@@ -9,6 +9,53 @@ private struct ChampionshipCardsWidthKey: PreferenceKey {
     }
 }
 
+/// What the rows of BOTH cards actually want, at the reader's text size (#4328).
+///
+/// One value for the whole view, not one per card: the reader compares the away
+/// team's bars against the home team's, and two bars of different track lengths
+/// cannot be compared — which is the same argument that already gives one card
+/// one column, applied to the pair. It is also strictly better than what shipped,
+/// where an all-clinched card took the 56 pt column while its opponent took 76
+/// and their bars came out different lengths.
+private struct ChampionshipColumnsKey: PreferenceKey {
+    static let defaultValue = ChampionshipColumnWidths.zero
+    static func reduce(
+        value: inout ChampionshipColumnWidths, nextValue: () -> ChampionshipColumnWidths
+    ) {
+        value = value.merged(with: nextValue())
+    }
+}
+
+/// Reports the width `probe` wants when nothing constrains it.
+///
+/// A `GeometryReader` on the drawn view would report the width it was GIVEN —
+/// 80 pt for a label in an 80 pt column, which is the very number under
+/// suspicion. So the probe is a hidden, `fixedSize` copy: `fixedSize` refuses the
+/// proposal, so what it measures is what the content wants, and `.hidden()` plus
+/// living in a `.background` keeps it out of both the drawing and the layout.
+private struct NaturalWidthProbe<Probe: View>: View {
+    let column: WritableKeyPath<ChampionshipColumnWidths, CGFloat>
+    @ViewBuilder let probe: Probe
+
+    var body: some View {
+        probe
+            .fixedSize(horizontal: true, vertical: false)
+            .hidden()
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: ChampionshipColumnsKey.self, value: widths(geo.size.width))
+                }
+            )
+    }
+
+    private func widths(_ width: CGFloat) -> ChampionshipColumnWidths {
+        var value = ChampionshipColumnWidths.zero
+        value[keyPath: column] = width
+        return value
+    }
+}
+
 struct ChampionshipPathView: View {
     let progression: TeamProgressionResponse
     var homeTeamColor: Color = .blue
@@ -18,6 +65,11 @@ struct ChampionshipPathView: View {
     /// `ChampionshipRowLayout.stacksBelowLabel` reads as "stack" — the shape that
     /// is safe when the width is not known.
     @State private var cardsWidth: CGFloat = 0
+
+    /// What the rows measured at the reader's text size, once laid out (#4328).
+    /// Zero until then, and the constants are the floor either way — see
+    /// `ChampionshipRowLayout.columns(measured:for:)`.
+    @State private var measuredColumns: ChampionshipColumnWidths = .zero
 
     /// Whether both teams share the same conference/league
     private var sameConference: Bool {
@@ -83,14 +135,25 @@ struct ChampionshipPathView: View {
                 let contentWidth = ChampionshipRowLayout.teamCardContentWidth(
                     totalWidth: cardsWidth, cardCount: cardCount)
 
+                // One column for both cards, and one shape, so every bar on the
+                // screen has the same track and the reader can compare them
+                // (#3574/#3580). Since #4328 the column is the larger of what
+                // shipped and what this reader's text size actually needs.
+                let columns = ChampionshipRowLayout.columns(
+                    measured: measuredColumns,
+                    for: (away.map { filteredStages(for: $0) } ?? [])
+                        + (home.map { filteredStages(for: $0) } ?? []))
+                let shape = ChampionshipRowLayout.shape(
+                    contentWidth: contentWidth, columns: columns)
+
                 HStack(alignment: .top, spacing: ChampionshipRowLayout.cardSpacing) {
                     if let away {
                         teamCard(team: away, stages: filteredStages(for: away),
-                                 color: awayTeamColor, contentWidth: contentWidth)
+                                 color: awayTeamColor, columns: columns, shape: shape)
                     }
                     if let home {
                         teamCard(team: home, stages: filteredStages(for: home),
-                                 color: homeTeamColor, contentWidth: contentWidth)
+                                 color: homeTeamColor, columns: columns, shape: shape)
                     }
                 }
                 .background(
@@ -101,6 +164,9 @@ struct ChampionshipPathView: View {
                 )
                 .onPreferenceChange(ChampionshipCardsWidthKey.self) { width in
                     cardsWidth = width
+                }
+                .onPreferenceChange(ChampionshipColumnsKey.self) { columns in
+                    measuredColumns = columns
                 }
             }
             .padding()
@@ -113,7 +179,8 @@ struct ChampionshipPathView: View {
         team: TeamProgressionData,
         stages: [ProgressionStageData]? = nil,
         color: Color,
-        contentWidth: CGFloat = 0
+        columns: ChampionshipColumnWidths,
+        shape: ChampionshipRowShape
     ) -> some View {
         let displayStages = stages ?? team.stages
         return VStack(alignment: .leading, spacing: 12) {
@@ -171,14 +238,11 @@ struct ChampionshipPathView: View {
                 .foregroundStyle(.tertiary)
                 .tracking(0.5)
 
-            // Stages. One decision for the whole card, so its bars stay the same
-            // length as each other and remain comparable (#3574/#3580).
-            let badgeWidth = ChampionshipRowLayout.badgeWidth(for: displayStages)
-            let stacked = ChampionshipRowLayout.stacksBelowLabel(
-                contentWidth: contentWidth, stages: displayStages)
-
+            // Stages. The columns and the shape were decided once for both cards
+            // (see `body`), so every bar on the screen has the same track and
+            // stays comparable (#3574/#3580).
             ForEach(displayStages, id: \.key) { stage in
-                stageRow(stage: stage, color: color, badgeWidth: badgeWidth, stacked: stacked)
+                stageRow(stage: stage, color: color, columns: columns, shape: shape)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -198,25 +262,39 @@ struct ChampionshipPathView: View {
     /// for what the row was doing before (#3574, #3580).
     @ViewBuilder
     private func stageRow(
-        stage: ProgressionStageData, color: Color, badgeWidth: CGFloat, stacked: Bool
+        stage: ProgressionStageData, color: Color,
+        columns: ChampionshipColumnWidths, shape: ChampionshipRowShape
     ) -> some View {
-        if stacked {
+        switch shape {
+        case .inline:
+            HStack(spacing: ChampionshipRowLayout.spacing) {
+                stageLabel(stage)
+                    .frame(width: columns.label, alignment: .leading)
+                stageBar(stage: stage, color: color)
+                stageBadges(stage: stage, color: color)
+                    .frame(width: columns.badges, alignment: .trailing)
+            }
+        case .stacked:
             VStack(alignment: .leading, spacing: 4) {
                 stageLabel(stage)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: ChampionshipRowLayout.spacing) {
                     stageBar(stage: stage, color: color)
                     stageBadges(stage: stage, color: color)
-                        .frame(width: badgeWidth, alignment: .trailing)
+                        .frame(width: columns.badges, alignment: .trailing)
                 }
             }
-        } else {
-            HStack(spacing: ChampionshipRowLayout.spacing) {
+        case .badgesAboveBar:
+            // #4328. The badges are given the whole card rather than a column,
+            // so `ChampionshipStageBadges` can take its two-line arrangement
+            // instead of truncating — and the bar, freed of them, is longer here
+            // than it is at default text size.
+            VStack(alignment: .leading, spacing: 4) {
                 stageLabel(stage)
-                    .frame(width: ChampionshipRowLayout.labelWidth, alignment: .leading)
-                stageBar(stage: stage, color: color)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 stageBadges(stage: stage, color: color)
-                    .frame(width: badgeWidth, alignment: .trailing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                stageBar(stage: stage, color: color)
             }
         }
     }
@@ -225,6 +303,11 @@ struct ChampionshipPathView: View {
         Text(stage.label)
             .font(.caption)
             .foregroundStyle(.secondary)
+            .background(
+                NaturalWidthProbe(column: \.label) {
+                    Text(stage.label).font(.caption)
+                }
+            )
     }
 
     private func stageBar(stage: ProgressionStageData, color: Color) -> some View {
@@ -248,6 +331,11 @@ struct ChampionshipPathView: View {
 
     private func stageBadges(stage: ProgressionStageData, color: Color) -> some View {
         ChampionshipStageBadges(stage: stage, color: color)
+            .background(
+                NaturalWidthProbe(column: \.badges) {
+                    ChampionshipStageBadges(stage: stage, color: color)
+                }
+            )
     }
 }
 
@@ -260,21 +348,41 @@ struct ChampionshipPathView: View {
 /// measure, "96 pt is enough for `↑91.3% ✓ clinched`" would be an estimate
 /// wearing the word measured — and a column one point too narrow is exactly
 /// what #3574 was.
+///
+/// Since #4328 the CARD asks it the same question at run time, at the reader's
+/// own text size, through `NaturalWidthProbe` — because the answer is different
+/// at each of the twelve, and a `static let` can only hold one of them.
 struct ChampionshipStageBadges: View {
     let stage: ProgressionStageData
     var color: Color = .blue
 
     var body: some View {
+        // #4328 — THE BACKSTOP FIRED, AND A BACKSTOP THAT FIRES IS THE DEFECT.
+        //
+        // `lineLimit(1)` below was written as a promise that a too-narrow column
+        // would fail legibly rather than as `clinc` / `hed` (#3574). At
+        // accessibility text sizes it kept that promise on the one string a
+        // reader cannot lose: the probability rendered `1…`. A legible ellipsis
+        // is still no number.
+        //
+        // So the arrangement gives before the words do. `ViewThatFits` takes the
+        // one-line badge wherever it fits — every size up to and including the
+        // column it is normally given — and drops to two lines only where the
+        // card genuinely cannot hold one (at `.accessibility5` the one-line badge
+        // wants 141.33 pt and a phone card has 137.3). The measurement that sizes
+        // the column reads the FIRST arm, so nothing about the ordinary render
+        // moves; see `NaturalWidthProbe`.
+        ViewThatFits(in: .horizontal) {
+            badges(AnyLayout(HStackLayout(alignment: .center, spacing: 4)))
+            badges(AnyLayout(VStackLayout(alignment: .trailing, spacing: 2)))
+        }
+    }
+
+    private func badges(_ layout: AnyLayout) -> some View {
         let prob = stage.probability ?? 0
         let isClinched = ChampionshipRowLayout.isClinched(probability: stage.probability)
 
-        // `lineLimit(1)` is a backstop, not the fix: the column is sized to hold
-        // this content, so it should never fire. It is here so that if it ever
-        // does — a larger Dynamic Type setting, a longer future string — the
-        // failure is a legible ellipsis rather than `clinc` / `hed` (#3574).
-        // It is why a row's HEIGHT can no longer testify about this bug, and why
-        // the test that guards it measures width instead.
-        HStack(spacing: 4) {
+        return layout {
             // #4108 — a settled row carries no movement. This drew
             // "↑90.9%  ✓ clinched": a 90.9 percentage-POINT 24h move claimed on a
             // stage the same row calls decided, with the probability itself never
@@ -312,6 +420,12 @@ struct ChampionshipStageBadges: View {
                 }
                 .foregroundStyle(.green)
             } else {
+                // `lineLimit(1)` stays, and it is now genuinely a backstop rather
+                // than the thing standing between the reader and the number: the
+                // arrangement above gives first, so this only ever fires on a
+                // future string nobody has measured. It is also why a row's HEIGHT
+                // cannot testify about a too-narrow column, and why every test
+                // that guards this measures width (#3574).
                 Text(Self.formatProb(prob))
                     .font(.caption)
                     .fontWeight(.bold)

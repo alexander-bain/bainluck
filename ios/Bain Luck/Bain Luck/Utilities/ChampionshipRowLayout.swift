@@ -52,6 +52,53 @@ import CoreGraphics
 /// the bar to reach `minBarWidth` even stacked, so 96% and 99.6% land within a
 /// point of each other. The rule gives the bar everything the card has; making
 /// the card bigger is a different question from how a row divides it.
+/// The two columns of a Championship Path row, as the card actually measured
+/// them — not as a constant hoped they would be.
+///
+/// #4328: every constant in this file was measured at ONE Dynamic Type size and
+/// then used at all twelve. `Text(formatProb(prob))` is `.font(.caption)`, a text
+/// style, so the probability grows with the reader's setting inside a column that
+/// could not: at `.accessibility3` the badge wants 117.67 pt and the column
+/// offered 76, so `lineLimit(1)` did what it promised and printed `1…` — the
+/// number the row exists to show, truncated, while the trend badge beside it
+/// (fixed `.system(size: 9)`) stayed exactly where it was.
+///
+/// A column that is a function of the reader's text size cannot be a `static let`,
+/// and the honest scaling factor is not `@ScaledMetric` either — the badge is one
+/// part that scales and one part that does not, so any single multiplier is wrong
+/// in one direction or the other. So the card measures what its own rows want and
+/// hands the answer back here. The constants below survive as the pre-measurement
+/// fallback, which is the same role `contentWidth == 0` already plays.
+struct ChampionshipColumnWidths: Equatable, Sendable {
+    var label: CGFloat = 0
+    var badges: CGFloat = 0
+
+    static let zero = ChampionshipColumnWidths()
+
+    /// Element-wise max: one card, one column, sized to its widest row.
+    func merged(with other: ChampionshipColumnWidths) -> ChampionshipColumnWidths {
+        ChampionshipColumnWidths(
+            label: max(label, other.label), badges: max(badges, other.badges))
+    }
+}
+
+/// Which of the three shapes a row takes, chosen from measured widths.
+enum ChampionshipRowShape: Equatable {
+    /// `label │ bar │ badges` — only where the card is genuinely wide enough.
+    case inline
+    /// The label on its own line, `bar │ badges` below it.
+    case stacked
+    /// #4328: label, then badges, then a bar across the whole card.
+    ///
+    /// At `.accessibility5` the badge alone wants 141.33 pt and a phone card has
+    /// 137.3 pt, so there is no arrangement in which the bar and the badges share
+    /// a line — `stacked` would hand the bar a negative width and draw the 2 pt
+    /// floor that #3580 was. Giving the bar the whole card instead makes it
+    /// *longer* than at default size, and every row of the card still gets the
+    /// same track, so the bars stay comparable.
+    case badgesAboveBar
+}
+
 enum ChampionshipRowLayout {
 
     // MARK: Measured constants
@@ -91,6 +138,13 @@ enum ChampionshipRowLayout {
     ///   pt at `99.9%` and 5 pt at `100.0%` — a truncated probability waiting on
     ///   a large enough day. `trend_24h` is a difference of two probabilities,
     ///   so `100.0%` is in range, and #3581 has the field publishing 91.4% today.
+    ///
+    /// 🔴 **SINCE #4328 THIS IS A FLOOR, NOT THE ANSWER.** Everything above was
+    /// measured at `.large` and is true there and nowhere else: the widest badge
+    /// wants 79 pt at `.xLarge` — one notch up from the default — and 141.33 pt at
+    /// `.accessibility5`. `columns(measured:for:)` takes the larger of this and
+    /// what the card measured, so the reader who changed nothing sees exactly what
+    /// they saw before, and everyone else gets a column that fits.
     static let valueBadgeWidth: CGFloat = 76
 
     /// The badge column when EVERY row in the card says "clinched".
@@ -154,7 +208,9 @@ enum ChampionshipRowLayout {
     }
 
     /// The width a one-line row needs before its bar starts eating into itself.
-    static func inlineRowMinimumWidth(badgeWidth: CGFloat) -> CGFloat {
+    static func inlineRowMinimumWidth(
+        labelWidth: CGFloat = ChampionshipRowLayout.labelWidth, badgeWidth: CGFloat
+    ) -> CGFloat {
         labelWidth + spacing + minBarWidth + spacing + badgeWidth
     }
 
@@ -171,13 +227,57 @@ enum ChampionshipRowLayout {
         return max(0, card - cardPadding * 2)
     }
 
+    /// The columns before anything has been measured — the constants above.
+    static func fallbackColumns(for stages: [ProgressionStageData]) -> ChampionshipColumnWidths {
+        ChampionshipColumnWidths(label: labelWidth, badges: badgeWidth(for: stages))
+    }
+
+    /// The columns to use, given what the view measured.
+    ///
+    /// 🔴 **THE CONSTANTS ARE A FLOOR, AND A MEASUREMENT MAY ONLY RAISE THEM.**
+    /// That is deliberate and it is what keeps this fix off the default-size
+    /// render: at `.large` the widest badge the Brewers card can draw measures
+    /// 69.67 pt against the 76 pt column, so the measurement is *smaller* and
+    /// changes nothing. Letting it win would shave 6 pt off every bar on a screen
+    /// Alex reads daily, to fix a defect that only exists above `.xLarge` — a
+    /// price the reader never asked to pay. Above that the measurement wins and
+    /// the probability gets its room back.
+    ///
+    /// The floor also covers the first layout pass, where nothing is measured yet
+    /// and the whole value is zero.
+    static func columns(
+        measured: ChampionshipColumnWidths, for stages: [ProgressionStageData]
+    ) -> ChampionshipColumnWidths {
+        fallbackColumns(for: stages).merged(with: measured)
+    }
+
+    /// The shape a row takes in a card of this width, given what its columns
+    /// actually measured.
+    ///
+    /// Read in order, and each step is the previous one's failure: sit on one line
+    /// if the line holds everything; otherwise give the label its own line; and if
+    /// even then the bar cannot resolve what it draws, give the bar the whole card
+    /// and put the badges above it.
+    static func shape(
+        contentWidth: CGFloat, columns: ChampionshipColumnWidths
+    ) -> ChampionshipRowShape {
+        guard contentWidth > 0 else { return .stacked }
+        if contentWidth >= inlineRowMinimumWidth(
+            labelWidth: columns.label, badgeWidth: columns.badges) {
+            return .inline
+        }
+        if contentWidth - spacing - columns.badges >= minBarWidth {
+            return .stacked
+        }
+        return .badgesAboveBar
+    }
+
     /// Whether the bar and badges drop below the label instead of sitting beside it.
     ///
     /// A card whose width is not known yet stacks: stacking never wraps a word
     /// and never starves the bar, so it is the safe answer to "not measured".
     static func stacksBelowLabel(contentWidth: CGFloat, stages: [ProgressionStageData]) -> Bool {
-        guard contentWidth > 0 else { return true }
-        return contentWidth < inlineRowMinimumWidth(badgeWidth: badgeWidth(for: stages))
+        shape(contentWidth: contentWidth, columns: fallbackColumns(for: stages)) != .inline
     }
 
     /// What the bar actually gets, under the layout the rule chose.
@@ -185,11 +285,21 @@ enum ChampionshipRowLayout {
     /// Exists so a test can assert the number the user sees rather than the
     /// branch that produced it — 0.0 pt was the defect, not "the inline branch".
     static func barWidth(contentWidth: CGFloat, stages: [ProgressionStageData]) -> CGFloat {
+        barWidth(contentWidth: contentWidth, columns: fallbackColumns(for: stages))
+    }
+
+    /// The same question asked with the card's own measurements.
+    static func barWidth(
+        contentWidth: CGFloat, columns: ChampionshipColumnWidths
+    ) -> CGFloat {
         guard contentWidth > 0 else { return 0 }
-        let badges = badgeWidth(for: stages)
-        if stacksBelowLabel(contentWidth: contentWidth, stages: stages) {
-            return max(0, contentWidth - spacing - badges)
+        switch shape(contentWidth: contentWidth, columns: columns) {
+        case .inline:
+            return max(0, contentWidth - columns.label - spacing - spacing - columns.badges)
+        case .stacked:
+            return max(0, contentWidth - spacing - columns.badges)
+        case .badgesAboveBar:
+            return contentWidth
         }
-        return max(0, contentWidth - labelWidth - spacing - spacing - badges)
     }
 }
