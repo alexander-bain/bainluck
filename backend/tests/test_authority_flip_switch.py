@@ -60,6 +60,26 @@ from app.utils.authority_agreement import (
 )
 from app.utils.authority_streak import REQUIRED_STREAK_DAYS
 
+#: The specimen for every test in this file that exercises the STREAK GATE.
+#:
+#: It must be a sport D104 has NOT ruled, or the test proves nothing: a ruled
+#: sport is permitted by `FLIP_RULED_WITHOUT_STREAK` before the streak is ever
+#: consulted, so "permits at seven" would pass at zero days and "refuses at six"
+#: would simply red.
+#:
+#: Was `basketball_nba` until the NBA shipped as the second ruled release
+#: (#4493). Four tests here went RED on that change and one —
+#: `test_a_discoverable_sport_is_unaffected_and_still_permits_at_seven` — stayed
+#: GREEN for the wrong reason, passing on the D104 branch while claiming to
+#: prove something about seven days. That silent pass is why the specimen is a
+#: named constant now instead of six string literals.
+#:
+#: NHL is next under #2867. When it ships there is no unruled shadow-stamped
+#: sport left that refuses on the CLOCK — `baseball_mlb` refuses one branch
+#: earlier on its missing governing number (D63, #4436) — so that release must
+#: give these tests a synthetic sport rather than move this line again.
+UNRULED_STREAK_SPECIMEN = "icehockey_nhl"
+
 
 def _day(day: str, state: str) -> dict:
     """One durable-ledger day entry, in the only two fields the walk reads.
@@ -353,14 +373,14 @@ def test_a_sport_with_no_ledger_is_refused_as_not_measured():
     "0/7 consecutive days" would describe a sport that FAILED a bar nobody ever
     applied to it. Gotcha #53 at the flip gate.
     """
-    permitted, why = flip_permitted("basketball_nba", [])
+    permitted, why = flip_permitted(UNRULED_STREAK_SPECIMEN, [])
     assert not permitted
     assert "not measured" in why
     assert "0/" not in why
 
 
 def test_a_short_streak_is_refused_as_a_wait_and_says_how_far_along():
-    permitted, why = flip_permitted("basketball_nba", _run_of(6, GATE_MEETS))
+    permitted, why = flip_permitted(UNRULED_STREAK_SPECIMEN, _run_of(6, GATE_MEETS))
     assert not permitted
     assert f"6/{REQUIRED_STREAK_DAYS}" in why
     assert "not a defect" in why
@@ -368,7 +388,7 @@ def test_a_short_streak_is_refused_as_a_wait_and_says_how_far_along():
 
 def test_seven_days_permits_the_measured_half_and_says_the_other_half_is_alex():
     permitted, why = flip_permitted(
-        "basketball_nba", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
+        UNRULED_STREAK_SPECIMEN, _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
     )
     assert permitted
     assert "YOUR-TURN" in why
@@ -383,11 +403,11 @@ def test_seven_days_of_too_few_does_not_permit_a_flip():
     the end-to-end statement — the gate refuses the day, and the counter refuses
     to build a streak out of days it refused.
     """
-    day = governing_identity("basketball_nba", _identity(both=1))["gate"]
+    day = governing_identity(UNRULED_STREAK_SPECIMEN, _identity(both=1))["gate"]
     assert day == GATE_TOO_FEW
 
     permitted, why = flip_permitted(
-        "basketball_nba", _run_of(REQUIRED_STREAK_DAYS, day)
+        UNRULED_STREAK_SPECIMEN, _run_of(REQUIRED_STREAK_DAYS, day)
     )
     assert not permitted
     assert f"0/{REQUIRED_STREAK_DAYS}" in why
@@ -957,9 +977,14 @@ def test_the_idless_refusal_names_the_parser_rather_than_asking_for_a_beat(
 
 
 def test_a_discoverable_sport_is_unaffected_and_still_permits_at_seven():
-    """The blast radius, from the other side: NBA's answer is byte-for-byte its old one."""
+    """The blast radius, from the other side: the specimen's answer is byte-for-byte its old one.
+
+    Read `UNRULED_STREAK_SPECIMEN` before editing this. It said "NBA" until the
+    NBA was ruled under #4493, at which point this test kept passing while no
+    longer proving anything about seven days — the specimen must stay unruled.
+    """
     permitted, why = flip_permitted(
-        "basketball_nba", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
+        UNRULED_STREAK_SPECIMEN, _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
     )
     assert permitted
     assert "discovery" not in why

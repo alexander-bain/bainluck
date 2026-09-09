@@ -174,16 +174,37 @@ class TestTheStructuralRefusalsSurviveTheRuling:
 
 
 class TestOnlyFootballShipsOnThisIssue:
-    """Alex: "Flip football first, then the rest in one release each"."""
+    """Alex: "Flip football first, then the rest in one release each".
 
-    def test_the_ruled_set_is_football_alone(self):
-        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL}), (
-            "NBA/NHL are one release each under #2867 and are not this ship; "
-            "adding them here lands three flips under a cert that graded one"
+    AMENDED BY #4493 (the NBA's release). The specimen moved; the principle did
+    not. This class asserts that the ruled set contains exactly the sports that
+    have actually been graded, one release at a time — it never asserted that
+    football would be alone forever, and rewriting it that way would have made
+    every later release edit a test named for #4417.
+
+    So `basketball_nba` moves from the still-waiting parametrize to the shipped
+    set, and `icehockey_nhl` stays behind as the control. This is the same
+    resolution the unreadable-ledger test above took when #4443 landed: the
+    specimen moves, the test stays.
+    """
+
+    def test_the_ruled_set_is_exactly_what_has_shipped(self):
+        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL, "basketball_nba"}), (
+            "the ruled set must equal the sports that have been graded: "
+            "football on #4417 and the NBA on #4493. NHL is one release of its "
+            "own under #2867; adding it lands two flips under a cert that "
+            "graded one"
         )
 
-    @pytest.mark.parametrize("sport", ["basketball_nba", "icehockey_nhl"])
-    def test_nba_and_nhl_still_wait(self, sport):
+    def test_football_is_still_ruled(self):
+        """This issue's own ship, which a later release must not undo."""
+        assert NFL in FLIP_RULED_WITHOUT_STREAK
+        permitted, why = flip_permitted(NFL, _days(5))
+        assert permitted is True, why
+
+    @pytest.mark.parametrize("sport", ["icehockey_nhl"])
+    def test_the_sports_that_have_not_shipped_still_wait(self, sport):
+        assert sport not in FLIP_RULED_WITHOUT_STREAK
         permitted, why = flip_permitted(sport, _days(5))
         assert permitted is False, why
         assert f"5/{REQUIRED_STREAK_DAYS}" in why

@@ -491,16 +491,35 @@ FLIP_EVIDENCE: dict[str, dict[str, Any]] = {}
 #: the same breath as football, still refused, because it has no governing
 #: identity number and that needs a ruling rather than a wait.
 #:
-#: One sport, because Alex asked for one release each: *"Flip football first (the
-#: Thursday kickoff), then the rest in one release each."* NBA and NHL clear
-#: every structural branch and are waiting only on their streak, so each is a
-#: one-line addition here under #2867 when its release comes.
+#: One release each, because that is what Alex asked for: *"Flip football first
+#: (the Thursday kickoff), then the rest in one release each."*
+#:
+#: Football shipped on #4417 and its resilience hole — a failover still gated on
+#: the MONITOR being readable — closed on #4443. `basketball_nba` is the second
+#: release, #4493. `icehockey_nhl` is the third and is deliberately still absent:
+#: it clears every structural branch and waits only on its streak, so it is a
+#: one-line addition here when its release comes. Adding it early would land two
+#: flips under a cert that graded one.
+#:
+#: Each addition was refused on the WAIT ALONE before it was made, read from the
+#: live row rather than inferred from the config (standing notice 37). The NBA's
+#: row at 2026-09-09 21:19:54Z: `NO-FAILOVER-NOT-GATED`, *"has not cleared D50's
+#: measured half: basketball_nba is 5/7 consecutive days at or above 99.5% — a
+#: wait, not a defect"*. That is branch 6 and nothing else.
+#:
+#: Beware the number that looks bad: the NBA's identity `pct` reads 3.39 and the
+#: NHL's 2.28, and neither governs its sport. `GOVERNING_IDENTITY_NUMBERS` gives
+#: both `("ours_covered_pct",)`, which reads 100.0; only football is governed by
+#: `("pct", "ours_covered_pct")`. A reader who checks `pct` concludes these
+#: sports are nowhere near ready.
 #:
 #: The ledger is untouched. It keeps folding a day per sport per pass and keeps
 #: being published — Alex kept it explicitly, as a MONITOR: a game StatPal lists
 #: that we lack is now OUR fetch bug to fix, filed under #2867, never a reason to
 #: say the venue does not cover it (standing notices 26/27).
-FLIP_RULED_WITHOUT_STREAK: frozenset[str] = frozenset({"americanfootball_nfl"})
+FLIP_RULED_WITHOUT_STREAK: frozenset[str] = frozenset(
+    {"americanfootball_nfl", "basketball_nba"}
+)
 
 
 def authority_for(sport_key: Optional[str]) -> str:

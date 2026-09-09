@@ -105,13 +105,20 @@ def _open_gate() -> tuple[bool, str]:
 #:
 #: Was `NFL` with an empty ledger until D104 = A4 (2026-09-09, #4417). Football is
 #: now in `FLIP_RULED_WITHOUT_STREAK` and an empty ledger permits it, so that call
-#: stopped producing a shut gate and took five tests with it. NBA is refused on
-#: its clock and is not ruled — the same *kind* of refusal NFL used to give.
+#: stopped producing a shut gate and took five tests with it. It then moved to
+#: `basketball_nba`, and moved AGAIN to `icehockey_nhl` when the NBA shipped as
+#: the second ruled release (#4493) and stopped being refused.
+#:
+#: The specimen is expected to keep moving — that is what "one release each"
+#: means — and the last unruled sport leaving `SHADOW_STAMPERS` is the day this
+#: control has to become something other than a real sport. NHL is refused on its
+#: clock and is not ruled: the same *kind* of refusal NFL and the NBA used to give.
 #:
 #: Still driven through the real `flip_permitted` rather than hand-writing
 #: `(False, "...")`: a control that cannot notice the gate changing under it is
-#: not a control, which is exactly how this helper caught D104 in the first place.
-STILL_GATED = "basketball_nba"
+#: not a control, which is exactly how this helper caught D104 in the first place
+#: and how it caught #4493 today.
+STILL_GATED = "icehockey_nhl"
 
 
 def _shut_gate() -> tuple[bool, str]:

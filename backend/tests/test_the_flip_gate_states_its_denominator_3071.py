@@ -55,7 +55,9 @@ from app.utils.authority_streak import REQUIRED_STREAK_DAYS
 #: A sport with a shadow stamper, a scheduled discovery pass and a governing
 #: number — i.e. one that can actually reach the `True` branch. Read from the
 #: real config rather than asserted, so this file follows a rename.
-THIN = "basketball_nba"
+#: Was `basketball_nba` until the NBA shipped as the second ruled release
+#: (#4493) and stopped reaching the seven-day branch at all.
+THIN = "icehockey_nhl"
 #: Was `americanfootball_nfl` until D104 = A4 (2026-09-09, #4417). Football is now
 #: in `FLIP_RULED_WITHOUT_STREAK` and returns before the seven-day branch, so it
 #: can no longer be the specimen for what that branch's sentence says. The
@@ -63,6 +65,25 @@ THIN = "basketball_nba"
 #: moves to the other sport that still reaches it. `both`/`denominator` come from
 #: `_days` rather than from the sport, so "complete" still describes the fixture.
 COMPLETE = "icehockey_nhl"
+
+#: THE TWO NAMES NOW HOLD THE SAME SPORT, AND THAT IS NOT AN OVERSIGHT.
+#:
+#: They were two sports because two were available. D104 has since ruled football
+#: (#4417) and the NBA (#4493), and a ruled sport is permitted before the
+#: seven-day branch is ever reached — so of the shadow-stamped sports, only the
+#: NHL still gets there. `baseball_mlb` does not: it refuses one branch earlier on
+#: its missing governing number (D63, #4436).
+#:
+#: What the two names distinguish is the FIXTURE, not the sport — `both` and
+#: `denominator` come from `_days`, so "thin" means a 41-of-1,208 day and
+#: "complete" a 321-of-321 one, and every assertion here is about the sentence
+#: those numbers produce. Keeping both names keeps the intent legible.
+#:
+#: WHEN THE NHL SHIPS (the third release under #2867) there is no sport left that
+#: reaches this branch, and this file cannot be fixed by moving a line again. It
+#: will need a synthetic sport registered into the config for the duration of the
+#: test. Do not discover this at merge time — see `UNRULED_STREAK_SPECIMEN` in
+#: `test_authority_flip_switch.py`, which carries the same warning.
 
 
 def _days(both, denominator, *, n=REQUIRED_STREAK_DAYS, state="MEETS", fields=True):

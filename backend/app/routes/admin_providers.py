@@ -1965,6 +1965,46 @@ _DUPLICATE_IDS_BY_POPULATION: dict[str, str] = {
 }
 
 
+def _authority_note(sport_key: str) -> str:
+    """What "current" means for THIS sport, and what flipping it would take.
+
+    Derived from `FLIP_RULED_WITHOUT_STREAK`, never restated (#4493). Until this
+    was per-sport it told every reader that flipping "needs `flip_permitted` to
+    say yes on seven consecutive daily gate states AND a YOUR-TURN entry Alex
+    has seen (D50)" — false for a ruled sport since #4417 retired the wait under
+    D104, and the third place that retired requirement's scaffolding was still
+    speaking. Two sessions in a row had to re-derive from the code that the gate
+    no longer binds, which is what a stale note costs.
+
+    Deriving it means the sentence cannot rot again as sports join the set: the
+    NHL's release changes this string for the NHL by changing the frozenset, and
+    nothing here.
+
+    Admin-only, so standing notice 34 (no diagnostic prose on a reader's screen)
+    does not reach it — this endpoint's whole audience is the operator asking
+    whether anything has flipped yet.
+    """
+    from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK
+
+    common = (
+        "the sport's source of record TODAY. The agreement row below "
+        "measures the candidate; it does not select it. "
+    )
+    if sport_key in FLIP_RULED_WITHOUT_STREAK:
+        return common + (
+            "Alex ruled this sport may fail over WITHOUT a certification streak "
+            "(D104 = A4, 2026-09-09), so `flip_permitted` no longer asks the "
+            "seven-day gate for it — but the four structural refusals still "
+            "apply, and the daily ledger below keeps running as a MONITOR."
+        )
+    return common + (
+        "Flipping needs `config.authority_by_sport.flip_permitted` to say yes "
+        "on seven consecutive daily gate states AND a YOUR-TURN entry Alex has "
+        "seen (D50). Sports Alex has ruled under D104 skip the streak; this one "
+        "is not among them."
+    )
+
+
 @router.get("/statpal/authority-agreement")
 async def statpal_authority_agreement(
     request: Request,
@@ -2036,18 +2076,15 @@ async def statpal_authority_agreement(
         entry["authority"] = {
             "current": authority_for(sport_key),
             "candidate": STATPAL,
-            "note": (
-                "the sport's source of record TODAY. The agreement row below "
-                "measures the candidate; it does not select it. Flipping needs "
-                "`config.authority_by_sport.flip_permitted` to say yes on seven "
-                "consecutive daily gate states AND a YOUR-TURN entry Alex has "
-                "seen (D50)."
-            ),
+            "note": _authority_note(sport_key),
             # Beside `current`, never folded into its note, because it qualifies
-            # what `current` MEANS rather than adding detail to it. NFL/NBA/NHL
-            # reach a genuine seven around 2026-09-11; on that day someone flips
-            # a line, watches `current` change, and would otherwise conclude the
-            # site had changed provider. It has not: nothing reads the switch.
+            # what `current` MEANS rather than adding detail to it. The premise
+            # this was written on — "NFL/NBA/NHL reach a genuine seven around
+            # 2026-09-11" — was overtaken by D104, which retired the wait for a
+            # ruled sport rather than waiting it out (#4417 football, #4493 NBA).
+            # The point it was making survives the premise: when someone adds a
+            # line and watches `current` change, they would otherwise conclude
+            # the site had changed provider. It has not: nothing reads the switch.
             # Derived from the declared consumer set, so it cannot outlive the
             # condition it describes (`SWITCH_CONSUMERS`).
             "switch_wired": SWITCH_IS_WIRED,
