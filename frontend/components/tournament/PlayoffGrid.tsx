@@ -7,7 +7,6 @@ import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   GRID_SECTION_LABEL,
-  columnSumSentence,
   formatAge,
   formatGridCell,
   gridCellExplanation,
@@ -411,67 +410,45 @@ export function gridTemplate(columnCount: number): string {
   return `minmax(var(--grid-name-w), max-content) repeat(${columnCount}, var(--grid-col-track))`;
 }
 
-function SumCheck({ grid }: { grid: PlayoffGridModel }) {
-  const failing = grid.columnSums.filter((check) => check.verdict !== "pass");
-  return (
-    <details
-      className="mt-2 max-w-[80ch] rounded-xl border border-surface-border bg-surface-card px-3 py-2"
-      data-testid="grid-sum-check"
-      data-failing={failing.length}
-    >
-      <summary className="cursor-pointer text-[11.5px] font-semibold text-text-secondary">
-        Does each column add up?{" "}
-        <span className="font-normal text-text-muted">
-          {grid.columnSums.length - failing.length} of {grid.columnSums.length} columns
-          within tolerance
-        </span>
-      </summary>
-      {/* ALEX'S RULING 4, shown rather than claimed. Eight players reach the
-          quarter-finals, four the semis, two the final, one wins it — so the
-          column has to add to that, and when it does not the page says by how
-          much instead of quietly scaling the numbers until it does. */}
-      <ul className="mt-1.5 space-y-1" data-testid="grid-sum-rows">
-        {grid.columnSums.map((check) => (
-          <li
-            key={check.key}
-            className="flex items-baseline gap-2 text-[11px] leading-snug"
-            data-testid="grid-sum-row"
-            data-column={check.key}
-            data-verdict={check.verdict}
-          >
-            <span
-              aria-hidden="true"
-              className={`mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full ${
-                check.verdict === "pass" ? "bg-accent-live" : "bg-accent-warning"
-              }`}
-            />
-            <span className="text-text-secondary">{columnSumSentence(check)}</span>
-          </li>
-        ))}
-      </ul>
-      {grid.monotonicityViolations.length > 0 && (
-        <p
-          className="mt-2 max-w-[80ch] border-t border-surface-border pt-1.5 text-[11px] leading-snug text-text-muted"
-          data-testid="grid-monotonicity"
-          data-count={grid.monotonicityViolations.length}
-        >
-          {/* The other eval. A player cannot be likelier to reach the final
-              than the semis; where the market says otherwise we show the
-              market and say that we noticed. */}
-          {grid.monotonicityViolations.length} player
-          {grid.monotonicityViolations.length === 1 ? " has" : "s have"} a higher chance for a
-          later round than an earlier one —{" "}
-          {grid.monotonicityViolations
-            .slice(0, 3)
-            .map((v) => `${v.display_name} (${v.earlier} → ${v.later})`)
-            .join(", ")}
-          {grid.monotonicityViolations.length > 3 ? " and others" : ""}. That is the
-          market disagreeing with itself where trading is thin, shown exactly as quoted.
-        </p>
-      )}
-    </details>
-  );
-}
+/**
+ * ═══ THE SELF-AUDIT LEFT THE PAGE (#4278, notice 34) — READ THIS BEFORE
+ *     PUTTING IT BACK ═══
+ *
+ * A `<details>` used to sit under this grid whose SUMMARY line — the part a
+ * reader sees without clicking anything — read:
+ *
+ *     ▸ Does each column add up?   0 of 5 columns within tolerance
+ *
+ * Inside it were the five per-column sentences and, when the model found them,
+ * a paragraph naming players whose later-round chance exceeds their earlier
+ * one. It was ALEX'S RULING 4 rendered honestly: eight reach the quarters, four
+ * the semis, two the final, one wins — so the column has to add to that, and
+ * where it does not the page said by how much rather than quietly scaling the
+ * numbers until it did.
+ *
+ * **Notice 34 (Alex, 2026-09-08 4:00pm PT) is later and is about THIS PAGE**:
+ * *"all the grey text is madness, and shouldn't be user-facing at all"*, and
+ * specifically *"any sentence written to satisfy a reviewer or the bus goes in
+ * the PR, the artifact, or a tooltip on the source mark — never in the page
+ * body."* A disclosure whose headline announces that every one of our five
+ * columns failed our own coherence check is the purest instance of the class —
+ * #4171 filed it as exactly that. A reader learns from it only that we do not
+ * trust our own table.
+ *
+ * 🔴 **RULING 4'S SUBSTANCE IS UNCHANGED AND MUST STAY UNCHANGED.** What ruling
+ * 4 forbids is *quietly scaling the numbers until they add up*, and nothing
+ * here scales anything: every cell still prints the market's own quote. What
+ * left is the paragraph ABOUT the arithmetic, not the arithmetic.
+ *
+ * 🔴 **AND REMOVING THE CAPTION MUST NOT CLOSE THE QUESTION IT WAS ASKING.**
+ * `0 of 5` was a true report of a real defect and it is still true. It lives on
+ * as **#4174** — open, untouched by this change, and now the only place the
+ * question is tracked. The numbers themselves ride the section below as
+ * `data-sum-columns` / `data-sum-failing` / `data-monotonicity`, the same
+ * treatment #4122 gave `data-marked`, so a probe, a guard or a sentinel reads
+ * every one of them exactly as before and a reader is not made to.
+ * `columnSumSentence` and the model's `columnSums` are untouched.
+ */
 
 export default function PlayoffGrid({
   grid,
@@ -518,6 +495,9 @@ export default function PlayoffGrid({
      can still read the count the deleted `grid-liquidity-key` paragraph used to
      say out loud (notice 34 / #4122). */
   const marked = markedCellCount(grid);
+  /* The deleted `grid-sum-check` disclosure's two numbers, kept machine-readable
+     — see the block above this component. Same treatment as `data-marked`. */
+  const sumFailing = grid.columnSums.filter((check) => check.verdict !== "pass").length;
 
   return (
     <section
@@ -529,6 +509,9 @@ export default function PlayoffGrid({
       data-no-market={grid.noMarketCells}
       data-alarms={grid.alarmCells}
       data-marked={marked}
+      data-sum-columns={grid.columnSums.length}
+      data-sum-failing={sumFailing}
+      data-monotonicity={grid.monotonicityViolations.length}
       data-scrolls={scrolls ? "true" : "false"}
     >
       <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
@@ -709,7 +692,9 @@ export default function PlayoffGrid({
           The marks on the cells are untouched — this removed the key, not the
           symbols it described. */}
 
-      <SumCheck grid={grid} />
+      {/* The column self-audit used to render here. See the block above
+          `PlayoffGrid` for why it is `data-sum-*` on the section instead, and
+          for why #4174 stays open. */}
     </section>
   );
 }

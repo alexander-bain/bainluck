@@ -543,8 +543,14 @@ describe("item 6 — the chart's x-axis", () => {
     for (const label of ["29 Jul", "5 Aug", "12 Aug", "19 Aug", "26 Aug"]) {
       expect(html).toContain(`>${label}</span>`);
     }
-    expect(html).toContain('data-testid="chart-span"');
-    expect(html).toContain("29d shown");
+    // #4278 / notice 34: `3 of 36 · 29d shown` was a coverage count plus a
+    // restatement of the axis, in grey, under the chart — notice 34's own
+    // example of the banned shape is "shown on 121 of 152". The AXIS is what
+    // survives and it is asserted above: five dated ticks, 29 Jul → 26 Aug,
+    // which is the same window the deleted words claimed.
+    expect(html).not.toContain('data-testid="chart-span"');
+    expect(html).not.toContain("29d shown");
+    expect(html).not.toMatch(/\d+ of \d+\s*<\/span>/);
   });
 
   it("spends the tier at the breakpoint — one render, three densities", () => {

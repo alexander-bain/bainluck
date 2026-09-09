@@ -105,14 +105,40 @@ export const SECTION_HEADING = "More predictions";
  *     given once in the section header. Densest; scales to a long section
  *     where a sentence per card would drown the questions.
  *
- * The default is `labelled` because the ambiguity Alex named is a WORDING
+ * The default WAS `labelled` because the ambiguity Alex named is a WORDING
  * problem, and the chip is the only one of the three that carries the label on
- * every card without spending a line on it. `dot` is the one to try if the
- * section grows past a handful of cards.
+ * every card without spending a line on it.
+ *
+ * ═══ THE DEFAULT IS NOW `dot` (#4278 / #4251, ux/1151) ═══
+ *
+ * Two rulings landed on `labelled` from opposite directions and both point the
+ * same way.
+ *
+ * 1. **Notice 34** (Alex, 2026-09-08 4:00pm PT, about `/tournaments/us-open`:
+ *    *"all the grey text is madness, and shouldn't be user-facing at all"*)
+ *    quotes this exact shape in its list of banned prose — *"method notes
+ *    ('last number is when we last saw…')"*. `Jannik Sinner: Last number 21
+ *    hours ago` is that sentence, printed in grey, in the page body. The
+ *    notice also names where it may live instead: *"a tooltip on the source
+ *    mark"*. `dot` already puts it there — `title={fresh.label}` plus an
+ *    `sr-only` label, so the fact survives for a screen reader and for a
+ *    pointer, and stops being a sentence the eye has to read past.
+ * 2. **#4251**, found on the standing US Open LOOK: the chip is generated text
+ *    of unbounded length laid out on the card TITLE's own row. On production at
+ *    390px it took ~60% of the line and collapsed `Who wins a second major this
+ *    year?` to six words on six lines, while its two pill-less siblings wrapped
+ *    normally. `dot` is a 6px dot plus `21h` — fixed width, bounded, and the
+ *    title gets its line back.
+ *
+ * This is NOT a retraction of UX-P154. Alex asked to keep riffing, so all three
+ * variants stay renderable from this component with the same data and the
+ * artifact still draws the comparison; only the default moves. `labelled` is
+ * still the right answer on a surface with room for it — it is the page body of
+ * a tournament hub that it is wrong for.
  */
 export type FreshnessVariant = "labelled" | "sentence" | "dot";
 
-export const DEFAULT_FRESHNESS_VARIANT: FreshnessVariant = "labelled";
+export const DEFAULT_FRESHNESS_VARIANT: FreshnessVariant = "dot";
 
 function FreshnessMark({
   market,
@@ -133,6 +159,17 @@ function FreshnessMark({
       ? `${fresh.staleOutcomes.map((o) => o.display_name).join(" + ")}: `
       : "";
   const tone = fresh.state === "quiet" ? "text-accent-warning" : "text-text-muted";
+  /* THE WHOLE ADMISSION, PREFIX INCLUDED (#4278). `dot` used to build its
+     tooltip from `fresh.label` alone and drop `partial` on the floor — the
+     visible mark has no room for a name, so the prefix was simply lost. That
+     was survivable while `dot` was an artifact-only riff; it is not survivable
+     now that `dot` is the production default (see `DEFAULT_FRESHNESS_VARIANT`),
+     because the tooltip is then the ONLY place the fact lives and a bare
+     "Last number 35 days ago" over a two-leg card whose other leg refreshed an
+     hour ago is exactly the false claim CERT-411 round 2 was raised to stop.
+     Caught by `tournamentPickerRotation`'s "a two-market card is as OLD as its
+     oldest leg" case going red on the default switch. */
+  const fullLabel = `${partial}${fresh.label}`;
 
   if (variant === "sentence") {
     return (
@@ -160,7 +197,7 @@ function FreshnessMark({
         data-testid="prop-age"
         data-variant="dot"
         data-state={fresh.state}
-        title={fresh.label}
+        title={fullLabel}
       >
         <span
           aria-hidden="true"
@@ -168,7 +205,7 @@ function FreshnessMark({
             fresh.state === "quiet" ? "bg-accent-warning" : "bg-text-muted"
           }`}
         />
-        <span className="sr-only">{fresh.label}. </span>
+        <span className="sr-only">{fullLabel}. </span>
         <span aria-hidden="true">{compactAge(fresh.ageHours)}</span>
       </span>
     );

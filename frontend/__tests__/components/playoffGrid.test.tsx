@@ -404,14 +404,29 @@ describe("ruling 4 — the semifinal column and the sum check", () => {
     );
   });
 
-  it("shows the sum check on the page", () => {
+  /* ═══ #4278 / notice 34: THE SELF-AUDIT IS OFF THE PAGE AND STILL MEASURED ═══
+     These four cases used to assert the OPPOSITE — that the `grid-sum-check`
+     disclosure, its five rows and the monotonicity paragraph rendered. They are
+     inverted rather than deleted, because the risk of a copy sweep over a
+     self-check is that it takes the CHECK with the CAPTION, and an inverted
+     test is the only thing that fails if someone later "restores" the prose or
+     drops the model that fed it. Every assertion below is paired: the sentence
+     is gone AND the fact it carried is still readable. */
+
+  it("does not print the column self-audit to the reader (#4278)", () => {
     const html = renderToStaticMarkup(<PlayoffGrid grid={grid()} />);
-    expect(html).toContain('data-testid="grid-sum-check"');
-    expect((html.match(/data-testid="grid-sum-row"/g) ?? []).length).toBe(5);
-    expect(html).toContain("4 places");
+    // The banned shapes, anchored on the clause that made each one banned
+    // rather than on words a legitimate string could share.
+    expect(html).not.toContain("Does each column add up");
+    expect(html).not.toContain("columns within tolerance");
+    expect(html).not.toContain('data-testid="grid-sum-check"');
+    expect(html).not.toContain('data-testid="grid-sum-row"');
+    // ...and the audit itself still ran and is still readable by a probe.
+    expect(html).toContain('data-sum-columns="5"');
+    expect(html).toMatch(/data-sum-failing="\d+"/);
   });
 
-  it("names an over-summing column and does NOT rescale it", () => {
+  it("still refuses to rescale an over-summing column (ruling 4's substance)", () => {
     const model = grid({
       column_sums: [
         { key: "F", short_label: "Final", sum: 2.781, expected: 2, ratio: 1.39,
@@ -419,16 +434,18 @@ describe("ruling 4 — the semifinal column and the sum check", () => {
       ],
     });
     const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
-    expect(html).toContain('data-verdict="over"');
-    expect(html).toContain("2.8");
-    expect(html).toContain("rather than scaling it down");
-    // The CELLS are untouched — the check is a diagnostic, never a corrector.
-    // 0.375 in the F column still prints 38%, not a rescaled 27%.
+    // THIS IS THE PART NOTICE 34 DID NOT TOUCH. Ruling 4 forbids quietly
+    // scaling the numbers until they add up; it does not require a paragraph
+    // saying so. 0.375 in the F column still prints 38%, not a rescaled 27%.
     expect(html).toContain('data-column="F"');
     expect(html).toContain("38%");
+    // The sentence that used to explain it is gone from the body.
+    expect(html).not.toContain("rather than scaling it down");
+    // The failing column is counted where machines look.
+    expect(html).toContain('data-sum-failing="1"');
   });
 
-  it("explains an under-summing column with its coverage count", () => {
+  it("counts an under-summing column without explaining it in prose", () => {
     const model = grid({
       column_sums: [
         { key: "R16", short_label: "R16", sum: 13.667, expected: 16, ratio: 0.854,
@@ -436,11 +453,12 @@ describe("ruling 4 — the semifinal column and the sum check", () => {
       ],
     });
     const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
-    expect(html).toContain('data-verdict="under"');
-    expect(html).toContain("12 of 56 players have no market");
+    expect(html).not.toContain("12 of 56 players have no market");
+    expect(html).toContain('data-sum-failing="1"');
+    expect(html).toContain('data-sum-columns="1"');
   });
 
-  it("reports monotonicity violations without hiding the numbers", () => {
+  it("counts monotonicity violations without hiding the numbers", () => {
     const model = grid({
       monotonicity_violations: [
         { entity_key: "cameron-norrie", display_name: "Cameron Norrie",
@@ -448,14 +466,27 @@ describe("ruling 4 — the semifinal column and the sum check", () => {
       ],
     });
     const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
-    expect(html).toContain('data-testid="grid-monotonicity"');
-    expect(html).toContain("Cameron Norrie (SF → F)");
-    // UX-P145 reworded the sentence around this ("are priced higher" → "have a
-    // higher chance"). What the assertion is FOR is unchanged: the page says it
-    // noticed and still shows the market's own numbers rather than correcting
-    // them. `tournamentPlainLanguage.test.tsx` guards the vocabulary.
-    expect(html).toContain("shown exactly as quoted");
-    expect(html).toContain("higher chance for a later round");
+    expect(html).not.toContain('data-testid="grid-monotonicity"');
+    expect(html).not.toContain("Cameron Norrie (SF → F)");
+    expect(html).not.toContain("shown exactly as quoted");
+    expect(html).not.toContain("higher chance for a later round");
+    // Still detected, still counted, and — the part that matters — the market's
+    // own numbers are still what the grid prints.
+    expect(html).toContain('data-monotonicity="1"');
+  });
+
+  it("counts zero when every column is coherent (positive control)", () => {
+    // The `data-sum-failing` assertions above are worthless if the attribute
+    // reads the same on a clean grid as on a broken one. It does not.
+    const model = grid({
+      column_sums: [
+        { key: "F", short_label: "Final", sum: 2.0, expected: 2, ratio: 1.0,
+          priced_rows: 56, total_rows: 56, verdict: "pass" },
+      ],
+    });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
+    expect(html).toContain('data-sum-failing="0"');
+    expect(html).toContain('data-monotonicity="0"');
   });
 });
 

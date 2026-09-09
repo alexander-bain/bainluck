@@ -581,7 +581,15 @@ export default function TournamentResults({
 
      `lib/tournamentResults.ts` is deliberately untouched — the pure functions
      and their unit tests are unchanged, and that file belongs to ux/1138's
-     #4067 right now. This is a render-side change only. */
+     #4067 right now. This is a render-side change only.
+
+     ── #4278 ADDENDUM (ux/1151): `population` WAS THE FOURTH, AND IT WAS MISSED.
+     `Includes 43 qualifying matches.` was still rendering under the FINISHED
+     heading on production this morning, three sweeps after the ruling. It is
+     the same shape as the three above — a coverage qualifier on a total — and
+     it now takes the same treatment: `data-population-note`. Nothing else about
+     it changes, and `resultsPopulationNote` stays exported and unit-tested for
+     exactly the reason the KEEP THESE POPULATED paragraph gives. */
   return (
     <section
       data-testid="tournament-results"
@@ -594,6 +602,7 @@ export default function TournamentResults({
       data-linked={links.linked}
       data-link-total={links.total}
       data-completion={completion ?? undefined}
+      data-population-note={population ?? undefined}
       data-unregistered-pairs={results?.unregistered_pairs ?? undefined}
     >
       <h2 className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
@@ -603,17 +612,9 @@ export default function TournamentResults({
         </span>
       </h2>
 
-      {/* WHAT THE COUNT COUNTS (#2450). More than half of this total was
-          qualifying on the live payload, and a reader adding up a 128-draw's
-          main-draw matches will never reach it. See `resultsPopulationNote`. */}
-      {population && (
-        <p
-          className="-mt-1 mb-2 text-[11px] leading-snug text-text-muted"
-          data-testid="results-population-note"
-        >
-          {population}
-        </p>
-      )}
+      {/* WHAT THE COUNT COUNTS (#2450) is now `data-population-note` on the
+          section above, not a grey line here — notice 34 / #4278. See the
+          addendum in the block over the `return`. */}
       <div className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
         {/* ONE grid for the whole list, so a column is a column across every
             row — see `RESULT_GRID`. The round headings are `col-span-3` bands

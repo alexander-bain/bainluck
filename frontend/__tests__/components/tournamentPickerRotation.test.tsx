@@ -470,7 +470,16 @@ describe("Alex's item 3 — the age says what it is the age OF", () => {
     // are a seam on the shipped component so the artifact shows what each would
     // actually look like, and the default is pinned so production cannot drift
     // onto one by accident.
-    expect(DEFAULT_FRESHNESS_VARIANT).toBe("labelled");
+    // #4278 / #4251 MOVED THE DEFAULT FROM `labelled` TO `dot`, and this pin is
+    // the point of the whole case: production must not drift onto a variant by
+    // accident, in either direction. `labelled` printed `Jannik Sinner: Last
+    // number 21 hours ago` in the page body — the exact shape notice 34 quotes
+    // — and, being unbounded generated text on the card TITLE's row, collapsed
+    // `Who wins a second major this year?` to one word per line at 390px
+    // (#4251). `dot` is fixed-width and puts the sentence in a `title` tooltip
+    // and an `sr-only` label, which is where notice 34 says a method note goes.
+    // All three variants stay renderable — Alex asked to keep riffing.
+    expect(DEFAULT_FRESHNESS_VARIANT).toBe("dot");
     for (const variant of ["labelled", "sentence", "dot"] as const) {
       const html = renderToStaticMarkup(
         <TournamentProps markets={[dark("old")]} draw="mens-singles" variant={variant} />
@@ -759,6 +768,20 @@ describe("ruling 8 as amended — a family is a subject AND a topic", () => {
     // whose other half refreshed an hour ago is false about that half.
     expect(html).toContain("Alcaraz:");
     expect(html).toContain('data-freshness="quiet"');
+
+    // 🔴 #4278 MADE THIS CASE LOAD-BEARING, AND IT CAUGHT A REGRESSION. The
+    // default variant moved `labelled` → `dot`, and `dot` built its tooltip
+    // from `fresh.label` alone — the `Alcaraz: ` prefix was dropped on the
+    // floor, because the visible mark has nowhere to put a name. Harmless
+    // while `dot` was an artifact-only riff; a lie the moment it is what
+    // production renders, since the tooltip is then the ONLY place the fact
+    // lives. So the assertion above is pinned to WHERE the name is, not just
+    // that the string appears somewhere in the markup — a bare `toContain`
+    // would have gone green again the day someone put the name in a
+    // `data-` attribute nobody reads.
+    expect(html).toContain('data-variant="dot"');
+    expect(html).toContain('title="Alcaraz: Last number');
+    expect(html).toContain('class="sr-only">Alcaraz: Last number');
   });
 });
 

@@ -104,16 +104,31 @@ describe("#3033 — what the movement column measures", () => {
     expect(deltaWindowNote([row("a", { trendStart: null })])).toBeNull();
   });
 
-  it("prints the sentence on the board itself", () => {
+  /* ═══ #4278 / notice 34: THE SENTENCE LEFT THE BOARD, THE WINDOW DID NOT ═══
+     `Movement since 10 Aug.` was rendering in grey at the foot of the
+     contenders card on production. It is a method note — it states which window
+     the `+19.8` was measured over — and notice 34 puts that class in the
+     artifact or a tooltip, never the page body. #3033's finding (a delta with
+     no stated window has no units) is answered by `data-delta-window`, which
+     every probe that read the paragraph still reads. The two cases below are
+     inverted rather than deleted so a "restore" cannot pass silently. */
+
+  it("does not print the movement window as prose (#4278)", () => {
     const html = renderToStaticMarkup(<TournamentBoard board={board([row("a"), row("b")])} />);
-    expect(html).toContain('data-testid="board-delta-window"');
-    expect(html).toContain("Movement since 6 Aug.");
+    expect(html).not.toContain('data-testid="board-delta-window"');
+    expect(html).not.toContain(">Movement since");
+    // ...and the fact still travels, verbatim, where machines look.
+    expect(html).toContain('data-delta-window="Movement since 6 Aug."');
   });
 
-  it("draws no empty footer when there is no movement claim to explain", () => {
+  it("carries no window attribute when there is no movement claim to qualify", () => {
+    // The positive control for the assertion above: the attribute is absent
+    // exactly when `deltaWindowNote` returns null, not always present and not
+    // always absent.
     const html = renderToStaticMarkup(
       <TournamentBoard board={board([row("a", { delta: null })])} />
     );
-    expect(html).not.toContain('data-testid="board-delta-window"');
+    expect(html).not.toContain("data-delta-window");
+    expect(html).not.toContain("Movement since");
   });
 });

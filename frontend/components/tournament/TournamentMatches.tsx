@@ -12,7 +12,6 @@ import {
   liveMatchLabel,
   matchEventHref,
   matchRoundPills,
-  matchRoundReconciliation,
   matchesInRound,
   showsDisagreement,
   titleChipDescription,
@@ -714,7 +713,6 @@ export default function TournamentMatches({
   // women's R16 came to say "2 matches have numbers that do not agree yet"
   // directly under two cards that each said they had no probability at all.
   const incoherent = inRound.filter(showsDisagreement).length;
-  const reconciliation = matchRoundReconciliation(active, inRound.length);
 
   return (
     <section data-testid="tournament-matches" data-round={active}>
@@ -789,22 +787,21 @@ export default function TournamentMatches({
         </span>
       </h2>
 
-      {/* WHAT HAPPENED TO THE REST OF THE ROUND (#2450). Alex added `ROUND OF
-          128 · 25 matches` to `FINISHED · 71` and got a number a 128-draw
-          cannot produce, because the two headings count different populations
-          and neither said so. The round's size is definitional — a round of 128
-          IS 64 matches — so stating it lets the arithmetic close without the
-          page claiming a finished-count it cannot stand behind. See
-          `matchRoundReconciliation`. */}
-      {reconciliation && (
-        <p
-          className="-mt-1 mb-2 text-[11px] leading-snug text-text-muted"
-          data-testid="match-round-reconciliation"
-        >
-          {reconciliation}
-        </p>
-      )}
+      {/* NOTICE 34 (#4278) REMOVED THE RECONCILIATION SENTENCE THAT USED TO SIT
+          HERE: `This round is 4 matches. Finished ones move to Finished,
+          below.` It was #2450's answer to a real arithmetic — `ROUND OF 128 ·
+          25 matches` beside `FINISHED · 71` is a sum a 128-draw cannot produce
+          — but the answer was a method note explaining our own grouping to the
+          reader, which is precisely the shape notice 34 bans from the page
+          body, on precisely the page Alex was looking at when he ruled.
 
+          #2450's finding is NOT dismissed, it is relocated: the round pill
+          directly above already prints the count of what is in this list (`QF
+          2`), the `FINISHED` section below prints its own, and a reader who
+          wants to know why they differ gets it from the structure rather than
+          from a sentence. `matchRoundReconciliation` stays exported and tested
+          in `lib/matchList.ts` — it is the honest phrasing if the fact ever
+          needs a tooltip, which is where notice 34 says it may live. */}
       {/* Every number says what it means (UX-P137, ruling 2). */}
       <div
         className="mb-1.5 flex items-center justify-between gap-2 px-3.5 text-[9.5px] font-bold uppercase tracking-[0.06em] text-text-muted"

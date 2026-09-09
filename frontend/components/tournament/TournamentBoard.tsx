@@ -192,7 +192,11 @@ export default function TournamentBoard({
   const deltaWindow = deltaWindowNote(visible);
 
   return (
-    <section data-testid="tournament-board" data-draw={board.draw}>
+    <section
+      data-testid="tournament-board"
+      data-draw={board.draw}
+      data-delta-window={deltaWindow ?? undefined}
+    >
       <h2 className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
         {board.label}
         {board.contenders > 0 && (
@@ -266,15 +270,16 @@ export default function TournamentBoard({
           </>
         )}
 
-        {deltaWindow && board.rows.length > 0 && (
-          <div
-            className="border-t border-surface-border px-3.5 py-2 text-[11px] text-text-muted"
-            data-testid="board-delta-window"
-          >
-            {deltaWindow}
-          </div>
-        )}
-
+        {/* NOTICE 34 (#4278). `Movement since 10 Aug.` used to print here, in
+            grey, at the foot of the contenders card. It is a method note — it
+            tells the reader which window our `+19.8` was measured over — and
+            notice 34 puts that class in the artifact or a tooltip, never in the
+            page body. #3033's finding (a delta with no stated window is a
+            number with no units) is not denied; the sentence is moved to
+            `data-delta-window` on the section, where every guard and probe that
+            asserted on it still reads it and a reader does not.
+            `deltaWindowNote` is unchanged, still exported, still unit-tested,
+            and still pinned against the Swift port in `RaceChartTests`. */}
         {board.unpriced > 0 && board.rows.length > 0 && (
           <div
             className="border-t border-surface-border px-3.5 py-2 text-[11px] text-text-muted"

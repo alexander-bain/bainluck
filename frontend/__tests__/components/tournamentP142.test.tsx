@@ -176,8 +176,11 @@ describe("(b) the headline chart has an x-axis on the real payload", () => {
     expect((html.match(/data-testid="chart-axis-label"/g) ?? []).length).toBeGreaterThanOrEqual(2);
     // A tick is a DATE, not a decoration.
     expect(html).toMatch(/data-testid="chart-axis-label" data-date="\d{4}-\d{2}-\d{2}"/);
-    // And the window is named in words beside the count.
-    expect(html).toContain('data-testid="chart-span"');
+    // And the window is named by the AXIS, not in words beside a count —
+    // `Nd shown` left the page under notice 34 (#4278). The dated ticks
+    // asserted above are now the only thing that states the window, which is
+    // what the sentence was restating anyway.
+    expect(html).not.toContain('data-testid="chart-span"');
   });
 });
 
