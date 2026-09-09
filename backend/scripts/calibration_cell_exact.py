@@ -1273,6 +1273,72 @@ CASE WHEN lower(btrim(d.outcome_name)) = 'over' THEN 'over'
 || '|' || COALESCE(d.market_type, 'null')
 """
 
+#: CAL-P1077 — the GRADING CHANNEL of a LONE CLAIM, for `polymarket/economics`
+#: (rank 5 live, excess 12,517).
+#:
+#: WHAT IT ASKS. This row is the only captured outcome of its market — a lone
+#: "Yes" on a daily "Up or Down" question. Which source graded it?
+#:
+#: WHY THE CELL NEEDS IT. D13 option A (`clean_vms`' ``graded_lone_claims >= 1``
+#: arm, line ~3684 of the producer) exists precisely so a lone claim publishes
+#: whether it won or lost, closing the "published iff it WON" bias. That arm
+#: does its job. What it cannot see is that the LOSING half of this family is
+#: graded by a source the truth-eligibility allowlist refuses — the bus measured
+#: ``all_losers`` 1,560 @0% and ``clean_resolution`` 1,265 @100% both INELIGIBLE,
+#: against ``api_settlement`` 927 @84.6% ELIGIBLE. So the bias D13 removed at the
+#: admission gate is re-introduced three CTEs later by the eligibility filter,
+#: and an "Up or Down" coin flip publishes as an 84.6%-winning forecast.
+#:
+#: ``mrs.n_outcomes`` is the producer's OWN lone-claim basis (the same column the
+#: D13 arm counts on), not a re-derivation — so ``a_``/``b_`` here mean exactly
+#: what "lone claim" means in the chain being folded.
+#:
+#: ``b_lone_other_source`` is the control that decides whether the rule is about
+#: LONENESS or about the CHANNEL: if the eligible lone claims graded by any other
+#: source are calibrated, the defect is the channel and the rule must name it.
+#: ``z_not_lone`` is the rest of the cell — doctrine 18 says a row-dropping fix
+#: is graded on exactly that arm, because it is what the reader is left with.
+LONECLAIM_JOIN = """
+LEFT JOIN market_result_shape mrs13 ON mrs13.market_id = d.market_id
+LEFT JOIN futures_outcomes fo13 ON fo13.id = d.outcome_id
+"""
+LONECLAIM_EXPR = """
+CASE WHEN mrs13.n_outcomes = 1
+          AND fo13.resolution_source = 'api_settlement'
+          THEN 'a_lone_api_settlement'
+     WHEN mrs13.n_outcomes = 1
+          THEN 'b_lone_' || COALESCE(fo13.resolution_source, 'null')
+     ELSE 'z_not_lone' END
+"""
+
+#: CAL-P1077 — the PUBLISHED price against the ELIGIBILITY price, for
+#: `polymarket/hockey` (rank 10 live, excess 6,117).
+#:
+#: WHAT IT ASKS. The admission gate reads ``opening_probability`` and demands
+#: ``> 0 AND < 1``. The published price is ``COALESCE(calibration_probability,
+#: opening_probability)``. Those are two different columns, so a leg admitted on
+#: a sane opening quote can publish at a certainty the gate would have refused.
+#: This dimension bands the price the READER is actually scored on.
+#:
+#: ``a_pub_certain`` is a published probability of 1.0 or 0.0 — not a forecast in
+#: any sense the page can defend, and the bus measured 21 unnamed "Player N" legs
+#: of "NHL Hart Memorial Trophy Winner" sitting at EXACTLY 1.0000 with all 21
+#: losing. ``b_pub_near_certain`` is the shoulder that says whether the defect is
+#: the exact value or the band. ``z_pub_ordinary`` is the control and the arm
+#: doctrine 18 grades a row-dropping fix on.
+PUBBAND_JOIN = "LEFT JOIN futures_outcomes fo14 ON fo14.id = d.outcome_id"
+PUBBAND_EXPR = """
+CASE WHEN COALESCE(fo14.calibration_probability, fo14.opening_probability) >= 1.0
+       OR COALESCE(fo14.calibration_probability, fo14.opening_probability) <= 0.0
+          THEN 'a_pub_certain'
+     WHEN COALESCE(fo14.calibration_probability, fo14.opening_probability) >= 0.99
+       OR COALESCE(fo14.calibration_probability, fo14.opening_probability) <= 0.01
+          THEN 'b_pub_near_certain'
+     ELSE 'z_pub_ordinary' END
+|| '|' || CASE WHEN fo14.calibration_probability IS NULL THEN 'from_opening'
+               ELSE 'from_calibration' END
+"""
+
 #: Dimensions whose expression depends on the chunk, and therefore cannot live
 #: in the static table below.
 PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim, "truth": truth_dim}
@@ -1303,6 +1369,8 @@ DIMENSIONS = {
     "price_moved": ("CASE WHEN d.price_moved THEN 'moved' ELSE 'unmoved' END", "", ""),
     "market_type": ("COALESCE(d.market_type, 'null')", "", ""),
     "ouside": (OUSIDE_EXPR, OUSIDE_JOIN, ""),
+    "loneclaim": (LONECLAIM_EXPR, LONECLAIM_JOIN, ""),
+    "pubband": (PUBBAND_EXPR, PUBBAND_JOIN, ""),
 }
 
 
