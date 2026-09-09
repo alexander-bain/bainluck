@@ -86,6 +86,22 @@ WIN_PROB_SOURCES = {
         "attribution_url": "https://statsapi.mlb.com",
         "attribution_name": "MLB Stats API",
     },
+    # The graded outcome, written by `espn_sync` once a game is final. It is a
+    # SOURCE (weight 5.0, and the only one exempt from decay and the share cap —
+    # see `_UNCAPPED_SOURCES`), so it belongs in this registry: without an entry
+    # here the serialisers printed its own key, `final_result`, as its name on
+    # 311 events.
+    "final_result": {
+        "display_name": "Final Result",
+        "source_type": "result",
+        "sports": ["*"],
+        "color": "#0f172a",
+        "dash_pattern": None,
+        "description": "The graded outcome of a completed game, taken from the final score. Not a forecast — 1.0 if the home team won, 0.0 if it lost.",
+        "methodology": "Read from the final score once the game is marked complete. It cannot go stale and it is never capped, because live-market noise must not out-vote the actual result on a settled game.",
+        "attribution_url": "https://bainluck.com",
+        "attribution_name": "Bain Luck",
+    },
     "bainluck_aggregate": {
         "display_name": "Bain Luck",
         "source_type": "aggregate",

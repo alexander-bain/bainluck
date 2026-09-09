@@ -4337,11 +4337,45 @@ def _numeric_source_probs(win_probability_sources) -> list[float]:
     number or a ``{"value": number, ...}`` wrapper. Used to derive the L2-172
     cross-source-agreement signal without any DB work (the dict is already loaded
     on the event) — keep this cheap; it runs per card inside GET /api/feed.
+
+    #4120 — THE KEY FILTER IS LOAD-BEARING, AND ITS ABSENCE WAS ARITHMETIC, NOT
+    COSMETIC. This walked ``.values()`` and took anything numeric, and the column
+    also carries ``betting_book_count`` — an integer count of sportsbooks, on
+    1,348 events. ``cross_source_agreement`` is ``max - min <= 0.10``, so a
+    reading of 13.0 in a list of probabilities makes the spread at least 12.9 and
+    the verdict is **False every single time**. Measured on the live 892-event
+    population 2026-09-08: ``sources_agree`` was True on 28 events and is True on
+    153 once the count is excluded, with 301 verdicts changing. That signal feeds
+    ``compute_confidence_score``, so a count of sportsbooks was quietly applying a
+    "sources disagree" penalty to the Discover cards of every event that had a
+    sportsbook line.
+
+    173 of those events become ``None`` rather than True: the count was one of
+    only two "readings", so removing it leaves fewer than two real sources and
+    agreement is genuinely unmeasurable. That is the honest answer and the
+    function's own contract ("drops it rather than guessing") — a fabricated
+    False derived from a real source plus a count is not.
+
+    THE ALLOWLIST IS ``SOURCE_WEIGHTS`` AND NOT THE DISPLAY REGISTRY, on purpose.
+    This is the "how many opinions are there and do they agree" question, which
+    is the aggregator's question — ``_tier1_readings`` answers it with exactly
+    this set. It is also the set the shipped frontend mirror pins
+    (``PROBABILITY_SOURCE_KEYS`` in ``lib/confidence.ts``, #3914, and its test
+    reads ``SOURCE_WEIGHTS`` out of this Python and fails the moment the two
+    part). The display registry is a superset — it also holds
+    ``bainluck_aggregate``, our own blend, which must never be counted as an
+    independent opinion about the blend. Serving and counting are different
+    questions and are allowlisted separately;
+    ``test_a_value_ios_cannot_decode_never_reaches_the_wire_4120`` pins that
+    ``SOURCE_WEIGHTS`` is a subset of the display registry so the two can differ
+    without contradicting each other.
     """
     out: list[float] = []
     if not win_probability_sources:
         return out
-    for v in win_probability_sources.values():
+    for k, v in win_probability_sources.items():
+        if k not in SOURCE_WEIGHTS:
+            continue
         if isinstance(v, bool):
             continue
         if isinstance(v, (int, float)):

@@ -15,7 +15,27 @@ REQUIRED_FIELDS = [
     "methodology", "attribution_url", "attribution_name",
 ]
 
-VALID_SOURCE_TYPES = {"market", "model", "aggregate"}
+# `result` added by #4120, with `final_result`'s registry entry. The vocabulary is
+# closed on purpose and widening it is a wire change, so the reasoning is here
+# rather than in a commit message:
+#
+#   * `final_result` is the GRADED OUTCOME of a finished game, read off the score.
+#     It is neither a market nor a model — calling it "model" (which is what the
+#     `.get("source_type", "model")` default was silently serving for it) says it
+#     is a forecast, and the one thing it is not is a forecast.
+#   * The served `type` therefore changes from "model" to "result" on the 311
+#     events carrying the key. Checked, not assumed: no client branches on this
+#     field. The event payload types it `type: string` (`lib/types.ts:225`), iOS
+#     types it `String?`, and the only `type === "market" | "model"` comparisons
+#     in the frontend read `SOURCE_META` in `GolferRow.tsx`, a different map.
+#   * `WinProbSourceMeta` in `lib/types.ts` narrows this to `"model" | "market"`
+#     and is already wrong for `aggregate`. It is fed from `win_prob_sources`,
+#     which is built only for sources with rows in `win_prob_snapshots`, and that
+#     table holds no `final_result` or `bainluck_aggregate` row — so neither value
+#     reaches it. That is a census, not a code path, and it is the weakest link in
+#     this argument; a writer that starts snapshotting either one has to widen the
+#     TS union in the same change.
+VALID_SOURCE_TYPES = {"market", "model", "aggregate", "result"}
 
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 

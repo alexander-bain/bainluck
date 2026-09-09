@@ -15789,9 +15789,41 @@ def _format_event(
                     # the iOS decoder. The write time is exposed as a SIBLING,
                     # never inside `value`.
                     numeric, updated_at = parse_source_entry(src_value)
+                    # #4120 — AND THE `else src_value` FALLBACK BELOW WAS DOING
+                    # EXACTLY WHAT THE PARAGRAPH ABOVE FORBIDS.
+                    #
+                    # `parse_source_entry` returns None for anything that is not
+                    # a number or a `{"value": number}` wrapper, and this line
+                    # then shipped the RAW entry. This column is a grab-bag:
+                    # `statpal_injuries` is an ARRAY of injury dicts (89 events)
+                    # and `statpal_injuries_updated` is an ISO STRING (89), so
+                    # both went onto the wire as a "source" whose probability was
+                    # an array or a date, labelled with their own snake_case key.
+                    #
+                    # For iOS that is not cosmetic, it is fatal, and the comment
+                    # above predicted it. `WinProbValue` accepts Double or String
+                    # and THROWS on anything else; `decodeIfPresent` only swallows
+                    # an ABSENT key, so a present-but-wrong-type value propagates
+                    # out through `[String: WinProbSource]` and fails the whole
+                    # `EventDetail`. Reproduced against the shipped model
+                    # definitions: the served payload for event 15296356 throws
+                    # `typeMismatch at winProbabilitySources.statpal_injuries.value`
+                    # and the same payload minus that entry decodes. **The iOS
+                    # event page could not render those 89 events at all.**
+                    #
+                    # So the gate is the SHAPE, not the key. `betting_book_count`
+                    # is numeric and stays on the wire deliberately: it is not a
+                    # source, but iOS consumes it to label the sportsbook row
+                    # "Sportsbooks (14)" (`WinProbSourceCatalog`), and both
+                    # clients already keep it out of their source LISTS with
+                    # their own allowlists (`PROBABILITY_SOURCE_KEYS` #3914,
+                    # `realSourceKeys`). Filtering it here would silently take
+                    # that count away from the app.
+                    if numeric is None:
+                        continue
                     source_config = WIN_PROB_SOURCES.get(src_key, {})
                     wp_sources[src_key] = {
-                        "value": numeric if numeric is not None else src_value,
+                        "value": numeric,
                         "display_name": source_config.get("display_name", src_key),
                         "type": source_config.get("source_type", "model"),
                         "color": source_config.get("color", "#6b7280"),

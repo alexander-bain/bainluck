@@ -816,13 +816,32 @@ class TestWinProbSources:
         assert mlb["dash_pattern"] == "4 4"
 
     def test_all_sources(self):
-        """Verify we have all expected sources including the aggregate."""
+        """Verify we have all expected sources including the aggregate.
+
+        #4120 added `final_result`. It is a real source — weight 5.0 in
+        `SOURCE_WEIGHTS`, and the only one exempt from staleness decay and the
+        share cap — that had no display entry, so the wire labelled it with its
+        own key on 311 events.
+
+        THE COUNT LINE IS GONE ON PURPOSE. `assert len(...) == 7` sat above an
+        exact-set assertion that already implies it, so it added no coverage and
+        cost a red on a correct change; a bare cardinality pin fails for the
+        reason a set pin already states, only less legibly. The exact set is the
+        guard (`git log -S` still finds any addition), and the SUBSET assertion
+        below is the one with teeth — it is what makes "displayable" safe to use
+        as an allowlist anywhere, because a weighted source that nobody named
+        would otherwise be silently unnamable.
+        """
         from app.config.win_prob_sources import WIN_PROB_SOURCES
-        assert len(WIN_PROB_SOURCES) == 7
+        from app.utils.aggregation import SOURCE_WEIGHTS
         assert set(WIN_PROB_SOURCES.keys()) == {
             "betting", "espn", "stat_model", "kalshi", "polymarket",
-            "mlb", "bainluck_aggregate",
+            "mlb", "final_result", "bainluck_aggregate",
         }
+        assert set(SOURCE_WEIGHTS) <= set(WIN_PROB_SOURCES), (
+            "every weighted source must carry a display name, or the wire prints "
+            "its snake_case key at a reader"
+        )
 
 
 class TestFeedsWinProbBlend:
