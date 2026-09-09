@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.services.database import DATABASE_URL
+from app.services.database import DATABASE_URL, build_connect_args
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +20,14 @@ def _get_task_engine():
     This creates a new engine that's bound to the current event loop,
     avoiding the 'attached to a different loop' errors when reusing
     the module-level engine across Celery task invocations.
+
+    #3776: the connect args come from ``build_connect_args`` rather than being
+    rebuilt here. This engine is the one that serves every Celery task — the
+    calibration build included — so it is the engine whose sessions were
+    resting at an UNBOUNDED ``statement_timeout`` and leaving orphaned Postgres
+    backends behind on every release-time SIGKILL.
     """
-    connect_args = {}
-    if "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL:
-        connect_args["ssl"] = "require"
+    connect_args = build_connect_args(DATABASE_URL)
 
     return create_async_engine(
         DATABASE_URL,
