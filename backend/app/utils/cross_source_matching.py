@@ -166,6 +166,41 @@ def _is_conservative_near_match(left: str, right: str) -> bool:
     )
 
 
+def is_same_question(left: str | None, right: str | None) -> bool:
+    """Are these two market titles the SAME question asked by two venues?
+
+    The two passes :func:`find_cross_source_markets` already runs, in the same
+    order and for the same reasons, exposed for callers that hold serialized
+    market dicts rather than ``FuturesMarket`` rows: an exact normalized-question
+    match first (the strongest evidence), then the conservative near-match, whose
+    guards — three tokens minimum, identical numeric tokens, identical direction
+    tokens, Jaccard >= 0.72 AND containment >= 0.85 — are what make it usable
+    outside a spotlight that a reader can eyeball.
+
+    The exact arm is not redundant with the near-match arm: a two-token title
+    ("Oscar Winner") is refused by the near-match token-count guard, and two
+    venues asking a short question identically are the easiest case of all.
+
+    A DISPLAY caller must be stricter than a matcher (a matcher that over-pairs
+    shows a spurious spread; a deduper that over-pairs DELETES a card the reader
+    wanted), so the discrimination is measured, not assumed. Every pair of titles
+    served together on Discover page one on 2026-09-09 was run through this:
+    the one real duplicate — Kalshi "2027 FIFA Women's World Cup Champion" and
+    Polymarket "FIFA Women's World Cup 2027 Winner", both in the World Cup
+    bundle — matches at Jaccard 0.75, and all ten same-bundle non-duplicates are
+    refused, including the three that share a canonical_market_key with their
+    neighbour: the men's and women's US Open, the 2030 men's World Cup beside the
+    2027 women's, and the Oscar beside the Grammy. Those controls live in
+    `test_cross_source_matching.py`; a change that pairs any of them is a bug in
+    this function whatever it does for the duplicate.
+    """
+    if not left or not right:
+        return False
+    if normalize_question(left) == normalize_question(right):
+        return True
+    return _is_conservative_near_match(left, right)
+
+
 # ---------------------------------------------------------------------------
 # Outcome alignment — comparing like with like
 # ---------------------------------------------------------------------------

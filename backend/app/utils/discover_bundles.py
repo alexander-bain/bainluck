@@ -525,6 +525,58 @@ def _make_theme_bundle_item(
     }
 
 
+def _dedupe_same_question_members(
+    members: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split a story cluster into (kept, folded): one row per question.
+
+    #4446 — a card whose whole job is to fold a family was serving the family's
+    duplicates. On production 2026-09-09 the World Cup bundle carried BOTH
+    Kalshi's "2027 FIFA Women's World Cup Champion" and Polymarket's "FIFA
+    Women's World Cup 2027 Winner", two rows apart, in the collapsed peek (all
+    three members render above the fold at ``PEEK_COUNT = 5``); the Fed & Rates
+    bundle carried the same shape. That is the standing ruling read backwards —
+    "the blend is the product: one number per question" — and the feed audit
+    target is ``duplicate-family-rate@20=0``.
+
+    Two gates, and BOTH are required:
+
+    * the venues differ. Two questions from ONE venue are that venue's own
+      distinct listings, and folding them is not ours to do.
+    * :func:`is_same_question` pairs the titles — the matcher's own two passes,
+      whose discrimination against the neighbours this bundler actually serves
+      is measured in that function's docstring and bound by its tests.
+
+    Why not ``canonical_market_key``, which is on the wire and looks purpose-built:
+    it is a ``category:league:type:year`` BUCKET, not a question key, and the
+    census that checked said so loudly. Of the 8 keys served more than once on
+    page one that day, exactly ONE pair was a real duplicate; the same key held
+    the Oscar beside the Grammy, the Texas Senate beside the New York Governor,
+    three different NASCAR series, and — inside a single bundle — the men's US
+    Open beside the women's. Deduping on it would have deleted the women's US
+    Open from the Grand Slam card.
+
+    The FIRST member of a matched pair survives: ``members`` arrives in feed
+    rank order, so the survivor is the better-ranked row, which is also the one
+    the bundle's own question and score were derived from.
+    """
+    from app.utils.cross_source_matching import is_same_question
+
+    kept: list[dict[str, Any]] = []
+    folded: list[dict[str, Any]] = []
+    for item in members:
+        data = _futures_data(item)
+        name = str(data.get("name") or "")
+        source = str(data.get("source") or "")
+        duplicate = any(
+            str(_futures_data(k).get("source") or "") != source
+            and is_same_question(str(_futures_data(k).get("name") or ""), name)
+            for k in kept
+        )
+        (folded if duplicate else kept).append(item)
+    return kept, folded
+
+
 def assemble_story_theme_bundles(
     items: list[dict[str, Any]],
     *,
@@ -580,6 +632,12 @@ def assemble_story_theme_bundles(
     for story_key, members in groups.items():
         if len(members) < min_items:
             continue
+        # The same question from two venues is ONE row (#4446). Folded BEFORE the
+        # cap so a duplicate does not spend a member slot the next distinct
+        # question could have had.
+        members, folded = _dedupe_same_question_members(members)
+        if len(members) < min_items:
+            continue
         chosen = members[:max_items_per_bundle]
         if len(chosen) < min_items:
             continue
@@ -590,6 +648,14 @@ def assemble_story_theme_bundles(
             continue
         bundle_by_story[story_key] = bundle
         represented_ids.update(_item_id(item) for item in chosen)
+        # A folded duplicate is REPRESENTED by the row that survived it, not
+        # dropped: without this it would fall through the emit loop below and
+        # come back as its own standalone card, which moves the duplicate down
+        # the page instead of removing it. Only claimed once the bundle actually
+        # formed — a cluster that could not state a shared question keeps every
+        # member, duplicate included, because there is no surviving row to
+        # represent it.
+        represented_ids.update(_item_id(item) for item in folded)
 
     if not represented_ids:
         return items
