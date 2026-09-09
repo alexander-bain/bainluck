@@ -178,7 +178,28 @@ describe("UX-P251 — the pure function is what the component PRINTS", () => {
       }
       stripped = next;
     }
-    const outsideMarkup = stripped.replace(/<[^>]*>/g, "").replace(/[^A-Za-z]/g, "");
+    // ⚠️ TEXT NODES ARE COLLECTED POSITIVELY, NOT BY STRIPPING TAGS. The
+    // obvious spelling of this line is `stripped.replace(/<[^>]*>/g, "")`, and
+    // CodeQL rejects it at HIGH severity as
+    // `js/incomplete-multi-character-sanitization`: a tag-stripping regex is
+    // the classic incomplete sanitiser, since `<script` survives inputs it does
+    // not anticipate. Nothing here is user input — this reads our own component
+    // file off disk and renders none of it — but the rule is right in general,
+    // and a guard is a bad place to keep a pattern nobody should copy. Reading
+    // the gaps BETWEEN tags asks the same question and is not a sanitiser.
+    //
+    // `jsx` is a whole element, so every text node lies between a `>` and the
+    // next `<`. Anchored, so a future edit that breaks that cannot silently
+    // shrink what this clause inspects.
+    expect(stripped.trim().startsWith("<")).toBe(true);
+    expect(stripped.trim().endsWith(">")).toBe(true);
+
+    const textNodes: string[] = [];
+    const betweenTags = />([^<>]*)</g;
+    for (let m = betweenTags.exec(stripped); m !== null; m = betweenTags.exec(stripped)) {
+      textNodes.push(m[1]);
+    }
+    const outsideMarkup = textNodes.join("").replace(/[^A-Za-z]/g, "");
     expect(`copy written into the JSX: ${outsideMarkup}`).toBe("copy written into the JSX: ");
   });
 
