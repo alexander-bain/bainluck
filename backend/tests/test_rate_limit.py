@@ -257,7 +257,35 @@ class TestIsExempt:
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter_state():
-    """Reset the rate limiter singleton between tests."""
+    """Reset the rate limiter singleton between tests.
+
+    THE CEILING STRINGS ARE RESTORED TOO, and that half is not optional.
+    `_make_test_app` lowers `ANON_RATE_LIMIT` to `5/minute` and `AUTH_RATE_LIMIT`
+    to `10/minute`, and `_make_cors_app` lowers `ANON_RATE_LIMIT` to `2/minute`,
+    all by assigning the MODULE GLOBAL. `ADMIN_RATE_LIMIT` was already saved and
+    restored here; these two were not, so this file left its lowered anon ceiling
+    behind for the whole worker. The real default is `60/minute`, so every later
+    test in the same worker that makes a sixth request from one address then gets
+    a `429` — and it reads as that test's bug rather than as this file's leak.
+
+    That is not hypothetical, and it is the SECOND time this class has reddened
+    CI in one day. On 2026-09-08 `test_rate_limit_trusted_ip_d70.py` leaked the
+    same global and broke `test_returning_visitor_live_ceiling_4013.py`; that
+    file was fixed (`c1731b5c`) and grew the guard class this file now also
+    carries. This file kept leaking. Adding ANY new test file anywhere in the
+    repo re-packs `ci_shard.py`'s LPT-greedy split, and on 2026-09-09 four new
+    files from #4066 put THIS file next to `test_rate_limit_trusted_ip_d70.py`
+    in shard 1 for the first time; d70's own restore then captured this file's
+    `3/minute` as its "pristine" value and d70's guard fired, accusing d70.
+    Reproduced in 2.9s with exactly two files, and it reproduces identically on
+    the commit BEFORE #4066 landed, so #4066 re-packed the shards but did not
+    cause this:
+
+        pytest tests/test_rate_limit.py tests/test_rate_limit_trusted_ip_d70.py
+
+    A leak that only fires on a re-pack is worse than a red: it accuses a
+    stranger.
+    """
     import app.utils.rate_limit as rl_mod
     old_limiter = rl_mod._rate_limiter
     old_anon = rl_mod._anon_limit
@@ -266,6 +294,8 @@ def _reset_rate_limiter_state():
     old_admin = rl_mod._admin_limit
     old_admin_rate = rl_mod.ADMIN_RATE_LIMIT
     old_admin_max = rl_mod._ADMIN_MAX
+    old_anon_rate = rl_mod.ANON_RATE_LIMIT
+    old_auth_rate = rl_mod.AUTH_RATE_LIMIT
     # Force fresh singletons each test
     rl_mod._rate_limiter = None
     rl_mod._anon_limit = None
@@ -278,6 +308,8 @@ def _reset_rate_limiter_state():
     rl_mod._admin_limit = old_admin
     rl_mod.ADMIN_RATE_LIMIT = old_admin_rate
     rl_mod._ADMIN_MAX = old_admin_max
+    rl_mod.ANON_RATE_LIMIT = old_anon_rate
+    rl_mod.AUTH_RATE_LIMIT = old_auth_rate
     rl_mod._trusted_uid_resolver = old_resolver
 
 
@@ -895,3 +927,41 @@ class TestAdminRateLimitBucket:
         that would silently undo this whole item."""
         from app.utils.rate_limit import _EXEMPT_PREFIXES
         assert not any(p.startswith("/api/admin") for p in _EXEMPT_PREFIXES)
+
+
+# ---------------------------------------------------------------------------
+# The guard for the class of bug the `_reset_rate_limiter_state` restore closes.
+# ---------------------------------------------------------------------------
+
+class TestThisFileLeavesTheCeilingsAsItFoundThem:
+    """`test_rate_limit_trusted_ip_d70.py` carries the identical guard, and it is
+    here for the identical reason: this file lowers the module's ceiling globals
+    to make throttling observable in a handful of requests, and a lowered ceiling
+    that outlives the file fails a STRANGER later in the same worker.
+
+    The bare `ANON_RATE_LIMIT` / `AUTH_RATE_LIMIT` names are bound at import time.
+    pytest imports every test module during collection, before it runs a single
+    test body, so they are the genuine module defaults and not something an
+    earlier case left behind. `rl_mod.<name>` is the live value.
+    """
+
+    def test_the_anon_and_auth_ceilings_are_the_module_defaults(self):
+        import app.utils.rate_limit as rl_mod
+
+        live = (rl_mod.ANON_RATE_LIMIT, rl_mod.AUTH_RATE_LIMIT)
+        pristine = (ANON_RATE_LIMIT, AUTH_RATE_LIMIT)
+        assert live == pristine, (
+            "this file leaked its lowered ceilings into the rest of the run. "
+            f"expected {pristine}, found {live}. Whatever runs next in this "
+            "worker will start failing on 429s that belong to this file — see "
+            "the `_reset_rate_limiter_state` docstring for the CI red it caused."
+        )
+
+    def test_the_parsed_singletons_were_dropped_so_the_strings_are_believed(self):
+        """Restoring the strings is not enough on its own: the limiter caches a
+        PARSED limit per bucket, so a stale singleton would keep serving the
+        lowered ceiling even with the right string in place."""
+        import app.utils.rate_limit as rl_mod
+
+        assert rl_mod._anon_limit is None
+        assert rl_mod._auth_limit is None
