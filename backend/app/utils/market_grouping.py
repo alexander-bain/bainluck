@@ -17,6 +17,7 @@ These utilities are used by:
 - The grouping API endpoints to assemble grouped market views
 """
 
+import os
 import re
 from typing import Optional
 
@@ -819,6 +820,198 @@ def detect_placement_groups(
             "rows": rows,
             "row_total": len(rows),
             "sources": entry["sources"],
+        }
+
+    return result
+
+
+# ── CONTAINER-MEMBER FOLD (#4153) ──
+
+#: The shortest shared wording that may be treated as one question's template.
+#: The members of a Polymarket container group are minted from one sentence with
+#: one slot swapped ("Will {player} advance to the Final …?"), so the shared
+#: prefix+suffix is nearly the whole name. A group whose members share almost no
+#: wording is not that shape, and folding it would put unrelated questions under
+#: one title — so the fold refuses rather than guesses.
+CONTAINER_FOLD_MIN_SHARED_AFFIX_CHARS = 8
+
+#: A container fold needs a field to be a field. One priced member is a claim
+#: about one entity and already has a correct card of its own.
+CONTAINER_FOLD_MIN_MEMBERS = 2
+
+
+
+def _shared_affixes(names: list[str]) -> tuple[str, str]:
+    """The wording every one of ``names`` shares, snapped to word boundaries.
+
+    Returns ``(prefix, suffix)``. Both are trimmed back to whitespace so a
+    common run that stops mid-word ("Will Em" across Emma/Emily) can never eat
+    half of the entity it is supposed to be leaving behind.
+    """
+    if not names:
+        return ("", "")
+    prefix = os.path.commonprefix(names)
+    suffix = os.path.commonprefix([n[::-1] for n in names])[::-1]
+    # A prefix that ends mid-word, or a suffix that starts mid-word, would slice
+    # the entity. Back each one off to the nearest space.
+    while prefix and not prefix.endswith(" "):
+        prefix = prefix[:-1]
+    while suffix and not suffix.startswith(" "):
+        suffix = suffix[1:]
+    # Degenerate case: one name is wholly contained in the affixes of another.
+    for n in names:
+        if len(prefix) + len(suffix) >= len(n):
+            return ("", "")
+    return (prefix, suffix)
+
+
+def extract_container_member_entities(names: list[str]) -> Optional[list[str]]:
+    """The entity each container member is about, or None if it cannot be told.
+
+        ["Will Coco Gauff advance to the Final in Women's Singles at the 2026 US Open?",
+         "Will Iga Swiatek advance to the Final in Women's Singles at the 2026 US Open?"]
+        → ["Coco Gauff", "Iga Swiatek"]
+
+    FAIL CLOSED. The caller is about to print these as the rows of one card, so
+    a label it cannot derive must sink the whole fold — a row labelled with the
+    leftovers of a bad split is worse than the repetition being fixed. Returns
+    None when the members share too little wording to be one question, when any
+    entity comes out empty, or when two members reduce to the same label (which
+    would render one player twice and silently drop another).
+    """
+    if len(names) < CONTAINER_FOLD_MIN_MEMBERS:
+        return None
+    prefix, suffix = _shared_affixes(names)
+    if len(prefix) + len(suffix) < CONTAINER_FOLD_MIN_SHARED_AFFIX_CHARS:
+        return None
+    entities = []
+    for name in names:
+        end = len(name) - len(suffix) if suffix else len(name)
+        entity = name[len(prefix):end].strip().strip(":-–—,").strip()
+        if len(entity) < 2:
+            return None
+        # THE SLOT IN A FIELD TEMPLATE IS A NAME.
+        #
+        # A colon, a bracket or a "vs" in the differing span means what varies
+        # between these members is a QUESTION or a FIXTURE, not an entity — so
+        # the wording they share was another coincidence. Three more of these
+        # survived the template-length rule on production 2026-09-08:
+        #
+        #   polymarket:968290 → ["US Open WTA (Doubles)", "Set 1 Winner"]
+        #   polymarket:982930 → ["Sintra, Qualifying: Completed Match", "Sintra"]
+        #   polymarket:987752 → ["Topo (-1.5) vs Sachko", "Sachko (-1.5) vs Topo"]
+        #
+        # Digits are deliberately NOT banned here: "Schalke 04" is a real
+        # entity, and refusing it would cost a legitimate soccer field to catch
+        # cases these three characters already catch.
+        if any(t in entity for t in (":", "(", ")")) or " vs " in entity.lower():
+            return None
+        entities.append(entity)
+    if len(set(entities)) != len(entities):
+        return None
+
+    # THE TEMPLATE MUST BE LONGER THAN THE SLOT IT LEAVES BEHIND.
+    #
+    # The floor above measures the LENGTH of the shared run, not whether that run
+    # is a template, and those are not the same test. Found on production
+    # 2026-09-08 by running this splitter over the whole open tennis population
+    # instead of over one night's pool:
+    #
+    #   polymarket:945776, parent "US Open WTA: Marta Kostyuk vs Sloane Stephens"
+    #     "Set 2 Winner: Kostyuk vs Stephens"
+    #     "US Open WTA: Marta Kostyuk vs Sloane Stephens"
+    #
+    # Two unrelated questions whose names happen to end on the same word. The
+    # shared run is " Stephens" — 9 characters, past the floor — so the split
+    # "succeeded" and produced the row labels "Set 2 Winner: Kostyuk vs" and
+    # "US Open WTA: Marta Kostyuk vs Sloane". Having a `field` parent did not
+    # save it: a two-player MATCH is also a `field`, and its group carries that
+    # match's side-markets.
+    #
+    # "One sentence with one slot swapped" has an arithmetic consequence — the
+    # sentence is longer than the slot. That refuses both specimens (9 shared
+    # characters against a 36-character "entity") and costs the real fields
+    # nothing: the US Open family shares 62 characters around a 14-character name.
+    if len(prefix) + len(suffix) < max(len(e) for e in entities):
+        return None
+    return entities
+
+
+def detect_container_field_groups(
+    members_by_group: dict[str, list[dict]],
+    parent_names: dict[str, str],
+) -> dict[str, dict]:
+    """Fold one Polymarket container group into the one question it really is.
+
+    #4153. Alex, shopping /sports: the "Player Props & Projections" strip is "a
+    wall of the same sentence with the names swapped" — twelve cards that are
+    four questions. Measured on the served pool the same night: **84 of the 100
+    candidate rows are ``container_member``, and they are 18 questions.** Each
+    member is one player's Yes/No leg of a field ("Will Coco Gauff advance to
+    the Final …?"), and the strip renders one card per leg.
+
+    THE TITLE IS BORROWED, THE NUMBERS ARE NOT. Every one of these groups
+    already has a parent row with ``market_type='field'`` carrying the venue's
+    own wording ("US Open 2026: To Reach the Final (Women's Singles)"), which is
+    why this fold does not have to invent a question from the members' grammar.
+    It does NOT take that parent's prices: measured on production 2026-09-08 the
+    parent of ``polymarket:910235`` prints ``0.000000`` for Belinda Bencic while
+    her live member leg is ``0.833`` — the parent is stale where the members are
+    polled, so promoting it wholesale would headline a field with a 0% leader
+    (#4163). Titles are text; prices come from the members.
+
+    ``members_by_group`` maps group_id → the group's FULL membership (not the
+    slice that happened to land in the caller's pool), each dict carrying
+    ``id``, ``name``, ``probability`` (the Yes leg) and optionally ``source``.
+    Passing a partial roster here is the #2789 failure — a card headed "To Reach
+    the Final" whose top row is not the leader because the leader was not loaded.
+
+    Returns group_id → ``{"title", "market_ids", "entries", "sources",
+    "member_total"}`` with ``entries`` ranked most-likely first. A group that
+    cannot be titled, cannot be split into distinct entities, or has fewer than
+    ``CONTAINER_FOLD_MIN_MEMBERS`` priced members is absent from the result and
+    keeps the per-member cards it has today.
+    """
+    result: dict[str, dict] = {}
+
+    for group_id, members in members_by_group.items():
+        title = (parent_names.get(group_id) or "").strip()
+        if not title:
+            continue
+        priced = [
+            m for m in members
+            if m.get("probability") is not None and (m.get("name") or "").strip()
+        ]
+        if len(priced) < CONTAINER_FOLD_MIN_MEMBERS:
+            continue
+        entities = extract_container_member_entities([m["name"] for m in priced])
+        if entities is None:
+            continue
+
+        entries = [
+            {
+                "market_id": m.get("id"),
+                "name": entity,
+                "probability": float(m["probability"]),
+                "source": m.get("source"),
+            }
+            for m, entity in zip(priced, entities)
+        ]
+        # Leader-first, and by entity name where two share a price so the order
+        # is stable across rebuilds rather than following the query's whim.
+        entries.sort(key=lambda e: (-e["probability"], e["name"]))
+
+        sources = []
+        for e in entries:
+            if e["source"] and e["source"] not in sources:
+                sources.append(e["source"])
+
+        result[group_id] = {
+            "title": title,
+            "market_ids": [m.get("id") for m in members if m.get("id") is not None],
+            "entries": entries,
+            "sources": sources,
+            "member_total": len(entries),
         }
 
     return result

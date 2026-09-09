@@ -1954,6 +1954,98 @@ def _market_has_priced_outcome(market: dict) -> bool:
     return False
 
 
+#: A container group is only worth a round trip once it is actually flooding the
+#: strip. One member in the pool is one card, which is the shape it should have
+#: anyway — the fold exists to collapse walls, not to reshape singletons.
+CONTAINER_FOLD_MIN_POOL_MEMBERS = 2
+
+#: How many of a folded field's entities the card prints, matching the ungrouped
+#: market card's own `[:5]`. The strip is a glance; the full field lives on the
+#: market page behind it.
+CONTAINER_FOLD_CARD_ROWS = 5
+
+
+async def load_container_field_folds(
+    db: AsyncSession, market_dicts: list[dict]
+) -> dict[str, dict]:
+    """The container groups in this pool that fold into one field card (#4153).
+
+    TWO QUERIES, BOTH KEYED ON `group_id`, BOTH SKIPPED WHEN NOTHING FLOODS.
+    This runs on the miss path of a Redis-cached, pre-warmed endpoint that was
+    measured at ~1 s (LAT-P100), so it earns its place by being bounded: the
+    candidate set is at most the number of distinct groups in a 100-row pool,
+    and a pool with no repeated group returns before touching the database.
+
+    THE SECOND QUERY IS THE POINT. The pool holds whichever legs were polled
+    most recently — 5 of the 40 members of "To Reach the Final" on the night
+    this was written. Folding that slice would head a card with the question and
+    then rank a field the leader is missing from, which is #2789 rebuilt: the
+    strip's own comment records a 192-golfer market whose card led with 0.09%.
+    So the fold reads the group's FULL membership and ranks that.
+    """
+    from ..utils.market_grouping import detect_container_field_groups
+
+    pool_by_group: dict[str, int] = defaultdict(int)
+    for m in market_dicts:
+        if m.get("market_type") != "container_member":
+            continue
+        group_id = m.get("group_id")
+        if group_id:
+            pool_by_group[str(group_id)] += 1
+
+    candidates = [
+        gid for gid, n in pool_by_group.items()
+        if n >= CONTAINER_FOLD_MIN_POOL_MEMBERS
+    ]
+    if not candidates:
+        return {}
+
+    # The venue's own wording for the question. No parent row, no fold — the
+    # alternative is inventing a headline out of the members' grammar, and a
+    # title is the one thing on this card a reader cannot check.
+    parent_rows = await db.execute(
+        select(FuturesMarket.group_id, FuturesMarket.name).where(
+            FuturesMarket.group_id.in_(candidates),
+            FuturesMarket.market_type == "field",
+        )
+    )
+    parent_names: dict[str, str] = {}
+    for group_id, name in parent_rows.all():
+        if group_id and name and group_id not in parent_names:
+            parent_names[str(group_id)] = name
+    if not parent_names:
+        return {}
+
+    member_rows = await db.execute(
+        select(
+            FuturesMarket.group_id,
+            FuturesMarket.id,
+            FuturesMarket.name,
+            FuturesMarket.source,
+            FuturesOutcome.current_probability,
+        )
+        .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(
+            FuturesMarket.group_id.in_(list(parent_names.keys())),
+            FuturesMarket.market_type == "container_member",
+            FuturesMarket.status.in_(["active", "open"]),
+            func.lower(FuturesOutcome.name) == "yes",
+        )
+    )
+    members_by_group: dict[str, list[dict]] = defaultdict(list)
+    for group_id, market_id, name, source, probability in member_rows.all():
+        members_by_group[str(group_id)].append(
+            {
+                "id": market_id,
+                "name": name,
+                "source": source,
+                "probability": probability,
+            }
+        )
+
+    return detect_container_field_groups(members_by_group, parent_names)
+
+
 def select_ungrouped_markets(
     market_dicts: list, grouped_market_ids: set, limit: int
 ) -> list:
@@ -2166,6 +2258,9 @@ async def grouped_feed(
             "status": m.status,
             "group_id": m.group_id,
             "group_type": m.group_type,
+            # #4153: the canonical shape, so the container fold can tell one
+            # leg of a field apart from a market that is a whole question.
+            "market_type": m.market_type,
             "outcomes": [],
         }
         for o in m.outcomes:
@@ -2200,10 +2295,72 @@ async def grouped_feed(
     # Top 10 / Top 20 / Make the Cut) listing the same golfers — "group them
     # into a beautiful grid."
     placement_groups = detect_placement_groups(market_dicts)
+    # #4153 — one Polymarket container group is ONE question, not one card per
+    # member. Loaded here rather than detected from `market_dicts` because the
+    # fold needs the group's whole membership; see `load_container_field_folds`.
+    container_folds = await load_container_field_folds(db, market_dicts)
 
     grouped_market_ids = set()
     grouped_outcome_ids = set()
     feed_items = []
+
+    # The fold goes FIRST so its members are already claimed when the ungrouped
+    # pass runs: leaving them unclaimed would put the wall back underneath the
+    # card built to replace it, which is the mistake the placement grid's own
+    # "the grid CONSUMES its markets" note records.
+    # Sport and category are the pool row's own, never invented: the strip and
+    # its callers filter on them, and a made-up value would put a tennis card
+    # under a soccer filter.
+    #
+    # THE POOL IS WHAT GETS CLAIMED, not the fold's own `market_ids`. Those come
+    # from the membership query, which only returns members carrying a Yes leg —
+    # so a member with no Yes leg would survive into the ungrouped pass and put
+    # its group on a second card, which is the one thing this fix must make
+    # impossible ("no group_id appears on more than one card", #4153).
+    _pool_by_group: dict[str, dict] = {}
+    for m in market_dicts:
+        gid = m.get("group_id")
+        if gid and str(gid) in container_folds:
+            _pool_by_group.setdefault(str(gid), m)
+            grouped_market_ids.add(m["id"])
+
+    for group_id, fold in container_folds.items():
+        for market_id in fold["market_ids"]:
+            grouped_market_ids.add(market_id)
+        entries = fold["entries"][:CONTAINER_FOLD_CARD_ROWS]
+        representative = _pool_by_group.get(group_id, {})
+        feed_items.append({
+            # Deliberately `market`, not a new row type. `propStripAdmission`
+            # fails closed on a type it does not know, so a fresh one would have
+            # dropped every folded card instead of rendering it — the same trap
+            # the exact-score ladders had to route around (UX-1052 item 2).
+            "type": "market",
+            "market": {
+                # The LEADING MEMBER, not the parent. The card is a link, and
+                # the parent field row is the one place these prices are wrong
+                # (#4163: 0.000000 for an 83% leader), so a tap must not land
+                # there. The leader's own market page says the same thing about
+                # the same field and says it correctly.
+                "id": entries[0]["market_id"],
+                "name": fold["title"],
+                "source": (fold["sources"] or [None])[0],
+                "category": representative.get("category"),
+                "sport": representative.get("sport"),
+                "outcomes": [
+                    {
+                        "id": e["market_id"],
+                        "name": e["name"],
+                        "probability": e["probability"],
+                        "american_odds": probability_to_american(e["probability"]),
+                        "market_id": e["market_id"],
+                        "market_name": fold["title"],
+                        "group_id": group_id,
+                        "source": e["source"],
+                    }
+                    for e in entries
+                ],
+            },
+        })
 
     for group_key, group_markets in stat_prop_groups.items():
         if len(group_markets) < 2:
@@ -2386,7 +2543,13 @@ async def grouped_feed(
 
     payload = {
         "feed": feed_items[:limit],
-        "total_grouped": len([f for f in feed_items if f["type"] != "market"]),
+        # #4153: a folded container group is a GROUPED row that rides the
+        # `market` type for the renderer's sake (see the fold above). Counting
+        # it by its type would file it as ungrouped and understate the grouping
+        # by exactly the thing this endpoint was just taught to do.
+        "total_grouped": len(
+            [f for f in feed_items if f["type"] != "market"]
+        ) + len(container_folds),
         "total_ungrouped": len(ungrouped),
         "group_counts": {
             "stat_prop": len(stat_prop_groups),
@@ -2394,6 +2557,7 @@ async def grouped_feed(
             "threshold": len(threshold_groups),
             "exact_score": len(exact_score_groups),
             "placement_grid": len(placement_groups),
+            "container_field": len(container_folds),
         },
     }
 
