@@ -4891,9 +4891,19 @@ celery_app.conf.beat_schedule = {
     # slower than `tournament_slate`'s three-minute read of the same scoreboard
     # ON PURPOSE: the slate renders the live card, so it wants the tighter
     # rhythm, while this writes the durable row and wants the cheaper one.
+    #
+    # 🔴 #4469 (lane1/217, 2026-09-09): the paragraph above argued `*/5` and the
+    # entry shipped `*/10`, both in the SAME commit (`9a6a014c`) — a slip, not a
+    # second decision, so the cadence is now what its own argument says. It was
+    # reader-visible: live/122 sampled event 15307447 over 95 polls and measured
+    # the score stamp at 483 s median / 629 s max against the price's 8.4 s,
+    # while the hero probability moved four times and the score never did. The
+    # 629 s max is this crontab plus runtime; `*/5` halves the ceiling it sets.
+    # The comparison to `tournament_slate` above still holds — 5 min is still
+    # slower than its 3 min read, which remains the deliberate part.
     "sync-tennis-from-espn": {
         "task": "app.tasks.sync_tennis_from_espn",
-        "schedule": crontab(minute="*/10"),
+        "schedule": crontab(minute="*/5"),
         "options": {"queue": "background"},
     },
     "backfill-team-logos": {
