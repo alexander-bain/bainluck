@@ -158,26 +158,41 @@ describe("#4326 category emoji — one map, and it stays one map", () => {
     // CI compiles no Swift (standing notice 10), so this is a source scan — but
     // it is a scan for VALUES, not for the presence of a line, and it fails if
     // the Swift switch and the web map ever disagree.
-    const IOS = [
+    // #4111 — this used to scan TWO files and require ≥8 cases in each. Those two
+    // ladders were verbatim copies, and the pair of them is what #4111 was: the
+    // Discover card and the detail hero were the same view written twice, they
+    // agreed on the emoji and disagreed on the photo, and only one of them drew
+    // it. They are now one `FuturesHero.emoji(for:)`, so requiring the second
+    // file to carry a ladder would require re-introducing the defect.
+    //
+    // The invariant this now guards is therefore stronger, not weaker: the
+    // canonical ladder agrees with web, AND the two files that used to hold
+    // copies provably hold none.
+    const CANONICAL = "ios/Bain Luck/Bain Luck/Utilities/DiscoverCardVisuals.swift";
+    const FORMER_COPIES = [
       "ios/Bain Luck/Bain Luck/Components/DiscoverFuturesCard.swift",
       "ios/Bain Luck/Bain Luck/Views/FuturesDetailView.swift",
     ];
+    const ladder = (file: string) => [
+      ...read(file).matchAll(/case "(\w+)": return "([^"]+)"/g),
+    ];
+
+    const cases = ladder(CANONICAL);
+    // If the switch is refactored the regex stops matching, and an empty scan
+    // must not read as agreement.
+    expect(cases.length).toBeGreaterThanOrEqual(8);
+
     let compared = 0;
-    for (const file of IOS) {
-      const source = read(file);
-      const cases = [
-        ...source.matchAll(/case "(\w+)": return "([^"]+)"/g),
-      ];
-      // If the switch is refactored the regex stops matching, and an empty scan
-      // must not read as agreement.
-      expect(cases.length).toBeGreaterThanOrEqual(8);
-      for (const [, key, glyph] of cases) {
-        expect(stripVariationSelectors(glyph)).toBe(
-          stripVariationSelectors(CATEGORY_EMOJI[key]),
-        );
-        compared += 1;
-      }
+    for (const [, key, glyph] of cases) {
+      expect(stripVariationSelectors(glyph)).toBe(
+        stripVariationSelectors(CATEGORY_EMOJI[key]),
+      );
+      compared += 1;
     }
-    expect(compared).toBeGreaterThanOrEqual(16);
+    expect(compared).toBeGreaterThanOrEqual(8);
+
+    for (const file of FORMER_COPIES) {
+      expect({ file, cases: ladder(file).length }).toEqual({ file, cases: 0 });
+    }
   });
 });
