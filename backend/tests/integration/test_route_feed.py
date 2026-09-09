@@ -287,6 +287,87 @@ class TestFeedMockedDataContract:
         assert [item["data"]["id"] for item in body["items"]] == [3]
 
 
+class TestFeedEditionToken:
+    """D1 clause (a) / #4110 — the served response carries an edition token.
+
+    ``tests/test_feed_edition_token_4110.py`` guards what the token MEANS (it
+    moves on ordered membership and on nothing else). This guards that the route
+    actually serves it, and serves the same one on every page — the two halves
+    fail independently: the function can be perfect while the route hashes
+    ``paginated``, or forgets to stamp it at all.
+    """
+
+    @staticmethod
+    def _install_three_card_feed(feed, monkeypatch):
+        def _stub(id, score):
+            return {
+                "type": "futures",
+                "score": score,
+                "reason": "",
+                "headline": None,
+                "data": {"id": id, "top_outcomes": [{"name": "Yes", "probability": 0.6}]},
+            }
+
+        async def fake_score_futures(*args, **kwargs):
+            return [_stub(1, 90), _stub(2, 50), _stub(3, 10)]
+
+        async def fake_apply_review_decisions(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(feed, "_score_futures", fake_score_futures)
+        monkeypatch.setattr(feed, "_apply_manual_review_decisions", fake_apply_review_decisions)
+        monkeypatch.setattr(feed, "diversify_discover_first_page", lambda items, **kwargs: items)
+
+    async def test_the_response_carries_an_edition(self, client, monkeypatch):
+        from app.routes import feed
+
+        self._install_three_card_feed(feed, monkeypatch)
+
+        body = (await client.get("/api/feed?include_events=false")).json()
+
+        assert isinstance(body.get("edition"), str)
+        assert len(body["edition"]) == 16
+
+    async def test_every_page_of_one_build_reports_one_edition(self, client, monkeypatch):
+        """THE OFFSET CLAUSE, through the real route.
+
+        The client merges page 2 into the list page 1 painted, so the two must
+        agree on the edition. This is the test that fails if a future edit
+        computes the token over ``paginated`` — each page would then get its own
+        token and the merge could never be proven safe."""
+        from app.routes import feed
+
+        self._install_three_card_feed(feed, monkeypatch)
+
+        page1 = (await client.get("/api/feed?include_events=false&limit=1&offset=0")).json()
+        page2 = (await client.get("/api/feed?include_events=false&limit=1&offset=1")).json()
+
+        # The pages really are different windows onto one list...
+        assert [i["data"]["id"] for i in page1["items"]] == [1]
+        assert [i["data"]["id"] for i in page2["items"]] == [2]
+        # ...and they agree on which list that is.
+        assert page1["edition"] == page2["edition"]
+
+    async def test_an_empty_refusal_states_no_edition(self, client, monkeypatch):
+        """``get_feed``'s empty returns are refusals, not editions. Absent, rather
+        than a stable constant a client could mistake for an agreed ordering."""
+        from app.routes import feed
+
+        async def fake_score_events(*args, **kwargs):
+            return []
+
+        async def fake_score_futures(*args, **kwargs):
+            return []
+
+        monkeypatch.setattr(feed, "_score_events", fake_score_events)
+        monkeypatch.setattr(feed, "_score_futures", fake_score_futures)
+
+        body = (await client.get("/api/feed?include_futures=false")).json()
+
+        assert body["items"] == []
+        assert "edition" not in body
+
+
 class TestFeedDebug:
     async def test_debug_requires_admin_secret(self, client, monkeypatch):
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")

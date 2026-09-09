@@ -1366,6 +1366,24 @@ export interface FeedResponse {
   };
   build_quality?: string;
   degraded_reason?: string | null;
+  /**
+   * D1 clause (a) / #4110 — identifies THIS ordered list.
+   *
+   * Derived from the ordered membership of the whole ranked feed, so it changes
+   * when cards are added, removed or reordered and stays put when only prices,
+   * probabilities, scores or reason strings move. Every offset page of one build
+   * carries the same value, so page 2 can prove it belongs to the list page 1
+   * painted.
+   *
+   * A client compares two of these for equality; it never recomputes one. Equal
+   * means "same list, safe to update in place"; different means the server has
+   * genuinely reordered and a wholesale repaint is legal.
+   *
+   * Absent on an older backend and on every empty refusal (requires-auth,
+   * leader-unavailable, input-age-ceiling) — the server states no ordering
+   * opinion, so reconcile rather than reorder.
+   */
+  edition?: string;
   // Present when my_teams_only=true
   my_teams_only?: boolean;
   requires_auth?: boolean;

@@ -501,6 +501,141 @@ def feed_page_base_built_at(base: Any) -> Optional[float]:
     return float(built_at) if isinstance(built_at, (int, float)) else None
 
 
+# --- D1 clause (a) / #4110: the edition token ----------------------------------
+# Alex, reading Discover on his phone 2026-09-08 3:30pm PT: "the feed re-rendered
+# several times during load and a card I was reading disappeared." Unsettling, and
+# not a race — native/072 measured the ordinary path. `DiscoverViewModel` assigns
+# the WHOLE `items` array in three places (boot seed from last-good cache, fresh
+# fetch, pagination merge) and re-derives order via `FeedInterleave.byCategory`
+# each time. The cached body and the fresh body are different inputs, so they
+# interleave to different orders: the boot paint is not a prefix of the fresh
+# paint, and a card can move or vanish the moment the network answers.
+#
+# The client half is a reconcile (native's, #4110). The server half is this: a
+# token that lets the client tell "the same list, repriced" from "a genuinely new
+# list", so a wholesale reorder becomes legal only when the SERVER says so.
+#
+# THE TOKEN IS DERIVED FROM CONTENT, NOT MINTED PER REQUEST. That is the whole
+# contract, and it is what a nonce or a build timestamp cannot do:
+#
+#   * it changes when, and only when, the ORDERED MEMBERSHIP changes. Prices,
+#     probabilities, reasons and scores are not inputs, so the 2-minute live-price
+#     poll moving every number on the page does not invalidate a reader's scroll
+#     position. `_page_base_built_at` could not carry this: it changes on every
+#     rebuild, including the overwhelmingly common one that reproduces the
+#     identical list.
+#   * it is STABLE ACROSS THE OFFSET PAGES of one edition, because it is computed
+#     over the whole ranked list before `feed_items[offset : offset + limit]` and
+#     rides the payload through `render_feed_page_from_base` (which copies every
+#     non-per-serve key). Page 2 can therefore prove it belongs to the edition
+#     page 1 painted, which is the property pagination-merge needs.
+#   * it is reproducible across processes and across a cache eviction: two dynos
+#     that build the same list emit the same token, so a cache miss does not
+#     present as a new edition.
+#
+# THE CLIENT NEVER RECOMPUTES IT — it only compares two of them for equality. So
+# this deliberately does NOT try to mirror `DiscoverViewModel.itemKey`'s string
+# form; it uses the server's own identity for a card, and the only property that
+# has to hold is that two lists get the same token iff they are the same cards in
+# the same order.
+FEED_EDITION_FIELD = "edition"
+
+#: 16 hex chars = 64 bits. A collision would have to be between two DIFFERENT
+#: orderings of the same feed within one reader's session, and its only
+#: consequence is that the client keeps the order it already painted — the
+#: pre-#4110 behaviour for that one refresh. Sized for a debuggable header, not
+#: for adversarial resistance; nothing is authenticated by it.
+_FEED_EDITION_HEX_LEN = 16
+
+
+#: Which field carries a card's stable identity, PER KIND.
+#:
+#: CERT-2309 blocked the first cut of this file for reading ``data["id"]`` and
+#: nothing else: `concept` and `tournament` cards do not have an ``id``, they
+#: have a ``key``, so every one of them collapsed to ``"?"``. On the production
+#: payload that was 3 of 40 cards — and because ``"?"`` is only positional, two
+#: concepts could swap slots, or one be replaced outright, without the token
+#: moving. The edition said "same list" across a change the reader could see,
+#: which is the exact failure the token exists to prevent, inverted.
+#:
+#: The values mirror `DiscoverViewModel.itemKey` (the client's own notion of
+#: which card is which): event/futures/bundle key on ``id``, while concept and
+#: tournament fall through to ``FeedItem.id`` == ``"<kind>-<key>"``. This is a
+#: correspondence, not a shared implementation — the client never recomputes the
+#: token, so only the IDENTITY has to agree, never the string form (see the
+#: header comment).
+_FEED_EDITION_IDENT_FIELDS: dict[str, str] = {
+    "event": "id",
+    "futures": "id",
+    "bundle": "id",
+    "concept": "key",
+    "tournament": "key",
+}
+
+#: Tried, in order, for a card kind this module has not been taught. A kind is
+#: added to `routes/feed.py` far more often than this file is read, so the
+#: unknown case degrades to a search instead of straight to ``"?"``: a new kind
+#: carrying either conventional field still participates in the edition. The
+#: guard test enumerates the kinds the route actually emits so a kind carrying
+#: NEITHER is caught at the moment it is added, rather than silently costing the
+#: token its resolution the way concept and tournament did.
+_FEED_EDITION_IDENT_FALLBACK: tuple[str, ...] = ("id", "key")
+
+
+def _feed_edition_member(item: Any) -> str:
+    """One card's identity for edition purposes: its type and its own id.
+
+    Never its price, probability, score or reason — those are exactly what must
+    NOT roll the edition.
+
+    "Its own id" is per-kind, because the payload has no single identity field:
+    see `_FEED_EDITION_IDENT_FIELDS`.
+
+    An item we cannot identify contributes ``"?"`` rather than being skipped.
+    Skipping would make a list of three unidentifiable cards hash the same as an
+    empty one, and would let a card appear or disappear without moving the token
+    — the precise failure this exists to prevent. ``"?"`` is positional, so the
+    count and the slot still register even when the identity does not; what it
+    cannot register is a swap or a substitution among unidentified cards, which
+    is why the map above matters and why ``"?"`` is a floor and not a strategy.
+    """
+    if not isinstance(item, dict):
+        return "?"
+    kind = item.get("type")
+    data = item.get("data")
+    if kind is None or not isinstance(data, dict):
+        return "?"
+    field = _FEED_EDITION_IDENT_FIELDS.get(kind)
+    fields = (field,) if field else _FEED_EDITION_IDENT_FALLBACK
+    for candidate in fields:
+        ident = data.get(candidate)
+        if ident is not None:
+            return f"{kind}:{ident}"
+    return "?"
+
+
+def feed_edition_token(items: Any) -> Optional[str]:
+    """Stable identifier for one ORDERED feed list.
+
+    Pure: no clock, no I/O, no Redis, no randomness — the same list yields the
+    same token in any process at any time, which is the reproducibility clause
+    above and is what makes it testable without a cache (and immune to gotcha
+    #44, having no clock to branch on).
+
+    Returns ``None`` — "the server states no ordering opinion" — for a non-list
+    and for the EMPTY list. The empty case is deliberate rather than an oversight
+    hashing to a constant: every empty return in ``get_feed`` is a refusal
+    (requires-auth, leader-unavailable, input-age-ceiling), not an edition, and a
+    client that reconciled against a stable "empty edition" token would be
+    treating three different failures as one authoritative ordering. Absent is
+    also what an older backend sends, so the client needs that branch regardless.
+    """
+    if not isinstance(items, list) or not items:
+        return None
+    joined = "\n".join(_feed_edition_member(item) for item in items)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:_FEED_EDITION_HEX_LEN]
+
+
 def feed_response_cache_key(
     *,
     user_id: Any = None,
