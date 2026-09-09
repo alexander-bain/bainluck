@@ -103,6 +103,11 @@ population, `scripts/` census — a dated census, not a standing fact):
   id against the wrong fixture with no constraint to catch it (#2871 learned
   this the same way). All 24 anchors in the population match the exception; a
   row carrying any other anchor is DEFERRED, never preserved and never deleted.
+  **This sentence was prose only until #4319** — the plan SQL counted a foreign
+  anchor into the same `n_preservable` bucket as a foreign curve, so it reached
+  PRESERVE and was deleted by CASCADE after a re-point that skips its table. The
+  count is now split by :func:`refusal_only_exceptions`, derived from
+  :data:`PRESERVABLE_TABLES`, and lands on the REFUSAL side.
 * `line_movement_analyses` WHERE `analysis_type = 'taxonomy_enrichment'` —
   deleted explicitly, BEFORE the events, because its FK is NO ACTION. **2 rows
   in the population are `line_movement` analyses**, which are observations about
@@ -313,6 +318,34 @@ DERIVED_EXCEPTIONS = {
 #: sample and a line-movement analysis assert none.
 PRESERVABLE_TABLES = ("win_prob_snapshots", "line_movement_analyses")
 
+
+def refusal_only_exceptions():
+    """Exception tables whose non-derived rows can be neither moved nor deleted.
+
+    #4319. Membership is DERIVED from :data:`PRESERVABLE_TABLES` rather than
+    restated, because the hole this closes was a restatement going stale. The
+    plan SQL used to count every exception table's non-derived rows into one
+    `n_preservable` bucket, and :func:`classify` turns that bucket into PRESERVE,
+    which `Matchup.doomed_ids` DELETES after re-pointing only the tables in
+    `PRESERVABLE_TABLES`. So a foreign anchor — `source <> 'polymarket'`, or
+    `id_kind <> 'market'` — was counted as substance worth keeping and then
+    dropped by CASCADE without ever being moved: the exact class
+    `4242-DELETE-ONLY-PROVEN-DERIVED-ROWS` was raised to stop.
+
+    The module docstring already promised the right answer in prose — "a row
+    carrying any other anchor is DEFERRED, never preserved and never deleted" —
+    and the SQL did not implement it. Non-derived rows of a table in here now
+    feed the REFUSAL side, so `classify` returns DEFER before it can reach the
+    PRESERVE branch.
+
+    Measured 0 on production 2026-09-09: all 24 anchors on the population are
+    polymarket/market, so this is a latent hole, not a live loss. Adding a fourth
+    exception cannot reintroduce it by omission — leaving the new table out of
+    `PRESERVABLE_TABLES` puts it in here, which is the safe direction.
+    """
+    return tuple(t for t in sorted(DERIVED_EXCEPTIONS)
+                 if t not in PRESERVABLE_TABLES)
+
 #: Backed up, and therefore restorable, whether they leave by CASCADE, by an
 #: explicit DELETE, or by being re-pointed onto the survivor.
 DERIVED_CHILD_TABLES = tuple(DERIVED_EXCEPTIONS)
@@ -393,9 +426,15 @@ def plan_sql(catalogue):
     """One read builds the whole plan, from the CATALOGUE rather than a list here.
 
     Per row: how many markets it holds, whether those markets agree about the
-    date, and then the four refusal counts — substantive children, provider
-    identity, pseudo-FK pins, and children of an exception table that do NOT
-    match that exception's predicate (the preservable substance).
+    date, and then the refusal counts — substantive children, provider identity,
+    pseudo-FK pins, non-derived rows of an exception table that CANNOT be moved
+    (#4319), and finally the non-derived rows that CAN be (the preservable
+    substance).
+
+    The last two are the same predicate — "does not match this exception's
+    derived predicate" — split by whether the table is in `PRESERVABLE_TABLES`.
+    Counting them together is #4319: it turns a row that must be deferred into a
+    row that is deleted after a re-point that never touches it.
     """
     subs = substantive_tables(catalogue) or ("events",)  # a no-op arm, never empty
     substantive_counts = "\n           + ".join(
@@ -406,12 +445,17 @@ def plan_sql(catalogue):
         if t != "events" else "0"
         for t in subs
     )
-    preservable_counts = "\n           + ".join(
-        f"(SELECT count(*) FROM {t} c WHERE c.event_id = d.id "
-        f"AND NOT ({pred}))"
-        for t, (pred, _note) in sorted(DERIVED_EXCEPTIONS.items())
-        if t in catalogue
-    ) or "0"
+    def _non_derived_counts(tables):
+        return "\n           + ".join(
+            f"(SELECT count(*) FROM {t} c WHERE c.event_id = d.id "
+            f"AND NOT ({DERIVED_EXCEPTIONS[t][0]}))"
+            for t in tables if t in catalogue
+        ) or "0"
+
+    refusal_only = refusal_only_exceptions()
+    preservable_counts = _non_derived_counts(
+        [t for t in sorted(DERIVED_EXCEPTIONS) if t in PRESERVABLE_TABLES])
+    unmovable_counts = _non_derived_counts(refusal_only)
     identity = " OR ".join(f"d.{c} IS NOT NULL" for c in IDENTITY_COLUMNS)
     pins = "\n           + ".join(
         f"(SELECT count(*) FROM {tbl} c WHERE c.{col} = d.id AND c.{pred})"
@@ -443,6 +487,7 @@ SELECT d.id, d.status, d.home_team_name, d.away_team_name, d.commence_time,
        ({substantive_counts}) AS n_other_substantive,
        (CASE WHEN {identity} THEN 1 ELSE 0 END) AS has_provider_identity,
        ({pins}) AS n_user_pins,
+       ({unmovable_counts}) AS n_unmovable_substance,
        ({preservable_counts}) AS n_preservable
 FROM dup d
 LEFT JOIN {HOLDER_TABLE} f ON f.event_id = d.id
@@ -553,14 +598,22 @@ def classify(row):
     DEFER     everything else, and everything unrecognised. Two market dates on
               one row is two fixtures already merged; a substantive child that
               was measured at zero has appeared since; the row carries a provider
-              identity, a user's pin, or a child of a table nobody classified.
-              All reported, none guessed at.
+              identity, a user's pin, a foreign anchor, or a child of a table
+              nobody classified. All reported, none guessed at.
 
     THE REFUSALS COME FIRST and they are unconditional. A row that any authority
     can name, or that a user has pinned, is never deleted by this repair no
     matter how phantom-shaped the rest of it looks.
+
+    `n_unmovable_substance` is one of those unconditional refusals and it is
+    checked BEFORE the PRESERVE branch on purpose (#4319): its rows are real
+    substance that `PRESERVABLE_TABLES` cannot move, so the only honest answer is
+    to leave the row standing. Reaching PRESERVE with one of them would delete
+    the parent after a re-point that never touched the child.
     """
     if row.get("has_provider_identity"):
+        return "DEFER"
+    if row.get("n_unmovable_substance"):
         return "DEFER"
     if row.get("n_user_pins"):
         return "DEFER"
@@ -929,6 +982,10 @@ async def run(args):
                         why.append("PROVIDER ID")
                     if r.get("n_user_pins"):
                         why.append(f"{r['n_user_pins']} user pin(s)")
+                    if r.get("n_unmovable_substance"):
+                        why.append(f"{r['n_unmovable_substance']} unmovable "
+                                   f"substance row(s) in "
+                                   f"{'/'.join(refusal_only_exceptions())}")
                     if r["n_other_substantive"]:
                         why.append(f"{r['n_other_substantive']} substantive children")
                     if r.get("n_preservable") and len(m.holders) != 1:
