@@ -161,6 +161,24 @@ describe("#4261 — the progression bar encodes probability at the width the rea
     expect(slice).not.toContain("inset-y-0");
   });
 
+  it("the name column is capped at phone width so a value column can be seen whole", () => {
+    // Measured on production 2026-09-09 at 390px: the scroller is 302px wide,
+    // the Golfer column had grown to 206.5px to fit "Jacob Skov Olesen", and
+    // the 78.4px Make Cut column therefore had 64px of room. Every bar wider
+    // than 82% of its cell clipped at the same pixel, so 87% and 66% drew the
+    // same block again — this time by layout, not by arithmetic. Capping the
+    // name at phone width buys the value column its own width back.
+    const html = renderToStaticMarkup(
+      <TournamentProgressionTable data={golfTable([0.87, 0.66])} pageType="golf" />,
+    );
+    const nameClasses = html.match(/class="text-text-primary font-medium[^"]*"/)?.[0] ?? "";
+    expect(nameClasses).toContain("max-w-[104px]");
+    expect(nameClasses).toContain("sm:max-w-[300px]"); // desktop is untouched
+    const headClasses = html.match(/class="sticky left-8[^"]*"/)?.[0] ?? "";
+    expect(headClasses).toContain("min-w-[92px]");
+    expect(headClasses).toContain("sm:min-w-[140px]");
+  });
+
   it("scales to the table it is given, not to a constant", () => {
     // The same probability is drawn wider in a table whose leader is smaller —
     // that is what "scaled to this table" means, and it is why the helper takes

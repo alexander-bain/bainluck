@@ -372,7 +372,7 @@ export default function TournamentProgressionTable({
                 </th>
                 {/* Name column - sticky */}
                 <th
-                  className="sticky left-8 z-10 bg-surface-card py-2 px-2 text-left text-text-secondary font-medium cursor-pointer hover:text-text-primary transition-colors min-w-[140px]"
+                  className="sticky left-8 z-10 bg-surface-card py-2 px-2 text-left text-text-secondary font-medium cursor-pointer hover:text-text-primary transition-colors min-w-[92px] sm:min-w-[140px]"
                   onClick={() => handleSort(null)}
                 >
                   <span className="flex items-center gap-1">
@@ -464,7 +464,7 @@ export default function TournamentProgressionTable({
                       <TeamNameLink
                         name={participant.name}
                         sportKey={data.sport}
-                        className="text-text-primary font-medium truncate max-w-[240px] sm:max-w-[300px] hover:underline"
+                        className="text-text-primary font-medium truncate max-w-[104px] sm:max-w-[300px] hover:underline"
                       />
                       {participant.record && (
                         <span className="text-[10px] text-text-secondary hidden sm:inline">
