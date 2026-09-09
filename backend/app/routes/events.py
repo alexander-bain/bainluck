@@ -46,6 +46,11 @@ from app.utils.event_completion import (
     is_retired_event_status,
 )
 from app.utils.graded_card import rendered_duel_percents
+from app.utils.market_shape import (
+    SHAPE_CONTAINER_MEMBER,
+    SHAPE_FIELD,
+    SHAPE_QUANTITY,
+)
 from app.utils.hero_probability import resolve_hero
 # `resolve_settled_hero` survives here for the graded-card gate around L12626,
 # which asks the settled question on its own account. The hero cascade itself
@@ -10150,6 +10155,63 @@ _SINGLE_INNING_RE = re.compile(r"\binning\b")
 _NON_SCORING_TOTAL_RE = re.compile(r"\bbases\b")
 
 
+#: The shapes that only ever exist as the *output* of decomposing a container
+#: (`app/utils/market_shape.py`: "container_member — a yes/no member of a
+#: decomposed field (shared group_id) → rolls up into a container").
+_DECOMPOSED_MEMBER_SHAPES = (SHAPE_CONTAINER_MEMBER, SHAPE_QUANTITY)
+
+
+def _decomposed_container_parent_ids(markets: list) -> set[int]:
+    """The `field` parents whose own children are in the SAME served set (#4189).
+
+    Polymarket game events arrive as one container plus nested sub-markets
+    (gotcha #18). Decomposition already splits them: on event 15307447 the
+    match container `60457478` has nine properly-named children — Set 1 Winner,
+    Set Handicap, four Match O/U rungs — each its own row on the shared
+    `group_id`. What survived the decomposition is the *parent*, still holding
+    the union of its children as raw outcome strings:
+
+        0.4150  "US Open WTA: Mirra Andreeva vs Coco Gauff Set 1 Winner"
+        0.4050  "US Open WTA: Mirra Andreeva vs Coco Gauff Set Handicap +/-1.5"
+        0.3550  "Mirra Andreeva"
+
+    Those are sub-market TITLES, not outcomes, and `_extract_threshold` happily
+    pulls `1.5` out of the second one — so each cleared the `threshold is not
+    None` gate and was minted as a player prop. That is why the rail printed
+    eight rows at one identical price (the parent's single price, stamped onto
+    every decomposed leg) next to a bare player name.
+
+    🔴 THE MEMBERS MUST BE IN THE SERVED SET, NOT MERELY IN THE GROUP. The
+    parent is only redundant when the reader can see its children instead; if
+    decomposition has not run, or the children were dropped upstream by
+    `has_no_real_price`, the parent is the only representation this event has
+    and suppressing it would delete the market rather than de-duplicate it. So
+    this reads `markets` — the list actually being rendered — never the group.
+
+    Scope measured on production 2026-09-08: 12,687 (group_id, event_id) pairs
+    hold a `field` parent alongside decomposed members, so this is a class, not
+    one match. Every event-linked sample is a Polymarket container — "… -
+    Player Props", "… - More Markets", the match container above. The
+    non-container `field` markets that share a group with members ("Which
+    cities face tornado risk on August 23?") are all `event_id IS NULL` and
+    never reach this serializer.
+
+    A NULL `market_type` is left alone deliberately: the shape backfill lags
+    ingest, and an unshaped parent is the current behaviour, so this fails
+    closed toward serving too much rather than too little.
+    """
+    groups_with_members = {
+        m.group_id
+        for m in markets
+        if m.group_id and (m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES
+    }
+    return {
+        m.id
+        for m in markets
+        if (m.market_type or "") == SHAPE_FIELD and m.group_id in groups_with_members
+    }
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -11279,9 +11341,16 @@ async def _build_game_markets(
     # Only reads box_score_data for completed/closed events — None otherwise.
     _prop_ctx = _build_prop_grade_context(event) if event_is_finished else None
 
+    # #4189: a decomposed container parent is not served beside its own
+    # children. Computed once over the served set, not per market.
+    decomposed_parents = _decomposed_container_parent_ids(markets)
+
     for market in markets:
         market_outcomes = outcomes_by_market.get(market.id, [])
         if not market_outcomes:
+            continue
+
+        if market.id in decomposed_parents:
             continue
 
         # #921 slice 2: don't render no-real-price or placeholder-team markets on
