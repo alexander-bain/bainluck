@@ -829,7 +829,10 @@ _NON_CONTENDER_WINNER_RE = NON_CONTENDER_WINNER_RE
 
 
 def _golf_winner_renorm_factor(
-    market_name: str, n_outcomes: int, prob_sum: float
+    market_name: str,
+    n_outcomes: int,
+    prob_sum: float,
+    mutually_exclusive: bool | None = None,
 ) -> float | None:
     """Renormalization factor for a golf winner market, or None to skip it (#926).
 
@@ -850,9 +853,34 @@ def _golf_winner_renorm_factor(
     caller's job, via `_NON_WINNER_MARKET_RE`. The docstring mattered: it read as a
     second line of defence that does not exist, so the ordinal gap in that regex had
     nothing behind it.
+
+    🔴 #4402 — SCALING TO 1.0 ASSUMES EXACTLY ONE WINNER, AND THE NAME DOES NOT SAY.
+    "Golfers to win a PGA Tour Major in 2027" reads as a winner field to
+    `_WINNER_MARKET_RE` and is not one: a season holds FOUR majors, so four golfers
+    win. Its 112 outcomes summed 9.346 and this function returned 1/9.346, which put
+    **Scottie Scheffler on the Discover golf hero at 6% while Kalshi priced him at
+    56.5%** — a ~9x understatement on page one, measured 2026-09-09. Its sibling
+    "…before 2030" is worse: sum 31.48, factor 1/31.48.
+
+    So the caller now passes `futures_markets.mutually_exclusive`, which the database
+    has held all along and this rule never read, and an explicitly NON-exclusive field
+    is refused rather than scaled. Refused, not rescaled: no factor makes a
+    four-winner market sum to 1.0 honestly, and returning None is what this function
+    already does with every other oversumming market it cannot vouch for.
+
+    UNKNOWN IS NOT NO. The default is `None`, which keeps the pre-#4402 path exactly,
+    because absence of the flag is not evidence of non-exclusivity and the cost of
+    over-refusing is a card that vanishes. Measured on the live population the day
+    this shipped: 75 open golf markets, 44 `false` / 31 `true` / **0 null**, and of
+    the 16 winner-matching fields with ≥4 priced outcomes, every genuine
+    single-tournament field (Amgen Irish Open, the four majors, the datagolf winners)
+    is `true` AND sums 1.00-1.15 — under the 1.5 early return, so untouched by this
+    gate either way. The only rows it moves are the two season-scope Kalshi markets.
     """
     if prob_sum <= 1.5:
         return 1.0
+    if mutually_exclusive is False:
+        return None
     is_winner_field = (
         n_outcomes >= 4
         and bool(_WINNER_MARKET_RE.search(market_name))
@@ -2446,13 +2474,27 @@ async def get_golf(
             # tournament-WINNER fields, which are independent per-golfer binaries
             # that also sum >100% (gotcha #23); those get renormalized to a real
             # field instead of dropped (#926). Markets summing <=1.5 are unchanged.
+            #
+            # #4402: and the market's own `mutually_exclusive` flag goes with it. A
+            # name saying "win" does not mean one winner — "Golfers to win a PGA Tour
+            # Major in 2027" has four — and scaling a four-winner field to sum 1.0 put
+            # Scheffler on the Discover hero at 6% against Kalshi's 56.5%.
             outcome_prob_sum = sum(
                 float(o.current_probability)
                 for o in market.outcomes
                 if o.current_probability is not None
             )
             renorm_factor = _golf_winner_renorm_factor(
-                market.name, len(market.outcomes), outcome_prob_sum
+                market.name,
+                len(market.outcomes),
+                outcome_prob_sum,
+                # `getattr`, not attribute access: this route's own fixtures build
+                # markets as `SimpleNamespace` and three suites' worth of them predate
+                # the column. Missing reads as UNKNOWN, which is the pre-#4402 path —
+                # the same graceful degradation the default encodes. A test asserts
+                # `FuturesMarket` really has the column, so this can never quietly
+                # become a permanent `None` through a rename.
+                mutually_exclusive=getattr(market, "mutually_exclusive", None),
             )
             if renorm_factor is None:
                 continue
