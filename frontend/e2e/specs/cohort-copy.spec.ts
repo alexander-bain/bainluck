@@ -431,17 +431,28 @@ async function productionNumberClaims(text: string, page: Page): Promise<Claim[]
     has("copy.sportsbook_named_as_a_subset", text, "389,385 traded outcomes (including 40,075 sportsbook lines)"),
     has("copy.excluded_side_counted", text, "Excluded: 263,022 untraded outcomes, whose price never moved off its opening line."),
     has("copy.toggle_names_what_it_adds", text, "Include untraded (+263,022)"),
-    // UX-P075 item (a): the short word must never be on screen without the
-    // sentence saying what it is a proxy for. This is the RENDERED half of the
-    // pairing `calibrationCohort.test.ts` asserts on the copy module.
-    has("copy.proxy_footnote_rendered", text, "shorthand for a price test, not a trade count"),
+    // D101 (Alex, Wed 2026-09-09): `copy.proxy_footnote_rendered` stood here and
+    // asserted the rendered half of the pairing — the short word never on screen
+    // without its proxy sentence. He ruled the sentence DELETED, so the claim is
+    // inverted: it must NOT be rendered. Written as an absence over the same
+    // rendered text the positive claim read, so the two cannot both pass.
+    {
+      id: "copy.proxy_footnote_deleted",
+      ok: !text.includes("shorthand for a price test, not a trade count"),
+      detail: "D101: the proxy footnote must not render",
+    },
     await partitionArithmetic(page, {
       moved: 349_310, sportsbook: 40_075, traded: 389_385, untraded: 263_022, total: 652_407,
     }),
-    // The definition did not vanish with the apology — it moved to the footnote.
-    // Without this the page could assert "counted as traded" and never say why,
-    // on the one page whose whole job is not needing to be taken at our word.
-    has("copy.sportsbook_definition_kept_in_footnote", text, "traded by construction")
+    // D101: `copy.sportsbook_definition_kept_in_footnote` stood here — UX-P080
+    // item 3's requirement that the page say WHY sportsbook lines count as
+    // traded, read off the deleted paragraph. The ground itself survives in
+    // `partitionNote`, one tap down inside the closed "The overall split" fold,
+    // and a closed `<details>` is not in `innerText` — so this rendered-text
+    // spec can no longer be where that requirement is guarded. It is asserted
+    // on the copy module instead (`calibrationCohort.test.ts`), and what stays
+    // here is the half innerText can still see: the rows named and counted.
+    has("copy.sportsbook_named_as_a_subset_survives", text, "40,075 sportsbook lines")
   );
   const direction = await attr(page, '[data-testid="calibration-activity-section"]', "data-activity-direction");
   claims.push({

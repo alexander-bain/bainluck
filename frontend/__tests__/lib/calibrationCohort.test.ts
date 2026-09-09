@@ -27,7 +27,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { PROXY_FOOTNOTE, describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
+import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import { describeActivityComparison, ece, mce } from "@/lib/calibrationMath";
 import {
   PROD_BUCKETS,
@@ -108,7 +108,6 @@ const copyOf = (c: ReturnType<typeof describeCohort>): string[] => [
   c.heroClause,
   c.shortLabel,
   c.partitionNote ?? "",
-  c.proxyFootnote ?? "",
 ];
 
 /** The strings that carry the cohort's NAME, excluding the footnote that explains it. */
@@ -226,30 +225,57 @@ describe("every cohort label names the predicate it actually selects", () => {
     }
   });
 
-  test("the short word NEVER travels without its proxy footnote", () => {
-    // The invariant that replaces the word-ban. If a label says "untraded",
-    // `proxyFootnote` must exist and must state the price test the word stands
-    // for — otherwise the rename has upgraded a proxy into a fact, which is the
-    // one thing Alex's ruling forbids in the same sentence that ordered it.
+  // D101 (Alex, Wed 2026-09-09 10:05am PT) — THE PAIRING INVARIANT IS RETIRED,
+  // AND WHAT REPLACES IT IS NARROWER ON PURPOSE.
+  //
+  // Two tests stood here: "the short word NEVER travels without its proxy
+  // footnote" and "no untraded cohort means no footnote". They pinned Alex's
+  // 2026-08-14 instruction. Standing notice 34 (2026-09-08) pointed the other
+  // way for that one sentence — ten lines of method prose in front of a phone
+  // reader — and calibration/1063 asked him rather than picking a side. He
+  // ruled DELETE, so the footnote and its pairing are gone.
+  //
+  // What is NOT gone is the thing the footnote was holding back. "Traded" and
+  // "untraded" as the NAME of a cohort are the rename Alex ordered in August and
+  // did not revisit; a label that says the markets were well traded, thinly
+  // traded, actively traded, or that counts trades, is the proxy being upgraded
+  // into a fact. That ban already existed one test above (L2-236's, kept when
+  // the pairing replaced it) — this one widens it to the words the deleted
+  // sentence was specifically qualifying, and, like its neighbour, is written
+  // over the EMITTED strings so a future edit reds here rather than in the one
+  // branch someone happened to change.
+  test("no label upgrades the cohort NAME into a claim about trading activity", () => {
+    const claims = /well[- ]traded|thinly[- ]traded|actively[- ]traded|heavily[- ]traded|trade count|trading volume|number of trades/i;
     for (const c of [dflt, all]) {
-      const usesWord = labelsOf(c).some((l) => /untraded/i.test(l));
-      expect(usesWord).toBe(true);
-      expect(c.proxyFootnote).not.toBeNull();
-      expect(c.proxyFootnote).toBe(PROXY_FOOTNOTE);
-      // The footnote must actually do its job, not merely be present.
-      expect(c.proxyFootnote).toContain("not a trade count");
-      expect(c.proxyFootnote).toContain("never moved off its opening line");
-      expect(c.proxyFootnote).toMatch(/already excluded upstream/i);
+      // The cohort is still NAMED with the short word — this is not a word-ban,
+      // and a change that quietly renamed the cohort to dodge the assertion
+      // would fail here instead of passing silently.
+      expect(labelsOf(c).some((l) => /untraded/i.test(l))).toBe(true);
+      for (const copy of copyOf(c)) expect(copy).not.toMatch(claims);
     }
   });
 
-  test("no untraded cohort means no footnote — a caveat about nothing is boilerplate", () => {
-    // The failure mode of an always-on caveat is that it stops being read. When
-    // the excluded side is empty the word is never rendered, so neither is the
-    // sentence explaining it.
-    const c = describeCohort({ movedN: 200, unchangedN: 0, notApplicableN: 0 }, 200, false);
-    expect(labelsOf(c).some((l) => /untraded/i.test(l))).toBe(false);
-    expect(c.proxyFootnote).toBeNull();
+  test("the deleted footnote's text is not re-emitted in the copy a reader lands on", () => {
+    // A "fix" that moved the paragraph into `detail`, `heroClause` or the
+    // toggle would satisfy every other assertion in this file and put the ten
+    // lines straight back on the reader's screen.
+    //
+    // `partitionNote` is deliberately NOT in this set. It is a different string,
+    // it renders inside the closed `The overall split` fold (#4340), and it is
+    // one of the six blocks Alex left behind the tap — asserting its absence
+    // here would be this test quietly overturning that.
+    const footnoteFragments = [
+      /shorthand for a price test/i,
+      /not a trade count/i,
+      /already excluded upstream/i,
+      /untraded in the literal sense/i,
+    ];
+    const empty = describeCohort({ movedN: 200, unchangedN: 0, notApplicableN: 0 }, 200, false);
+    for (const c of [dflt, all, empty]) {
+      for (const copy of labelsOf(c)) {
+        for (const fragment of footnoteFragments) expect(copy).not.toMatch(fragment);
+      }
+    }
   });
 
   test("no label claims trading CAUSED a calibration difference", () => {
@@ -287,16 +313,26 @@ describe("every cohort label names the predicate it actually selects", () => {
     }
   });
 
-  test("the definition did not vanish with the apology — it moved to the footnote", () => {
-    // Alex: "with the definition in the footnote". Deleting the sentence would
-    // satisfy the first half of the ruling while losing the reason a reader
-    // should believe it, on the page whose entire job is not being taken at our
-    // word.
-    expect(dflt.proxyFootnote).toContain("traded by construction");
-    // CERT-2290: was "a book"; notice 33 bans the word in any number, and the
-    // GROUND the assertion is really about — that a sportsbook moves its line
-    // with money — is unchanged.
-    expect(dflt.proxyFootnote).toContain("a sportsbook moves its line with money");
+  // D101 — WHERE UX-P080 ITEM 3's REQUIREMENT WENT.
+  //
+  // This test asserted "with the definition in the footnote" (Alex, UX-P080
+  // round 2): the GROUND for counting sportsbook lines as traded — "a
+  // sportsbook moves its line with money" — had to be on the page, or a reader
+  // is told the rows count and never told why. It read that ground off
+  // `proxyFootnote`, which D101 deletes.
+  //
+  // The requirement is not dropped, it moved: `partitionNote` states the same
+  // ground, and #4340 renders that note inside the closed "The overall split"
+  // fold — one tap down, which is exactly where Alex's 10:05am ruling left the
+  // other six blocks of this class. So the assertion is re-pointed rather than
+  // deleted, and it still fails if the ground disappears from the page.
+  test("the ground for counting sportsbook lines as traded survives the deletion", () => {
+    expect(dflt.partitionNote).toContain("a sportsbook moves its line with money");
+    expect(dflt.partitionNote).toContain("count as traded");
+    // And the rows themselves are still named and counted in the copy a reader
+    // lands on, with no tap required.
+    expect(dflt.detail).toContain("40,075 sportsbook lines");
+    expect(dflt.detail).toContain("389,385 traded outcomes");
   });
 
   test("the excluded side is described by what it is, with its count", () => {

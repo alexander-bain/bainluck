@@ -72,6 +72,38 @@
 // whenever the word appears, and `calibrationCohort.test.ts` asserts the pairing
 // rather than banning the word. A short word with its proxy stated is honest; a
 // short word alone is the thing L2-236 was right about.
+//
+// ---------------------------------------------------------------------------
+// D101 — AND THE FOOTNOTE IS NOW DELETED (Alex, Wed 2026-09-09 10:05am PT)
+// ---------------------------------------------------------------------------
+//
+// The paragraph above describes a footnote that no longer exists. It is kept
+// because the reversal has to be legible where the argument lived (ruling 055),
+// and because the next reader of this file will otherwise re-derive it.
+//
+// Two of Alex's own instructions had come to point opposite ways for this one
+// sentence: 2026-08-14 said the proxy footnote rides with the word wherever the
+// word appears, and standing notice 34 (2026-09-08) says no diagnostic prose on
+// a reader's screen. calibration/1063 put the conflict to him rather than
+// picking a side, with three options — A leave it, B fold it behind the same
+// tap as the other six blocks, C delete it. **He ruled C.**
+//
+// The GROUND for counting sportsbook lines as traded (UX-P080 item 3, Alex
+// round 2) rode in the same paragraph's last clause and does NOT go with it:
+// `partitionNote` states it, and #4340 renders that note inside the closed
+// "The overall split" fold — one tap down, where the other six blocks of this
+// class now live. `calibrationCohort.test.ts` re-points that assertion rather
+// than deleting it.
+//
+// So the pairing invariant is gone, not weakened, and what replaces it is the
+// only thing left that can go wrong: the cohort labels must not start making a
+// CLAIM the deleted sentence used to qualify. "Traded"/"untraded" as the name of
+// a cohort survives — that is the rename Alex ordered in August and did not
+// revisit. "Well-traded", "thinly traded", "actively traded", a trade COUNT, or
+// any word that asserts activity rather than naming a cohort is what the
+// footnote was holding back, and `calibrationCohort.test.ts` bans exactly those,
+// on the emitted strings. The word-ban L2-236 wanted, narrowed to the claims
+// that were actually at issue.
 
 /** en-US thousands separators, fixed so tests do not depend on host locale. */
 function fmt(n: number): string {
@@ -117,20 +149,6 @@ export interface CohortCopy {
    */
   partitionNote: string | null;
   /**
-   * The proxy footnote — UX-P075 / Alex 2026-08-14 item (a).
-   *
-   * NON-OPTIONAL wherever the short words appear. "Traded"/"untraded" are the
-   * reader's words for a PRICE test, and this sentence is what stops the rename
-   * from upgrading a proxy into a fact. It states the asymmetry precisely:
-   * movement proves trading, stillness does not prove its absence.
-   *
-   * Derived by TESTING the emitted labels for the word, never by a separate
-   * condition that implies them — so it is null exactly when no label says
-   * "untraded", and the two cannot drift. A footnote about a cohort the page is
-   * not showing is boilerplate, and boilerplate is how a caveat stops being read.
-   */
-  proxyFootnote: string | null;
-  /**
    * `moved + unchanged + notApplicable === fullN`. False means the payload
    * carries a `price_moved` value outside the tri-state, and any cohort count
    * derived from it is describing fewer rows than it claims.
@@ -138,32 +156,6 @@ export interface CohortCopy {
   reconciles: boolean;
 }
 
-/**
- * The proxy footnote's text. One constant, because the page renders it and the
- * test asserts it, and a footnote that exists in two spellings is a footnote
- * one of whose spellings is unguarded.
- */
-export const PROXY_FOOTNOTE =
-  '"Traded" and "untraded" are shorthand for a price test, not a trade count. ' +
-  "A price that moved off its opening line proves trading happened; a price " +
-  "that never moved does not prove that it didn't. Outcomes with no bid and no " +
-  "volume are already excluded upstream, so nothing in the untraded set is " +
-  "untraded in the literal sense — it is the set whose price never moved off " +
-  "its opening line. " +
-  // UX-P080 item 3 (Alex round 2). This is the definition the headline sentence
-  // stopped carrying. It belongs here and not up there for the reason the whole
-  // footnote exists: the short word leads, the precision rides with it. Note it
-  // states the GROUND ("a sportsbook moves its line with money"), not just the
-  // conclusion — a reader who is told sportsbook lines count as traded and not
-  // told why has been asked to take our word for it, on the one page whose
-  // entire job is not needing to be taken at our word.
-  // #4067 repair (CERT-2290): the SECOND copy of the same sentence, and the one
-  // the bundle scan did not report — a rendered-DOM walk over the served page
-  // found it while `scanBundleSource` did not. Two guards, two different blind
-  // spots; the render is the one the reader has.
-  "Sportsbook lines carry no price-moved flag and do not need one: a sportsbook " +
-  "moves its line with money, so those outcomes are traded by construction " +
-  "and are counted as traded here.";
 
 /**
  * Count the three `price_moved` states over anything bucket-shaped.
@@ -226,27 +218,15 @@ export function describeCohort(
       `= ${fmt(fullN)} resolved outcomes.`
     : null;
 
-  // The footnote rides with the WORD — and that is implemented by TESTING the
-  // emitted labels, not by guessing a condition that implies them.
-  //
-  // The first draft guessed (`unchangedN > 0`) and was wrong twice in a row: the
-  // zero-untraded branch still said "Excluded: 0 untraded outcomes", and after
-  // that was fixed the toggle still said "Include untraded". Both were caught by
-  // the pairing test, both were the same mistake — a second expression that has
-  // to stay in agreement with the strings, i.e. #1620's disease in miniature.
-  // Deriving the footnote FROM the strings makes disagreement unrepresentable.
-  const withFootnote = (copy: Omit<CohortCopy, "proxyFootnote">): CohortCopy => ({
-    ...copy,
-    proxyFootnote: [
-      copy.headline, copy.detail, copy.toggleLabel,
-      copy.statDetail, copy.heroClause, copy.shortLabel,
-    ].some(l => /untraded/i.test(l))
-      ? PROXY_FOOTNOTE
-      : null,
-  });
+  // D101 (Alex, Wed 2026-09-09): `withFootnote` stood here. It derived the
+  // proxy footnote FROM the emitted strings — the pairing that made "untraded"
+  // on screen without its definition unrepresentable — and it is deleted with
+  // the footnote it produced. The lesson it was written for survives as a
+  // TEST over the emitted strings (never a second condition beside them), which
+  // is where it belonged anyway: see the claim ban in calibrationCohort.test.ts.
 
   if (includeNeverMoved) {
-    return withFootnote({
+    return {
       key: "all",
       cohortN,
       fullN,
@@ -264,7 +244,7 @@ export function describeCohort(
       heroClause: `${fmt(fullN)} resolved predictions`,
       partitionNote,
       reconciles,
-    });
+    };
   }
 
   // UX-P080 item 3 — Alex round 2. The default cohort is THE TRADED OUTCOMES,
@@ -285,18 +265,21 @@ export function describeCohort(
   // subtraction — and the reader who does the subtraction still does not learn
   // anything, because the answer is that all of them are traded.
   //
-  // The definition does not vanish; it moves to `PROXY_FOOTNOTE`, which already
-  // travels with the word wherever the word appears. Same move UX-P075 made for
-  // "untraded" and UX-P078 made for the shape annex: the short true thing leads,
-  // the precision rides underneath it, and neither is dropped.
+  // The definition did not vanish at the time; it moved to `PROXY_FOOTNOTE`,
+  // which travelled with the word wherever the word appeared. **D101 has since
+  // deleted that footnote** (Alex, 2026-09-09). The GROUND it carried — a
+  // sportsbook moves its line with money, so those rows are traded — is not
+  // lost with it: `partitionNote` below states it, and #4340 put that note
+  // inside the closed "The overall split" fold, which is where the other six
+  // blocks of this class now live. The rows are named and counted in `detail`
+  // either way.
   const shortLabel = "Traded";
   const headline = `Showing traded markets (${fmt(defaultCohortN)})`;
   // An empty excluded side excludes NOTHING, so it gets no clause — "Excluded:
-  // 0 untraded outcomes" both states a non-fact and puts the word "untraded" on
-  // screen in the one state where `proxyFootnote` is (correctly) null, breaking
-  // the pairing invariant. Caught by that invariant's own test on its first run,
-  // which is the whole argument for writing the assertion as a pairing rather
-  // than as a word-ban.
+  // 0 untraded outcomes" states a non-fact. It was caught by the proxy-footnote
+  // pairing test on that test's first run (the pairing is gone with D101, the
+  // clause it caught is not), which is the whole argument for writing an
+  // assertion over the emitted strings rather than over the branch.
   const excluded = unchangedN > 0
     ? ` Excluded: ${fmt(unchangedN)} untraded outcomes, whose price never moved off its opening line.`
     : "";
@@ -307,7 +290,7 @@ export function describeCohort(
       // and there is no second construction to name.
       `Every traded outcome.${excluded}`;
 
-  return withFootnote({
+  return {
     key: "excluding_never_moved",
     cohortN,
     fullN,
@@ -327,5 +310,5 @@ export function describeCohort(
       : `${fmt(defaultCohortN)} resolved predictions`,
     partitionNote,
     reconciles,
-  });
+  };
 }
