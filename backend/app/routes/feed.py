@@ -40,6 +40,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.dependencies.auth import get_optional_user
 # Admission bounds for the shared candidate base live WITH the base (they exist
@@ -202,6 +203,7 @@ from app.utils.labeling_queue import (
     review_key_for_feed_item as _review_key_for_feed_item,
 )
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.outcome_display import (
     display_rank_order,
@@ -6668,6 +6670,49 @@ async def _score_events(
 
     if not events:
         return []
+
+    # ── ONE GAME, ONE CARD (#4100) ────────────────────────────────────────────
+    #
+    # Alex saw page one of `/sports` carry the same MLB game twice, five cards
+    # apart, quoting two different probabilities and spelling the team's name
+    # two ways ("St. Louis Cardinals" 24/76 with a score; "St.Louis Cardinals"
+    # 38/62 with none). They are two `events` rows, each anchored to a different
+    # provider's game id, which is why ruling 048 correctly refuses to merge them
+    # in the registry. `app/utils/event_twin_fold.py` carries the full reasoning.
+    #
+    # The fold happens HERE, above everything, rather than at card assembly, so
+    # that every stage below sees one row per fixture: the snapshot fallback, the
+    # prematch prior read, scoring, diversity caps and the story caps all count
+    # the fixture once. Folding at the end would leave a capped surface having
+    # spent two of its slots on one game.
+    #
+    # `set_committed_value` is the union's delivery mechanism and is load-bearing:
+    # it writes the merged venues onto the hydrated row WITHOUT marking it dirty,
+    # so no later flush can persist a serve-time blend into `events`. A plain
+    # attribute assignment would be a write waiting for a commit (gotcha #4's
+    # neighbourhood), and threading the merged dict through the four downstream
+    # readers by hand would give a card whose source list and whose probability
+    # disagreed about which venues exist.
+    # Gotcha #42, applied to a whole stage rather than one row: the fold is an
+    # improvement to the page, never a precondition for having one. If anything
+    # in it raises, the feed serves the unfolded candidate set — the bug Alex
+    # reported — instead of serving nothing.
+    try:
+        _fold = fold_twin_events(events)
+        if _fold.dropped_ids:
+            for _survivor_id, _merged in _fold.merged_sources.items():
+                _survivor = next(e for e in _fold.events if e.id == _survivor_id)
+                set_committed_value(_survivor, "win_probability_sources", _merged)
+            logger.info(
+                "feed twin fold: %d duplicate event rows collapsed, %d cards gained "
+                "a venue (dropped=%s)",
+                _fold.folded_count,
+                len(_fold.merged_sources),
+                _fold.dropped_ids[:20],
+            )
+            events = _fold.events
+    except Exception:
+        logger.exception("feed twin fold failed; serving the unfolded candidate set")
 
     # Batch fallback: for events where _compute_aggregate_probability() returns
     # None, query the latest win_prob_snapshot per event. This catches
