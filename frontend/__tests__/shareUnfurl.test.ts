@@ -68,15 +68,30 @@ describe("the site names one host", () => {
   it("no file under app/ hardcodes the apex origin", () => {
     // The literal was in 21 places before LAT-P278. It is a fact about the
     // deployment, not about a page, and it now lives once in lib/siteUrl.ts.
+    //
+    // A PLAIN SUBSTRING SEARCH, NOT A REGEX, and that is deliberate: CodeQL
+    // flagged the first version of this line (`/https:\/\/bainluck\.com/`,
+    // alert 2234, `js/regex/missing-regexp-anchor`, high) because an unanchored
+    // regex over a URL matches anywhere and arbitrary hosts may precede or
+    // follow it. Here we are looking for a literal inside source text rather
+    // than validating a URL, so there is no anchor that would be correct —
+    // `String.includes` says exactly what is meant and carries no such trap.
     const offenders: string[] = [];
     for (const file of walk(APP_DIR, (n) => /\.tsx?$/.test(n))) {
       const src = fs.readFileSync(file, "utf8");
-      // `https://bainluck.com` but not `https://www.bainluck.com`.
-      if (/https:\/\/bainluck\.com/.test(src)) {
+      if (src.includes(`${APEX_ORIGIN}`)) {
         offenders.push(path.relative(process.cwd(), file));
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("that search is precise — the www origin is not read as the apex", () => {
+    // `https://www.bainluck.com` must NOT contain `https://bainluck.com`, or
+    // the rule above would flag every correctly-fixed file and the whole guard
+    // would be noise. Cheap, and it pins the one way this check could invert.
+    expect(CANONICAL_ORIGIN.includes(APEX_ORIGIN)).toBe(false);
+    expect(`${APEX_ORIGIN}/sports`.includes(APEX_ORIGIN)).toBe(true);
   });
 
   it("the apex and the canonical origin are actually different strings", () => {
