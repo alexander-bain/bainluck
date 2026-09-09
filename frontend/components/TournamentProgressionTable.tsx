@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import type { ProgressionResponse, ProgressionParticipant, ProgressionStage } from "@/lib/types";
@@ -25,15 +25,35 @@ type SortConfig = {
 };
 
 /**
- * Compute inline data bar width as a percentage (0-100).
- * Uses square-root scaling so differences at the low end (2% vs 8%)
- * are as visible as differences at the high end (20% vs 35%).
- * Scaled relative to a column max of ~40% (sqrt(0.4) ≈ 0.632).
+ * Smallest scale denominator (#4261). A table whose numbers are all noise-level
+ * must not draw a full-width bar just because 0.4% is the widest it has.
  */
-function barWidth(probability: number | null): number {
+export const BAR_SCALE_FLOOR = 0.01;
+
+/**
+ * Compute inline data bar width as a percentage (0-100).
+ *
+ * Width is PROPORTIONAL to probability, against `scaleMax` — the widest live
+ * number in THIS table — because the card's caption says "Bar width =
+ * probability" and that has to be literally true.
+ *
+ * Two things it is deliberately not (#4261):
+ *
+ * - not scaled against a constant. It used to be `sqrt(p)/sqrt(0.4)`, a
+ *   hardcoded column max of 40%, so every probability at or above 0.4 clamped
+ *   to a full-width bar. Golf's "Make Cut" column runs 55-90%, so all forty
+ *   rows drew the identical slab. Square root alone does not fix that: against
+ *   this table's own max it still renders 87% and 66% at 100% and 87% of the
+ *   cell, which on a phone is the same complaint back again.
+ * - not scaled per column. The golf columns nest (make cut ⊇ top 20 ⊇ … ⊇
+ *   win), so a row reads as a funnel; normalising each column to its own
+ *   leader would draw McIlroy's 12% win as wide as his 87% make-cut and erase
+ *   the only thing the row says.
+ */
+export function barWidth(probability: number | null, scaleMax: number): number {
   if (probability === null || probability === undefined || probability <= 0) return 0;
-  // sqrt scaling, capped at 100% bar width
-  return Math.min(100, (Math.sqrt(probability) / Math.sqrt(0.4)) * 100);
+  const denom = Math.max(scaleMax, BAR_SCALE_FLOOR);
+  return Math.min(100, (probability / denom) * 100);
 }
 
 /**
@@ -256,6 +276,41 @@ export default function TournamentProgressionTable({
 
   const hasSources = uniqueSources.length > 1;
 
+  // The widest live number in the table sets the bar scale (#4261). Resolved
+  // columns draw no bar, so they cannot set it either.
+  const barScaleMax = useMemo(() => {
+    const liveKeys = safeStages.filter((s) => !s.resolved).map((s) => s.key);
+    let max = 0;
+    for (const p of safeParticipants) {
+      for (const key of liveKeys) {
+        const prob = p.probabilities?.[key];
+        if (typeof prob === "number" && Number.isFinite(prob) && prob > max) max = prob;
+      }
+    }
+    return max;
+  }, [safeParticipants, safeStages]);
+
+  // A phone shows one of golf's five stage columns and clips the header of the
+  // next one; the container has always scrolled, but nothing said so (#4261).
+  // The fade is drawn only while there is more table to the right.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const syncScrollAffordance = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
+  }, []);
+
+  useEffect(() => {
+    syncScrollAffordance();
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(syncScrollAffordance);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [syncScrollAffordance, safeStages.length, sortedParticipants.length]);
+
   if (!safeStages.length || !safeParticipants.length) {
     return (
       <div className={`text-center text-text-secondary py-8 ${className || ""}`}>
@@ -296,178 +351,193 @@ export default function TournamentProgressionTable({
       )}
 
       {/* Scrollable table container */}
-      <div className="overflow-x-auto -mx-2 px-2">
-        <table className="w-full border-collapse text-sm min-w-[500px]">
-          <thead>
-            <tr className="border-b border-white/10">
-              {/* Rank column */}
-              <th className="sticky left-0 z-10 bg-surface-card py-2 px-1 text-center text-text-secondary font-medium w-8">
-                #
-              </th>
-              {/* Name column - sticky */}
-              <th
-                className="sticky left-8 z-10 bg-surface-card py-2 px-2 text-left text-text-secondary font-medium cursor-pointer hover:text-text-primary transition-colors min-w-[140px]"
-                onClick={() => handleSort(null)}
-              >
-                <span className="flex items-center gap-1">
-                  {data.sport === "golf" ? "Golfer" : "Team"}
-                  {sort.stageKey === null && (
-                    <SortArrow direction={sort.direction} />
-                  )}
-                </span>
-              </th>
-              {/* Stage columns */}
-              {safeStages.map((stage) => {
-                // Resolved (season-state decided) columns are de-emphasized so
-                // they no longer read as live probability bars (#927).
-                const isResolved = !!stage.resolved;
-                return (
+      <div className="relative">
+        <div
+          ref={scrollRef}
+          onScroll={syncScrollAffordance}
+          className="overflow-x-auto -mx-2 px-2"
+        >
+          <table className="w-full border-collapse text-sm min-w-[500px]">
+            <thead>
+              <tr className="border-b border-white/10">
+                {/* Rank column */}
+                <th className="sticky left-0 z-10 bg-surface-card py-2 px-1 text-center text-text-secondary font-medium w-8">
+                  #
+                </th>
+                {/* Name column - sticky */}
                 <th
-                  key={stage.key}
-                  className={`py-2 px-2 text-center font-medium cursor-pointer transition-colors whitespace-nowrap ${isResolved ? "text-text-muted" : "text-text-secondary hover:text-text-primary"}`}
-                  onClick={() => handleSort(stage.key)}
+                  className="sticky left-8 z-10 bg-surface-card py-2 px-2 text-left text-text-secondary font-medium cursor-pointer hover:text-text-primary transition-colors min-w-[140px]"
+                  onClick={() => handleSort(null)}
                 >
-                  {stage.market_id ? (
-                    <Link
-                      href={`/futures/${stage.market_id}`}
-                      className="hover:underline"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleStageClick(stage);
-                      }}
-                    >
+                  <span className="flex items-center gap-1">
+                    {data.sport === "golf" ? "Golfer" : "Team"}
+                    {sort.stageKey === null && (
+                      <SortArrow direction={sort.direction} />
+                    )}
+                  </span>
+                </th>
+                {/* Stage columns */}
+                {safeStages.map((stage) => {
+                  // Resolved (season-state decided) columns are de-emphasized so
+                  // they no longer read as live probability bars (#927).
+                  const isResolved = !!stage.resolved;
+                  return (
+                  <th
+                    key={stage.key}
+                    className={`py-2 px-2 text-center font-medium cursor-pointer transition-colors whitespace-nowrap ${isResolved ? "text-text-muted" : "text-text-secondary hover:text-text-primary"}`}
+                    onClick={() => handleSort(stage.key)}
+                  >
+                    {stage.market_id ? (
+                      <Link
+                        href={`/futures/${stage.market_id}`}
+                        className="hover:underline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStageClick(stage);
+                        }}
+                      >
+                        <span className="flex items-center justify-center gap-1">
+                          {stage.label}
+                          {sort.stageKey === stage.key && (
+                            <SortArrow direction={sort.direction} />
+                          )}
+                        </span>
+                      </Link>
+                    ) : (
                       <span className="flex items-center justify-center gap-1">
                         {stage.label}
                         {sort.stageKey === stage.key && (
                           <SortArrow direction={sort.direction} />
                         )}
                       </span>
-                    </Link>
-                  ) : (
-                    <span className="flex items-center justify-center gap-1">
-                      {stage.label}
-                      {sort.stageKey === stage.key && (
-                        <SortArrow direction={sort.direction} />
-                      )}
-                    </span>
-                  )}
-                  {isResolved && (
-                    <span className="block text-[9px] font-normal text-text-muted uppercase tracking-wide mt-0.5">
-                      decided
-                    </span>
-                  )}
-                </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {sortedParticipants.map((participant, idx) => (
-              <tr
-                key={participant.team_id ?? participant.name}
-                className="border-b border-white/5 hover:bg-white/5 transition-colors"
-                onMouseEnter={() => onHoverParticipant?.(participant.name)}
-                onMouseLeave={() => onHoverParticipant?.(null)}
-              >
-                {/* Rank */}
-                <td className="sticky left-0 z-10 bg-surface-card py-1.5 px-1 text-center text-text-secondary text-xs">
-                  {idx + 1}
-                </td>
-                {/* Name */}
-                <td className="sticky left-8 z-10 bg-surface-card py-1.5 px-2">
-                  <div className="flex items-center gap-2">
-                    {showLogos && participant.logo_url && (
-                      <img
-                        src={participant.logo_url}
-                        alt=""
-                        className="w-5 h-5 object-contain flex-shrink-0"
-                        loading="lazy"
-                      />
                     )}
-                    {showLogos && !participant.logo_url && participant.primary_color && (
-                      <span
-                        className="w-5 h-5 rounded-full flex-shrink-0 inline-block"
-                        style={{ backgroundColor: participant.primary_color }}
-                      />
-                    )}
-                    {participant.seed != null && (
-                      <span className="text-[10px] font-mono text-text-secondary/60 flex-shrink-0">
-                        {participant.seed}
+                    {isResolved && (
+                      <span className="block text-[9px] font-normal text-text-muted uppercase tracking-wide mt-0.5">
+                        decided
                       </span>
                     )}
-                    <TeamNameLink
-                      name={participant.name}
-                      sportKey={data.sport}
-                      className="text-text-primary font-medium truncate max-w-[240px] sm:max-w-[300px] hover:underline"
-                    />
-                    {participant.record && (
-                      <span className="text-[10px] text-text-secondary hidden sm:inline">
-                        {participant.record}
-                      </span>
-                    )}
-                  </div>
-                </td>
-                {/* Stage cells */}
-                {safeStages.map((stage) => {
-                  // Every lookup is guarded: a participant missing one of these
-                  // maps (poison payload, partial adapter) must render an empty
-                  // cell, never throw and blank the whole table.
-                  const prob = participant.probabilities?.[stage.key] ?? null;
-                  const change = participant.changes_24h?.[stage.key];
-                  const status = participant.status?.[stage.key] ?? null;
-                  const sources = participant.sources_data?.[stage.key];
-                  // Build tooltip with per-source values
-                  const tooltip = sources?.length
-                    ? sources.map((s) => {
-                        const label = SOURCE_LABELS[s.source] || s.source;
-                        const pct = s.probability * 100;
-                        return `${label}: ${pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)}%`;
-                      }).join(" · ")
-                    : undefined;
-                  const isResolved = !!stage.resolved;
-                  // Resolved columns: no live bar, no change indicator — a muted
-                  // decided glyph (in@✓ / out@—) so it can't read as a live bar.
-                  const bw = isResolved ? 0 : barWidth(prob);
-                  const display = cellDisplay(prob, status);
-                  return (
-                    <td
-                      key={stage.key}
-                      className="py-1.5 px-2 text-center relative"
-                      title={isResolved ? "Decided" : (tooltip ?? display.label)}
-                    >
-                      {/* Inline data bar — scaled width, single-hue accent */}
-                      {bw > 0 && (
-                        <div
-                          className="absolute inset-y-0 left-0 bg-blue-500/[0.08] transition-all"
-                          style={{ width: `${bw}%` }}
-                        />
-                      )}
-                      <div className="flex flex-col items-center relative">
-                        {isResolved ? (
-                          <span className="font-mono text-sm text-text-muted">
-                            {prob != null && prob >= 0.5 ? "✓" : "—"}
-                          </span>
-                        ) : (
-                          <>
-                            <span
-                              className={`font-mono text-sm ${probTextClass(prob, status)}`}
-                              aria-label={display.label}
-                              data-cell-state={status ?? "live"}
-                            >
-                              {display.text}
-                            </span>
-                            <SourceBreakdown sources={sources ?? []} />
-                            <ChangeIndicator change={change} />
-                          </>
-                        )}
-                      </div>
-                    </td>
+                  </th>
                   );
                 })}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sortedParticipants.map((participant, idx) => (
+                <tr
+                  key={participant.team_id ?? participant.name}
+                  className="border-b border-white/5 hover:bg-white/5 transition-colors"
+                  onMouseEnter={() => onHoverParticipant?.(participant.name)}
+                  onMouseLeave={() => onHoverParticipant?.(null)}
+                >
+                  {/* Rank */}
+                  <td className="sticky left-0 z-10 bg-surface-card py-1.5 px-1 text-center text-text-secondary text-xs">
+                    {idx + 1}
+                  </td>
+                  {/* Name */}
+                  <td className="sticky left-8 z-10 bg-surface-card py-1.5 px-2">
+                    <div className="flex items-center gap-2">
+                      {showLogos && participant.logo_url && (
+                        <img
+                          src={participant.logo_url}
+                          alt=""
+                          className="w-5 h-5 object-contain flex-shrink-0"
+                          loading="lazy"
+                        />
+                      )}
+                      {showLogos && !participant.logo_url && participant.primary_color && (
+                        <span
+                          className="w-5 h-5 rounded-full flex-shrink-0 inline-block"
+                          style={{ backgroundColor: participant.primary_color }}
+                        />
+                      )}
+                      {participant.seed != null && (
+                        <span className="text-[10px] font-mono text-text-secondary/60 flex-shrink-0">
+                          {participant.seed}
+                        </span>
+                      )}
+                      <TeamNameLink
+                        name={participant.name}
+                        sportKey={data.sport}
+                        className="text-text-primary font-medium truncate max-w-[240px] sm:max-w-[300px] hover:underline"
+                      />
+                      {participant.record && (
+                        <span className="text-[10px] text-text-secondary hidden sm:inline">
+                          {participant.record}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  {/* Stage cells */}
+                  {safeStages.map((stage) => {
+                    // Every lookup is guarded: a participant missing one of these
+                    // maps (poison payload, partial adapter) must render an empty
+                    // cell, never throw and blank the whole table.
+                    const prob = participant.probabilities?.[stage.key] ?? null;
+                    const change = participant.changes_24h?.[stage.key];
+                    const status = participant.status?.[stage.key] ?? null;
+                    const sources = participant.sources_data?.[stage.key];
+                    // Build tooltip with per-source values
+                    const tooltip = sources?.length
+                      ? sources.map((s) => {
+                          const label = SOURCE_LABELS[s.source] || s.source;
+                          const pct = s.probability * 100;
+                          return `${label}: ${pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)}%`;
+                        }).join(" · ")
+                      : undefined;
+                    const isResolved = !!stage.resolved;
+                    // Resolved columns: no live bar, no change indicator — a muted
+                    // decided glyph (in@✓ / out@—) so it can't read as a live bar.
+                    const bw = isResolved ? 0 : barWidth(prob, barScaleMax);
+                    const display = cellDisplay(prob, status);
+                    return (
+                      <td
+                        key={stage.key}
+                        className="py-1.5 px-2 text-center relative"
+                        title={isResolved ? "Decided" : (tooltip ?? display.label)}
+                      >
+                        {/* Inline data bar — scaled width, single-hue accent */}
+                        {bw > 0 && (
+                          <div
+                            className="absolute inset-y-0 left-0 bg-blue-500/[0.08] transition-all"
+                            style={{ width: `${bw}%` }}
+                          />
+                        )}
+                        <div className="flex flex-col items-center relative">
+                          {isResolved ? (
+                            <span className="font-mono text-sm text-text-muted">
+                              {prob != null && prob >= 0.5 ? "✓" : "—"}
+                            </span>
+                          ) : (
+                            <>
+                              <span
+                                className={`font-mono text-sm ${probTextClass(prob, status)}`}
+                                aria-label={display.label}
+                                data-cell-state={status ?? "live"}
+                              >
+                                {display.text}
+                              </span>
+                              <SourceBreakdown sources={sources ?? []} />
+                              <ChangeIndicator change={change} />
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {/* -right-2 lands on the scroll container's own clip edge, which that
+            container's -mx-2 puts 8px outside this wrapper. */}
+        {canScrollRight && (
+          <div
+            aria-hidden="true"
+            data-testid="progression-scroll-affordance"
+            className="pointer-events-none absolute inset-y-0 -right-2 w-8 bg-gradient-to-l from-surface-card to-transparent"
+          />
+        )}
       </div>
     </div>
   );
