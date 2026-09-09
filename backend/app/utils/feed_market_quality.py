@@ -246,9 +246,9 @@ def classify_fabricated_book(
 # (split from #921; cf. gotcha #23). Suppress them UNLESS there's live interest:
 # a genuine near-certain MOVER (a big 24h swing — e.g. it just jumped to 99% on
 # news) or a high-volume market stays eligible.
-FEED_LOCKED_CERTAIN_HIGH = 0.99   # leader rounds to 100%
-FEED_LOCKED_CERTAIN_LOW = 0.01    # leader rounds to 0%
-FEED_LOCKED_CERTAIN_KEEP_MOVE = 0.10       # >=10pt 24h swing = genuine mover
+FEED_LOCKED_CERTAIN_HIGH = 0.99  # leader rounds to 100%
+FEED_LOCKED_CERTAIN_LOW = 0.01  # leader rounds to 0%
+FEED_LOCKED_CERTAIN_KEEP_MOVE = 0.10  # >=10pt 24h swing = genuine mover
 FEED_LOCKED_CERTAIN_KEEP_VOLUME = 25000.0  # live money = keep
 
 
@@ -392,7 +392,7 @@ _DAILY_EQUITY_DIRECTION_RE = re.compile(
 # this year?" and the Pokemon-card family ("Charizard ex Up or Down: July") all
 # lack one and are untouched here.
 _TICKERED_DAILY_DIRECTION_RE = re.compile(
-    r"\([A-Z0-9][A-Z0-9./&^-]{0,9}\)"          # (XAUUSD), (SPY), (EUR/USD), (NG)
+    r"\([A-Z0-9][A-Z0-9./&^-]{0,9}\)"  # (XAUUSD), (SPY), (EUR/USD), (NG)
     r".*?\b("
     r"up or down|closes? above|closes? below|close above|close below"
     r")\b.*\b("
@@ -498,7 +498,9 @@ def _is_asset_price_level(name: str) -> bool:
     """R2 — asset price-LEVEL market (stocks/crypto/commodities ' above $X')."""
     if _MACRO_EVENT_RE.search(name):
         return False
-    return bool(_ASSET_CONTEXT_RE.search(name)) and bool(_PRICE_THRESHOLD_RE.search(name))
+    return bool(_ASSET_CONTEXT_RE.search(name)) and bool(
+        _PRICE_THRESHOLD_RE.search(name)
+    )
 
 
 # R8: "#1 yes, #2 no." A "will X be number one" market is eligible; runner-up /
@@ -523,9 +525,25 @@ def _is_runner_up_rank(name: str) -> bool:
 # R6: resolved SPORTS scores never surface (Alex gets them from ESPN). Needs the
 # market/event status (threaded in from the scoring path).
 _SPORTS_CATEGORIES = {
-    "basketball", "football", "baseball", "hockey", "soccer", "golf", "tennis",
-    "mma", "boxing", "cricket", "rugby", "motorsports", "esports", "lacrosse",
-    "wrestling", "olympics", "cycling", "rodeo", "pickleball",
+    "basketball",
+    "football",
+    "baseball",
+    "hockey",
+    "soccer",
+    "golf",
+    "tennis",
+    "mma",
+    "boxing",
+    "cricket",
+    "rugby",
+    "motorsports",
+    "esports",
+    "lacrosse",
+    "wrestling",
+    "olympics",
+    "cycling",
+    "rodeo",
+    "pickleball",
 }
 
 
@@ -724,6 +742,7 @@ def _subnational_election_story_key(name: str) -> str | None:
 
     return None
 
+
 # Margin-of-victory + voter-turnout election markets — Alex product decision
 # (2026-06-24). These two families flooded Discover: ~1,100 open variants, one
 # per state/district (KXMIDTERMMOV-*, KXMIDTERMVOTETURN-*, ...), and Alex judged
@@ -797,9 +816,7 @@ _STREAM_COUNT_TICKER_RE = re.compile(r"KXARTISTSTREAMS")
 # False-positive-safe: requires the literal "vote percent / % of the vote /
 # vote share" — does NOT catch approval ratings or poll shares of other things.
 _VOTE_PERCENT_RE = re.compile(
-    r"\bvote percent\b"
-    r"|\bvote share\b"
-    r"|\b(?:percent|%|\d+%)\s+of the vote\b",
+    r"\bvote percent\b" r"|\bvote share\b" r"|\b(?:percent|%|\d+%)\s+of the vote\b",
     re.IGNORECASE,
 )
 _VOTE_PERCENT_TICKER_RE = re.compile(r"KXVOTEPRIMARY")
@@ -846,11 +863,22 @@ _EPISODE_LEVEL_RE = re.compile(
 # Ticker-prefix suppression: numeric KPI/index threshold ladders
 _SUPPRESS_TICKER_PREFIXES = (
     # Stock index ranges/levels
-    "KXINX-", "KXINXY-", "KXNASDAQ100Y-", "KXINXU-", "KXINXMAXY-", "KXINXMINY-",
+    "KXINX-",
+    "KXINXY-",
+    "KXNASDAQ100Y-",
+    "KXINXU-",
+    "KXINXMAXY-",
+    "KXINXMINY-",
     # Company KPI thresholds
-    "KXTSLA-", "KXMTN-", "KXFDX-", "KXF-", "KXMCD-",
+    "KXTSLA-",
+    "KXMTN-",
+    "KXFDX-",
+    "KXF-",
+    "KXMCD-",
     # Macro indicators
-    "KXISMPMI-", "KXNOTE10-", "KXUSDM-",
+    "KXISMPMI-",
+    "KXNOTE10-",
+    "KXUSDM-",
     # Launch/production counts
     "KXSPACEXCOUNT-",
 )
@@ -858,18 +886,34 @@ _SUPPRESS_TICKER_PREFIXES = (
 # Ticker-prefix boost: narrative-driven markets
 _BOOST_TICKER_PREFIXES = (
     # IPO timing
-    "KXWAYMO", "KXIPOANTHROPIC", "KXIPOSTARLINK", "KXIPO-",
+    "KXWAYMO",
+    "KXIPOANTHROPIC",
+    "KXIPOSTARLINK",
+    "KXIPO-",
     # CEO/leadership changes
-    "KXAAPLCEOCHANGE", "KXTESLACEOCHANGE", "KXOPENAICEOCHANGE", "KXNEWROLEX",
+    "KXAAPLCEOCHANGE",
+    "KXTESLACEOCHANGE",
+    "KXOPENAICEOCHANGE",
+    "KXNEWROLEX",
     # M&A / acquisitions
-    "KXTAKEOVERACQ", "KXACQUANNOUNCE", "KXACQANNOUNCE", "KXUSACOMPANYSTAKE",
+    "KXTAKEOVERACQ",
+    "KXACQUANNOUNCE",
+    "KXACQANNOUNCE",
+    "KXUSACOMPANYSTAKE",
     "KXCOMPANYSTAKE",
     # Product launches
-    "KXIPHONERELEASE", "KXAPPLEFOLD", "KXPS6",
+    "KXIPHONERELEASE",
+    "KXAPPLEFOLD",
+    "KXPS6",
     # Cultural / fun
-    "KXCOSTCOHOTDOG", "KXBEZELP", "KXNBAFINALSPRICE", "KXNFLXINCREASE",
+    "KXCOSTCOHOTDOG",
+    "KXBEZELP",
+    "KXNBAFINALSPRICE",
+    "KXNFLXINCREASE",
     # AI milestones
-    "KXAISTREAMSERIES", "KXOAIANTH", "KXLLM1",
+    "KXAISTREAMSERIES",
+    "KXOAIANTH",
+    "KXLLM1",
 )
 
 _TOP_TIER_SOCCER_RE = re.compile(
@@ -1037,6 +1081,25 @@ _GENERIC_HEADLINES = {
     "Multi-source",
 }
 
+#: Headlines that are a state word and nothing else. Each is true, and none of
+#: them is an explanation: "Live" tells a reader the game is on, not what the card
+#: teaches them. A state word explains a card only when the copy underneath it
+#: says something (#4169 — the blank hero of #4150 scored as explained because
+#: `bool("Live" or "")` is True).
+_STATUS_ONLY_HEADLINES = frozenset(
+    {
+        "live",
+        "final",
+        "upcoming",
+        "scheduled",
+        "in progress",
+        "halftime",
+        "postponed",
+        "delayed",
+        "tbd",
+    }
+)
+
 
 @dataclass(frozen=True)
 class MarketQuality:
@@ -1112,13 +1175,47 @@ def _is_narrow_range(text: str) -> bool:
 # salient, it is that in "<PLACE> <OFFICE> winner?" nothing else is present.
 _OFFICE_NOUNS = frozenset(
     {
-        "state", "senate", "house", "delegates", "governor", "mayor", "mayoral",
-        "commission", "commissioner", "council", "assembly", "legislature",
-        "legislative", "board", "district", "county", "committee", "seat",
-        "election", "elections", "primary", "runoff", "winner", "race",
-        "control", "chamber", "public", "service", "attorney", "general",
-        "secretary", "treasurer", "auditor", "sheriff", "supervisor",
-        "alderman", "selectman", "ward", "precinct", "city", "town",
+        "state",
+        "senate",
+        "house",
+        "delegates",
+        "governor",
+        "mayor",
+        "mayoral",
+        "commission",
+        "commissioner",
+        "council",
+        "assembly",
+        "legislature",
+        "legislative",
+        "board",
+        "district",
+        "county",
+        "committee",
+        "seat",
+        "election",
+        "elections",
+        "primary",
+        "runoff",
+        "winner",
+        "race",
+        "control",
+        "chamber",
+        "public",
+        "service",
+        "attorney",
+        "general",
+        "secretary",
+        "treasurer",
+        "auditor",
+        "sheriff",
+        "supervisor",
+        "alderman",
+        "selectman",
+        "ward",
+        "precinct",
+        "city",
+        "town",
     }
 )
 
@@ -1275,8 +1372,14 @@ def classify_market_quality(
     has_salient = _has_named_salient_entity(name)
     is_narrow = _is_narrow_range(name)
 
-    ticker_suppress = any(ticker.startswith(p) for p in _SUPPRESS_TICKER_PREFIXES) if ticker else False
-    ticker_boost = any(ticker.startswith(p) for p in _BOOST_TICKER_PREFIXES) if ticker else False
+    ticker_suppress = (
+        any(ticker.startswith(p) for p in _SUPPRESS_TICKER_PREFIXES)
+        if ticker
+        else False
+    )
+    ticker_boost = (
+        any(ticker.startswith(p) for p in _BOOST_TICKER_PREFIXES) if ticker else False
+    )
     if ticker_suppress:
         reasons.append("ticker_suppress")
     if ticker_boost:
@@ -1828,7 +1931,10 @@ def diversify_discover_first_page(
     def can_select(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> bool:
         group = _discover_category_group(item)
         cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3)
-        if cold_start_cap is not None and len([s for s in category_counts.values()]) < 8:
+        if (
+            cold_start_cap is not None
+            and len([s for s in category_counts.values()]) < 8
+        ):
             cap = min(cap, cold_start_cap)
         if category_counts.get(group, 0) >= cap:
             return False
@@ -1899,7 +2005,9 @@ def diversify_discover_first_page(
                     continue
                 if relaxed_extra is not None:
                     group = _discover_category_group(item)
-                    cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3) + relaxed_extra
+                    cap = (
+                        _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3) + relaxed_extra
+                    )
                     if category_counts.get(group, 0) >= cap:
                         continue
                 selected.append(item)
@@ -2477,16 +2585,36 @@ def has_specific_explanation(
     *,
     hook_description: str | None,
     headline: str | None,
-    quality: MarketQuality,
+    quality: MarketQuality | None = None,
+    reason: str | None = None,
 ) -> bool:
-    """Return whether a card has enough explanation to stand on its own."""
+    """Return whether a card has enough explanation to stand on its own.
+
+    `reason` is optional because the two kinds of caller stand at different
+    points in the pipeline. The RANKING path scores a card to decide its order,
+    before any reason line has been composed — it has no served copy to pass, so
+    it passes none and this reads exactly as it always did. The MEASURING path
+    (`feed_quality_debug`) reads a finished payload and must pass it: a card whose
+    headline is a bare state word and whose reason is empty is a blank card, and
+    a coverage metric that calls it explained can never fail (#4169).
+
+    `quality` is optional for the same reason — an `event` card has no
+    `MarketQuality`, and before this it was given a second, weaker definition of
+    "explained" rather than this one.
+    """
     if has_strong_hook(hook_description):
         return True
-    if (
+    if quality is not None and (
         "health_outbreak" in quality.reasons
         or "sports_personnel_story" in quality.reasons
     ):
         return True
+    if reason is not None:
+        served = reason.strip()
+        if served and served.lower() not in _STATUS_ONLY_HEADLINES:
+            return True
+        if (headline or "").strip().lower() in _STATUS_ONLY_HEADLINES:
+            return False
     return headline not in _GENERIC_HEADLINES
 
 

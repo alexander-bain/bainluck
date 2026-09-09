@@ -47,6 +47,7 @@ class TestComputeFuturesHighlight:
             CATEGORY_BASE_SCORES,
             SPORTS_CATEGORY_BASE,
         )
+
         assert "esports" in CATEGORY_BASE_SCORES
         assert CATEGORY_BASE_SCORES["esports"] <= CATEGORY_BASE_SCORES["crypto"]
         assert CATEGORY_BASE_SCORES["esports"] < SPORTS_CATEGORY_BASE
@@ -107,8 +108,14 @@ class TestComputeFuturesHighlight:
     def test_major_movement_detected(self):
         """Large 24h probability changes are flagged."""
         outcomes = [
-            {"name": "Team A", "probability": 0.30, "probability_change_24h": 0.08,
-             "rank": 1, "rank_change_24h": 0, "opening_probability": 0.22},
+            {
+                "name": "Team A",
+                "probability": 0.30,
+                "probability_change_24h": 0.08,
+                "rank": 1,
+                "rank_change_24h": 0,
+                "opening_probability": 0.22,
+            },
         ]
         result = compute_futures_highlight(outcomes=outcomes)
         assert result.flags.has_major_movement is True
@@ -118,8 +125,14 @@ class TestComputeFuturesHighlight:
     def test_moderate_movement_detected(self):
         """Moderate 24h probability changes are flagged."""
         outcomes = [
-            {"name": "Team A", "probability": 0.25, "probability_change_24h": 0.03,
-             "rank": 1, "rank_change_24h": 0, "opening_probability": 0.22},
+            {
+                "name": "Team A",
+                "probability": 0.25,
+                "probability_change_24h": 0.03,
+                "rank": 1,
+                "rank_change_24h": 0,
+                "opening_probability": 0.22,
+            },
         ]
         result = compute_futures_highlight(outcomes=outcomes)
         assert result.flags.has_moderate_movement is True
@@ -130,13 +143,23 @@ class TestComputeFuturesHighlight:
         (a single thin trade on a placeholder) must NOT headline as the mover."""
         outcomes = [
             # Gigi Hadid @ 0.35% ticking +0.3pt — huge relative move, still ~0%.
-            {"name": "Gigi Hadid", "probability": 0.0035,
-             "probability_change_24h": 0.06, "rank": 3, "rank_change_24h": 0,
-             "opening_probability": 0.0005},
+            {
+                "name": "Gigi Hadid",
+                "probability": 0.0035,
+                "probability_change_24h": 0.06,
+                "rank": 3,
+                "rank_change_24h": 0,
+                "opening_probability": 0.0005,
+            },
             # A real leader with a smaller-but-material move above the floor.
-            {"name": "Real Leader", "probability": 0.40,
-             "probability_change_24h": 0.055, "rank": 1, "rank_change_24h": 0,
-             "opening_probability": 0.345},
+            {
+                "name": "Real Leader",
+                "probability": 0.40,
+                "probability_change_24h": 0.055,
+                "rank": 1,
+                "rank_change_24h": 0,
+                "opening_probability": 0.345,
+            },
         ]
         result = compute_futures_highlight(outcomes=outcomes)
         assert result.top_mover_name == "Real Leader"
@@ -145,12 +168,22 @@ class TestComputeFuturesHighlight:
     def test_all_near_zero_movers_yield_no_top_mover(self):
         """If every mover is below the probability floor, there is no top mover."""
         outcomes = [
-            {"name": "Nominee A", "probability": 0.003,
-             "probability_change_24h": 0.09, "rank": 1, "rank_change_24h": 0,
-             "opening_probability": 0.0005},
-            {"name": "Nominee B", "probability": 0.001,
-             "probability_change_24h": 0.08, "rank": 2, "rank_change_24h": 0,
-             "opening_probability": 0.0005},
+            {
+                "name": "Nominee A",
+                "probability": 0.003,
+                "probability_change_24h": 0.09,
+                "rank": 1,
+                "rank_change_24h": 0,
+                "opening_probability": 0.0005,
+            },
+            {
+                "name": "Nominee B",
+                "probability": 0.001,
+                "probability_change_24h": 0.08,
+                "rank": 2,
+                "rank_change_24h": 0,
+                "opening_probability": 0.0005,
+            },
         ]
         result = compute_futures_highlight(outcomes=outcomes)
         assert result.top_mover_name is None
@@ -159,10 +192,22 @@ class TestComputeFuturesHighlight:
     def test_leader_change_detected(self):
         """When the #1 rank has changed, it's detected."""
         outcomes = [
-            {"name": "Team B", "probability": 0.30, "probability_change_24h": 0.10,
-             "rank": 1, "rank_change_24h": 2, "opening_probability": 0.20},
-            {"name": "Team A", "probability": 0.28, "probability_change_24h": -0.05,
-             "rank": 2, "rank_change_24h": -1, "opening_probability": 0.33},
+            {
+                "name": "Team B",
+                "probability": 0.30,
+                "probability_change_24h": 0.10,
+                "rank": 1,
+                "rank_change_24h": 2,
+                "opening_probability": 0.20,
+            },
+            {
+                "name": "Team A",
+                "probability": 0.28,
+                "probability_change_24h": -0.05,
+                "rank": 2,
+                "rank_change_24h": -1,
+                "opening_probability": 0.33,
+            },
         ]
         result = compute_futures_highlight(outcomes=outcomes)
         assert result.flags.leader_changed is True
@@ -171,12 +216,30 @@ class TestComputeFuturesHighlight:
     def test_rank_shakeup_with_multiple_changes(self):
         """Multiple rank changes in top 5 = shakeup."""
         outcomes = [
-            {"name": "A", "probability": 0.30, "probability_change_24h": 0.01,
-             "rank": 1, "rank_change_24h": 2, "opening_probability": 0.29},
-            {"name": "B", "probability": 0.25, "probability_change_24h": 0.01,
-             "rank": 2, "rank_change_24h": -1, "opening_probability": 0.24},
-            {"name": "C", "probability": 0.20, "probability_change_24h": 0.01,
-             "rank": 3, "rank_change_24h": 1, "opening_probability": 0.19},
+            {
+                "name": "A",
+                "probability": 0.30,
+                "probability_change_24h": 0.01,
+                "rank": 1,
+                "rank_change_24h": 2,
+                "opening_probability": 0.29,
+            },
+            {
+                "name": "B",
+                "probability": 0.25,
+                "probability_change_24h": 0.01,
+                "rank": 2,
+                "rank_change_24h": -1,
+                "opening_probability": 0.24,
+            },
+            {
+                "name": "C",
+                "probability": 0.20,
+                "probability_change_24h": 0.01,
+                "rank": 3,
+                "rank_change_24h": 1,
+                "opening_probability": 0.19,
+            },
         ]
         result = compute_futures_highlight(outcomes=outcomes)
         assert result.flags.has_rank_shakeup is True
@@ -252,12 +315,30 @@ class TestComputeFuturesHighlight:
         # Create a scenario with everything interesting
         now = datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc)
         outcomes = [
-            {"name": "A", "probability": 0.30, "probability_change_24h": 0.15,
-             "rank": 1, "rank_change_24h": 3, "opening_probability": 0.15},
-            {"name": "B", "probability": 0.25, "probability_change_24h": -0.10,
-             "rank": 2, "rank_change_24h": -2, "opening_probability": 0.35},
-            {"name": "C", "probability": 0.20, "probability_change_24h": 0.05,
-             "rank": 3, "rank_change_24h": 1, "opening_probability": 0.15},
+            {
+                "name": "A",
+                "probability": 0.30,
+                "probability_change_24h": 0.15,
+                "rank": 1,
+                "rank_change_24h": 3,
+                "opening_probability": 0.15,
+            },
+            {
+                "name": "B",
+                "probability": 0.25,
+                "probability_change_24h": -0.10,
+                "rank": 2,
+                "rank_change_24h": -2,
+                "opening_probability": 0.35,
+            },
+            {
+                "name": "C",
+                "probability": 0.20,
+                "probability_change_24h": 0.05,
+                "rank": 3,
+                "rank_change_24h": 1,
+                "opening_probability": 0.15,
+            },
         ]
         result = compute_futures_highlight(
             market_tier=1,
@@ -274,10 +355,22 @@ class TestComputeFuturesHighlight:
         """Test a realistic championship market scenario."""
         now = datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc)
         outcomes = [
-            {"name": "Celtics", "probability": 0.22, "probability_change_24h": -0.05,
-             "rank": 1, "rank_change_24h": 0, "opening_probability": 0.27},
-            {"name": "Thunder", "probability": 0.18, "probability_change_24h": 0.03,
-             "rank": 2, "rank_change_24h": 1, "opening_probability": 0.15},
+            {
+                "name": "Celtics",
+                "probability": 0.22,
+                "probability_change_24h": -0.05,
+                "rank": 1,
+                "rank_change_24h": 0,
+                "opening_probability": 0.27,
+            },
+            {
+                "name": "Thunder",
+                "probability": 0.18,
+                "probability_change_24h": 0.03,
+                "rank": 2,
+                "rank_change_24h": 1,
+                "opening_probability": 0.15,
+            },
         ]
         result = compute_futures_highlight(
             market_tier=1,
@@ -427,9 +520,22 @@ class TestDeterministicFuturesHeadlines:
             "Will Anthropic IPO before OpenAI?"
         )
 
-    def test_source_disagreement_headline_takes_priority_over_movement(self):
-        """Cross-source disagreement should be the deterministic top story."""
-        from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason
+    def test_source_disagreement_is_scored_but_never_narrated(self):
+        """#4133/#4160 reversed this test's premise, and kept its scoring half.
+
+        It used to assert that cross-source disagreement was the deterministic
+        TOP STORY: `primary_reason == "Sources disagree"`, headline
+        `"Sources disagree (3)"`, reason `"3 sources disagree, but Thunder leads
+        NBA Championship at 31%"`. The standing ruling is the opposite — *the
+        blend is the product; source divergence is a data bug to fix, not a
+        feature to show* — so the card still RANKS on the divergence (the flag,
+        the weight and the reason code are all asserted below, unchanged) and
+        simply stops telling the reader about it.
+        """
+        from app.utils.feed_reasons import (
+            generate_futures_headline,
+            generate_futures_reason,
+        )
 
         result = compute_futures_highlight(
             market_tier=1,
@@ -448,9 +554,12 @@ class TestDeterministicFuturesHeadlines:
             ],
         )
 
+        # The scoring half, unchanged: the card is still promoted for it.
         assert result.flags.has_source_divergence is True
         assert result.flags.has_major_movement is True
-        assert result.primary_reason == "Sources disagree"
+        assert "source_divergence" in result.reasons
+        # The narration half: no label, so the next real signal speaks.
+        assert result.primary_reason == "Big odds movement"
 
         headline = generate_futures_headline(
             result.reasons,
@@ -465,12 +574,20 @@ class TestDeterministicFuturesHeadlines:
             leader_probability=0.31,
             source_count=3,
         )
-        assert headline == "Sources disagree (3)"
-        assert reason == "3 sources disagree, but Thunder leads NBA Championship at 31%"
+        assert headline == "Thunder leads at 31%"
+        # The movement it also has speaks instead, unnamed here only because
+        # this fixture passes the generator no mover.
+        assert reason == "Big odds movement in NBA Championship"
+        # And the composed served headline — `headline or primary_reason`, the
+        # expression in `routes/feed.py` — never reaches the old string either.
+        assert "disagree" not in (headline or result.primary_reason or "").lower()
 
     def test_opening_probability_surprise_gets_named_headline(self):
         """Opening-line surprises should produce specific deterministic copy."""
-        from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason
+        from app.utils.feed_reasons import (
+            generate_futures_headline,
+            generate_futures_reason,
+        )
 
         result = compute_futures_highlight(
             market_tier=3,
@@ -623,11 +740,13 @@ class TestMinorLeagueDetection:
     def test_minor_league_gets_score_penalty(self):
         """Minor league futures should score significantly lower."""
         nhl = compute_futures_highlight(
-            market_tier=1, sport_category="hockey",
+            market_tier=1,
+            sport_category="hockey",
             market_name="NHL Stanley Cup Winner",
         )
         ahl = compute_futures_highlight(
-            market_tier=1, sport_category="hockey",
+            market_tier=1,
+            sport_category="hockey",
             market_name="AHL Calder Cup Winner",
         )
         assert nhl.score > ahl.score
@@ -637,7 +756,8 @@ class TestMinorLeagueDetection:
     def test_minor_league_hockey_loses_major_bonus(self):
         """AHL gets penalty, not major_league bonus, even though hockey is tier 1."""
         result = compute_futures_highlight(
-            market_tier=1, sport_category="hockey",
+            market_tier=1,
+            sport_category="hockey",
             market_name="AHL Calder Cup Winner",
         )
         assert "major_league" not in result.reasons

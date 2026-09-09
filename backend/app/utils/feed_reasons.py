@@ -10,6 +10,41 @@ import re
 from datetime import datetime, timezone
 from typing import NamedTuple, Optional
 
+#: Words about our own machinery — the ordering of our leaderboard, the number of
+#: rows we hold for a question, whether our sources agree with each other. None of
+#: them is a thing that happened in the world, so none of them may reach a reader
+#: (#4133, #4160; notice 34). Two standing rulings say the same thing from two
+#: directions: attribution is BY NAME in the source mark, never an anonymous count
+#: (D91), and source divergence is a data bug to fix, not a feature to show.
+#:
+#: This tuple is the ban list, not a description of one: the guard in
+#: `tests/test_feed_reasons_serve_no_diagnostics_4160.py` drives every branch of
+#: the three generators below and fails on any output that matches it, so a new
+#: branch cannot reintroduce the class. `feed_quality_debug.WHY_NOW_MARKERS` — the
+#: vocabulary that CREDITS a card with having explained itself — is asserted
+#: disjoint from it by the same test.
+DIAGNOSTIC_PHRASES: tuple[str, ...] = (
+    "ranking change",
+    "tracked by",
+    "sources disagree",
+    "sources tracking",
+    "multi-source",
+    "across 2 sources",
+)
+
+#: The same ban, for the shapes that carry a live count instead of a fixed word.
+DIAGNOSTIC_PHRASE_RE = re.compile(
+    r"\b\d+\s+sources?\b|\bacross\s+\d+\s+sources?\b", re.IGNORECASE
+)
+
+
+def contains_diagnostic_phrase(text: str | None) -> bool:
+    """True when a served string talks about our pipeline instead of the world."""
+    lowered = (text or "").lower()
+    if any(phrase in lowered for phrase in DIAGNOSTIC_PHRASES):
+        return True
+    return bool(DIAGNOSTIC_PHRASE_RE.search(lowered))
+
 
 def _side_label(name: str) -> str:
     """Make binary Yes/No outcome labels read naturally in movement text."""
@@ -772,16 +807,10 @@ def generate_futures_reason(
             return f"New favorite: {leader_name} ({pct}%) now leads {market_name}"
         return f"New favorite in {market_name}"
 
-    # Source divergence
-    if "source_divergence" in reasons:
-        if source_count >= 2:
-            if leader_name and leader_probability is not None:
-                pct = round(leader_probability * 100)
-                return f"{source_count} sources disagree, but {leader_name} leads {market_name} at {pct}%"
-            return (
-                f"Sources disagree on {market_name} ({source_count} sources tracking)"
-            )
-        return f"Sources disagree on {market_name}"
+    # (No `source_divergence` branch. Removed with the rest of DIAGNOSTIC_PHRASES
+    # — the standing ruling is "the blend is the product": divergence between our
+    # sources is a data bug to fix, not news to print. A card that reaches here on
+    # divergence alone falls to the leader sentence below and says what it knows.)
 
     # Major movement
     if "major_movement_24h" in reasons:
@@ -793,9 +822,11 @@ def generate_futures_reason(
             return f"{_side_label(top_mover_name)} moved {direction} {pct} points today in {market_name}"
         return f"Big odds movement in {market_name}"
 
-    # Rankings shakeup
-    if "rank_shakeup" in reasons:
-        return f"Multiple ranking changes in {market_name}"
+    # (No `rank_shakeup` branch. "Multiple ranking changes" described the ordering
+    # of our own leaderboard, and the honest replacement is not available here:
+    # `rank_shakeup` fires on two rank changes BELOW the top, and `leader_change`
+    # — the one development a reader could restate — is its own branch above. So
+    # the card falls through to a movement or leader sentence it can support.)
 
     # Moderate movement
     if "moderate_movement_24h" in reasons:
@@ -847,12 +878,10 @@ def generate_futures_reason(
             )
         return f"{market_name} has shifted since {since_opening}"
 
-    # Multi-source
-    if "multi_source" in reasons:
-        if leader_name and leader_probability is not None:
-            pct = round(leader_probability * 100)
-            return f"{leader_name} ({pct}%) leads {market_name} across {source_count} sources"
-        return f"{market_name} tracked by {source_count} sources"
+    # (No `multi_source` branch. How many rows we hold for a question is a count
+    # of our inventory, and which venues carry it is attribution — D91 puts that
+    # in the source mark, BY NAME. With the count gone the branch said exactly
+    # what the fallback below says, so it is the fallback.)
 
     # Fallback
     if leader_name and leader_probability is not None:
@@ -907,12 +936,7 @@ def generate_futures_headline(
             return f"New favorite: {leader_name} ({round(leader_probability * 100)}%)"
         return "New favorite"
 
-    if "source_divergence" in reasons:
-        return (
-            f"Sources disagree ({source_count})"
-            if source_count >= 2
-            else "Sources disagree"
-        )
+    # (No `source_divergence` branch — see `generate_futures_reason`.)
 
     if (
         "major_movement_24h" in reasons
@@ -924,8 +948,7 @@ def generate_futures_headline(
             return f"{_short_market_name(market_name)} odds {direction} {_point_change(top_mover_change)} points"
         return f"{_side_label(top_mover_name)} {direction} {_point_change(top_mover_change)} points today"
 
-    if "rank_shakeup" in reasons:
-        return "Multiple ranking changes"
+    # (No `rank_shakeup` branch — see `generate_futures_reason`.)
 
     if (
         "moderate_movement_24h" in reasons
@@ -968,12 +991,9 @@ def generate_futures_headline(
             f"{_point_change(top_surprise_change)} points since {since_opening}"
         )
 
-    if "multi_source" in reasons:
-        return (
-            f"Tracked by {source_count} sources"
-            if source_count >= 2
-            else "Multi-source"
-        )
+    # (No `multi_source` branch — see `generate_futures_reason`. "Tracked by 2
+    # sources" held the HEADLINE slot on four of the first twenty cards the
+    # morning this shipped.)
 
     if leader_name and leader_probability is not None:
         if _weak_outcome_label(leader_name) and market_name:
@@ -1051,17 +1071,15 @@ def generate_futures_context_summary(
             if leader
             else "Resolution window is this month"
         )
-    if "multi_source" in reasons and headline.startswith("Tracked by"):
-        if leader:
-            return f"{leader} across {source_count} sources"
-        return headline
+    # (No `multi_source` clause. The headline it keyed on — `startswith("Tracked
+    # by")` — is no longer emitted, and " across N sources" is the same inventory
+    # count that D91 puts in the source mark by name.)
 
     if headline:
         if _copy_repeats_market_name(headline, market_name):
-            if "source_divergence" in reasons and source_count >= 2:
-                return f"Sources disagree ({source_count})"
-            if "multi_source" in reasons and source_count >= 2:
-                return f"Tracked by {source_count} sources"
+            # (No divergence / source-count rungs here either: when the headline
+            # only restates the question, the honest answer is the leader or the
+            # resolution window, never a number about our own rows.)
             if "resolving_soon_7d" in reasons:
                 return "Resolution window is this week"
             if "resolving_soon_30d" in reasons:

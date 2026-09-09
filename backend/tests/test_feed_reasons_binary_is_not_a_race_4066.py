@@ -246,7 +246,11 @@ def test_a_field_market_keeps_its_leads_copy():
         now=NOW,
     )
 
-    assert headline == "Tracked by 2 sources"
+    # Was `"Tracked by 2 sources"` until #4160/#4133 took the inventory count
+    # off the screen. The point of this test is unchanged and still tested: a
+    # FIELD market keeps its "leads" copy, and only yes/no questions were
+    # rescued from being rendered as a race.
+    assert headline == "Los Angeles Dodgers leads at 30%"
 
 
 # ── The dated baseline itself ────────────────────────────────────────────────

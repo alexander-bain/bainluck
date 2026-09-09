@@ -692,7 +692,17 @@ def diagnose_feed_items(
                     "image": bool(
                         data.get("home_team_data") or data.get("away_team_data")
                     ),
-                    "explanation_ok": bool(item.get("headline") or item.get("reason")),
+                    # One definition of "explained", not two (#4169). This branch
+                    # used to carry its own — `bool(headline or reason)` — so an
+                    # event card whose headline was the word "Live" and whose
+                    # reason was empty scored as explained, and
+                    # `explanation-coverage@20` read 20/20 on a page with a blank
+                    # card on it. Every card type now reaches the same predicate.
+                    "explanation_ok": has_specific_explanation(
+                        hook_description=None,
+                        headline=item.get("headline"),
+                        reason=item.get("reason"),
+                    ),
                     "quality_class": "normal",
                     "family_key": f"event:{data.get('id') or name.lower()}",
                     "story_key": None,
@@ -724,6 +734,9 @@ def diagnose_feed_items(
             hook_description=hook,
             headline=headline,
             quality=quality,
+            # The measuring path has the served copy and passes it (#4169); the
+            # ranking path does not have it yet and does not.
+            reason=item.get("reason") or "",
         )
 
         diagnosed.append(
@@ -959,7 +972,10 @@ WHY_NOW_MARKERS = (
     "shifted since ",
     "has shifted since ",
     "new favorite",
-    "multiple ranking changes",
+    # ("multiple ranking changes" was here. Removed in the same commit as the
+    # branch that emitted it — #4160: it described the ordering of our own
+    # leaderboard, so the metric was crediting a card for a string notice 34
+    # forbids from being on the screen at all.)
     "resolving soon",
     "resolving this week",
     "resolves this week",

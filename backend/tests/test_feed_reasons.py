@@ -180,6 +180,14 @@ def test_futures_reason_describes_movement_as_points_not_percent():
 
 
 def test_futures_reason_names_leader_when_sources_disagree():
+    """#4160/#4133: the disagreement itself no longer reaches the reader.
+
+    Was `"3 sources disagree, but Sentimental Favorite leads Best Picture at
+    37%"`. The standing ruling is that divergence between our sources is a data
+    bug to fix, not news to print, so the card falls through to the sentence it
+    can support — and the half this test was really about, that a divergent card
+    still NAMES ITS LEADER instead of going blank, is asserted below.
+    """
     reason = generate_futures_reason(
         market_name="Best Picture",
         highlight_reasons=["source_divergence"],
@@ -188,10 +196,8 @@ def test_futures_reason_names_leader_when_sources_disagree():
         source_count=3,
     )
 
-    assert (
-        reason
-        == "3 sources disagree, but Sentimental Favorite leads Best Picture at 37%"
-    )
+    assert reason == "Sentimental Favorite (37%) leads Best Picture"
+    assert "disagree" not in reason
 
 
 def test_futures_reason_names_leader_for_monthly_resolution():
@@ -451,8 +457,11 @@ def test_futures_context_summary_adds_leader_to_source_disagreement_headline():
         source_count=3,
     )
 
-    assert headline == "Sources disagree (3)"
-    assert summary == "Sources disagree (3); Sentimental Favorite leads at 37%"
+    # #4160/#4133 — see the reason-side test above. Both slots now say the one
+    # thing the card can stand behind.
+    assert headline == "Sentimental Favorite leads at 37%"
+    assert summary == "Sentimental Favorite leads at 37%"
+    assert "disagree" not in headline and "disagree" not in summary
 
 
 def test_futures_context_summary_omits_weak_date_leader():
