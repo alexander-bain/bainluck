@@ -323,6 +323,36 @@ class TestTheQueryIsShapedAsClaimed:
         sql = " ".join(str(mod._KALSHI_UNREACHED_FROZEN_SQL).split())
         assert "ORDER BY fm.volume DESC NULLS LAST" in sql
 
+    def test_it_is_actually_wired_into_the_task(self):
+        """The mutation every other arm here misses: delete the call, stay green.
+
+        Mutation-tested 2026-09-09 — eleven mutants of the arm's own logic were
+        caught by the classes above, and replacing the ONE call site with a
+        no-op left all fourteen passing. A ship nothing invokes is inert, and no
+        behavioural test of a helper can see that.
+
+        Parsed with `ast`, deliberately, not grepped: this module's docstrings
+        name `_sweep_unreached_kalshi_frozen` several times, so a source scan for
+        the string is satisfied by the prose ABOUT the call and would pass with
+        the call itself deleted. The AST sees calls only.
+        """
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(mod))
+        sites = [
+            fn.name
+            for fn in ast.walk(tree)
+            if isinstance(fn, (ast.AsyncFunctionDef, ast.FunctionDef))
+            for call in ast.walk(fn)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "_sweep_unreached_kalshi_frozen"
+        ]
+        assert "_refresh_stale_futures_prices" in sites, (
+            "the reach arm is not called by the task; #4253's reach half is inert"
+        )
+
     def test_it_admits_only_uncrowned_frozen_legs_on_live_markets(self):
         sql = " ".join(str(mod._KALSHI_UNREACHED_FROZEN_SQL).split())
         assert "fm.source = 'kalshi'" in sql
