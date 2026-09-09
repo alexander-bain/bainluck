@@ -396,11 +396,14 @@ def test_committed_register_has_both_singles_draws_populated(committed):
 
 
 def test_the_doubles_draws_are_declared_and_empty(committed):
-    """Item 12: the section ACCEPTS the class, and holds none of it yet.
+    """Item 12: the register ACCEPTS the class, and holds none of it yet.
 
-    Censused 2026-08-26: zero US Open doubles markets at either source. If one
-    of these ever gains a player without a market to price them, that is a
-    population bug and this catches it.
+    NOT because no doubles market exists — that census expired, see the note on
+    ``DOUBLES_DRAWS`` — but because no doubles OUTRIGHT market does, and a
+    register player is a contender for a board. The doubles reach the page from
+    the scoreboard instead (#4124). If one of these draws ever gains a player
+    without a market to price them, that is a population bug and this catches
+    it.
     """
     view = TournamentRegister(committed)
     for draw in DOUBLES_DRAWS:

@@ -18,6 +18,7 @@ import {
   type PropMarket,
   type PropOutcome,
 } from "@/lib/tournamentProps";
+import { drawIsPriced } from "@/lib/tournamentResults";
 
 /**
  * The curated questions section (UX-P132 re-skin, Alex's item 5).
@@ -661,6 +662,14 @@ export default function TournamentProps({
   const [expanded, setExpanded] = React.useState(false);
 
   if (visible.length === 0) {
+    // #4124: EXCEPT ON A DRAW NOTHING PRICES. The reasoning below is about a
+    // curation GAP — a draw whose markets we hold and have not curated — and
+    // the empty box is how that gap reaches somebody who can close it. The
+    // doubles are not that: no venue quotes a doubles prop, so the box would be
+    // a permanent paragraph explaining an absence, which is exactly what
+    // standing notice 34 bans from a reader's screen. `TournamentResults` makes
+    // the same call on the same test.
+    if (!drawIsPriced(draw)) return null;
     // An empty section still appears, and says WHY, with a number. A section
     // that vanishes teaches the reader it does not exist; one that says
     // "nothing curated yet" over a register holding eleven markets is simply

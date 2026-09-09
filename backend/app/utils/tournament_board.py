@@ -80,8 +80,15 @@ TREND_DAYS = 30
 DRAW_LABELS: dict[str, str] = {
     "mens-singles": "Men's Singles",
     "womens-singles": "Women's Singles",
-    # Ready and unused (UX-P139, item 12). No doubles market exists at either
-    # source; ESPN already carries all three draws' results under these slugs.
+    # All five draws render (#4124). ESPN carries all three doubles draws'
+    # matches and results under these exact slugs, and the page shows them
+    # behind its Doubles pill. No doubles OUTRIGHT market exists — measured
+    # 2026-09-09, `KXMIXEDDOUBLES` is the only doubles "Tournament Champion"
+    # series Kalshi runs and it has zero open markets — so a doubles draw has
+    # matches and no championship board. (The line here used to read "No
+    # doubles market exists at either source", censused 2026-08-26 before the
+    # doubles draw was made. It was false within the week and read as a
+    # standing fact for two.)
     "mens-doubles": "Men's Doubles",
     "womens-doubles": "Women's Doubles",
     "mixed-doubles": "Mixed Doubles",

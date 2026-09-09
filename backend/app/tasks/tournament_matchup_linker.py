@@ -71,7 +71,34 @@ WATCHED: tuple[dict[str, Any], ...] = (
         "season": "2026",
         # Measured 2026-08-28: 47 KXATPMATCH + 49 KXWTAMATCH open events for the
         # main draw, which is exactly the 96 registered R128 fixtures.
-        "kalshi_series": ("KXATPMATCH", "KXWTAMATCH"),
+        #
+        # ═══ AND THE THREE DOUBLES SERIES (#4124) ═══
+        #
+        # This tuple is the last link in the doubles chain and it is the one
+        # that would have made every other part of that ship look broken: a
+        # doubles card can be named, identified, rounded and rendered, and it
+        # still prints no number if the resolver never sees a doubles market.
+        # Kalshi lists them under their own series, so this pool — an explicit
+        # allowlist by design — excluded all of them by construction.
+        #
+        # Measured 2026-09-09 against Kalshi's own series index (notice 26a) and
+        # then against our tables: `KXATPDOUBLES` 86 markets inside the
+        # 14-day candidate window, `KXWTADOUBLES` 76, `KXMIXEDDOUBLESMATCH` 22.
+        # The pool goes 600 -> 784, against a `MAX_CANDIDATE_MARKETS` cap of
+        # 2,000, so the cap stays what it is: a guard against a series rename,
+        # not a live bound.
+        #
+        # `KXMIXEDDOUBLESMATCH`, not `KXMIXEDDOUBLES` — the latter is the mixed
+        # doubles TOURNAMENT CHAMPION series (an outright), and an outright in a
+        # match-market pool is a market that could bind to a fixture and answer
+        # a different question. The two names differ by six characters.
+        "kalshi_series": (
+            "KXATPMATCH",
+            "KXWTAMATCH",
+            "KXATPDOUBLES",
+            "KXWTADOUBLES",
+            "KXMIXEDDOUBLESMATCH",
+        ),
     },
 )
 
@@ -283,14 +310,18 @@ def _authority_competitions(
 
     ``determined`` is the gate, and it is the same one ``authority_match_row``
     uses to decide whether it may draw the row at all. Two competitors, both
-    with a positive athlete id and a name, or the competition is skipped —
-    a doubles competition names a team and no athlete, and a qualifier slot
-    names "TBD". Resolving either would be guessing at who a market is for.
+    identified and named, or the competition is skipped — a qualifier slot names
+    "TBD" with a non-positive id, and resolving it would be guessing at who a
+    market is for. Since #4124 a doubles PAIR clears that gate too, so the day's
+    doubles quarter-finals reach the resolver on the same terms as the singles.
 
-    Keying on ``espn:athlete:<id>`` matches ``authority_match_row``'s own
-    ``entity_key``, so the sides map this produces is looked up by the exact
-    string the slate row carries.
+    ``competitor_entity_key`` mints the key for both, and it is the same call
+    ``authority_match_row`` makes, so the sides map this produces is looked up by
+    the exact string the slate row carries. Formatting it in both files is how
+    the two come to disagree the day one of them learns a new shape.
     """
+    from app.services.espn_tennis import competitor_entity_key
+
     out: list[dict[str, Any]] = []
     for comp_id, listed in (order_of_play or {}).items():
         if not isinstance(listed, dict):
@@ -312,7 +343,7 @@ def _authority_competitions(
             "scheduled_date": listed.get("start_at"),
             "players": [
                 {
-                    "entity_key": f"espn:athlete:{c.get('espn_athlete_id')}",
+                    "entity_key": competitor_entity_key(c),
                     "display_name": c.get("name"),
                 }
                 for c in competitors

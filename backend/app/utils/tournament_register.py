@@ -69,20 +69,30 @@ ALLOWED_SOURCES = ("kalshi", "polymarket")
 #: The draws a tournament may have.  Register-owned because ``llm_gender`` is
 #: dead (NULL on all 861,809 rows of ``futures_markets``).
 #:
-#: THE THREE DOUBLES DRAWS ARE HERE AND EMPTY (UX-P139, Alex's item 12):
-#: "the measurement lane is cataloging what Polymarket carried for US Open
-#: 2025 — build the section to accept those market classes when the catalog
-#: lands."  Censused 2026-08-26: **zero** US Open doubles markets exist at
-#: either source (3,581 markets platform-wide match "doubles"; none of them
-#: this tournament), so nothing in the committed register uses them today.
+#: THE THREE DOUBLES DRAWS ARE HERE AND STILL EMPTY IN THE COMMITTED FILE
+#: (UX-P139, Alex's item 12).  They are listed rather than added later because
+#: the alternative is that a doubles entry fails ``UNKNOWN_DRAW`` — a population
+#: pass blocked on a one-line code change, which is exactly the "deploy on the
+#: day" this whole register pattern exists to avoid.
 #:
-#: They are listed anyway rather than added later, because the alternative is
-#: that the catalog lands and a doubles entry fails ``UNKNOWN_DRAW`` — a
-#: population pass blocked on a one-line code change, which is exactly the
-#: "deploy on the day" this whole register pattern exists to avoid.  ESPN
-#: already carries all three draws' RESULTS under these exact slugs (63 men's,
-#: 63 women's, 21 mixed competitions on 2026-08-26), so the results half is
-#: live the moment anybody asks for it.
+#: ⚠️ THE CENSUS THAT USED TO BE WRITTEN HERE EXPIRED (#4124).  It read, in the
+#: present tense, "**zero** US Open doubles markets exist at either source
+#: (3,581 markets platform-wide match 'doubles'; none of them this
+#: tournament)".  That was measured 2026-08-26, four days before the doubles
+#: draw was made, and it was false within the week: measured 2026-09-09 against
+#: Kalshi's own series index, ``KXATPDOUBLES`` holds 319 markets of which 309
+#: are attached to an event of ours, ``KXWTADOUBLES`` 278 of which 259 are, and
+#: every one of the day's six doubles matches is held, open and attached.  A
+#: dated census written as a standing fact is the first thing the next reader
+#: believes; if you replace this paragraph, date it and say what expires it.
+#:
+#: What IS true today, and is the reason the committed register still carries no
+#: doubles player: no doubles **outright** market exists (``KXMIXEDDOUBLES``,
+#: the only doubles "Tournament Champion" series, has zero open markets), so a
+#: doubles draw has no championship board to register contenders for.  Its
+#: matches and its results reach the page from the scoreboard instead — see
+#: ``tournament_slate.build_results``, which since #4124 builds a row from ESPN
+#: alone for a draw this register carries no player in.
 SINGLES_DRAWS = ("mens-singles", "womens-singles")
 DOUBLES_DRAWS = ("mens-doubles", "womens-doubles", "mixed-doubles")
 DRAWS = (*SINGLES_DRAWS, *DOUBLES_DRAWS)

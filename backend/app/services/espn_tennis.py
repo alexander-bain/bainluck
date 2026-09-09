@@ -74,9 +74,49 @@ DRAW_SLUGS: dict[str, str] = {
 }
 
 #: The two draws whose competitions name individual athletes.  A doubles
-#: competition names a TEAM and no athlete in some payloads, which yields a
-#: half-pair or none — silence, never a fixture to anchor on.
+#: competition names a PAIR — see :data:`PAIR_COMPETITOR_TYPE` — so a reader
+#: that only knows how to read an athlete gets silence from one, never a
+#: half-pair.
 SINGLES_SLUGS = ("mens-singles", "womens-singles")
+
+#: ESPN's own word for a competitor that is a doubles pair rather than a person.
+#:
+#: ═══ #4124: WHY EVERY DOUBLES READ WAS SILENT ═══
+#:
+#: Every "who is playing" read in this module went to
+#: ``competitor["athlete"]["displayName"]``, and a doubles competitor has no
+#: ``athlete`` key at all.  Measured against the live board 2026-09-09, all five
+#: draws present, 625 competitions::
+#:
+#:     order_of_play                       625   (147 of them doubles)
+#:     ... naming two identified sides     474   ALL singles, 0 doubles
+#:     finished results parsed             468   ALL singles
+#:     `unpaired`, i.e. dropped            137   ALL doubles
+#:
+#: So ``/tournaments/us-open`` had no doubles on it in any form — not a card,
+#: not a result, not a row — while the hub one surface over carried 12 live
+#: doubles matches.  Nothing was filtering them out by name; they simply never
+#: acquired one.
+#:
+#: What a doubles competitor carries instead::
+#:
+#:     id      "1013-2319"        the two athlete ids, joined
+#:     type    "team"
+#:     roster  displayName "Marcelo Melo / John Peers"
+#:             athletes[]  two records, each with displayName and a flag
+#:
+#: That is a complete identity — a stable id and the name both venues print —
+#: so the pair is read as ONE side, exactly as ESPN models it.  A doubles match
+#: is two sides, not four players, which is also what makes it fit the
+#: register's pair-shaped matchup and this page's two-sided card without a
+#: second card family (standing notice 35).
+PAIR_COMPETITOR_TYPE = "team"
+
+#: Namespace for a doubles pair's entity key, beside ``espn:athlete:<id>`` for a
+#: singles player.  Both are minted by :func:`competitor_entity_key` and by
+#: nothing else, so the linker's write and the slate's read cannot drift.
+PAIR_ENTITY_PREFIX = "espn:pair:"
+ATHLETE_ENTITY_PREFIX = "espn:athlete:"
 
 #: Only a FINAL competition yields a result.  An in-progress match has line
 #: scores too, and printing them as a result would be the settled-means-settled
@@ -218,6 +258,70 @@ def espn_round_key(display_name: Any, *, draw_size: int) -> Optional[str]:
     return None
 
 
+def pair_athlete_ids(competitor: dict[str, Any]) -> list[int]:
+    """The two athlete ids behind a doubles competitor, ascending, or ``[]``.
+
+    ESPN's competitor id for a pair is the two athlete ids joined —
+    ``"1013-2319"`` for Melo / Peers.  It is sorted here rather than taken as
+    published because the published order is the ROSTER's, and the roster is a
+    property of one payload while the pair is the thing we key on.  Ascending
+    means the same two people produce the same key whichever way round ESPN
+    lists them, in this round and in the next one.
+
+    ``[]`` for anything that is not exactly two positive ids: a singles
+    competitor (one id), an unfilled slot, a shape we do not recognise.  The
+    caller reads that as "no pair identity", never as a partial one.
+    """
+    parts = str(competitor.get("id") or "").split("-")
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return []
+    ids = sorted(int(p) for p in parts)
+    return ids if all(i > 0 for i in ids) else []
+
+
+def competitor_name(competitor: dict[str, Any]) -> str:
+    """What to CALL one side of a competition — a player, or a doubles pair.
+
+    The single answer to a question this module used to answer in four places,
+    each of them by reaching for ``athlete.displayName`` and each of them
+    therefore blind to half the tournament (see :data:`PAIR_COMPETITOR_TYPE`).
+
+    The athlete wins where there is one.  A doubles competitor has none, and
+    its ``roster.displayName`` is the pair as both venues write it —
+    ``"Marcelo Melo / John Peers"`` — which is also the string Kalshi's market
+    title is built from, so the name that reaches a reader is the name that
+    reaches a matcher.
+    """
+    athlete = competitor.get("athlete") or {}
+    roster = competitor.get("roster") or {}
+    return str(
+        athlete.get("displayName")
+        or roster.get("displayName")
+        or competitor.get("name")
+        or ""
+    ).strip()
+
+
+def competitor_entity_key(view: dict[str, Any]) -> Optional[str]:
+    """``espn:athlete:2012`` / ``espn:pair:1013-2319`` — or ``None``.
+
+    Minted HERE and nowhere else.  Two consumers write this key and two read it
+    back — ``tournament_matchup_linker`` puts a resolved price under it and
+    ``tournament_slate.authority_match_row`` looks the price up by it — and they
+    used to format it independently, which is a shared string constant living in
+    two files waiting for one of them to learn about doubles first.
+    """
+    if not isinstance(view, dict) or not view.get("determined"):
+        return None
+    pair_id = view.get("espn_pair_id")
+    if pair_id:
+        return f"{PAIR_ENTITY_PREFIX}{pair_id}"
+    athlete_id = view.get("espn_athlete_id")
+    if athlete_id is None:
+        return None
+    return f"{ATHLETE_ENTITY_PREFIX}{athlete_id}"
+
+
 def _competitor_view(competitor: dict[str, Any]) -> dict[str, Any]:
     """One side of an ESPN competition, as the draw ingest wants it.
 
@@ -227,25 +331,47 @@ def _competitor_view(competitor: dict[str, Any]) -> dict[str, Any]:
     FACT about the draw, not a gap in our read of it.  It is carried through
     rather than dropped so the fixture still says "somebody plays Jack Kennedy",
     which is true, instead of vanishing because half of it is unknown.
+
+    A DOUBLES PAIR IS ONE SIDE (#4124).  It is ``determined`` on the same terms
+    a player is — a real name and a positive id — with the id being the two
+    athlete ids from :func:`pair_athlete_ids`.  Two fields stay ``None`` on it
+    deliberately: ``flag_url`` and ``country``, because a pair has two of each
+    (Melo is Brazilian, Peers Australian) and printing either one would tell the
+    reader something false about the other player.  ``PlayerAvatar``'s initials
+    step is the honest render for a pair, and it is already the step every
+    unpinned singles slot lands on.
     """
     athlete = competitor.get("athlete") or {}
-    name = str(athlete.get("displayName") or competitor.get("name") or "").strip()
+    name = competitor_name(competitor)
+    pair_ids = (
+        pair_athlete_ids(competitor)
+        if str(competitor.get("type") or "") == PAIR_COMPETITOR_TYPE
+        else []
+    )
     raw_id = str(competitor.get("id") or "")
     espn_id = int(raw_id) if raw_id.lstrip("-").isdigit() else None
+    is_pair = bool(pair_ids)
     determined = (
-        espn_id is not None
-        and espn_id > 0
+        (is_pair or (espn_id is not None and espn_id > 0))
         and name.lower() not in PLACEHOLDER_NAMES
     )
     flag = athlete.get("flag") or {}
-    return {
+    view = {
         "name": name,
-        "espn_athlete_id": espn_id if determined else None,
-        "flag_url": flag.get("href") if determined else None,
-        "country": flag.get("alt") if determined else None,
+        "espn_athlete_id": None if is_pair else (espn_id if determined else None),
+        "flag_url": None if is_pair else (flag.get("href") if determined else None),
+        "country": None if is_pair else (flag.get("alt") if determined else None),
         "determined": determined,
         "order": competitor.get("order"),
     }
+    if is_pair and determined:
+        # Emitted only for a pair, and only when it means something. This view
+        # is published for all 625 competitions into a shared 100MB Redis LRU
+        # (see the byte census on `sides` in `parse_results`), so a key that is
+        # `None` on 79% of them is 625 nulls bought with nothing.
+        view["espn_pair_id"] = "-".join(str(i) for i in pair_ids)
+    view["entity_key"] = competitor_entity_key(view)
+    return view
 
 
 def parse_draw(
@@ -727,13 +853,17 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                     # live against Cerundolo. Nothing downstream could notice,
                     # because nothing downstream was told who ESPN had on court.
                     #
-                    # A doubles competition names a TEAM and no athlete, so this
-                    # yields `[]` there. That is silence, not a half-pair, and
-                    # the consumer must read it as such.
+                    # A doubles competition names a PAIR and no athlete, and
+                    # until #4124 this read went straight to `athlete` and
+                    # yielded `[]` for every one of them — 147 competitions of
+                    # silence that read exactly like a quiet day. It goes
+                    # through `competitor_name` now, so a doubles side is named
+                    # by its roster and the two questions below — who is on, and
+                    # who won — can be asked of the whole tournament.
                     competitor_names = [
                         name
                         for name in (
-                            ((c.get("athlete") or {}).get("displayName") or "")
+                            competitor_name(c)
                             for c in (competition.get("competitors") or [])
                         )
                         if name
@@ -896,16 +1026,18 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                     # would come to disagree.
                     names = competitor_names
                     if len(names) != 2:
-                        # A doubles competition names a TEAM, not an athlete, in
-                        # some ESPN payloads. Counted rather than dropped so the
-                        # doubles section's coverage is a number and not a
-                        # shrug.
+                        # A competition that does not name two sides: an
+                        # unfilled later-round slot, or a shape we cannot read.
+                        # Counted rather than dropped so a draw's coverage is a
+                        # number and not a shrug — it was 137 (every doubles
+                        # match at the tournament) until #4124 taught the read
+                        # above about pairs.
                         stats["unpaired"] += 1
                         continue
 
                     winner = next(
                         (
-                            (c.get("athlete") or {}).get("displayName")
+                            competitor_name(c)
                             for c in competitors
                             if c.get("winner")
                         ),
@@ -916,6 +1048,23 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                         "winner_name": winner,
                         "winner_normalized": normalize_name(winner),
                         "players": names,
+                        # THE SIDES' OWN IDS, BESIDE THEIR NAMES (#4124).
+                        #
+                        # `build_results` joins a result to the register by
+                        # NAME, and that is right for a draw the register
+                        # carries. A doubles draw is not one — the ceremony
+                        # ingest wrote singles only — so its rows are built from
+                        # this map alone, and a row still needs an identity per
+                        # side to key a renderer on. Same order as `players`,
+                        # `None` where the side is an unfilled slot.
+                        #
+                        # ~30KB on a ~360KB cached payload (605 finished
+                        # competitions x 2). Paid for by the alternative, which
+                        # is a second read of the scoreboard to recover an id we
+                        # had in hand on the first.
+                        "entity_keys": [
+                            competitor_entity_key(view) for view in competitor_views
+                        ],
                         "espn_competition_id": comp_id,
                         "espn_round": (competition.get("round") or {}).get("displayName"),
                         "completed_at": competition.get("date"),
@@ -1107,7 +1256,7 @@ def scoreboard_competitions(
                     names = [
                         name
                         for name in (
-                            ((c.get("athlete") or {}).get("displayName") or "")
+                            competitor_name(c)
                             for c in (competition.get("competitors") or [])
                         )
                         if name

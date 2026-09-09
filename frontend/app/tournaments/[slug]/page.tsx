@@ -134,7 +134,12 @@ import { useParams } from "next/navigation";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ContenderChart from "@/components/tournament/ContenderChart";
-import DrawToggle, { DRAWS, OPENING_DRAW_FALLBACK } from "@/components/tournament/DrawToggle";
+import DrawToggle, {
+  DRAWS,
+  OPENING_DRAW_FALLBACK,
+  drawOptions,
+} from "@/components/tournament/DrawToggle";
+import { drawIsPriced, selectionDraws } from "@/lib/tournamentResults";
 import { TOURNAMENT_COLUMNS, TOURNAMENT_SHELL } from "@/components/tournament/layout";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
@@ -282,6 +287,10 @@ export default function TournamentPage() {
          * `current ?? …` and not a bare set: a reader who tapped the toggle
          * while the request was in flight has already answered this question.
          */
+        /* #4124: `DRAWS` and not the derived pill list — the OPENING draw stays
+           one of the two singles ones. Doubles is a pill a reader chooses, not
+           a page a Slam opens on, and a reader who lands mid-session on a
+           doubles quarter-final would otherwise never see the singles. */
         setDrawChoice(
           (current) =>
             current ??
@@ -323,9 +332,27 @@ export default function TournamentPage() {
   // Everything derived, computed BEFORE the loading/error returns so the hook
   // order never changes between renders. Each guards on `data` being null
   // rather than being moved below the returns.
+  /**
+   * WHICH DRAWS THE PILL ON SCREEN IS SHOWING (#4124).
+   *
+   * One for a singles pill, three for Doubles. Every filter below reads this
+   * rather than comparing against `draw`, so a group pill cannot leave one
+   * section filtering on an id no row carries.
+   */
+  const drawsShown = useMemo(() => selectionDraws(draw), [draw]);
+
+  /**
+   * The pills, derived from the payload (#4124). Doubles appears the day the
+   * doubles draw does and not before — see `drawOptions`.
+   */
+  const drawPills = useMemo(
+    () => drawOptions([data?.slate?.matches ?? [], data?.results?.matches ?? []]),
+    [data]
+  );
+
   const board = useMemo(
-    () => data?.boards.find((entry) => entry.draw === draw) ?? null,
-    [data, draw]
+    () => data?.boards.find((entry) => drawsShown.includes(entry.draw)) ?? null,
+    [data, drawsShown]
   );
 
   const selectionKeys = useMemo(
@@ -382,13 +409,18 @@ export default function TournamentPage() {
   const matches = useMemo(
     () =>
       buildMatchList({
-        slate: (data?.slate?.matches ?? []).filter((match) => match.draw === draw),
+        /* #4124: `selectionDraws` and not `=== draw`, because the Doubles
+           pill selects three draws at once. For a singles pill it is a
+           one-element list and this filter is what it always was. */
+        slate: (data?.slate?.matches ?? []).filter((match) =>
+          drawsShown.includes(match.draw ?? "")
+        ),
         rounds,
         prematch,
         titleChances,
         broadcasts: data?.broadcasts,
       }),
-    [data, draw, rounds, prematch, titleChances]
+    [data, drawsShown, rounds, prematch, titleChances]
   );
 
   /**
@@ -460,6 +492,7 @@ export default function TournamentPage() {
             pill before the draw is released. */}
         <DrawToggle
             draw={draw}
+          draws={drawPills}
           onSelect={(id) => {
             setDrawChoice(id);
             setSelection(null);
@@ -600,6 +633,14 @@ export default function TournamentPage() {
                 {TOURNAMENT_PROPS_ENABLED && (
                   <TournamentProps markets={data.props ?? []} draw={draw} />
                 )}
+                {/* #4124: nothing else. The two blocks that follow on a singles
+                    pill — the championship board and the grid — are one draw's
+                    priced field, and the doubles have no outright market at
+                    either venue (measured 2026-09-09: `KXMIXEDDOUBLES`, the only
+                    doubles "Tournament Champion" series Kalshi runs, has zero
+                    open markets). Under the Doubles pill this page is the
+                    matches and the results, which is all there is to be honest
+                    about. */}
               </div>
             </div>
           )}
@@ -610,7 +651,12 @@ export default function TournamentPage() {
               the last block on the same scroll now: chart, matches, results,
               board, more predictions, grid. Same component, same props, same
               full width — only the door is gone. */}
-          {(
+          {/* #4124: gated on the selection being a PRICED draw. Passed no grid
+              — which is what a doubles selection has — this component falls
+              through to `bracket-unreleased`, whose fallback is *both singles
+              championship boards*. A reader who tapped Doubles would have been
+              shown the men's and women's singles title races under it. */}
+          {drawIsPriced(draw) && (
             <div className="mt-6">
               {/* THE PLAYOFF GRID (UX-P139). It no longer waits for the draw:
                   its cells come from round-advancement markets that are live

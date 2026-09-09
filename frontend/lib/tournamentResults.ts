@@ -194,16 +194,56 @@ export const DRAW_LABELS: Record<string, string> = {
   "mixed-doubles": "Mixed Doubles",
 };
 
-/** Is this draw one the page currently prices, or one it is only ready for? */
+/**
+ * The three doubles draws, and the one pill that shows all of them (#4124).
+ *
+ * ═══ WHY THE DOUBLES ARE ONE SELECTION AND NOT THREE PILLS ═══
+ *
+ * Alex's UX-P132 ruling 1 is *"take direction A's toggle EVERYWHERE, and never
+ * two stacked gender lists"* — one strip, one draw on screen. Five pills
+ * ("Men's · Women's · Men's Doubles · Women's Doubles · Mixed Doubles") do not
+ * fit a 390px strip and would have to scroll or abbreviate, and a second
+ * doubles-only sub-toggle is the stacked list the ruling bans.
+ *
+ * One "Doubles" pill covering all three keeps the strip at three, and it costs
+ * the reader nothing: every match row and every result row already carries its
+ * own `draw_label`, so a mixed-doubles row under the Doubles pill says
+ * "Mixed Doubles" on itself. The grouping is in the chrome; the distinction is
+ * on the row, which is where a reader was going to look for it anyway.
+ */
+export const DOUBLES_DRAWS = [
+  "mens-doubles",
+  "womens-doubles",
+  "mixed-doubles",
+] as const;
+
+/** The pill id for the doubles group. Namespaced away from every real draw. */
+export const DOUBLES_SELECTION = "doubles";
+
+/**
+ * The draws a pill selects: one for a singles pill, three for Doubles.
+ *
+ * Every filter on this page reads through this rather than comparing to `draw`
+ * directly, so "which draws am I showing" has one answer and adding a group
+ * cannot leave one surface filtering on a pill id that matches no row.
+ */
+export function selectionDraws(selection: string): string[] {
+  return selection === DOUBLES_SELECTION ? [...DOUBLES_DRAWS] : [selection];
+}
+
+/** Is this selection one the page currently prices, or one it only lists? */
 export function drawIsPriced(draw: string): boolean {
   return draw === "mens-singles" || draw === "womens-singles";
 }
 
 export function resultsForDraw(
   results: TournamentResults | null | undefined,
-  draw: string
+  selection: string
 ): TournamentResult[] {
-  return (results?.matches ?? []).filter((match) => match.draw === draw);
+  const draws = selectionDraws(selection);
+  return (results?.matches ?? []).filter((match) =>
+    draws.includes(match.draw)
+  );
 }
 
 /**

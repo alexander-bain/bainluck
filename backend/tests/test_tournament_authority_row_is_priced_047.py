@@ -437,10 +437,15 @@ def test_no_market_at_all_is_reported_as_an_absence():
     assert out["counters"]["resolved"] == 0
 
 
-def test_a_doubles_competition_names_no_athlete_and_is_never_resolved():
-    """A doubles competition names a TEAM and no athlete; a qualifier slot
-    names "TBD" with a non-positive id. ``determined`` is the same gate
-    ``authority_match_row`` uses to decide it may draw the row at all."""
+def test_an_undetermined_competition_is_never_resolved():
+    """A qualifier slot names "TBD" with a non-positive id. ``determined`` is
+    the same gate ``authority_match_row`` uses to decide it may draw the row at
+    all.
+
+    (This was ``test_a_doubles_competition_names_no_athlete…`` and a doubles
+    competition was its example. Since #4124 a doubles PAIR is determined and
+    IS resolved — ``test_tournament_doubles_4124`` asserts that — so the
+    example was removed and the rule it guards was not.)"""
     from app.tasks.tournament_matchup_linker import _authority_competitions
 
     doubles = _listed(competitors=[
