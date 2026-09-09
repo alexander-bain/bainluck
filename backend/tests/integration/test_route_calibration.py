@@ -5,7 +5,6 @@ top-level keys, nested structure, and field types — even when the DB is empty.
 Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 """
 
-import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -44,7 +43,7 @@ def _disable_sample_gate(monkeypatch):
 
 
 @pytest.fixture
-async def client(client, mock_db):
+async def client(client, mock_db, monkeypatch):
     """Publish, then serve — the only order the route supports since Queue 300B.
 
     These are contract tests for the SHAPE of ``GET /api/calibration``, and they
@@ -60,9 +59,36 @@ async def client(client, mock_db):
 
     Pass ``publish=False`` to ask the route for whatever is already cached, which
     is how the caching behaviour itself gets tested.
+
+    CERT-2308: a publish now seeds the SHARED STORE as well as the memo, because
+    the memo's admission is a fingerprint match against that store and nothing
+    else. Seeding only ``_cache`` modelled a state a real publish cannot produce
+    — a warm process holding a copy no store has ever held — and under the repair
+    the route correctly refuses it, so four contract tests started measuring the
+    stale-marked fallback instead of the shape they name. The seam is corrected,
+    not loosened: the fixture now does what the beat does.
     """
+    import json as _json
+
     from app.routes import calibration
     from app.tasks.precompute_calibration import compute_calibration_payload
+    from app.utils import request_cache as rc
+
+    class _PublishedStore:
+        """The one key the route reads, holding exactly the published bytes."""
+
+        def __init__(self):
+            self.raw = None
+
+        async def get(self, key):
+            return self.raw if key == "bainluck:calibration:main" else None
+
+    store = _PublishedStore()
+
+    async def _getter():
+        return store
+
+    monkeypatch.setattr(rc, "get_shared_async_redis", _getter)
 
     class _PublishThenServe:
         def __init__(self, inner):
@@ -70,8 +96,13 @@ async def client(client, mock_db):
 
         async def get(self, url, *, publish=True, **kwargs):
             if publish and url.split("?")[0] == "/api/calibration":
-                calibration._cache["data"] = await compute_calibration_payload(mock_db)
-                calibration._cache["timestamp"] = time.time()
+                payload = await compute_calibration_payload(mock_db)
+                store.raw = _json.dumps(payload, default=str)
+                # A publish makes the memo's copy superseded by construction, and
+                # the route must learn that from the store rather than from us.
+                calibration._cache["data"] = None
+                calibration._cache["timestamp"] = 0
+                calibration._cache["source"] = None
             return await self._inner.get(url, **kwargs)
 
     return _PublishThenServe(client)

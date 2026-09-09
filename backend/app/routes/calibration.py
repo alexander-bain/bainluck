@@ -43,32 +43,27 @@ router = APIRouter()
 #: stale-marked copy, which tier 1 refuses on its own account.
 _cache: dict = {"data": None, "timestamp": 0, "source": None}
 
-#: Wall-clock backstop for the tier-1 memo, and NOTHING MORE since #4072.
+#: THE TIER-1 MEMO NO LONGER HAS A CLOCK, and the absence is the fix (#4072).
 #:
-#: It has been 3600 since the endpoint shipped (``d3ae331d``, 2026-05-12), when
-#: tier 1 was the ONLY cache and a miss ran the whole multi-CTE aggregation live
-#: against Postgres on a public unauthenticated route. The hour was sized against
-#: THAT — the database. The precompute beat and the Redis tier arrived later, so
-#: what a memo miss costs today is one ``GET`` of a bounded key, and the constant
-#: has never been re-sized against its actual cost. It is left at 3600 because it
-#: now only governs a payload this process cannot date (see
-#: ``_memo_may_answer``), which is a case already declared degraded.
-CACHE_TTL = 3600
-
-#: #4072. The real bound on the tier-1 memo: how old the ARTIFACT it holds may be.
+#: There were two, and both were the same mistake. ``CACHE_TTL = 3600`` bounded
+#: the memo by an hour of WALL CLOCK from whenever this process happened to seed
+#: — two equal periods with an arbitrary phase offset, so a dyno that memoised
+#: the 20:16 artifact at 20:30 served it until 21:30 and missed the 21:16
+#: publish by 14 minutes (measured twice in consecutive hours, no release in
+#: either window). Keying the bound to the artifact's own age instead removed
+#: the offset, and CERT-2299 showed it was still not enough: builds are not all
+#: the same length, so a successor can publish while the incumbent is 3,599 s
+#: old, and for that interval a warm dyno and a cold one serve different curves.
 #:
-#: ``precompute_calibration_main`` is hourly (:15, publishing ~70-100 s in), and
-#: the memo used to be bounded by an hour of WALL CLOCK from whenever the process
-#: happened to seed. Two equal periods with an arbitrary phase offset between
-#: them: a process that memoised the 20:16 artifact at 20:30 kept serving it
-#: until 21:30, and the 21:16 publish went unseen for 14 minutes. Measured twice
-#: in consecutive hours with no release in either window (lag ≥ 11m42s, ≥ 14m19s).
+#: CERT-2308 closed the last of it. **The quantity being bounded was never time.
+#: It is whether somebody else has published**, and no constant derived from a
+#: clock can answer that — only the shared store can. So the memo asks it, every
+#: request, and answers only on a positive match (``_memo_may_answer``). A
+#: number here would be a fourth guess at a question that now has an answer.
 #:
-#: Keying the bound to the payload's own ``generated_at`` removes the phase offset
-#: outright, because ``generated_at`` IS the publish clock: an artifact reaches
-#: this age at the moment its successor is due, so the memo lapses seconds before
-#: there is something newer to read rather than up to an hour after.
-PUBLISH_PERIOD_S = 3600
+#: What a memo miss costs, for whoever re-reads this: one ``GET`` of a bounded
+#: key. Not the multi-CTE aggregation the 3600 was originally sized against —
+#: that compute left the request path in Queue 300B.
 
 #: #2007 / CAL-P076. The staged bank's as-of + drift, memoised per dyno. The two
 #: durable rows behind it are primary-key reads of bounded payloads, but tier 1
@@ -104,24 +99,23 @@ def main_artifact_fingerprint(raw: Any) -> Optional[str]:
 
 def _memo_may_answer(
     payload: Any,
-    memoised_at: float,
     *,
-    now: float,
-    age_s: Optional[float],
-    store_answered: bool,
     current_fingerprint: Optional[str],
     memo_fingerprint: Optional[str],
 ) -> bool:
-    """May tier 1 answer from process memory, or must it re-read Redis first?
+    """May tier 1 answer from process memory, or must the request read on?
 
-    ``age_s`` is the payload's own content age (``payload_age_s``), passed in
-    rather than recomputed because the caller needs it anyway for its ruling-025
-    declaration — one parse, one answer, no chance of the gate and the
-    declaration disagreeing about how old the same copy is.
+    ONE RULE, and it is a positive proof: the memo may answer exactly when the
+    bytes it was decoded from are still the bytes the shared store holds.
 
-    ``store_answered`` says whether the shared store gave a definite answer this
-    request — the key's current bytes, or a clean "absent". A Redis failure is
-    NOT an answer, and the difference decides which of the two rules below runs.
+    That is a total answer — it cannot be early, late, or racy — and it costs
+    one ``GET`` of a bounded key, never a decode, because the fingerprint is
+    taken over the raw value (gotcha #38: the decode is the expensive part, and
+    a check that guards it must not require one).
+
+    Everything that is NOT a match is a miss: an absent key, a superseded
+    artifact, an unreadable store. The tiers below know how to say so honestly,
+    and every one of them discloses what it served.
     """
     if not isinstance(payload, dict):
         return False
@@ -133,50 +127,39 @@ def _memo_may_answer(
     if payload.get("cache", {}).get("status") == "stale":
         return False
 
-    if store_answered:
-        # CERT-2299, the repair. The age gate below is necessary and NOT
-        # sufficient, and the cert's falsifier is the proof: the beat is hourly,
-        # but its builds are not all the same length, so a successor can publish
-        # while the incumbent is still 3,599 s old. For that interval a warm dyno
-        # kept answering from memory while a cold one already served the new
-        # artifact — two readers, one instant, different curves, and a refresh
-        # that moves backward. That IS the ship, so a clock cannot settle it: no
-        # bound derived from time alone can, because the thing being bounded is
-        # not time, it is whether somebody else has published.
-        #
-        # So ask the only authority there is. The memo may answer exactly when
-        # the bytes it was decoded from are still the bytes the store holds. That
-        # is a total answer — it cannot be early, late, or racy — and it costs
-        # one GET of a bounded key, never a decode, because the fingerprint is
-        # taken over the raw value.
-        #
-        # An absent key (``current_fingerprint is None``) is a MISS, not a match:
-        # the memo must not outlive the artifact's eviction either, and the
-        # tiers below know how to say so honestly.
-        return (
-            memo_fingerprint is not None
-            and current_fingerprint is not None
-            and memo_fingerprint == current_fingerprint
-        )
-
-    # The store could not be reached, so there is no successor to be superseded
-    # BY — nothing published while we cannot read is visible to any other dyno
-    # either. Falling back to the clock here is not a weaker rule, it is the only
-    # rule left, and refusing outright would spend a cold compute to answer a
-    # question Redis is currently unable to pose.
-    if age_s is not None:
-        # #4072: bound the memo by the ARTIFACT's age, never by how long THIS
-        # process has happened to hold it. Once the copy is a full publish period
-        # old its successor is due.
-        return age_s < PUBLISH_PERIOD_S
-
-    # Age genuinely unknown — absent or unparseable ``generated_at``, which is
-    # never the same as zero (gotcha #53). A payload this process cannot date is
-    # already declared degraded by the caller, and refusing the memo outright
-    # would make it re-read Redis on EVERY request for as long as it is held,
-    # which is a lot of load to spend on a copy we have already stopped
-    # believing. The wall-clock backstop governs this case and no other.
-    return (now - memoised_at) < CACHE_TTL
+    # CERT-2308, THE REPAIR: ``4072-REDIS-FAILURE-CANNOT-REANIMATE-SUPERSEDED-MEMO``.
+    #
+    # There used to be a second branch here, taken when the store could not be
+    # read, which fell back to bounding the memo by the artifact's age. Its
+    # justification was written down and it was FALSE:
+    #
+    #     "The store could not be reached, so there is no successor to be
+    #      superseded BY — nothing published while we cannot read is visible to
+    #      any other dyno either."
+    #
+    # A Redis failure is per-CONNECTION, not global. One dyno timing out says
+    # nothing about the others, and the cert's falsifier is the proof: with the
+    # local read failing, the warm process served 1,000,000 while a cold one
+    # served 2,000,000 — the same two same-instant curves and backward refreshes
+    # this ship exists to end, reached by a different door.
+    #
+    # The generalisation, and the reason no third guess belongs here: a fallback
+    # is only honest when it is a WEAKER ANSWER TO THE SAME QUESTION. The
+    # question is "has somebody else published?", and a clock cannot answer it at
+    # all — it answers "how old is this?", which is a different question whose
+    # answer happens to correlate. Gotcha #53: unreadable is not "no", and the
+    # reassuring reading of an absent signal is the one that must never be free.
+    #
+    # Refusing costs nothing a reader loses. The request falls to the durable
+    # substrate (one indexed primary-key read) or to this process's own copy
+    # stamped ``redis_unavailable`` — the SAME numbers, disclosed instead of
+    # asserted. There is no cold compute left below to be afraid of; Queue 300B
+    # removed it.
+    return (
+        memo_fingerprint is not None
+        and current_fingerprint is not None
+        and memo_fingerprint == current_fingerprint
+    )
 
 
 def _score_payload(payload: dict) -> dict:
@@ -1359,17 +1342,20 @@ async def public_calibration(
     except Exception:
         _redis_failed = True
 
-    # A definite answer about what the store holds — bytes, or a clean "absent".
-    # A failure is NOT an answer, and ``_memo_may_answer`` switches rules on it.
-    store_answered = not _redis_failed
+    # ``None`` when the key is absent AND when the read failed — the two are the
+    # same thing to the memo (CERT-2308: neither is a positive read of the
+    # current artifact), and ``_redis_failed`` still separates them for tier 2b,
+    # which needs to know whether the durable last-good is worth attempting.
     current_fingerprint = main_artifact_fingerprint(main_raw)
 
     # 1. In-process cache (survives between requests on same dyno). Admission is
-    #    ``_memo_may_answer``: stale-marked copies are excluded (Queue #284
-    #    Item 3); since #4072 a copy whose ARTIFACT has reached a full publish
-    #    period is excluded too; and since CERT-2299 the memo may answer only
-    #    while the bytes it was decoded from are still the bytes the shared store
-    #    holds. Compute behavior is unchanged.
+    #    ``_memo_may_answer``, and since CERT-2308 it is ONE positive rule: the
+    #    memo answers only while the bytes it was decoded from are still the
+    #    bytes the shared store holds. Stale-marked copies were already excluded
+    #    (Queue #284 Item 3); the artifact-age bound (#4072) and the wall-clock
+    #    TTL are both gone, because neither could answer the question that
+    #    actually decides — has somebody else published? Compute behavior is
+    #    unchanged.
     #
     #    Ruling 025: this tier re-derives the declaration from the CONTENT it is
     #    about to serve rather than replaying whatever the producing tier
@@ -1380,10 +1366,6 @@ async def public_calibration(
     memo_age = payload_age_s(_cache["data"])
     if _memo_may_answer(
         _cache["data"],
-        _cache["timestamp"],
-        now=now,
-        age_s=memo_age,
-        store_answered=store_answered,
         current_fingerprint=current_fingerprint,
         memo_fingerprint=_cache.get("source"),
     ):

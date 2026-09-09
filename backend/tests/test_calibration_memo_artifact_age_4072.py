@@ -109,15 +109,27 @@ def _no_compute(monkeypatch):
     monkeypatch.setattr(precompute_calibration, "compute_calibration_payload", _boom)
 
 
-#: The store could not be reached this request, so ``_memo_may_answer`` falls back
-#: to its clock rule. Named rather than repeated so a case that means "Redis is
-#: down" cannot be misread as "Redis said the memo is current" — under CERT-2299
-#: those are opposite worlds and the predicate branches on exactly this.
-_UNREACHABLE_STORE = {
-    "store_answered": False,
-    "current_fingerprint": None,
-    "memo_fingerprint": None,
-}
+#: The store did not positively answer this request — the read failed, or the key
+#: is gone. Named rather than repeated because CERT-2308 is precisely the finding
+#: that these two are the SAME thing to the memo: neither is a positive read of
+#: the current artifact, and only a positive read may admit a copy.
+_STORE_DID_NOT_ANSWER = {"current_fingerprint": None, "memo_fingerprint": None}
+
+
+class _FailingRedis:
+    """A per-connection Redis failure — THIS dyno cannot read; others can.
+
+    The distinction is the whole of CERT-2308. ``bounded_redis_call`` reports a
+    raise as ``is_failure``, which is what a timeout or a dropped TLS session
+    looks like to one web process while the rest of the fleet is fine.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    async def get(self, key):
+        self.calls += 1
+        raise ConnectionError("simulated per-dyno Redis failure")
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +294,54 @@ class TestTheMemoDoesNotOutliveItsArtifact:
         )
         assert redis.calls >= 1, "the memo must consult the store to see the successor"
 
+    async def test_a_local_redis_failure_cannot_reanimate_a_superseded_memo(
+        self, monkeypatch, healthy_staged_bank
+    ):
+        """CERT-2308's falsifier, as a permanent guard — the named repair
+        ``4072-REDIS-FAILURE-CANNOT-REANIMATE-SUPERSEDED-MEMO``.
+
+        The last door into the same defect. This dyno memoises the old artifact
+        and then loses its Redis connection — a timeout, a dropped TLS session,
+        one process, not the fleet. The gate used to fall back to the artifact's
+        age here, on the written reasoning that a store nobody can read has no
+        successor to be superseded by. It is per-CONNECTION: other dynos read the
+        successor fine, and the cert measured exactly that — warm 1,000,000
+        against cold 2,000,000, the two same-instant curves this ship exists to
+        end.
+
+        What the repair does NOT do is hide the numbers. The reader still gets
+        this copy; they stop being told it is current. That distinction is the
+        whole assertion below — same figures, different claim — because a guard
+        that only checked ``total_outcomes`` would pass on a route that had
+        simply gone dark, which is not a fix.
+        """
+        from app.routes import calibration
+
+        old = _payload(outcomes=1_000_000, generated_at=_stamp(seconds_ago=60))
+        _use(monkeypatch, _CountingRedis(main=json.dumps(old)))
+        _no_compute(monkeypatch)
+
+        first = await calibration.public_calibration(db=object())
+        assert first["total_outcomes"] == 1_000_000, "precondition: the memo is warm"
+        assert first.get("cache") is None, "precondition: it was admitted as current"
+
+        # The artifact is only 60 s old, so every retired clock rule would have
+        # admitted it. Meanwhile this dyno's connection dies and the beat
+        # publishes 2,000,000, which every other dyno can already read.
+        failing = _use(monkeypatch, _FailingRedis())
+
+        second = await calibration.public_calibration(db=object())
+
+        assert failing.calls >= 1, "precondition: the request did attempt the store"
+        assert second.get("cache", {}).get("status") == "stale", (
+            "a warm dyno with a dead Redis connection served its memo as a current "
+            "curve while the rest of the fleet served the successor — CERT-2308"
+        )
+        assert second["cache"].get("reason") == "redis_unavailable"
+        assert (
+            second.get("availability") != "fresh"
+        ), "the copy is disclosed as degraded, not declared fresh"
+
 
 # ---------------------------------------------------------------------------
 # The predicate on its own — the boundary and the cases the route cannot reach
@@ -291,95 +351,59 @@ class TestTheMemoDoesNotOutliveItsArtifact:
 class TestMemoMayAnswer:
     """The predicate on its own.
 
-    Since CERT-2299 the predicate has TWO rules and ``store_answered`` chooses
-    between them, so every case here says which world it is in. The cases below
-    are the ``store_answered=False`` world — the store could not be reached, so
-    there is no successor visible to anyone and the clock is the only rule left.
-    ``TestTheStoreIsTheAuthority`` covers the other world.
+    Since CERT-2308 it has ONE rule — a positive fingerprint match — so these
+    cases are the ones the route cannot easily stage, plus the two exclusions
+    that survive from earlier queues.
     """
 
     def _fresh(self, *, seconds_ago: float) -> dict:
         return {"generated_at": _stamp(seconds_ago=seconds_ago)}
 
-    def test_the_boundary_is_the_publish_period(self):
-        """At exactly one period the successor is due, so the copy is refused.
+    @pytest.mark.parametrize("age_s", [0, 1, 60, 1_800, 3_598, 3_599, 3_600, 4_000])
+    def test_an_unreadable_store_refuses_the_memo_at_every_age(self, age_s):
+        """THE CERT-2308 REPAIR, at the predicate.
 
-        Pinned as a boundary rather than a value: a memo admitted AT the boundary
-        is the whole hour of lag back again, one second at a time.
+        There used to be a clock rule here for exactly this case, and its written
+        justification was that a store we cannot read has no successor to be
+        superseded by. That is false: a Redis failure is per-connection. The ages
+        below sweep both sides of the retired boundary, and every one of them must
+        refuse — a boundary that no longer exists must not be reconstructible from
+        the predicate's behaviour.
         """
-        from app.routes.calibration import PUBLISH_PERIOD_S, _memo_may_answer
-
-        now = 1_000_000.0
-        just_inside = self._fresh(seconds_ago=PUBLISH_PERIOD_S - 2)
-        at_boundary = self._fresh(seconds_ago=PUBLISH_PERIOD_S)
+        from app.routes.calibration import _memo_may_answer
 
         assert (
-            _memo_may_answer(
-                just_inside,
-                now,
-                now=now,
-                age_s=PUBLISH_PERIOD_S - 2,
-                **_UNREACHABLE_STORE,
-            )
-            is True
-        )
-        assert (
-            _memo_may_answer(
-                at_boundary, now, now=now, age_s=PUBLISH_PERIOD_S, **_UNREACHABLE_STORE
-            )
+            _memo_may_answer(self._fresh(seconds_ago=age_s), **_STORE_DID_NOT_ANSWER)
             is False
-        )
+        ), "an unreadable store admitted a memo — this is CERT-2308"
+
+    def test_a_memo_the_store_cannot_confirm_is_refused_even_when_it_is_right(self):
+        """The uncomfortable half, stated on purpose.
+
+        The refused copy may well BE the current artifact — we cannot know, and
+        that is the point. Gotcha #53: the reassuring reading of an absent signal
+        is never the free one, and the cost of being wrong here is two readers
+        seeing two curves, while the cost of being needlessly cautious is one
+        primary-key read and an honest ``redis_unavailable`` label.
+        """
+        from app.routes.calibration import _memo_may_answer
+
+        brand_new = self._fresh(seconds_ago=1)
+        assert _memo_may_answer(brand_new, **_STORE_DID_NOT_ANSWER) is False
 
     def test_a_stale_marked_copy_is_still_never_memo_served(self):
-        """Queue #284 Item 3 must survive the #4072 change.
+        """Queue #284 Item 3 must survive every rewrite of this gate.
 
         A stale-marked copy stays honestly marked and re-attempts Redis on every
-        request, so a later fresh-main read replaces it promptly. Age has nothing
-        to do with it: even a brand-new stale-marked copy is refused.
+        request, so a later fresh-main read replaces it promptly. It is refused
+        even when the fingerprints agree, which is the only case that could
+        otherwise admit it now.
         """
         from app.routes.calibration import _memo_may_answer
 
         marked = {"generated_at": _stamp(seconds_ago=1), "cache": {"status": "stale"}}
         assert (
-            _memo_may_answer(
-                marked, 1_000_000.0, now=1_000_000.0, age_s=1, **_UNREACHABLE_STORE
-            )
-            is False
-        )
-
-    def test_an_undated_payload_falls_back_to_the_wall_clock_backstop(self):
-        """Unknown age is not zero (gotcha #53) — but it is not "re-read forever"
-        either.
-
-        A payload with no parseable ``generated_at`` is already declared degraded
-        by the caller. Refusing it outright would make it hit Redis on every
-        request for as long as it is held, which is a lot of load to spend on a
-        copy we have already stopped believing, so ``CACHE_TTL`` governs this
-        case — and this case alone.
-        """
-        from app.routes.calibration import CACHE_TTL, _memo_may_answer
-
-        undated = {"buckets": []}
-        memoised_at = 1_000_000.0
-
-        assert (
-            _memo_may_answer(
-                undated,
-                memoised_at,
-                now=memoised_at + 10,
-                age_s=None,
-                **_UNREACHABLE_STORE,
-            )
-            is True
-        )
-        assert (
-            _memo_may_answer(
-                undated,
-                memoised_at,
-                now=memoised_at + CACHE_TTL + 1,
-                age_s=None,
-                **_UNREACHABLE_STORE,
-            )
+            _memo_may_answer(marked, current_fingerprint="a", memo_fingerprint="a")
             is False
         )
 
@@ -388,9 +412,28 @@ class TestMemoMayAnswer:
 
         for empty in (None, "", [], 0):
             assert (
-                _memo_may_answer(empty, 0.0, now=1.0, age_s=1.0, **_UNREACHABLE_STORE)
+                _memo_may_answer(empty, current_fingerprint="a", memo_fingerprint="a")
                 is False
             ), f"{empty!r} is not a payload"
+
+    def test_the_gate_takes_no_clock_at_all(self):
+        """A structural pin, because the defect came back once already.
+
+        Three guesses have now been made at this gate — wall clock, artifact age,
+        artifact age when Redis is down — and each was a different constant
+        answering a question that is not about time. If a clock argument reappears
+        in this signature, the fourth guess is being made; the fix is to ask the
+        store, not to pick a better number.
+        """
+        import inspect
+
+        from app.routes.calibration import _memo_may_answer
+
+        params = set(inspect.signature(_memo_may_answer).parameters)
+        assert params == {"payload", "current_fingerprint", "memo_fingerprint"}, (
+            "the memo gate grew an argument; if it is a time, read the docstring "
+            f"above it before adding a fourth bound. Got: {sorted(params)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +442,7 @@ class TestMemoMayAnswer:
 
 
 class TestTheStoreIsTheAuthority:
-    """When the store answers, the clock does not get a vote.
+    """The store is the only authority, and since CERT-2308 the only one at all.
 
     The whole CERT-2299 finding is that an age bound is necessary and not
     sufficient: the memo's question is not "how old is my copy" but "has anyone
@@ -429,10 +472,6 @@ class TestTheStoreIsTheAuthority:
         assert (
             _memo_may_answer(
                 {"generated_at": "whenever"},
-                0.0,
-                now=1_000_000.0,
-                age_s=999_999.0,
-                store_answered=True,
                 current_fingerprint=fp,
                 memo_fingerprint=fp,
             )
@@ -447,10 +486,6 @@ class TestTheStoreIsTheAuthority:
         assert (
             _memo_may_answer(
                 {"generated_at": "now"},
-                1_000_000.0,
-                now=1_000_000.0,
-                age_s=1.0,
-                store_answered=True,
                 current_fingerprint=self._fp('{"a": 2}'),
                 memo_fingerprint=self._fp('{"a": 1}'),
             )
@@ -470,10 +505,6 @@ class TestTheStoreIsTheAuthority:
         assert (
             _memo_may_answer(
                 {"generated_at": "now"},
-                1_000_000.0,
-                now=1_000_000.0,
-                age_s=1.0,
-                store_answered=True,
                 current_fingerprint=None,
                 memo_fingerprint=None,
             )
@@ -493,10 +524,6 @@ class TestTheStoreIsTheAuthority:
         assert (
             _memo_may_answer(
                 {"generated_at": "now"},
-                1_000_000.0,
-                now=1_000_000.0,
-                age_s=1.0,
-                store_answered=True,
                 current_fingerprint=self._fp('{"a": 1}'),
                 memo_fingerprint=None,
             )
