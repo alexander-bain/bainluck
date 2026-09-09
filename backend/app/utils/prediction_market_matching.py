@@ -369,7 +369,12 @@ _DERIVATIVE_SEGMENT = (
 _DERIVATIVE_MARKET_TYPE = (
     r'(?:Exact\s+Score|Correct\s+Score|Halftime\s+Result|Half\s+Time\s+Result'
     r'|First\s+Team\s+to\s+Score|Both\s+Teams\s+to\s+Score|Total\s+Corners'
-    r'|Total\s+Goals|Total\s+Points|Winner|Result)'
+    r'|Total\s+Goals|Total\s+Points|Winner|Result'
+    # #4242: the one label still minting rows after #2871 shipped. "Patriots vs.
+    # Seahawks - Highest Scoring Quarter" named an away team on production
+    # 2026-09-05, twice. The segment alternation above cannot reach it — the
+    # period word is the TAIL of the market type here, not a leading "1st Half".
+    r'|Highest\s+Scoring\s+(?:Quarter|Half|Period|Inning))'
 )
 # NOTE: "- Game N" is deliberately NOT here. It designates a distinct real game
 # in a series, so stripping it would merge Games 1-5 into one event — a

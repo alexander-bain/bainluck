@@ -942,6 +942,91 @@ def auto_create_self_refutes(market, commence_time) -> bool:
     return _ticker_date_conflicts_with_event(ticker_time, commence_time, prefix)
 
 
+# #4242. How far into the past a market's own start time may sit before the row
+# it would mint is dated by nothing but the clock.
+#
+# Chosen by measuring the cut, not by taste. Of the auto-created rows stamped
+# `now` in the 60 days to 2026-09-09 whose source market is still linked
+# (production db-query):
+#
+#   cut     polymarket refused      kalshi refused
+#   30d     204 / 207  (98.6%)      5,992 / 6,037  (99.3%)
+#   90d     202 / 207  (97.6%)      3,936 / 6,037  (65.2%)
+#   180d    201 / 207  (97.1%)         62 / 6,037   (1.0%)
+#   365d    164 / 207  (79.2%)          0 / 6,037   (0.0%)
+#
+# 180 takes the whole Polymarket generator (its markets are 1.5-2 YEARS stale —
+# resolved 2024 NLCS and UFC 308 rows) and leaves the Kalshi population, which
+# is NOT an active generator, alone: its worst matchup holds 9 rows from a burst
+# that ended 2026-07-16, against Polymarket's 70 and still climbing today. The
+# predicate is deliberately source-agnostic; the DATA does the scoping, so
+# nothing here has to guess which venue misbehaves next.
+#
+# The Kalshi column is an UPPER BOUND: it was measured on market age alone,
+# before the ticker exemption in `auto_create_time_is_invented`, which spares
+# every Kalshi market whose ticker parses to a date. The true Kalshi cost at
+# 180d is <= 62 / 6,037.
+AUTO_CREATE_STALE_MARKET_DAYS = 180
+
+
+def auto_create_time_is_invented(market, now) -> bool:
+    """True when the only start time this row could carry is one we made up.
+
+    Pure: no DB. A TERMINATION check, not a matching rule — the Polymarket
+    sibling of :func:`auto_create_self_refutes`, which closes the identical loop
+    but can only ever fire for Kalshi (it refuses on a TICKER date, and
+    Polymarket has no ticker at all).
+
+    #4242, measured on production 2026-09-09. `_create_event_from_prediction_market`
+    replaces a market `commence_time` that disagrees with `now` by more than 30
+    days with `now` itself, commented "the market is probably live". For a market
+    whose own start time is two years old that is not a guess, it is a fabrication,
+    and it makes the row **unfindable by the thing that would have reused it**:
+
+      1. a resolved 2024 market ("Whittaker vs. Chimaev", commence 2024-10-22;
+         "Galatasaray vs. AZ Alkmaar", 2025-02-11) reaches the auto-create;
+      2. the row is stamped `commence_time = now`, and `events.external_id` is
+         left NULL, so neither the registry's exact-source-id step nor its
+         structured match can find it again;
+      3. the next poll, seven hours later, therefore finds nothing and creates a
+         SECOND row — at a new `now`. Go to 1.
+
+    Production held **70** rows for "Mets v Dodgers - Game 4", 62 for
+    "Galatasaray v AZ Alkmaar" and 61 for "Whittaker v Chimaev", 1,912 phantom
+    rows across 100 matchups, growing ~15/day. `/api/events/search?q=Whittaker`
+    returned 25 results of which **24 were the same 2024 fight**, one of them
+    flagged `live`.
+
+    This is the shape #2020 already named: not ruling 048's bounded duplicate
+    cost, but a generator no drain can outrun, so the bound goes where the
+    generation is. Refusing costs nothing true — the row we decline to write was
+    never going to carry the game's real time either. Linking is untouched: this
+    writer runs only after `_find_matching_event` found nothing, so the market
+    still links the moment a real fixture exists.
+
+    A market carrying a parseable TICKER date is exempt outright, whether or not
+    :func:`auto_create_commence_time` chose to use it: the ticker reports a
+    start, so the row would not be dated by the clock and this rule has no
+    business refusing it. That exemption is what keeps the 180-day cut off
+    Kalshi's back — and it is checked here rather than by reading
+    `commence_source` at the call site, because the rescue deliberately fires
+    only when the ticker DISAGREES with the fallback (a ticker that agrees is
+    still a reported start).
+    """
+    if extract_game_date_from_ticker(getattr(market, "external_id", None)) is not None:
+        return False  # the ticker reports a start; nothing is being invented
+
+    commence_time = getattr(market, "commence_time", None)
+    if commence_time is None or now is None:
+        return False  # a market with no time of its own is a different population
+    if commence_time.tzinfo is None:
+        commence_time = commence_time.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    age_days = (now - commence_time).total_seconds() / 86400
+    return age_days > AUTO_CREATE_STALE_MARKET_DAYS
+
+
 async def _check_duplicate_kalshi_linkage(
     session, event_id: int, market, ticker_game_date,
 ) -> bool:
@@ -4949,6 +5034,27 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     commence_time, commence_source = auto_create_commence_time(
         market, commence_time,
     )
+
+    # #4242: REFUSE to date a game by the clock when the market's own start time
+    # is 180+ days past. See `auto_create_time_is_invented` for the measured
+    # loop — a resolved 2024 market minting a new row every seven hours, 70 of
+    # them for one matchup, 24 of the 25 hits for /search?q=Whittaker.
+    #
+    # Placed HERE, after the ticker rescue above, so the code reads in the order
+    # it decides: find a real start first, refuse only if none exists. The
+    # predicate exempts any market with a parseable ticker date, so a Kalshi row
+    # whose start the ticker reports is never reached by this.
+    if auto_create_time_is_invented(market, now):
+        logger.warning(
+            "Refusing auto-create with an invented time (#4242): %s '%s' has "
+            "commence_time=%s, %d+ days past, and no ticker-derived start — the "
+            "row would be dated `now` and could never be found again, so the "
+            "create cannot converge",
+            market.external_id, market.name,
+            market.commence_time.isoformat() if market.commence_time else None,
+            AUTO_CREATE_STALE_MARKET_DAYS,
+        )
+        return None
 
     # #2020, half two: REFUSE to create a row this pipeline's own guard will
     # refuse to link. See `auto_create_self_refutes` for the measured loop.
