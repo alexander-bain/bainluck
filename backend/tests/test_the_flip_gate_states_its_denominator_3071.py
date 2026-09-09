@@ -56,7 +56,13 @@ from app.utils.authority_streak import REQUIRED_STREAK_DAYS
 #: number — i.e. one that can actually reach the `True` branch. Read from the
 #: real config rather than asserted, so this file follows a rename.
 THIN = "basketball_nba"
-COMPLETE = "americanfootball_nfl"
+#: Was `americanfootball_nfl` until D104 = A4 (2026-09-09, #4417). Football is now
+#: in `FLIP_RULED_WITHOUT_STREAK` and returns before the seven-day branch, so it
+#: can no longer be the specimen for what that branch's sentence says. The
+#: property under test is unchanged and is about the branch, not the sport, so it
+#: moves to the other sport that still reaches it. `both`/`denominator` come from
+#: `_days` rather than from the sport, so "complete" still describes the fixture.
+COMPLETE = "icehockey_nhl"
 
 
 def _days(both, denominator, *, n=REQUIRED_STREAK_DAYS, state="MEETS", fields=True):

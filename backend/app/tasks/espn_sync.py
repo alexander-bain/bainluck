@@ -347,9 +347,15 @@ async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
     if it gets that far without one — so this function asks it, and only goes to
     the network when the answer says the standby could have mattered. The
     ordering lives in the pure function and the caller obeys it, rather than
-    both holding a copy that can drift. Today `flip_permitted` refuses every
-    sport, so **this path makes no StatPal call at all** and costs one durable
-    read per silent sport per pass.
+    both holding a copy that can drift.
+
+    **D104 = A4 (2026-09-09) made this path reach the network.** It used to make
+    no StatPal call at all, because `flip_permitted` refused every sport. Now a
+    sport in `FLIP_RULED_WITHOUT_STREAK` — football today — gets its standby read
+    on a pass where ESPN went dark for it: one `get_schedule_fixtures` and one
+    `livescores`, via `_statpal_standby_reading`. Every other silent sport still
+    costs exactly one durable ledger read and no network call, because it refuses
+    at the gate first.
     """
     from app.config.authority_by_sport import flip_permitted
     from app.services.authority_ledger import read_ledger_days

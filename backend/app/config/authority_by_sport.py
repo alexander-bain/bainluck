@@ -37,7 +37,16 @@ need to be. `utils/authority_failover` reads the switch to answer who serves a
 sport on a pass where ESPN went silent — a question about PROVIDER SELECTION,
 which is this lane's, not about event identity, which is lane1's. Every sport
 being `ESPN` still means today's behaviour is byte-for-byte what it was, and the
-failover's own gate (`flip_permitted`) refuses every sport besides.
+failover's own gate (`flip_permitted`) is what decides whether ESPN's silence may
+be covered at all.
+
+**That gate no longer refuses every sport (D104 = A4, 2026-09-09).**
+`americanfootball_nfl` is in `FLIP_RULED_WITHOUT_STREAK` and is permitted without
+a certification streak, so on a pass where ESPN goes dark for football, StatPal's
+schedule and livescore writers now run. Every sport is still `ESPN` in the map
+above and that is not a contradiction: the map is the STANDING source of record
+and the gate is the FALLBACK, and on a pass where ESPN answers, football is
+processed exactly as it always was.
 
 It also does not count the seven days itself. `authority_streak.compute_streak`
 does that — it shipped with authority/021, it walks the durable ledger's own
@@ -458,6 +467,41 @@ DISCOVERY_PARSES_BUT_MINTS_NO_ID: dict[str, str] = {
 #: the flip forward was earned. Rolling back is the move that has to be cheapest.
 FLIP_EVIDENCE: dict[str, dict[str, Any]] = {}
 
+#: Sports Alex ruled may fail over to StatPal **without a certification streak**.
+#:
+#: D104 = A4, 2026-09-09 10:20am PT, in his words: *"I'm not at all worried about
+#: StatPal having schedule coverage for top-tier leagues. We don't need 7 days of
+#: proof. If there's anything missing, it was a failure by us to fetch it
+#: correctly."*
+#:
+#: **This is a gate exemption, not a flip.** A key here still holds `ESPN` in
+#: `AUTHORITY_BY_SPORT` above, and must: that map is the STANDING source of
+#: record, and `authority_failover.decide` treats a `STATPAL` value there as "this
+#: sport has already flipped, ESPN's silence is not an outage for it" — which is
+#: not a fallback and is not what was asked for. What D104 asked for is D50's own
+#: design, ESPN first and StatPal behind it, so what changes is the one question
+#: in `decide` that refused every sport: the gate.
+#:
+#: **It exempts the WAIT and nothing else.** `flip_permitted` consults this set
+#: only after its four structural refusals — measurement population, no shadow
+#: stamper, no working discovery pass, no governing number (D63). Those say
+#: "there is nothing here to flip TO", which is a different sentence from "come
+#: back in a week", and a ruling about proof days does not reach them.
+#: `baseball_mlb` is the case that keeps this honest: a top-tier league named in
+#: the same breath as football, still refused, because it has no governing
+#: identity number and that needs a ruling rather than a wait.
+#:
+#: One sport, because Alex asked for one release each: *"Flip football first (the
+#: Thursday kickoff), then the rest in one release each."* NBA and NHL clear
+#: every structural branch and are waiting only on their streak, so each is a
+#: one-line addition here under #2867 when its release comes.
+#:
+#: The ledger is untouched. It keeps folding a day per sport per pass and keeps
+#: being published — Alex kept it explicitly, as a MONITOR: a game StatPal lists
+#: that we lack is now OUR fetch bug to fix, filed under #2867, never a reason to
+#: say the venue does not cover it (standing notices 26/27).
+FLIP_RULED_WITHOUT_STREAK: frozenset[str] = frozenset({"americanfootball_nfl"})
+
 
 def authority_for(sport_key: Optional[str]) -> str:
     """Which provider is the source of record for `sport_key` right now.
@@ -663,25 +707,37 @@ def flip_permitted(
     Returns `(permitted, why)`, and `why` is the point of the function. "No" has
     SIX meanings here:
 
+      * the key is a MEASUREMENT POPULATION, not a sport key — a wrong question
+        rather than a "no" about any sport;
       * no dark id join for this sport at all, so there is nothing to flip TO;
       * no WORKING discovery pass — either no beat at all, or a beat whose
-        service call parses nothing (NFL today) — so agreeing about the games we
-        already have is the only thing this sport's streak could ever prove. Fix
-        the path, do not wait for days;
+        service call parses nothing — so agreeing about the games we already have
+        is the only thing this sport's streak could ever prove. Fix the path, do
+        not wait for days;
       * no governing number ruled, so no day could ever have advanced (D63);
       * no ledger at all — not measured, which is not a streak of zero;
       * a streak that is real and not seven days long yet;
       * a streak broken by a day under the bar, or by a day nobody recorded.
 
-    Only the last is a problem. Returning a bare `False` for all six is how a
+    Only the last is a problem. Returning a bare `False` for all of them is how a
     sport that needs a ruling gets waited on instead, which is the failure this
     lane spent 9/4 unwinding on MLB. The last two share a wording — both are
     reported with `compute_streak`'s own `stopped_by` detail, which names the day
     and the reason rather than making the reader go and look.
 
-    A `True` here is still not permission to flip. It is the first half of D50;
-    the second half is a YOUR-TURN entry Alex has seen, and no function can
-    check that.
+    **D104 = A4 (Alex, 2026-09-09) retires the last two for a ruled sport, and
+    only those two.** A key in `FLIP_RULED_WITHOUT_STREAK` is permitted whatever
+    its streak says, because Alex ruled the top-tier leagues need no proof days.
+    The ruling is asked AFTER the four structural refusals above and AFTER
+    `compute_streak` — after the refusals so it can never be read as a way past
+    "there is nothing here to flip TO" (`baseball_mlb` still refuses on D63), and
+    after the walk so the permission can report what the monitor currently says.
+    The days keep being folded and published either way; only their authority
+    over the answer is gone.
+
+    A `True` here was, until D104, the first half of D50, whose second half is a
+    YOUR-TURN entry Alex has seen. For a ruled sport that second half is what the
+    ruling itself was — Alex naming the leagues and saying to switch now.
     """
     population = MEASUREMENT_POPULATION_SCOPES.get(sport_key)
     if population is not None:
@@ -742,6 +798,31 @@ def flip_permitted(
     # the next one is under no obligation to.
     days_recorded = list(ledger_days)
     streak = compute_streak(days_recorded)
+    if sport_key in FLIP_RULED_WITHOUT_STREAK:
+        # D104 = A4. Asked AFTER the four structural refusals above, so the
+        # ruling exempts the WAIT and cannot be used to skip "there is nothing
+        # here to flip TO" — and asked AFTER `compute_streak`, not instead of it,
+        # because Alex kept the ledger running as a monitor and a permission that
+        # never walked the days could not report what the monitor currently says.
+        observed = None if streak is None else streak["days"]
+        monitor = (
+            "its ledger has not been written yet, so the monitor has nothing to "
+            "say about it so far"
+            if observed is None
+            else f"the monitor still runs and currently reads a run of "
+            f"{observed} day(s) at or above {FLIP_BAR_PCT}%"
+        )
+        return True, (
+            f"{sport_key} may fail over to StatPal without a certification "
+            "streak: Alex ruled D104 = A4 on 2026-09-09 — no proof days for the "
+            "top-tier leagues, and a game StatPal lists that we lack is our "
+            f"fetch bug to fix (#2867), not a gap in the venue. So {monitor}, "
+            f"and the {REQUIRED_STREAK_DAYS}-day bar no longer gates this sport. "
+            "THE LIMIT: this is a fallback BEHIND ESPN, not a standing source of "
+            f"record — `AUTHORITY_BY_SPORT` still reads "
+            f"`{authority_for(sport_key)}`, so on a pass where ESPN answers "
+            "nothing here changes"
+        )
     if streak is None:
         # `None` is not zero. An empty ledger has never been measured, and
         # reporting it as "0/7 consecutive days" would describe a sport that
