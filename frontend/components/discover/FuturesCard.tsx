@@ -340,7 +340,19 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               <SignalBars tier={data.confidence_tier} />
             </span>
           </div>
-          <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2">{data.name}</h3>
+          {/* #4425: the leaderboard was the one variant of the four whose title
+              was bare text — A (665), B (547), the ladder (230) and
+              FuturesCompactRow (803) all wrap it. Standalone that was survivable
+              because DiscoverCard's whole-card tap (L2-175 Item 1) navigates for
+              it, but ThemeBundleCard renders FuturesCard raw, with no swipe
+              wrapper and no tap, so inside a bundle the row had neither a link
+              nor a tap: 11 of 11 leaderboard members across the five bundles on
+              page one were inert, including Alex's "2028 Democratic presidential
+              nominee". No double-navigation — handleTap returns early on a click
+              that lands on an `a` (DiscoverCard.tsx:118). */}
+          <Link href={detailHref} onClick={onDetailClick} className="block group">
+            <h3 className="text-base font-bold leading-tight text-text-primary group-hover:text-accent-brand transition-colors line-clamp-2">{data.name}</h3>
+          </Link>
 
           {/* UX-P248 / Alex D-D — why this card is in front of THIS reader.
               CERT-678: the leaderboard is its own `<article>` and was one of the
