@@ -26,7 +26,7 @@ print 49 while half-up on the raw probability says 51. There the sentence must
 follow the card, not the rounder. A fix that merely swapped `round` for
 `rendered_percent` would fix ten of the eleven and quietly keep the eleventh.
 
-So the guards below stand in two places:
+So the guards below stand in three places:
 
 * at the ROUTE (`_score_futures`), where the invariant is checked against the
   card's OWN served `rendered_percent` values and nothing is hand-picked — the
@@ -34,9 +34,14 @@ So the guards below stand in two places:
   `or` or a later serializer does to the string;
 * at the COMPOSERS, driven through every contract row that discriminates
   banker's rounding from half-up, so the sentence joins the contract the other
-  three runtimes are already held to.
+  three runtimes are already held to;
+* at BOTH ROUTE SITES structurally, because the /sports futures rail
+  (`_score_sports_mode_futures`) is a hand-maintained near-copy of
+  `_score_futures` that the live guard's fixtures cannot reach, and a near-copy
+  is exactly where a fix applied once survives as a bug.
 """
 
+import ast
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -45,13 +50,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.routes.feed import _score_futures
-from app.utils.feed_reasons import (
-    compose_binary_card_copy,
-    generate_futures_context_summary,
-    generate_futures_headline,
-    generate_futures_reason,
-)
+# Imported as MODULES, not as names: `test_the_route_guard_can_fail` monkeypatches
+# attributes on both, and a module cannot be both `import`ed and `import from`ed
+# without CodeQL's py/import-and-import-from (a note, but an avoidable one).
+import app.routes.feed as feed_route
+import app.utils.feed_reasons as fr
 from app.utils.graded_card import rendered_percent
 from app.utils.personalization import PersonalizationContext
 
@@ -179,7 +182,7 @@ async def _serve(markets, *, source_count: int = 2):
             side_effect=Exception("no redis in test"),
         ),
     ):
-        return await _score_futures(
+        return await feed_route._score_futures(
             _mock_db(markets),
             datetime.now(timezone.utc),
             None,
@@ -280,9 +283,6 @@ async def test_the_route_guard_can_fail(monkeypatch):
     rounder alone is not enough to reproduce the bug. That is the fix, stated as
     a test.
     """
-    import app.routes.feed as feed_route
-    import app.utils.feed_reasons as fr
-
     monkeypatch.setattr(feed_route, "_printed_leader_percent", lambda rows: None)
     monkeypatch.setattr(
         feed_route, "_printed_affirmative_percent", lambda rows, names: None
@@ -346,14 +346,14 @@ def test_the_leads_at_templates_follow_the_contract(case):
     assert expected != wrong, "this row does not discriminate; the table moved"
 
     for name, sentence in (
-        ("headline", generate_futures_headline(**_futures_kwargs(probability))),
+        ("headline", fr.generate_futures_headline(**_futures_kwargs(probability))),
         (
             "context_summary",
-            generate_futures_context_summary(
+            fr.generate_futures_context_summary(
                 headline="", **_futures_kwargs(probability)
             ),
         ),
-        ("reason", generate_futures_reason(**_futures_kwargs(probability))),
+        ("reason", fr.generate_futures_reason(**_futures_kwargs(probability))),
     ):
         stated = PERCENT_IN_TEXT.findall(sentence)
         assert stated, f"{name} stated no percent for p={probability}: {sentence!r}"
@@ -371,7 +371,7 @@ def test_the_leads_at_templates_follow_the_contract(case):
 def test_the_percent_chance_template_follows_the_contract(case):
     """`N% chance` — the family #4146's body measured at six of twelve."""
     probability, expected = case["probability"], case["percent"]
-    copy = compose_binary_card_copy(
+    copy = fr.compose_binary_card_copy(
         market_name="Will the U.S. invade Iran before 2027?",
         highlight_reasons=[],
         affirmative_probability=probability,
@@ -391,18 +391,36 @@ def test_the_percent_chance_template_follows_the_contract(case):
 
 
 def test_the_sentence_follows_the_card_when_the_pair_rule_derives_the_complement():
-    """The eleventh miss, and the one a rounding swap would not fix.
+    """The miss NO ROUNDER CAN FIX, transcribed from the live card.
 
-    #2060's pair rule rounds the LEADER once and derives the other side as
-    `100 - leader`, so a card whose No side leads at 0.495 prints 51 for No and
-    **49** for Yes — while half-up on the raw 0.505 affirmative says 51. The
-    caption describes the Yes row, so it must say 49: the card is not wrong, the
-    independently-derived sentence is.
+    Production `c7cf9898`, 2026-09-08 23:2x PT — `Will New Jersey Devils advance
+    to the Second Round of the 2027 Stanley Cup Playoffs?`:
+
+        Not New Jersey Devils   p=0.505   card prints 51
+        New Jersey Devils       p=0.495   card prints 49
+        caption                                "50% chance"
+
+    The caption describes the AFFIRMATIVE, which is the 0.495 row. Note what
+    that makes the arithmetic:
+
+    * banker's `round(49.5)` = **50**
+    * half-up `rendered_percent(0.495)` = **50**
+    * what the card prints for that row = **49**
+
+    Both rounders agree, and both are wrong, because #2060's pair rule never
+    rounds this side at all — it rounds the LEADER once (0.505 -> 51) and
+    DERIVES the complement as `100 - 51`. So no rounding of the affirmative
+    probability can reproduce 49, and a fix that swapped `round` for the half-up
+    rounder would have left this card saying 50 beside a row saying 49.
+
+    The only thing that gets it right is reading the row. That is the whole
+    thesis of #4146, and this is the specimen that proves the weaker reading
+    ("just use half-up") insufficient rather than merely inelegant.
     """
-    copy = compose_binary_card_copy(
+    copy = fr.compose_binary_card_copy(
         market_name="Will New Jersey Devils advance to the Second Round?",
         highlight_reasons=[],
-        affirmative_probability=0.505,
+        affirmative_probability=0.495,
         rendered_affirmative_percent=49,
     )
     stated = PERCENT_IN_TEXT.findall(copy.context_summary)
@@ -411,9 +429,16 @@ def test_the_sentence_follows_the_card_when_the_pair_rule_derives_the_complement
         "the sentence re-derived the percent instead of stating the one the card "
         f"prints: {copy.context_summary!r}"
     )
+    # The two rounders this fixture must out-run, asserted rather than asserted
+    # ABOUT — if either ever yields 49, this test stops discriminating and the
+    # docstring above has gone stale.
+    assert _bankers(0.495) == 50 and rendered_percent(0.495) == 50, (
+        "both rounders no longer agree on 50 for the affirmative side; this "
+        "specimen no longer separates 'say what the card says' from 'use half-up'"
+    )
     # And the fallback still exists for callers that have no served row yet.
     assert PERCENT_IN_TEXT.findall(
-        compose_binary_card_copy(
+        fr.compose_binary_card_copy(
             market_name="Will the U.S. invade Iran before 2027?",
             highlight_reasons=[],
             affirmative_probability=0.145,
@@ -433,3 +458,100 @@ def test_the_contract_still_has_rows_that_catch_this():
     )
     for case in DISCRIMINATING:
         assert rendered_percent(case["probability"]) != _bankers(case["probability"])
+
+
+# ── 3. BOTH ROUTE SITES, not just the one the live guard can reach ──────────
+
+
+#: The composers that put a percent in a sentence, spelled as `routes/feed.py`
+#: calls them — these are matched against `ast.Name` ids in THAT file, so they are
+#: bare names, not this module's `fr.` aliases. `compose_binary_card_copy` is not
+#: here: the route never calls it directly — it is reached THROUGH these three,
+#: which forward the affirmative percent they are given.
+_SENTENCE_COMPOSERS = {
+    "generate_futures_headline",
+    "generate_futures_reason",
+    "generate_futures_context_summary",
+}
+
+#: The two places a futures card's sentences are composed. Discover goes through
+#: `_score_futures`; the /sports page's futures rail goes through
+#: `_score_sports_mode_futures`, which is a near-copy — and a near-copy is
+#: exactly where a fix applied once survives as a bug.
+_ROUTE_SCORERS = ("_score_futures", "_score_sports_mode_futures")
+
+
+def _composer_calls_in(function_name: str) -> list[tuple[int, str, set[str]]]:
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "routes" / "feed.py"
+    ).read_text()
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function_name
+        ):
+            return [
+                (call.lineno, call.func.id, {k.arg for k in call.keywords})
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id in _SENTENCE_COMPOSERS
+            ]
+    raise AssertionError(f"{function_name} is gone from routes/feed.py")
+
+
+@pytest.mark.parametrize("scorer", _ROUTE_SCORERS)
+def test_every_route_site_hands_the_composers_the_printed_percent(scorer):
+    """The live guard above drives `_score_futures`. This one reaches both.
+
+    Structural on purpose, and honest about it: a served-payload guard for the
+    /sports futures rail needs a whole second fixture universe (a real Sport, a
+    sport_id, the sports-mode admission gates), and CERT-2326's lesson is that a
+    guard which cannot reach a branch reports it clean. The reachable, cheap and
+    decisive fact is that BOTH scorers pass the card's own percents to every
+    composer they call — because the defect returns the moment one of them
+    stops, and the two functions are near-copies maintained by hand.
+
+    Deleting a kwarg at the sports-mode site reds this; adding a fourth call
+    site without the kwargs reds this.
+    """
+    calls = _composer_calls_in(scorer)
+    assert len(calls) == 3, (
+        f"{scorer} makes {len(calls)} sentence-composer calls, expected 3 "
+        f"(headline, reason, context_summary): {[(c[0], c[1]) for c in calls]}"
+    )
+    assert {
+        c[1] for c in calls
+    } == _SENTENCE_COMPOSERS, (
+        f"{scorer} no longer calls each composer exactly once: {calls}"
+    )
+    for lineno, name, kwargs in calls:
+        for required in ("rendered_leader_percent", "rendered_affirmative_percent"):
+            assert required in kwargs, (
+                f"{scorer} calls {name} at feed.py:{lineno} without {required}, so "
+                "that sentence derives its own percent again and can disagree "
+                "with the card beside it"
+            )
+
+
+def test_the_composers_still_accept_the_printed_percent():
+    """The kwargs above must be real parameters, not silently swallowed.
+
+    `generate_futures_*` do not take `**kwargs`, so a rename in `feed_reasons`
+    would raise at the route — but this states the coupling as an assertion
+    rather than leaving it to the live guard's fixtures to trip over.
+    """
+    import inspect
+
+    for composer in (
+        fr.generate_futures_headline,
+        fr.generate_futures_reason,
+        fr.generate_futures_context_summary,
+    ):
+        params = inspect.signature(composer).parameters
+        for required in ("rendered_leader_percent", "rendered_affirmative_percent"):
+            assert required in params, f"{composer.__name__} dropped {required}"
+    assert (
+        "rendered_affirmative_percent"
+        in inspect.signature(fr.compose_binary_card_copy).parameters
+    )
