@@ -2547,6 +2547,32 @@ _EVENT_DETAIL_DEFAULT_TTL = 300
 #: was absorbing, and the entry is capped at `_EVENT_DETAIL_MAX_SIZE` anyway.
 #: What it buys is that "forever" stops being a word this cache can mean.
 _EVENT_DETAIL_SETTLED_TTL = 3600
+#: How recently a row must have settled to be denied the hour above — live/113,
+#: #3343. The SECOND exception to "a settled row's content never changes again".
+#:
+#: The first was retirement, and the comment above says in as many words that it
+#: is the only one. It is not: a row also goes `completed` → `live` AGAIN, and
+#: this codebase already knows it — `venue_live_write_is_a_resurrection` in
+#: `app/utils/event_completion.py` exists for exactly that transition (live/042).
+#: So a premature `completed` — a provider calling a match early, a score feed
+#: mistaking a set for a match — gets cached with a one-hour lease that NOTHING
+#: can end early. The correction lands in the row; the cache never re-reads to
+#: see it. #3343 is that hour: `Final`, a `WON` chip and a named winner over a
+#: US Open match that was level at one set all and still being played.
+#:
+#: WHY A WINDOW AND NOT A CORROBORATING FIELD. The obvious rule is "trust a
+#: settled entry only when it carries `completed_at`". Measured on production
+#: 2026-09-08 before writing this: `completed` is 2,772 rows in 30d with 1
+#: missing `completed_at`, but `closed` is 55,629 rows with **54,496 (98%)**
+#: missing it. That rule would strip the shortcut from 98% of the settled
+#: population to fix a defect none of those rows have. Rejected on the number.
+#:
+#: WHY TEN MINUTES. A reversal is a correction, and corrections arrive fast —
+#: the live-price poller runs every 2 minutes. Ten minutes is five of its passes.
+#: Past that a settlement is not coming back, and the entry gets its full hour.
+#: The cost is bounded to rows that settled in the last ten minutes: those pay
+#: the live TTL, which is what they would have paid one minute earlier anyway.
+_EVENT_DETAIL_FRESHLY_SETTLED_WINDOW = 600
 _EVENT_DETAIL_MAX_SIZE = 50
 
 
@@ -9147,6 +9173,50 @@ async def get_live_odds(sport_key: str):
         )
 
 
+def _settled_within_reversal_window(cached_resp: dict, cached_at: float) -> bool:
+    """Did this row settle recently enough that the settlement might be undone?
+
+    True ⇒ the entry is denied :data:`_EVENT_DETAIL_SETTLED_TTL` and keeps
+    re-checking at the live cadence, so a resurrection (`completed` → `live`,
+    the second exception to "settled rows never change" — see #3343 and
+    `venue_live_write_is_a_resurrection`) is visible in 30 seconds and not in an
+    hour.
+
+    Reads `completed_at` off the CACHED RESPONSE rather than widening the entry
+    tuple, so neither the tuple shape nor the write site moves. `_format_event`
+    has already turned it into an ISO string by the time it is stored; a
+    `datetime` is accepted too, because a serializer that stops isoformatting
+    should degrade to re-checking, not to a silent hour.
+
+    ═══ THE TWO ABSTENTIONS, AND WHY EACH FALLS THE WAY IT DOES ═══
+
+    **No usable `completed_at` ⇒ False**, keeping the hour. This is the whole
+    reason the window is a window and not a corroborating-field test: `closed`
+    is 55,629 rows of which 54,496 (98%) carry no `completed_at` at all, so
+    treating absence as "might be fresh" would hand the live TTL to the entire
+    archival population to fix a defect none of it has. `completed`, the status
+    that actually resurrects, carries the field on 2,771 of 2,772 rows.
+
+    **A `completed_at` in the FUTURE ⇒ True**, denying the hour. The subtraction
+    is left unguarded on purpose: a stamp ahead of the clock is corrupt, and the
+    safe response to a corrupt settlement claim is to re-read it soon rather
+    than to trust it for an hour.
+    """
+    raw = cached_resp.get("completed_at")
+    if isinstance(raw, datetime):
+        settled = raw
+    elif isinstance(raw, str):
+        try:
+            settled = datetime.fromisoformat(raw)
+        except ValueError:
+            return False
+    else:
+        return False
+    if settled.tzinfo is None:
+        settled = settled.replace(tzinfo=timezone.utc)
+    return cached_at - settled.timestamp() < _EVENT_DETAIL_FRESHLY_SETTLED_WINDOW
+
+
 def _cached_detail_payload(event_id: int, now: float) -> dict | None:
     """The detail payload `get_event` would serve RIGHT NOW, or ``None``.
 
@@ -9175,7 +9245,13 @@ def _cached_detail_payload(event_id: int, now: float) -> dict | None:
         ttl = _EVENT_DETAIL_LIVE_TTL
     elif cached_status in SETTLED_STATUSES:
         # Was `or` with no expiry at all — see `_EVENT_DETAIL_SETTLED_TTL`.
-        ttl = _EVENT_DETAIL_SETTLED_TTL
+        # A settlement this row only just made keeps re-checking instead
+        # (#3343): the hour is for settlements that have stopped moving.
+        ttl = (
+            _EVENT_DETAIL_LIVE_TTL
+            if _settled_within_reversal_window(cached_resp, cached_at)
+            else _EVENT_DETAIL_SETTLED_TTL
+        )
     else:
         ttl = _EVENT_DETAIL_DEFAULT_TTL
     if now - cached_at >= ttl:
