@@ -91,6 +91,25 @@ because this rail's target *is* a sport. It is instead: the target token appears
 exactly once, and no other sport token appears at all. See
 ``test_the_only_sport_word_in_this_module_is_the_target``.
 
+## the write is a compare-and-set, not a write by id
+
+CERT-2394 blocked this lane's #4253 ship for the neighbouring mistake: a scan
+decided a row was eligible, and the write then re-asserted less than the scan
+had tested, so anything moving in between slipped through. The same shape is
+available here — the gate that admits a row reads ``llm_sport_category``, and a
+write keyed on ``id`` alone would not notice that column moving between the scan
+and the commit.
+
+So the UPDATE names the value it expects to find, grouped by before-value the
+same way :func:`restore_sql` is. A row somebody else moved mid-pass matches
+nothing, is left alone, and is reported in ``drifted`` — because ``planned 2,
+changed 1`` with no explanation reads as the write half-failing when in fact the
+gate did its job.
+
+The scan's other two conditions are the candidate's own ``source`` and its name
+and ticker, none of which move for a live row; the category is the column that
+moves, and it is the one the compare-and-set names.
+
 ## D51 — backup and restore
 
 Every planned change carries its ``before`` value in the returned payload, on
@@ -228,18 +247,52 @@ async def repair(session, apply: bool = False) -> dict[str, Any]:
     missing = sorted(set(NHL_PROP_ROW_IDS) - {r.id for r in rows})
 
     changed = 0
+    drifted: list[dict[str, Any]] = []
     if apply and planned:
-        result = await session.execute(
-            update(FuturesMarket)
-            .where(FuturesMarket.id.in_([p["id"] for p in planned]))
-            .values(llm_sport_category=TARGET_CATEGORY)
-        )
+        # 🔴 COMPARE-AND-SET on the value the plan was made from, not a blind
+        # write by id — the finding CERT-2394 blocked this lane for on #4253.
+        # The gate that admits a row reads `llm_sport_category`; anything that
+        # moves that column between the scan and the write invalidates the
+        # decision, and a write keyed on id alone would not notice.
+        #
+        # Grouped by before-value for the same reason `restore_sql` is: the
+        # statement has to name the value it expects to find. Today every row is
+        # the same, so this is one statement.
+        by_before: dict[Optional[str], list[int]] = {}
+        for row in planned:
+            by_before.setdefault(row["before"], []).append(row["id"])
+
+        for before, ids in by_before.items():
+            result = await session.execute(
+                update(FuturesMarket)
+                .where(FuturesMarket.id.in_(ids))
+                .where(
+                    FuturesMarket.llm_sport_category.is_(None)
+                    if before is None
+                    else FuturesMarket.llm_sport_category == before
+                )
+                .values(llm_sport_category=TARGET_CATEGORY)
+            )
+            matched = result.rowcount or 0
+            changed += matched
+            if matched != len(ids):
+                # Not an error, and NOT silent. Somebody moved a row while this
+                # pass was running; the plan for it is stale and it was left
+                # alone. Naming it is the whole point — "planned 2, changed 1"
+                # with no explanation is the shape that reads as a partial
+                # failure of the write rather than a refusal by the gate.
+                drifted.append(
+                    {"before": before, "ids": sorted(ids), "matched": matched}
+                )
+
         await session.commit()
-        changed = result.rowcount or 0
         logger.warning(
-            "#4365 part 2 repair applied: %s rows -> %s. D51 RESTORE:\n%s",
+            "#4365 part 2 repair applied: %s of %s planned rows -> %s "
+            "(drifted: %s). D51 RESTORE:\n%s",
             changed,
+            len(planned),
             TARGET_CATEGORY,
+            drifted or "none",
             restore_sql(planned),
         )
 
@@ -249,6 +302,10 @@ async def repair(session, apply: bool = False) -> dict[str, Any]:
         "refused": refused,
         "missing_ids": missing,
         "changed": changed,
+        # Rows whose stored category moved between the scan and the write, so
+        # the compare-and-set matched nothing and the plan for them was stale.
+        # Empty on a healthy run; `changed < len(planned)` is never unexplained.
+        "drifted": drifted,
         # The D51 undo travels WITH the plan, on the dry run too — an operator
         # should be able to read the restore before deciding to apply, not only
         # in a log line they have to go and find afterwards.

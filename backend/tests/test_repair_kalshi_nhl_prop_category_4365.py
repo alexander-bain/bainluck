@@ -585,6 +585,123 @@ async def test_the_restore_travels_on_the_dry_run():
     )
 
 
+# ---------------------------------------------------------------------------
+# The write is a compare-and-set (the CERT-2394 lesson, applied here)
+# ---------------------------------------------------------------------------
+
+
+class _ApplySession:
+    """A session that lets the write run and records what it was asked to do.
+
+    ``matched`` is the rowcount the UPDATE will report, so a drift — somebody
+    moving the row between the scan and the write — can be simulated without a
+    server.
+    """
+
+    def __init__(self, rows, matched=None):
+        self._rows = rows
+        self._matched = matched
+        self.updates = []
+        self.committed = False
+
+    async def execute(self, statement):
+        rows = self._rows
+        if statement.__visit_name__ == "select":
+            class _Result:
+                def all(self):
+                    return rows
+            return _Result()
+
+        self.updates.append(statement)
+        matched = self._matched
+        if matched is None:
+            matched = len(self._rows)
+
+        class _Written:
+            rowcount = matched
+
+        return _Written()
+
+    async def commit(self):
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_the_update_constrains_the_column_it_is_about_to_overwrite():
+    """🔴 The CERT-2394 lesson, as a test rather than a paragraph.
+
+    That cert blocked this lane's #4253 for a write that re-asserted less than
+    its scan had tested. Here the gate reads `llm_sport_category`, so a write
+    keyed on `id` alone would not notice that column moving between the scan and
+    the commit. Asserted on the statement's WHERE clause, so deleting the
+    compare-and-set fails even though the repair still "works".
+    """
+    session = _ApplySession([_SHIP_ROW])
+    await rail.repair(session, apply=True)
+
+    assert len(session.updates) == 1
+    where = str(session.updates[0].whereclause)
+    assert "llm_sport_category" in where, (
+        "the UPDATE is keyed on id alone. A row whose category moved between "
+        "the scan and the write would be overwritten on a stale decision, and "
+        "its recorded `before` — the D51 restore — would be wrong."
+    )
+    assert session.committed
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_apply_reports_every_planned_row_changed():
+    session = _ApplySession([_SHIP_ROW])
+    out = await rail.repair(session, apply=True)
+    assert out["changed"] == 1
+    assert out["drifted"] == []
+    assert out["terminal"] == "changed"
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_drifted_is_named_not_silently_missing():
+    """`planned 1, changed 0` must never arrive unexplained.
+
+    A bare count shortfall reads as the write half-failing. It is the opposite:
+    the compare-and-set noticed a stale plan and declined. The payload has to
+    say which row and what value it expected.
+    """
+    session = _ApplySession([_SHIP_ROW], matched=0)
+    out = await rail.repair(session, apply=True)
+
+    assert out["changed"] == 0
+    assert out["drifted"] == [
+        {"before": "basketball", "ids": [12508872], "matched": 0}
+    ]
+    assert len(out["planned"]) == 1, (
+        "the plan should still report what it intended — the drift is a write-"
+        "time refusal, not a planning error"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_still_issues_no_write():
+    """The apply-capable session makes it possible to write by accident; prove
+    `apply=False` does not, now that nothing raises to stop it."""
+    session = _ApplySession([_SHIP_ROW])
+    out = await rail.repair(session, apply=False)
+    assert session.updates == []
+    assert session.committed is False
+    assert out["changed"] == 0
+    assert out["drifted"] == []
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_written_when_every_row_is_refused():
+    """An all-refused plan must not issue an empty UPDATE — a statement with an
+    empty id list is a write nobody reviewed."""
+    session = _ApplySession([_CONTROL_ROW])
+    out = await rail.repair(session, apply=True)
+    assert session.updates == []
+    assert out["planned"] == []
+    assert out["changed"] == 0
+
+
 def test_the_restore_line_is_a_statement_not_a_dict_repr():
     """D51's undo must be runnable, not merely present.
 
