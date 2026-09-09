@@ -222,6 +222,69 @@ def _prev_day(day: str) -> str:
     return (date.fromisoformat(day) - timedelta(days=1)).isoformat()
 
 
+#: What `counted_on` is, said on the payload rather than in a doc nobody has open
+#: at the moment they are reading a 7/7 (#4274).
+COUNTED_ON_IS = (
+    "one entry per day of THIS streak — `since`..`through`, not the whole "
+    "retained ledger — saying what that day's governing number was divided by. "
+    "A retained day from before the streak began was not part of what was "
+    "cleared, so including it would describe a different measurement than the "
+    "one being permitted. `both` and `denominator` are `null`, never `0`, on a "
+    "day recorded before the ledger kept them: an absent answer is not a zero "
+    "answer. Reported, and gates nothing — the streak's length is decided by "
+    "each day's state and by nothing here (#3071's minimum denominator is "
+    "UNRULED)."
+)
+
+
+def _counted_on_days(
+    by_day: dict[str, dict[str, Any]],
+    *,
+    since: Optional[str],
+    through: Optional[str],
+) -> list[dict[str, Any]]:
+    """The streak's own days, each saying what it was counted on (#4274).
+
+    `streak.note` has always told the reader that the per-day denominator is
+    "on each entry in `days[]`" — and the served payload publishes `days` as an
+    INTEGER and no such list anywhere. On 2026-09-11 three sports reach seven
+    days, two of them on ~3% of a season that has not started, and the sentence
+    would have sent whoever checked to a key that does not exist.
+
+    The window is the STREAK's, for the reason `_counted_on` in
+    `authority_by_sport` uses the same one: a range that grew from 3 to 41 over
+    seven days and one that sat at 41 throughout are different facts, and
+    question A's third candidate option turns on exactly that difference.
+
+    Empty when there is no streak. That is not a `0` and not a missing key: a
+    zero-day streak genuinely has no days to describe, and `days: 0` above
+    already says so.
+    """
+    if since is None or through is None:
+        return []
+    out: list[dict[str, Any]] = []
+    cursor = since
+    while cursor <= through:
+        entry = by_day.get(cursor)
+        if entry is not None:
+            out.append(
+                {
+                    "day": cursor,
+                    "state": entry.get("state"),
+                    # `.get`, not `[...]`: a ledger day written before these
+                    # fields existed carries neither, and `None` is the honest
+                    # answer for it. A `0` here would read as "measured, and
+                    # there was nothing" — the flattering direction.
+                    "both": entry.get("both"),
+                    "denominator": entry.get("denominator"),
+                    "numbers": list(entry.get("numbers") or []),
+                    "values": dict(entry.get("values") or {}),
+                }
+            )
+        cursor = (date.fromisoformat(cursor) + timedelta(days=1)).isoformat()
+    return out
+
+
 def compute_streak(days: Iterable[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """Consecutive clearing days, ending at the most recent recorded day.
 
@@ -321,12 +384,14 @@ def compute_streak(days: Iterable[dict[str, Any]]) -> Optional[dict[str, Any]]:
         "carried_days": sorted(carried),
         "unstable_days": sorted(unstable),
         "stopped_by": stopped_by,
+        "counted_on": _counted_on_days(by_day, since=since, through=as_of),
+        "counted_on_is": COUNTED_ON_IS,
         "note": (
             "Consecutive UTC days ending at `through`, each scored on that "
             "sport's governing number (D63). `carried_days` neither advanced "
             "nor reset it; a day with no stored row stops it. Seven here is "
             "necessary for a flip and not sufficient — D50 also requires a "
             "YOUR-TURN entry Alex has seen, and the denominator those days were "
-            "measured over is on each entry in `days[]`."
+            "measured over is on each entry in `counted_on[]` below."
         ),
     }
