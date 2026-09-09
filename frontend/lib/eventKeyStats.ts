@@ -504,12 +504,34 @@ export function chartAxisToHomeProb(axisValue: number): number {
  * `probabilityInvariant.test.ts` was green through this entire bug precisely
  * because it re-implemented the arithmetic instead of calling it.
  *
- * ═══ THE SECOND END IS DERIVED ═══
+ * ═══ THE SECOND END IS DERIVED — AND WHICH END IS THE SECOND IS THE RULE ═══
  *
  * Never rounded on its own. On the half-percent grid both ends can land on
  * `.5` at once, so independent rounding prints 101 — the card-level half of the
- * same contract (`renderedCardPercents`). Deriving `100 - home` keeps a
- * complement pair summing to 100 by construction.
+ * same contract (`renderedCardPercents`). Deriving one end from the other keeps
+ * a complement pair summing to 100 by construction.
+ *
+ * #4154 — GETTING THE SUM RIGHT IS NOT ENOUGH; THE HERO AND THE CHART HAVE TO
+ * DERIVE THE *SAME* END. The first version of this function always rounded
+ * `home` and derived `away`. The hero does not: `renderedDuelPercents` rounds
+ * the LARGER side and derives the smaller, so that the number a card leads with
+ * is the one that survives untouched. The two rules agree whenever home is the
+ * larger side and disagree whenever it is not — and `0.275` is not a rounding
+ * edge case, it is half of every duel on the board.
+ *
+ * Read on production 2026-09-08 on `/events/15307331` (Zheng v Rybakina, a US
+ * Open quarter-final): `hero_probability: 0.275` printed a **27%** hero — 100
+ * minus a rounded 73 — above a **28%** callout, because this function rounded
+ * `0.275` on its own. One card, one number, two answers, and both arms were
+ * individually obeying a contract. #3892 closed the mirror image of this
+ * (`0.575`, hero 58 / callout 57) by fixing HOW the chart rounds; it could not
+ * see this one, because there the charted side was the side the hero rounds.
+ *
+ * So the chart does not have a rounding rule of its own any more. It rebuilds
+ * the pair the axis value implies and asks `renderedDuelPercents` — the hero's
+ * own function — which end to anchor. Agreement is then structural rather than
+ * a coincidence re-established at each call site, which is the only form of it
+ * that survives the next change to either arm.
  *
  * Returns `null`s for a non-finite axis value, which is `renderedPercent`'s own
  * answer for "no number here". A caller rendering into JSX must supply its own
@@ -519,9 +541,14 @@ export function chartAxisPercents(axisValue: number): {
   home: number | null;
   away: number | null;
 } {
-  const home = renderedPercent(chartAxisToHomeProb(axisValue));
-  if (home === null) return { home: null, away: null };
-  return { home, away: 100 - home };
+  const homeProb = chartAxisToHomeProb(axisValue);
+  // The axis carries ONE end, and this function has always answered for both by
+  // treating the other as its complement. Making that reconstruction explicit is
+  // what lets the hero's rule decide the anchor; a non-finite axis value falls
+  // out as a non-complement pair and yields the nulls documented above.
+  const [away, home] = renderedDuelPercents(1 - homeProb, homeProb);
+  if (home === null || away === null) return { home: null, away: null };
+  return { home, away };
 }
 
 /**

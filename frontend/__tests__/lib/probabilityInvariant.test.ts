@@ -15,6 +15,7 @@
 // test here instead of only surfacing as a live visual mismatch.
 
 import {
+  chartAxisPercents,
   chartAxisToHomeProb,
   computeLastChartPoint,
   homeProbToChartAxis,
@@ -91,16 +92,40 @@ function surfaces(
   const scrubHomeFrac = chartAxis === null ? null : chartAxisToHomeProb(chartAxis);
 
   return {
-    hero: pct(hero.homeProb),
+    // #4154 — `homePct`, NOT `pct(hero.homeProb)`. The resolver returns both:
+    // `homeProb` is the number to REASON with and `homePct` is, in its own
+    // comment, "the number to PRINT". This suite read the former and rounded it
+    // itself, so it was still modelling the rule one level up from where #3892
+    // caught it doing the same thing — and it went green while production
+    // printed a 27% hero over a 28% callout on `/events/15307331`, because
+    // `renderedPercent(0.275)` is 28 and the hero DERIVES 27 from a rounded 73.
+    hero: hero.homePct,
     atRest: pct(lastChartPoint?.homeProb ?? null),
     // #3892 — the chart arms come back through `chartAxisToHomeProb` before
     // rounding, mirroring what `OddsChart` now does. Rounding the axis value
     // directly is the defect: it rounds `probability * 100` rather than the
     // decimal the venue quoted.
-    chartPlot: chartAxis === null ? null : pct(chartAxisToHomeProb(chartAxis)),
-    tooltip: tooltipHome === null ? null : pct(chartAxisToHomeProb(tooltipHome)),
-    scrub: pct(scrubHomeFrac),
+    //
+    // #4154 — and they go through `chartAxisPercents`, which is the function
+    // `OddsChart` calls. `pct(...)` here was the same re-implementation:
+    // it anchors on `home` where the shipped chart now anchors on the pair's
+    // larger side, so this arm could disagree with the screen in exactly the
+    // case the screen was wrong.
+    chartPlot: chartAxis === null ? null : chartAxisPercents(chartAxis).home,
+    tooltip:
+      tooltipHome === null ? null : chartAxisPercents(tooltipHome).home,
+    scrub:
+      scrubHomeFrac === null
+        ? null
+        : chartAxisPercents(homeProbToChartAxis(scrubHomeFrac)).home,
+    // Each end rounded INDEPENDENTLY — deliberately not what the page prints.
+    // The #3892 case below asserts it as the unpaired value on purpose: 58 + 43
+    // is 101, and the pair's derivation is the only reason a reader never sees
+    // that. Kept under its own name by #4154 so the printed value can sit
+    // beside it rather than replace it.
     heroAway: pct(hero.awayProb),
+    // #4154 — what the away end actually PRINTS, paired with `hero` above.
+    heroAwayPrinted: hero.awayPct,
   };
 }
 
@@ -170,6 +195,13 @@ describe("cross-surface invariant: hero == readout == chart == tooltip == scrub"
     // what makes the derivation load-bearing rather than decorative — 58 + 43
     // is 101, and the deriving is the only reason the reader never sees it.
     expect(s.heroAway).toBe(43);
+
+    // #4154 — and the paired value, which is what the screen reads. Both are
+    // asserted because the gap between them IS the derivation: 43 is the number
+    // the away end would print on its own, 42 is the number it prints beside a
+    // rounded 58.
+    expect(s.heroAwayPrinted).toBe(42);
+    expect(s.hero! + s.heroAwayPrinted!).toBe(100);
   });
 
   test("#1003 case — no blend, no win_prob_history: history FRACTION shows as 81, never 1", () => {
