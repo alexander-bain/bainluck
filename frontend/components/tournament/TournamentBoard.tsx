@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import LiquidityMark from "../LiquidityMark";
+import { FreshnessDot } from "../FreshnessDot";
 import TrendSparkline from "./TrendSparkline";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore from "./ShowMore";
@@ -11,7 +12,7 @@ import {
   boardNotice,
   formatBoardProbability,
   formatTrendDelta,
-  rowFreshnessLabel,
+  rowFreshness,
   rowIsPresentedAsLive,
   trendDirection,
   type TournamentBoardData,
@@ -47,7 +48,7 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
   const settled = row.probability === null;
   // Names the old leg when only one of them is old (UX-P135), so a row muted
   // by a stale Polymarket price does not read as "nobody has looked at this".
-  const freshness = rowFreshnessLabel(row);
+  const freshness = rowFreshness(row);
   const [revealed, setRevealed] = React.useState<string | null>(null);
   const toggleReveal = React.useCallback((sentence: string) => {
     setRevealed((open) => (open === sentence ? null : sentence));
@@ -95,11 +96,23 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
               <span>
                 {row.source_count} source{row.source_count === 1 ? "" : "s"}
               </span>
-              {freshness !== null && (
+              {/* #4283 / notice 34: an AGE is a method note about our pipeline
+                  and goes to the mark's tooltip; an ANSWER ("no reading yet")
+                  is what the reader asked and stays in the body. The split is
+                  `rowFreshness().kind`, not a phrase match here. */}
+              {freshness !== null && freshness.kind === "answer" && (
                 <span className="text-accent-warning" data-testid="row-age">
                   {" · "}
-                  {freshness}
+                  {freshness.label}
                 </span>
+              )}
+              {freshness !== null && freshness.kind === "age" && (
+                <FreshnessDot
+                  label={freshness.label}
+                  ageHours={freshness.ageHours}
+                  testId="row-age"
+                  className="ml-1 align-baseline"
+                />
               )}
               {/* UX-P157. On the honesty line rather than beside the number,
                   and that is a measurement, not a preference: the number track

@@ -119,24 +119,30 @@ const BANNED: { block: string; needle: RegExp; arm?: string }[] = [
   { block: "qualifying population note", needle: />\s*Includes \d+ qualifying/i },
   // 4. TournamentBoard's delta window.
   { block: "delta window note", needle: />\s*Movement since/i },
-  // 5. TournamentProps' `labelled` freshness chip, in the page body.
-  //    (The tooltip and sr-only copies are permitted — notice 34 names a
-  //    tooltip on the source mark as the sanctioned home for exactly this.)
+  // 5. The freshness admission, in the page body, on ANY of the three surfaces
+  //    that carry it. (The tooltip and sr-only copies are permitted — notice 34
+  //    names a tooltip on the source mark as the sanctioned home for exactly
+  //    this, and that is where #4278 and #4283 put it.)
   //
-  //    🔴 SCOPED TO THE PROPS ARM, AND THE REASON IS THE FINDING THAT SCOPED
-  //    IT. Written unscoped, this needle went red on `TournamentMatches` —
-  //    `slateRowFreshnessLabel` (lib/slate.ts) builds the SAME sentence for a
-  //    quiet match row, and `rowFreshnessLabel` mirrors it on the boards. That
-  //    is a real seventh instance of the banned shape on this page and it is
-  //    FILED, not fixed here: it is 27 references across six source files with
-  //    25 test assertions on the phrase, it needs a treatment a match row does
-  //    not currently have (there is no `dot` variant for a slate row), and it
-  //    was NOT rendering on production this morning — every match was fresh. A
-  //    deadline sweep is the wrong place to widen by a two-surface refactor.
-  //    Scoping it here rather than deleting the needle keeps the props chip
-  //    guarded and leaves an accurate note for whoever takes the seventh.
-  { block: "freshness sentence in body", needle: /Last number [^<"]*ago\s*<\/span>/i,
-    arm: "props" },
+  //    ✅ UNSCOPED AS OF #4283, WHICH IS WHAT THE `arm` WAS WAITING FOR. This
+  //    needle carried `arm: "props"` because `slateRowFreshnessLabel` and
+  //    `rowFreshnessLabel` printed the same sentence on the match slate and the
+  //    contender boards, and a deadline sweep was the wrong place to widen by a
+  //    two-surface refactor. Both now render `FreshnessDot`, so the scope is
+  //    gone and this runs page-wide — which is the point, and the acceptance
+  //    test #4283 was filed with.
+  { block: "freshness sentence in body", needle: /Last number [^<"]*ago\s*<\/span>/i },
+  //    🔴 AND THE SHAPE THE NAMED NEEDLE ABOVE CANNOT SEE. `Last number …` is
+  //    only the slate's COMMON branch. Its mixed branch builds
+  //    `Alcaraz + Sinner 20 hours ago`, and `rowFreshnessLabel` on the boards
+  //    builds a bare `20 hours ago` or `one reading 20 days ago` — all three
+  //    are the same age-bearing method note and NONE of them contains "Last
+  //    number", so removing the `arm` above would have declared victory over a
+  //    third of the instance. Anchored on `ago</span>`, which is what a BODY
+  //    text node ends with; the sanctioned copies do not match it — the
+  //    `sr-only` label ends `ago. </span>` (the sentence's own full stop) and
+  //    the `title=` attribute closes on a quote, which `[^<"]` already excludes.
+  { block: "bare age in body", needle: /\d+\s+(hour|day|min)s?\s+ago\s*<\/span>/i },
   // 6. PlayoffGrid's self-audit.
   { block: "column self-audit summary", needle: /Does each column add up/i },
   { block: "column self-audit verdict", needle: /columns\s+within tolerance/i },
@@ -333,6 +339,9 @@ describe("#4278 — the guard can fail", () => {
       "delta window note": "<div>Movement since 10 Aug.</div>",
       "freshness sentence in body":
         '<span data-variant="labelled">Jannik Sinner: Last number 21 hours ago</span>',
+      // The two shapes with no "Last number" in them: the slate's mixed branch
+      // and the boards' bare age. Both are what #4283 took off the page.
+      "bare age in body": '<span data-testid="match-age">Alcaraz + Sinner 20 hours ago</span>',
       "column self-audit summary": "<summary>Does each column add up? </summary>",
       "column self-audit verdict": "<span>0 of 5 columns within tolerance</span>",
       "monotonicity paragraph": "<p>1 player has a higher chance for a later round than an earlier one</p>",

@@ -61,7 +61,7 @@ import { BOOKS_MARKER } from "./tournamentResults";
 import {
   formatSlateProbability,
   matchBroadcast,
-  slateRowFreshnessLabel,
+  slateRowFreshness,
   slateRowIsPresentedAsLive,
   slateStalenessLabel,
   type Broadcast,
@@ -209,8 +209,13 @@ export interface MatchListEntry {
   score: string | null;
   coherent: boolean;
   isLive: boolean;
-  /** "3 hours ago", naming the stale side when only one is old. `null` if live. */
-  freshnessLabel: string | null;
+  /**
+   * The staleness admission, naming the stale side when only one is old, or
+   * `null` if live. `kind: "age"` is a method note and may only be drawn as a
+   * `FreshnessDot` (notice 34, #4283); `kind: "answer"` is a reply the reader
+   * asked for and belongs in the body.
+   */
+  freshness: { label: string; kind: "age" | "answer"; ageHours: number | null } | null;
   broadcast: ResolvedBroadcast | null;
   /**
    * The one sentence this row is allowed, or `null` (Alex's ruling 6).
@@ -645,7 +650,7 @@ export function matchListFromSlate(
       score: match.score ?? null,
       coherent: match.coherent,
       isLive: slateRowIsPresentedAsLive(match),
-      freshnessLabel: slateRowFreshnessLabel(match),
+      freshness: slateRowFreshness(match),
       broadcast: matchBroadcast(match, options.broadcasts, options.region),
       detailNote: null,
       eventId: match.event_id ?? null,
@@ -803,7 +808,7 @@ export function matchListFromBracket(
         score: scores[match.id] ?? joined?.score ?? null,
         coherent: joined ? joined.coherent : true,
         isLive: joined ? slateRowIsPresentedAsLive(joined) : false,
-        freshnessLabel: joined ? slateRowFreshnessLabel(joined) : null,
+        freshness: joined ? slateRowFreshness(joined) : null,
         broadcast: joined
           ? matchBroadcast(joined, options.broadcasts, options.region)
           : null,

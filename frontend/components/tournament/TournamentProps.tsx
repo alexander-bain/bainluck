@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { FreshnessDot } from "@/components/FreshnessDot";
 
 import LiquidityMark from "../LiquidityMark";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
@@ -192,23 +193,19 @@ function FreshnessMark({
   }
 
   if (variant === "dot") {
+    /* #4283 MOVED THIS BODY OUT, it did not copy it. The slate rows and the
+       contender boards needed the same mark, and `LiquidityMark`'s header is
+       explicit that a per-surface glyph is how a signal stops being a signal.
+       There is now one `FreshnessDot` and three callers. */
     return (
-      <span
-        className={`ml-2 inline-flex shrink-0 items-center gap-1 text-[10.5px] tabular-nums ${tone}`}
-        data-testid="prop-age"
-        data-variant="dot"
-        data-state={fresh.state}
-        title={fullLabel}
-      >
-        <span
-          aria-hidden="true"
-          className={`h-1.5 w-1.5 rounded-full ${
-            fresh.state === "quiet" ? "bg-accent-warning" : "bg-text-muted"
-          }`}
-        />
-        <span className="sr-only">{fullLabel}. </span>
-        <span aria-hidden="true">{compactAge(fresh.ageHours)}</span>
-      </span>
+      <FreshnessDot
+        label={fullLabel}
+        ageHours={fresh.ageHours}
+        tone={fresh.state === "quiet" ? "quiet" : "muted"}
+        state={fresh.state}
+        testId="prop-age"
+        className="ml-2"
+      />
     );
   }
 
@@ -223,13 +220,6 @@ function FreshnessMark({
       {fresh.label}
     </span>
   );
-}
-
-/** "32h" / "20d" / "—". Only the `dot` variant, which labels itself elsewhere. */
-function compactAge(ageHours: number | null): string {
-  if (ageHours === null || !Number.isFinite(ageHours)) return "—";
-  if (ageHours < 48) return `${Math.floor(ageHours)}h`;
-  return `${Math.floor(ageHours / 24)}d`;
 }
 
 /** "A" / "A and B" / "A, B and C" — the page's own list voice, not an Oxford one. */
