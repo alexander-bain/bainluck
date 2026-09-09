@@ -322,6 +322,18 @@ POLYMARKET_MARKET_BUDGET = 1200
 #: would be the shared cap again, wearing the per-source ones as decoration.
 DEFAULT_MARKET_BUDGET = KALSHI_MARKET_BUDGET + POLYMARKET_MARKET_BUDGET
 
+#: Extra ``/markets/{ticker}`` calls one pass may spend confirming that a leg the
+#: venue no longer lists really is gone (#4253). One call per CANDIDATE leg, and
+#: the candidate set is self-draining: a retired leg's ``current_probability`` is
+#: NULL, so it stops matching :data:`_KALSHI_FROZEN_CERTAIN_SQL` forever after.
+#:
+#: Sized against the measured standing population (production 2026-09-09): **41
+#: legs across 14 markets** carry ``current_probability = 1.0`` uncrowned in the
+#: reachable Kalshi cohort, of which **23 across 9 markets** clear the ungraded
+#: gate below. 60 clears today's whole backlog in one pass and costs at most
+#: 60 x 0.35 s = 21 s against the 420 s loop budget.
+KALSHI_DELISTED_CHECK_BUDGET = 60
+
 #: How many rows each value pool carries into the expensive staleness anti-join.
 #:
 #: THE POOLS EXIST BECAUSE OF A PLAN, NOT A PREFERENCE. With the tier fence gone
@@ -995,6 +1007,209 @@ async def _fetch_kalshi_prices(service, external_id: str):
     return priced
 
 
+#: Legs that claim CERTAINTY on a contract nobody has graded (#4253).
+#:
+#: Three conditions, and the third is the one that took the measuring:
+#:
+#: * ``current_probability = 1.0`` — not "near 1", exactly 1. A leg the venue
+#:   quotes at 0.99 is a PRICE; 1.0 uncrowned is a claim of certainty with no
+#:   result behind it, which is the thing #4253 is about.
+#: * ``is_winner IS NOT TRUE`` — a crowned leg's 1.0 is its settlement.
+#: * **the market has no crowned outcome at all.** Grading has never touched
+#:   this market, so a 1.0 here cannot be a grading MISS — there is nothing to
+#:   have missed. Where grading demonstrably runs, a 1.0 uncrowned is most often
+#:   an ungraded YES whose price is the last surviving trace of the result, and
+#:   withdrawing it would destroy information rather than restore truth.
+#:
+#: That third clause is a refusal, and the refusal is the safety argument.
+#: Measured on production 2026-09-09 over the reachable Kalshi cohort: 41 legs
+#: match the first two conditions, and this clause REFUSES 18 of them across five
+#: markets — *Who will release a new song this year?* (12 legs beside 47 crowned
+#: siblings: Don Toliver, Charlie Puth, BLACKPINK, Harry Styles), *top 20 song*
+#: (3 beside 10), *#1 hit* (1 beside 4), *Texas gas prices* (1 beside 3),
+#: *Nasdaq-100* (1 beside 7). Every one of those is a plausible ungraded YES.
+#: The 23 it admits, across nine markets, are IPO and product ladders with ZERO
+#: crowned outcomes — *When will Starlink/OpenAI/Anduril/Stripe/Deel/Discord/
+#: Oura/Fannie Mae announce an IPO?* and *What flavors will JUUL relaunch?* —
+#: where a leg reading "Before Sep 1, 2025" at 100% is contradicted by the parent
+#: market still being open.
+#:
+#: ``price_changed_at IS NULL`` is deliberately NOT a condition. It was in the
+#: census that found this population and it is a no-op on it (41 of 41 also
+#: satisfy it), so including it would narrow the rule by an accident of the
+#: sample rather than by anything about truth.
+_KALSHI_FROZEN_CERTAIN_SQL = text(
+    """
+    SELECT fo.market_id, fo.external_id
+      FROM futures_outcomes fo
+     WHERE fo.market_id = ANY(:market_ids)
+       AND fo.current_probability = 1.0
+       AND fo.is_winner IS NOT TRUE
+       AND fo.external_id IS NOT NULL
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_outcomes crowned
+              WHERE crowned.market_id = fo.market_id
+                AND crowned.is_winner IS TRUE
+           )
+     ORDER BY fo.market_id, fo.external_id
+    """
+)
+
+#: The withdrawal itself. Mirrors `polymarket._retire_unpriced_legs` field for
+#: field — ``current_probability``/``current_american_odds`` and nothing else —
+#: rather than calling it, because the two rules are not the same rule and
+#: folding them would hide that. Polymarket's says *the venue serves this leg and
+#: quotes no price*; this one says *the venue no longer serves this leg at all*.
+#:
+#: Deliberately NOT touched, for the reasons that helper records: ``is_winner``
+#: (a grade is not a quote), ``opening_probability`` (calibration truth, a
+#: different owner), and ``last_updated`` — stamping a withdrawal fresh would
+#: advertise a current price at the exact moment we stopped having one, and this
+#: column is rendered to readers as the card's own date.
+#:
+#: ``current_probability = 1.0`` is repeated here and not just in the SELECT: the
+#: confirmation is a network round trip, so a live poll may have written a real
+#: price to the row in between. Re-asserting it makes the write a
+#: compare-and-set instead of a blind UPDATE keyed on a stale read.
+#:
+#: 🔴 SO IS THE CROWNED-SIBLING REFUSAL, AND IT IS THE CLAUSE THE FIRST VERSION
+#: FORGOT (CERT-2394). The scan's three conditions are not three tests of one
+#: row: two are about the candidate, and the third — *this market has no crowned
+#: outcome at all* — is about its SIBLINGS, which is the entire safety argument
+#: for admitting the row (it is why 18 of 41 production candidates are refused).
+#: Re-checking only the candidate's own two columns therefore left the decisive
+#: boundary racy: between the scan and this write sit up to
+#: :data:`KALSHI_DELISTED_CHECK_BUDGET` venue round trips, and
+#: `backfill_winners` runs every 6h against exactly these markets. Let it crown
+#: a SIBLING inside that window and the candidate's own columns are still
+#: 1.0/not-true, so the old statement retired it — erasing a leg in a
+#: now-graded market, the precise class the rule promises to preserve.
+#:
+#: Repeating the ``NOT EXISTS`` here closes the window to the statement's own
+#: snapshot: a crowning that committed before this UPDATE begins is visible to
+#: it, so the refusal is decided on the state at WRITE time rather than on a
+#: read that may be a minute old. The refusal is deliberately whole-market — one
+#: crowned sibling withdraws nothing anywhere in the market, matching the scan.
+_KALSHI_RETIRE_DELISTED_SQL = text(
+    """
+    UPDATE futures_outcomes
+       SET current_probability = NULL,
+           current_american_odds = NULL
+     WHERE market_id = :market_id
+       AND external_id = ANY(:tickers)
+       AND current_probability = 1.0
+       AND is_winner IS NOT TRUE
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_outcomes crowned
+              WHERE crowned.market_id = :market_id
+                AND crowned.is_winner IS TRUE
+           )
+ RETURNING id
+    """
+)
+
+#: Did a crowned outcome appear in this market between the scan and the write?
+#:
+#: Asked ONLY when the compare-and-set above retired nothing, and asked purely so
+#: the refusal is countable. Without it the race's outcome is indistinguishable
+#: from "the venue re-listed everything" — both arrive as zero rows — and a
+#: safety boundary nobody can see firing is one nobody can prove still works.
+_KALSHI_MARKET_NOW_GRADED_SQL = text(
+    """
+    SELECT EXISTS (
+             SELECT 1
+               FROM futures_outcomes crowned
+              WHERE crowned.market_id = :market_id
+                AND crowned.is_winner IS TRUE
+           )
+    """
+)
+
+
+async def _scan_kalshi_frozen_certain(session, market_ids: list[int]) -> dict[int, list[str]]:
+    """Candidate legs for :data:`_KALSHI_FROZEN_CERTAIN_SQL`, grouped by market.
+
+    Run ONCE per pass over the whole Kalshi batch rather than per market: the
+    predicate matches nothing for all but a handful of markets (14 of 3,338
+    reachable rows on production 2026-09-09), so a per-market query would be
+    3,338 round trips to learn "no" 3,324 times.
+    """
+    if not market_ids:
+        return {}
+    rows = (
+        await session.execute(
+            _KALSHI_FROZEN_CERTAIN_SQL, {"market_ids": list(market_ids)}
+        )
+    ).fetchall()
+    out: dict[int, list[str]] = {}
+    for market_id, ticker in rows:
+        out.setdefault(int(market_id), []).append(ticker)
+    return out
+
+
+async def _retire_delisted_kalshi_legs(
+    session, service, market_id: int, tickers: list[str], stats: dict
+) -> int:
+    """Withdraw our number on legs the venue has delisted. Returns the count.
+
+    The candidate list is a DATABASE claim; this function turns it into a VENUE
+    fact before writing anything. Each ticker is confirmed with its own
+    :meth:`KalshiAPIService.market_exists` call, and only a definite ``False``
+    (an observed 404) retires. ``True`` and ``None`` both decline — the second
+    because "we could not reach the venue" must never be spent as evidence of
+    absence (gotcha #53).
+
+    The write re-decides the crowned-sibling refusal for itself; those venue
+    calls ARE the race window, so the scan's verdict is carried here as a
+    candidate list and never as a permission (CERT-2394 —
+    :data:`_KALSHI_RETIRE_DELISTED_SQL`).
+    """
+    confirmed: list[str] = []
+    for ticker in tickers:
+        if stats["delisted_checks"] >= KALSHI_DELISTED_CHECK_BUDGET:
+            stats["delisted_check_budget_hit"] = True
+            break
+        stats["delisted_checks"] += 1
+        try:
+            exists = await service.market_exists(ticker)
+        except Exception as exc:  # pragma: no cover - defensive
+            stats["errors"].append(f"kalshi exists {ticker}: {exc}")
+            continue
+        if exists is False:
+            confirmed.append(ticker)
+        elif exists is None:
+            stats["delisted_indeterminate"] += 1
+        else:
+            stats["delisted_still_listed"] += 1
+        await asyncio.sleep(0.15)
+
+    if not confirmed:
+        return 0
+    result = await session.execute(
+        _KALSHI_RETIRE_DELISTED_SQL,
+        {"market_id": market_id, "tickers": confirmed},
+    )
+    retired = len(result.fetchall())
+    if not retired:
+        # Zero rows has two causes and they are not the same news. Separate them
+        # so the refusal is countable (CERT-2394) — see
+        # `_KALSHI_MARKET_NOW_GRADED_SQL`.
+        now_graded = await session.scalar(
+            _KALSHI_MARKET_NOW_GRADED_SQL, {"market_id": market_id}
+        )
+        if now_graded:
+            stats["delisted_refused_market_graded"] += 1
+            logger.info(
+                "futures_price_refresh: refused to withdraw %s delisted Kalshi "
+                "leg(s) on market %s — a sibling was crowned after the scan "
+                "(#4253/CERT-2394)",
+                len(confirmed), market_id,
+            )
+    return retired
+
+
 async def _fetch_polymarket_prices(service, event_ids: list[str]) -> tuple[dict, dict]:
     """Prices for a batch of Polymarket event ids, keyed by event id.
 
@@ -1173,6 +1388,27 @@ async def _refresh_stale_futures_prices(
         # a clean success on every pass while retiring nothing, and a stat that
         # only appears when it fires cannot tell that apart from a quiet cohort.
         "legs_retired": 0,
+        # #4253. The Kalshi half of the same withdrawal, counted SEPARATELY from
+        # `legs_retired` because it answers a different venue question — "the
+        # venue no longer lists this contract", not "the venue lists it and
+        # quotes no price". Folding them would make a Kalshi regression
+        # invisible behind Polymarket's much larger number.
+        #
+        # The three refusal counters are reported unconditionally, including as
+        # zero, for the reason `legs_retired` is: a pass that confirmed nothing
+        # and a pass that had nothing to confirm both arrive as "0 retired", and
+        # only `delisted_checks` separates them.
+        "kalshi_legs_retired": 0,
+        "delisted_checks": 0,
+        "delisted_still_listed": 0,
+        "delisted_indeterminate": 0,
+        # CERT-2394. Markets where the venue confirmed the delisting but a
+        # sibling was crowned between the scan and the write, so the whole
+        # market was refused. Reported unconditionally for the same reason as
+        # the three above: a boundary that is only visible when it fires cannot
+        # be shown to be working on the passes where it doesn't.
+        "delisted_refused_market_graded": 0,
+        "delisted_check_budget_hit": False,
         "errors": [],
         "by_source": {},
         "remaining_stale": None,
@@ -1469,6 +1705,17 @@ async def _refresh_stale_futures_prices(
                 from app.services.kalshi_api import KalshiAPIService
 
                 kalshi_service = KalshiAPIService()
+                # One scan for the whole batch, before the loop — see
+                # `_scan_kalshi_frozen_certain`. A failure here must not cost the
+                # pass its prices, so it degrades to "no candidates".
+                try:
+                    frozen_certain = await _scan_kalshi_frozen_certain(
+                        session, [m["id"] for m in kalshi_markets]
+                    )
+                except Exception as exc:
+                    await session.rollback()
+                    stats["errors"].append(f"kalshi frozen scan: {exc}")
+                    frozen_certain = {}
                 for market in kalshi_markets:
                     if time.monotonic() - started > _TIME_BUDGET_S:
                         stats["budget_hit"] = True
@@ -1517,6 +1764,33 @@ async def _refresh_stale_futures_prices(
                         await _clear_if_stamped(session, market, stats)
                     else:
                         stats["unpriceable"] += 1
+
+                    # #4253, AFTER the write on purpose. The event read above
+                    # proves the venue is reachable and this market is live, so
+                    # a 404 on one of its legs means that leg specifically is
+                    # gone — not that the venue is down. Running it before the
+                    # write would also race the fresh price the write is about
+                    # to put on the row.
+                    candidates = frozen_certain.get(market["id"])
+                    if candidates:
+                        try:
+                            retired = await _retire_delisted_kalshi_legs(
+                                session, kalshi_service, market["id"], candidates, stats
+                            )
+                            await session.commit()
+                        except Exception as exc:
+                            await session.rollback()
+                            stats["errors"].append(
+                                f"kalshi retire {market['external_id']}: {exc}"
+                            )
+                        else:
+                            if retired:
+                                stats["kalshi_legs_retired"] += retired
+                                logger.info(
+                                    "futures_price_refresh: withdrew %s delisted "
+                                    "Kalshi leg(s) on market %s (%s)",
+                                    retired, market["id"], market["external_id"],
+                                )
                     await asyncio.sleep(0.15)
 
         # Two TTLs, because there are two clocks. An identity market marked for
