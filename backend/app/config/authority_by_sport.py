@@ -435,6 +435,10 @@ def authority_for(sport_key: Optional[str]) -> str:
 DISCOVERY_SCHEDULED = "SCHEDULED"
 DISCOVERY_BEAT_PARSES_NOTHING = "BEAT-WITHOUT-A-WORKING-PARSE"
 DISCOVERY_PARSER_MINTS_NO_ID = "PARSER-MINTS-NO-ID"
+#: No beat AND a parser that cannot read the payload if one called it. Distinct
+#: from `NO-BEAT`, which prescribes scheduling a beat — the one instruction that
+#: cannot pay here (#3193).
+DISCOVERY_NO_BEAT_AND_PARSER_BLIND = "NO-BEAT-AND-PARSER-BLIND"
 DISCOVERY_NO_BEAT = "NO-BEAT"
 
 
@@ -462,6 +466,17 @@ def discovery_state(sport_key: str) -> tuple[str, str]:
     deleting the branch: the census is true and load-bearing, it was just
     filed where soccer could never read it.
 
+    🔴 THE SAME DEFECT HAD A SECOND INSTANCE, ONE LIST OVER, AND THIS FUNCTION
+    SHIPPED WITH IT. `DISCOVERY_NO_BEAT_AND_NO_PARSE` carries tennis's census —
+    0 of 7 and 0 of 11 fixtures parsed on pinned real payloads, from two
+    independent causes in two different functions (#3193) — and nothing read
+    that map. Both tennis populations fell through to the bare `NO-BEAT`
+    ending, which is true (there is no beat) and prescribes the one build step
+    that cannot pay: scheduling a beat over a parser that reads nothing. The
+    map was written; only the branch that consults it was missing. Four maps in,
+    the lesson is that adding a state to the config and adding the arm that
+    publishes it are two changes, and the second is the one a reader feels.
+
     Total, like :func:`authority_for` — every input has an answer and none
     raise.
     """
@@ -488,6 +503,22 @@ def discovery_state(sport_key: str) -> tuple[str, str]:
             f"The parser reads the fixtures and mints no id for them: {idless}. "
             "Teaching it the id comes BEFORE scheduling a beat — this is a "
             "build step, not a wait"
+        )
+    # The same rule as the id-less arm, for the state that is worse than either:
+    # no beat AND a parser that could not read the payload if one called it. The
+    # bare "build a beat" ending below prescribes exactly the work that cannot
+    # pay — tennis's parser is measured at 0 of 7 and 0 of 11 on pinned real
+    # payloads (#3193) — and it is not merely useless: teaching the parser
+    # without also settling the sport-key question would have the beat create a
+    # second copy of every US Open match hourly, because registry Step 1 is
+    # sport-scoped (D55/#2879) and the linker anchors under different keys than
+    # `STATPAL_SPORT_MAPPING` claims. So the blindness is named BEFORE the beat.
+    blind = DISCOVERY_NO_BEAT_AND_NO_PARSE.get(sport_key)
+    if blind:
+        return DISCOVERY_NO_BEAT_AND_PARSER_BLIND, (
+            f"Neither half of discovery exists for this sport: {blind}. "
+            "Teaching the parser comes BEFORE scheduling a beat — both are "
+            "build steps, not a wait"
         )
     return DISCOVERY_NO_BEAT, (
         "This is a build step (a `sync_statpal_schedules` beat), not a wait"
