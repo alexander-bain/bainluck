@@ -1,40 +1,10 @@
 import SwiftUI
 
-// MARK: - Category Gradients (shared with Discover card)
-
-private let detailCategoryGradients: [String: (Color, Color)] = [
-    "basketball": (Color(red: 0.49, green: 0.18, blue: 0.07), Color(red: 0.76, green: 0.25, blue: 0.05)),
-    "football": (Color(red: 0.08, green: 0.33, blue: 0.18), Color(red: 0.08, green: 0.50, blue: 0.24)),
-    "baseball": (Color(red: 0.50, green: 0.11, blue: 0.11), Color(red: 0.73, green: 0.11, blue: 0.11)),
-    "hockey": (Color(red: 0.12, green: 0.23, blue: 0.37), Color(red: 0.15, green: 0.39, blue: 0.92)),
-    "soccer": (Color(red: 0.02, green: 0.31, blue: 0.23), Color(red: 0.02, green: 0.60, blue: 0.40)),
-    "golf": (Color(red: 0.08, green: 0.33, blue: 0.18), Color(red: 0.09, green: 0.40, blue: 0.20)),
-    "mma": (Color(red: 0.27, green: 0.04, blue: 0.04), Color(red: 0.60, green: 0.11, blue: 0.11)),
-    "economics": (Color(red: 0.18, green: 0.06, blue: 0.40), Color(red: 0.49, green: 0.23, blue: 0.93)),
-    "politics": (Color(red: 0.12, green: 0.11, blue: 0.29), Color(red: 0.26, green: 0.22, blue: 0.79)),
-    "tech": (Color(red: 0.03, green: 0.20, blue: 0.27), Color(red: 0.03, green: 0.57, blue: 0.70)),
-    "culture": (Color(red: 0.51, green: 0.09, blue: 0.26), Color(red: 0.86, green: 0.15, blue: 0.47)),
-    "weather": (Color(red: 0.05, green: 0.29, blue: 0.43), Color(red: 0.01, green: 0.52, blue: 0.78)),
-    "entertainment": (Color(red: 0.44, green: 0.10, blue: 0.46), Color(red: 0.75, green: 0.15, blue: 0.83)),
-    "cricket": (Color(red: 0.07, green: 0.31, blue: 0.29), Color(red: 0.08, green: 0.72, blue: 0.65)),
-    "olympics": (Color(red: 0.47, green: 0.21, blue: 0.06), Color(red: 0.85, green: 0.47, blue: 0.02)),
-]
-
-private let detailDefaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blue: 0.16), Color(red: 0.12, green: 0.16, blue: 0.24))
-
-private func detailCategoryEmoji(_ category: String?) -> String {
-    switch category?.lowercased() {
-    case "politics": return "🏛"
-    case "geopolitics": return "🌍"
-    case "economics": return "📈"
-    case "tech": return "💻"
-    case "entertainment": return "🎬"
-    case "culture": return "🎭"
-    case "weather": return "🌤"
-    case "health": return "🏥"
-    default: return "🍀"
-    }
-}
+// The palette, the emoji ladder and the hero backdrop used to be declared here
+// as `private` copies of the Discover card's — under a comment that called them
+// "shared with Discover card", which they were not. All three now come from
+// `Utilities/DiscoverCardVisuals.swift`; see `FuturesHero` for what the second
+// copy cost (#4111).
 
 // MARK: - Sort
 
@@ -160,13 +130,12 @@ struct FuturesDetailView: View {
     // MARK: - Hero Section
 
     private func heroSection(_ market: FuturesMarketDetail) -> some View {
-        let gradient = detailCategoryGradients[market.llmSportCategory?.lowercased() ?? ""] ?? detailDefaultGradient
         let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
         let isResolved = market.status == "resolved"
 
         return ZStack(alignment: .bottomLeading) {
             // Background: image with gradient overlay, or category gradient
-            heroBackground(market: market, gradient: gradient)
+            heroBackground(market: market)
                 .frame(height: 220)
                 .clipped()
 
@@ -263,34 +232,8 @@ struct FuturesDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
-    @ViewBuilder
-    private func heroBackground(market: FuturesMarketDetail, gradient: (Color, Color)) -> some View {
-        if let imageUrlStr = market.imageUrl, let url = URL(string: imageUrlStr) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .overlay(
-                            LinearGradient(
-                                colors: [.black.opacity(0.08), .black.opacity(0.78)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                default:
-                    LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
-                }
-            }
-        } else {
-            LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
-                .overlay(
-                    Text(detailCategoryEmoji(market.llmSportCategory))
-                        .font(.system(size: 96))
-                        .opacity(0.10)
-                )
-        }
+    private func heroBackground(market: FuturesMarketDetail) -> some View {
+        FuturesHeroBackground(imageURL: market.imageUrl, category: market.llmSportCategory)
     }
 
     @ViewBuilder
