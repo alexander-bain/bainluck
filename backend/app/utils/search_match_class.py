@@ -229,6 +229,36 @@ def tokens(text: str) -> tuple[str, ...]:
     return tuple(_fold_token(m) for m in _TOKEN_RE.findall(lowered))
 
 
+def _name_tokens(text: str) -> tuple[str, ...]:
+    """`tokens` WITHOUT the plural strip. Accents and case still fold.
+
+    The recall tiers want `yankee` and `yankees` to be one token, because they
+    are asking "did the user land on this row". #4411's promotion asks a
+    different question — "did the user NAME this participant" — and there the
+    plural is not noise, it is the whole difference between two entities:
+
+        Jannik Sinner  (a tennis player)   vs  Sinners  (a Counter-Strike team)
+
+    `_fold_token("Sinners")` is `"sinner"`, so under `tokens` the query `sinner`
+    NAMES the esports roster and its live match is promoted over the player's.
+    Measured on production 2026-09-09 (CERT-2392): `sinner` returned
+    "Saint Sinners at Spirit Academy" and "NIP at Sinners" and no Jannik row.
+
+    Accent folding is kept because it never merges two entities — `espana` and
+    `España` are the same name typed on different keyboards. The plural does
+    merge them, so it goes.
+
+    The cost is that a singular query for a plural nickname (`yankee` against
+    "New York Yankees") no longer promotes that team's game. That is the same
+    shape as the Sinners case and cannot be told apart from it without knowing
+    which strings are people; the team's own card still answers such a query on
+    MC0, and the game still ranks exactly where it did before #4411.
+    """
+    lowered = unicodedata.normalize("NFKD", (text or "").casefold())
+    lowered = "".join(c for c in lowered if not unicodedata.combining(c))
+    return tuple(_TOKEN_RE.findall(lowered))
+
+
 def trigram_similarity(a: str, b: str) -> float:
     """Jaccard over padded 3-grams. Not Postgres' `similarity()` and not trying
     to be: MC5 is the bottom class, everything above it wins regardless, so this
@@ -373,9 +403,11 @@ def query_names_participant(query: str, participants: Iterable[str | None]) -> b
     The test for promoting an `event` to `ENTITY_EVENT_KIND` (#4411). True when
     every query token appears somewhere in the participants' OWN names.
 
-    Tokenised with `tokens`, the same function MC1 uses, so a query that is an
-    MC1 match against a participant is necessarily True here — the promotion can
-    never disagree with the class that admitted the row.
+    Tokenised with `_name_tokens`, which is `tokens` minus the plural strip.
+    That is DELIBERATELY stricter than the class that admitted the row: MC1 asks
+    whether the query landed here, this asks whether the query named the people
+    playing, and `sinner` lands on the Counter-Strike roster "Sinners" without
+    naming Jannik. Read `_name_tokens` for the measurement (CERT-2392).
 
     The participants are read as a UNION rather than one-at-a-time on purpose,
     and that is what makes the rule produce Alex's ordering for BOTH halves of
@@ -396,14 +428,17 @@ def query_names_participant(query: str, participants: Iterable[str | None]) -> b
     fixtures through the tournament/sport-alias recall arms, and none of them
     appears in a participant name, so all of them return False and the ratified
     market > event relation continues to decide those exactly as it does today.
+
+    * `sinner` -> "NIP" + "Sinners" -> False, and `sinners` -> True. The plural
+      is the entity boundary, not a spelling of the same word.
     """
-    q_tokens = tokens(query)
+    q_tokens = _name_tokens(query)
     if not q_tokens:
         return False
     owned: set[str] = set()
     for p in participants:
         if p:
-            owned.update(tokens(p))
+            owned.update(_name_tokens(p))
     if not owned:
         return False
     return all(t in owned for t in q_tokens)

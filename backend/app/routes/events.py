@@ -6283,17 +6283,19 @@ async def typeahead_search(
             futures_term_conditions.append(
                 _build_expanded_ilike(FuturesMarket.name, term, exp)
             )
-        ilike_event_filter = and_(*event_term_conditions)
+        ilike_event_names = and_(*event_term_conditions)
+        ilike_event_filter = ilike_event_names
         team_filter = and_(*team_term_conditions)
         ilike_futures_filter = and_(*futures_term_conditions)
     else:
         term, exp = ta_expanded[0]
-        ilike_event_filter = or_(
+        ilike_event_names = or_(
             _build_expanded_ilike(Event.home_team_name, term, exp),
             _build_expanded_ilike(Event.away_team_name, term, exp),
         )
+        ilike_event_filter = ilike_event_names
         if sport_alias_keys:
-            ilike_event_filter = or_(ilike_event_filter, Sport.key.in_(sport_alias_keys))
+            ilike_event_filter = or_(ilike_event_names, Sport.key.in_(sport_alias_keys))
 
         team_filter = or_(
             _build_expanded_ilike(Team.name, term, exp),
@@ -6303,13 +6305,23 @@ async def typeahead_search(
         ilike_futures_filter = _build_expanded_ilike(FuturesMarket.name, term, exp)
 
     # Combine FTS + ILIKE for events and futures
-    fts_event_f = or_(
+    fts_event_names = or_(
         _fts_filter(Event.home_team_name, ta_fts_q),
         _fts_filter(Event.away_team_name, ta_fts_q),
     )
+    fts_event_f = fts_event_names
     if sport_alias_keys:
-        fts_event_f = or_(fts_event_f, Sport.key.in_(sport_alias_keys))
+        fts_event_f = or_(fts_event_names, Sport.key.in_(sport_alias_keys))
     event_team_filter = or_(fts_event_f, ilike_event_filter)
+    # #4411's or-last arm recalls on PARTICIPANT NAMES ONLY — the sport-alias
+    # arm is deliberately left out. With it in, `us open` (an alias, naming no
+    # participant) would drag every finished match of the tournament into a
+    # second query on most keystrokes, all of it then thrown away by the
+    # promotion test. Excluding it makes the wasted work not happen rather than
+    # happen and be discarded, and it is the same predicate the admission test
+    # below applies in Python, so the two cannot disagree about what "the query
+    # named this row" means.
+    event_name_filter = or_(fts_event_names, ilike_event_names)
 
     # LAT-P140: the two halves go in as SEPARATE arms of the UNION built below,
     # not as one OR'd arm. `_futures_name_arms` carries the measurement; the short
@@ -6454,16 +6466,35 @@ async def typeahead_search(
     # Promoting the entity cannot help a candidate that was never built, so the
     # ranking half of #4411 is inert without this.
     #
-    # Deliberately a SECOND query on the empty path only, never a widening of
-    # the first: a row that has already started is what a reader wants LEAST
-    # while an upcoming one exists, and merging the two windows would let a
-    # finished match outrank tonight's. On the <150ms keystroke budget this
-    # costs nothing in the common case, because the common case does not run it.
-    if not _ta_rows:
-        _ta_rows = (
-            await db.execute(_last_match_query(event_team_filter, now))
+    # Deliberately a SECOND query, never a widening of the first: a row that has
+    # already started is what a reader wants LEAST while an upcoming one exists,
+    # and merging the two windows would let a finished match outrank tonight's.
+    #
+    # The trigger is the ABSENCE OF A NAMED PARTICIPANT, not the emptiness of
+    # the pool (CERT-2392). Emptiness was the wrong test and production proved
+    # it: `sinner` fills the upcoming pool with two live Counter-Strike fixtures
+    # whose roster is called "Sinners", so `if not _ta_rows` never fired and the
+    # player's own match could not be reached no matter how the pool was ranked.
+    # A pool that is full of somebody else is exactly as empty, for this
+    # purpose, as a pool with nothing in it.
+    #
+    # Only rows the query NAMES are admitted from the second query, which is
+    # what keeps this from becoming "show finished matches whenever nothing is
+    # on". `us open` names no participant, so it admits nothing and the arm is
+    # inert for every tournament, league and sport query.
+    def _ta_names_participant(ev) -> bool:
+        return query_names_participant(q, (ev.home_team_name, ev.away_team_name))
+
+    if not any(_ta_names_participant(ev) for ev in _ta_rows):
+        _ta_last = (
+            await db.execute(_last_match_query(event_name_filter, now))
         ).scalars().all()
         _ta_mark("last_match_query")
+        # PREPENDED, not appended. `_ta_events[:_EVENT_POOL_SIZE]` truncates the
+        # pool BEFORE anything is scored, so a Jannik match sitting behind four
+        # esports fixtures would be cut on its way to the scorer and the ship
+        # would fail in a way that looks like a ranking bug and is not one.
+        _ta_rows = [*(ev for ev in _ta_last if _ta_names_participant(ev)), *_ta_rows]
 
     event_pool = []
     # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
@@ -16658,7 +16689,7 @@ def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:
     )
 
 
-def _last_match_query(event_team_filter, now: datetime):
+def _last_match_query(event_name_filter, now: datetime):
     """The "or-LAST" arm of #4411: the most recent FINISHED match for a query.
 
     Module-level for the reason `_typeahead_evidence` is — the pool assembly
@@ -16667,9 +16698,13 @@ def _last_match_query(event_team_filter, now: datetime):
     asserts the four clauses that make it safe, because each one is exactly the
     sort of thing a later edit loosens for a good-sounding reason.
 
-    It is a SEPARATE query from the upcoming-events pool and runs only when that
-    pool came back empty. Merging the two would let a finished match outrank
+    It is a SEPARATE query from the upcoming-events pool, and it runs when that
+    pool contains no row the query NAMES — not when the pool is empty (see the
+    call site, CERT-2392). Merging the two would let a finished match outrank
     tonight's fixture, which is the opposite of "next-or-last".
+
+    Takes the participant-name filter, NOT the sport-alias-augmented one the
+    upcoming pool uses; the call site says why.
     """
     return (
         select(Event)
@@ -16680,7 +16715,7 @@ def _last_match_query(event_team_filter, now: datetime):
             selectinload(Event.away_team),
         )
         .where(
-            event_team_filter,
+            event_name_filter,
             Event.status.in_(["completed", "closed"]),
             # Bounded at BOTH ends (gotcha #41). Without the floor this answers
             # `alcaraz` with a match from 2023; without the ceiling it is not a
