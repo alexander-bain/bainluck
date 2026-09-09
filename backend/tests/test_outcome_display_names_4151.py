@@ -54,7 +54,10 @@ The guards stand in four places:
 """
 
 import inspect
+import pathlib
 import re
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -160,7 +163,10 @@ NOT_A_NAME_AT_ALL = [
 #: built from (`_slug_leaks` below), which has no false positives at all, and
 #: this pattern is reserved for label fields, where a whole-value match is
 #: exactly the right question.
-LOOKS_LIKE_A_SLUG = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9.]+)+$")
+#: Mirrors `_SLUG_RE`. The separator class and the token class are disjoint on
+#: purpose — see the comment on `_SLUG_RE`; sharing `.` between them is the
+#: `py/redos` defect CodeQL flagged on PR #4230, and this copy carried it too.
+LOOKS_LIKE_A_SLUG = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+$")
 
 #: 🔴 THE ONLY PLACES A LOWERCASE TOKEN IS ALLOWED, and they are machine fields,
 #: not prose. Per notice 33's clarification the rule is about what a READER sees;
@@ -261,6 +267,65 @@ def test_the_list_form_does_not_mutate_its_input():
     assert rows[0]["name"] == "gpt-5.2", "input was mutated"
     assert out[0]["name"] == "GPT 5.2"
     assert out[0]["probability"] == 0.4, "the rest of the row was dropped"
+
+
+# ── 1b. THE SLUG PATTERN IS LINEAR (py/redos, CodeQL on PR #4230) ────────────
+
+
+def test_the_slug_pattern_cannot_be_made_to_backtrack():
+    """A pathological outcome name must not stall `GET /api/feed`.
+
+    The first cut of `_SLUG_RE` was `(?:[-_.][a-z0-9.]+)+` — `.` in BOTH the
+    separator class and the token class, so each `.` could be consumed either
+    way and the engine had exponentially many splits to try. Measured on the
+    original: `a-` + n×`..` cost ~8x more per two repetitions (31 chars = 10ms,
+    and past ~40 chars it does not finish). The fix drops `.` from the token
+    class, which makes every separator unambiguous.
+
+    Run in a SUBPROCESS on purpose. A regression here does not fail an
+    assertion, it hangs — in-process that burns a CI worker until the job
+    times out and reports as infrastructure trouble rather than as this bug.
+    `TimeoutExpired` names the defect and the runaway dies with the child.
+    """
+    backend_root = str(pathlib.Path(odn.__file__).parents[2])
+    probe = (
+        "import sys\n"
+        f"sys.path.insert(0, {backend_root!r})\n"
+        "from app.utils.outcome_display_names import _SLUG_RE\n"
+        # Separators with no token between them: the shape that exploded.
+        'assert _SLUG_RE.match("a-" + ".." * 30 + "!") is None\n'
+        'assert _SLUG_RE.match("a-" + ".." * 200 + "!") is None\n'
+        'print("ok")\n'
+    )
+
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired:  # pragma: no cover - the regression path
+        pytest.fail(
+            "_SLUG_RE did not finish on 'a-' + 60 separators in 20s: the "
+            "separator class and the token class share a character again, so "
+            "the pattern backtracks exponentially (CodeQL py/redos). Keep "
+            "'.' out of the token half."
+        )
+    assert done.returncode == 0, done.stderr
+    assert "ok" in done.stdout
+
+
+def test_the_pattern_mirrored_in_this_file_still_matches_the_module():
+    """`LOOKS_LIKE_A_SLUG` above is a copy, so it can drift.
+
+    It drifting is not cosmetic: this file's payload walk uses the copy, so a
+    copy that is looser than the module would hunt for slugs the module never
+    rewrites (noise), and a copy that is tighter would walk past the very rows
+    the module leaves on screen (a guard that cannot see its own defect). Both
+    carried the redos pattern together; they stay together.
+    """
+    assert LOOKS_LIKE_A_SLUG.pattern == odn._SLUG_RE.pattern
 
 
 # ── 2. AT THE ROUTE: the sentence AND the row, on the real serve path ────────

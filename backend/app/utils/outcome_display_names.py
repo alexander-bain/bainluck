@@ -59,7 +59,21 @@ import re
 # least one separator. Leading-letter is load-bearing — it is what excludes
 # `9-1-1` (the ABC show), `7th-9th` and `120-139`, all of which are real outcome
 # names on live markets.
-_SLUG_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9.]+)+$")
+#
+# 🔴 THE SEPARATOR CLASS AND THE TOKEN CLASS MUST STAY DISJOINT. This first read
+# `(?:[-_.][a-z0-9.]+)+`, with `.` in BOTH halves, so a `.` could be consumed as
+# either a separator or a token character and the engine had exponentially many
+# ways to split the same string. CodeQL `py/redos` caught it as two high-severity
+# alerts on PR #4230; measured, `a-` + n×`..` grew ~8x per two repetitions (31
+# chars = 10ms, and 27+ chars was already unbounded in practice) on a pattern
+# that runs inside `GET /api/feed`. Dropping `.` from the token class makes every
+# separator unambiguous and the match linear: 403 chars now costs 2µs.
+# A version point still survives, because `.` is a separator and the digits
+# around it are their own tokens — `claude-fable-5.1-max` and `gpt-4.1` match
+# exactly as before. The only value whose classification changed in the whole
+# real population is `a-.b` (two adjacent separators), which is not an outcome
+# name and now keeps its slug — the safe direction.
+_SLUG_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+$")
 
 # The question whose answers are model identifiers. Kept deliberately narrow:
 # widening it is a decision to re-typeset some other market's answers, and that
