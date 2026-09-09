@@ -231,3 +231,66 @@ def test_shipped_classification_agrees_with_the_ship(name, ticker):
 def test_a_real_hockey_name_is_never_classified_politics(name, ticker):
     """The gate that makes the id list safe, asserted without a database."""
     assert rail._shipped_classification(name, ticker) != "politics"
+
+
+# --------------------------------------------------------------------------
+# #4365 part 1 — the resolved tail. Production names and tickers, verbatim.
+# --------------------------------------------------------------------------
+
+#: The three resolved rows the bound grew by, with the exact `name` and
+#: `external_id` production stores for them. Pinned as data rather than
+#: asserted from the id list, so a future edit that swaps an id for a
+#: Belleville row cannot make this test agree with it.
+_RESOLVED_TAIL = (
+    (
+        31835562,
+        "How many Senators will vote to confirm Todd Blanche as Attorney General?",
+        "KXBLANCHECOUNT-27",
+    ),
+    (33282801, "Which Senators will vote for Todd Blanche?", "KXVOTEBLANCHE-27"),
+    (
+        52755933,
+        "How many Senators vote to confirm Jay Clayton as Director of National Intelligence?",
+        "KXCLAYTONCOUNT-27",
+    ),
+)
+
+
+@pytest.mark.parametrize("market_id,name,ticker", _RESOLVED_TAIL)
+def test_the_resolved_tail_ids_are_in_the_bound(market_id, name, ticker):
+    """Each #4365 id is enumerated AND passes gate 2 on its production name.
+
+    Two assertions in one because either alone is a false pass: an id in the
+    bound that gate 2 refuses is a no-op the payload reports as `refused`, and
+    a name that classifies `politics` but is not enumerated is never examined.
+    """
+    assert market_id in rail.SENATE_ROW_IDS
+    assert rail._shipped_classification(name, ticker) == rail.TARGET_CATEGORY
+
+
+@pytest.mark.parametrize(
+    "name,ticker",
+    [
+        # Sampled from the SAME 133-row census that produced the three ids
+        # above — these are the shapes gate 2 refuses, one per family.
+        ("Belleville Senators vs Hartford Wolf Pack", "KXAHLGAME-26FEB211930BELHAR"),
+        ("Utica Comets vs Belleville Senators", "KXAHLGAME-26FEB281900UTIBEL"),
+        ("DET Red Wings at OTT Senators: Points", "KXNHLPTS-26FEB26DETOTT"),
+        ("OTT Senators at TOR Maple Leafs: Points", "KXNHLPTS-26FEB28OTTTOR"),
+    ],
+)
+def test_the_resolved_census_majority_is_still_refused(name, ticker):
+    """130 of the 133 resolved `senat*` rows must stay hockey.
+
+    This is what stops #4365 part 1 from being re-done as a name predicate.
+    The population the issue names is 133 rows; the ship is 3. The other 130
+    are genuinely Ottawa/Belleville, and gate 2 — not the id list — is what
+    draws that line, so the line is asserted here on real production strings.
+
+    🔴 The last case is #4365 part 2's own specimen. WITH its ticker it is
+    hockey, which is why part 2 is latent at 0 stored rows; name-only it
+    classifies `basketball`. If this case ever starts returning `politics`
+    the ticker-prefix branch has stopped running first, and part 2 became
+    reachable.
+    """
+    assert rail._shipped_classification(name, ticker) != rail.TARGET_CATEGORY

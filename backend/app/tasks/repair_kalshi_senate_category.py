@@ -91,9 +91,10 @@ from app.models import FuturesMarket
 logger = logging.getLogger(__name__)
 
 
-#: The enumerated bound. Measured on production 2026-09-09 by lane1b/104:
-#: every OPEN Kalshi row whose name matches ``senat*``, that is stored under a
-#: sport category, and that the shipped classifier calls ``politics``.
+#: The enumerated bound. Measured on production 2026-09-09 by lane1b/104 (the
+#: OPEN rows) and lane1b/108 (the resolved tail, #4365 part 1): every Kalshi row
+#: whose name matches ``senat*``, that is stored under a sport category, and
+#: that the shipped classifier calls ``politics``.
 #:
 #: The census that produced it also returned six OPEN rows that are genuinely
 #: hockey (``59693566`` NHL: OTT Senators Total Points, and five Polymarket
@@ -111,6 +112,18 @@ SENATE_ROW_IDS: tuple[int, ...] = (
     25924671,  # How many Senators will vote for the Clarity Act?
     25924714,  # Which Senators will vote for the Clarity Act?
     59693468,  # Which Senators will vote for Heidi Overton?
+    # ---- #4365 part 1, the resolved tail (lane1b/108, 2026-09-09) ----------
+    # #4229 shipped the OPEN rows only, and disclosed this remainder rather than
+    # widening its frozen bound after the cert. The population is NOT the 133
+    # rows the name class matches: replaying `_shipped_classification` over
+    # every non-open Kalshi `senat*` row stored under a sport category returns
+    # `hockey` for 130 of them (Belleville/Ottawa/AHL) and `politics` for these
+    # three. Gate 2 is what draws that line, so the three ids below are the
+    # measurement's OUTPUT, not its input — put a Belleville id here and the
+    # repair still refuses it.
+    31835562,  # How many Senators will vote to confirm Todd Blanche as AG?
+    33282801,  # Which Senators will vote for Todd Blanche?
+    52755933,  # How many Senators vote to confirm Jay Clayton as DNI?
 )
 
 #: The only category this repair is allowed to write. Named once, here, so the
