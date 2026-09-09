@@ -340,7 +340,22 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               <SignalBars tier={data.confidence_tier} />
             </span>
           </div>
-          <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2">{data.name}</h3>
+          {/* #4425: the leaderboard title is a LINK, like its three siblings
+              (the ladder at ~231, variant B at ~548, variant A at ~666, and
+              `FuturesCompactRow` at ~812 — which is why the collapsed peek is
+              already clickable and only the expanded row was dead).
+              L2-175 made the standalone Discover card tappable by wrapping it in
+              `useSwipe(..., handleTap)`, and that whole-card tap hid this
+              missing anchor for a year. `ThemeBundleCard`'s `ThemeBundleMember`
+              renders `<FuturesCard>` raw — no `DiscoverCard`, no swipe wrapper,
+              no tap handler — so inside a bundle the row had neither a link nor
+              a tap and was completely inert: measured on production, expanding
+              "Who wins in 2028?" took its anchor count from 2 to 0.
+              Cannot double-navigate: `handleTap` returns early on a click that
+              lands inside an `a` (`DiscoverCard.tsx:118`). */}
+          <Link href={detailHref} onClick={onDetailClick} className="block group">
+            <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</h3>
+          </Link>
 
           {/* UX-P248 / Alex D-D — why this card is in front of THIS reader.
               CERT-678: the leaderboard is its own `<article>` and was one of the
