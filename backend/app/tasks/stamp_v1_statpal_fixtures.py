@@ -1215,6 +1215,19 @@ def _claim_context(
     Omitted entirely when there is no operator run — the four scheduled leagues
     write through a beat, so a `null` here would put a key on ~750 anchors that
     only ever means "not this mechanism".
+
+    `season` AND `round` ARE CARRIED FOR THE SAME REASON, AND ONLY WHEN SERVED
+    (D106, `docs/fixture-identity-contract-d106.md`). The parser already reads
+    both — `_parse_v1_season_schedule` lifts `season` off the tournament wrapper
+    that `_extract_match_items` otherwise flattens away — and this function was
+    dropping them, so of the 1,044 StatPal game anchors on production **0 could
+    say which season a fixture belongs to**. Measured at the venue 2026-09-09,
+    `season` is served on 1208/1208 NBA, 1405/1405 NHL and 182/182 MLB fixtures
+    (`2026/2027`, `2026`) and on 0/374 NFL; `round` is the mirror image, 100% on
+    the NFL and 0% here. Written under the same rule as `apply_run_id`: a key
+    that would always be `null` for a whole sport is not recorded for that
+    sport, because a column of nulls reads as "we looked and there is none"
+    rather than "this endpoint does not serve it".
     """
     context: dict[str, Any] = {
         "written_by": "stamp_v1_statpal_fixtures",
@@ -1224,6 +1237,10 @@ def _claim_context(
         ),
         "statpal_stats_id": fixture.stats_id,
     }
+    if fixture.season:
+        context["season"] = fixture.season
+    if fixture.round_info:
+        context["round"] = fixture.round_info
     if apply_run_id:
         context["apply_run_id"] = apply_run_id
     return context

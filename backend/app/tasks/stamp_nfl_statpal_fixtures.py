@@ -218,6 +218,11 @@ class StampRun:
     rows_measured: int = 0
     already_linked: int = 0
     stamped: int = 0
+    #: Bracket slots StatPal published before it knows who plays in them — not
+    #: contests, so not gaps either (D106 R3, `is_placeholder_fixture`). Counted
+    #: rather than dropped silently: `fixtures_read` includes them, so a bucket
+    #: that does not account for them would stop the buckets summing.
+    placeholders: int = 0
     #: A StatPal contest matched exactly one of our rows, but that row already
     #: holds a fabricated `statpal_fixture_id` (#2963). Never written to.
     polluted_column: list[dict[str, Any]] = field(default_factory=list)
@@ -244,6 +249,7 @@ class StampRun:
             "rows_measured": self.rows_measured,
             "already_linked": self.already_linked,
             "stamped": self.stamped,
+            "placeholders": self.placeholders,
             "polluted_column": len(self.polluted_column),
             "ambiguous": len(self.ambiguous),
             "unmatched_fixtures": len(self.unmatched_fixtures),
@@ -267,13 +273,75 @@ LOST_RACE = "LOST_RACE"
 #: explicitly, and until it is, it refuses and is receipted.
 COMMITTABLE_OUTCOMES = frozenset({WROTE, CONFIRMED})
 
-#: The five things one StatPal contest can be against our table. A verdict, not
+#: The six things one StatPal contest can be against our table. A verdict, not
 #: a score.
 VERDICT_STAMP = "STAMP"
 VERDICT_ALREADY_LINKED = "ALREADY_LINKED"
 VERDICT_POLLUTED = "POLLUTED_COLUMN"
 VERDICT_AMBIGUOUS = "AMBIGUOUS"
 VERDICT_UNMATCHED = "UNMATCHED"
+#: Not a contest at all — a bracket slot StatPal publishes before it knows who
+#: plays in it. See `is_placeholder_fixture`.
+VERDICT_PLACEHOLDER = "PLACEHOLDER"
+
+#: Names StatPal uses for a participant it does not know yet. Matched whole, never
+#: as a substring — `TBD` inside a real club name is a club, not a bracket slot.
+PLACEHOLDER_TEAM_NAMES = frozenset({"TBD", "TBA", "N/A", ""})
+
+
+def is_placeholder_fixture(fixture: StatPalFixture) -> bool:
+    """Is this a bracket slot rather than a game? (D106 rule R3.)
+
+    StatPal's NFL `season-schedule` publishes the whole postseason as soon as the
+    season starts, with the participants unknown. Measured at the venue
+    2026-09-09: **53 raw rows over 7 distinct `contestid`s**, every one with both
+    sides set to the SAME club — `{"id": "6687", "name": "TBD"}` — an empty venue,
+    and `datetime_utc` at the provider's default 7:00 PM EST slot. `280795`
+    appears 15 times under five different rounds, `280794` 10 times.
+
+    **SEVEN IS THE NUMBER HERE, NOT FIFTY-THREE.** `_read_fixtures` dedupes by
+    `fixture_id` at collection, so what reaches this function is 7 placeholders
+    against 321 real contests — exactly what the served agreement row has been
+    saying all along (`denominator: 321`, `excluded.statpal_placeholders: 7`),
+    which is the cheapest possible check and the one to make before quoting a
+    count. The 53 is a property of the payload, not of anything past the dedup.
+
+    The repeated ids still matter for anyone downstream of the raw payload:
+    `event_provider_anchors` is unique on `(source, source_id, id_kind)`, so a
+    writer that does NOT dedupe would bind one row and report COLLISION for the
+    rest — the duplicate detector firing on rows that duplicate nothing. This
+    stamper dedupes and cannot hit it; a new consumer of the payload can.
+
+    THE TELL IS THE TEAM ID, NOT THE WORD. `home_team_id == away_team_id` is
+    impossible for a real contest and survives StatPal renaming the slot; the
+    literal string does not. The name check is kept as a second arm for the case
+    where the ids are absent, and is deliberately anchored rather than a
+    substring, because a real club can contain those letters.
+
+    THE MEASUREMENT SIDE ALREADY EXCLUDED THESE; THE MATCHING SIDE DID NOT.
+    `authority_agreement.is_placeholder` keeps them out of the denominator, which
+    is why the agreement number was never wrong. But `classify_fixture` only
+    required both team names to match one of our rows exactly, and no club is
+    called TBD, so the placeholders fell out as `UNMATCHED` — the right outcome
+    for the wrong reason. `UNMATCHED` on the fixture side asserts *"StatPal has a
+    contest we do not hold"*, so 7 non-games sat in the ingestion-gap receipts
+    every run, one relaxed name rule away from a stamp.
+
+    THE TWO PREDICATES DIVERGE DELIBERATELY. The measurement excludes a fixture
+    when EITHER side is unnamed — an unpairable row must not sit in a denominator.
+    This guard rejects only when BOTH are, because that is the shape it measured:
+    all 7 have both sides TBD and 0 are half-known, so the two agree exactly today
+    and the denominator does not move. If StatPal starts publishing
+    `Seahawks @ TBD` they part company, and this arm is the one to widen.
+    """
+    home_id = (fixture.home_team_id or "").strip()
+    away_id = (fixture.away_team_id or "").strip()
+    if home_id and home_id == away_id:
+        return True
+
+    home = (fixture.home_team or "").strip().upper()
+    away = (fixture.away_team or "").strip().upper()
+    return home in PLACEHOLDER_TEAM_NAMES and away in PLACEHOLDER_TEAM_NAMES
 
 
 def classify_fixture(
@@ -289,6 +357,12 @@ def classify_fixture(
     all of them, because "two rows matched" without saying which two is a count,
     and a receipt has to be actionable.
     """
+    if is_placeholder_fixture(fixture):
+        # Before the window, before the names: a bracket slot is not a contest,
+        # so neither "we hold it" nor "we are missing it" is a true thing to say
+        # about it. D106 R3.
+        return VERDICT_PLACEHOLDER, []
+
     if fixture.start_time is None:
         # No kickoff is not a wide window, it is no window. Two teams meet twice
         # a season; matching on names alone would pair Week 3 with Week 14.
@@ -508,7 +582,21 @@ async def _run_stamp_nfl_statpal_fixtures(
             ),
         }
 
-    kickoffs = [f.start_time for f in fixtures if f.start_time]
+    #: PLACEHOLDERS DO NOT GET A VOTE ON THE WINDOW (D106 R3), and this is the
+    #: part of the finding that survived checking. StatPal publishes the whole
+    #: postseason bracket the day the season starts, the last slot dated
+    #: 2027-02-14 — **35 days** past the last real regular-season kickoff
+    #: (2027-01-10). Measured 2026-09-09 through this module's own dedup:
+    #: `max()` over all 328 fixtures gives 2027-02-14T23:30Z, over the 321 real
+    #: ones 2027-01-10T00:00Z. The served window end is 2027-02-15T00:30Z, which
+    #: is the first of those plus `CANDIDATE_SLACK` to the minute — so the pool
+    #: has been five weeks wider than it needed to be, hunting rows no contest in
+    #: this payload can ever claim.
+    kickoffs = [
+        f.start_time
+        for f in fixtures
+        if f.start_time and not is_placeholder_fixture(f)
+    ]
     window_start = (min(kickoffs) if kickoffs else now) - CANDIDATE_SLACK
     window_end = (max(kickoffs) if kickoffs else now) + CANDIDATE_SLACK
     #: WIDER than the write window, and read separately for that reason. Writing
@@ -545,6 +633,13 @@ async def _run_stamp_nfl_statpal_fixtures(
         claimed: set[int] = set()
 
         for fixture in fixtures:
+            if is_placeholder_fixture(fixture):
+                # Not a contest, so it is neither an unknown club nor a gap in our
+                # inventory. Skipped before `_note_unknown_names`, which would
+                # otherwise carry "TBD" in the unknown-club report. D106 R3.
+                run.placeholders += 1
+                continue
+
             _note_unknown_names(run, fixture.home_team, fixture.away_team)
             verdict, matches = classify_fixture(fixture, pool)
 
