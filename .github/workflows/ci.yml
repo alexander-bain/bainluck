@@ -1380,6 +1380,37 @@ jobs:
             exit 1
           fi
 
+      - name: "#4253 a delisted Kalshi leg stops claiming 100% (real Postgres)"
+        # The Starlink IPO card served five PAST dates at 100%, ranked above
+        # every real price, because Kalshi purged those market rows (gotcha #35)
+        # and no writer has touched ours since March. Declining to write is not
+        # withdrawing what is written.
+        #
+        # Real Postgres for three reasons a mock cannot cover. The candidate
+        # predicate turns on a correlated `NOT EXISTS` over the same table it
+        # selects from plus `= ANY(:ids)`; the write is a compare-and-set with
+        # `RETURNING`; and the clock arm is the CERT-2382 clause again —
+        # `FuturesOutcome.last_updated` is `onupdate=func.now()`, which fires for
+        # `update()` and not for `text()`, so a switch of statement style would
+        # keep every source scan green while stamping every withdrawn row.
+        #
+        # The refusal arms carry the safety argument, not the ship arm: the same
+        # census that found 41 retirable legs found that 4.2% of ALL stored legs
+        # are venue-absent, dominated by ungraded YES results at ~0.99 beside
+        # crowned siblings. `test_a_market_grading_has_touched_is_refused` is the
+        # arm that keeps those.
+        #
+        # Same skip-detection as every gate in this job: adding the file is not
+        # adding the gate.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_delisted_leg_retirement_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/kalshi4253.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi4253.txt; then
+            echo "::error::#4253 delisted-leg retirement gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

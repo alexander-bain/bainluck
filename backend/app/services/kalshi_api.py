@@ -933,6 +933,50 @@ class KalshiAPIService(BaseAPIClient):
                 return None
         return None
 
+    async def market_exists(self, ticker: str) -> Optional[bool]:
+        """Does the venue still serve this market? ``True`` / ``False`` / ``None``.
+
+        Three returns because there are three facts, and :meth:`get_market`
+        cannot tell two of them apart. That method is documented "None only for
+        404", but its own ``except Exception`` arm also returns ``None`` after
+        three attempts — so a DNS blip, a timeout and a genuine 404 arrive as the
+        same value (gotcha #36). Reading that ``None`` as "the venue delisted it"
+        is how a network wobble would withdraw prices from live markets.
+
+        * ``False`` — a 404 was actually observed. Kalshi keeps EVENT rows
+          forever and purges MARKET rows (gotcha #35), so a 404 here is the
+          venue saying this contract is gone and no number will return from it.
+        * ``True`` — a 2xx was observed. The contract is still listed, whatever
+          its status; ``finalized`` markets answer 200 and must not be retired.
+        * ``None`` — we could not tell. Every caller must treat this as "no
+          evidence", never as an absence.
+
+        Measured against the live venue 2026-09-09 on the #4253 cohort: all 41
+        stored legs that are absent from their event's nested book answered 404,
+        and three controls still in the book answered 200 — including
+        ``KXIPOSTARLINK-26SEP01``, which is ``finalized`` with ``result=no`` and
+        is exactly the row a status-blind rule would have retired.
+        """
+        import asyncio as _asyncio
+        for _attempt in range(3):
+            try:
+                response = await self.client.get(
+                    f"{self.BASE_URL}/markets/{ticker}",
+                )
+                if response.status_code == 404:
+                    return False
+                if response.status_code == 429:
+                    await _asyncio.sleep(3 * (_attempt + 1))
+                    continue
+                response.raise_for_status()
+                return True
+            except Exception:
+                if _attempt < 2:
+                    await _asyncio.sleep(1)
+                    continue
+                return None
+        return None
+
     async def get_markets(
         self,
         status: Optional[str] = "open",
