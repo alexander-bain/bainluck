@@ -1095,6 +1095,87 @@ struct EventDetailView: View {
         sourceCount > 0 ? "Sources (\(sourceCount))" : "Individual Sportsbooks"
     }
 
+    /// #4233 — one row of either sources list, in whichever shape the model chose.
+    ///
+    /// Shared by `sourceContent` and `bookmakerContent` because the two lists sit
+    /// in one visual table under one disclosure: a reflow that reached only one of
+    /// them would put a stacked row directly above an inline one and read as a
+    /// rendering fault. #4107 was found the same way — the same defect fixed in
+    /// one of these two functions and not the other.
+    ///
+    /// The label's `lineLimit` reads `maximumLabelLines`, which is the number the
+    /// model used to decide this row's shape. Both are load-bearing together with
+    /// `.fixedSize` (#3966): `lineLimit` alone still truncates when a parent
+    /// proposes one line's height.
+    @ViewBuilder
+    private func sourceProbabilityRow(
+        label: String,
+        font: Font,
+        probabilities: (away: Double, home: Double)?,
+        colors: (away: Color, home: Color),
+        columns: EventSourceLabelColumn.Columns
+    ) -> some View {
+        let labelText = Text(label)
+            .font(font)
+            .frame(width: columns.label, alignment: .leading)
+            .lineLimit(EventSourceLabelColumn.maximumLabelLines)
+            .fixedSize(horizontal: false, vertical: true)
+
+        Group {
+            switch columns.layout {
+            case .inline:
+                HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
+                    labelText
+                    if let probabilities {
+                        probabilityBarAndNumbers(probabilities, colors: colors, columns: columns)
+                    }
+                }
+            case .stacked:
+                VStack(
+                    alignment: .leading,
+                    spacing: EventSourceLabelColumn.stackedLineSpacing
+                ) {
+                    labelText
+                    if let probabilities {
+                        HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
+                            probabilityBarAndNumbers(
+                                probabilities, colors: colors, columns: columns)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
+        .padding(.vertical, 4)
+    }
+
+    /// The bar and the two percentages — the part of the row that stays together
+    /// on one line in both layouts.
+    ///
+    /// Read from the same model that sizes the label, so the two cannot drift:
+    /// the whole defect was a layout number that stopped describing its layout.
+    @ViewBuilder
+    private func probabilityBarAndNumbers(
+        _ probabilities: (away: Double, home: Double),
+        colors: (away: Color, home: Color),
+        columns: EventSourceLabelColumn.Columns
+    ) -> some View {
+        ProbabilityBar(
+            awayProb: probabilities.away, homeProb: probabilities.home,
+            awayColor: colors.away,
+            homeColor: colors.home,
+            height: 6
+        )
+        .frame(maxWidth: .infinity)
+
+        Text(formatProbability(probabilities.away))
+            .font(.caption2.monospacedDigit())
+            .frame(width: columns.numeric, alignment: .trailing)
+        Text(formatProbability(probabilities.home))
+            .font(.caption2.monospacedDigit())
+            .frame(width: columns.numeric, alignment: .trailing)
+    }
+
     /// One row per source feeding the blend: label, the same away–home pair the
     /// hero reads, and the same bar the book table uses.
     private func sourceContent(_ event: EventDetail, entries: [WinProbSourceCatalog.Entry]) -> some View {
@@ -1120,38 +1201,12 @@ struct EventDetailView: View {
         return VStack(spacing: 0) {
             ForEach(entries) { entry in
                 let homeProbability = entry.homeProbability
-                let awayProbability = 1 - homeProbability
-                HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
-                    Text(entry.label)
-                        .font(.caption.weight(.medium))
-                        .frame(width: columns.label, alignment: .leading)
-                        // Both are load-bearing (#3966): `lineLimit(2)` alone
-                        // still truncates when the parent proposes one line's
-                        // height. This only engages past the clamp, at the
-                        // largest accessibility sizes.
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    ProbabilityBar(
-                        awayProb: awayProbability, homeProb: homeProbability,
-                        awayColor: colors.away,
-                        homeColor: colors.home,
-                        height: 6
-                    )
-                    .frame(maxWidth: .infinity)
-
-                    // Read from the same model that sizes the label, so the two
-                    // cannot drift: the whole defect was a layout number that
-                    // stopped describing its layout.
-                    Text(formatProbability(awayProbability))
-                        .font(.caption2.monospacedDigit())
-                        .frame(width: columns.numeric, alignment: .trailing)
-                    Text(formatProbability(homeProbability))
-                        .font(.caption2.monospacedDigit())
-                        .frame(width: columns.numeric, alignment: .trailing)
-                }
-                .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
-                .padding(.vertical, 4)
+                sourceProbabilityRow(
+                    label: entry.label,
+                    font: .caption.weight(.medium),
+                    probabilities: (away: 1 - homeProbability, home: homeProbability),
+                    colors: colors,
+                    columns: columns)
             }
         }
         .padding(.vertical, 8)
@@ -1216,35 +1271,12 @@ struct EventDetailView: View {
             weight: .regular)
         return VStack(spacing: 0) {
             ForEach(bookmakers, id: \.bookmaker) { bm in
-                let probabilities = Self.bookmakerProbabilities(bm)
-
-                HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
-                    Text(bm.bookmaker ?? "Unknown")
-                        .font(.caption)
-                        .frame(width: columns.label, alignment: .leading)
-                        // Both load-bearing together (#3966), as in `sourceContent`.
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let probabilities {
-                        ProbabilityBar(
-                            awayProb: probabilities.away, homeProb: probabilities.home,
-                            awayColor: colors.away,
-                            homeColor: colors.home,
-                            height: 6
-                        )
-                        .frame(maxWidth: .infinity)
-
-                        Text(formatProbability(probabilities.away))
-                            .font(.caption2.monospacedDigit())
-                            .frame(width: columns.numeric, alignment: .trailing)
-                        Text(formatProbability(probabilities.home))
-                            .font(.caption2.monospacedDigit())
-                            .frame(width: columns.numeric, alignment: .trailing)
-                    }
-                }
-                .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
-                .padding(.vertical, 4)
+                sourceProbabilityRow(
+                    label: bm.bookmaker ?? "Unknown",
+                    font: .caption,
+                    probabilities: Self.bookmakerProbabilities(bm),
+                    colors: colors,
+                    columns: columns)
             }
         }
         .padding(.vertical, 8)

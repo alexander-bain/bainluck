@@ -17,9 +17,29 @@ final class EventSourceLabelColumnTests: XCTestCase {
         "Sportsbooks (19)", "Bain Luck Model", "MLB Model", "Kalshi", "Polymarket",
     ]
 
-    /// A 375pt phone — the narrowest we ship — and a 402pt one.
-    private let narrowPhone: Double = 375
-    private let widePhone: Double = 402
+    /// THE WIDTH THE PANEL ACTUALLY PUBLISHES — MEASURED, NOT THE SCREEN.
+    ///
+    /// #4233 — this used to read `375` and `402`, the two phones' screen widths,
+    /// and it was wrong in the direction that flatters the code: the Sources
+    /// panel is inset inside the event card, so the row it measures is smaller
+    /// than the phone. Instrumented at the publish site (`SOURCEROWWIDTH=…` from
+    /// `onPreferenceChange`) on event 14780138 at a11y3:
+    ///
+    ///   - 375pt SE    → **348** (27pt of inset)
+    ///   - 402pt phone → **370** (32pt — and note it is NOT the same inset, which
+    ///     is why both are measured rather than one derived from the other)
+    ///
+    /// Every sweep in this file therefore used to test a roomier row than ships,
+    /// which is how #4233's first trigger passed its own tests and still left the
+    /// real books table truncating at a11y3. A width model checked against a
+    /// width nobody renders is the defect this file exists to prevent, one level
+    /// up.
+    ///
+    /// The transient first pass publishes 420 before layout settles; the clamp
+    /// simply runs roomy for that frame, which is the same behaviour
+    /// `maximumLabelWidth` already documents for an unmeasured row.
+    private let narrowRow: Double = 348
+    private let wideRow: Double = 370
 
     /// The probability strings a real five-source row prints. Passed explicitly
     /// everywhere rather than defaulted, because #4208 was exactly the bug of a
@@ -36,6 +56,25 @@ final class EventSourceLabelColumnTests: XCTestCase {
         EventSourceLabelColumn.numericColumnWidth(for: values, typeSize: typeSize)
     }
 
+    /// #4233 — the width the INLINE clamp gives, whether or not the model then
+    /// reflows the row.
+    ///
+    /// Several guards below are about the clamp's arithmetic — that it charges
+    /// for the numbers, that it engages, that it yields to the bar — and not
+    /// about which layout ships. `columns(...)` now answers both questions in one
+    /// call, so at the top of the scale it returns a full-width stacked label and
+    /// those guards stop describing anything. Asking the clamp directly keeps
+    /// each test on its own subject; the layout choice has its own guards below.
+    private func inlineLabel(
+        _ labels: [String], _ values: [String], _ availableWidth: Double,
+        _ typeSize: DynamicTypeSize, _ weight: Font.Weight = .medium
+    ) -> Double {
+        EventSourceLabelColumn.width(
+            for: labels, availableWidth: availableWidth,
+            numericWidth: numeric(values, typeSize),
+            typeSize: typeSize, weight: weight)
+    }
+
     // MARK: - The regression itself
 
     /// The defect, stated as a test: at every text size up to the clamp, the
@@ -46,9 +85,9 @@ final class EventSourceLabelColumnTests: XCTestCase {
         for typeSize in Self.everyTypeSize {
             let width = EventSourceLabelColumn.columns(
                 labels: productionLabels, values: productionValues,
-                availableWidth: narrowPhone, typeSize: typeSize).label
+                availableWidth: narrowRow, typeSize: typeSize).label
             let ceiling = EventSourceLabelColumn.maximumLabelWidth(
-                availableWidth: narrowPhone,
+                availableWidth: narrowRow,
                 numericWidth: numeric(productionValues, typeSize))
             guard width < ceiling else { continue }  // clamped; wrapping takes over
 
@@ -90,7 +129,7 @@ final class EventSourceLabelColumnTests: XCTestCase {
             118)
         let width = EventSourceLabelColumn.columns(
             labels: ["Bain Luck Model"], values: productionValues,
-            availableWidth: widePhone, typeSize: .accessibility1).label
+            availableWidth: wideRow, typeSize: .accessibility1).label
         XCTAssertGreaterThanOrEqual(
             width, EventSourceLabelColumn.textWidth("Bain Luck Model", typeSize: .accessibility1))
     }
@@ -130,18 +169,14 @@ final class EventSourceLabelColumnTests: XCTestCase {
     /// almost certainly stopped charging for the numbers.
     func testTheClampedColumnYieldsToTheNumbersAtTheTopOfTheScale() {
         let long = ["Sportsbooks (100)"]
-        let atFour = EventSourceLabelColumn.columns(
-            labels: long, values: productionValues,
-            availableWidth: widePhone, typeSize: .accessibility4)
-        let atFive = EventSourceLabelColumn.columns(
-            labels: long, values: productionValues,
-            availableWidth: widePhone, typeSize: .accessibility5)
 
         XCTAssertGreaterThan(
-            atFive.numeric, atFour.numeric,
+            numeric(productionValues, .accessibility5),
+            numeric(productionValues, .accessibility4),
             "the numbers must be the thing that grew")
         XCTAssertLessThan(
-            atFive.label, atFour.label,
+            inlineLabel(long, productionValues, wideRow, .accessibility5),
+            inlineLabel(long, productionValues, wideRow, .accessibility4),
             "a clamped label is supposed to yield the room the numbers took")
     }
 
@@ -151,7 +186,7 @@ final class EventSourceLabelColumnTests: XCTestCase {
     func testAtDefaultTypeSizeTheColumnIsNarrowerThanTheLiteralItReplaced() {
         let width = EventSourceLabelColumn.columns(
             labels: productionLabels, values: productionValues,
-            availableWidth: narrowPhone, typeSize: .large).label
+            availableWidth: narrowRow, typeSize: .large).label
         XCTAssertLessThan(width, 118)
         XCTAssertGreaterThan(width, 90, "…but not so narrow it re-breaks the 90pt case")
     }
@@ -177,9 +212,9 @@ final class EventSourceLabelColumnTests: XCTestCase {
     func testTheBarKeepsItsFloorEvenAtTheLargestAccessibilitySize() {
         let columns = EventSourceLabelColumn.columns(
             labels: ["Sportsbooks (100)"], values: productionValues,
-            availableWidth: narrowPhone, typeSize: .accessibility5)
+            availableWidth: narrowRow, typeSize: .accessibility5)
         XCTAssertGreaterThanOrEqual(
-            columns.barWidth(availableWidth: narrowPhone), 72,
+            columns.barWidth(availableWidth: narrowRow), 72,
             "the label ate the probability bar")
     }
 
@@ -197,17 +232,61 @@ final class EventSourceLabelColumnTests: XCTestCase {
     /// accessibility size on the smallest phone). Pinned so the trade is a
     /// decision on record rather than a surprise, and so anyone who widens the
     /// numbers further has to come back here and re-justify the number.
+    ///
+    /// **#4233 — AND THIS IS WHY THE READER NO LONGER SEES IT.** The trade below
+    /// is still exactly what the inline row would make; it is now the evidence
+    /// that the inline row is the wrong shape here rather than a description of
+    /// what ships. Kept, and asserted against the clamp directly, because the
+    /// reflow's whole justification is that this is what it replaces — a later
+    /// change that made the inline clamp roomy again should have to come back and
+    /// read this.
     func testTheWidestPossiblePairCostsTheBarItsFloorAndThatIsTheTrade() {
-        let columns = EventSourceLabelColumn.columns(
-            labels: ["Sportsbooks (100)"], values: widestValues,
-            availableWidth: narrowPhone, typeSize: .accessibility5)
-        let bar = columns.barWidth(availableWidth: narrowPhone)
+        let labels = ["Sportsbooks (100)"]
+        let label = inlineLabel(labels, widestValues, narrowRow, .accessibility5)
+        let bar = narrowRow
+            - EventSourceLabelColumn.fixedRowCost(
+                numericWidth: numeric(widestValues, .accessibility5))
+            - label
 
         XCTAssertLessThan(bar, EventSourceLabelColumn.minimumBarWidth)
-        XCTAssertGreaterThan(bar, 40, "a bar this short stops reading as a split at all")
+        // #4233 — this used to assert `bar > 40`, on the reasoning that 49pt
+        // still reads as a split. Measured against the row the panel actually
+        // publishes (348pt, not the 375pt screen this file used to sweep) the
+        // inline bar here is 22pt, not 49. So the trade #4208 recorded was worse
+        // than #4208 could see, and the floor that matters is only that the
+        // arithmetic stays positive — a NEGATIVE bar is a silent overflow, which
+        // is the failure `testTheBarNeverGoesNegative…` below owns.
+        XCTAssertGreaterThan(bar, 0, "the inline row over-subscribes outright")
+        XCTAssertLessThan(
+            bar, 40,
+            "22pt of bar is the measured cost of staying inline here — if this row "
+                + "has become roomy, re-read whether the reflow is still earning its place")
         XCTAssertEqual(
-            columns.label, EventSourceLabelColumn.minimumLabelWidth, accuracy: 0.001,
+            label, EventSourceLabelColumn.minimumLabelWidth, accuracy: 0.001,
             "the label is supposed to have yielded everything first")
+    }
+
+    /// #4233 — SO THE ROW STACKS, AND BOTH SIDES OF THAT TRADE COME BACK.
+    ///
+    /// The pair to the test above, on the identical render: the model reflows,
+    /// the label goes from its 60pt floor to the full 343pt line, and the bar
+    /// goes from 49pt — under the floor — to 115pt, comfortably over it. This is
+    /// the assertion that the reflow was worth making; the previous test is the
+    /// assertion that it was necessary.
+    func testTheReflowGivesBackBothSidesOfThatTrade() {
+        let columns = EventSourceLabelColumn.columns(
+            labels: ["Sportsbooks (100)"], values: widestValues,
+            availableWidth: narrowRow, typeSize: .accessibility5)
+
+        XCTAssertEqual(columns.layout, .stacked)
+        XCTAssertGreaterThan(
+            columns.barWidth(availableWidth: narrowRow),
+            EventSourceLabelColumn.minimumBarWidth,
+            "the reflow is supposed to lift the bar back over its floor, not just move it")
+        XCTAssertGreaterThan(
+            columns.label,
+            inlineLabel(["Sportsbooks (100)"], widestValues, narrowRow, .accessibility5),
+            "and the label is supposed to be wider than the clamp it escaped")
     }
 
     /// AND THE BAR NEVER GOES NEGATIVE, which is the failure the test above is
@@ -224,10 +303,10 @@ final class EventSourceLabelColumnTests: XCTestCase {
                 (longestBookmaker, Font.Weight.regular),
             ] {
                 let columns = EventSourceLabelColumn.columns(
-                    labels: labels, values: widestValues, availableWidth: narrowPhone,
+                    labels: labels, values: widestValues, availableWidth: narrowRow,
                     typeSize: typeSize, weight: weight)
                 XCTAssertGreaterThan(
-                    columns.barWidth(availableWidth: narrowPhone), 0,
+                    columns.barWidth(availableWidth: narrowRow), 0,
                     "the row over-subscribes at \(typeSize) for \(labels)")
             }
         }
@@ -250,29 +329,28 @@ final class EventSourceLabelColumnTests: XCTestCase {
         let ink = EventSourceLabelColumn.textWidth(
             "Sportsbooks (100)", typeSize: .accessibility5)
         let ceiling = EventSourceLabelColumn.maximumLabelWidth(
-            availableWidth: narrowPhone,
+            availableWidth: narrowRow,
             numericWidth: numeric(productionValues, .accessibility5))
         XCTAssertGreaterThan(
             ink, ceiling,
             "no accessibility size on a 375pt phone outgrows the row — the clamp is untested")
 
-        let width = EventSourceLabelColumn.columns(
-            labels: ["Sportsbooks (100)"], values: productionValues,
-            availableWidth: narrowPhone, typeSize: .accessibility5).label
-        XCTAssertEqual(width, ceiling, accuracy: 0.001)
+        XCTAssertEqual(
+            inlineLabel(["Sportsbooks (100)"], productionValues, narrowRow, .accessibility5),
+            ceiling, accuracy: 0.001)
     }
 
     func testAShortLabelSetStillGetsAReadableFloor() {
         let width = EventSourceLabelColumn.columns(
             labels: ["Kalshi"], values: productionValues,
-            availableWidth: narrowPhone, typeSize: .xSmall).label
+            availableWidth: narrowRow, typeSize: .xSmall).label
         XCTAssertGreaterThanOrEqual(width, EventSourceLabelColumn.minimumLabelWidth)
     }
 
     func testAnEmptyTableFallsBackToTheFloorRatherThanZero() {
         let width = EventSourceLabelColumn.columns(
             labels: [], values: productionValues,
-            availableWidth: narrowPhone, typeSize: .large).label
+            availableWidth: narrowRow, typeSize: .large).label
         XCTAssertEqual(width, EventSourceLabelColumn.minimumLabelWidth, accuracy: 0.001)
     }
 
@@ -445,21 +523,284 @@ final class EventSourceLabelColumnTests: XCTestCase {
     /// `fixedRowCost` charged for. If the two ever came from different renders
     /// the clamp would protect the wrong amount of space — silently, since both
     /// numbers would still look plausible.
+    ///
+    /// #4233 — both branches are asserted, and the sweep is checked to visit
+    /// both. A version of this test that only knew about `.inline` would pass on
+    /// a build where the reflow never engages, which is the one regression it is
+    /// worth having.
     func testTheColumnsPairIsInternallyConsistent() {
+        var seen = Set<EventSourceLabelColumn.RowLayout>()
         for typeSize in Self.everyTypeSize {
             let columns = EventSourceLabelColumn.columns(
                 labels: productionLabels, values: productionValues,
-                availableWidth: narrowPhone, typeSize: typeSize)
-            XCTAssertEqual(
-                columns.fixedRowCost,
-                EventSourceLabelColumn.fixedRowCost(numericWidth: columns.numeric),
-                accuracy: 0.001)
+                availableWidth: narrowRow, typeSize: typeSize)
+            seen.insert(columns.layout)
             XCTAssertEqual(
                 columns.numeric, numeric(productionValues, typeSize), accuracy: 0.001)
-            XCTAssertEqual(
-                columns.barWidth(availableWidth: narrowPhone),
-                narrowPhone - columns.fixedRowCost - columns.label, accuracy: 0.001)
+
+            switch columns.layout {
+            case .inline:
+                XCTAssertEqual(
+                    columns.fixedRowCost,
+                    EventSourceLabelColumn.fixedRowCost(numericWidth: columns.numeric),
+                    accuracy: 0.001)
+                XCTAssertEqual(
+                    columns.barWidth(availableWidth: narrowRow),
+                    narrowRow - columns.fixedRowCost - columns.label, accuracy: 0.001)
+            case .stacked:
+                // One gap fewer, and the label is on the line above rather than
+                // subtracted from this one.
+                XCTAssertEqual(
+                    columns.fixedRowCost,
+                    EventSourceLabelColumn.stackedFixedRowCost(numericWidth: columns.numeric),
+                    accuracy: 0.001)
+                XCTAssertEqual(
+                    columns.barWidth(availableWidth: narrowRow),
+                    narrowRow - columns.fixedRowCost, accuracy: 0.001)
+            }
         }
+        XCTAssertEqual(
+            seen, [.inline, .stacked],
+            "the five-source table on a 375pt phone is supposed to use BOTH layouts "
+                + "across the type scale — this sweep asserted only \(seen)")
+    }
+
+    // MARK: - #4233 — the reflow
+
+    /// The ten rows `bookmakerContent` draws on event 14780138 (NE vs SEA), in
+    /// the order it draws them.
+    ///
+    /// Captured from the frame rather than invented, because the first version of
+    /// this sweep used a six-name subset that happened to exclude
+    /// `betanysportsbook` and `betonlineag` — the two longest — and therefore
+    /// exercised a roomier table than the one that ships.
+    /// `betanysports`, not `betanysportsbook`: the stacked frame prints it in
+    /// full and there is no ellipsis on it. The longer spelling is a real label
+    /// on other events — `testTheLongestBookmakerNameFitsTheColumnItIsGiven`
+    /// owns it — but writing it here would make this list a composite of two
+    /// tables while claiming to be one, which is how a fixture starts flattering
+    /// the code.
+    private static let productionBooks = [
+        "ballybet", "betanysports", "betmgm", "betonlineag", "betparx",
+        "betrivers", "betus", "bovada", "draftkings", "fanatics",
+    ]
+
+    /// Every label set either list draws, on every phone we ship, at every size.
+    private static let everyList: [(name: String, labels: [String], weight: Font.Weight)] = [
+        ("sources", ["Sportsbooks (19)", "Bain Luck Model", "MLB Model", "Kalshi", "Polymarket"],
+         .medium),
+        ("sources, worst case", ["Sportsbooks (100)"], .medium),
+        ("books", productionBooks, .regular),
+        ("books, short", ["betrivers", "betus", "bovada", "draftkings", "fanatics", "lowvig"],
+         .regular),
+        ("books, worst case", ["betanysportsbook"], .regular),
+    ]
+
+    /// How many lines `label` needs in the width the model actually gives it.
+    private func linesDrawn(
+        _ label: String, _ columns: EventSourceLabelColumn.Columns,
+        _ typeSize: DynamicTypeSize, _ weight: Font.Weight
+    ) -> Int {
+        EventSourceLabelColumn.labelLineCount(
+            label, width: columns.label, typeSize: typeSize, weight: weight)
+    }
+
+    /// THE REGRESSION, STATED END TO END: NO LABEL EVER TRUNCATES.
+    ///
+    /// This is the assertion #4208's build fails. The file promised "a long label
+    /// takes two lines; it does not truncate", and photographed at a11y5 it read
+    /// `be-tri…` / `bo-va…` / `draf tki…`. Measured with UIKit's own line
+    /// breaking at the width the model hands the column, the five-source table on
+    /// a 375pt phone needs 3 lines at a11y3 and 5 at a11y5.
+    ///
+    /// Deliberately says nothing about WHICH layout delivers this. It is the
+    /// reader's outcome, so it survives any future change to how the row decides
+    /// its shape — including replacing the reflow with something better.
+    ///
+    /// The limit is written as the literal `2` rather than `maximumLabelLines`
+    /// for the reason `testTheAdvertisedBarFloorIsStillSeventyTwoPoints` gives:
+    /// this is a claim about what a reader can see, and it cannot be checked
+    /// against the variable that is supposed to encode it.
+    func testNoLabelTruncatesOnAnyPhoneAtAnyTypeSize() {
+        for width in [narrowRow, wideRow] {
+            for list in Self.everyList {
+                for typeSize in Self.everyTypeSize {
+                    let columns = EventSourceLabelColumn.columns(
+                        labels: list.labels, values: widestValues, availableWidth: width,
+                        typeSize: typeSize, weight: list.weight)
+                    for label in list.labels {
+                        XCTAssertLessThanOrEqual(
+                            linesDrawn(label, columns, typeSize, list.weight), 2,
+                            "\(label) truncates in the \(list.name) list at \(typeSize) "
+                                + "on a \(Int(width))pt phone — \(columns.layout), "
+                                + "column \(columns.label)pt")
+                    }
+                }
+            }
+        }
+    }
+
+    /// The eligible case, asserted rather than assumed: the sweep above passes
+    /// vacuously on a build where no row was ever in trouble. This pins that the
+    /// inline layout GENUINELY fails on a real render — the specimen Alex would
+    /// see — so the test above is measuring a rescue and not a calm.
+    func testTheInlineLayoutGenuinelyTruncatesWhereTheReflowRescuesIt() {
+        let books = Self.everyList[2]
+        let inline = inlineLabel(
+            books.labels, widestValues, narrowRow, .accessibility5, books.weight)
+        let worstInline = books.labels.map {
+            EventSourceLabelColumn.labelLineCount(
+                $0, width: inline, typeSize: .accessibility5, weight: books.weight)
+        }.max() ?? 0
+        XCTAssertGreaterThan(
+            worstInline, EventSourceLabelColumn.maximumLabelLines,
+            "the inline row no longer over-subscribes on a 375pt phone at a11y5 — "
+                + "the reflow is untested and this whole section may be dead")
+
+        let columns = EventSourceLabelColumn.columns(
+            labels: books.labels, values: widestValues, availableWidth: narrowRow,
+            typeSize: .accessibility5, weight: books.weight)
+        XCTAssertEqual(columns.layout, .stacked)
+    }
+
+    /// THE LINE COUNT MODELS HYPHENATION, BECAUSE `Text` DOES.
+    ///
+    /// The photographed miss, pinned as its own case. On event 14780138 at a11y3
+    /// the books clamp is 131pt, and in that column `betanysportsbook` is TWO
+    /// lines to `boundingRect` with no paragraph style — it breaks the word by
+    /// character — and THREE as SwiftUI actually draws it, which hyphenates. The
+    /// first version of this trigger asked the unhyphenated question, concluded
+    /// the row fit, and shipped a frame reading `be-` / `tanys…` beneath four
+    /// visibly hyphenated neighbours (`bally-bet`, `beton-lineag`, `bet-parx`).
+    ///
+    /// A hard 3 rather than "more than the limit": the whole failure was an
+    /// off-by-one-line, so a test that would pass at 4 would have passed at 2.
+    func testTheLineCountAgreesWithTheHyphenationSwiftUIPerforms() {
+        XCTAssertEqual(
+            EventSourceLabelColumn.labelLineCount(
+                "betanysportsbook", width: 131, typeSize: .accessibility3, weight: .regular),
+            3,
+            "the line count has stopped modelling hyphenation — it will read this "
+                + "label as fitting and leave the row inline, which is #4233's own miss")
+    }
+
+    /// And the sweep visits that exact render, so the case above cannot become
+    /// unreachable while still passing on its hardcoded width.
+    func testTheProductionBooksTableReflowsAtTheSizeItWasPhotographedTruncating() {
+        let columns = EventSourceLabelColumn.columns(
+            labels: Self.productionBooks, values: ["37%", "63%"],
+            availableWidth: narrowRow, typeSize: .accessibility3, weight: .regular)
+        XCTAssertEqual(
+            columns.layout, .stacked,
+            "this is the render in artifacts-native-081/AFTER-4233-sources-a11y3.png, "
+                + "where `betanysportsbook` truncated inline")
+    }
+
+    /// And the advertised limit itself, so it cannot be raised somewhere else to
+    /// make the sweep pass. Same shape and same reason as the bar floor's pin: a
+    /// three-line label in a table of six rows is a wall of text, not a table.
+    func testTheAdvertisedLabelLineLimitIsStillTwo() {
+        XCTAssertEqual(EventSourceLabelColumn.maximumLabelLines, 2)
+    }
+
+    /// THE TRIGGER IS MEASURED, NOT A SIZE THRESHOLD.
+    ///
+    /// The obvious implementation is `dynamicTypeSize >= .accessibility1`, and it
+    /// would be this file's original bug written a third time — a constant that
+    /// is right for one text size on one screen width. The proof that it is not
+    /// one: on identical text sizes the two phones we ship DISAGREE about whether
+    /// the same list reflows, because 27 more points of row is enough to keep the
+    /// books table inside two lines all the way up the scale.
+    ///
+    /// A threshold implementation cannot produce this and would fail here.
+    /// Stated as the property rather than as two pinned cells, deliberately.
+    ///
+    /// The first version of this test named the one render where the phones then
+    /// disagreed, and modelling hyphenation moved it — a guard that has to be
+    /// re-pinned every time the measurement improves is a guard that gets
+    /// re-pinned without being read. What must hold is that the two widths
+    /// disagree SOMEWHERE, and that is what a threshold implementation cannot do.
+    func testTheReflowPointDependsOnTheWidthAndNotOnlyTheTypeSize() {
+        var disagreements = 0
+        for list in Self.everyList {
+            for typeSize in Self.everyTypeSize {
+                func layout(_ width: Double) -> EventSourceLabelColumn.RowLayout {
+                    EventSourceLabelColumn.columns(
+                        labels: list.labels, values: ["49%", "51%"], availableWidth: width,
+                        typeSize: typeSize, weight: list.weight).layout
+                }
+                // More room never causes a reflow. A trigger with its comparison
+                // the wrong way round would still disagree across widths, so the
+                // count below is not enough on its own.
+                if layout(narrowRow) == .inline {
+                    XCTAssertEqual(
+                        layout(wideRow), .inline,
+                        "\(list.name) at \(typeSize) stacks on the WIDER phone while the "
+                            + "narrower one holds it inline — the trigger's comparison "
+                            + "is inverted")
+                }
+                if layout(narrowRow) != layout(wideRow) { disagreements += 1 }
+            }
+        }
+        XCTAssertGreaterThan(
+            disagreements, 0,
+            "the two phones we ship never disagree about a single render — the "
+                + "trigger has stopped reading the width and is a size threshold")
+    }
+
+    /// And it depends on the LABELS, not only on the geometry: the same row, same
+    /// phone, same size, reflows for a table of long names and not for a table of
+    /// short ones. A trigger that ignored the strings would answer both alike.
+    func testTheReflowPointDependsOnTheLabelsThemselves() {
+        func layout(_ labels: [String]) -> EventSourceLabelColumn.RowLayout {
+            EventSourceLabelColumn.columns(
+                labels: labels, values: ["49%", "51%"], availableWidth: narrowRow,
+                typeSize: .accessibility5, weight: .regular).layout
+        }
+        XCTAssertEqual(layout(["draftkings"]), .stacked)
+        XCTAssertEqual(layout(["bet"]), .inline, "a short table has no reason to reflow")
+    }
+
+    /// One decision for the whole list, not per row.
+    ///
+    /// Rows that each chose their own shape would give a table with a ragged edge
+    /// down it — a stacked row directly above an inline one reads as a rendering
+    /// fault, not as a considered layout. So the widest label decides for every
+    /// row, which is exactly what a single `Columns` per list buys.
+    func testOneLongLabelReflowsTheWholeTableIncludingItsShortRows() {
+        let mixed = ["Kalshi", "Polymarket", "Sportsbooks (100)"]
+        let columns = EventSourceLabelColumn.columns(
+            labels: mixed, values: widestValues, availableWidth: narrowRow,
+            typeSize: .accessibility5)
+        XCTAssertEqual(columns.layout, .stacked)
+        // `Kalshi` would have been comfortable inline; it stacks anyway, and it
+        // gets the same full line as the label that forced the decision.
+        XCTAssertEqual(
+            columns.label,
+            EventSourceLabelColumn.labelLineWidth(availableWidth: narrowRow),
+            accuracy: 0.001)
+    }
+
+    /// The reflow's payoff for the bar, swept: wherever the row stacks, the bar
+    /// is not merely present but back over the floor the inline row had given up.
+    func testTheStackedBarClearsTheFloorTheInlineRowHadToGiveUp() {
+        var stackedCases = 0
+        for width in [narrowRow, wideRow] {
+            for list in Self.everyList {
+                for typeSize in Self.everyTypeSize {
+                    let columns = EventSourceLabelColumn.columns(
+                        labels: list.labels, values: widestValues, availableWidth: width,
+                        typeSize: typeSize, weight: list.weight)
+                    guard columns.layout == .stacked else { continue }
+                    stackedCases += 1
+                    XCTAssertGreaterThanOrEqual(
+                        columns.barWidth(availableWidth: width), 72,
+                        "a stacked row is supposed to have room for its bar — "
+                            + "\(list.name) at \(typeSize) on \(Int(width))pt")
+                }
+            }
+        }
+        XCTAssertGreaterThan(stackedCases, 0, "no row stacked — the sweep proved nothing")
     }
 
     // MARK: - The second list: individual sportsbooks
@@ -496,19 +837,30 @@ final class EventSourceLabelColumnTests: XCTestCase {
             labels: [label], values: productionValues, availableWidth: 0,
             typeSize: .accessibility5, weight: .regular)
         let measured = EventSourceLabelColumn.columns(
-            labels: [label], values: productionValues, availableWidth: narrowPhone,
+            labels: [label], values: productionValues, availableWidth: narrowRow,
             typeSize: .accessibility5, weight: .regular)
         // Unmeasured takes the whole of the ink; measured yields to the bar.
+        //
+        // #4233 — asked of the clamp rather than of `measured.label`, because at
+        // a11y5 this row reflows and its label is then the full line, which is
+        // WIDER than the unmeasured ink and would read as the clamp having
+        // vanished. The clamp is still there and still doing this; it is the
+        // layout on top of it that changed.
         XCTAssertGreaterThan(
-            unmeasured.label, measured.label,
+            unmeasured.label,
+            inlineLabel([label], productionValues, narrowRow, .accessibility5, .regular),
             "an unmeasured row is supposed to be the UNCLAMPED one")
         XCTAssertEqual(
-            measured.label,
+            inlineLabel([label], productionValues, narrowRow, .accessibility5, .regular),
             EventSourceLabelColumn.maximumLabelWidth(
-                availableWidth: narrowPhone, numericWidth: measured.numeric),
+                availableWidth: narrowRow, numericWidth: measured.numeric),
             accuracy: 0.001, "the measured row should be sitting on the clamp here")
         // And the thing the clamp is for: on the unmeasured row the bar is gone.
-        XCTAssertLessThan(unmeasured.barWidth(availableWidth: narrowPhone), 72)
+        XCTAssertLessThan(unmeasured.barWidth(availableWidth: narrowRow), 72)
+        XCTAssertEqual(
+            unmeasured.layout, .inline,
+            "an unmeasured row must not reflow — a first frame that stacks and then "
+                + "snaps inline is a visible flicker")
     }
 
     /// The longest real bookmaker name this list draws, at the size that cut it on
@@ -517,7 +869,7 @@ final class EventSourceLabelColumnTests: XCTestCase {
         let books = ["ballybet", "betanysportsbook", "betmgm", "betonlineag",
                      "betparx", "betrivers", "betus", "bovada", "draftkings", "espnbet"]
         let columns = EventSourceLabelColumn.columns(
-            labels: books, values: productionValues, availableWidth: narrowPhone,
+            labels: books, values: productionValues, availableWidth: narrowRow,
             typeSize: .xxxLarge, weight: .regular)
         let widest = books
             .map { EventSourceLabelColumn.textWidth($0, typeSize: .xxxLarge, weight: .regular) }
@@ -527,7 +879,7 @@ final class EventSourceLabelColumnTests: XCTestCase {
         XCTAssertLessThanOrEqual(
             columns.label,
             EventSourceLabelColumn.maximumLabelWidth(
-                availableWidth: narrowPhone, numericWidth: columns.numeric))
+                availableWidth: narrowRow, numericWidth: columns.numeric))
     }
 
     // MARK: -

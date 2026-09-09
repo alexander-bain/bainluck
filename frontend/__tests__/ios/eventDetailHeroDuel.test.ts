@@ -111,6 +111,20 @@ d("the iOS event detail hero prints a decided pair", () => {
     // Rendering-only, and it must stay that way. `ProbabilityBar` takes the
     // PROBABILITIES; if a percent ever reached it the bar would be drawn on a
     // 0–100 value in a 0–1 API.
-    expect(view).toMatch(/ProbabilityBar\(\s*\n?\s*awayProb: awayProbability, homeProb: homeProbability/);
+    //
+    // #4233 — RE-ANCHORED, and worth saying why. This asserted the literal text
+    // `awayProb: awayProbability, homeProb: homeProbability`, which was the
+    // SOURCES ROW's call, not the hero's — the only `ProbabilityBar` in this
+    // file is the sources list's, and the hero draws its duel elsewhere. So this
+    // guard has been passing on a render path its own describe block does not
+    // name. Consolidating the two source rows into one builder (#4233) renamed
+    // those locals and surfaced it.
+    //
+    // The claim is still worth keeping and is kept, now stated as the property
+    // rather than as one call's spelling: whatever this file hands the bar is a
+    // 0–1 probability, never a percent.
+    const barCall = view.slice(view.indexOf("ProbabilityBar("));
+    expect(barCall).toMatch(/awayProb: probabilities\.away, homeProb: probabilities\.home/);
+    expect(barCall.slice(0, 200)).not.toMatch(/awayProb:[^,]*[Pp]ercent/);
   });
 });

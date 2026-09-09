@@ -84,19 +84,80 @@ const sourceContent = withoutComments(
   ),
 );
 
+/**
+ * ═══ #4233 MOVED THE ROW OUT OF BOTH LISTS, ON PURPOSE ═══
+ *
+ * The `describe.each` below used to hold `sourceContent` and `bookmakerContent`
+ * to the same drawing predicates, because "a guard scoped to one of two
+ * identical call sites is a guard on one call site" — the lesson #4107 learned
+ * when its own fix reached one of the two.
+ *
+ * #4233 removed the duplication instead of guarding it: there is now ONE row
+ * builder and both lists call it, so the half-fixed row is not a defect this
+ * file has to catch — it is a shape the code can no longer take. That is
+ * strictly better than the guard, and it is why these slices moved.
+ *
+ * What replaces the old assertions, and is the thing worth pinning now: the two
+ * `*Content` functions still MEASURE independently (different faces, different
+ * value sets) and must not go back to DRAWING independently.
+ */
+const sourceRow = withoutComments(
+  functionBody(eventDetail, "private func sourceProbabilityRow("),
+);
+const barAndNumbers = withoutComments(
+  functionBody(eventDetail, "private func probabilityBarAndNumbers("),
+);
+
+describe("#4233 there is exactly one row builder and both lists use it", () => {
+  it("sliced the shared row", () => {
+    expect(sourceRow.length).toBeGreaterThan(400);
+    expect(sourceRow).toContain("columns.layout");
+    expect(sourceRow).toContain("probabilityBarAndNumbers(");
+    expect(barAndNumbers).toContain("ProbabilityBar(");
+    expect(barAndNumbers).toContain("formatProbability(");
+  });
+
+  it("both lists delegate to it", () => {
+    expect(sourceContent).toContain("sourceProbabilityRow(");
+    expect(bookmakerContent).toContain("sourceProbabilityRow(");
+  });
+
+  /**
+   * The regression that would undo the consolidation: a list that starts drawing
+   * its own row again. That is how the two drifted the first time, and a copy
+   * would be invisible to every predicate below, which now scans one slice.
+   */
+  it("neither list draws a row of its own any more", () => {
+    for (const slice of [sourceContent, bookmakerContent]) {
+      expect(slice).not.toContain("ProbabilityBar(");
+      expect(slice).not.toContain("HStack(");
+      expect(slice).not.toContain("lineLimit(");
+    }
+  });
+
+  /**
+   * The whole file draws exactly one of these. `EventDetailView` is ~1,100 lines
+   * and this bar is its only probability bar; a second call would mean a row had
+   * been forked back out.
+   */
+  it("the view has a single ProbabilityBar call site", () => {
+    expect(withoutComments(eventDetail).match(/ProbabilityBar\(/g)).toHaveLength(1);
+  });
+});
+
 describe("#4107 the Sources list label column", () => {
   /**
    * THE SLICE IS PROVEN FIRST. Every ban below is a `not.toContain`, and a
    * `not.toContain` on an empty string passes. If the signature ever drifts,
    * `functionBody` throws — but if it matched something tiny or wrong, the bans
-   * would go quietly green. So: the slice must be the row-drawing function, and
+   * would go quietly green. So: the slice must be the measuring function, and
    * must contain the landmarks only that function has.
    */
-  it("slices the function that actually draws the source rows", () => {
+  it("slices the function that actually sizes the source rows", () => {
     expect(sourceContent.length).toBeGreaterThan(400);
-    expect(sourceContent).toContain("ProbabilityBar(");
     expect(sourceContent).toContain("entry.label");
     expect(sourceContent).toContain("formatProbability(");
+    expect(sourceContent).toContain("EventSourceLabelColumn.columns(");
   });
 
   /**
@@ -145,8 +206,8 @@ describe.each([
 ])("#4107 %s sizes its label column against ink", (name, slice) => {
   it("sliced the right function", () => {
     expect(slice.length).toBeGreaterThan(400);
-    expect(slice).toContain("ProbabilityBar(");
     expect(slice).toContain("formatProbability(");
+    expect(slice).toContain("sourceProbabilityRow(");
   });
 
   it("asks the width model instead of writing a number down", () => {
@@ -165,19 +226,96 @@ describe.each([
     expect(slice).not.toContain("minimumScaleFactor");
   });
 
-  it("lets a clamped label wrap rather than truncate", () => {
-    expect(slice).toContain("lineLimit(2)");
-    expect(slice).toContain("fixedSize(horizontal: false, vertical: true)");
-    // The specific regression this list had: one line and no wrap.
-    expect(slice).not.toContain("lineLimit(1)");
+  /**
+   * #4233 — the measurement each list makes is spent by the shared row, so the
+   * `Columns` it computed has to be the one handed over. A list that measured
+   * correctly and then passed a stale or default value would be sized against a
+   * table that is not on screen: the #4107 bug with an extra hop in it.
+   */
+  it("spends its own measurement on the shared row", () => {
+    expect(slice).toMatch(/sourceProbabilityRow\([\s\S]*?columns: columns\)/);
+  });
+});
+
+/**
+ * Everything the row itself must still do, now asserted once because there is
+ * one row.
+ */
+describe("#4107/#4233 the shared row draws against the measurement", () => {
+  it("has no hardcoded point width left in it", () => {
+    for (const slice of [sourceRow, barAndNumbers]) {
+      expect(slice).not.toMatch(/\.frame\(\s*width:\s*\d/);
+    }
+  });
+
+  it("does not reach for minimumScaleFactor as a backstop", () => {
+    expect(sourceRow).not.toContain("minimumScaleFactor");
+  });
+
+  /**
+   * #4233 — the limit is READ FROM THE MODEL rather than written here.
+   *
+   * The model reflows the row exactly because the label would exceed this
+   * number. A literal `lineLimit(2)` in the view would still be correct today
+   * and would silently decouple the two the moment either moved — the view
+   * clipping at a limit the model was not reasoning about is the same class of
+   * defect as a width literal, one property over.
+   */
+  it("lets a clamped label wrap rather than truncate, at the model's own limit", () => {
+    expect(sourceRow).toContain("lineLimit(EventSourceLabelColumn.maximumLabelLines)");
+    expect(sourceRow).toContain("fixedSize(horizontal: false, vertical: true)");
+    // The specific regression this list had: one line and no wrap. And the
+    // literal the model is supposed to own.
+    expect(sourceRow).not.toContain("lineLimit(1)");
+    expect(sourceRow).not.toContain("lineLimit(2)");
   });
 
   it("reads the row's own constants from the model it clamps against", () => {
-    expect(slice).toContain("EventSourceLabelColumn.interColumnSpacing");
-    expect(slice).toContain("EventSourceLabelColumn.horizontalPadding");
+    expect(sourceRow).toContain("EventSourceLabelColumn.interColumnSpacing");
+    expect(sourceRow).toContain("EventSourceLabelColumn.horizontalPadding");
+    expect(sourceRow).toContain("EventSourceLabelColumn.stackedLineSpacing");
     // #4208 — `numericColumnWidth` used to be a constant read here. It is a
     // measurement now and arrives with the label, from the one call above.
-    expect(slice).toContain("columns.numeric");
+    expect(barAndNumbers).toContain("columns.numeric");
+    expect(sourceRow).toContain("columns.label");
+  });
+});
+
+/**
+ * ═══ #4233 — THE ROW ACTUALLY HONOURS THE LAYOUT IT WAS GIVEN ═══
+ *
+ * The Swift tests own the decision: when a label would need more than
+ * `maximumLabelLines` in the column the clamp gives it, `columns.layout` is
+ * `.stacked`. Nothing in them can see whether the VIEW then draws a stacked row
+ * — a model that returns `.stacked` into a view with one hardcoded `HStack` is
+ * a fix that passes its own unit tests and changes nothing on the phone, which
+ * is the exact failure mode this repo has shipped before.
+ */
+describe("#4233 the row draws both layouts", () => {
+  it("branches on the model's layout rather than on the text size", () => {
+    expect(sourceRow).toContain("switch columns.layout");
+    expect(sourceRow).toContain("case .inline:");
+    expect(sourceRow).toContain("case .stacked:");
+    // A size threshold in the view would be the literal this file exists to
+    // keep out, wearing a different type.
+    expect(sourceRow).not.toContain("dynamicTypeSize >=");
+    expect(sourceRow).not.toContain("accessibility1");
+  });
+
+  it("stacks into a VStack and keeps the bar and numbers on one line", () => {
+    const stacked = sourceRow.slice(sourceRow.indexOf("case .stacked:"));
+    expect(stacked).toContain("VStack(");
+    expect(stacked).toContain("HStack(spacing: EventSourceLabelColumn.interColumnSpacing)");
+    expect(stacked).toContain("probabilityBarAndNumbers(");
+  });
+
+  it("keeps the inline layout a single row", () => {
+    const inline = sourceRow.slice(
+      sourceRow.indexOf("case .inline:"),
+      sourceRow.indexOf("case .stacked:"),
+    );
+    expect(inline).toContain("HStack(spacing: EventSourceLabelColumn.interColumnSpacing)");
+    expect(inline).not.toContain("VStack(");
   });
 });
 
@@ -200,17 +338,26 @@ describe.each([
  * down. That is this file's job, and it is the failure mode with the track
  * record here.
  */
-describe.each([
-  ["sourceContent", sourceContent],
-  ["bookmakerContent", bookmakerContent],
-])("#4208 %s sizes its probability columns against ink", (name, slice) => {
+describe("#4208 the shared row sizes its probability columns against ink", () => {
   it("draws the numbers at the measured width", () => {
-    const frames = slice.match(/\.frame\(\s*width: columns\.numeric, alignment: \.trailing\)/g);
+    const frames = barAndNumbers.match(
+      /\.frame\(\s*width: columns\.numeric, alignment: \.trailing\)/g,
+    );
     // Two columns, away and home. One match would mean half the row was fixed —
     // which is the exact shape of the bug this file keeps finding.
     expect(frames).toHaveLength(2);
   });
 
+  it("has not gone back to the 36pt literal", () => {
+    expect(barAndNumbers).not.toContain("width: 36");
+    expect(barAndNumbers).not.toContain("numericColumnWidth");
+  });
+});
+
+describe.each([
+  ["sourceContent", sourceContent],
+  ["bookmakerContent", bookmakerContent],
+])("#4208 %s measures its probability columns against ink", (name, slice) => {
   it("has not gone back to the 36pt literal", () => {
     expect(slice).not.toContain("width: 36");
     expect(slice).not.toContain("numericColumnWidth");
@@ -242,8 +389,14 @@ describe("#4208 the books column measures the rows it actually draws", () => {
     expect(bookmakerContent).toContain(
       "guard let pair = Self.bookmakerProbabilities(bm) else { return [] }",
     );
-    expect(bookmakerContent).toContain("if let probabilities {");
-    expect(bookmakerContent).toContain("Self.bookmakerProbabilities(bm)");
+    // #4233 — the row is shared now, so the predicate's OTHER use moved with it:
+    // the list hands the same optional over and the row decides whether to draw
+    // the bar. Both halves still named, because a list that measured through the
+    // predicate and drew through something else is the drift this pins.
+    expect(bookmakerContent).toContain(
+      "probabilities: Self.bookmakerProbabilities(bm)",
+    );
+    expect(sourceRow).toContain("if let probabilities {");
   });
 
   it("never substitutes a made-up price for a row that has none", () => {
@@ -315,14 +468,26 @@ describe("#4107 the row width is measured where BOTH lists can see it", () => {
  * differs between them.
  */
 describe("#4107 each list measures in the face it draws in", () => {
-  it("the books list asks for the regular face it renders", () => {
+  /**
+   * #4233 — the row is shared, so the face travels as an argument. That makes
+   * the contract tighter, not looser: the face a list MEASURES in and the face
+   * it hands the row to DRAW in are now two arguments of the same call, and a
+   * mismatch is visible in one line rather than split across two functions.
+   */
+  it("the books list asks for, and draws in, the regular face", () => {
     expect(bookmakerContent).toContain("weight: .regular");
-    expect(bookmakerContent).toContain(".font(.caption)");
+    expect(bookmakerContent).toContain("font: .caption,");
   });
 
   it("the sources list stays on the medium face it renders", () => {
-    expect(sourceContent).toContain(".font(.caption.weight(.medium))");
+    expect(sourceContent).toContain("font: .caption.weight(.medium),");
     expect(sourceContent).not.toContain("weight: .regular");
+  });
+
+  /** And the row draws the face it was handed rather than one of its own. */
+  it("the shared row draws the face it is given", () => {
+    expect(sourceRow).toContain(".font(font)");
+    expect(sourceRow).not.toContain(".font(.caption)");
   });
 });
 
