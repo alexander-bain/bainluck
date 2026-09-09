@@ -384,7 +384,11 @@ export default function GolfPage() {
   return (
     <div className="min-h-screen">
       {/* Hero */}
-      <div className="relative overflow-hidden bg-gradient-to-b from-[#002e1f] via-surface-deep to-surface-deep">
+      {/* #4219: the hero was a dark-green gradient left over from dark mode, and the
+          title was cream (#FFF8E7) — 1.03:1 by the time the gradient had faded to
+          white. The site is light mode only, so the hero is the light surface and the
+          green survives as the radial wash below. */}
+      <div className="relative overflow-hidden bg-surface-deep">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(0,103,71,0.12)_0%,_transparent_70%)]" />
         <div className="relative max-w-6xl mx-auto px-4 pt-8 pb-6 text-center">
           <Link
@@ -394,7 +398,7 @@ export default function GolfPage() {
             &larr; Back to feed
           </Link>
           <div className="text-4xl mb-3">&#x26F3;</div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-[#FFF8E7] tracking-tight">
+          <h1 className="text-3xl sm:text-4xl font-bold text-text-primary tracking-tight">
             Golf Odds &amp; Futures
           </h1>
           <p className="text-text-secondary mt-2 text-lg">
