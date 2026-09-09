@@ -707,7 +707,6 @@ celery_app.conf.task_routes = {
     "app.tasks.sync_espn_live_events": {"queue": "realtime"},
     "app.tasks.poll_live_prediction_markets": {"queue": "realtime"},
     "app.tasks.sync_mlb_win_probability": {"queue": "realtime"},
-    "app.tasks.sync_statpal_live_plays": {"queue": "realtime"},
     "app.tasks.sync_statpal_livescores": {"queue": "realtime"},
     # #2867 / D59. On `realtime` for a correctness reason, not a cost one: the
     # link is what lets a live tennis card read its score line from StatPal, and
@@ -2174,13 +2173,6 @@ def sync_statpal_injuries(self, sport_key: str = None):
     return _tracked_run("statpal_injuries", _sync_statpal_injuries(sport_key))
 
 
-@celery_app.task(bind=True, name="app.tasks.sync_statpal_live_plays")
-def sync_statpal_live_plays(self, sport_key: str = None):
-    """Fetch play-by-play data from StatPal for live games."""
-    from app.tasks.statpal_sync import _sync_statpal_live_plays
-    return _tracked_run("statpal_plays", _sync_statpal_live_plays(sport_key))
-
-
 @celery_app.task(bind=True, name="app.tasks.enrich_market_images")
 def enrich_market_images(self, limit: int = 50):
     """Fetch images from Pexels API for markets missing image_url."""
@@ -2492,25 +2484,11 @@ def sync_statpal_livescores(self):
     return _tracked_run("statpal_livescores", _sync_statpal_livescores())
 
 
-@celery_app.task(bind=True, name="app.tasks.sync_statpal_rosters")
-def sync_statpal_rosters(self, sport_key: str = None):
-    """Sync team rosters from StatPal (supplements ESPN roster data)."""
-    from app.tasks.statpal_sync import _sync_statpal_rosters
-    return run_async(_sync_statpal_rosters(sport_key))
-
-
 @celery_app.task(bind=True, name="app.tasks.sync_statpal_standings")
 def sync_statpal_standings(self, sport_key: str = None):
     """Sync league standings from StatPal."""
     from app.tasks.statpal_sync import _sync_statpal_standings
     return _tracked_run("statpal_standings", _sync_statpal_standings(sport_key))
-
-
-@celery_app.task(bind=True, name="app.tasks.sync_statpal_team_stats")
-def sync_statpal_team_stats(self, sport_key: str = None):
-    """Sync season-level team statistics from StatPal."""
-    from app.tasks.statpal_sync import _sync_statpal_team_stats
-    return _tracked_run("statpal_team_stats", _sync_statpal_team_stats(sport_key))
 
 
 # --- Daily Digest ---
@@ -5075,25 +5053,23 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_statpal_injuries",
         "schedule": crontab(minute=20),  # Hourly at :20 — injuries cached with 2h TTL anyway (was every 15 min)
     },
-    "sync-statpal-live-plays": {
-        "task": "app.tasks.sync_statpal_live_plays",
-        "schedule": 60.0,  # Every 60 seconds — play-by-play for live NFL games only
-    },
+    # `sync-statpal-live-plays` (60 s) was RETIRED 2026-09-09 by authority/083
+    # under #2907: it asked `{sport}/fixtures/{id}/playbyplay`, which the venue
+    # does not publish, so it wrote 0 `scoring_plays` rows in its whole life and
+    # 0 of 52,346 events ever carried `statpal_plays` — while banking 632
+    # successes a day. `/nfl/live-plays` is the live path and is a rewrite, not a
+    # repoint (see `RETIRED_VENUE_PATHS` in `services/statpal_api.py`).
     "sync-statpal-livescores": {
         "task": "app.tasks.sync_statpal_livescores",
         "schedule": 30.0,  # Every 30 seconds — real-time scores for all live games
     },
-    "sync-statpal-rosters-daily": {
-        "task": "app.tasks.sync_statpal_rosters",
-        "schedule": crontab(minute=30, hour=7),  # Daily at 7:30 AM UTC — after ESPN roster sync (7:00)
-    },
+    # `sync-statpal-rosters-daily` and `sync-statpal-team-stats-weekly` were
+    # RETIRED with it, same issue, same reason: the venue publishes no teams,
+    # roster, team-stats or player-stats path for any sport, so `get_teams`
+    # returned `[]` every run and the roster loop it gates never iterated once.
     "sync-statpal-standings-daily": {
         "task": "app.tasks.sync_statpal_standings",
         "schedule": crontab(minute=0, hour=8),  # Daily at 8:00 AM UTC
-    },
-    "sync-statpal-team-stats-weekly": {
-        "task": "app.tasks.sync_statpal_team_stats",
-        "schedule": crontab(minute=0, hour=9, day_of_week=1),  # Weekly Monday 9:00 AM UTC
     },
     # #975: weekly roll-up of external feature-request shakes into one digest issue
     "digest-external-feature-requests-weekly": {
@@ -5790,10 +5766,12 @@ celery_app.conf.beat_schedule = {
         # `precompute-discover-candidate-base` — background queue, a different
         # worker dyno, not a StatPal reader.
         #
-        # No placement can dodge `sync-statpal-livescores` (30 s) or
-        # `sync-statpal-live-plays` (60 s): they fire during every minute anyway,
-        # which is the `BACKGROUND_INTERVAL_FLOOR` argument the NFL stamper below
-        # spells out. They are absorbed, not avoided.
+        # No placement can dodge `sync-statpal-livescores` (30 s): it fires
+        # during every minute anyway, which is the `BACKGROUND_INTERVAL_FLOOR`
+        # argument the NFL stamper below spells out. It is absorbed, not avoided.
+        # (`sync-statpal-live-plays`, 60 s, was the second such reader until
+        # authority/083 retired it under #2907 — so this offset now collides with
+        # strictly less than it was chosen against, never more.)
         "task": "app.tasks.link_tennis_statpal_fixtures",
         "schedule": crontab(minute="4,14,24,34,44,54"),
         "options": {"queue": "realtime"},

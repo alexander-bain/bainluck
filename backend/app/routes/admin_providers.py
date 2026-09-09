@@ -2417,61 +2417,6 @@ async def trigger_statpal_injury_sync(
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
-@router.post("/statpal/sync-plays")
-async def trigger_statpal_play_sync(
-    request: Request,
-    secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Sport key. If omitted, syncs all live games."),
-):
-    """
-    Trigger a StatPal play-by-play sync for live games.
-
-    Fetches recent plays from live games to provide context for probability
-    movements and Pulse calculations.
-    """
-    _check_admin_secret(secret, request=request)
-
-    from app.tasks import sync_statpal_live_plays
-
-    try:
-        task = sync_statpal_live_plays.delay(sport_key=sport_key)
-        return {
-            "status": "queued",
-            "task_id": task.id,
-            "message": f"StatPal play-by-play sync queued. "
-                       f"Use /api/admin/statpal/task/{task.id} to check status.",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
-
-
-@router.post("/statpal/sync-rosters")
-async def trigger_statpal_roster_sync(
-    request: Request,
-    secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Sport key. If omitted, syncs all."),
-):
-    """
-    Trigger a StatPal roster sync (supplements ESPN roster data).
-
-    Only updates teams that don't already have roster data from ESPN.
-    """
-    _check_admin_secret(secret, request=request)
-
-    from app.tasks import sync_statpal_rosters
-
-    try:
-        task = sync_statpal_rosters.delay(sport_key=sport_key)
-        return {
-            "status": "queued",
-            "task_id": task.id,
-            "message": f"StatPal roster sync queued. "
-                       f"Use /api/admin/statpal/task/{task.id} to check status.",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
-
-
 @router.get("/statpal/task/{task_id}")
 async def get_statpal_task_status(
     request: Request,
@@ -2538,29 +2483,6 @@ async def trigger_statpal_standings_sync(
         "status": "queued",
         "task_id": task.id,
         "message": f"Standings sync queued. "
-                   f"Use /api/admin/statpal/task/{task.id} to check status.",
-    }
-
-
-@router.post("/statpal/sync-team-stats")
-async def trigger_statpal_team_stats_sync(
-    request: Request,
-    secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Optional: limit to one sport key"),
-):
-    """Trigger StatPal team stats sync (weekly task, runs Monday 9:00 AM UTC)."""
-    _check_admin_secret(secret, request=request)
-
-    from app.tasks import sync_statpal_team_stats
-
-    try:
-        task = sync_statpal_team_stats.delay(sport_key=sport_key)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {e}")
-    return {
-        "status": "queued",
-        "task_id": task.id,
-        "message": f"Team stats sync queued. "
                    f"Use /api/admin/statpal/task/{task.id} to check status.",
     }
 

@@ -729,6 +729,21 @@ def test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer():
 def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     """60 beats NAME `background`. The queue carries 105.
 
+    🔴 **RE-DERIVED at authority/083 (2026-09-09, #2907): 122 → 120, explicit
+    UNMOVED at 77, fall-through 45 → 43.** The first re-derivation in this
+    docstring that SUBTRACTS. Two retired beats — `sync-statpal-rosters-daily`
+    and `sync-statpal-team-stats-weekly` — were both default-queue fall-through
+    and both asked StatPal for paths the venue does not publish. A third,
+    `sync-statpal-live-plays`, went in the same change but named `realtime`, so
+    it counted in NEITHER half: three deletions, total down two. That is exactly
+    why #1910 forbids arithmetic in this direction too — subtracting three would
+    have been wrong. RE-DERIVED by running the census below, which printed
+    `explicit 77 implicit 43 total 120`.
+
+    The test name still says 105/45 and both halves are now stale; the numbers
+    that bind are the assertions, and the name is left alone because renaming it
+    would break every reference to this guard in the handoff record.
+
     🔴 **MERGE RE-DERIVATION (Integrator INT-139): 104 (ux-122 fold) x 103
     (queue 419) -> 105, explicit 60.** Both lanes re-derived against a master
     that did not yet carry the other, so NEITHER number was the merged one.
@@ -993,8 +1008,8 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
             implicit += 1
 
     assert explicit == 77, f"explicitly-routed background beats moved: {explicit}"
-    assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 122
+    assert implicit == 43, f"default-queue fall-through moved: {implicit}"
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 120
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

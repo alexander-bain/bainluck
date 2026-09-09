@@ -29,7 +29,7 @@ Docs: https://statpal.io/quick-start-tutorial/
 import logging
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -136,18 +136,6 @@ class StatPalFixture:
 
 
 @dataclass
-class StatPalPlayer:
-    """A player from a StatPal team roster."""
-    player_id: str
-    name: str
-    position: Optional[str] = None
-    jersey_number: Optional[str] = None
-    status: Optional[str] = None  # active, injured, suspended, etc.
-    injury_type: Optional[str] = None
-    injury_detail: Optional[str] = None
-
-
-@dataclass
 class StatPalInjury:
     """An injury report entry from StatPal."""
     player_id: str
@@ -209,6 +197,47 @@ INJURY_BUCKET_STATUS: dict[str, str] = {
 INJURY_ENDPOINTS: dict[str, str] = {
     "soccer": "injuries-suspensions",
 }
+
+#: Paths this client used to ask for and no longer does, because the venue does
+#: not publish them. #2907, retired 2026-09-09 by authority/083.
+#:
+#: `get_teams`, `get_roster`, `get_team_stats`, `get_player_stats`,
+#: `get_game_detail` and `get_play_by_play` are DELETED, not deprecated. Each
+#: called a path that 404s, `_get` turns a 404 into None, and every one of those
+#: callers turned None into `[]` — which is also what "this team has no injured
+#: players" and "no plays yet" look like. That is gotcha #53, and it is the
+#: reason the deletion is the fix rather than a retry or a raise: there is no
+#: value to read, so there is no reading to repair.
+#:
+#: Two methods, per notice 26, and they agree. Both re-run 2026-09-09 15:1xZ:
+#:  1. The venue's compiled spec (`statpal.io/static/openapi/openapi-compiled.yaml`)
+#:     publishes 54 paths. None is a teams, roster, team-stats, player-stats or
+#:     per-fixture playbyplay path, for ANY sport. This reproduces the 01:44Z
+#:     reading recorded above INJURY_ENDPOINTS, six days on.
+#:  2. A keyed live probe of every retired path: 404 (or 500 for the two forms
+#:     `docs/statpal-capabilities.md` §3 documents, `/{sport}/rosters/{abbr}` and
+#:     `/{sport}/team-stats/{id}`). Three positive controls answered 200 in the
+#:     same shell — `/v1/nba/standings`, `/v1/nfl/live-plays`, and
+#:     `/v2/soccer/injuries-suspensions` — so the key, the egress and the parse
+#:     all work and the 404s are path-level (notice 7).
+#:
+#: EXPIRES 2026-12-09. After that date this paragraph is a historical note, not a
+#: statement about the venue: re-read the spec before relying on it.
+#:
+#: PLAY-BY-PLAY IS THE ONE WITH A LIVE ALTERNATIVE, and it is filed rather than
+#: built. `/nfl/live-plays` answers 200 (8,705 B at 15:1xZ) — but as a
+#: whole-league dump keyed by `contestid`, not a per-fixture list, so consuming
+#: it is a rewrite with a different parser and a different join, not a repoint.
+#: Until that lands nothing asks for NFL plays at all, which is the honest state
+#: and is now the visible one.
+RETIRED_VENUE_PATHS: tuple[str, ...] = (
+    "{sport}/teams",
+    "{sport}/teams/{team_id}/roster",
+    "{sport}/teams/{team_id}/stats",
+    "{sport}/players/{player_id}/stats",
+    "{sport}/fixtures/{fixture_id}",
+    "{sport}/fixtures/{fixture_id}/playbyplay",
+)
 
 #: StatPal sport -> the endpoint that serves live scores for it, where the name
 #: is NOT the default `livescores`. Same shape of fact as `INJURY_ENDPOINTS`
@@ -297,51 +326,6 @@ class StatPalInjuryFetch:
     def is_alarm(self) -> bool:
         """A supported sport we could not read. `empty` is not an alarm."""
         return self.reason == "fetch_failed"
-
-
-@dataclass
-class StatPalPlayEvent:
-    """A single play or event from play-by-play data."""
-    play_id: Optional[str] = None
-    timestamp: Optional[datetime] = None
-    period: Optional[str] = None  # Q1, 1st, Top 3rd, etc.
-    clock: Optional[str] = None  # "4:32", "12:00"
-    description: str = ""
-    play_type: Optional[str] = None  # touchdown, field_goal, strikeout, etc.
-    team: Optional[str] = None
-    player: Optional[str] = None
-    home_score: Optional[int] = None
-    away_score: Optional[int] = None
-
-
-@dataclass
-class StatPalTeam:
-    """A team from StatPal."""
-    team_id: str
-    name: str
-    short_name: Optional[str] = None
-    abbreviation: Optional[str] = None
-    logo_url: Optional[str] = None
-    venue: Optional[str] = None
-    league: Optional[str] = None
-
-
-@dataclass
-class StatPalGameDetail:
-    """Detailed game info including start/end times and status."""
-    fixture_id: str
-    status: str
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    home_team: str = ""
-    away_team: str = ""
-    home_score: Optional[int] = None
-    away_score: Optional[int] = None
-    period: Optional[str] = None
-    clock: Optional[str] = None
-    venue: Optional[str] = None
-    plays: list[StatPalPlayEvent] = field(default_factory=list)
-    injuries: list[StatPalInjury] = field(default_factory=list)
 
 
 def is_available() -> bool:
@@ -1623,106 +1607,6 @@ class StatPalAPIService(BaseAPIClient):
         )
 
     # -------------------------------------------------------------------------
-    # Teams
-    # -------------------------------------------------------------------------
-
-    async def get_teams(self, sport: str, league_id: Optional[str] = None) -> list[StatPalTeam]:
-        """Fetch all teams for a sport/league.
-
-        Args:
-            sport: Sport identifier
-            league_id: Optional league filter
-
-        Returns:
-            List of StatPalTeam objects.
-        """
-        params = {}
-        if league_id:
-            params["league"] = league_id
-
-        data = await self._get(sport, "teams", params)
-        if not data:
-            return []
-
-        teams = []
-        items = data.get("data", data) if isinstance(data, dict) else data
-        if not isinstance(items, list):
-            return []
-
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            try:
-                teams.append(StatPalTeam(
-                    team_id=str(item.get("id", "")),
-                    name=item.get("name", ""),
-                    short_name=item.get("short_name"),
-                    abbreviation=item.get("abbreviation", item.get("code")),
-                    logo_url=item.get("logo"),
-                    venue=item.get("venue", {}).get("name") if isinstance(item.get("venue"), dict) else None,
-                    league=item.get("league", {}).get("name") if isinstance(item.get("league"), dict) else None,
-                ))
-            except Exception as e:
-                logger.debug(f"StatPal: skipping team parse error: {e}")
-                continue
-
-        return teams
-
-    # -------------------------------------------------------------------------
-    # Rosters
-    # -------------------------------------------------------------------------
-
-    async def get_roster(self, sport: str, team_id: str) -> list[StatPalPlayer]:
-        """Fetch the roster for a specific team.
-
-        Args:
-            sport: Sport identifier
-            team_id: StatPal team ID
-
-        Returns:
-            List of StatPalPlayer objects with positions and jersey numbers.
-        """
-        data = await self._get(sport, f"teams/{team_id}/roster")
-        if not data:
-            return []
-
-        players = []
-        items = data.get("data", data.get("players", data))
-        if isinstance(items, dict):
-            items = items.get("players", [])
-        if not isinstance(items, list):
-            return []
-
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            try:
-                name = item.get("name", item.get("player_name", ""))
-                if not name:
-                    # Some responses nest the player info
-                    player_obj = item.get("player", {})
-                    if isinstance(player_obj, dict):
-                        name = player_obj.get("name", "")
-
-                if not name:
-                    continue
-
-                players.append(StatPalPlayer(
-                    player_id=str(item.get("id", item.get("player_id", ""))),
-                    name=name,
-                    position=item.get("position", item.get("pos")),
-                    jersey_number=str(item.get("number", item.get("jersey", ""))) or None,
-                    status=item.get("status"),
-                    injury_type=item.get("injury_type"),
-                    injury_detail=item.get("injury_detail"),
-                ))
-            except Exception as e:
-                logger.debug(f"StatPal: skipping player parse error: {e}")
-                continue
-
-        return players
-
-    # -------------------------------------------------------------------------
     # Injuries
     # -------------------------------------------------------------------------
 
@@ -1781,110 +1665,6 @@ class StatPalAPIService(BaseAPIClient):
         return StatPalInjuryFetch(injuries, reason, sport, endpoint)
 
     # -------------------------------------------------------------------------
-    # Play-by-Play
-    # -------------------------------------------------------------------------
-
-    async def get_play_by_play(self, sport: str, fixture_id: str) -> list[StatPalPlayEvent]:
-        """Fetch play-by-play data for a specific game.
-
-        Args:
-            sport: Sport identifier
-            fixture_id: StatPal fixture/game ID
-
-        Returns:
-            List of StatPalPlayEvent objects in chronological order.
-        """
-        data = await self._get(sport, f"fixtures/{fixture_id}/playbyplay")
-        if not data:
-            return []
-
-        plays = []
-        items = data.get("data", data.get("plays", data.get("events", data)))
-        if not isinstance(items, list):
-            return []
-
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            try:
-                plays.append(StatPalPlayEvent(
-                    play_id=str(item.get("id", item.get("play_id", ""))) or None,
-                    timestamp=_parse_datetime(item.get("timestamp", item.get("time"))),
-                    period=item.get("period", item.get("quarter", item.get("inning"))),
-                    clock=item.get("clock", item.get("game_clock")),
-                    description=item.get("description", item.get("text", "")),
-                    play_type=item.get("type", item.get("play_type")),
-                    team=item.get("team", {}).get("name") if isinstance(item.get("team"), dict) else item.get("team"),
-                    player=item.get("player", {}).get("name") if isinstance(item.get("player"), dict) else item.get("player_name"),
-                    home_score=_safe_int(item.get("home_score")),
-                    away_score=_safe_int(item.get("away_score")),
-                ))
-            except Exception as e:
-                logger.debug(f"StatPal: skipping play parse error: {e}")
-                continue
-
-        return plays
-
-    # -------------------------------------------------------------------------
-    # Game Detail (combines fixture info + plays + injuries)
-    # -------------------------------------------------------------------------
-
-    async def get_game_detail(self, sport: str, fixture_id: str) -> Optional[StatPalGameDetail]:
-        """Fetch comprehensive game detail including status, times, plays, and injuries.
-
-        This is the primary method for determining game start/end times and
-        understanding what happened during a game.
-
-        Args:
-            sport: Sport identifier
-            fixture_id: StatPal fixture/game ID
-
-        Returns:
-            StatPalGameDetail with full game context, or None on error.
-        """
-        data = await self._get(sport, f"fixtures/{fixture_id}")
-        if not data:
-            return None
-
-        item = data.get("data", data) if isinstance(data, dict) else data
-        if isinstance(item, list):
-            item = item[0] if item else {}
-        if not isinstance(item, dict):
-            return None
-
-        fixture = self._parse_single_fixture(item)
-        if not fixture:
-            return None
-
-        # Fetch play-by-play and injuries in parallel for live/finished games
-        plays = []
-        injuries = []
-        if fixture.status in ("live", "finished"):
-            plays = await self.get_play_by_play(sport, fixture_id)
-
-        detail = StatPalGameDetail(
-            fixture_id=fixture.fixture_id,
-            status=fixture.status,
-            start_time=fixture.start_time,
-            end_time=fixture.end_time,
-            home_team=fixture.home_team,
-            away_team=fixture.away_team,
-            home_score=fixture.home_score,
-            away_score=fixture.away_score,
-            venue=fixture.venue,
-            plays=plays,
-            injuries=injuries,
-        )
-
-        # Try to extract period/clock from status or latest play
-        if plays:
-            latest = plays[-1]
-            detail.period = latest.period
-            detail.clock = latest.clock
-
-        return detail
-
-    # -------------------------------------------------------------------------
     # Standings
     # -------------------------------------------------------------------------
 
@@ -1903,44 +1683,6 @@ class StatPalAPIService(BaseAPIClient):
             params["season"] = season
 
         return await self._get(sport, "standings", params)
-
-    # -------------------------------------------------------------------------
-    # Player / Team Stats
-    # -------------------------------------------------------------------------
-
-    async def get_team_stats(self, sport: str, team_id: str, season: Optional[str] = None) -> Optional[dict]:
-        """Fetch team statistics.
-
-        Args:
-            sport: Sport identifier
-            team_id: StatPal team ID
-            season: Season year (optional)
-
-        Returns:
-            Raw team stats dict, or None on error.
-        """
-        params = {}
-        if season:
-            params["season"] = season
-
-        return await self._get(sport, f"teams/{team_id}/stats", params)
-
-    async def get_player_stats(self, sport: str, player_id: str, season: Optional[str] = None) -> Optional[dict]:
-        """Fetch individual player statistics.
-
-        Args:
-            sport: Sport identifier
-            player_id: StatPal player ID
-            season: Season year (optional)
-
-        Returns:
-            Raw player stats dict, or None on error.
-        """
-        params = {}
-        if season:
-            params["season"] = season
-
-        return await self._get(sport, f"players/{player_id}/stats", params)
 
 
 # =============================================================================
