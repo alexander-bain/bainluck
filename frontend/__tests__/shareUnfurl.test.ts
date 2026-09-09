@@ -54,8 +54,10 @@ const BUILT_HTML_DIR = path.join(process.cwd(), ".next", "server", "app");
 
 /** The host that answers 200. The apex 301s to it; see `lib/siteUrl.ts`. */
 const CANONICAL_ORIGIN = "https://www.bainluck.com";
+/** The bare host that must never be emitted, because it only redirects. */
+const APEX_HOST = "bainluck.com";
 /** The host that must never be emitted, because it only redirects. */
-const APEX_ORIGIN = "https://bainluck.com";
+const APEX_ORIGIN = `https://${APEX_HOST}`;
 
 /* ───────────────────────── the one-host rules ───────────────────────── */
 
@@ -84,16 +86,23 @@ describe("the site names one host", () => {
     // every correctly-fixed file and the whole thing would be noise.
     //
     // Asserted through `mentionsApexOrigin` against SOURCE-LINE fixtures, not
-    // by comparing two URL constants directly. That is not cosmetic: CodeQL
-    // flags `<url>.includes(<url>)` as `js/incomplete-url-substring-
-    // sanitization` (high) — correctly, in general, since a substring test is
-    // no way to validate a host. Here the input is a line of source text and
-    // the question is "does this file mention the apex", so the fixtures are
-    // written as what they actually represent.
+    // by comparing two URL constants directly — the loop and its control must
+    // run the identical predicate or the control is for a different check.
     expect(mentionsApexOrigin('metadataBase: new URL("https://www.bainluck.com")')).toBe(false);
     expect(mentionsApexOrigin('metadataBase: new URL("https://bainluck.com")')).toBe(true);
     expect(mentionsApexOrigin('url: "https://bainluck.com/sports"')).toBe(true);
     expect(mentionsApexOrigin('url: "/sports"')).toBe(false);
+
+    // A host is a parsed field, so a subdomain that merely ENDS in the apex is
+    // a different host and must not trip the guard.
+    expect(mentionsApexOrigin('url: "https://staging.bainluck.com/sports"')).toBe(false);
+    // ...and a lookalike host that merely BEGINS with it is not the apex either.
+    expect(mentionsApexOrigin('url: "https://bainluck.com.example.net/"')).toBe(false);
+
+    // The spellings the previous substring test let through. These are the
+    // reason the predicate parses instead of matching characters.
+    expect(mentionsApexOrigin('url: "http://bainluck.com/sports"')).toBe(true);
+    expect(mentionsApexOrigin('src: "//bainluck.com/og.png"')).toBe(true);
   });
 
   it("the apex and the canonical origin are actually different strings", () => {
@@ -226,8 +235,9 @@ describe("every prerendered page unfurls with a picture", () => {
       ];
       for (const [tag, value] of checks) {
         if (!value) continue;
-        // Startswith the apex AND is not the www host.
-        if (value.startsWith(`${APEX_ORIGIN}/`) || value === APEX_ORIGIN) {
+        // Same parsed-host predicate the source scan uses, so a tag and a
+        // source line cannot disagree about what "the apex" means.
+        if (isApexUrl(value)) {
           offenders.push({ page: rel(file), tag, value });
         }
       }
@@ -283,20 +293,41 @@ function meta(html: string, key: string): string | null {
 }
 
 /**
- * Does this file's SOURCE TEXT mention the redirecting apex origin?
+ * Is this an absolute URL whose host is exactly the redirecting apex?
+ *
+ * Decided by PARSING the URL and comparing `hostname` for equality — never by
+ * testing whether one URL string contains another. Two earlier versions of this
+ * predicate were written as string tests and both were right to be rejected:
+ * an unanchored regex (`/https:\/\/bainluck\.com/`, alert 2234) and a substring
+ * test (`.includes(APEX_ORIGIN)`, alert 2238). A host is a parsed field, not a
+ * span of characters, so the parse is the honest test as well as the quiet one.
+ *
+ * Equality also makes the predicate stricter than the substring version it
+ * replaces: that one only ever matched the `https://` spelling, so `http://` and
+ * a protocol-relative `//bainluck.com` walked straight past the guard.
+ */
+function isApexUrl(raw: string): boolean {
+  try {
+    return new URL(raw, "https://example.invalid").hostname === APEX_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Does this file's SOURCE TEXT hardcode the redirecting apex origin?
  *
  * The parameter is a file's contents, not a URL — the question is "does this
  * source hardcode the wrong host", not "is this URL safe". Kept as a named
  * helper so the loop and its negative control run the identical predicate: a
  * control that re-implements the check is a control for a different check.
  *
- * A plain substring test, deliberately not a regex: CodeQL flagged the first
- * version of the caller (`/https:\/\/bainluck\.com/`, alert 2234,
- * `js/regex/missing-regexp-anchor`, high) for being an unanchored regex over a
- * URL, and there is no anchor that would be correct when scanning source text.
+ * Works by lifting every URL-shaped token out of the text and asking `isApexUrl`
+ * about each one. The regex only finds candidates; it decides nothing.
  */
 function mentionsApexOrigin(sourceText: string): boolean {
-  return sourceText.includes(APEX_ORIGIN);
+  const candidates = sourceText.match(/(?:https?:)?\/\/[^\s"'`)]+/g) ?? [];
+  return candidates.some(isApexUrl);
 }
 
 /** True when the route's own segment directory holds an `opengraph-image.tsx`. */
