@@ -107,18 +107,39 @@ real phantoms or deletes 671 real fixtures. Say the timezone, always.
 
 ### R3 — UNKNOWN START IS TOLD BY THE PARTICIPANTS, NOT BY THE CLOCK
 
-StatPal's NFL `season-schedule` publishes 53 postseason placeholders reading `TBD @ TBD`,
-at `00:00Z`, and **the six `fixture_id`s among them repeat up to 15 times each** — `280795`
-appears 15×, `280794` 10×, each time under a different `round`. One provider id claiming to
-be several different games.
+StatPal's NFL `season-schedule` publishes the whole postseason the day the season starts:
+**53 raw rows** reading `TBD @ TBD` at `00:00Z`, over **7 distinct `fixture_id`s** — `280795`
+appears 15×, `280794` 10×, each time under a different `round`. One provider id claiming to be
+several different games.
 
-Among the 322 non-placeholder NFL fixtures the id is unique, every time. So the placeholder
-test is `TBD` participants (and the repeated id), not the timestamp.
+**Read the dedup before quoting a count.** The NFL stamper's `_read_fixtures` dedupes by
+`fixture_id` at collection, so those 53 rows reach the matcher as **7 placeholder contests**
+against 321 real ones. Production's own agreement row says the same thing and is the cheapest
+check available: `denominator: 321`, `excluded.statpal_placeholders: 7`. The 53 is a property of
+the payload; the 7 is what any consumer downstream of the dedup actually sees. Quoting the wrong
+one makes a small real defect look like a large imaginary one.
 
-**Nothing guards this today.** The stampers are safe only incidentally, because they require
-both team names to match exactly and no team is called TBD. Any writer that creates from the
-schedule instead of matching against it mints 52 phantoms with 6 colliding anchors — #3840's
-class exactly, and EVENT-GRAPH-DOCTRINE rule 1's phantom.
+Among the 321 non-placeholder NFL fixtures the id is unique, every time. So the placeholder test
+is the participants, not the timestamp — and specifically `home_team_id == away_team_id`
+(`{"id": "6687", "name": "TBD"}` on both sides), which survives StatPal renaming the slot.
+
+**What is and is not guarded.** A *name*-based exclusion already exists on the MEASUREMENT side
+(`authority_agreement.py`, `is_placeholder`), which is why the agreement denominator is honest.
+The gap was on the matching / receipt / window side, where placeholders were falling out as
+`UNMATCHED` — *"StatPal has a contest we do not hold"* — only because no club is called TBD.
+Now guarded explicitly (`VERDICT_PLACEHOLDER`).
+
+The two predicates differ deliberately and the divergence is worth knowing: the measurement
+excludes a fixture if **either** side is unnamed, because an unpairable row must not sit in a
+denominator; the matcher's guard rejects only when **both** sides are, because that is the shape
+it measured. Today they agree exactly — all 7 have both sides TBD, 0 are half-known — so the
+denominator is unchanged at 321. If StatPal starts publishing `Seahawks @ TBD`, they will part
+company, and the matcher's arm is the one to widen.
+
+The repeated-id property still matters for anyone else: `event_provider_anchors` is unique on
+`(source, source_id, id_kind)`, so a writer that does **not** dedupe would bind one row and
+report `COLLISION` for the rest — the duplicate detector firing on rows that duplicate nothing.
+This stamper dedupes and so cannot hit it. Any new consumer of the raw payload can.
 
 ### R4 — A DOUBLEHEADER IS TOLD BY THE GAP, AND THE UTC DAY BOUNDARY MANUFACTURES THEM
 

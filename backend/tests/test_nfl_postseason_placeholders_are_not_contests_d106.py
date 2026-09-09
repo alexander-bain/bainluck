@@ -18,27 +18,40 @@ Championships, Pro Bowl, Super Bowl — and **not one of them is a game**:
   * **`contestid` REPEATS.** `280795` appears 15 times, `280794` 10, `280797` 8 —
     one provider id claiming to be several different games.
 
-That last one is the dangerous property. `event_provider_anchors` is unique on
-`(source, source_id, id_kind)`, so a writer that keyed on these ids would bind one
-row and report COLLISION for the rest — a duplicate detector firing on rows that
-are not duplicates of anything.
+**53 IS THE PAYLOAD'S NUMBER, NOT THE STAMPER'S.** `_read_fixtures` dedupes by
+`fixture_id` at collection, so 7 placeholders reach the matcher against 321 real
+contests — which is what the served agreement row has said all along
+(`denominator: 321`, `excluded.statpal_placeholders: 7`). These tests parse the raw
+payload, so they assert 53; anything reasoning about what the stamper *sees* must
+say 7. Getting that backwards cost a withdrawn cert, so it is written down here.
+
+The repeated ids still matter downstream: `event_provider_anchors` is unique on
+`(source, source_id, id_kind)`, so a writer that does NOT dedupe would bind one row
+and report COLLISION for the rest — a duplicate detector firing on rows that are not
+duplicates of anything. This stamper dedupes and cannot hit it.
 
 ## what protects us today, and why that is not enough
 
-Nothing, explicitly. `classify_fixture` requires both team names to match a row in
-our pool exactly, and no NFL team is called TBD, so every placeholder falls out as
-`UNMATCHED`. That is the right OUTCOME reached for the wrong REASON, and it has
-two costs that are live right now:
+A NAME-based exclusion already exists on the MEASUREMENT side
+(`authority_agreement.is_placeholder`), so the agreement denominator was never wrong.
+On the MATCHING side there was nothing: `classify_fixture` requires both team names
+to match a row in our pool exactly, and no NFL team is called TBD, so every
+placeholder fell out as `UNMATCHED`. Right OUTCOME, wrong REASON, with two costs:
 
   1. `UNMATCHED` on the fixture side means *"StatPal has a contest we do not
-     hold"* — an ingestion gap. 53 non-games are reported as gaps we should close.
+     hold"* — an ingestion gap. 7 non-games reported as gaps we should close.
   2. the candidate-pool window is `min(kickoff) - slack .. max(kickoff) + slack`
-     over every parsed fixture, and the placeholders carry dates three weeks past
-     the last real regular-season game, so they stretch the window they have no
-     business being in.
+     over every parsed fixture, and the last placeholder is dated **2027-02-14**,
+     **35 days** past the last real regular-season kickoff (2027-01-10). The served
+     window end is 2027-02-15T00:30Z — that placeholder plus `CANDIDATE_SLACK`, to
+     the minute.
 
 And it is one relaxed name rule away from becoming a stamp. So the placeholder is
-rejected BY NAME here, with its own verdict, before any matching is attempted.
+rejected here, with its own verdict, before any matching is attempted.
+
+This guard requires BOTH sides unnamed; the measurement excludes on EITHER. They
+agree exactly today (0 half-known slots), and the divergence is deliberate — the
+reasoning is on `is_placeholder_fixture`.
 
 ## what these tests fail on
 
@@ -98,6 +111,19 @@ def test_the_provider_id_repeats_which_is_the_whole_hazard():
     assert len(repeated) == 6, f"expected 6 repeated contest ids, got {repeated}"
     assert max(repeated.values()) == 15
     assert sum(repeated.values()) == 52
+
+
+def test_fifty_three_rows_are_seven_contests_and_that_is_the_number_to_quote():
+    """The arithmetic that makes 7, not 53, the count anyone downstream sees.
+
+    `_read_fixtures` dedupes by `fixture_id`, so the stamper's placeholder count is
+    the number of DISTINCT ids here — and the served agreement row independently
+    says the same (`excluded.statpal_placeholders: 7`, `denominator: 321`). Pinned
+    because quoting 53 for the stamper is a real mistake that was really made.
+    """
+    fixtures = _placeholders()
+    assert len(fixtures) == 53
+    assert len({f.fixture_id for f in fixtures}) == 7
 
 
 # --- the predicate --------------------------------------------------------------
