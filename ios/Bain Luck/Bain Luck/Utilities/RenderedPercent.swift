@@ -192,3 +192,61 @@ nonisolated func duelPercents(
     }
     return renderedDuelPercents(away: awayProbability, home: homeProbability)
 }
+
+/// The one whole percent a compact row prints beside an away-first
+/// `"<away> vs <home>"` title — the FIRST-NAMED side's.
+///
+/// ## Why a lone number needs a rule at all
+///
+/// #4306: `SearchView.searchEventRow` built its title away-first — the house
+/// convention, 6 of the 7 sites that build one — and then drew
+/// `homeProbability` beside it with no label. A reader anchors a lone number to
+/// the name they read first, so every scheduled row stated the opposite of the
+/// market. Measured on production 2026-09-09, 6 of 6 US Open rows, worst case
+/// "Botic van de Zandschulp vs Alexander Zverev — 86%" for a side priced at
+/// 13.8%. The finished arm of that same function already renders its score
+/// away-first, so one row disagreed with itself depending on whether the match
+/// had started.
+///
+/// ## Why it returns a percent and not a probability
+///
+/// The number a reader compares against the event page they tap through to has
+/// to be the same INTEGER that page drew, and `duelPercents` is the last word on
+/// that (#2279). Rounding again here would reintroduce the off-by-one from the
+/// other direction.
+///
+/// ## A payload with only the home side still gets a number
+///
+/// `away_probability` accompanied `home_probability` on 53 of 53 rows carrying
+/// odds across four production search queries (2026-09-09), so this is a
+/// belt-and-braces path rather than a live case. It exists because the row it
+/// replaces drew a number whenever HOME was present, and a fix for a
+/// wrong-sided number must not turn into a missing one: `renderedDuelPercents`
+/// answers `nil` for a pair that is not a complement, which is what a
+/// home-only payload is. Deriving the complement is the move the two other
+/// single-sided readers already make (`MenuBarView`, `TeamDetailView`).
+///
+/// The derivation is here and not at the call site so that the rule and its
+/// edge case are one testable thing — CI compiles no Swift (#4302), so a
+/// branch that lives in a view body is a branch no gate can reach.
+/// Returns the probability as well as the percent because the caller needs
+/// both and must not derive either a second time: `formatProbability` runs its
+/// `<1%` / `>99%` guards on the PROBABILITY (they are a claim about the value,
+/// not about the rounding), so a call site holding only the integer cannot
+/// format the number correctly, and a call site deriving the Double itself is a
+/// second copy of the rule this function exists to hold.
+nonisolated func firstNamedSideNumber(
+    away awayProbability: Double?,
+    home homeProbability: Double?,
+    servedAway: Int?,
+    servedHome: Int?
+) -> (probability: Double, percent: Int)? {
+    guard let away = awayProbability ?? homeProbability.map({ 1 - $0 }) else { return nil }
+    guard let percent = duelPercents(
+        away: away,
+        home: homeProbability,
+        servedAway: servedAway,
+        servedHome: servedHome
+    )[0] else { return nil }
+    return (probability: away, percent: percent)
+}
