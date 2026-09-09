@@ -468,6 +468,34 @@ _REPAIRS = {
         "app.tasks.repair_team_identity_mapping",
         "repair",
     ),
+    # #4264 / CERT-2358: the disease markets stranded on the `weather` shelf.
+    # #4264 widened `misfiled_subject` so the epidemiology arm may correct
+    # `weather`, which fixes the CLASSIFIER; it cannot fix a row the ingest never
+    # rewrites. Measured 2026-09-09: of the 22 affected open markets, 16 were
+    # touched within the hour and converge on the next poll, and 6 have not been
+    # re-seen in 1-83 days — including `16630403`, "Hantavirus pandemic in 2026?",
+    # page one slot 5, wearing a sun-and-cloud chip. This is that half.
+    # Carries NO classification rules: it replays the shipped Polymarket cascade
+    # (`_tags_to_category` + `resolve_event_category`) against each row's STORED
+    # `category_tags`, so it cannot drift from the poller. It reads stored tags
+    # rather than re-asking Gamma (which is what Q495's rail does) precisely
+    # because these rows are stale — a venue fetch is the most likely thing to
+    # fail here, and a 404 would leave the page-one card wrong under a clean
+    # terminal.
+    # Parents are classified from their own tags; tagless CHILD sub-markets
+    # INHERIT their group parent's answer and are never classified alone, because
+    # `_tags_to_category([])` would drop them into the table-tennis and
+    # title-fallback arms with a `group_names` list this repair cannot rebuild.
+    # D51: the undo record is written to the durable rail BEFORE any row is
+    # touched and nothing is written if it does not persist; every write is a
+    # compare-and-set on the exact prior state, so a concurrent poll is never
+    # clobbered. Restore with `?undo_identity=<id>&apply=true`.
+    # Capped at APPLY_CAP=60 by module constant. ATTENDED-OPTIONAL: never wire
+    # this to a beat — it is a drain with an end state, not a standing job.
+    "weather-shelf-disease": (
+        "app.tasks.repair_weather_shelf_disease",
+        "repair",
+    ),
     # #1947 queue 375 (SPEC-Q370): the attended `events.espn_id` CORRECTION
     # consumer. Window 368 found the gap and READY-lane1-369 named it — "population
     # 1 has NO APPLY PATH; no attended consumer writes events.espn_id" — which is
