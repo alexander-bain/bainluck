@@ -147,6 +147,16 @@ export function suggestionSubtitle(
   if (s.type === "event") {
     // A game with no commence_time gets no second line rather than a blank one.
     if (!s.commence_time) return null;
+    // #4411: the dropdown answers a player's name with their NEXT match, or
+    // their LAST one when nothing is upcoming. A finished match carrying only
+    // a date is unreadable in a list whose other rows are all upcoming — "Sep 9"
+    // beside "Sep 11" looks like a fixture, not a result. Say which it is.
+    // NOT `Final · ${formatEventTime(...)}`: that helper collapses every past
+    // instant to the single word "Recently", so the composed line reads
+    // "Final · Recently" — two vague words where one precise one will do.
+    if (s.status === "completed" || s.status === "closed") {
+      return { kind: "event-time", text: "Final" };
+    }
     return {
       kind: "event-time",
       text: s.status === "live" ? "Live now" : formatEventTime(s.commence_time, now),

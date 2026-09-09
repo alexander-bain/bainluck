@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 # --- the tiers -------------------------------------------------------------
@@ -90,16 +91,41 @@ UNRANKABLE = None
 #:
 #: The ratified market > event > team relation is untouched by this: it governs
 #: the three kinds it names, and nothing here reorders them.
+#:
+#: `entity_event` (#4411, Alex 2026-09-09: "typing a player's name returns a pile
+#: of props above the match itself") is the ONE case that outranks a market, and
+#: it is not a re-litigation of the ratified relation — it is a different kind.
+#: A plain `event` is a row the query merely LANDED ON; an `entity_event` is a row
+#: the query NAMED, because the query's tokens sit inside one participant's own
+#: name. `alcaraz` against "Ben Shelton vs Carlos Alcaraz" names a participant;
+#: `nba mvp` against any game names none, so `nba mvp` still answers with the
+#: award market and `british open` / `ai` / `ipo` are likewise untouched.
+#:
+#: This is the same shape as ruling 041's team floor: the entity does not win by
+#: being an entity, it wins by matching something it OWNS. The difference is only
+#: that a team owns an alias row and a tennis player owns nothing but the
+#: participant field on the fixture, so there is no alias for it to win MC0 on.
+#:
+#: The numbers below moved (market 2 -> 3, event 3 -> 4, team 4 -> 5) purely to
+#: open slot 2. Every PAIRWISE relation that existed before is identical; only
+#: the new kind is interleaved. Nothing may read these as absolute values.
 KIND_ORDER: dict[str, int] = {
     "event_concept": 0,
     "concept": 0,
     "hub": 1,
-    "futures": 2,
-    "market": 2,
-    "event": 3,
-    "team": 4,
+    "entity_event": 2,
+    "futures": 3,
+    "market": 3,
+    "event": 4,
+    "team": 5,
 }
 _KIND_ORDER_FALLBACK = 9
+
+#: The kind an `event` is promoted to when the query names one of its own
+#: participants. Named rather than inlined so the route and the guard tests
+#: cannot drift from the dict above by a typo — an unknown kind would silently
+#: take `_KIND_ORDER_FALLBACK` and sort last, which is the opposite of the ship.
+ENTITY_EVENT_KIND = "entity_event"
 
 # --- the knobs -------------------------------------------------------------
 # FIVE knobs, against a ratified ceiling of eight. Every default here is
@@ -339,6 +365,48 @@ def fragment_credit(query: str, ev: Evidence) -> float:
 
 def kind_rank(kind: str) -> int:
     return KIND_ORDER.get((kind or "").lower(), _KIND_ORDER_FALLBACK)
+
+
+def query_names_participant(query: str, participants: Iterable[str | None]) -> bool:
+    """Does `query` name the people/teams playing, rather than merely land on the row?
+
+    The test for promoting an `event` to `ENTITY_EVENT_KIND` (#4411). True when
+    every query token appears somewhere in the participants' OWN names.
+
+    Tokenised with `tokens`, the same function MC1 uses, so a query that is an
+    MC1 match against a participant is necessarily True here — the promotion can
+    never disagree with the class that admitted the row.
+
+    The participants are read as a UNION rather than one-at-a-time on purpose,
+    and that is what makes the rule produce Alex's ordering for BOTH halves of
+    what he said:
+
+    * `alcaraz` -> "Ben Shelton" + "Carlos Alcaraz" -> True. The player has no
+      team row, so his match IS the entity and it leads.
+    * `red sox` -> "Boston Red Sox" + "New York Yankees" -> True. Here the team
+      row also exists and wins on MC0 against its own alias, which outranks
+      every MC1 candidate whatever its kind. So the order comes out team card,
+      then its game, then props — "leads with the entity, then its games, then
+      props", exactly.
+    * `shelton alcaraz` -> True, because a matchup query names both of them.
+      One-at-a-time would have made the fixture itself lose to its own props.
+
+    What it must NOT do is fire on a query that named something else about the
+    row. `us open`, `tennis`, `nba mvp` and `british open` all land on plenty of
+    fixtures through the tournament/sport-alias recall arms, and none of them
+    appears in a participant name, so all of them return False and the ratified
+    market > event relation continues to decide those exactly as it does today.
+    """
+    q_tokens = tokens(query)
+    if not q_tokens:
+        return False
+    owned: set[str] = set()
+    for p in participants:
+        if p:
+            owned.update(tokens(p))
+    if not owned:
+        return False
+    return all(t in owned for t in q_tokens)
 
 
 def rank_key(query: str, ev: Evidence) -> tuple | None:
