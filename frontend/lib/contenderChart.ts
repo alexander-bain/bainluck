@@ -743,11 +743,11 @@ export function chartCeiling(series: ChartSeries[], timeframe: Timeframe): numbe
 export function chartYLabels(ceiling: number): { probability: number; label: string }[] {
   return [ceiling, ceiling / 2, 0].map((probability) => ({
     probability,
-    // Whole percents: the steps are 10/25/50/75/100, so halves land on
-    // 5/12.5/25/37.5/50 and only the 25 and 75 cases need a decimal. `12.5%` is
-    // correct and reads as precision nobody asked for on an axis label, so it
-    // rounds — and the rounding is visible only on a rule the reader is using to
-    // place a line, never on a number the page states as a fact.
+    // Whole percents: the steps are 10/15/25/50/75/100, so halves land on
+    // 5/7.5/12.5/25/37.5/50 and only the 15, 25 and 75 cases need a decimal.
+    // `7.5%` and `12.5%` are correct and read as precision nobody asked for on an
+    // axis label, so they round — and the rounding is visible only on a rule the
+    // reader is using to place a line, never on a number the page states as a fact.
     label: `${Math.round(probability * 100)}%`,
   }));
 }
