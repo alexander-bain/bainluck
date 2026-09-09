@@ -33,6 +33,22 @@ export interface TournamentTrendPoint {
   probability: number;
 }
 
+/**
+ * A point in the FINE series — one per hour observed, not one per day (#4173).
+ *
+ * ⚠️ **THE KEY IS `at`, AND THE NAME IS THE GUARD.** A day point is parsed as
+ * ``new Date(`${point.date}T00:00:00Z`)``; reusing `date` for an instant would
+ * build `2026-09-09T08:00:00ZT00:00:00Z`, which is an `Invalid Date`, which is
+ * `NaN`, which is a blank plot with nothing in the console. With a second name
+ * the same mistake is a `npm run typecheck` error instead of an empty chart.
+ *
+ * `at` is always a full ISO-8601 instant with an explicit `Z`.
+ */
+export interface TournamentFinePoint {
+  at: string;
+  probability: number;
+}
+
 export interface TournamentSourceView {
   source: string;
   probability: number;
@@ -73,6 +89,20 @@ export interface TournamentRow {
   blend_rule: string | null;
   divergent: boolean;
   trend: TournamentTrendPoint[];
+  /**
+   * The same history at hourly resolution, last 14 days (#4173).
+   *
+   * ⚠️ **BOTH SERIES ARE PERMANENT AND THEY ARE READ BY DIFFERENT PICTURES.**
+   * `trend` is what `TrendSparkline` draws and what `trend_delta` measures — 250
+   * vertices in a 52px sparkline is mush, and a delta over 14 days printed beside
+   * a 30-day line would be two spans on one row. `trend_hourly` is what
+   * `ContenderChart` draws, where 15 vertices across an 817px plot is the
+   * staircase ux reported. One blend rule, two resolutions.
+   *
+   * Optional because a payload served by a backend older than #4173 does not
+   * carry it, and the chart falls back to `trend` rather than going blank.
+   */
+  trend_hourly?: TournamentFinePoint[];
   trend_delta: number | null;
   /** UX-P157. The AND over this row's contributors — see `lib/liquidity`. */
   liquidity?: string | null;

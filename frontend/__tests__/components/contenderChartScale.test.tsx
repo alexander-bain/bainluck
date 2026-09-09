@@ -71,7 +71,7 @@ function series(
     probability,
     isLive: true,
     points: history.map((p, i) => ({
-      date: `2026-08-${String(20 + i).padStart(2, "0")}`,
+      at: `2026-08-${String(20 + i).padStart(2, "0")}`,
       probability: p,
     })),
   } as ChartSeries;

@@ -86,7 +86,7 @@ function render(rows: TournamentRow[], windowStarts: WindowStarts) {
 function drawnDates(rows: TournamentRow[], windowStarts: WindowStarts): string[] {
   const range = defaultChartRange(seriesFor(rows), windowStarts);
   const drawn = seriesForRange(seriesFor(rows), range, windowStarts);
-  return Array.from(new Set(drawn.flatMap((entry) => entry.points.map((p) => p.date)))).sort();
+  return Array.from(new Set(drawn.flatMap((entry) => entry.points.map((p) => p.at)))).sort();
 }
 
 describe("ux/1034 A1 — the window the contender chart opens on", () => {
@@ -148,13 +148,13 @@ describe("ux/1034 A1 — the window the contender chart opens on", () => {
     expect(dates.length).toBeGreaterThanOrEqual(2);
     expect(dates[0]).toBe("2026-08-30");
     // 4 August is on this board and is what he was shown. It is not drawn now.
-    expect(seriesFor(MENS.rows)[0].points[0].date).toBe("2026-08-04");
+    expect(seriesFor(MENS.rows)[0].points[0].at).toBe("2026-08-04");
     expect(dates).not.toContain("2026-08-04");
 
     // Quals is the wider of the two windows and still narrower than ALL.
     const qual = seriesForRange(seriesFor(MENS.rows), "QUAL", starts);
     const qualDates = Array.from(
-      new Set(qual.flatMap((entry) => entry.points.map((p) => p.date)))
+      new Set(qual.flatMap((entry) => entry.points.map((p) => p.at)))
     ).sort();
     expect(qualDates[0]).toBe("2026-08-26");
     expect(qualDates.length).toBeGreaterThan(dates.length);

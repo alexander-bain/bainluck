@@ -10,7 +10,7 @@ import {
   NO_WINDOW_STARTS,
   RANGE_LABELS,
   TIER_PLOT_PX,
-  axisSpanDays,
+  axisSpan,
   axisTicks,
   axisWindow,
   chartGeometry,
@@ -236,7 +236,10 @@ export default function ContenderChart({
   const ticks = axisTicks(geometry, timeframe);
   /* #2451: the y-axis's three rules and their labels, top first. */
   const yLabels = chartYLabels(geometry.ceiling);
-  const spanDays = axisSpanDays(geometry);
+  /* #4173: `Nd` cannot state a window narrower than a day, and the `1D` chip
+     now draws one. `axisSpan` writes the footer's form and the spoken one from
+     the same arithmetic. */
+  const span = axisSpan(geometry);
   // NOT named `window` — this is a client component and shadowing the global
   // inside a render body is a trap for whoever adds a `window.matchMedia` here.
   const axisRange = axisWindow(geometry);
@@ -392,8 +395,8 @@ export default function ContenderChart({
           preserveAspectRatio="none"
           role="img"
           aria-label={
-            spanDays !== null && axisRange !== null
-              ? `Probability history for ${series.length} contenders over ${spanDays} days, ${axisRange.from} to ${axisRange.to}`
+            span !== null && axisRange !== null
+              ? `Probability history for ${series.length} contenders over ${span.spoken}, ${axisRange.from} to ${axisRange.to}`
               : `Probability history for ${series.length} contenders`
           }
           data-testid="chart-svg"
@@ -430,7 +433,7 @@ export default function ContenderChart({
               below, positioned by the same percentages. */}
           {ticks.map((tick) => (
             <line
-              key={tick.date}
+              key={tick.at}
               x1={tick.x}
               x2={tick.x}
               y1={0}
@@ -441,7 +444,7 @@ export default function ContenderChart({
               opacity={0.7}
               vectorEffect="non-scaling-stroke"
               data-testid="chart-axis-tick"
-              data-date={tick.date}
+              data-at={tick.at}
               data-tier={tick.tier}
             />
           ))}
@@ -506,7 +509,7 @@ export default function ContenderChart({
                   : 0;
             return (
               <span
-                key={tick.date}
+                key={tick.at}
                 className={`absolute top-0 whitespace-nowrap text-[9.5px] tabular-nums text-text-muted ${
                   TICK_TIER_VISIBILITY[tick.tier]
                 }`}
@@ -521,7 +524,7 @@ export default function ContenderChart({
                     : "translateX(-50%)",
                 }}
                 data-testid="chart-axis-label"
-                data-date={tick.date}
+                data-at={tick.at}
               >
                 {tick.label}
               </span>
@@ -551,7 +554,13 @@ export default function ContenderChart({
               the three lines drawn, and the axis under the chart already prints
               its own first and last date — the span was the axis restated in
               words. What is left in this slot is the RESET CONTROL, which is an
-              affordance, not a sentence. */}
+              affordance, not a sentence.
+
+              #4173's rebase resolved HERE, taking the deletion. That ship
+              changed how `span` is DERIVED (a duration over instants rather
+              than a count of day keys); #4278 removed the only place it was
+              printed. A correct derivation of a number nobody shows is not a
+              reason to put the sentence back. */}
           {canReset && (
             // RULING 5's second gap. DataGolf's picker has a clear-all; ours
             // had no way back to the default short of removing lines one at a
