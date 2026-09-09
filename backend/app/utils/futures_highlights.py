@@ -260,6 +260,12 @@ BORING_PENALTY = -25
 OBSCURE_ELECTION_PENALTY = -20
 COMPELLING_BOOST = 8  # per matching pattern, max 3
 SPORTS_POSTSEASON_STORY_BOOST = 40
+# How far out a "win the Stanley Cup / NBA Finals / …" market can resolve and
+# still read as a story about a postseason (#4161). Covers the current season and
+# the one after it; beyond that the market is a multi-season futures bet, not a
+# story. A market with NO resolution date is never demoted by this — see
+# `days_until` in `compute_futures_highlight`.
+SPORTS_POSTSEASON_STORY_HORIZON_DAYS = 547
 
 # Cultural gravity — high-interest culture/entertainment markets get a tier
 # boost similar to how sports get league tier bonuses. These are markets a
@@ -547,6 +553,20 @@ def compute_futures_highlight(
     flags = result.flags
     outcomes = outcomes or []
 
+    # Horizon, normalised ONCE. Two scoring terms need it and they sit on opposite
+    # sides of this function (the postseason-story boost below, the resolution
+    # proximity ladder near the end), so computing it here is what lets them agree
+    # on the same number rather than each re-deriving it.
+    #
+    # `days_until is None` means WE DO NOT KNOW, and that is not the same as "far
+    # away": 153 of the 160 open markets matching the postseason-story pattern
+    # carry no `resolution_date` at all (measured 2026-09-09). Every rule below
+    # therefore treats an unknown horizon as no evidence and leaves the score
+    # alone, so a missing date can never demote a card.
+    if resolution_date is not None and resolution_date.tzinfo is None:
+        resolution_date = resolution_date.replace(tzinfo=timezone.utc)
+    days_until = (resolution_date - now).days if resolution_date is not None else None
+
     # === Category base score (calibrated against Polymarket ground truth) ===
     _market_name = market_name or ""
     _name_lower = _market_name.lower()
@@ -628,9 +648,31 @@ def compute_futures_highlight(
             result.score += COMPELLING_BOOST * min(compelling_hits, 3)
             result.reasons.append(f"compelling_x{min(compelling_hits, 3)}")
 
-    if _market_name and _v.sports_postseason_story:
+    # #4161 — A POSTSEASON STORY HAS TO BE A STORY ABOUT THIS POSTSEASON.
+    # This boost is +40, the single largest term in the file, and it fires on
+    # "<verb> the Stanley Cup / NBA Finals / World Series / Super Bowl". Nothing
+    # bounded it in time, so it also fired on `Canadian Team to Win the Stanley
+    # Cup® Before the 2030-31 Season` — resolving June 2030 — and carried it to
+    # 81.5 of a possible 98, which is how a four-year-out market held a page-one
+    # slot on the morning edition (#4161, seen at slot 11 and again at slot 16).
+    # Roughly half that card's score was this one term.
+    #
+    # The bound is generous ON PURPOSE: a market for the current season AND the
+    # one after it still reads as a postseason story, so the boost survives to 18
+    # months. Measured against every open market matching the pattern
+    # (2026-09-09): 5 within 18 months keep the boost, 153 with no resolution date
+    # keep it (unknown is not far — see `days_until` above), and 2 lose it, both
+    # of them multi-season hockey futures resolving in 2029 and 2030.
+    _postseason_is_this_era = (
+        days_until is None or days_until <= SPORTS_POSTSEASON_STORY_HORIZON_DAYS
+    )
+    if _market_name and _v.sports_postseason_story and _postseason_is_this_era:
         result.score += SPORTS_POSTSEASON_STORY_BOOST
         result.reasons.append("sports_postseason_story")
+    elif _market_name and _v.sports_postseason_story:
+        # Recorded so the demotion is legible in `qa_signals` rather than looking
+        # like the pattern simply failed to match.
+        result.reasons.append("postseason_story_beyond_horizon")
 
     # === Market tier scoring ===
     tier = market_tier or 5
@@ -742,10 +784,10 @@ def compute_futures_highlight(
             result.reasons.append("rank_shakeup")
 
     # === Resolution proximity ===
-    if resolution_date is not None:
-        if resolution_date.tzinfo is None:
-            resolution_date = resolution_date.replace(tzinfo=timezone.utc)
-        days_until = (resolution_date - now).days
+    # `days_until` is computed once at the top of this function — the postseason
+    # boost above needs the same number, and two derivations of one quantity is
+    # how they drift apart.
+    if days_until is not None:
         if days_until <= 1:
             # Micro-bets (resolves today/tomorrow) — daily temperature, oil price,
             # stock close. High volume but not Discover-worthy content. This is a
