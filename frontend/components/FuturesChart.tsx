@@ -455,6 +455,19 @@ export function FuturesChart({
                   }
                 };
 
+                /* #4262: THE END LABELS ANCHOR TO THE PLOT EDGE, NOT TO THEIR
+                   TICK. A centred label needs half its width of room on each
+                   side, and the tick at each end of the domain does not have
+                   it: the last one sits at `padding.left + innerWidth` (780)
+                   with `padding.right` = 20 units of margin, while `Sep 8 9 AM`
+                   measures 51 units. Measured on production at 390px, its box
+                   ran to 805.53 in a viewBox 800 wide and the card clips at
+                   `overflow: hidden`, so the reader saw `Sep 8 9 AI`.
+                   Anchoring the last label by its END pins its right edge to
+                   780 by construction — no font metric can push it out — and
+                   the first by its START keeps it out of the y-axis gutter
+                   (`padding.left`), where the opaque `0%` chip lives. */
+                const lastTick = ticks.length - 1;
                 return ticks.map((t, i) => (
                   <g key={`x-${i}`}>
                     <line
@@ -467,7 +480,7 @@ export function FuturesChart({
                     <text
                       x={xScale(t)}
                       y={padding.top + innerHeight + 16}
-                      textAnchor="middle"
+                      textAnchor={i === 0 ? "start" : i === lastTick ? "end" : "middle"}
                       className="text-xs fill-slate"
                       style={{ fontSize: "9px" }}
                     >
@@ -711,15 +724,36 @@ export function FuturesChart({
             data-testid="futures-chart-y-axis"
             className="pointer-events-none absolute bottom-0 left-0 top-0 z-20"
           >
-            {[0, 0.25, 0.5, 0.75, 1].map((pct) => (
-              <span
-                key={pct}
-                className="absolute left-0 -translate-y-1/2 bg-surface-card pr-1 text-xs text-text-muted"
-                style={{ top: `${(yScale(maxProb * pct) / effectiveHeight) * 100}%` }}
-              >
-                {Math.round(maxProb * pct * 100)}%
-              </span>
-            ))}
+            {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
+              /* #4262: THE LABEL ON THE BASELINE IS ONLY HALF IN THE PLOT.
+                 Centring is right for the interior rules and wrong for `0%`,
+                 which sits on the plot floor: half its OPAQUE box hung below
+                 the floor into the x-axis strip, and whatever tick label was
+                 under it lost its head. Measured on production at 390px:
+                 the `0%` chip covered x 41.47→63.67 of `Sep 7 9 PM`, whose own
+                 box starts at 41.47 — so the reader saw `ep 7 9 PM`. The tick
+                 was never clipped; it was painted over.
+                 Anchoring `0%` by its bottom lifts all of its ink above the
+                 floor and leaves 5px of air at 390px, 7.8px at desktop width.
+                 Same rule, same reason as #3520 on `ContenderChart`.
+                 The ceiling label is NOT the mirror case and is left centred:
+                 `padding.top` gives it 20 units of margin to sit in, so it has
+                 no plot edge to hang out of. */
+              const onFloor = pct === 0;
+              return (
+                <span
+                  key={pct}
+                  data-testid="chart-y-label"
+                  data-anchor={onFloor ? "bottom" : "centre"}
+                  className={`absolute left-0 bg-surface-card pr-1 text-xs text-text-muted ${
+                    onFloor ? "-translate-y-full" : "-translate-y-1/2"
+                  }`}
+                  style={{ top: `${(yScale(maxProb * pct) / effectiveHeight) * 100}%` }}
+                >
+                  {Math.round(maxProb * pct * 100)}%
+                </span>
+              );
+            })}
           </div>
         )}
       </div>
