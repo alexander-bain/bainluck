@@ -45,12 +45,23 @@ esports roster and must NOT run the or-last arm: if the fix were "never promote
 anything containing `sinner`" both arms of this file would go green while the
 rule had been broken for the team that really is called Sinners.
 
-A NOTE ON WHAT THIS FILE DOES NOT CLAIM. Production holds NO event row for any
-Jannik Sinner US Open match — his most recent is 2026-07-18, outside the arm's
-30-day floor — while it does hold his props (vs Kecmanovic, Shapovalov, Tien).
-So `sinner` on production answers with props until that matching gap closes;
-that is #4425, filed under the marquee axiom, and is not a ranking defect. The
-completed match below is SEEDED for exactly that reason.
+WHY THE COMPLETED MATCH BELOW IS SEEDED, AND WHY THAT IS NOT A DODGE. Jannik is
+not playing this US Open. Measured 2026-09-09: the semi-final field on
+"US Open Men's Singles Winner" is Zverev .435 / Shelton .375 / Tiafoe .095 /
+Khachanov .045, he is a residual outcome at .010, he has no 2026 US Open match
+market of any kind, and his most recent event row is 2026-07-18 — outside the
+arm's own 30-day floor. His Kecmanovic / Shapovalov / Tien props are March and
+July matches and all four ARE attached to their events, so this is an absence,
+not a matching gap, and nothing is filed for it.
+
+What that means for the ship is worth stating plainly, because it is easy to
+read this file as proving more than it does: on production TODAY, `sinner`
+answers with his props, because there is no match of his to lead with and we
+have no player entity page to offer instead. The repair still changes that page
+— it stops a Counter-Strike fixture being served as "the answer" for Jannik —
+and the leading half is exercised for real by `shelton` and `alcaraz`, who have
+matches. The seed here is what lets the arm be tested at all; re-seed it from
+production the next time he is in a draw.
 """
 
 from datetime import datetime, timedelta, timezone

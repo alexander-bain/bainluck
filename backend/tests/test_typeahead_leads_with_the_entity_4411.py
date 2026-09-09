@@ -102,6 +102,14 @@ _SHELTON = [
     _cand("Ben Shelton at Frances Tiafoe", "event", ["Frances Tiafoe", "Ben Shelton"]),
 ]
 
+#: SYNTHETIC, unlike the two above. Jannik is not in the 2026 US Open (measured
+#: 2026-09-09: no match market, residual .010 on the winner market, last event
+#: row 2026-07-18), and the raw pool for `sinner` is really two Counter-Strike
+#: fixtures whose roster is called "Sinners". That namesake collision is what
+#: this pool CANNOT see — it is owned by
+#: `tests/integration/test_route_typeahead_sinner_namesake_4411.py` (CERT-2392),
+#: because both of its causes live in the pool assembly and a hand-built pool
+#: has already made those decisions for itself.
 _SINNER = [
     _cand("Will any man other than Carlos Alcaraz and Jannik Sinner win a ATP Grand Slam in 2026?", "futures"),
     _cand("Jannik Sinner: Total Games", "futures"),
