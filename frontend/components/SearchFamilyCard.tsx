@@ -43,11 +43,30 @@ function AnswerRow({
     >
       {/* #4136: head truncates, tail does not. When `tail` is empty — the
           ordinary case, a row that shares no long prefix with a sibling — this
-          is exactly the single truncating div it has always been. */}
+          is exactly the single truncating div it has always been.
+
+          #4518: the tail used to be `flex-shrink-0` inside a `min-w-0` container
+          whose overflow is VISIBLE, so on the one row where the head had already
+          collapsed to nothing and the tail STILL did not fit, the tail had no
+          room to shrink into and no clip to stop it — it painted straight
+          through the outcome text (−26px at 390, −47px at 360, clean by 430).
+
+          What is wanted is an ORDER, not a ratio: the head gives up everything
+          before the tail gives up anything. CSS has no "shrink this one first",
+          but shrinkage is distributed proportional to `basis × shrink-factor`
+          and an item that reaches its min size freezes and hands the remaining
+          deficit to the others — so a head factor several orders of magnitude
+          above the tail's IS that order, expressed the one way the box model
+          offers. The tail keeps `truncate` so that when it finally must give,
+          it ellipsises inside its own box instead of over its neighbour.
+
+          Not `overflow-hidden` on the container: that stops the overlap by
+          hard-cutting the tail, which silently eats the bytes #4136 exists to
+          preserve — a visible bug traded for an invisible one. */}
       <div className="flex-1 min-w-0 flex items-center">
-        <div className={`truncate ${nameClass}`}>{title.head}</div>
+        <div className={`truncate shrink-[9999] ${nameClass}`}>{title.head}</div>
         {title.tail && (
-          <div className={`flex-shrink-0 ${nameClass}`}>{title.tail}</div>
+          <div className={`truncate shrink ${nameClass}`}>{title.tail}</div>
         )}
       </div>
       {ld && ld.probability != null ? (
