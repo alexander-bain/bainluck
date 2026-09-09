@@ -548,26 +548,70 @@ FEED_EDITION_FIELD = "edition"
 _FEED_EDITION_HEX_LEN = 16
 
 
+#: Which field carries a card's stable identity, PER KIND.
+#:
+#: CERT-2309 blocked the first cut of this file for reading ``data["id"]`` and
+#: nothing else: `concept` and `tournament` cards do not have an ``id``, they
+#: have a ``key``, so every one of them collapsed to ``"?"``. On the production
+#: payload that was 3 of 40 cards — and because ``"?"`` is only positional, two
+#: concepts could swap slots, or one be replaced outright, without the token
+#: moving. The edition said "same list" across a change the reader could see,
+#: which is the exact failure the token exists to prevent, inverted.
+#:
+#: The values mirror `DiscoverViewModel.itemKey` (the client's own notion of
+#: which card is which): event/futures/bundle key on ``id``, while concept and
+#: tournament fall through to ``FeedItem.id`` == ``"<kind>-<key>"``. This is a
+#: correspondence, not a shared implementation — the client never recomputes the
+#: token, so only the IDENTITY has to agree, never the string form (see the
+#: header comment).
+_FEED_EDITION_IDENT_FIELDS: dict[str, str] = {
+    "event": "id",
+    "futures": "id",
+    "bundle": "id",
+    "concept": "key",
+    "tournament": "key",
+}
+
+#: Tried, in order, for a card kind this module has not been taught. A kind is
+#: added to `routes/feed.py` far more often than this file is read, so the
+#: unknown case degrades to a search instead of straight to ``"?"``: a new kind
+#: carrying either conventional field still participates in the edition. The
+#: guard test enumerates the kinds the route actually emits so a kind carrying
+#: NEITHER is caught at the moment it is added, rather than silently costing the
+#: token its resolution the way concept and tournament did.
+_FEED_EDITION_IDENT_FALLBACK: tuple[str, ...] = ("id", "key")
+
+
 def _feed_edition_member(item: Any) -> str:
-    """One card's identity for edition purposes: its type and its id.
+    """One card's identity for edition purposes: its type and its own id.
 
     Never its price, probability, score or reason — those are exactly what must
     NOT roll the edition.
+
+    "Its own id" is per-kind, because the payload has no single identity field:
+    see `_FEED_EDITION_IDENT_FIELDS`.
 
     An item we cannot identify contributes ``"?"`` rather than being skipped.
     Skipping would make a list of three unidentifiable cards hash the same as an
     empty one, and would let a card appear or disappear without moving the token
     — the precise failure this exists to prevent. ``"?"`` is positional, so the
-    count and the slot still register even when the identity does not.
+    count and the slot still register even when the identity does not; what it
+    cannot register is a swap or a substitution among unidentified cards, which
+    is why the map above matters and why ``"?"`` is a floor and not a strategy.
     """
     if not isinstance(item, dict):
         return "?"
     kind = item.get("type")
     data = item.get("data")
-    ident = data.get("id") if isinstance(data, dict) else None
-    if kind is None or ident is None:
+    if kind is None or not isinstance(data, dict):
         return "?"
-    return f"{kind}:{ident}"
+    field = _FEED_EDITION_IDENT_FIELDS.get(kind)
+    fields = (field,) if field else _FEED_EDITION_IDENT_FALLBACK
+    for candidate in fields:
+        ident = data.get(candidate)
+        if ident is not None:
+            return f"{kind}:{ident}"
+    return "?"
 
 
 def feed_edition_token(items: Any) -> Optional[str]:

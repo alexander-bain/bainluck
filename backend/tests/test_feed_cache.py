@@ -1,9 +1,14 @@
+import re
+from pathlib import Path
+
 import pytest
 
 from app.tasks import redis_state
 from app.utils.feed_cache import (
     FEED_EDITION_FIELD,
     FEED_RESPONSE_STALE_TTL_SECONDS,
+    _FEED_EDITION_IDENT_FIELDS,
+    _feed_edition_member,
     build_feed_cache_metadata,
     feed_edition_token,
     invalidate_feed_response_cache,
@@ -101,8 +106,28 @@ async def test_invalidate_feed_response_cache_deletes_fresh_and_stale_keys(
 # =============================================================================
 
 
+#: The identity field each kind ACTUALLY carries in the served payload, read off
+#: production `GET /api/feed?limit=40` on 2026-09-08: 28 futures + 8 bundle + 1
+#: event on ``data.id``, 3 concept on ``data.key`` and no ``id`` at all.
+#:
+#: Stated here, in the fixture, rather than imported from the module under test.
+#: CERT-2309 blocked this file's first cut because the fixture gave EVERY kind an
+#: ``id``, so the tests below passed on a payload shape production never serves
+#: and the concept collapse was invisible to all of them. A fixture that borrows
+#: the implementation's own map could not fail that way either — and could not
+#: fail if the map itself were wrong, which is the failure that actually happened.
+_FIXTURE_IDENT_FIELD = {
+    "event": "id",
+    "futures": "id",
+    "bundle": "id",
+    "concept": "key",
+    "tournament": "key",
+}
+
+
 def edition_card(kind: str, ident, *, probability=0.5, score=70, reason="") -> dict:
-    """A feed item in the shape ``GET /api/feed`` serves.
+    """A feed item in the shape ``GET /api/feed`` serves — including which field
+    carries the identity, which differs by kind (`_FIXTURE_IDENT_FIELD`).
 
     ``probability``/``score``/``reason`` are the volatile fields — the ones that
     move on the 2-minute live-price poll and on every rescore. They are
@@ -113,7 +138,10 @@ def edition_card(kind: str, ident, *, probability=0.5, score=70, reason="") -> d
         "score": score,
         "reason": reason,
         "headline": None,
-        "data": {"id": ident, "probability": probability},
+        "data": {
+            _FIXTURE_IDENT_FIELD.get(kind, "id"): ident,
+            "probability": probability,
+        },
     }
 
 
@@ -197,6 +225,141 @@ def test_the_same_id_under_a_different_type_is_a_different_card():
     assert feed_edition_token([edition_card("event", 1000)]) != feed_edition_token(
         [edition_card("futures", 1000)]
     )
+
+
+# --- CERT-2309's repair: every kind the route emits has an identity -------------
+# `4110-CONCEPT-AND-TOURNAMENT-KEYS-PARTICIPATE-IN-EDITION`.
+#
+# The first cut read ``data["id"]`` for every card. `concept` and `tournament`
+# carry ``data["key"]`` instead, so on the production payload three concepts and
+# the live tournament all rendered as ``"?"`` — positionally present, individually
+# indistinguishable. The bus's falsifier is the first two tests here: swap two real
+# concepts, or replace one outright, and the token did not move. The server told
+# the client "same list" about a list whose visible cards had changed.
+
+
+def a_production_shaped_feed() -> list[dict]:
+    """The mix production actually serves, per the 2026-09-08 census: the
+    id-keyed kinds AND the key-keyed ones, which is what the old fixture lacked."""
+    return [
+        edition_card("futures", 5001),
+        edition_card("concept", "us-open-2026"),
+        edition_card("bundle", 7001),
+        edition_card("concept", "fed-september"),
+        edition_card("tournament", "vuelta-a-espana-2026"),
+        edition_card("event", 9001),
+        edition_card("concept", "world-cup-2030"),
+    ]
+
+
+def test_swapping_two_concepts_rolls_the_edition():
+    """CERT-2309's falsifier, first half. Two concept cards trading slots is a
+    reorder the reader can see; before the repair both hashed as ``"?"`` and the
+    token was byte-identical."""
+    before = a_production_shaped_feed()
+    after = list(before)
+    after[1], after[3] = after[3], after[1]
+
+    assert after != before, "fixture must actually swap, or this asserts nothing"
+    assert feed_edition_token(after) != feed_edition_token(before)
+
+
+def test_replacing_a_concept_with_a_different_one_rolls_the_edition():
+    """CERT-2309's falsifier, second half. A substitution at the same slot, same
+    kind, same length — identity is the only thing that changed, so identity is
+    the only thing that can catch it."""
+    before = a_production_shaped_feed()
+    after = list(before)
+    after[1] = edition_card("concept", "a-completely-different-concept")
+
+    assert feed_edition_token(after) != feed_edition_token(before)
+
+
+def test_replacing_a_tournament_rolls_the_edition():
+    """The other key-keyed kind, which the falsifier reached through the same
+    collapse. `tournament` is one card on the page, so a repair that fixed only
+    `concept` would leave the marquee card unidentifiable."""
+    before = a_production_shaped_feed()
+    after = list(before)
+    after[4] = edition_card("tournament", "some-other-tournament")
+
+    assert feed_edition_token(after) != feed_edition_token(before)
+
+
+def test_no_card_the_route_emits_hashes_as_unidentified():
+    """The direct statement of the defect, kind by kind, so a regression names the
+    kind that broke rather than just moving a hash."""
+    for kind, ident in (
+        ("event", 1),
+        ("futures", 2),
+        ("bundle", 3),
+        ("concept", "a-key"),
+        ("tournament", "a-tournament-key"),
+    ):
+        member = _feed_edition_member(edition_card(kind, ident))
+        assert member != "?", f"{kind} card collapsed to '?' — CERT-2309's defect"
+        assert member == f"{kind}:{ident}"
+
+
+def test_every_kind_the_feed_route_emits_is_taught_to_the_edition():
+    """The guard that makes the NEXT kind fail here instead of in production.
+
+    `concept` and `tournament` were not new when this token shipped — they were
+    simply never enumerated. So this reads the kinds out of the source that emits
+    them and requires the map to know each one. A sixth card kind added to the
+    feed with neither an ``id`` nor a ``key`` fails this test on the day it is
+    written, which is the only day it is cheap to fix.
+
+    Read from source rather than from a live payload deliberately: a payload
+    census only sees the kinds that happened to rank today (`tournament` is
+    frequently absent), and a guard that passes because a kind was missing is the
+    same failure one level up.
+    """
+    emitters = (
+        Path(__file__).resolve().parents[1] / "app" / "routes" / "feed.py",
+        Path(__file__).resolve().parents[1] / "app" / "utils" / "discover_bundles.py",
+    )
+    emitted = set()
+    for path in emitters:
+        assert path.exists(), f"emitter moved: {path}"
+        emitted |= set(re.findall(r'"type":\s*"([a-z_]+)"', path.read_text()))
+
+    assert emitted, "found no card kinds in the source — the pattern went stale"
+    assert {"concept", "tournament"} <= emitted, (
+        "the two kinds CERT-2309 was about are no longer found in the source; "
+        "this guard is reading the wrong place"
+    )
+
+    untaught = emitted - set(_FEED_EDITION_IDENT_FIELDS)
+    assert not untaught, (
+        f"card kind(s) {sorted(untaught)} are emitted by the feed but have no "
+        "identity field in _FEED_EDITION_IDENT_FIELDS, so every one of them "
+        "hashes to '?' and cannot be told apart within an edition (CERT-2309)"
+    )
+
+
+def test_an_unknown_kind_still_participates_if_it_carries_either_field():
+    """The fallback. A kind this module has not been taught degrades to a search
+    for the two conventional fields rather than straight to ``"?"`` — so the guard
+    above is what enforces the map, and an untaught kind is still identified in
+    the meantime instead of silently costing the token its resolution."""
+    assert _feed_edition_member(
+        {"type": "novel_kind", "data": {"key": "abc"}}
+    ) == "novel_kind:abc"
+    assert _feed_edition_member(
+        {"type": "novel_kind", "data": {"id": 12}}
+    ) == "novel_kind:12"
+
+
+def test_a_card_with_no_identity_is_still_positional():
+    """``"?"`` remains the floor: unidentifiable cards must still occupy a slot, or
+    a list of three would hash like an empty one and a card could vanish without
+    moving the token."""
+    assert _feed_edition_member({"type": "mystery", "data": {}}) == "?"
+
+    one = [{"type": "mystery", "data": {}}]
+    two = [{"type": "mystery", "data": {}}, {"type": "mystery", "data": {}}]
+    assert feed_edition_token(one) != feed_edition_token(two)
 
 
 # --- offset stability: native's question 3 --------------------------------------
