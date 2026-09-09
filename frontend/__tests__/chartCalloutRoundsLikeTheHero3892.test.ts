@@ -42,7 +42,10 @@ import {
   chartAxisToHomeProb,
   homeProbToChartAxis,
 } from "../lib/eventKeyStats";
-import { renderedPercent } from "../lib/renderedPercent";
+import {
+  renderedDuelPercents,
+  renderedPercent,
+} from "../lib/renderedPercent";
 
 /** What the callout used to do: round the 0–100 axis value. */
 const roundTheAxis = (probability: number): number =>
@@ -51,6 +54,23 @@ const roundTheAxis = (probability: number): number =>
 /** What it does now, through the real shipped function. */
 const shipped = (probability: number): number | null =>
   chartAxisPercents(homeProbToChartAxis(probability)).home;
+
+// ═══ #4154 — WHAT THIS SUITE COMPARES THE CHART AGAINST, AND WHY IT MOVED ═══
+//
+// This file's subject is "the callout prints the same whole percent as the
+// hero", and it asserted that as `shipped(p) === renderedPercent(p)`. That is a
+// PROXY, and it is only the hero's answer when `p` is the LARGER side of the
+// duel — `renderedDuelPercents` rounds the larger side and derives the smaller,
+// so on `0.275` the hero prints a derived 27 while `renderedPercent(0.275)` is
+// 28. Both of #3892's own moved values above 0.5 (0.565, 0.575) sit on the side
+// where the proxy holds, so the suite could not tell the two rules apart — and
+// #4154 shipped underneath it: hero 27%, callout 28%, on a quarter-final page.
+//
+// So the comparison is now the hero's ACTUAL function rather than a stand-in
+// that agrees with it half the time. Where the two coincide the assertions are
+// unchanged; where they do not, this is the one that describes the screen.
+const heroHome = (probability: number): number | null =>
+  renderedDuelPercents(1 - probability, probability)[1];
 
 // The four three-decimal wire values on which `Math.round(p * 100)` and the
 // contract disagree. Named in #3892 and re-derived here rather than trusted:
@@ -66,7 +86,10 @@ describe("#3892 — the chart callout rounds the probability, not the axis value
       expect(roundTheAxis(p)).not.toBe(renderedPercent(p));
       expect(roundTheAxis(p)).toBe(renderedPercent(p)! - 1);
 
-      expect(shipped(p)).toBe(renderedPercent(p));
+      // The hero's answer, not `renderedPercent` — see the #4154 note above.
+      // On 0.565/0.575 these are the same number; on 0.145/0.285 they are not,
+      // and the hero is what the reader is comparing the callout to.
+      expect(shipped(p)).toBe(heroHome(p));
     },
   );
 
