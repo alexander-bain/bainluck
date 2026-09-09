@@ -508,6 +508,42 @@ export function localDayKey(scheduled: string): string {
   return `${at.getFullYear()}-${month}-${day}`;
 }
 
+/**
+ * Calendar-day key for a fixture whose start is a PLACEHOLDER, not a time
+ * (#4344).
+ *
+ * `localDayKey` is right for every row that carries a real published start:
+ * the reader asks "when is it on" and the answer belongs in their timezone.
+ * It is WRONG for a row with no order of play, because there is no instant to
+ * localise — ESPN stamps midnight in the VENUE's timezone, and midnight is the
+ * one moment of the day that changes date when you move it west. Flushing
+ * Meadows is UTC−4, so "Friday" arrives as `2026-09-11T04:00:00Z`, and a
+ * Pacific reader localising that lands on 9pm **Thursday**. Both US Open
+ * semi-finals were listed a day early that way, and the women's — resolving to
+ * the reader's today — lost its day token entirely and read `Time TBD`.
+ *
+ * So a placeholder is read in UTC, which is the frame the REST OF THE SYSTEM
+ * already reads it in: `tournament_link_resolver._as_date` takes `.date()` off
+ * the same string to get the date its one-day match window compares, and
+ * `tournament_matchup_linker` calls that "still the right DATE". This function
+ * is not a new reading of the value — it is the frontend stopping being the
+ * only place that reads it differently.
+ *
+ * BOUND, stated because it is real: this is exact for every venue at or west
+ * of Greenwich and one day early for a venue east of it (midnight in Melbourne
+ * at UTC+11 is `13:00Z the previous day`). The backend resolver carries the
+ * identical bound, so fixing it properly means serving the calendar date as a
+ * date — not guessing the venue's offset here, which is the same shape of
+ * inference that caused the bug.
+ */
+export function placeholderDayKey(scheduled: string): string {
+  const at = new Date(scheduled);
+  if (Number.isNaN(at.getTime())) return scheduled.slice(0, 10);
+  const month = `${at.getUTCMonth() + 1}`.padStart(2, "0");
+  const day = `${at.getUTCDate()}`.padStart(2, "0");
+  return `${at.getUTCFullYear()}-${month}-${day}`;
+}
+
 export function dayHeading(dayKey: string, now: Date = new Date()): string {
   const todayKey = localDayKey(now.toISOString());
   if (dayKey === todayKey) return "Today";

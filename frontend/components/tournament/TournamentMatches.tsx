@@ -28,6 +28,7 @@ import {
   dayHeading,
   formatMovePoints,
   localDayKey,
+  placeholderDayKey,
   slateEmptyState,
   type SlateEmptyState,
   type SlateNotice,
@@ -628,6 +629,17 @@ function MatchRow({
  * will be played in the afternoon. The day is real and worth saying; the hour
  * is a placeholder and saying it is the small version of the same mistake that
  * emptied this card for a day.
+ *
+ * AND THE DAY HAS TO BE READ IN THE PLACEHOLDER'S OWN FRAME (#4344). Q463
+ * stopped printing the placeholder's hour and kept localising its date, which
+ * is the half that was actually wrong: midnight is the one moment of the day
+ * that changes date when you carry it west. On 2026-09-09 both US Open
+ * semi-finals were listed a day early to a Pacific reader — the men's said
+ * "Tomorrow" for a Friday match while the match's own page said Sep 11, and
+ * the women's resolved to the reader's today, so the branch below dropped the
+ * day token and it read a bare "Time TBD" for a match a day away. A real
+ * published start still localises, because for a real start that is the right
+ * answer; see `placeholderDayKey` for why a placeholder is not.
  */
 function formatMatchTime(
   scheduled: string,
@@ -636,7 +648,10 @@ function formatMatchTime(
 ): string {
   const at = new Date(scheduled);
   if (Number.isNaN(at.getTime())) return scheduled;
-  const day = dayHeading(localDayKey(scheduled), now);
+  const day = dayHeading(
+    startIsTbd ? placeholderDayKey(scheduled) : localDayKey(scheduled),
+    now
+  );
   if (startIsTbd) return day === "Today" ? "Time TBD" : `${day} · TBD`;
   const clock = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   return day === "Today" ? clock : `${day} ${clock}`;
