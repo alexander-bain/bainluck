@@ -22,6 +22,7 @@ So the rail's contract is narrow and worth pinning:
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from app.config.league_configs import LEAGUE_CONFIGS
 from fastapi import HTTPException
 
 
@@ -97,7 +98,10 @@ class TestGridRegisterProposalRail:
             )
 
         assert result["league"] == "nba"
-        assert result["season"] == "2025-26"
+        # From the config, not a literal (#4441) — the proposal stamps the
+        # league's CURRENT configured season, so pinning the string here made
+        # the test fail on a season rollover and pass while the config rotted.
+        assert result["season"] == LEAGUE_CONFIGS["nba"].season_pattern
         assert result["entries_total"] == 2
         assert result["status_counts"] == {"live": 1, "settled": 1}
         assert result["unresolved_total"] == 3

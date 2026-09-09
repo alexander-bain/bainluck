@@ -12,8 +12,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.config.league_configs import get_all_league_slugs
+from app.config.league_configs import get_all_league_slugs, LEAGUE_CONFIGS
 from app.models import FuturesMarket, FuturesOutcome
+
+# The grid drops markets naming a season other than the league's current one
+# (`_is_past_season_market` / `_is_future_season_market`, #708), so a fixture
+# that hard-codes a season silently becomes a PAST-season market the year the
+# config rolls over — and the grid then correctly returns zero teams, which
+# reads as a broken test rather than a stale fixture (#4441).
+_NBA_SEASON = LEAGUE_CONFIGS["nba"].season_pattern
+_NBA_CHAMPIONSHIP_MARKET_NAME = f"NBA Championship {_NBA_SEASON}"
 
 
 # All configured league slugs — tests run against each
@@ -49,7 +57,7 @@ def _mock_result(rows=None):
 def _playoff_market(
     *,
     market_id=101,
-    name="NBA Championship 2025-26",
+    name=_NBA_CHAMPIONSHIP_MARKET_NAME,
     source="odds_api",
     external_id="basketball_nba_championship_2025",
     market_tier=1,
@@ -275,7 +283,7 @@ class TestPlayoffGridMockedData:
                 {
                     "source": "odds_api",
                     "probability": cell["merged_probability"],
-                    "market_name": "NBA Championship 2025-26",
+                    "market_name": _NBA_CHAMPIONSHIP_MARKET_NAME,
                 }
             ]
 
@@ -315,7 +323,7 @@ class TestPlayoffGridMockedData:
             {
                 "market_id": 101,
                 "source": "odds_api",
-                "name": "NBA Championship 2025-26",
+                "name": _NBA_CHAMPIONSHIP_MARKET_NAME,
                 "external_id": "basketball_nba_championship_2025",
                 "outcome_count": 2,
                 "sample_outcomes": [
