@@ -21,6 +21,7 @@ import {
   type MatchListSide,
   type MatchRoundKey,
 } from "@/lib/matchList";
+import { BOOKS_SOURCE } from "@/lib/prematchReading";
 import { renderedDuelMovePoints, renderedDuelPercents } from "@/lib/renderedPercent";
 import { matchupEventHref, type MatchupEventIds } from "@/lib/tournamentEventLink";
 import {
@@ -288,31 +289,48 @@ function SideLine({
             }`}
             data-testid="match-probability"
             data-percent={percent ?? undefined}
+            /* The rung, for anyone measuring — see the block below. `undefined`
+               and not `null` on a prediction-market row, so the attribute is
+               absent rather than present-and-empty: a census counting
+               `[data-price-source]` must count the books rows only. */
+            data-price-source={entry.priceMarker ? BOOKS_SOURCE : undefined}
           >
             {percent === null ? "—" : `${percent}%`}
           </span>
         )}
-        {/* WHERE THIS NUMBER CAME FROM, when that needs saying (#3729).
-            The same word, the same size and the same reason as the finished
-            list's `BOOKS_MARKER` one section down — a sportsbook consensus is
-            a different claim wearing the same shape, and one page may not
-            caveat it in two vocabularies. `null` on every row whose number is
-            the product's own reading, which is all of them until a fixture is
-            quoted by books before any market is pinned to it. */}
-        {/* NOT `aria-hidden`, and that is the one place this differs from the
-            results row's marker. There it is decorative because the row already
-            speaks a full clause naming the rung; this card speaks none, so
-            hiding the word would leave a screen reader with the number and no
-            caveat at all — the state #3729's own footnote calls out. Read
-            aloud it is "70% books", which is what the page says. */}
-        {entry.priced && percent !== null && entry.priceMarker !== null && (
-          <span
-            className="-ml-1 text-[9px] font-medium uppercase tracking-[0.04em] text-text-muted"
-            data-testid="match-price-marker"
-          >
-            {entry.priceMarker}
-          </span>
-        )}
+        {/* WHERE THIS NUMBER CAME FROM (#3729), NOW SAID THE WAY THE REST OF
+            THE SITE SAYS IT — #4125 item 2.
+
+            This used to print `entry.priceMarker` — the literal word
+            `sportsbooks`, 9px uppercase — beside the percentage, deliberately
+            matching the finished list's marker one section down so that "one
+            page may not caveat it in two vocabularies". That reasoning is
+            still right, which is exactly why this moves with it: the finished
+            list dropped its visible marker under Alex's *"Keep the design
+            consistent with event cards elsewhere"*, so leaving this one would
+            re-create the two-vocabulary page the old comment warned about,
+            pointing the other way.
+
+            #3729's concern was a screen reader getting the number with no
+            caveat, and the old comment was right that this card — unlike the
+            results row — speaks no clause of its own, which is why its marker
+            was deliberately NOT `aria-hidden`. So the honest answer is parity,
+            not a replacement sentence: every reader of this card now gets the
+            same thing, the number, and no one is told a venue. Adding an
+            sr-only clause instead would have handed one class of reader a
+            caveat the page has decided not to make.
+
+            ⚠️ AND `PREMATCH_SAID` WOULD HAVE BEEN THE WRONG SENTENCE TO ADD.
+            It reads "Pre-match probability:", which is what the FINISHED row's
+            number is. This card's number is the CURRENT price on a fixture
+            that has not been played — live on an in-progress match. Borrowing
+            the results row's clause because the two markers looked alike would
+            have put a pre-match claim on a live figure.
+
+            The rung is not lost, it stops being *prose*: `data-price-source`
+            carries it for every guard and census that reads this list, the
+            same attribute and the same `books` rung id the results row has
+            used since CERT-812. */}
       </span>
     </div>
   );

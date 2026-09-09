@@ -166,11 +166,18 @@ describe("#4122 — the finished list draws results and explains nothing", () =>
    * is the classic way a "does not contain" guard lies. This is real production
    * data — 116 men's rows — so the numbers are not a fixture author's choice.
    */
-  it("still draws the results, the per-row numbers and the D91 marks", () => {
+  it("still draws the results, the per-row numbers and their attribution", () => {
     expect(html).toContain('data-testid="tournament-results"');
     expect((html.match(/data-testid="result-row"/g) ?? []).length).toBeGreaterThan(80);
     expect((html.match(/data-testid="result-prematch"/g) ?? []).length).toBeGreaterThan(80);
-    expect(html).toContain('data-testid="result-prematch-marker"');
+    // #4125 item 2: this used to require the VISIBLE `sportsbooks` marker, on
+    // Alex's *"Keep the design consistent with event cards elsewhere"* it is
+    // gone, and the attribution is the `data-prematch-source` attribute that
+    // every guard already read. The control's job is unchanged — prove the
+    // render is real so the BANNED list above cannot pass on an empty page —
+    // and the attribute proves it just as well as the span did.
+    expect(html).toContain('data-prematch-source="books"');
+    expect(html).not.toContain('data-testid="result-prematch-marker"');
     expect(html).toContain('data-testid="result-score"');
   });
 

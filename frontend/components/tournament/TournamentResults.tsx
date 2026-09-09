@@ -333,22 +333,50 @@ function ResultRow({
                     {attribution.said} {player.display_name}{" "}
                   </span>
                   {prior}
-                  {/* THE VISIBLE HALF. A books number says so beside itself;
-                      a prediction-market one renders exactly as it always did,
-                      so this change is strictly additive on the 111 rows that
-                      were already honest. `aria-hidden` because the sr-only
-                      clause above already said it in words — a screen reader
-                      hearing "68% books" after "sportsbooks opened Shelton"
-                      would hear the rung twice. */}
-                  {attribution.marker && (
-                    <span
-                      aria-hidden="true"
-                      data-testid="result-prematch-marker"
-                      className="ml-1 text-[9px] font-medium uppercase tracking-[0.04em] text-text-muted"
-                    >
-                      {attribution.marker}
-                    </span>
-                  )}
+                  {/* ═══ #4125 ITEM 2: THE VISIBLE MARKER IS GONE ═══
+                      Alex, on this page, 2026-09-08 4:00pm PT: *"Why does the
+                      tournament page awkwardly include the word 'books' on each
+                      completed event card and then show a weird disclaimer
+                      underneath. Keep the design consistent with event cards
+                      elsewhere."*
+
+                      "Elsewhere" is measurable, and neither surface does what
+                      this one did. `FeedCard` (`/sports`, every feed list)
+                      prints the pre-match figure as a bare grey `NN%` beside
+                      the name with NO visible word — the rung lives only in the
+                      spoken clause and `data-prematch-source`
+                      (`FeedCard.tsx:694-706`). Discover's `EventCard` prints
+                      ONE caption for the whole card
+                      (`Pre-match · sportsbooks`, `EventCard.tsx:301`). This
+                      list printed the word on BOTH player rows, so a
+                      five-match list said it ten times.
+
+                      🔴 THIS DOES NOT RE-OPEN CERT-812, and the reason is the
+                      whole argument. CERT-812's finding was a FALSE CLAIM: the
+                      spoken clause said "the market gave" on 61 of 172 rows
+                      that were a sportsbook median. Two things were shipped
+                      against it — a rung-specific clause and this marker. D65
+                      (ux/1071) then replaced the forked clause with
+                      `PREMATCH_SAID`, "Pre-match probability:", which is true
+                      of every rung, on Alex's words *"Shouldn't reference
+                      sportsbooks."* A clause that names no venue cannot name
+                      the wrong one, so the false claim is already dead and the
+                      marker is the last thing still saying a venue out loud.
+                      Both of CERT-812's registers survive here: the sr-only
+                      clause above, and `data-prematch-source` on the cell,
+                      which is what every guard and census actually reads.
+
+                      D91 sanctions "small source marks", and this stays true —
+                      what it does not sanction is the same word twice per
+                      match in the column the names need. Measured at 390px
+                      before this change: the prior track is `max-content`, so
+                      it sized to `NN% SPORTSBOOKS` and the name track
+                      (`minmax(0,1fr)`) gave up the difference — 8 of the 10
+                      names on the served list were clipped (`Jessica …`,
+                      `Emma Nava…`, `Aryna S…`). #4067 caused that half by
+                      itself: it renamed the word from `books` (5 chars) to
+                      `sportsbooks` (11), correctly under notice 33, and this
+                      `max-content` column silently charged the names for it. */}
                 </>
               )}
             </span>
