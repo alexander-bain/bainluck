@@ -17,6 +17,11 @@ export const CATEGORY_GRADIENTS: Record<string, string> = {
   cricket: "linear-gradient(135deg, #134e4a, #14b8a6)",
   weather: "linear-gradient(135deg, #0c4a6e, #0284c7)",
   entertainment: "linear-gradient(135deg, #701a75, #c026d3)",
+  // #4264. The `health` shelf has been a real destination since CAL-P132 but had no
+  // entry in either map, so every health market fell to DEFAULT_CAT (grey, 📊) on the
+  // web while the app already drew 🏥. Teal, to sit clearly apart from weather's sky
+  // blue — the two shelves this ship separates must not read as the same chip.
+  health: "linear-gradient(135deg, #134e4a, #0d9488)",
 };
 
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; emoji: string }> = {
@@ -38,6 +43,10 @@ const CATEGORY_COLORS: Record<string, { bg: string; text: string; emoji: string 
   cricket: { bg: "bg-teal-500/15", text: "text-teal-600", emoji: "🏏" },
   weather: { bg: "bg-sky-500/15", text: "text-sky-600", emoji: "🌤" },
   entertainment: { bg: "bg-fuchsia-500/15", text: "text-fuchsia-600", emoji: "🎬" },
+  // #4264. 🏥 is the emoji both iOS maps already use (DiscoverFuturesCard.swift,
+  // FuturesDetailView.swift), so the web now agrees with the app rather than
+  // inventing a third answer for the same shelf.
+  health: { bg: "bg-teal-500/15", text: "text-teal-600", emoji: "🏥" },
 };
 
 const DEFAULT_CAT = { bg: "bg-gray-500/15", text: "text-gray-600", emoji: "📊" };
