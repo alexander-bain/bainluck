@@ -1060,9 +1060,21 @@ def authority_round(listed: dict[str, Any], draw_size: Optional[int]) -> Optiona
     """
     from app.services.espn_tennis import espn_round_key
 
-    if not draw_size:
-        return None
-    return espn_round_key(listed.get("espn_round"), draw_size=draw_size)
+    # ═══ #4124: A SIZE IS ONLY NEEDED TO COUNT, NOT TO NAME ═══
+    #
+    # "Round 2" needs the draw's size and gets `None` without one, exactly as
+    # above. "Quarterfinal" does not: it names its own round in any draw of any
+    # size, and `espn_round_key` has always read it from a table.
+    #
+    # The distinction only started to matter with doubles, whose fixtures reach
+    # this function with `draw_size=None` — `first_round_size` reads the
+    # REGISTER, and the register carries no doubles matchup to read a size off.
+    # Under the old guard every one of today's doubles quarter-finals and
+    # semi-finals published `round: null`, which `slateRoundKey` files under
+    # **Qualifying**: the semi-final of a Slam, on the card, under the qualifying
+    # heading. Passing 0 through is what the guard was protecting against and
+    # `round_names_for_size(0)` returns `[]`, so "Round 2" still yields nothing.
+    return espn_round_key(listed.get("espn_round"), draw_size=draw_size or 0)
 
 
 def authority_match_row(
@@ -1157,14 +1169,27 @@ def authority_match_row(
     ``authority`` is a register row to repair, ``scoreboard`` is a round the
     register was never going to have.
 
-    ``None`` when the scoreboard does not name two identified people for this
-    competition: doubles competitions name a team and no athlete, and a
-    qualifier slot names "TBD" with a non-positive id.  A half-read is silence,
-    and silence leaves Q503's plain withhold in place — the caller must not
-    invent a side.  On the ux/1033 path that same silence is what keeps 126
-    doubles competitions and every unfilled later-round slot off the card
-    without one extra rule being written for them.
+    ``None`` when the scoreboard does not name two identified sides for this
+    competition — an unfilled later-round slot names "TBD" with a non-positive
+    id.  A half-read is silence, and silence leaves Q503's plain withhold in
+    place: the caller must not invent a side.
+
+    ═══ #4124: AND A DOUBLES PAIR IS A SIDE ═══
+
+    That silence used to cover all 147 doubles competitions too, because a
+    doubles competitor carries a roster and no athlete and this module's
+    upstream reader only knew how to read an athlete.  It reads both now (see
+    ``espn_tennis.competitor_name``), so a doubles fixture arrives here named,
+    identified and indistinguishable in shape from a singles one — two sides, an
+    id each, a clock — and every rule below applies to it unchanged.  Nothing in
+    this function is doubles-aware, which is the point: a pair is a side.
+
+    The entity keys come from ``competitor_entity_key`` rather than being
+    formatted here, so this row's ``espn:pair:698-1513`` is byte-identical to the
+    one ``resolve_authority_links`` filed the price under.  Two files formatting
+    one key is how the price for a match we hold goes unread.
     """
+    from app.services.espn_tennis import competitor_entity_key
     competitors = listed.get("competitors")
     if not isinstance(competitors, list) or len(competitors) != 2:
         return None
@@ -1209,7 +1234,7 @@ def authority_match_row(
             sides_map = candidate_sides
     loaded_by_key: dict[str, dict[str, Any]] = {}
     for c in ordered:
-        entity_key = f"espn:athlete:{c.get('espn_athlete_id')}"
+        entity_key = competitor_entity_key(c)
         outcome_id = (sides_map.get(entity_key) or {}).get("outcome_id")
         loaded = (prices or {}).get(outcome_id) if isinstance(outcome_id, int) else None
         if loaded is not None:
@@ -1227,7 +1252,7 @@ def authority_match_row(
         # four arrived. Namespaced so it can never collide with one, and so a
         # reader of the payload can see at a glance that this side came from
         # the scoreboard.
-        entity_key = f"espn:athlete:{c.get('espn_athlete_id')}"
+        entity_key = competitor_entity_key(c)
         loaded = loaded_by_key.get(entity_key) or {}
         liquidity = loaded.get("liquidity") or {}
         sides.append({
@@ -2379,6 +2404,74 @@ def _prematch_by_pair(
     return out
 
 
+def _scoreboard_result_row(
+    draw: str, found: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    """A finished match named by the scoreboard alone, or ``None`` (#4124).
+
+    The same row shape ``build_results`` produces from the register, with every
+    field the register would have supplied left honestly empty: no seed, no
+    pinned face, no pre-match probability.  ``source_pairing`` says which kind of
+    row this is, so nothing downstream has to infer it from a missing seed.
+
+    ``None`` when the scoreboard did not name two identified sides, or when its
+    own winner does not normalize to one of them.  Both are the same refusal
+    ``build_results`` already makes for a registered pair, and for the same
+    reason: a score printed under the wrong two names looks entirely plausible.
+    """
+    from app.services.espn_tennis import COMPLETION_UNKNOWN, normalize_name
+
+    names = found.get("players") or []
+    keys = found.get("entity_keys") or []
+    if len(names) != 2 or len(keys) != 2 or not all(keys):
+        return None
+
+    winner_key: Optional[str] = None
+    for key, name in zip(keys, names):
+        if normalize_name(name) == found.get("winner_normalized"):
+            winner_key = str(key)
+            break
+    if winner_key is None:
+        return None
+
+    return {
+        "matchup_key": f"espn:{found.get('espn_competition_id')}",
+        "draw": draw,
+        "draw_label": draw_label(draw),
+        "round": found.get("espn_round") or "",
+        "players": [
+            {
+                "entity_key": str(key),
+                "display_name": name,
+                "seed": None,
+                "is_winner": str(key) == winner_key,
+                # A doubles pair has two faces and two flags, so it gets
+                # neither: `PlayerAvatar` falls back to initials, which is the
+                # step every unpinned singles slot already lands on.
+                "image": None,
+                "prematch_probability": None,
+                "prematch_source": None,
+            }
+            for key, name in zip(keys, names)
+        ],
+        "winner_entity_key": winner_key,
+        "score": found.get("score"),
+        "completion": found.get("completion") or COMPLETION_UNKNOWN,
+        "completed_at": found.get("completed_at"),
+        "source_round": found.get("espn_round"),
+        "source": "espn",
+        # WHICH SIDE OF THE REGISTER THIS ROW CAME FROM. `register` on every
+        # other row; named rather than implied, so a reader of the payload never
+        # has to deduce it from the absence of a seed.
+        "source_pairing": "scoreboard",
+        "espn_competition_id": (
+            str(found["espn_competition_id"])
+            if found.get("espn_competition_id") is not None
+            else None
+        ),
+    }
+
+
 def build_results(
     register: dict[str, Any],
     *,
@@ -2417,6 +2510,31 @@ def build_results(
     result whose winner does not normalize to one of the two is dropped
     separately — a score under the wrong names is exactly the class of defect
     the register exists to make impossible, and it would look plausible.
+
+    ═══ #4124: A DRAW THE REGISTER HAS NEVER HEARD OF ═══
+
+    That rule has one hole and the doubles fell through it.  ``unregistered_pair``
+    means "this tournament's register does not carry these two people", and for a
+    singles qualifier that is a true and useful coverage statement — the register
+    carries 378 singles players, so a name missing from it is a gap worth
+    counting.  For the doubles it said the same words about a different
+    situation: the register carries **zero** players in all three doubles draws,
+    because ``ingest_tournament_draw`` ran on the singles sheets and nothing
+    else.  Every doubles result at the tournament was therefore "unregistered",
+    and the section was empty for a reason no reader could distinguish from
+    "the doubles have not started".
+
+    So the two situations are separated on the one fact that tells them apart:
+    **does the register carry ANY player in this draw?**  If it does, a missing
+    pair is a coverage gap and is counted exactly as before — singles behaviour
+    is unchanged to the row.  If it does not, the register has no opinion to
+    contradict, and the row is built from the scoreboard alone, carrying
+    ``source_pairing: "scoreboard"`` so it is never mistaken for a pinned one.
+
+    A scoreboard row is honest about what it does not have: no seed, no pinned
+    face, and no pre-match probability.  It is not counted in the ruling-8 image
+    coverage either — that gate asks what fraction of REGISTER-PINNED slots have
+    a picture, and a doubles pair is not a person with a headshot.
     """
     reg = TournamentRegister(register)
     by_draw = (results or {}).get("draws") or {}
@@ -2429,9 +2547,23 @@ def build_results(
         key = (str(player.get("draw") or ""), normalize_name(player.get("display_name")))
         by_name.setdefault(key, player)
 
+    # Which draws the register has an opinion about at all (#4124). Read off the
+    # players rather than off `DRAWS`, because the question is what THIS
+    # register carries, not what the schema allows.
+    registered_draws = {
+        str(player.get("draw") or "")
+        for player in reg.players
+        if isinstance(player, dict)
+    }
+
     rows: list[dict[str, Any]] = []
     unregistered_pair = 0
     winner_mismatch = 0
+    scoreboard_sourced = 0
+    # Slots on REGISTER-PINNED rows only — see the ruling-8 note in the
+    # docstring. Accumulated rather than derived from `len(rows)`, which since
+    # #4124 also counts rows the register does not back.
+    registered_slots = 0
 
     # A matchup key when we still hold one, so a result and its former slate row
     # agree on identity. Absent, the ESPN competition id is the stable key.
@@ -2459,8 +2591,20 @@ def build_results(
                 for name in (found.get("players") or [])
             ]
             if len(entries) != 2 or any(entry is None for entry in entries):
-                unregistered_pair += 1
+                if draw in registered_draws:
+                    unregistered_pair += 1
+                    continue
+                row = _scoreboard_result_row(draw, found)
+                if row is None:
+                    # The scoreboard did not name two identified sides for a
+                    # finished match. Counted where a missing pair is counted,
+                    # because that is what it is.
+                    unregistered_pair += 1
+                    continue
+                rows.append(row)
+                scoreboard_sourced += 1
                 continue
+            registered_slots += 2
 
             keys = [str(entry.get("entity_key")) for entry in entries]
             winner_key: Optional[str] = None
@@ -2536,6 +2680,10 @@ def build_results(
                 "completed_at": found.get("completed_at"),
                 "source_round": found.get("espn_round"),
                 "source": "espn",
+                # This pairing is the register's (#4124). On EVERY row, not only
+                # on the scoreboard-sourced ones, so a consumer reads a value
+                # rather than inferring one from a key that is absent.
+                "source_pairing": "register",
                 # THE AUTHORITY'S OWN ID FOR THIS MATCH (#2693 step 2).
                 # Published on EVERY row, not only on the rows whose
                 # `matchup_key` happens to be `espn:…`. A register-keyed row has
@@ -2577,9 +2725,15 @@ def build_results(
         # avatar steps each slot landed on, so the day the register loses a
         # tranche of pins the payload says so instead of the page quietly
         # filling with grey initials.
-        "player_slots": 2 * len(rows),
+        "player_slots": registered_slots,
         "with_face": with_face,
         "with_flag": with_flag,
+        # HOW MANY ROWS THE SCOREBOARD NAMED RATHER THAN THE REGISTER (#4124).
+        # The doubles, today. Reported for the same reason `authority_pairings`
+        # is on the slate: a row with no seed, no face and no prior is a
+        # different KIND of row, and a page that shows both should be able to
+        # say how many of each without counting them.
+        "scoreboard_sourced": scoreboard_sourced,
         "source_competitions": (results or {}).get("stats", {}).get("final", 0),
         "source_scored": (results or {}).get("stats", {}).get("scored", 0),
         # UX-P147: how the unscored ones ended, counted at the source rather

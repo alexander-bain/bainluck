@@ -102,8 +102,10 @@ ALCARAZ_V_FARIA = [
     _competitor("Carlos Alcaraz", 3782, 1),
     _competitor("Jaime Faria", 10219, 2),
 ]
-#: A doubles competition names a TEAM and no athlete; a later-round slot names
-#: the qualifier who has not qualified. Both are silence, not half a pairing.
+#: A later-round slot names the qualifier who has not qualified: silence, not
+#: half a pairing. (A doubles competition used to be the other example here.
+#: Since #4124 a pair IS a determined side — see
+#: `test_tournament_doubles_4124.py` — so only the placeholder case is left.)
 UNDETERMINED = [
     _competitor("TBD", None, 1, determined=False),
     _competitor("Ben Shelton", 4879, 2),

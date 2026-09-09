@@ -2,6 +2,8 @@
 
 import React from "react";
 
+import { DOUBLES_DRAWS, DOUBLES_SELECTION } from "@/lib/tournamentResults";
+
 /**
  * The Men's / Women's pill strip.
  *
@@ -34,6 +36,35 @@ export const DRAWS: DrawOption[] = [
   { id: "mens-singles", label: "Men's" },
   { id: "womens-singles", label: "Women's" },
 ];
+
+/**
+ * The third pill (#4124), added only when the tournament actually has doubles.
+ *
+ * `/tournaments/us-open` had no doubles on it in any form — not a tab, not a
+ * row, not a card — while `/hub/tennis` carried twelve live doubles matches the
+ * same afternoon. The backend half of that gap is fixed upstream of here; this
+ * is the door.
+ *
+ * DERIVED FROM THE PAYLOAD, never a constant. Before the doubles draw is made
+ * there is nothing behind the pill, and a pill that opens an empty section is
+ * worse than no pill: it teaches the reader we do not cover the doubles, which
+ * is the exact conclusion this ship exists to stop them drawing. So the strip
+ * asks the payload whether any doubles row exists, and grows by one when it
+ * does — the same day, with no deploy.
+ */
+export const DOUBLES_DRAW: DrawOption = {
+  id: DOUBLES_SELECTION,
+  label: "Doubles",
+};
+
+export function drawOptions(rows: Array<{ draw?: string | null } | null | undefined>[]): DrawOption[] {
+  const hasDoubles = rows.some((list) =>
+    (list ?? []).some((row) =>
+      DOUBLES_DRAWS.includes((row?.draw ?? "") as (typeof DOUBLES_DRAWS)[number])
+    )
+  );
+  return hasDoubles ? [...DRAWS, DOUBLES_DRAW] : DRAWS;
+}
 
 /**
  * The draw to open on when NOTHING is being played (live/077 item 2).

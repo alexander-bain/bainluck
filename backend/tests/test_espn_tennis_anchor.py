@@ -147,8 +147,15 @@ class TestScoreboardCompetitions:
         assert board[0]["event_name"] == "Whatever Cup"
 
     def test_doubles_are_excluded(self):
-        """A doubles competition names a TEAM and no athlete in some payloads,
-        which is a half-pair — silence, never a fixture to anchor on."""
+        """The anchor reads the two SINGLES groupings and nothing else.
+
+        The reason used to be written as "a doubles competition names a TEAM and
+        no athlete, which is a half-pair". That stopped being the reason at
+        #4124 — a pair is a named, identified side now — and this test would
+        still have passed, on the actual reason: ``scoreboard_competitions``
+        defaults to :data:`SINGLES_SLUGS` and never looks in the doubles
+        grouping. The anchor's scope is a deliberate choice, not a side effect
+        of a read that could not see them."""
         board = scoreboard_competitions([
             _payload([_competition("1", ["A One", "B Two"])], slug="mens-doubles")
         ])
