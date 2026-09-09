@@ -27,6 +27,7 @@ import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import {
   describeCategoryPopulation,
   describeCategoryTablePopulation,
+  footerPopulationPhrase,
   nameAll,
 } from "@/lib/calibrationPopulation";
 import {
@@ -2257,8 +2258,19 @@ export default function CalibrationPage() {
 
       {/* Footer */}
       <footer className="text-center text-xs text-text-muted pt-4 border-t border-surface-border">
-        <p>
-          {cohortN.toLocaleString()} resolved outcomes &middot; {sources.length} sources &middot; {categories.length} categories
+        {/* #4339: this printed cohortN under the bare phrase "resolved outcomes" —
+            the same phrase the "What's included?" card uses for total_outcomes,
+            316,972 higher, three screens up. The only parenthetical here is keyed
+            to priceCohort, so on the default view (priceCohort === "all") nothing
+            qualified it and a cohort subtotal stood as the page's last word.
+            `footerPopulationPhrase` is line 904's disclosure, in plain text: when
+            the cohort is not the whole, name the whole. fullN equals
+            data.total_outcomes, so the number it names as "total" is the SAME
+            number the card prints (page.tsx:263-264). The counts also travel as
+            data attributes so a probe reads numbers, not prose (notice 34). */}
+        <p data-testid="calibration-footer-population"
+          data-cohort-n={cohortN} data-full-n={fullN}>
+          {footerPopulationPhrase(cohortN, fullN)} &middot; {sources.length} sources &middot; {categories.length} categories
           {priceCohort !== "all" && ` (${priceCohort === "closing" ? "closing line" : "opening price"} cohort)`}
         </p>
         <p className="mt-1">
