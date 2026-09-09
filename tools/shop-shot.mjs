@@ -15,6 +15,7 @@ import { existsSync, readdirSync } from 'fs';
 // file starts Chromium, so nothing in it is reachable from a test — which is why
 // #3932's behaviours shipped verified only by hand.
 import {
+  EXIT_CAMERA,
   EXIT_CLICK_FAILED,
   EXIT_USAGE,
   clearStaleArtifact,
@@ -111,7 +112,7 @@ try {
     // shorthand stays for the [ . # forms already in the issue. A bare step is
     // text, as the positional `clickText` always was.
     const { isSelector, sel } = readStep(step);
-    // `.filter({ visible: true })` BEFORE `.first()`, and it is load-bearing.
+    // VISIBLE BEFORE `.first()`, and it is load-bearing.
     //
     // The old line was a bare `.first()`, which takes the first node in DOM
     // order whether or not it is on screen. Measured on bainluck.com at 390px:
@@ -125,8 +126,28 @@ try {
     // node nobody can see. Silently it produced a screenshot of the un-tapped
     // page; loudly (above) it would fail on targets that are right there. Fixing
     // only the loudness would have turned a false pass into a false failure.
+    //
+    // WHY THE SELECTOR ENGINE AND NOT `.filter({ visible: true })` (#4032).
+    //
+    // The filter option is sugar added in Playwright 1.51, and an OLDER
+    // Playwright does not reject it — it accepts the object and drops the key.
+    // So the visible-first fix quietly evaporated on any machine resolving an
+    // older build, leaving a bare `.first()` and the exact bug it repaired.
+    // Measured on this fixture, same page, same viewport:
+    //
+    //   1.48.2  filter({visible:true}) -> count=2, first = the HIDDEN decoy
+    //   1.55.1  filter({visible:true}) -> count=1, first = the visible link
+    //   both    locator('visible=true') -> count=1, first = the visible link
+    //
+    // That is not hypothetical: `findPlaywright()` above prefers whatever
+    // `~/.npm/_npx` holds (1.55.1 on the authoring laptop) and falls back to the
+    // repo's own lockfile, which pins 1.48.2 — so the laptop passed and CI, and
+    // any machine without that npx cache, silently clicked the wrong node. The
+    // `visible=true` selector engine has existed since 1.14 and means the same
+    // thing in every version this can resolve, so the behaviour no longer
+    // depends on which one it got.
     const all = isSelector ? page.locator(sel) : page.getByText(sel, { exact: true });
-    const target = all.filter({ visible: true }).first();
+    const target = all.locator('visible=true').first();
     let landed = false;
     try {
       await target.click({ timeout: 15000 });
@@ -187,4 +208,10 @@ try {
 } finally {
   await browser.close();
 }
-process.exit(ok ? 0 : 1);
+// The last place the exit-code vocabulary was still a literal (#4032 item 5).
+// `EXIT_CAMERA` is 1, so this changes no behaviour today — it changes what a
+// future edit has to do to stay coherent. Two of the three codes came from the
+// shared module and the third was typed here, which is exactly how a
+// vocabulary drifts: renumber `EXIT_CAMERA` and this line would have gone on
+// meaning the old thing while every reader of the constant meant the new one.
+process.exit(ok ? 0 : EXIT_CAMERA);
