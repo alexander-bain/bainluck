@@ -1,6 +1,7 @@
 "use client";
 
 import type { BookmakerOddsDetail } from "@/lib/types";
+import { isNamedSource, sourceLabel } from "@/lib/sourceLabels";
 
 interface BookmakerTableProps {
   bookmakerOdds: BookmakerOddsDetail[];
@@ -52,9 +53,16 @@ export default function BookmakerTable({
     return null;
   }
 
-  // Filter out bookmakers without probability data (they only have spread/totals)
+  // Filter out sportsbooks without probability data (they only have spread/totals),
+  // and those this app cannot name (#4284). The naming filter runs HERE, before
+  // the average, the counts and the divergence flag are derived, so the table can
+  // never disagree with its own footer about how many sportsbooks it is showing —
+  // the trap the iOS half hit when it capped the list before labelling it.
   const oddsWithProbability = bookmakerOdds.filter(
-    (odds) => odds.home_probability !== null && odds.away_probability !== null
+    (odds) =>
+      odds.home_probability !== null &&
+      odds.away_probability !== null &&
+      isNamedSource(odds.bookmaker)
   );
 
   // If no bookmakers have probability data, show a message
@@ -116,8 +124,9 @@ export default function BookmakerTable({
   const shortHomeTeam = homeTeam.split(" ").pop() || homeTeam;
   const shortAwayTeam = awayTeam.split(" ").pop() || awayTeam;
 
-  // Check if any bookmaker has projected scores
-  const hasAnyProjectedScores = bookmakerOdds.some(
+  // Check if any SHOWN sportsbook has projected scores — reading the unfiltered
+  // array here would head a column "(proj. score)" that no visible row fills.
+  const hasAnyProjectedScores = oddsWithProbability.some(
     (odds) => odds.projected_home_score != null && odds.projected_away_score != null
   );
 
@@ -163,7 +172,7 @@ export default function BookmakerTable({
                 } ${stale ? "opacity-60" : ""}`}
               >
                 <td className="py-3 px-4 font-medium text-graphite">
-                  {odds.bookmaker}
+                  {sourceLabel(odds.bookmaker)}
                   {isDivergent && (
                     <span className="ml-2 text-xs text-amber-600">*</span>
                   )}
