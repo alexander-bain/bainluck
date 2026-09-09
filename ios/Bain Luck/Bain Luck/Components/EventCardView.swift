@@ -329,13 +329,17 @@ struct EventCardView: View {
             // UX-P166 — both sides of one question in fixed positions is a DUEL,
             // and rounding the two independently printed 101. Measured on
             // production 2026-08-29: all 24,117 events carrying an opening line
-            // are complement pairs and 207 of them print 101, none 99. Same rule
-            // and same helper as the `currentOdds` strip.
+            // are complement pairs and 207 of them print 101, none 99.
+            //
+            // This line claimed "same rule and same helper as the `currentOdds`
+            // strip" while that strip was still rounding per side (#3049) — it was
+            // the only site on the card that HAD the rule. It now reads the shared
+            // `openingPercents`, so the claim is true and there is one derivation
+            // per odds source rather than a third copy.
             if isLive, let opening = event.openingOdds,
                let awayOpen = opening.awayProbability,
                let homeOpen = opening.homeProbability {
-                let openPcts = renderedDuelPercents(away: awayOpen, home: homeOpen)
-                Text("Opened \(formatProbability(awayOpen, renderedPercent: openPcts[0]))/\(formatProbability(homeOpen, renderedPercent: openPcts[1]))")
+                Text("Opened \(formatProbability(awayOpen, renderedPercent: openingPercents[0]))/\(formatProbability(homeOpen, renderedPercent: openingPercents[1]))")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -380,6 +384,40 @@ struct EventCardView: View {
 
     private enum TeamSide { case home, away }
 
+    /// The two percents the LIVE strip prints, `[away, home]`, decided once.
+    ///
+    /// #3049: `probabilityWithMovement(for:)` is invoked once per side and used to
+    /// format that side's raw probability alone, so it structurally could not apply
+    /// a pair rule. Venues quote on a half-percent grid, so `.x5` is the common case
+    /// and independent half-up rounding sent both sides up: all three live US Open
+    /// cards printed 101 at 15:05Z on 2026-09-04 (95/6, 61/40, 76/25) while the
+    /// event page hero for the same match printed 5/95. Deriving the pair HERE, from
+    /// both sides at once, is the only shape that can be right.
+    ///
+    /// The served pair is passed because these probabilities are `current_odds`'
+    /// own — `duelPercents` takes both served values or neither, never one.
+    private var livePercents: [Int?] {
+        duelPercents(
+            away: event.currentOdds?.awayProbability,
+            home: event.currentOdds?.homeProbability,
+            servedAway: event.currentOdds?.awayRenderedPercent,
+            servedHome: event.currentOdds?.homeRenderedPercent
+        )
+    }
+
+    /// The two percents the OPENING line prints, `[away, home]`.
+    ///
+    /// No served values: `current_odds.{away,home}_rendered_percent` describes
+    /// `current_odds` and nothing else, and handing that rounding to another
+    /// source's probability prints a mismatched pair that still sums to 100 — the
+    /// one error a sum guard cannot see (`RenderedPercent.swift`).
+    private var openingPercents: [Int?] {
+        renderedDuelPercents(
+            away: event.openingOdds?.awayProbability,
+            home: event.openingOdds?.homeProbability
+        )
+    }
+
     @ViewBuilder
     private func probabilityWithMovement(for side: TeamSide) -> some View {
         let prob: Double? = side == .home ? event.currentOdds?.homeProbability : event.currentOdds?.awayProbability
@@ -396,7 +434,7 @@ struct EventCardView: View {
                             .foregroundStyle(shift > 0 ? Color.green : Color.red)
                     }
                 }
-                Text(formatProbability(prob))
+                Text(formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0]))
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(color)
@@ -416,7 +454,7 @@ struct EventCardView: View {
             let isUpset = won && wasUnderdog
 
             HStack(spacing: 2) {
-                Text(formatProbability(prob))
+                Text(formatProbability(prob, renderedPercent: side == .home ? openingPercents[1] : openingPercents[0]))
                     .font(.caption)
                     .fontWeight(.semibold)
                     .monospacedDigit()
