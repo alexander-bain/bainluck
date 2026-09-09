@@ -11,7 +11,6 @@ import {
   fetchProgression,
   fetchFuturesGroup,
   fetchEventConcept,
-  formatProbability,
 } from "@/lib/api";
 import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
 import {
@@ -25,7 +24,6 @@ import {
   sportPagePath,
 } from "@/lib/eventKey";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
-import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
@@ -36,9 +34,8 @@ import { FuturesChart } from "@/components/FuturesChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import QuantityGroup, { buildThresholdRungs } from "@/components/QuantityGroup";
 import ProgressionTable from "@/components/ProgressionTable";
-import EntityImage from "@/components/EntityImage";
+import OutcomeRow, { outcomeRowPrintsMove } from "@/components/futures/OutcomeRow";
 import RelatedByTag from "@/components/RelatedByTag";
-import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import {
   asOfLabel,
@@ -547,6 +544,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   }
 
   const isResolved = market.status === "resolved";
+  // #3358: whether the "Last move" column is worth any width is a decision about the
+  // WHOLE table, so it is made here and passed down, never re-derived per row. On
+  // this issue's own market and on `/futures/202` every row prints `–`, and that dead
+  // 80px column is most of why the name column had 26px to print a name in.
+  const showLastMove = displayedOutcomes.some((o) =>
+    outcomeRowPrintsMove(o, isResolved),
+  );
   // UX-P233 (board item 11): "as of Aug 28" when the prices are older than a day,
   // null when they are current. One line for the whole table — see the render.
   const marketAsOf = asOfLabel(leader?.last_updated);
@@ -1074,6 +1078,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               isResolved={isResolved}
               rendered={renderedById.get(outcome.id)?.current ?? null}
               renderedOpening={renderedById.get(outcome.id)?.opening ?? null}
+              showLastMove={showLastMove}
             />
           ))}
         </div>
@@ -1125,236 +1130,6 @@ function SortButton({
         <span>{direction === "asc" ? "↑" : "↓"}</span>
       )}
     </button>
-  );
-}
-
-/**
- * Single outcome row
- */
-function OutcomeRow({
-  outcome,
-  rank,
-  isLeader,
-  isSelected,
-  onToggleSelect,
-  hasHistory,
-  marketCategory,
-  marketName,
-  isResolved = false,
-  rendered,
-  renderedOpening,
-}: {
-  outcome: FuturesOutcome;
-  rank: number;
-  isLeader: boolean;
-  isSelected: boolean;
-  onToggleSelect: () => void;
-  hasHistory: boolean;
-  marketCategory?: string | null;
-  marketName?: string;
-  isResolved?: boolean;
-  /** The card-level integers for this row's two price columns, or null for "no
-   *  override" (#2831). Both REQUIRED, with no default: the pair decision needs the
-   *  whole outcome set, so only the caller can make it, and a default would compile
-   *  at the next call site while quietly printing 101 again. */
-  rendered: number | null;
-  renderedOpening: number | null;
-}) {
-  const change = outcome.probability_change_24h;
-  const rankChange = outcome.rank_change_24h;
-
-  // Entity image detection
-  const isNonSports = isNonSportsCategory(marketCategory ?? null);
-  const isIntl = isInternationalSport(marketCategory ?? null);
-  const outcomeFlag = isIntl ? flagUrl(outcome.name) : null;
-
-  return (
-    <div
-      // UX-P230: the rendered order is the thing under guard — name it on the row
-      // so a test reads what the page actually painted, not what a helper returned.
-      data-testid="outcome-row"
-      data-outcome-name={outcome.name}
-      className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
-        isSelected
-          ? "bg-blue-50 border border-blue-200"
-          : isResolved && outcome.is_winner === true
-          ? "bg-emerald-50 border border-emerald-200"
-          : isResolved && outcome.is_winner === false
-          ? "bg-slate-50/50"
-          : isLeader
-          ? "bg-amber-50 border border-amber-200"
-          : "bg-slate/5 hover:bg-slate/10"
-      }`}
-    >
-      {/* Selection checkbox (for chart) */}
-      {hasHistory && (
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            onToggleSelect();
-          }}
-          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-            isSelected
-              ? "bg-blue-500 border-blue-500 text-white"
-              : "border-slate/30 hover:border-text-secondary"
-          }`}
-        >
-          {isSelected && (
-            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                clipRule="evenodd"
-              />
-            </svg>
-          )}
-        </button>
-      )}
-
-      {/* Rank */}
-      <span
-        className={`w-8 h-8 flex items-center justify-center text-sm rounded-full shrink-0 ${
-          isLeader
-            ? "bg-amber-100 text-amber-700 font-bold"
-            : "bg-surface-card text-text-secondary border border-surface-border"
-        }`}
-      >
-        {rank}
-      </span>
-
-      {/* Rank change indicator */}
-      {rankChange !== null && rankChange !== 0 && (
-        <span
-          className={`text-xs shrink-0 ${
-            rankChange < 0 ? "text-emerald-600" : "text-red-500"
-          }`}
-        >
-          {rankChange < 0 ? `↑${Math.abs(rankChange)}` : `↓${rankChange}`}
-        </span>
-      )}
-
-      {/* Name */}
-      <div className="flex items-center gap-2 flex-1 min-w-0">
-        {outcomeFlag ? (
-          <img
-            src={outcomeFlag}
-            alt={outcome.name}
-            width={24}
-            height={18}
-            loading="lazy"
-            className="rounded-sm flex-shrink-0"
-          />
-        ) : isNonSports ? (
-          <EntityImage type="wikipedia" name={outcome.name} size={24} />
-        ) : null}
-        <div className="min-w-0">
-          <span
-            className={`text-sm truncate block ${
-              isLeader ? "font-semibold text-text-primary" : "text-text-primary"
-            }`}
-          >
-            {outcome.name}
-          </span>
-          {isResolved && outcome.is_winner === true && (
-            <span className="text-xs text-emerald-600 font-medium">Won</span>
-          )}
-          {isResolved && outcome.is_winner === false && (
-            <span className="text-xs text-red-400 font-medium">Lost</span>
-          )}
-        </div>
-      </div>
-
-      {/* Opening price. UX-P233 (board item 11): this column was the ONLY one of
-          the row's three numbers that named its own baseline, which is exactly why
-          the other two read as if they shared it. All three are labelled now. */}
-      {outcome.opening_probability !== null && (
-        <div className="text-xs text-text-secondary text-right shrink-0">
-          <div className="text-[10px] uppercase tracking-wide text-text-muted">
-            Open
-          </div>
-          <div data-testid="outcome-open">
-            {formatProbability(outcome.opening_probability, { rendered: renderedOpening })}
-          </div>
-        </div>
-      )}
-
-      {/* The last recorded move. UX-P233: was headed "24h Change" and printed a
-          bare badge. It is a PER-WRITE delta (CAL-P159), so on 109441 Disney reads
-          +1.5 while Disney fell from an opening 22% to 7% — both true, of different
-          windows, and with neither stated the badge simply looked wrong. */}
-      <div className="w-20 text-right shrink-0">
-        <div className="text-[10px] uppercase tracking-wide text-text-muted">
-          Last move
-        </div>
-        {isResolved && outcome.is_winner !== null ? (
-          <span className="text-xs text-text-muted">-</span>
-        ) : change !== null && isRenderedMove(change) ? (
-          // UX-P275: the gate asks whether a move PRINTS, not whether the wire
-          // fraction is nonzero. Those disagreed on everything that rounds to
-          // zero, so 16 of 22 rows here carried a coloured `±0.0%` pill. A move
-          // too small to print is no move: it falls to the same muted dash an
-          // exact zero already used, rather than becoming a differently-coloured
-          // claim decided by the sign of a rounding residue.
-          <span
-            data-testid="outcome-change"
-            className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-              change > 0
-                ? "bg-emerald-500/15 text-emerald-400"
-                : "bg-red-500/15 text-red-400"
-            }`}
-          >
-            {change > 0 ? "+" : "-"}
-            {formatMovementPoints(change)}%
-          </span>
-        ) : (
-          <span className="text-xs text-text-muted">-</span>
-        )}
-      </div>
-
-      {/* The latest recorded probability. UX-P233: "Latest", never "Now" — on
-          109441 every row's last write is 2026-08-28, so a column headed "Now"
-          would be the same unprovable freshness claim the movement badge was
-          making. WHEN that latest reading was taken is stated once for the whole
-          market, above the table, rather than repeated on all eight rows. */}
-      <div className="text-right shrink-0">
-        {!isResolved && (
-          <div className="text-[10px] uppercase tracking-wide text-text-muted">
-            Latest
-          </div>
-        )}
-        {isResolved && outcome.is_winner === true ? (
-          <>
-            <div className="font-mono text-base tabular-nums font-bold text-emerald-600">
-              100%
-            </div>
-            <div className="text-xs text-emerald-500 font-medium">
-              Settled
-            </div>
-          </>
-        ) : isResolved && outcome.is_winner === false ? (
-          <>
-            <div className="font-mono text-base tabular-nums font-semibold text-text-muted">
-              0%
-            </div>
-            <div className="text-xs text-text-muted font-medium">
-              Settled
-            </div>
-          </>
-        ) : (
-          <>
-            <div
-              className={`font-mono text-base tabular-nums ${
-                isLeader ? "font-bold text-text-primary" : "font-semibold text-text-primary"
-              }`}
-            >
-              {formatProbability(outcome.probability, { rendered })}
-            </div>
-            {/* #883/L2-48: American moneyline (+9900) removed — probability only.
-                The standing no-odds thesis: "60% vs 40%", never "-150/+130". */}
-          </>
-        )}
-      </div>
-    </div>
   );
 }
 

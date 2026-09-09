@@ -51,14 +51,20 @@
 // `CombinedFeedCard` and `FeedCard` are real exported components, so every
 // claim about them below is read off RENDERED MARKUP.
 //
-// The third surface, `/futures/1`'s `OutcomeRow`, lives inside
-// `app/futures/[id]/page.tsx` and is NOT exported — and it must not become
-// exported, because a named export from a Next.js `page.tsx` is a typecheck
-// error against the page contract (UX-P274 paid for that one). So its claim is
-// a SOURCE SCAN, which is strictly weaker, and it is labelled as such rather
-// than dressed up as a render. The behaviour it would assert is covered
-// behaviourally by the predicate tests and by the two components that share the
-// identical shape.
+// The third surface, `/futures/1`'s `OutcomeRow`, USED to live inside
+// `app/futures/[id]/page.tsx` and could not be exported, because a named export
+// from a Next.js `page.tsx` is a typecheck error against the page contract
+// (UX-P274 paid for that one). That is why its claim here is a SOURCE SCAN,
+// which is strictly weaker, and is labelled as such rather than dressed up as a
+// render.
+//
+// #3358 moved it to `components/futures/OutcomeRow.tsx` — a real exported
+// component — precisely so a layout claim about it could be rendered rather
+// than grepped, so the subject path below follows the code. The scan is KEPT
+// rather than upgraded in this diff because it is not this file's ship to
+// re-cut; what has changed is that the option now exists, and
+// `__tests__/components/futuresOutcomeRowNameWidth3358.test.tsx` renders the
+// component for real, so the behaviour is no longer scan-only.
 
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
@@ -375,7 +381,8 @@ describe("ANTI-DRIFT (SOURCE SCAN, not a render) — the three reported call sit
   };
 
   const SUBJECTS = [
-    "app/futures/[id]/page.tsx",
+    // #3358: was `app/futures/[id]/page.tsx`; `OutcomeRow` moved out of the page.
+    "components/futures/OutcomeRow.tsx",
     "components/CombinedFeedCard.tsx",
     "components/FeedCard.tsx",
   ];
@@ -389,9 +396,19 @@ describe("ANTI-DRIFT (SOURCE SCAN, not a render) — the three reported call sit
   });
 
   it("the futures LAST MOVE column no longer multiplies by 100 itself", () => {
-    const src = read("app/futures/[id]/page.tsx");
-    expect(src).not.toMatch(/\(\s*change\s*\*\s*100\s*\)\.toFixed/);
-    expect(src).not.toMatch(/change\s*!==\s*null\s*&&\s*change\s*!==\s*0/);
+    // #3358 moved the column into `OutcomeRow`, so the scan follows it — and
+    // keeps reading the page too. A ban that moves house with the code it bans
+    // stops covering the house it left: re-introducing either shape in the page
+    // would otherwise be invisible, and this is a negative, so a subject with
+    // none of the code in it passes for free.
+    for (const rel of [
+      "components/futures/OutcomeRow.tsx",
+      "app/futures/[id]/page.tsx",
+    ]) {
+      const src = read(rel);
+      expect(src).not.toMatch(/\(\s*change\s*\*\s*100\s*\)\.toFixed/);
+      expect(src).not.toMatch(/change\s*!==\s*null\s*&&\s*change\s*!==\s*0/);
+    }
   });
 
   it("CombinedFeedCard no longer multiplies by 100 itself", () => {
