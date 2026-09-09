@@ -128,6 +128,22 @@ WHAT IS NEVER WRITTEN
 ``llm_sport_category`` only, by Core UPDATE (gotchas #4/#5), compare-and-set on
 the value we read, so a concurrent re-ingest is never clobbered.
 
+🔴 **AND NOT ``updated_at`` — the repair must not touch the observation clock.**
+CERT-2382 blocked the first SHA for exactly this. The write carried
+``updated_at = NOW()`` out of habit, and ``updated_at`` on this row is not
+bookkeeping: **the card renders it as its own relative date.** The Fed Chair
+card's before-LOOK reads ``May 17`` in the corner — that IS the 115-day
+staleness, shown to a reader. Stamping NOW() would have left the four-month-old
+prices unchanged while presenting them as observed *just now*: a repair whose
+entire purpose is TRUTH, introducing a reader-visible lie about freshness, in
+the same statement that fixes the badge.
+
+The general rule, and it is worth stating because the habit is strong: **a
+column a surface RENDERS is not bookkeeping, and a repair touches only the
+column it is repairing.** `updated_at` here answers "when did we last see this
+price", and the repair did not see a price. See #4157, which is the same
+observation-clock question one layer up.
+
 Not ``category``, and that is a measured decision rather than caution: the
 poller's ``update_set`` in ``app/tasks/polymarket.py`` does **not** contain
 ``category`` — it is written on INSERT and never again. Writing it here would
@@ -261,6 +277,11 @@ async def repair(session, apply: bool = False, **_ignored) -> dict[str, Any]:
         "rows_written": 0,
     }
     planned: list[dict[str, Any]] = []
+    #: The rows the database actually moved, read back by ``RETURNING id``. On a
+    #: dry run this stays empty and the restore is built from ``planned``, which
+    #: is the right basis there: an operator reading a dry run wants the undo for
+    #: the write they are about to authorise.
+    applied: list[dict[str, Any]] = []
     refused: list[dict[str, Any]] = []
     verdicts: list[dict[str, Any]] = []
     missing_ids: list[str] = []
@@ -357,15 +378,26 @@ async def repair(session, apply: bool = False, **_ignored) -> dict[str, Any]:
                         text(
                             """
                             UPDATE futures_markets
-                            SET llm_sport_category = :llm,
-                                updated_at = NOW()
+                            SET llm_sport_category = :llm
                             WHERE id = ANY(:ids)
                               AND llm_sport_category IS NOT DISTINCT FROM :before
+                            RETURNING id
                             """
                         ),
                         {"llm": llm, "ids": ids, "before": before},
                     )
-                    counts["rows_written"] += result.rowcount or 0
+                    # CERT-2382 follow-up `4229-D51-RESTORE-TRACKS-ACTUAL-WRITES`
+                    # — RETURNING, not rowcount, and the difference is the whole
+                    # point. The undo must name the rows that MOVED, not the rows
+                    # we hoped to move. The compare-and-set can legitimately match
+                    # fewer rows than planned (a re-ingest landing between the
+                    # SELECT and the UPDATE is exactly what it exists for), and a
+                    # rowcount tells you HOW MANY matched, never WHICH — so a
+                    # restore built from the plan could write a stale `before`
+                    # over a fresher value, turning the undo into a second defect.
+                    moved = {r[0] for r in result.all()}
+                    counts["rows_written"] += len(moved)
+                    applied.extend(p for p in event_plan if p["id"] in moved)
                 await session.commit()
             except Exception as exc:  # noqa: BLE001 — a blocked write is not a verdict
                 # A statement timeout aborts the whole TRANSACTION, so the
@@ -382,11 +414,16 @@ async def repair(session, apply: bool = False, **_ignored) -> dict[str, Any]:
                     exc,
                 )
 
+    # CERT-2382 follow-up: on an apply the undo is built from what the database
+    # RETURNED, never from the plan. On a dry run nothing moved, so the plan is
+    # the correct basis — it is the undo for the write about to be authorised.
+    undo_basis = applied if apply else planned
+
     if apply and counts["rows_written"]:
         logger.warning(
             "#4229 Polymarket repair applied: %s rows. D51 RESTORE:\n%s",
             counts["rows_written"],
-            restore_sql(planned),
+            restore_sql(undo_basis),
         )
 
     # Gotcha #53: a pass that examined events and wrote nothing says so in a
@@ -401,12 +438,17 @@ async def repair(session, apply: bool = False, **_ignored) -> dict[str, Any]:
         "bound": list(SENATE_EVENT_IDS),
         "counts": counts,
         "planned": planned,
+        # What the database actually moved (RETURNING id). Empty on a dry run.
+        # Reported alongside `planned` rather than instead of it, so a partial
+        # apply is visible as the difference between the two rather than being
+        # smoothed into one number.
+        "applied": applied,
         "refused": refused,
         "verdicts": verdicts,
         "missing_ids": missing_ids,
         # The D51 undo travels WITH the plan, on the dry run too — an operator
         # reads the restore before deciding to apply, not afterwards in a log
         # line they have to go and find.
-        "restore_sql": restore_sql(planned),
+        "restore_sql": restore_sql(undo_basis),
         "terminal": terminal,
     }

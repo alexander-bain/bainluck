@@ -1347,6 +1347,39 @@ jobs:
             exit 1
           fi
 
+      - name: "#4229 Polymarket senate repair preserves the observation clock (real Postgres)"
+        # CERT-2382 blocked the first SHA because the UPDATE carried
+        # `updated_at = NOW()`, and this table's `updated_at` is RENDERED on the
+        # card as the market's own relative date — the Fed Chair card's
+        # before-LOOK reads `May 17`. Stamping it would have left four-month-old
+        # prices unchanged while presenting them as observed just now.
+        #
+        # This clause cannot be pinned by a source scan, and that is the whole
+        # reason for the file. `FuturesMarket.updated_at` is `onupdate=func.now()`,
+        # which fires for Core/ORM `update()` and not for the `text()` this rail
+        # uses. So "the timestamp survives" rests on an interaction between a
+        # column default and a statement style, neither visible in the repair's
+        # source: switching to `sqlalchemy.update()` would keep every scan green
+        # and bump the clock on every repaired row.
+        #
+        # Two-armed like its neighbours: the hockey control is forced INSIDE the
+        # id bound so only the venue's per-event verdict can spare it, AND
+        # `test_a_repair_that_stamps_the_clock_cannot_pass_this` executes the
+        # blocked statement and requires the timestamp assertion to fail. Green
+        # means the clock is preserved AND that preserving it was proved
+        # necessary.
+        #
+        # Same skip-detection as every gate in this job: adding the file is not
+        # adding the gate.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_polymarket_senate_category_4229_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/senate4229pm.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/senate4229pm.txt; then
+            echo "::error::#4229 Polymarket senate repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

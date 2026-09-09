@@ -310,10 +310,15 @@ class _Result:
 
 
 class _StubSession:
-    """The three statement shapes `repair()` issues, and nothing else."""
+    """The three statement shapes `repair()` issues, and nothing else.
 
-    def __init__(self, rows_by_event):
+    `moves` lets a test say which ids the compare-and-set actually matched, so a
+    PARTIAL apply can be driven. Default None means "all of them".
+    """
+
+    def __init__(self, rows_by_event, moves=None):
         self.rows_by_event = rows_by_event
+        self.moves = moves
         self.updates: list[dict] = []
         self.commits = 0
         self.rollbacks = 0
@@ -326,7 +331,11 @@ class _StubSession:
             return _Result(self.rows_by_event.get(params["eid"], []))
         if "UPDATE" in sql.upper():
             self.updates.append(dict(params))
-            return _Result(rowcount=len(params["ids"]))
+            # RETURNING id — the rail reads WHICH rows moved, not how many.
+            ids = params["ids"] if self.moves is None else [
+                i for i in params["ids"] if i in self.moves
+            ]
+            return _Result([(i,) for i in ids], rowcount=len(ids))
         raise AssertionError(f"unexpected statement:\n{sql}")
 
     async def commit(self):
@@ -413,6 +422,54 @@ def test_an_apply_writes_the_planned_rows_and_compare_and_sets(monkeypatch):
     # 🔴 The compare-and-set value. Without it a re-ingest that landed between
     # the SELECT and the UPDATE is clobbered by a verdict computed before it.
     assert write["before"] == "hockey"
+    # The undo is built from what moved, and here everything did.
+    assert sorted(p["id"] for p in out["applied"]) == [114420, 114421]
+
+
+def test_a_partial_compare_and_set_restores_only_the_rows_that_moved(monkeypatch):
+    """🔴 CERT-2382's nonblocking follow-up `4229-D51-RESTORE-TRACKS-ACTUAL-WRITES`.
+
+    The compare-and-set is allowed to match fewer rows than planned — a
+    re-ingest landing between the SELECT and the UPDATE is exactly what it is
+    for. A rowcount says HOW MANY matched and never WHICH, so an undo built from
+    the plan would write a stale `before` over the fresher value that caused the
+    miss, turning the restore into a second defect. `RETURNING id` is what makes
+    it exact.
+    """
+    session = _StubSession(
+        {
+            "162276": [
+                _Row(114420, "Fed chair", "open", "hockey"),
+                _Row(114421, "Fed chair leg", "open", "hockey"),
+            ]
+        },
+        moves={114420},  # 114421 was re-ingested underneath us
+    )
+    monkeypatch.setattr(rail, "SENATE_EVENT_IDS", ("162276",))
+
+    out = _run(session, monkeypatch, {"162276": SUBJECT_FED_CHAIR}, apply=True)
+
+    assert out["counts"]["rows_written"] == 1
+    assert [p["id"] for p in out["applied"]] == [114420]
+    assert len(out["planned"]) == 2, "the plan still records what was intended"
+    assert "114420" in out["restore_sql"]
+    assert "114421" not in out["restore_sql"], (
+        "the undo names a row the database never moved; restoring it would "
+        "overwrite the fresher value that caused the compare-and-set to miss"
+    )
+
+
+def test_a_dry_runs_restore_is_built_from_the_plan(monkeypatch):
+    """Nothing moved, so `applied` is empty — but the operator still needs the undo."""
+    session = _StubSession({"162276": [_Row(114420, "Fed chair", "open", "hockey")]})
+    monkeypatch.setattr(rail, "SENATE_EVENT_IDS", ("162276",))
+
+    out = _run(session, monkeypatch, {"162276": SUBJECT_FED_CHAIR}, apply=False)
+
+    assert out["applied"] == []
+    assert "114420" in out["restore_sql"], (
+        "a dry run must still show the undo for the write it is proposing"
+    )
 
 
 def test_a_transient_venue_failure_is_never_a_verdict(monkeypatch):
@@ -474,9 +531,32 @@ def test_the_update_writes_only_llm_sport_category():
             for part in set_clause.split(",")
             if "=" in part
         }
-        assert assigned == {"LLM_SPORT_CATEGORY", "UPDATED_AT"}, (
+        assert assigned == {"LLM_SPORT_CATEGORY"}, (
             f"the UPDATE assigns {sorted(assigned)}; this rail writes exactly "
-            "llm_sport_category (plus its touch stamp)."
+            "llm_sport_category and nothing else."
+        )
+
+
+def test_the_update_never_touches_the_observation_clock():
+    """🔴 CERT-2382's required repair, `4229-PRESERVE-THE-MARKETS-OBSERVATION-CLOCK`.
+
+    The first SHA carried `updated_at = NOW()` in the UPDATE, out of habit. On
+    this table `updated_at` is not bookkeeping — **the card renders it as its own
+    relative date.** The Fed Chair card's before-LOOK reads `May 17` in the
+    corner, which IS the 115-day staleness shown to a reader. Stamping NOW()
+    would have left four-month-old prices unchanged while presenting them as
+    observed just now: a TRUTH regression introduced by the TRUTH repair.
+
+    Its own test rather than a clause of the one above, because the assertion
+    above is about SCOPE (one column) and this is about a specific column being
+    reader-visible. Merging them would let a future edit that re-adds the stamp
+    fail with a message about scope, which is not what a reader needs to be told.
+    """
+    for sql in _sql_statements():
+        assert "UPDATED_AT" not in sql.upper(), (
+            "the repair writes `updated_at`. That column is rendered on the card "
+            "as the market's own relative date, so stamping it would present "
+            f"unchanged stale prices as fresh:\n{sql}"
         )
 
 
