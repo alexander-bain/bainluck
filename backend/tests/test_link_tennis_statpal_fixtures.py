@@ -393,9 +393,18 @@ class TestTheDoublesDrawOnTheDayItWasBuilt:
     three that link, one of the seven ghost/real twins, and BOTH of the day's
     real misses. The event rows are production's, read the same minute.
 
-    Read as a whole it is also the ship's measurement: 12 doubles fixtures live
-    on the board, 3 link, 7 are ambiguous because we hold two rows for the match
-    (#2878), 2 miss on a name shape (#4095). Nothing in it is fabricated.
+    Read as a whole it is also the ship's measurement. As built: 12 doubles
+    fixtures live on the board, 3 link, 7 are ambiguous because we hold two rows
+    for the match (#2878), 2 miss on a name shape (#4095). Nothing in it is
+    fabricated.
+
+    **#4095 has since been fixed**, and on this payload the two name-shape misses
+    are gone: `Carpico/ Filin` links to the row whose surname carries the
+    initial, and `Hsieh S-/Ostapenko` stops being a miss and is reported as the
+    twin it always was. Carried to the whole board that is 4 link, 8 ambiguous,
+    0 name-shape misses — the second and third of those are read off this
+    payload's two rows and not re-measured against the live board, which has
+    moved on.
     """
 
     def test_the_pinned_doubles_payload_is_what_the_docstring_says(self):
@@ -466,22 +475,62 @@ class TestTheDoublesDrawOnTheDayItWasBuilt:
         "home,ours",
         [("Carpico/ Filin", "Carpico / Filin N"), ("Hsieh S-/Ostapenko", "Hsieh S-W / Ostapenko")],
     )
-    def test_the_two_real_misses_are_a_name_shape_and_are_reported(self, home, ours):
-        """Both of the day's misses, pinned as misses on purpose (#4095).
+    def test_neither_of_the_days_two_name_shape_misses_is_a_miss_any_more(
+        self, home, ours
+    ):
+        """The two rows #4095 was filed for, flipped. This test was the flip.
 
-        Neither is an absence — we hold the match. `doubles_key` is a pair of
-        whole folded surnames with no initial slot, so our `Filin N` and
-        StatPal's `Filin` are two different surnames, as are `Hsieh S-W` and
-        `Hsieh S-`. Widening that key is a change to the identity the AGREEMENT
-        row is scored on, so it is filed rather than smuggled in here; this test
-        holds the exact shape so the fix has something to flip.
+        As pinned, both were `UNMATCHED`: `doubles_key` was a pair of whole
+        folded surnames with no initial slot, so our `Filin N` and StatPal's
+        `Filin` read as two different surnames, as did `Hsieh S-W` and
+        `Hsieh S-`. Neither was ever an absence — we held both matches, and the
+        first assertion below is what says so.
+
+        `doubles_teams_agree` now compares each player under `keys_agree`, the
+        rule the singles arm already obeyed, so a disambiguating initial stops
+        making a row unjoinable. What each fixture becomes is asserted
+        separately below, because they do NOT become the same thing and the
+        difference is the point.
         """
         assert any(
             ours in (c["home"], c["away"]) for c in LIVE_POOL
-        ), "the row we miss is in the pool — this is a miss, not an absence"
-        verdict, matches = classify_fixture(_doubles_by_players(home), LIVE_POOL)
-        assert verdict == VERDICT_UNMATCHED
-        assert matches == []
+        ), "the row we missed is in the pool — this was a miss, not an absence"
+        verdict, _ = classify_fixture(_doubles_by_players(home), LIVE_POOL)
+        assert verdict != VERDICT_UNMATCHED
+
+    def test_the_filin_fixture_links_to_the_row_whose_surname_carries_the_initial(
+        self,
+    ):
+        """`Carpico/ Filin` → our `Carpico / Filin N`. One row, so a clean link.
+
+        The ship of #4095 in one assertion: a real US Open doubles match that
+        StatPal held and we held, joined at last.
+        """
+        verdict, matches = classify_fixture(
+            _doubles_by_players("Carpico/ Filin"), LIVE_POOL
+        )
+        assert verdict == VERDICT_LINK
+        assert [m["id"] for m in matches] == [15306271]
+
+    def test_the_hsieh_fixture_is_reported_as_the_twin_it_always_was(self):
+        """`Hsieh S-/Ostapenko` → AMBIGUOUS over BOTH spellings we hold.
+
+        Not a disappointment, and not a widening that went too far. Our register
+        holds `Hsieh S-W / Ostapenko` (15307368, `tennis_wta`) beside
+        `Hsieh/Ostapenko` (15307402, `tennis_other`) — two rows for one match,
+        the #2878 shape, seven of which were already on this board. Before the
+        fix the fixture agreed with neither and read as *"StatPal has a match we
+        do not"*, which was false. Now it agrees with both and says so.
+
+        Stamping either one buries the twin (D35, #2693), so the refusal is the
+        correct outcome, and it is strictly more informative than the miss it
+        replaces: it names the two rows.
+        """
+        verdict, matches = classify_fixture(
+            _doubles_by_players("Hsieh S-/Ostapenko"), LIVE_POOL
+        )
+        assert verdict == VERDICT_AMBIGUOUS
+        assert sorted(m["id"] for m in matches) == [15307368, 15307402]
 
 
 class TestTheWindow:

@@ -64,10 +64,12 @@ joined on 2026-09-08 carried an anchor.
 Refusing the population was the right first move and the wrong resting place:
 the reason the fallback failed is that it read a pair as a bag of tokens, and
 `authority_tennis_names.tennis_names_agree` — the identity the AGREEMENT row has
-been scored on since CERT-1948 — does not. It keys a doubles side on
-`doubles_key`, the sorted pair of folded surnames, and a doubles name can never
-equal a singles key, so the hits that motivated the refusal are unreachable by
-construction rather than by exclusion. Both teams must agree, in one orientation
+been scored on since CERT-1948 — does not. It reads a doubles side as a pair of
+`(surname, initial)` keys (`doubles_teams_agree`), and a doubles name can never
+agree with a singles one, so the hits that motivated the refusal are unreachable
+by construction rather than by exclusion. Until #4095 that comparison was whole
+folded strings, which made a side carrying an initial — our `Filin N` against
+StatPal's `Filin` — permanently unjoinable. Both teams must agree, in one orientation
 or the other; **one team agreeing is not a match** — `Guarachi/Sherif` v
 `Danilina/Krunic` and our `Maria/Sonmez` v `Danilina/Krunic` are two different
 matches in one draw, eight hours apart, and a one-team rule pairs them.

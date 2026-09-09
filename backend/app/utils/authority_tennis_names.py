@@ -151,6 +151,35 @@ under both separator spellings, 2 with the partners in the opposite order
 (``Golubic / Waltert`` beside ``Waltert/Golubic``) — and none is two different
 teams.
 
+**A doubles side takes an initial too, and for a while that made it unjoinable
+(#4095).** The pair was compared as whole folded strings, so our ``Filin N``
+and StatPal's ``Filin`` were two different surnames — the initial that exists
+to tell two players apart was instead the thing that hid the row. Measured on
+the live US Open doubles board of 2026-09-08 it cost 2 of the 12 matches, and
+neither was an absence: we held both.
+
+So the join is :func:`doubles_teams_agree`, each player under the same
+``(surname, initial)`` rule the singles arm obeys, and both arms now answer to
+one relation. A doubles side is written surname-FIRST by both vocabularies
+(``Filin N``, ``Hsieh S-W``, ``Hsieh S-``) where a singles one is written
+initials-first, so the initials are the TRAILING single-character tokens; that
+is the only difference between the two parsers.
+
+Swept over the same corpus: **50 of 1,674 doubles names carry an initial at
+all**, agreeing pairs among our own register go 159 → 177, none is lost, and
+every one of the 18 gained is one team written two ways (``Rojer J-J /
+Winegar`` beside ``Rojer/Winegar``). The widening is initial-AWARE and never
+initial-DROPPING — two initials both present and differing is still a refusal,
+because dropping it is the reduction that fused ``Damm`` with ``Damm Jr``.
+
+:func:`doubles_key` did NOT move, and that is deliberate. It stays the pair of
+whole folded strings, so what ``register_identity``, the twin sweep's block key
+and the agreement row's denominator score on is unchanged. The consequence is
+that where our register holds one team under two spellings the fixture now
+agrees with BOTH and :func:`resolve_tennis_name` refuses as ``AMBIGUOUS``
+naming them — the twin (#2878) reported instead of one of its halves silently
+stamped.
+
 ═══ WHICH DIRECTION THIS FAILS IN ═══
 
 A false AGREEMENT is silent: a substitution goes undetected and the agreement row
@@ -464,10 +493,18 @@ def is_doubles_name(name: object) -> bool:
 
 
 def doubles_key(name: object) -> Optional[DoublesKey]:
-    """The unordered pair of surnames, or ``None`` if this is not a clean pair.
+    """The unordered pair of side strings, or ``None`` if this is not a clean pair.
 
     ``None`` rather than a one-element set for a malformed pair: a doubles row we
     cannot read into two players is a row to report, not to half-match.
+
+    **This is the IDENTITY, not the join.** Two of our own rows share it iff they
+    are written identically down to the initial, which is what
+    :func:`register_identity`, the twin sweep's block key and the agreement row's
+    denominator are scored on. Whether one of our names and a StatPal name are
+    the same TEAM is :func:`doubles_teams_agree`, and it is deliberately a
+    different and looser question — see that function for why the two cannot be
+    the same relation.
     """
     if not is_doubles_name(name):
         return None
@@ -477,6 +514,113 @@ def doubles_key(name: object) -> Optional[DoublesKey]:
     if len(parts) != 2:
         return None
     return tuple(sorted(parts))
+
+
+def _doubles_player_key(folded: str) -> Optional[TennisKey]:
+    """One side of a doubles pair as ``(surname, initial)``, already folded.
+
+    A doubles side is written SURNAME-FIRST by both vocabularies — ours spells
+    ``Filin N`` and ``Hsieh S-W``, StatPal spells ``Filin`` and ``Hsieh S-`` —
+    which is the opposite of the singles shape :func:`statpal_tennis_key` reads
+    and the reason this is its own parser rather than a reuse of that one.
+
+    So the initials are the TRAILING single-character tokens, and the surname is
+    everything before them, whole and possibly multi-token: ``roger vasselin``
+    and ``melichar martinez`` keep both of theirs. Only a trailing run is
+    stripped, never a leading one — a leading single character is how
+    ``O'Connell`` folds, and treating it as an initial is the prefix-as-cover
+    mistake the module header measures.
+
+    ``None`` when nothing is left that could be a surname. A side that is
+    initials all the way down (``S-``, ``J R``) names no one, and matching it to
+    whatever shares a letter is the silent failure this module is biased
+    against — the same refusal :func:`statpal_tennis_key` makes for
+    initials-only singles.
+    """
+    toks = folded.split()
+    initials: list[str] = []
+    # Strip the whole trailing run, including a side that is nothing BUT
+    # initials — the emptiness left behind is what the refusal below reads. An
+    # earlier cut stopped at the last token and then re-tested it for length,
+    # which said the same thing twice: mutating either clause left the other
+    # answering for it, so neither was under test.
+    while toks and len(toks[-1]) == 1:
+        initials.append(toks.pop())
+    if not toks:
+        return None
+    # `initials` was filled right-to-left, so its LAST entry is the first
+    # initial as written — the given-name initial, which is the one
+    # `statpal_tennis_key` compares on the singles side.
+    return (" ".join(toks), initials[-1] if initials else None)
+
+
+def doubles_side_keys(name: object) -> Optional[tuple[TennisKey, TennisKey]]:
+    """The two ``(surname, initial)`` keys a doubles name names, in written order.
+
+    ``None`` for anything that is not two readable players, so a caller can never
+    half-match a malformed pair. Written order rather than sorted, because the
+    pairing is decided by :func:`doubles_teams_agree` trying both orientations —
+    a canonical sort would have to order ``None`` against a letter in the initial
+    slot, which is a comparison with no meaning and, on two players who share a
+    surname, a ``TypeError``.
+    """
+    if not is_doubles_name(name):
+        return None
+    assert isinstance(name, str)
+    parts = [fold_tennis_name(p) for p in name.split("/")]
+    parts = [p for p in parts if p]
+    if len(parts) != 2:
+        return None
+    first, second = (_doubles_player_key(p) for p in parts)
+    if first is None or second is None:
+        return None
+    return (first, second)
+
+
+def doubles_teams_agree(ours: object, theirs: object) -> bool:
+    """Are these two doubles names the same TEAM?
+
+    Both sides must be readable pairs, so a doubles name can never agree with a
+    singles one — the wall :func:`tennis_names_agree` depends on, and the reason
+    the doubles-to-singles hits that closed #2867's arm are unreachable rather
+    than excluded afterwards.
+
+    Each player is then compared under :func:`keys_agree`, the same rule the
+    singles join obeys: **the surname whole and equal, the initial deciding only
+    when both sides carry one.** Partner order carries no information, so both
+    pairings are tried.
+
+    ═══ WHY THIS IS NOT `doubles_key` EQUALITY (#4095) ═══
+
+    It used to be. Measured against the live US Open doubles board on
+    2026-09-08, that cost two of the twelve matches — StatPal's ``Carpico/
+    Filin`` against our ``Carpico / Filin N``, and its ``Hsieh S-/Ostapenko``
+    against our ``Hsieh S-W / Ostapenko``. Neither was an absence: we held both
+    matches. Whole-string equality reads ``filin n`` and ``filin`` as two
+    different surnames, so **a disambiguating initial made the row unjoinable**,
+    which is the exact inverse of what an initial is for.
+
+    The widening is initial-AWARE and never initial-DROPPING, and the difference
+    is the whole safety argument. Deleting the initial would fuse ``Filin`` with
+    ``Filin N`` unconditionally — the shape that fused ``Damm`` with ``Damm Jr``
+    (CERT-1890), two real players in real draws. Under `keys_agree` a MISSING
+    initial reads as *unknown* and an initial that is PRESENT on both sides and
+    differs is a refusal, so two Hsiehs stay two Hsiehs.
+
+    What the widening does not do is decide anything for us. Where our register
+    holds the same team under two spellings — ``Hsieh S-W / Ostapenko`` beside
+    ``Hsieh/Ostapenko``, both real rows on the day — the fixture now agrees with
+    BOTH, `register_identity` keeps them apart, and `resolve_tennis_name`
+    refuses as AMBIGUOUS naming the two. That is the loud failure this module is
+    biased toward, and it is the correct reading: the two rows are a twin
+    (#2878, D39/#2693), and stamping either one buries it.
+    """
+    a, b = doubles_side_keys(ours), doubles_side_keys(theirs)
+    if a is None or b is None:
+        return False
+    straight = keys_agree(a[0], b[0]) and keys_agree(a[1], b[1])
+    crossed = keys_agree(a[0], b[1]) and keys_agree(a[1], b[0])
+    return straight or crossed
 
 
 def statpal_tennis_key(name: object) -> Optional[TennisKey]:
@@ -590,10 +734,15 @@ def tennis_names_agree(ours: object, theirs: object) -> bool:
     matches a singles name: the two populations are different draws and
     conflating them is what produces a phantom "missing from our DB" gap, since
     doubles outnumber singles better than 2:1 on a US Open day.
+
+    Both arms now obey ONE identity rule — `keys_agree` on `(surname, initial)`
+    — and the arms differ only in how many players a side has and in which end
+    of the string the initial sits at. Until #4095 the doubles arm was
+    whole-string equality instead, which is why the same initial that
+    disambiguates a singles player made a doubles row unjoinable.
     """
     if is_doubles_name(ours) or is_doubles_name(theirs):
-        ours_pair, theirs_pair = doubles_key(ours), doubles_key(theirs)
-        return ours_pair is not None and ours_pair == theirs_pair
+        return doubles_teams_agree(ours, theirs)
     theirs_key = statpal_tennis_key(theirs)
     if theirs_key is None:
         return False
