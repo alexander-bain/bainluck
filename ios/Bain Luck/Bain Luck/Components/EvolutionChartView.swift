@@ -70,6 +70,10 @@ struct EvolutionChartView: View {
     @State private var selectedRange: EvolutionTimeRange = .week
     @State private var crosshair: CrosshairData?
 
+    /// #4373 — the leaderboard's numeric columns are measured in the face they are
+    /// drawn in, so they need the size the reader is actually at.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     // MARK: - Colors
 
     /// 10-color palette matching the web EvolutionChart, optimized for light backgrounds.
@@ -565,23 +569,14 @@ struct EvolutionChartView: View {
     // MARK: - Leaderboard Grid
 
     private var leaderboardGrid: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("#")
-                    .frame(width: 24, alignment: .leading)
-                Text("Participant")
-                Spacer()
-                Text("Prob")
-                    .frame(width: 50, alignment: .trailing)
-                Text("24h")
-                    .frame(width: 50, alignment: .trailing)
-            }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal)
-            .padding(.vertical, 6)
-            .background(Color.cardBackground.opacity(0.5))
+        // #4373 — sized ONCE, here, off the outcomes this render is about to draw,
+        // and handed to the header and every row. Two callers measuring separately
+        // is how a header stops sitting over its own column.
+        let columns = EvolutionLeaderboardGeometry.columns(
+            for: displayedOutcomes, at: dynamicTypeSize)
+
+        return VStack(spacing: 0) {
+            EvolutionLeaderboardHeader(columns: columns)
 
             Divider()
 
@@ -589,88 +584,17 @@ struct EvolutionChartView: View {
                 let isSelected = effectiveSelected.contains(outcome.name)
                 let isHighlighted = highlightedName == nil || highlightedName == outcome.name
                 let color = colorForOutcome(name: outcome.name, index: index)
-                let probPct = (outcome.currentProbability ?? 0) * 100
-                let changePct = (outcome.probabilityChange24h ?? 0) * 100
 
                 Button {
                     toggleSelection(outcome.name)
                 } label: {
-                    HStack(spacing: 6) {
-                        // Position + color dot
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(color)
-                                .frame(width: 6, height: 6)
-                                .opacity(isSelected ? 1 : 0.3)
-                            Text("\(index + 1)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(width: 24, alignment: .leading)
-
-                        // Logo + Name
-                        if let logo = outcome.logoSmall {
-                            TeamLogoView(
-                                url: logo,
-                                teamName: outcome.name,
-                                color: color,
-                                size: 18
-                            )
-                        }
-                        Text(outcome.name)
-                            .font(.subheadline)
-                            .fontWeight(isSelected ? .semibold : .regular)
-                            .foregroundStyle(isSelected ? .primary : .secondary)
-                            .lineLimit(1)
-                            .opacity(isHighlighted ? 1 : 0.4)
-
-                        if let record = outcome.record {
-                            Text(record)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-
-                        Spacer()
-
-                        // Probability with mini bar
-                        HStack(spacing: 4) {
-                            GeometryReader { geo in
-                                ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(Color.barTrack.opacity(0.3))
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(color.opacity(0.6))
-                                        .frame(width: geo.size.width * min(1, probPct / 100))
-                                }
-                            }
-                            .frame(width: 24, height: 4)
-
-                            Text(probPct < 1 && probPct > 0
-                                 ? String(format: "%.1f%%", probPct)
-                                 : "\(Int(probPct.rounded()))%")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .monospacedDigit()
-                                .foregroundStyle(.primary)
-                        }
-                        .frame(width: 50, alignment: .trailing)
-
-                        // 24h change
-                        Text(changePct > 0 ? "+\(String(format: "%.1f", changePct))%"
-                             : changePct < 0 ? "\(String(format: "%.1f", changePct))%"
-                             : "-")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .monospacedDigit()
-                            .foregroundStyle(
-                                changePct > 0 ? .green :
-                                changePct < 0 ? .red : .secondary
-                            )
-                            .frame(width: 50, alignment: .trailing)
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(isSelected ? Color.accentColor.opacity(0.05) : Color.clear)
+                    EvolutionLeaderboardRow(
+                        position: index + 1,
+                        outcome: outcome,
+                        color: color,
+                        isSelected: isSelected,
+                        isHighlighted: isHighlighted,
+                        columns: columns)
                 }
                 .buttonStyle(.plain)
                 .simultaneousGesture(
@@ -722,6 +646,131 @@ struct EvolutionChartView: View {
 
 /// The Evolution chart's control bar, as its own view so the suite can host and
 /// measure the real thing rather than a model of it (#4199).
+/// The leaderboard's column headings.
+///
+/// Extracted with `EvolutionLeaderboardRow` (#4373) so the header and the rows are
+/// the same two widths by construction rather than by two people remembering to
+/// change both — the previous pair of `50`s had already stopped matching what was
+/// under them.
+struct EvolutionLeaderboardHeader: View {
+    let columns: EvolutionLeaderboardGeometry.Columns
+
+    var body: some View {
+        HStack {
+            Text("#")
+                .frame(width: 24, alignment: .leading)
+            Text("Participant")
+            Spacer()
+            Text("Prob")
+                .frame(width: columns.prob, alignment: .trailing)
+            if let change = columns.change {
+                Text("24h")
+                    .frame(width: change, alignment: .trailing)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+        .background(Color.cardBackground.opacity(0.5))
+    }
+}
+
+/// One leaderboard row: position, participant, probability, 24-hour change.
+///
+/// 🔴 #4373 — THE MINI BAR IS GONE FROM THE `Prob` CELL, and that is the fix.
+/// `EvolutionLeaderboardGeometry` carries the measurements; the short version is
+/// that a 50pt cell spent 28 of its points on a 24pt bar and left 22 for a number
+/// that needs 43.5, so the number wrapped its percent sign onto a second line on
+/// every row of every leaderboard at every width.
+///
+/// The number is `lineLimit(1)` as well as measured. The measurement is what makes
+/// it fit; the line limit is what makes a future miss show up as a clipped digit
+/// rather than as this defect coming quietly back.
+struct EvolutionLeaderboardRow: View {
+    let position: Int
+    let outcome: TimelineOutcomeMeta
+    let color: Color
+    let isSelected: Bool
+    let isHighlighted: Bool
+    let columns: EvolutionLeaderboardGeometry.Columns
+
+    private var probPct: Double { (outcome.currentProbability ?? 0) * 100 }
+    private var changePct: Double { (outcome.probabilityChange24h ?? 0) * 100 }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // Position + color dot
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
+                    .opacity(isSelected ? 1 : 0.3)
+                Text("\(position)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 24, alignment: .leading)
+
+            // Logo + Name
+            if let logo = outcome.logoSmall {
+                TeamLogoView(
+                    url: logo,
+                    teamName: outcome.name,
+                    color: color,
+                    size: 18
+                )
+            }
+            Text(outcome.name)
+                .font(.subheadline)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .lineLimit(1)
+                .opacity(isHighlighted ? 1 : 0.4)
+
+            if let record = outcome.record {
+                Text(record)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+
+            Text(EvolutionLeaderboardGeometry.probLabel(probPct))
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+                .lineLimit(1)
+                .foregroundStyle(.primary)
+                .frame(width: columns.prob, alignment: .trailing)
+
+            if let change = columns.change {
+                Text(EvolutionLeaderboardGeometry.changeLabel(changePct))
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .foregroundStyle(
+                        changePct > 0 ? .green :
+                        changePct < 0 ? .red : .secondary
+                    )
+                    .frame(width: change, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(isSelected ? Color.accentColor.opacity(0.05) : Color.clear)
+        // The delta leaves the SCREEN at accessibility sizes, never the row. Said
+        // as one sentence because four separate elements is four swipes to learn
+        // one line of a table.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(position). \(outcome.name), "
+            + "\(EvolutionLeaderboardGeometry.probLabel(probPct)), "
+            + EvolutionLeaderboardGeometry.spokenChange(changePct))
+    }
+}
+
 struct EvolutionControlBar: View {
     /// Chip padding for the two single-row arms, roomiest first.
     ///
