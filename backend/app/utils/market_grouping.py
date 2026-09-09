@@ -912,7 +912,25 @@ def extract_container_member_entities(names: list[str]) -> Optional[list[str]]:
         # Digits are deliberately NOT banned here: "Schalke 04" is a real
         # entity, and refusing it would cost a legitimate soccer field to catch
         # cases these three characters already catch.
-        if any(t in entity for t in (":", "(", ")")) or " vs " in entity.lower():
+        #
+        # #4223 adds the question mark, which is the same rule and the plainest
+        # case of it: no name ends in "?". Seven of the twelve field cards on
+        # /sports were reading
+        #
+        #   Major League Cricket: Texas Super Kings vs Seattle Orcas
+        #     Orcas 100% | Orcas - Completed match? 100% | Orcas - Who wins the toss? 100%
+        #
+        # — three different questions about one fixture, folded because they
+        # share a long prefix, with the toss question printed as a contender.
+        # Measured over 153 at-risk production groups the same night: 88 fold
+        # today and 42 of those produce an entity carrying a "?" — dates and
+        # dollar amounts as well as question tails ("$1.2T?", "December 31?").
+        # Not one legitimate entity in the sample contained one.
+        #
+        # A space-padded dash was measured alongside it and deliberately NOT
+        # banned: it costs 0 additional groups in that sample, so it would be a
+        # rule with no case, and reserve-team names ("Bayern - II") are real.
+        if any(t in entity for t in (":", "(", ")", "?")) or " vs " in entity.lower():
             return None
         entities.append(entity)
     if len(set(entities)) != len(entities):
