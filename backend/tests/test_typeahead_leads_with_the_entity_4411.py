@@ -422,3 +422,60 @@ class TestTheLastMatchArm:
     def test_it_excludes_proven_duplicates(self):
         """#2263 / CERT-439 — two slots on one game is its own complaint."""
         assert self._sql().count("commence_time") >= 2
+
+    def test_the_arm_is_actually_REACHED_from_the_dropdown(self):
+        """THE MUTATION THAT SURVIVED EVERYTHING ELSE IN THIS FILE.
+
+        Replacing `if not _ta_rows:` with `if False:` leaves the query perfect,
+        every test above green, and `alcaraz` back to five props and no match —
+        because a query nobody calls ranks nothing. A pure function proves the
+        SHAPE of the arm and says nothing about its REACH, and reach is the
+        entire recall half of #4411.
+
+        Read as an AST rather than as a substring on purpose: the property is
+        "the pool assembly calls this, and calls it conditionally", which
+        survives reformatting, renaming a local and reflowing the branch. A
+        string pin on `if not _ta_rows:` would red on a no-op edit and, worse,
+        would go quietly green if someone kept the line and moved the call out
+        from under it.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from app.routes.events import typeahead_search
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(typeahead_search)))
+
+        def calls_it(node) -> bool:
+            return any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id == "_last_match_query"
+                for n in ast.walk(node)
+            )
+
+        assert calls_it(tree), "the or-last arm is never called — it is dead code"
+
+        conditional = [
+            branch
+            for branch in ast.walk(tree)
+            if isinstance(branch, ast.If) and calls_it(branch)
+        ]
+        assert conditional, "the or-last arm is called unconditionally"
+
+        # ...and the condition must be able to be True. `if False:` was the
+        # mutant that survived the first pass; `if _ta_rows and False:` survived
+        # the fix for it. Both are the same act — switching the half off while
+        # leaving every other test green — so the assertion is on the class:
+        # no falsy literal anywhere in the condition, in any position.
+        for branch in conditional:
+            frozen = [
+                n
+                for n in ast.walk(branch.test)
+                if isinstance(n, ast.Constant) and not n.value
+            ]
+            assert not frozen, (
+                "the or-last arm is guarded by a condition carrying a falsy "
+                f"literal ({[n.value for n in frozen]}) — it can never run"
+            )
