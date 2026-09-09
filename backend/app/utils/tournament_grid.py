@@ -121,7 +121,6 @@ from app.utils.tournament_board import (
 )
 from app.utils.tournament_progress import (
     EMPTY_PROGRESS,
-    VERDICT_OUT,
     VERDICT_REACHED,
     DrawProgress,
 )
