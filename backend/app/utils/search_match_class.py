@@ -444,6 +444,77 @@ def query_names_participant(query: str, participants: Iterable[str | None]) -> b
     return all(t in owned for t in q_tokens)
 
 
+# --- the plural namesake rule (#4411, CERT-2399) ----------------------------
+#
+# `sinner` on production led with "Counter-Strike: NIP vs Sinners - Map 1
+# Winner" and "- Map 2 Winner", and Jannik's own US Open field came third. The
+# plural strip is why: `tokens("Sinners")` is `("sinner",)`, so the esports
+# roster is an MC1 name match while the tennis field — which carries "Jannik
+# Sinner" only in its OUTCOMES — is MC4. Class comes first and is inviolable, so
+# a namesake roster beat the player every time.
+#
+# The fix does NOT touch `match_class` or `rank_key`. Every tier property in
+# `test_search_match_class_properties.py` is asserted on those two, and they all
+# hold unchanged, because the rule cannot be expressed per-candidate without
+# breaking a case that matters more:
+#
+#   `yankee` against "New York Yankees" is the SAME SHAPE as `sinner` against
+#   "Sinners" — a singular query reaching a plural name through the fold — and
+#   demoting it would break "typing a team name finds the team".
+#
+# What separates them is not the candidate, it is the RESULT SET. When the user
+# types `sinner`, something in the set really is called that (the outcome
+# "Jannik Sinner"). When they type `yankee`, nothing is: every candidate says
+# "Yankees", so the fold is doing legitimate recall work and must be left alone.
+#
+# Hence two conditions, and the rule fires only when BOTH hold:
+#
+#   1. GATE, over the whole set: some candidate carries every query token
+#      UNFOLDED, as a whole token, in a name/alias/outcome it owns.
+#   2. PER-CANDIDATE: this candidate matched ONLY through the plural fold — it
+#      lands folded and does not land strictly.
+#
+# With the gate closed the penalty is 0 for every candidate and the ordering is
+# byte-for-byte what it was, which is what makes this safe to put in front of a
+# scorer this much depends on.
+
+
+def _owned_text(ev: Evidence) -> tuple[str, ...]:
+    """Every string the candidate owns — the names it answers to and the
+    outcomes it may rank on. The union `match_class` reads across MC0-MC4."""
+    return (*ev.owned_names(), *ev.outcomes)
+
+
+def _query_lands_strictly(query: str, ev: Evidence) -> bool:
+    """Every query token appears UNFOLDED as a whole token in owned text.
+
+    "Strictly" is only about the plural: `_name_tokens` still folds case and
+    accents, because neither ever merges two entities.
+    """
+    q = _name_tokens(query)
+    if not q:
+        return False
+    owned: set[str] = set()
+    for text in _owned_text(ev):
+        if text:
+            owned.update(_name_tokens(text))
+    return bool(owned) and all(t in owned for t in q)
+
+
+def _lands_only_by_plural_fold(query: str, ev: Evidence) -> bool:
+    """The plural strip is the ONLY reason this candidate matched at all."""
+    if _query_lands_strictly(query, ev):
+        return False
+    q = tokens(query)
+    if not q:
+        return False
+    owned: set[str] = set()
+    for text in _owned_text(ev):
+        if text:
+            owned.update(tokens(text))
+    return bool(owned) and all(t in owned for t in q)
+
+
 def rank_key(query: str, ev: Evidence) -> tuple | None:
     """Sort key for one candidate, ascending. None means: do not rank it.
 
@@ -532,12 +603,19 @@ def rank(query: str, candidates: list[tuple[Evidence, object]]) -> list[object]:
     Stable: candidates that tie on the full key keep their input order, so an
     upstream ordering that already means something is preserved rather than
     scrambled.
+
+    Carries the plural-namesake rule (#4411), which is a property of the SET and
+    so cannot live in `rank_key`. Read the block above `_owned_text` for why the
+    gate is what keeps `yankee` working. When the gate is closed — the ordinary
+    case — every penalty is 0 and this returns exactly what it always did.
     """
+    gate = any(_query_lands_strictly(query, ev) for ev, _ in candidates)
     keyed = []
     for i, (ev, payload) in enumerate(candidates):
         k = rank_key(query, ev)
         if k is None:
             continue
-        keyed.append((k, i, payload))
+        namesake = 1 if (gate and _lands_only_by_plural_fold(query, ev)) else 0
+        keyed.append(((namesake, *k), i, payload))
     keyed.sort(key=lambda row: (row[0], row[1]))
     return [payload for _, _, payload in keyed]

@@ -293,7 +293,7 @@ class TestKindOrderRelations:
         So: rank an unpromoted set under the pre-#4411 table and under the
         current one, and require the two orderings to be identical.
         """
-        import app.utils.search_match_class as smc
+        from app.utils import search_match_class as smc
 
         pre_4411 = {
             "event_concept": 0, "concept": 0, "hub": 1,
