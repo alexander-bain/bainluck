@@ -185,11 +185,19 @@ describe("the other direction: a quote on screen keeps the promise", () => {
     expect(section.quotedOutcomes).toBeGreaterThan(0);
   });
 
-  test("the header promises a quote, and a quote is on screen", () => {
+  // NOTICE 34 (#4167). The header no longer PROMISES anything — a promise about
+  // how a number was obtained is a method note, and the ruling puts those in
+  // the PR or a tooltip, never the page body. What the rows do is unchanged and
+  // is what this test now checks directly: the quote and its percentage are on
+  // screen, under the bare state word. The `settledSectionNote` chooser itself
+  // is still total and still unit-tested below; it just no longer feeds the web
+  // render (the Swift string it is mirrored against is untouched).
+  test("a quote is on screen under the state word, with no promise about it", () => {
     const text = visible(render(scoreless, "completed"));
-    expect(text).toContain(SETTLED_QUOTE_SECTION_NOTE);
+    expect(text).toContain(SETTLED_SECTION_NOTE_NO_QUOTES);
     expect(text).toContain(SETTLED_QUOTE_PREFIX);
     expect(text).toMatch(PERCENT_ON_A_ROW);
+    expect(text).not.toContain(SETTLED_QUOTE_SECTION_NOTE);
   });
 
   test("the promise never says 'each' again", () => {
@@ -223,15 +231,21 @@ describe("the MIXED section — #3645's acceptance criterion, and the hard case"
     expect(section.quotedOutcomes).toBeLessThan(section.renderedOutcomes);
   });
 
-  test("both shapes are on screen, and the sentence is true of both", () => {
+  // NOTICE 34 (#4167): the mixed section is the case that made the sentence
+  // hard to write, and it is the case that shows why deleting it costs nothing.
+  // Both row shapes still render under one header; the header now says only
+  // what the section IS. A word that makes no claim about the rows cannot be
+  // false of either shape, which is the whole difficulty this fixture existed
+  // to catch.
+  test("both shapes are on screen, under a header that claims nothing", () => {
     const text = visible(render(twoSetsToLove, "completed"));
     // a stated result...
     expect(text).toMatch(/won Set [12]/);
     // ...and a quote, under one header.
     expect(text).toContain(SETTLED_QUOTE_PREFIX);
-    expect(text).toContain(SETTLED_QUOTE_SECTION_NOTE);
-    // The old sentence would have been false here too: it promised a quote for
-    // EVERY market, and the result rows are markets with none.
+    expect(text).toContain(SETTLED_SECTION_NOTE_NO_QUOTES);
+    // Neither the sentence that was false here nor its predecessor.
+    expect(text).not.toContain(SETTLED_QUOTE_SECTION_NOTE);
     expect(text).not.toContain("showing each market's last quote");
   });
 });
