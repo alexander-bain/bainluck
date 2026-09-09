@@ -1,0 +1,644 @@
+{
+ "captured_at": "2026-09-09T16:35Z",
+ "source": "GET https://api.bainluck.com/api/feed?limit=250",
+ "edition": "b433c96f31941ab7",
+ "note": "the FED & RATES theme bundle exactly as served, plus every compact row the same response rendered. `caption` is feedContextSnippet's futures chain (context_summary, headline, reason, hook_description) — the string the reader actually reads under the question.",
+ "bundle": {
+  "type": "bundle",
+  "score": 90.0,
+  "reason": "What does the Fed do next?",
+  "headline": "Fed & Rates",
+  "data": {
+   "id": "theme:story:macro_rates:109983-113032-60527877",
+   "title": "Fed & Rates",
+   "kind": "theme",
+   "story_key": "story:macro_rates",
+   "shared_question": "What does the Fed do next?",
+   "item_count": 3,
+   "member_ids": [
+    109983,
+    113032,
+    60527877
+   ],
+   "items": [
+    {
+     "type": "futures",
+     "score": 90,
+     "reason": "Hike 25bps (56%) leads Fed decision in Sep 2026?",
+     "headline": "Hike 25bps leads at 56%",
+     "context_summary": "Hike 25bps leads at 56%",
+     "data": {
+      "id": 109983,
+      "name": "Fed decision in Sep 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "economics",
+      "source": "kalshi",
+      "source_count": 2,
+      "sources": [
+       "kalshi",
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-09-16T17:59:00+00:00",
+      "top_outcomes": [
+       {
+        "id": 1602816,
+        "name": "Hike 25bps",
+        "probability": 0.555,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 56
+       },
+       {
+        "id": 1602813,
+        "name": "Fed maintains rate",
+        "probability": 0.445,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 45
+       },
+       {
+        "id": 1602817,
+        "name": "Hike >25bps",
+        "probability": 0.015,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 2
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 5,
+      "canonical_market_key": "economics::championship:2026",
+      "group_id": "kalshi:KXFEDDECISION-26SEP",
+      "group_type": "kalshi_event",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": true,
+       "comparison_theme": "macro_ranges",
+       "threshold_points": [],
+       "distribution_outcomes": [
+        {
+         "label": "Hike 25bps",
+         "probability": 0.555,
+         "movement": null
+        },
+        {
+         "label": "Fed maintains rate",
+         "probability": 0.445,
+         "movement": null
+        },
+        {
+         "label": "Hike >25bps",
+         "probability": 0.015,
+         "movement": null
+        },
+        {
+         "label": "Cut >25bps",
+         "probability": 0.01,
+         "movement": null
+        },
+        {
+         "label": "Cut 25bps",
+         "probability": 0.01,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [
+        "multi_source_consistency_check"
+       ],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution",
+        "bundle_candidate"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/32417524/pexels-photo-32417524.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.5294,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "discover_llm": {
+       "topic": "economics",
+       "subtopic": "fed",
+       "archetype": "other",
+       "audience_scope": "mainstream",
+       "salience_score": 4,
+       "junk_flags": [],
+       "comparison_axes": []
+      },
+      "interestingness_score": 59.87,
+      "interestingness_reasons": [
+       "multi_source",
+       "fresh",
+       "resolving_soon",
+       "trading_volume"
+      ],
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:kalshi",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 62,
+     "reason": "",
+     "headline": "Well off its opening price",
+     "context_summary": "Well off its opening price",
+     "data": {
+      "id": 113032,
+      "name": "How many Fed rate cuts in 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "economics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-12-31T00:00:00+00:00",
+      "top_outcomes": [
+       {
+        "id": 1627056,
+        "name": "0 (0 bps)",
+        "probability": 0.9275,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 93
+       },
+       {
+        "id": 1627054,
+        "name": "1 (25 bps)",
+        "probability": 0.0485,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 5
+       },
+       {
+        "id": 1627052,
+        "name": "2 (50 bps)",
+        "probability": 0.0165,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 2
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 13,
+      "canonical_market_key": null,
+      "group_id": "polymarket:51456",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": true,
+       "comparison_theme": "macro_ranges",
+       "threshold_points": [
+        {
+         "source": "outcome",
+         "label": "0 (0 bps)",
+         "value": 0.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.9275
+        },
+        {
+         "source": "outcome",
+         "label": "1 (25 bps)",
+         "value": 1.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0485
+        },
+        {
+         "source": "outcome",
+         "label": "2 (50 bps)",
+         "value": 2.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0165
+        },
+        {
+         "source": "outcome",
+         "label": "3 (75 bps)",
+         "value": 3.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0035
+        },
+        {
+         "source": "outcome",
+         "label": "4 (100 bps)",
+         "value": 4.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0015
+        },
+        {
+         "source": "outcome",
+         "label": "5 (125 bps)",
+         "value": 5.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0015
+        },
+        {
+         "source": "outcome",
+         "label": "6 (150 bps)",
+         "value": 6.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0005
+        },
+        {
+         "source": "outcome",
+         "label": "7 (175 bps)",
+         "value": 7.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0005
+        },
+        {
+         "source": "outcome",
+         "label": "8 (200 bps)",
+         "value": 8.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0005
+        },
+        {
+         "source": "outcome",
+         "label": "9 (225 bps)",
+         "value": 9.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0005
+        },
+        {
+         "source": "outcome",
+         "label": "10 (250 bps)",
+         "value": 10.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0005
+        },
+        {
+         "source": "outcome",
+         "label": "11 (275 bps)",
+         "value": 11.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.0005
+        }
+       ],
+       "distribution_outcomes": [
+        {
+         "label": "0 (0 bps)",
+         "probability": 0.9275,
+         "movement": null
+        },
+        {
+         "label": "1 (25 bps)",
+         "probability": 0.0485,
+         "movement": null
+        },
+        {
+         "label": "2 (50 bps)",
+         "probability": 0.0165,
+         "movement": null
+        },
+        {
+         "label": "3 (75 bps)",
+         "probability": 0.0035,
+         "movement": null
+        },
+        {
+         "label": "4 (100 bps)",
+         "probability": 0.0015,
+         "movement": null
+        },
+        {
+         "label": "5 (125 bps)",
+         "probability": 0.0015,
+         "movement": null
+        },
+        {
+         "label": "12+ (300+ bps)",
+         "probability": 0.0015,
+         "movement": null
+        },
+        {
+         "label": "6 (150 bps)",
+         "probability": 0.0005,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 5,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values",
+        "bundle_candidate"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/35404568/pexels-photo-35404568.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "discover_llm": {
+       "topic": "economics",
+       "subtopic": "fed",
+       "archetype": "other",
+       "audience_scope": "mainstream",
+       "salience_score": 4,
+       "junk_flags": [],
+       "comparison_axes": []
+      },
+      "interestingness_score": 40.9,
+      "interestingness_reasons": [
+       "fresh",
+       "trading_volume"
+      ],
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 59,
+     "reason": "",
+     "headline": null,
+     "context_summary": "",
+     "data": {
+      "id": 60527877,
+      "name": "How many dissent at the October Fed meeting?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "economics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "quantity",
+      "status": "open",
+      "resolution_date": "2026-10-28T23:59:00+00:00",
+      "top_outcomes": [
+       {
+        "id": 226326811,
+        "name": "3",
+        "probability": 0.25,
+        "rank": 1,
+        "movement": -0.005,
+        "rendered_percent": 25
+       },
+       {
+        "id": 226326813,
+        "name": "2",
+        "probability": 0.217,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 22
+       },
+       {
+        "id": 226326812,
+        "name": "1",
+        "probability": 0.2028,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 20
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 5,
+      "canonical_market_key": null,
+      "group_id": "polymarket:990713",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": true,
+       "comparison_theme": "macro_ranges",
+       "threshold_points": [
+        {
+         "source": "outcome",
+         "label": "4+",
+         "value": 4.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.1651,
+         "needs_sibling_markets": true
+        }
+       ],
+       "distribution_outcomes": [
+        {
+         "label": "3",
+         "probability": 0.25,
+         "movement": -0.005
+        },
+        {
+         "label": "2",
+         "probability": 0.217,
+         "movement": 0.0
+        },
+        {
+         "label": "1",
+         "probability": 0.2028,
+         "movement": 0.0
+        },
+        {
+         "label": "0",
+         "probability": 0.1651,
+         "movement": 0.005
+        },
+        {
+         "label": "4+",
+         "probability": 0.1651,
+         "movement": 0.005
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values",
+        "bundle_candidate"
+       ]
+      },
+      "image_url": null,
+      "image_width": null,
+      "image_height": null,
+      "hook_description": "As central banks grapple with rising inflation and economic uncertainty, the upcoming Federal Reserve meeting could reveal significant divisions among policymakers, signaling a potential shift in monetary policy that could impact markets and consumers alike.",
+      "temporal_badge": "New",
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "interestingness_score": 45.24,
+      "interestingness_reasons": [
+       "decisive_but_not_settled"
+      ],
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    }
+   ],
+   "debug_bundles": {
+    "grouped_by": "story_key",
+    "story_key": "story:macro_rates",
+    "title_source": "authored",
+    "question_source": "authored",
+    "member_ids": [
+     109983,
+     113032,
+     60527877
+    ],
+    "member_names": [
+     "Fed decision in Sep 2026?",
+     "How many Fed rate cuts in 2026?",
+     "How many dissent at the October Fed meeting?"
+    ]
+   }
+  }
+ },
+ "compact_row_census": [
+  {
+   "question": "2028 U.S. Presidential Election winner?",
+   "hero_outcome": "J.D. Vance",
+   "caption": "J.D. Vance leads at 23%"
+  },
+  {
+   "question": "2028 Democratic presidential nominee",
+   "hero_outcome": "Jon Ossoff",
+   "caption": "New favorite: Jon Ossoff (17%)"
+  },
+  {
+   "question": "Best AI at the end of 2026?",
+   "hero_outcome": "Claude",
+   "caption": "Claude leads at 61%"
+  },
+  {
+   "question": "Top AI model in September?",
+   "hero_outcome": "Claude Fable 5.1 Max",
+   "caption": "Claude Fable 5.1 Max leads at 73%"
+  },
+  {
+   "question": "Oscar Winner: Best Picture",
+   "hero_outcome": "The Odyssey",
+   "caption": "The Odyssey leads at 41%"
+  },
+  {
+   "question": "Daytime Emmy Awards: Outstanding Main Title and Graphic Design for a Daytime Program",
+   "hero_outcome": "The Drew Barrymore Show",
+   "caption": "New favorite: The Drew Barrymore Show (50%)"
+  },
+  {
+   "question": "Fed decision in Sep 2026?",
+   "hero_outcome": "Hike 25bps",
+   "caption": "Hike 25bps leads at 56%"
+  },
+  {
+   "question": "How many Fed rate cuts in 2026?",
+   "hero_outcome": "0 (0 bps)",
+   "caption": "Well off its opening price"
+  },
+  {
+   "question": "How many dissent at the October Fed meeting?",
+   "hero_outcome": "3",
+   "caption": "As central banks grapple with rising inflation and economic uncertainty, the upcoming Federal Reserve meeting could reveal significant divisions among policymakers, signaling a potential shift in monetary policy that could impact markets and consumers alike."
+  },
+  {
+   "question": "US Open Men's Singles Winner",
+   "hero_outcome": "Alexander Zverev",
+   "caption": "New favorite: Alexander Zverev (30%)"
+  },
+  {
+   "question": "2026 Women’s US Open Winner (Tennis)",
+   "hero_outcome": "Aryna Sabalenka",
+   "caption": "Aryna Sabalenka leads at 35%"
+  },
+  {
+   "question": "Will the U.S. invade Iran before 2027?",
+   "hero_outcome": "Yes",
+   "caption": ""
+  },
+  {
+   "question": "Will the Iranian regime fall before 2027?",
+   "hero_outcome": "Yes",
+   "caption": "Well off its opening price"
+  },
+  {
+   "question": "Who will be the next Prime Minister of Israel after the next election?",
+   "hero_outcome": "Gadi Eizenkot",
+   "caption": "Gadi Eizenkot leads at 58%"
+  },
+  {
+   "question": "When will traffic at the Strait of Hormuz return to normal?",
+   "hero_outcome": "Before Jan 1, 2029",
+   "caption": "Before Jan 1, 2029 leads at 71%"
+  },
+  {
+   "question": "Russia x Ukraine ceasefire agreement by...?",
+   "hero_outcome": "December 31",
+   "caption": "Well off its opening price"
+  },
+  {
+   "question": "Putin out as President of Russia by December 31, 2026?",
+   "hero_outcome": "Yes",
+   "caption": "Well off its opening price"
+  },
+  {
+   "question": "2027 FIFA Women's World Cup Champion",
+   "hero_outcome": "Spain",
+   "caption": "Spain leads at 20%"
+  },
+  {
+   "question": "2030 FIFA World Cup Champion",
+   "hero_outcome": "France",
+   "caption": "France leads at 12%"
+  },
+  {
+   "question": "FIFA Women's World Cup 2027 Winner",
+   "hero_outcome": "Brazil",
+   "caption": ""
+  },
+  {
+   "question": "Texas Senate winner?",
+   "hero_outcome": "Ken Paxton",
+   "caption": "Ken Paxton leads at 53%"
+  },
+  {
+   "question": "Nebraska Senate winner?",
+   "hero_outcome": "Pete Ricketts",
+   "caption": "Pete Ricketts leads at 74%"
+  }
+ ]
+}

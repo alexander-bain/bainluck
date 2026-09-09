@@ -8,6 +8,7 @@ import type { LadderKind } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
+import { rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
@@ -796,6 +797,14 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // disagreement one component sideways instead of removing it.
   const compactPercent = renderedLeaderPercent(data.top_outcomes, leader);
   const context = feedContextSnippet(item);
+  // #4396 — and that "no outcome label at all" was still true a week later, on
+  // 7 of the 22 rows page one served. `rowAnswerLabel` fills the CAPTION'S gap:
+  // it returns a name only where the sentence below the question failed to say
+  // which answer the percentage is for, so the 15 rows already reading "Hike
+  // 25bps leads at 56%" do not print their outcome twice. The full
+  // `FuturesCard` has printed `leader.name` under its hero all along; this row
+  // is its small twin and now says the same thing. Measurement: the module.
+  const answerLabel = rowAnswerLabel(leader, context);
   const rowCue = forYouCue(item);
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
@@ -812,7 +821,18 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
             on all four variants; leaving this row silent would have put the
             same boosted market's explanation on or off depending on whether
             the feed grouped it as a theme bundle or a plain group. */}
-        {context && <div className="text-xs text-text-muted mt-0.5 line-clamp-2">{context}</div>}
+        {/* #4396 — the answer leads the caption line rather than taking a line
+            of its own: at 390px a bundle shows five of these rows, and a third
+            line on each is the "grey prose" notice 34 rules out. The answer is
+            first because it outranks the why-now — if a long outcome name
+            clamps the caption away, the row still says what its number is. */}
+        {(answerLabel || context) && (
+          <div className="text-xs mt-0.5 line-clamp-2" data-testid="compact-row-caption">
+            {answerLabel && <span className="font-semibold text-text-secondary" data-testid="compact-row-answer">{answerLabel}</span>}
+            {answerLabel && context && <span className="text-text-muted"> · </span>}
+            {context && <span className="text-text-muted">{context}</span>}
+          </div>
+        )}
         {rowCue && <div className="mt-1"><ForYouChip cue={rowCue} /></div>}
       </div>
       {leader && (
