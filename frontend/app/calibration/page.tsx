@@ -1001,22 +1001,24 @@ export default function CalibrationPage() {
         >
           {cohort.toggleLabel}
         </button>
-        {/* UX-P075 item (a), and it is the half of that item that does the
-            work. Alex ruled the cohort renamed to "traded"/"untraded" AND the
-            proxy footnote kept — the short word is for the reader, this is what
-            stops it becoming a claim we cannot support. It sits inside the same
-            banner as the word, full-width beneath it, because a caveat a scroll
-            away from its term is a caveat that is not read.
-            `lib/calibrationCohort.ts` carries the reversal of L2-236's
-            contrary decision, in the open, per ruling 055. */}
-        {cohort.proxyFootnote && (
-          <p
-            className="basis-full text-xs text-text-muted"
-            data-testid="calibration-proxy-footnote"
-          >
-            {cohort.proxyFootnote}
-          </p>
-        )}
+        {/* D101 (Alex, Wed 2026-09-09 10:05am PT): the proxy footnote stood
+            here — ten lines of grey method prose ("'Traded' and 'untraded' are
+            shorthand for a price test, not a trade count…") between a phone
+            reader and the first number on the page.
+
+            It was here because Alex's 2026-08-14 instruction said the sentence
+            rides with the word wherever the word appears, and standing notice
+            34 says no diagnostic prose on a reader's screen. Two of his own
+            rules, pointing opposite ways at one sentence. calibration/1063 put
+            the choice to him (leave it / fold it / delete it) rather than
+            picking a side; he ruled DELETE.
+
+            What the reader keeps: the cohort banner's own sentence, which says
+            in plain words what is shown and what is excluded, and the "What
+            'traded' means here" fold in the price-moved section below, which is
+            a different and shorter explanation of the same proxy. What the code
+            keeps: the ban, in calibrationCohort.test.ts, on any label that
+            upgrades the cohort NAME into a claim about activity. */}
       </div>
 
       {/* Source Comparison */}
