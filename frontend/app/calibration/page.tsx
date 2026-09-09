@@ -1593,12 +1593,21 @@ export default function CalibrationPage() {
       {/* By Category */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">By Category<CohortTag cohort={cohort} /></h2>
-        <p className="text-xs text-text-muted mb-4">
-          Same treatment as By Source: 95% CI error bars, and every bucket shown &mdash;
-          small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) as faded
-          hollow dots with wide error bars, never hidden. Select a category tab to see
-          per-bucket sample counts.
+        {/* #4291 / standing notice 34, continuing #4118's sweep. What stood here
+            was a method note — what the error bars are, what a faded dot means —
+            and method notes are one tap down. The caption is what makes the
+            chart usable: it says the tabs change it. */}
+        <p className="text-xs text-text-muted mb-3">
+          One curve per category. Select a tab to change it.
         </p>
+        <CalibrationCardNote label="How to read these dots">
+          <p className="text-xs text-text-muted">
+            Same treatment as By Source: 95% CI error bars, and every bucket shown &mdash;
+            small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) as faded
+            hollow dots with wide error bars, never hidden. Select a category tab to see
+            per-bucket sample counts.
+          </p>
+        </CalibrationCardNote>
         <div className="flex flex-wrap gap-2 mb-4">
           <TabButton label="Top 5" active={!activeCat} onClick={() => setActiveCat(null)} />
           {categories.map(c => (
@@ -1619,36 +1628,51 @@ export default function CalibrationPage() {
         data-published-categories={categoryMetrics.length}
       >
         <h2 className="text-title-3 text-text-primary mb-1">Category Breakdown<CohortTag cohort={cohort} /></h2>
-        <p className="text-xs text-text-muted mb-4">
-          Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
-        </p>
-        {/* UX-P118 item 5 / #2108 / Option C amendment 6: WHICH POPULATION.
-            The API publishes a per-category ECE over the whole population; this
-            table renders one over the active cohort, and several of its rows
-            additionally pool multiple payload categories. Both numbers are
-            correct about their own population — unlabelled, the pair reads as a
-            contradiction to anyone who curls the API (hockey: 0.95pp published,
-            2.25pp here on 2026-08-21).
+        {/* #4291 / standing notice 34, continuing #4118's sweep. Three grey
+            paragraphs stood between this heading and its first number, and the
+            second of them was the notice's named shape three times over: a
+            coverage count ("7 of 15 rows"), a method note, and a backticked API
+            field name on a reader's screen.
 
-            The numerator counts RENDERED pooled rows, not every normalized key
-            that pools. Those are two different populations and the shipped
-            version mixed them: keys that never reach the screen (`mma` on the
-            2026-08-24 payload) were counted in the numerator of a fraction whose
-            denominator was the visible rows, so a reader who expanded all of
-            them found fewer than promised. A disclosure whose own count does not
-            survive being checked is worse than no disclosure. */}
-        <p
-          className="text-xs text-text-muted mb-4"
-          data-testid="calibration-category-population-note"
-          data-pooled-rows={pooledRenderedRowCount}
-          data-total-rows={categoryMetrics.length}
-        >
-          {describeCategoryTablePopulation(
-            cohort.key,
-            pooledRenderedRowCount,
-            categoryMetrics.length
-          )}
+            The two notes fold into ONE disclosure rather than two stacked ones,
+            which is the call `calibrationNotice34.test.ts` already records for
+            Source Comparison: "two disclosures stacked on one card is the noise
+            this ship exists to remove." */}
+        <p className="text-xs text-text-muted mb-3">
+          Every published category, sorted by ECE. Lower is better.
         </p>
+        <CalibrationCardNote label="What this table counts">
+          <p className="text-xs text-text-muted mb-3">
+            Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
+          </p>
+          {/* UX-P118 item 5 / #2108 / Option C amendment 6: WHICH POPULATION.
+              The API publishes a per-category ECE over the whole population; this
+              table renders one over the active cohort, and several of its rows
+              additionally pool multiple payload categories. Both numbers are
+              correct about their own population — unlabelled, the pair reads as a
+              contradiction to anyone who curls the API (hockey: 0.95pp published,
+              2.25pp here on 2026-08-21).
+
+              The numerator counts RENDERED pooled rows, not every normalized key
+              that pools. Those are two different populations and the shipped
+              version mixed them: keys that never reach the screen (`mma` on the
+              2026-08-24 payload) were counted in the numerator of a fraction whose
+              denominator was the visible rows, so a reader who expanded all of
+              them found fewer than promised. A disclosure whose own count does not
+              survive being checked is worse than no disclosure. */}
+          <p
+            className="text-xs text-text-muted"
+            data-testid="calibration-category-population-note"
+            data-pooled-rows={pooledRenderedRowCount}
+            data-total-rows={categoryMetrics.length}
+          >
+            {describeCategoryTablePopulation(
+              cohort.key,
+              pooledRenderedRowCount,
+              categoryMetrics.length
+            )}
+          </p>
+        </CalibrationCardNote>
         {/* CAL-P067 item 4 (Fable ruling): the selection-bias disclosure. This
             is deliberately NOT phrased as a sample-size caveat — the two look
             alike and have opposite remedies. More data fixes a small sample; it
