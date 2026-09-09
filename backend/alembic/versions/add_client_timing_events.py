@@ -11,8 +11,16 @@ creation, so both indexes build instantly and there is nothing to build
 concurrently around.
 
 Revision ID: add_client_timing_events
-Revises: uq_event_espn_id
+Revises: containers_phase1
 Create Date: 2026-09-05
+
+Re-pointed 2026-09-08 (latency/272) from `uq_event_espn_id` to `containers_phase1`.
+`containers_phase1` (#2927) landed on master while this branch sat unmerged and
+chains directly onto `uq_event_espn_id`, so keeping the old parent gave Alembic
+TWO heads — which fails the Heroku release phase outright: the site does not
+deploy at all. A rebase does not fix this on its own; the parent is data in the
+file, not a position in git history. This is the exact trap this branch's own
+head-guard commit described, and it is why that guard is worth having.
 """
 
 from alembic import op
@@ -21,7 +29,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic. (24 chars — gotcha #1 caps this at 32.)
 revision = "add_client_timing_events"
-down_revision = "uq_event_espn_id"
+down_revision = "containers_phase1"
 branch_labels = None
 depends_on = None
 
