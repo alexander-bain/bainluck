@@ -59,6 +59,16 @@ export const CARD_SURFACE = "#FFFFFF";
  * there. It also makes the pair's separation unmeasurable, because the number a
  * reader sees is the composited pixel, not the token. 0.7 is not a new value:
  * it is what this component already used whenever a team colour was present.
+ *
+ * It is `FeedCard`'s opacity, and it stays this module's default so that
+ * caller's behaviour is untouched — but it is not universal. `probabilityBarPair`
+ * takes the opacity as an argument (#4470), because the decision is about the
+ * pixel a reader sees and a card that paints its bar opaque sees a different
+ * pixel. Deciding an opaque bar with this value over-rescues: measured over the
+ * 326 distinct team colours on events in the 7 days to 2026-09-09, nine of them
+ * (25 events — Lakers gold `#fdb927` at 1.73:1 among them) are visible at full
+ * opacity and rejected at 0.7, and "rescuing" those replaces a real brand colour
+ * with a generic grey for no reader gain.
  */
 export const SEGMENT_OPACITY = 0.7;
 
@@ -121,16 +131,16 @@ function toRgb(hex: string | null | undefined): Rgb | null {
   return [parts[0], parts[1], parts[2]] as const;
 }
 
-/** The pixel actually painted: the colour at SEGMENT_OPACITY over the card. */
-function composite(c: Rgb): Rgb {
+/** The pixel actually painted: the colour at `opacity` over the card. */
+function composite(c: Rgb, opacity: number): Rgb {
   const s = toRgb(CARD_SURFACE);
   // CARD_SURFACE is a module constant and always parses; the branch is for the
   // type system, not for a case that can occur.
   const base: Rgb = s ?? [255, 255, 255];
   return [
-    SEGMENT_OPACITY * c[0] + (1 - SEGMENT_OPACITY) * base[0],
-    SEGMENT_OPACITY * c[1] + (1 - SEGMENT_OPACITY) * base[1],
-    SEGMENT_OPACITY * c[2] + (1 - SEGMENT_OPACITY) * base[2],
+    opacity * c[0] + (1 - opacity) * base[0],
+    opacity * c[1] + (1 - opacity) * base[1],
+    opacity * c[2] + (1 - opacity) * base[2],
   ] as const;
 }
 
@@ -165,15 +175,17 @@ export function colorDistance(a: Rgb, b: Rgb): number {
   );
 }
 
-/** Is this colour visible at all once painted on the card? */
-function visibleOnCard(c: Rgb): boolean {
+/** Is this colour visible at all once painted on the card at `opacity`? */
+function visibleOnCard(c: Rgb, opacity: number): boolean {
   const surface = toRgb(CARD_SURFACE) ?? ([255, 255, 255] as const);
-  return contrastRatio(composite(c), surface) >= MIN_SURFACE_CONTRAST;
+  return contrastRatio(composite(c, opacity), surface) >= MIN_SURFACE_CONTRAST;
 }
 
 /** Would these two read as one block? */
-function tooClose(a: Rgb, b: Rgb): boolean {
-  return colorDistance(composite(a), composite(b)) < MIN_PAIR_DISTANCE;
+function tooClose(a: Rgb, b: Rgb, opacity: number): boolean {
+  return (
+    colorDistance(composite(a, opacity), composite(b, opacity)) < MIN_PAIR_DISTANCE
+  );
 }
 
 /**
@@ -182,19 +194,19 @@ function tooClose(a: Rgb, b: Rgb): boolean {
  * point: "we have a colour for this team" and "the user can see it" are
  * different claims, and only the second one matters here.
  */
-function usable(hex: string | null | undefined): Rgb | null {
+function usable(hex: string | null | undefined, opacity: number): Rgb | null {
   const rgb = toRgb(hex);
   if (!rgb) return null;
-  return visibleOnCard(rgb) ? rgb : null;
+  return visibleOnCard(rgb, opacity) ? rgb : null;
 }
 
 /** First ladder colour that is visible and distinguishable from `other`. */
-function rescue(other: Rgb | null, preferred: string): string {
+function rescue(other: Rgb | null, preferred: string, opacity: number): string {
   const candidates = [preferred, ...RESCUE_LADDER];
   for (const hex of candidates) {
     const rgb = toRgb(hex);
-    if (!rgb || !visibleOnCard(rgb)) continue;
-    if (other && tooClose(rgb, other)) continue;
+    if (!rgb || !visibleOnCard(rgb, opacity)) continue;
+    if (other && tooClose(rgb, other, opacity)) continue;
     return hex;
   }
   // Unreachable over every real and synthetic colour tested; kept so the
@@ -214,27 +226,43 @@ function rescue(other: Rgb | null, preferred: string): string {
  * When BOTH sides carry usable colours that are too close to each other, the
  * away side is kept and the home side is rescued. That choice is arbitrary but
  * it must be deterministic, or the same fixture renders two ways.
+ *
+ * `opacity` is the opacity the CALLER paints these segments at, and every
+ * threshold is applied to the pixel that produces. It defaults to
+ * `SEGMENT_OPACITY` so `FeedCard` is unchanged; `discover/EventCard` paints an
+ * opaque bar and passes `1` (#4470). Getting this wrong in either direction is
+ * measurable, not theoretical — see the note on `SEGMENT_OPACITY`.
  */
 export function probabilityBarPair(
   awayColor?: string | null,
-  homeColor?: string | null
+  homeColor?: string | null,
+  opacity: number = SEGMENT_OPACITY
 ): BarPair {
-  const awayRgb = usable(awayColor);
-  const homeRgb = usable(homeColor);
+  const awayRgb = usable(awayColor, opacity);
+  const homeRgb = usable(homeColor, opacity);
 
   if (awayRgb && homeRgb) {
-    if (!tooClose(awayRgb, homeRgb)) {
+    if (!tooClose(awayRgb, homeRgb, opacity)) {
       return { away: normalize(awayColor), home: normalize(homeColor) };
     }
-    return { away: normalize(awayColor), home: rescue(awayRgb, HOME_DEFAULT) };
+    return {
+      away: normalize(awayColor),
+      home: rescue(awayRgb, HOME_DEFAULT, opacity),
+    };
   }
 
   if (awayRgb) {
-    return { away: normalize(awayColor), home: rescue(awayRgb, HOME_DEFAULT) };
+    return {
+      away: normalize(awayColor),
+      home: rescue(awayRgb, HOME_DEFAULT, opacity),
+    };
   }
 
   if (homeRgb) {
-    return { away: rescue(homeRgb, AWAY_DEFAULT), home: normalize(homeColor) };
+    return {
+      away: rescue(homeRgb, AWAY_DEFAULT, opacity),
+      home: normalize(homeColor),
+    };
   }
 
   return { away: AWAY_DEFAULT, home: HOME_DEFAULT };

@@ -22,6 +22,14 @@ import {
   suspendedSummary,
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
+import { probabilityBarPair } from "@/lib/probabilityBarPair";
+
+/**
+ * This card's bar is painted at full opacity — no `opacity` style on either
+ * segment — so the pixel the reader sees IS the colour, and that is the opacity
+ * the pair rule has to decide at (#4470).
+ */
+const PROBABILITY_BAR_OPACITY = 1;
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -36,6 +44,19 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const [showContext, setShowContext] = useState(false);
   const homeColor = data.home_team_data?.primary_color || "#374151";
   const awayColor = data.away_team_data?.primary_color || "#6b7280";
+  // #4470: the probability row and the bar sit on the WHITE card, so they get
+  // the shared pair rule rather than the raw team colour. Leeds United's
+  // `primary_color` is `#ffffff`, and on production 2026-09-09 that painted
+  // their 68% and their two thirds of the bar in white on white — one number on
+  // the card, and the reader could not tell whose. 33 teams / 85 events in the
+  // trailing 7 days composite below the 1.5:1 floor, Real Madrid and Tottenham
+  // among them. The opacity is 1 because this bar is opaque, unlike FeedCard's;
+  // deciding it at FeedCard's 0.7 would grey out nine colours a reader can see.
+  //
+  // The crest tiles and the header gradient below deliberately keep the raw
+  // colour: they sit on the coloured header, not on the card, so the card
+  // surface this module measures against is not their background.
+  const barPair = probabilityBarPair(awayColor, homeColor, PROBABILITY_BAR_OPACITY);
   const isLive = data.status === "live";
   const isDone = isFinishedStatus(data.status);
   // live/048 + CERT-786. This card had the worst fall-through of the three,
@@ -178,7 +199,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                   links to, without scraping styled prose. */}
               <span
                 className={`font-bold ${authorityClass}`.trim()}
-                style={{ color: awayColor }}
+                style={{ color: barPair.away }}
                 data-testid="event-card-away-probability"
                 data-probability={awayProb}
                 data-rendered-percent={awayPct ?? undefined}
@@ -192,7 +213,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               </span>
               <span
                 className={`font-bold ${authorityClass}`.trim()}
-                style={{ color: homeColor }}
+                style={{ color: barPair.home }}
                 data-testid="event-card-home-probability"
                 data-probability={homeProb}
                 data-rendered-percent={homePct ?? undefined}
@@ -202,8 +223,8 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               </span>
             </div>
             <div className="h-2.5 rounded-full overflow-hidden flex">
-              <div className="transition-all duration-500" style={{ width: `${awayProb * 100}%`, backgroundColor: awayColor }} />
-              <div className="transition-all duration-500" style={{ width: `${homeProb * 100}%`, backgroundColor: homeColor }} />
+              <div className="transition-all duration-500" style={{ width: `${awayProb * 100}%`, backgroundColor: barPair.away }} />
+              <div className="transition-all duration-500" style={{ width: `${homeProb * 100}%`, backgroundColor: barPair.home }} />
             </div>
           </div>
         )}
