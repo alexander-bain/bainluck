@@ -19,7 +19,7 @@ import { eventPath } from "@/lib/eventKey";
 import { conceptDomainEmoji, conceptHeadlineBout } from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
-import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
+import { getSportLabel, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
@@ -416,7 +416,7 @@ function EventFeedCard({
 
   // Sport emoji
   const sportEmoji = data.sport ? getEmojiForLeague(data.sport) : null;
-  const leagueName = data.sport ? getLeagueDisplay(data.sport) : null;
+  const leagueName = data.sport ? getSportLabel(data.sport, data.sport_name) : null;
 
   // Game time for scheduled events
   const gameTime = isScheduled ? formatGameTime(data.commence_time) : null;

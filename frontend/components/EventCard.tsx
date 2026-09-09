@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useSpring, useTransform } from "framer-motion";
 import { motion } from "@/components/motion";
 import type { Event } from "@/lib/types";
-import { getLeagueDisplay } from "@/lib/sportCategories";
+import { getSportLabel } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import { cn } from "@/lib/utils";
 import EventCardShell from "./EventCardShell";
@@ -437,7 +437,7 @@ export default function EventCard({
             <div className="flex items-center gap-1.5 min-w-0">
               {showSport && event.sport && (
                 <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
-                  {getLeagueDisplay(event.sport)}
+                  {getSportLabel(event.sport, event.sport_name)}
                 </span>
               )}
               {highlightLabel && !isLive && (

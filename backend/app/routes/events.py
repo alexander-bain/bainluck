@@ -15955,6 +15955,22 @@ def _format_event(
         "id": event.id,
         "external_id": event.external_id,
         "sport": event.sport.key if event.sport else None,
+        # #4368 — the key is not a label. Every client that renders a league on
+        # an event card had only `sport` to work from, so all of them parsed the
+        # key: `soccer_netherlands_eredivisie` -> "NETHERLANDS EREDIVISIE" beside
+        # a filter chip on the same screen reading "Dutch Eredivisie". Of the 161
+        # branded rows `/api/sports` serves, that parser reproduces 30 and prints
+        # a different WORD for 83 ("A-League" -> "AUSTRALIA ALEAGUE").
+        #
+        # `.name` is free here: `.key` on the line above already resolved
+        # `event.sport`, so this reads another column off an instance the caller
+        # has loaded — no second query, no new eager-load requirement.
+        #
+        # It is not the whole answer on its own: 15 of the 176 rows store their
+        # own key in `name` ("mma_other"), so a client still needs the map as a
+        # fallback. Serving the name is what lets it prefer, which it could not
+        # do before. Clients: `getSportLabel` in frontend/lib/sportCategories.ts.
+        "sport_name": event.sport.name if event.sport else None,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "commence_time": event.commence_time.isoformat(),
