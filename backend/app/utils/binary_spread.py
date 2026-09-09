@@ -524,6 +524,52 @@ def _name_tokens(name: Optional[str]) -> list[str]:
     return [token for token in cleaned.split() if token]
 
 
+# Rung short forms the token rule provably cannot reach, rewritten BEFORE it
+# runs (#3981).
+#
+# Deliberately data rather than a branch inside `_rung_names_side`: the
+# prefix/initials rule is a general contract with its own guard, and a
+# hard-coded club inside it would make that contract untrue and hide the next
+# miss. A short form that needs help is declared here, with the reason.
+#
+# `A's` is the whole population today. `_name_tokens("A's")` -> `["as"]`, and
+# `events` stores the club as the single token `Athletics`, which `as` reaches
+# by neither arm: the prefix arm asks whether "athletics" starts with "as" (it
+# starts "at"), and the initials arm compares "a" to "as". So the resolver
+# refuses, and the caller correctly drops the rung rather than guess a side —
+# 470 `futures_outcomes` spread rungs across 144 markets read `A's wins by ...`
+# (`name LIKE 'A''s wins by%'`, measured on production 2026-09-09 05:55Z).
+#
+# The ladder is NOT dropped whole, and the distinction is the point: all 144 of
+# those markets are mixed (0 are all-A's), so the opponent's rungs resolve and
+# the A's rungs do not — 470 of the 1,266 rungs in those markets, 37%, are
+# discarded, and the spread is then inferred from ONE side. A one-sided ladder
+# is a confident answer built on half the evidence, not a missing one; see
+# `margin_rung_on_home_axis` below on why a confident wrong spread is worse
+# than shipping nothing.
+#
+# Keyed on the WHOLE token sequence rather than per token, so a rewrite can
+# never fire inside a longer name — `["kansas"]` and `["las","vegas"]` are
+# untouched, and a rung reading "As" as part of some longer phrase never
+# reaches the table at all.
+_RUNG_TOKEN_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("as",): ("athletics",),
+}
+
+
+def _aliased_rung_tokens(rung_tokens: list[str]) -> list[str]:
+    """The rung's tokens with a declared short form rewritten, else unchanged.
+
+    This CANNOT widen a match to a second team, which is the property that
+    keeps `resolve_rung_side`'s refusal intact: `athletics` reaches the club
+    stored as `Athletics` and nothing else. The soccer clubs are safe by the
+    shape of the prefix arm rather than by luck — it asks whether the SIDE
+    token starts with the RUNG token, and "athletic" (Charlton Athletic,
+    Athletic Club, Dover Athletic FC) does not start with "athletics".
+    """
+    return list(_RUNG_TOKEN_ALIASES.get(tuple(rung_tokens), rung_tokens))
+
+
 def _rung_names_side(rung_tokens: list[str], side_tokens: list[str]) -> bool:
     """Could this rung's team text be naming the team called ``side_tokens``?
 
@@ -563,7 +609,10 @@ def resolve_rung_side(
     reading only ``New York`` in Giants v Jets matches both sides, and guessing
     there inverts the scoreline instead of merely losing a rung.
     """
-    rung_tokens = _name_tokens(team_text)
+    # Aliases are consulted BEFORE the token rule and cannot widen a match to a
+    # second team, so the refusal above still holds for genuinely ambiguous
+    # rungs (#3981).
+    rung_tokens = _aliased_rung_tokens(_name_tokens(team_text))
     names_home = _rung_names_side(rung_tokens, _name_tokens(home_team_name))
     names_away = _rung_names_side(rung_tokens, _name_tokens(away_team_name))
     if names_home and not names_away:
