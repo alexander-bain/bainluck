@@ -16,9 +16,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.utils.futures_source_merge import blend_with_verdict
 from app.utils.tournament_board import (
     DARK_PRICE_HOURS,
     TREND_DAYS,
+    TREND_FINE_DAYS,
+    TREND_FINE_MAX_POINTS,
     build_boards,
     draw_label,
     price_state,
@@ -649,6 +652,195 @@ def test_a_divergent_day_is_gated_in_the_trend_too_not_meaned():
     assert point["probability"] == pytest.approx(
         payload["boards"][0]["rows"][0]["probability"]
     )
+
+
+# ---------------------------------------------------------------------------
+# The FINE series (ux/1144 (a), #4173) — same rule, hourly bucket, own field
+# ---------------------------------------------------------------------------
+
+def _hourly(*pairs):
+    """`(hour, probability)` in the shape `_load_fine_series` emits."""
+    return [(f"2026-08-25T{h:02d}:00:00Z", p) for h, p in pairs]
+
+
+def test_the_fine_series_is_served_and_is_not_the_daily_one():
+    """The whole ship: two resolutions of one question, side by side.
+
+    ux's report is that the chart draws "one averaged dot per day". If
+    `trend_hourly` ever came back with the daily bucket's point count this test
+    would pass on shape and the defect would be untouched, so it asserts the
+    COUNTS differ and that the fine series is the denser of the two.
+    """
+    payload = build_boards(
+        _two_source_register(),
+        prices={("kalshi", 1, 10): _priced(0.50)},
+        series_by_outcome={10: [("2026-08-25", 0.50)]},
+        fine_series_by_outcome={
+            10: _hourly((9, 0.44), (10, 0.47), (11, 0.50), (12, 0.50))
+        },
+        now=NOW,
+    )
+    row = payload["boards"][0]["rows"][0]
+    assert len(row["trend"]) == 1
+    assert len(row["trend_hourly"]) == 4
+    assert len(row["trend_hourly"]) > len(row["trend"])
+
+
+def test_the_fine_point_is_keyed_on_at_not_date():
+    """A day parser must not silently succeed on an hourly point.
+
+    `contenderChart.ts` reads a day point as ``new Date(`${p.date}T00:00:00Z`)``.
+    If the hourly point also carried `date`, that expression would build
+    `2026-08-25T09:00:00ZT00:00:00Z`, which is `Invalid Date` — `NaN` all the
+    way to an empty chart with no error anywhere. Keying on `at` makes the reuse
+    a type error at the client boundary instead of a blank plot.
+    """
+    payload = build_boards(
+        _two_source_register(),
+        prices={("kalshi", 1, 10): _priced(0.50)},
+        fine_series_by_outcome={10: _hourly((9, 0.44))},
+        now=NOW,
+    )
+    point = payload["boards"][0]["rows"][0]["trend_hourly"][0]
+    assert set(point) == {"at", "probability"}
+    assert point["at"] == "2026-08-25T09:00:00Z"
+
+
+def test_the_fine_series_uses_the_SAME_blend_rule_including_its_refusals():
+    """One question, one rule, at both resolutions.
+
+    The divergence gate is the only place where "blend" and "mean" part
+    company, so it is the only test that can tell a shared rule from a
+    coincidence. Hour 9 is a normal pair and must print the midpoint; hour 10 is
+    50 points apart, and the gate does NOT drop it — it declines to average and
+    resolves to one side. Either way the fine point must be whatever the
+    headline rule produces for the same inputs and never the mean, which is the
+    same assertion `test_a_divergent_day_is_gated_in_the_trend_too_not_meaned`
+    makes one bucket width up.
+    """
+    payload = build_boards(
+        _two_source_register(),
+        prices={
+            ("kalshi", 1, 10): _priced(0.50),
+            ("polymarket", 2, 20): _priced(0.54),
+        },
+        fine_series_by_outcome={
+            10: _hourly((9, 0.50), (10, 0.575)),
+            20: _hourly((9, 0.54), (10, 0.060)),
+        },
+        now=NOW,
+    )
+    row = payload["boards"][0]["rows"][0]
+    trend = row["trend_hourly"]
+    assert [p["at"] for p in trend] == [
+        "2026-08-25T09:00:00Z",
+        "2026-08-25T10:00:00Z",
+    ]
+    # The agreeing hour: the midpoint, exactly as the headline blends it.
+    assert trend[0]["probability"] == pytest.approx(0.52)
+    # The divergent hour: NOT the mean, and exactly what the headline RULE
+    # returns for that pair. Compared against `blend_with_verdict` itself rather
+    # than against a literal, so a swap to `statistics.mean` cannot be papered
+    # over by updating a number — and deliberately not against `row`'s own
+    # probability, which is blended from the PRICES (0.50/0.54 → 0.52), not from
+    # this hour.
+    assert trend[1]["probability"] != pytest.approx((0.575 + 0.060) / 2)
+    assert trend[1]["probability"] == pytest.approx(
+        blend_with_verdict(
+            [
+                {"source": "kalshi", "probability": 0.575},
+                {"source": "polymarket", "probability": 0.060},
+            ]
+        )[0]
+    )
+    assert row["probability"] == pytest.approx(0.52)
+
+
+def test_a_gap_in_the_fine_series_stays_a_gap():
+    """No carry-forward at the finer bucket either. Hours 10 and 11 are absent
+    from the data and must be absent from the line — an hourly chart that
+    interpolates would draw a smooth move through a window in which nobody
+    published anything, which is the one thing this module exists to refuse."""
+    payload = build_boards(
+        _two_source_register(),
+        prices={("kalshi", 1, 10): _priced(0.50)},
+        fine_series_by_outcome={10: _hourly((9, 0.44), (12, 0.50))},
+        now=NOW,
+    )
+    trend = payload["boards"][0]["rows"][0]["trend_hourly"]
+    assert [p["at"] for p in trend] == [
+        "2026-08-25T09:00:00Z",
+        "2026-08-25T12:00:00Z",
+    ]
+
+
+def test_the_fine_series_does_not_disturb_the_daily_one_or_its_delta():
+    """The sparkline and its delta are LIVE and CORRECT today.
+
+    This ship is additive by construction — a second query, a second field — and
+    that promise is only worth what a test makes of it. `trend_delta` in
+    particular stays the daily span: recomputing it from a 14-day fine window
+    would print a delta measured over one span beside a line drawn over another.
+    """
+    daily = {10: [("2026-08-20", 0.40), ("2026-08-25", 0.50)]}
+    without = build_boards(
+        _two_source_register(),
+        prices={("kalshi", 1, 10): _priced(0.50)},
+        series_by_outcome=daily,
+        now=NOW,
+    )["boards"][0]["rows"][0]
+    withfine = build_boards(
+        _two_source_register(),
+        prices={("kalshi", 1, 10): _priced(0.50)},
+        series_by_outcome=daily,
+        fine_series_by_outcome={10: _hourly((9, 0.44), (10, 0.47), (11, 0.50))},
+        now=NOW,
+    )["boards"][0]["rows"][0]
+    assert withfine["trend"] == without["trend"]
+    assert withfine["trend_delta"] == without["trend_delta"] == pytest.approx(0.10)
+    assert withfine["trend_hourly"] and not without["trend_hourly"]
+
+
+def test_every_row_carries_the_field_even_with_nothing_to_put_in_it():
+    """One shape for "no points", settled rows included.
+
+    A settled row prints a result and never a probability, and it must still
+    carry `trend_hourly` — a client that has to distinguish `[]` from `undefined`
+    will get it wrong on the row where getting it wrong is loudest.
+    """
+    register = _register(
+        [
+            _player(
+                "winner",
+                "Winner",
+                "mens-singles",
+                [_source("kalshi", 1, 10, status="settled", terminal_result="won")],
+            ),
+            _player("live-one", "Live One", "mens-singles", [_source("kalshi", 1, 11)]),
+        ]
+    )
+    payload = build_boards(
+        register,
+        prices={("kalshi", 1, 11): _priced(0.30)},
+        now=NOW,
+    )
+    rows = payload["boards"][0]["rows"]
+    assert len(rows) == 2
+    for row in rows:
+        assert row["trend_hourly"] == []
+
+
+def test_the_fine_window_is_bounded_and_shorter_than_the_daily_one():
+    """The bound is the BUCKET, not a slice.
+
+    `TREND_FINE_MAX_POINTS` is arithmetic over the window and the bucket width,
+    so no capture-rail change can push a row past it. It is asserted against the
+    daily window too: a fine series longer than the coarse one would mean the
+    sparkline was the shorter picture, which is backwards.
+    """
+    assert 0 < TREND_FINE_DAYS <= TREND_DAYS
+    assert TREND_FINE_MAX_POINTS == TREND_FINE_DAYS * 24
+    assert TREND_FINE_MAX_POINTS <= 500
 
 
 # ---------------------------------------------------------------------------

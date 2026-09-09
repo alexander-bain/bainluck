@@ -18,7 +18,7 @@ Two things are pinned here that the pure-logic suite cannot reach:
 import inspect
 
 from app.routes import tournaments
-from app.utils import tournament_event_link
+from app.utils import tournament_board, tournament_event_link
 
 
 class TestSlugResolution:
@@ -215,6 +215,110 @@ class TestCacheDiscipline:
 
     def test_series_scan_is_bounded(self):
         assert tournaments.MAX_SERIES_ROWS <= 50000
+
+    def test_the_fine_series_scan_is_bounded_ABOVE_its_own_arithmetic(self):
+        """A cap below what the query legitimately returns is not a bound, it is
+        a silent truncation (ux/1144 (a)).
+
+        The register pins ~160 outcomes and an hour bucket over
+        `TREND_FINE_DAYS` yields at most `TREND_FINE_MAX_POINTS` rows each, so
+        the ceiling is arithmetic and the cap has to clear it. Written as the
+        arithmetic rather than as a literal because a later change to the window
+        must move this number with it — 20,000 would have truncated the US Open
+        board on the day it shipped (measured: 31,807 hourly rows).
+        """
+        ceiling = 160 * tournament_board.TREND_FINE_MAX_POINTS
+        assert tournaments.MAX_FINE_SERIES_ROWS > ceiling
+        assert tournaments.MAX_FINE_SERIES_ROWS <= 100000
+
+
+class TestSeriesLoaders:
+    """The two series queries — one question, two bucket widths (ux/1144 (a))."""
+
+    def test_the_fine_loader_buckets_by_HOUR_not_by_DAY(self):
+        """The whole ship, asserted on the SQL rather than on a comment.
+
+        ux's report is "one averaged dot per day"; the fix is the bucket. A
+        `date_trunc('day')` in here would serve the daily series under a second
+        name and every shape test in the suite would still pass.
+
+        THE FIRST VERSION OF THIS TEST DID NOT CATCH THAT. It asserted `"hour"`
+        appeared anywhere in the source, which the label `.label("hour")`
+        satisfies all by itself — so flipping the bucket to `day`, the one
+        mutation that undoes the entire ship, ran green. The assertion is on the
+        `date_trunc` ARGUMENT now, and `day` is banned from it outright, because
+        a pin that a neighbouring string can satisfy is not a pin.
+        """
+        source = inspect.getsource(tournaments._load_fine_series)
+        assert 'date_trunc("hour"' in source
+        assert 'date_trunc("day"' not in source
+        assert "TREND_FINE_DAYS" in source
+        assert "MAX_FINE_SERIES_ROWS" in source
+
+    def test_the_daily_loader_still_buckets_by_DAY(self):
+        """The control. The fine series is ADDITIVE — if this ship had converted
+        the existing loader instead of adding one, the sparkline and
+        `trend_delta` would have changed under a chart fix, and nothing above
+        would have noticed."""
+        source = inspect.getsource(tournaments._load_series)
+        assert 'date_trunc("day"' in source
+        assert 'date_trunc("hour"' not in source
+        assert "TREND_DAYS" in source
+
+    def test_the_fine_series_stamps_an_EXPLICIT_utc_instant(self):
+        """A naive timestamp is parsed in the READER's timezone.
+
+        `new Date("2026-09-09T08:00:00")` is 08:00 local; the same string with a
+        `Z` is 08:00 UTC. Without the suffix the whole line slides by the
+        reader's own offset — a chart that is silently wrong by hours for
+        everyone outside UTC, and silently right for whoever tested it in
+        London.
+        """
+        source = inspect.getsource(tournaments._load_fine_series)
+        assert "Z" in source and "%Y-%m-%dT%H:00:00Z" in source
+
+    def test_a_bound_cap_is_reported_rather_than_swallowed(self, caplog):
+        """Both queries order by `outcome_id`, so a cap that binds does not thin
+        the lines — it deletes the tail of the id list outright. Nothing
+        downstream can tell that from "those players have no history", so the
+        only place it can be caught is at the row count."""
+        with caplog.at_level("ERROR"):
+            tournaments._warn_if_truncated([1, 2, 3], 3, "hourly", 160)
+        assert any("cap" in r.message or "cap" in r.getMessage() for r in caplog.records)
+        assert any("hourly" in r.getMessage() for r in caplog.records)
+
+    def test_BOTH_loaders_actually_call_the_reporter(self):
+        """The two tests above prove the reporter works, and nothing else.
+
+        A pure function proves nothing about whether anything reaches it — this
+        lane shipped a correct, live, completely inert fix on that exact gap
+        eight hours ago (#4000). So the call site is pinned as well as the
+        callee, and BOTH loaders are named: the daily one swallowed a bound cap
+        silently for as long as it has existed, and fixing only the new one
+        would have left the older, lower cap as the quiet half.
+        """
+        for loader in (tournaments._load_series, tournaments._load_fine_series):
+            assert "_warn_if_truncated" in inspect.getsource(loader), loader.__name__
+
+    def test_the_route_hands_the_fine_series_to_the_builder(self):
+        """The loader can run, return rows, and reach nothing.
+
+        `build_boards` only emits `trend_hourly` for what it is given, so a
+        route that loads the series and forgets the keyword argument serves an
+        empty line from a query it paid for — and every call-count test above
+        still passes. Scoped to `_build_sections` rather than the module so a
+        mention in a docstring elsewhere cannot satisfy it.
+        """
+        source = inspect.getsource(tournaments._build_sections)
+        assert "fine_series_by_outcome=" in source
+        assert "_load_fine_series(" in source
+
+    def test_a_cap_that_did_not_bind_says_nothing(self, caplog):
+        """The control — an ERROR on every healthy request is an ERROR nobody
+        reads, which is how the next real truncation gets missed."""
+        with caplog.at_level("ERROR"):
+            tournaments._warn_if_truncated([1, 2], 3, "hourly", 160)
+        assert caplog.records == []
 
 
 class TestSlateContract:
