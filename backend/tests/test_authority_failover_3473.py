@@ -634,13 +634,27 @@ async def test_an_unreadable_ledger_refuses_rather_than_permits(monkeypatch):
     happens to refuse too, today, which is exactly why it is worth pinning: the
     reason would be wrong ("not measured yet") and a future gate that treated a
     short streak more kindly would inherit the wrong answer silently.
+
+    Ran on football until #4443 made football the one sport this is no longer
+    true of: D104 turned the ledger from EVIDENCE into a MONITOR for a ruled
+    sport, so refusing football because the monitor's store is degraded refuses
+    on the monitor rather than on evidence. **The principle above is unchanged
+    and is why this test stays** — it must remain impossible for an outage to
+    open the gate for a sport Alex has not ruled, which is most of the row. So
+    the specimen moves to `STILL_GATED`, exactly as it did for the test below
+    when #4417 landed, rather than the test being deleted.
+
+    Football's side of the same pass is
+    `test_ruled_failover_survives_monitor_read_failure_4443`, which carries the
+    paired control asserting this same refusal for an unruled sport.
     """
     from app.tasks.espn_sync import _decide_failovers
 
+    _shut_gate()
     _no_ledger(monkeypatch, days=None, why="durable-read-CORRUPT: bad envelope")
-    decisions = await _decide_failovers({}, {"americanfootball_nfl"}, {"errors": []})
+    decisions = await _decide_failovers({}, {STILL_GATED}, {"errors": []})
 
-    decision = decisions["americanfootball_nfl"]
+    decision = decisions[STILL_GATED]
     assert decision.failed_over is False
     assert "durable-read-CORRUPT" in decision.why
 
