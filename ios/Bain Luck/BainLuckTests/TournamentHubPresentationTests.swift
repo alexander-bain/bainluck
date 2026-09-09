@@ -287,6 +287,55 @@ final class TournamentHubPresentationTests: XCTestCase {
         XCTAssertTrue(farText.hasSuffix(startTimeFormatterTestMirror(far)))
     }
 
+    /// #4134 REGRESSION — THE FORMATTER MUST NOT CONSULT THE REAL CLOCK AT ALL.
+    ///
+    /// `startTimeText` took `now` and then decided "Tomorrow" with
+    /// `calendar.isDateInTomorrow(date)`, which is defined against the system
+    /// clock. The test above could not see that on the day it was written —
+    /// its anchor happened to BE the real today, so the injected `now` and the
+    /// real clock agreed — and it went red, permanently, the moment the date
+    /// rolled past midnight on 2026-09-09. A gate that only fails on certain
+    /// calendar days is worse than no gate: it reds a module nobody touched and
+    /// gets read as flake.
+    ///
+    /// So this asks the SAME relative question — "a start one day after now" —
+    /// at anchors years either side of the real today. Every answer must be
+    /// identical, because the answer is a function of `now` and nothing else.
+    /// With `isDateInTomorrow` at most one anchor in this list can pass, on at
+    /// most one day of the year; with the day-delta it passes every day.
+    ///
+    /// The far-past and far-future anchors are the point. A test that only ever
+    /// anchors near today cannot distinguish an injected clock from a read one.
+    func testTheStartTimeFormatterIsIndependentOfTheRealSystemClock() throws {
+        let calendar = Calendar.current
+        for year in [2019, 2024, 2026, 2031, 2044] {
+            let anchor = try XCTUnwrap(calendar.date(from: DateComponents(
+                timeZone: calendar.timeZone, year: year, month: 3, day: 14, hour: 19, minute: 0)))
+            func offset(_ days: Int) throws -> Date {
+                let day = try XCTUnwrap(calendar.date(byAdding: .day, value: days, to: anchor))
+                return try XCTUnwrap(
+                    calendar.date(bySettingHour: 8, minute: 30, second: 0, of: day))
+            }
+            func text(_ date: Date) -> String {
+                TournamentHubPresentation.startTimeText(for: date, now: anchor, calendar: calendar)
+            }
+
+            let today = try offset(0)
+            XCTAssertEqual(
+                text(today), startTimeFormatterTestMirror(today),
+                "anchored in \(year), a start on the anchor's own day is a bare time")
+            XCTAssertTrue(
+                text(try offset(1)).hasPrefix("Tomorrow "),
+                "anchored in \(year), one day after `now` must read as tomorrow")
+            XCTAssertFalse(
+                text(try offset(3)).contains("Tomorrow"),
+                "anchored in \(year), three days out is not tomorrow")
+            XCTAssertFalse(
+                text(try offset(-1)).contains("Tomorrow"),
+                "anchored in \(year), yesterday is certainly not tomorrow")
+        }
+    }
+
     /// And the row a reader actually sees goes through it.
     ///
     /// The test above proves `startTimeText` is right; it does NOT prove
