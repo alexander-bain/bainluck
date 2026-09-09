@@ -11,14 +11,13 @@ from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 from typing import NamedTuple, Optional
 
-
 # Market tier weights (lower tier number = more important)
 MARKET_TIER_WEIGHTS = {
     1: 15,  # Championship
     2: 10,  # Conference
-    3: 8,   # Awards (MVP, etc.)
-    4: 5,   # Division
-    5: 2,   # Props/other
+    3: 8,  # Awards (MVP, etc.)
+    4: 5,  # Division
+    5: 2,  # Props/other
 }
 
 # Sport/league tier for futures (mirrors LEAGUE_TIERS in highlights.py)
@@ -62,8 +61,7 @@ _MINOR_LEAGUE_PATTERNS = re.compile(
     r"Eredivisie|Primeira\s*Liga|Super\s*Lig|A[\s-]?League|J[\s-]?League|K[\s-]?League|"
     r"Scottish\s*Premiership|Belgian\s*Pro|Swiss\s*Super|Austrian\s*Bundesliga|"
     # Football minor
-    r"CFL|UFL|XFL|USFL|Arena\s*Football"
-    r")\b",
+    r"CFL|UFL|XFL|USFL|Arena\s*Football" r")\b",
     re.IGNORECASE,
 )
 
@@ -231,7 +229,8 @@ FOREIGN_LOCAL_ELECTION_PENALTY = -30
 
 # Compelling market patterns — genuinely interesting content
 _COMPELLING_PATTERNS = [
-    re.compile(p, re.IGNORECASE) for p in [
+    re.compile(p, re.IGNORECASE)
+    for p in [
         r"(invade|invasion|war|strike|military action)",
         r"(ceasefire|peace deal|treaty)",
         r"(nba|nfl|mlb|nhl|fifa|world cup|super bowl|olympics|masters|champions league|wimbledon|french open|australian open|us open|grand slam|ufc).*(champion|winner|title)",
@@ -391,9 +390,7 @@ def _name_verdicts(market_name: str) -> _NameVerdicts:
         cultural_gravity_t1=bool(_CULTURAL_GRAVITY_T1.search(market_name)),
         cultural_gravity_t2=bool(_CULTURAL_GRAVITY_T2.search(market_name)),
         compelling_hits=sum(1 for p in _COMPELLING_PATTERNS if p.search(market_name)),
-        sports_postseason_story=bool(
-            _SPORTS_POSTSEASON_STORY_RE.search(market_name)
-        ),
+        sports_postseason_story=bool(_SPORTS_POSTSEASON_STORY_RE.search(market_name)),
         minor_league=bool(_MINOR_LEAGUE_PATTERNS.search(market_name)),
         top_tier_soccer=bool(_TOP_TIER_SOCCER_RE.search(market_name)),
     )
@@ -401,39 +398,71 @@ def _name_verdicts(market_name: str) -> _NameVerdicts:
 
 # Scoring weights
 FUTURES_WEIGHTS = {
-    "major_movement_24h": 12,       # Leader moved >5% in 24h
-    "moderate_movement_24h": 6,     # Leader moved 2-5% in 24h
-    "leader_change": 15,            # #1 ranking changed
-    "rank_shakeup": 8,              # Multiple rank changes in top 5
-    "high_tier_market": 10,         # Championship/conference
-    "major_league": 8,              # Major sport/league
-    "secondary_league": 4,          # Secondary sport
-    "resolving_soon_7d": 8,         # Resolves within 7 days
-    "resolving_soon_30d": 4,        # Resolves within 30 days
-    "multi_source": 8,              # Available from 2+ sources
-    "source_divergence": 12,        # Sources disagree by >5%
-    "high_volume": 8,               # Market has significant trade volume
-    "moderate_volume": 4,           # Market has some trade volume
+    "major_movement_24h": 12,  # Leader moved >5% in 24h
+    "moderate_movement_24h": 6,  # Leader moved 2-5% in 24h
+    "leader_change": 15,  # #1 ranking changed
+    "rank_shakeup": 8,  # Multiple rank changes in top 5
+    "high_tier_market": 10,  # Championship/conference
+    "major_league": 8,  # Major sport/league
+    "secondary_league": 4,  # Secondary sport
+    "resolving_soon_7d": 8,  # Resolves within 7 days
+    "resolving_soon_30d": 4,  # Resolves within 30 days
+    "multi_source": 8,  # Available from 2+ sources
+    "source_divergence": 12,  # Sources disagree by >5%
+    "high_volume": 8,  # Market has significant trade volume
+    "moderate_volume": 4,  # Market has some trade volume
 }
 
+#: The last-resort DISPLAY label for a scoring signal, highest priority first.
+#: `routes/feed.py` composes the served headline as
+#: `generate_futures_headline(...) or highlight_result.primary_reason`, so every
+#: string here is a string a reader can end up looking at.
+#:
+#: Two rules govern what may be in it, and a signal that satisfies neither is
+#: simply absent — the next real signal speaks, and if none does `primary_reason`
+#: is None and the card says nothing rather than saying this:
+#:
+#: * D1 clause a (#4066): the two `*_surprise` codes measure against OPENING, an
+#:   instant this list cannot name, so they sit below every code anchored to a
+#:   time and their copy no longer claims a baseline. The dated sentence is
+#:   composed in `feed_reasons`, where `opening_captured_at` is in hand.
+#: * #4133/#4160: `source_divergence`, `rank_shakeup` and `multi_source` carried
+#:   "Sources disagree", "Rankings shakeup" and "Multi-source". They are scoring
+#:   signals with no honest reader-facing label, and removing their branches from
+#:   `feed_reasons` alone would have emptied the headline more often and handed
+#:   those exact three strings to this fallback — the fix making its own defect
+#:   more visible. Guarded at runtime by
+#:   `tests/test_feed_reasons_serve_no_diagnostics_4160.py`.
+PRIMARY_REASON_LABELS: list[tuple[str, str]] = [
+    ("leader_change", "New favorite"),
+    ("major_movement_24h", "Big odds movement"),
+    ("volume_spike", "Trading surge"),
+    ("moderate_movement_24h", "Odds moving"),
+    ("resolving_soon_7d", "Resolving soon"),
+    ("resolving_soon_30d", "Resolving this month"),
+    ("major_surprise", "Well off its opening price"),
+    ("moderate_surprise", "Off its opening price"),
+]
+
 # Thresholds
-MAJOR_MOVEMENT_THRESHOLD = 0.05    # 5% change in 24h
-MODERATE_MOVEMENT_THRESHOLD = 0.02 # 2% change
-SOURCE_DIVERGENCE_THRESHOLD = 0.05 # 5% disagreement between sources
+MAJOR_MOVEMENT_THRESHOLD = 0.05  # 5% change in 24h
+MODERATE_MOVEMENT_THRESHOLD = 0.02  # 2% change
+SOURCE_DIVERGENCE_THRESHOLD = 0.05  # 5% disagreement between sources
 # #235 Item 2: a near-0% outcome ticking a few tenths of a point (a single thin
 # trade on a placeholder nominee — e.g. "Gigi Hadid 0.35% +0.3%") is NOT a story.
 # An outcome must clear this absolute-probability floor before it can headline as
 # the top mover. Suppresses the never-traded-placeholder 24h-move display class.
-MOVER_MIN_PROBABILITY = 0.05       # 5% floor to be eligible as a "mover"
+MOVER_MIN_PROBABILITY = 0.05  # 5% floor to be eligible as a "mover"
 
 # Volume thresholds (24h trading volume in contracts/dollars)
-HIGH_VOLUME_THRESHOLD = 50_000     # $50K+ 24h volume = high interest
+HIGH_VOLUME_THRESHOLD = 50_000  # $50K+ 24h volume = high interest
 MODERATE_VOLUME_THRESHOLD = 5_000  # $5K+ 24h volume = some interest
 
 
 @dataclass
 class FuturesFlags:
     """Boolean flags describing futures market characteristics."""
+
     has_major_movement: bool = False
     has_moderate_movement: bool = False
     leader_changed: bool = False
@@ -450,6 +479,7 @@ class FuturesFlags:
 @dataclass
 class FuturesHighlightResult:
     """Complete highlight analysis for a futures market."""
+
     score: int = 0
     # Uncapped float total (before the display cap at 98) used by the feed's
     # de-saturated ORDERING score. `score` stays an int capped at 98 for display
@@ -662,7 +692,10 @@ def compute_futures_highlight(
             # Track biggest mover — but only if the outcome itself clears the
             # probability floor. A ~0%-probability nominee is not a story no matter
             # how large its relative delta (#235 Item 2).
-            if change_24h > biggest_change and (current_prob or 0) >= MOVER_MIN_PROBABILITY:
+            if (
+                change_24h > biggest_change
+                and (current_prob or 0) >= MOVER_MIN_PROBABILITY
+            ):
                 biggest_change = change_24h
                 biggest_mover_name = o.get("name")
 
@@ -735,7 +768,10 @@ def compute_futures_highlight(
 
     # Source divergence (disagreement MAGNITUDE) is a distinct signal not carried
     # by the blend, so it remains an additive term.
-    if max_source_divergence is not None and max_source_divergence >= SOURCE_DIVERGENCE_THRESHOLD:
+    if (
+        max_source_divergence is not None
+        and max_source_divergence >= SOURCE_DIVERGENCE_THRESHOLD
+    ):
         flags.has_source_divergence = True
         result.score += FUTURES_WEIGHTS["source_divergence"]
         result.reasons.append("source_divergence")
@@ -753,11 +789,7 @@ def compute_futures_highlight(
             result.reasons.append("moderate_volume")
 
     # === Volume velocity (current vs 7-day average) ===
-    if (
-        volume_24h is not None
-        and volume_7d_avg is not None
-        and volume_7d_avg > 0
-    ):
+    if volume_24h is not None and volume_7d_avg is not None and volume_7d_avg > 0:
         velocity = volume_24h / volume_7d_avg
         if velocity >= 3.0:
             result.score += 8
@@ -796,27 +828,7 @@ def compute_futures_highlight(
     result.score = min(98, result.score)
 
     # === Determine primary reason for display ===
-    #
-    # D1 clause a (#4066): the two `*_surprise` codes measure against OPENING,
-    # an instant this list cannot name, so they sit below every code that is
-    # anchored to a time and their copy no longer claims a baseline. The dated
-    # sentence is composed in `feed_reasons` where `opening_captured_at` is in
-    # hand; these strings are only the last-resort label when it has nothing.
-    priority_order = [
-        ("leader_change", "New favorite"),
-        ("source_divergence", "Sources disagree"),
-        ("major_movement_24h", "Big odds movement"),
-        ("volume_spike", "Trading surge"),
-        ("rank_shakeup", "Rankings shakeup"),
-        ("moderate_movement_24h", "Odds moving"),
-        ("resolving_soon_7d", "Resolving soon"),
-        ("resolving_soon_30d", "Resolving this month"),
-        ("major_surprise", "Well off its opening price"),
-        ("moderate_surprise", "Off its opening price"),
-        ("multi_source", "Multi-source"),
-    ]
-
-    for reason_code, display_text in priority_order:
+    for reason_code, display_text in PRIMARY_REASON_LABELS:
         if reason_code in result.reasons:
             result.primary_reason = display_text
             break

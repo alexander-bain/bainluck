@@ -32,7 +32,11 @@ from app.utils.feed_reasons import (
     generate_futures_headline,
     generate_futures_reason,
 )
-from app.utils.futures_highlights import FUTURES_WEIGHTS
+from app.utils.futures_highlights import (
+    FUTURES_WEIGHTS,
+    PRIMARY_REASON_LABELS as FUTURES_PRIMARY_REASON_LABELS,
+    compute_futures_highlight,
+)
 
 # Every signal the scorer can attach to a card, plus the two lifetime-move
 # reasons that only `feed_reasons` knows about. Driving the cross-product means
@@ -195,3 +199,79 @@ def test_the_ban_list_itself_still_catches_what_it_is_for():
     )
     assert not contains_diagnostic_phrase("New favorite: Hike 25bps (55%)")
     assert not contains_diagnostic_phrase("Jair Bolsonaro moved up 6.1 points today")
+
+
+# ── The producer the first draft of this guard could not see ─────────────────
+#
+# CI found it and three local bands did not. `routes/feed.py` composes the served
+# headline as `generate_futures_headline(...) or highlight_result.primary_reason`,
+# and `primary_reason` came off a SECOND label table in `futures_highlights.py`
+# carrying "Sources disagree", "Rankings shakeup" and "Multi-source". Deleting the
+# branches in `feed_reasons` alone would have made a headline empty MORE often and
+# handed those exact three strings to the fallback — the fix making its own defect
+# more visible. A ban that covers one producer is a ban on one producer.
+
+
+def test_the_headline_fallback_label_is_never_a_diagnostic():
+    """Every scoring signal's last-resort display label, one at a time."""
+    offenders = []
+    for signal in ALL_HIGHLIGHT_REASONS:
+        label = dict(FUTURES_PRIMARY_REASON_LABELS).get(signal)
+        if contains_diagnostic_phrase(label):
+            offenders.append(f"{signal} -> primary_reason: {label!r}")
+    assert (
+        not offenders
+    ), "the headline fallback talks about our pipeline:\n" + "\n".join(offenders)
+
+
+def test_the_served_headline_is_clean_however_it_is_composed():
+    """The real expression from `routes/feed.py`, not either half alone.
+
+    A divergent, multi-source, reshuffled card with no mover data is the exact
+    shape that empties the headline and reaches the fallback.
+    """
+    reasons = ["source_divergence", "multi_source", "rank_shakeup"]
+    highlight = compute_futures_highlight(
+        market_tier=1,
+        sport_category="basketball",
+        source_count=3,
+        max_source_divergence=0.09,
+        outcomes=[
+            {
+                "name": "Thunder",
+                "probability": 0.31,
+                "probability_change_24h": 0.06,
+                "rank": 1,
+                "rank_change_24h": 0,
+                "opening_probability": 0.25,
+            }
+        ],
+    )
+    served = (
+        generate_futures_headline(
+            highlight.reasons,
+            leader_name="Thunder",
+            leader_probability=0.31,
+            source_count=3,
+        )
+        or highlight.primary_reason
+        or ""
+    )
+    assert not contains_diagnostic_phrase(served), f"served headline: {served!r}"
+    assert not contains_diagnostic_phrase(highlight.primary_reason)
+    # And the signals themselves are untouched — this is a COPY fix, not a
+    # scoring change. The card still ranks on the divergence it no longer names.
+    assert highlight.flags.has_source_divergence is True
+    assert "source_divergence" in highlight.reasons
+
+    for signal in reasons:
+        one_signal_headline = (
+            generate_futures_headline(
+                [signal], leader_name=None, leader_probability=None, source_count=3
+            )
+            or dict(FUTURES_PRIMARY_REASON_LABELS).get(signal)
+            or ""
+        )
+        assert not contains_diagnostic_phrase(
+            one_signal_headline
+        ), f"{signal} composed to {one_signal_headline!r}"
