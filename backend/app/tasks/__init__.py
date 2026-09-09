@@ -4539,6 +4539,18 @@ def refresh_open_commentary(self):
     return _tracked_run("refresh_open_commentary", _refresh_open_commentary())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.refresh_oscars_previews")
+def refresh_oscars_previews(self):
+    """Write the Oscars category previews `GET /api/oscars` reads (#3322).
+
+    The request path no longer generates them: six synchronous OpenAI calls on an
+    async handler measured 10.83s and parked the loop for every other request on
+    that process. Skips without an OpenAI call when there is nothing to preview.
+    See app/tasks/oscars_previews.py."""
+    from app.tasks.oscars_previews import _refresh_oscars_previews
+    return _tracked_run("refresh_oscars_previews", _refresh_oscars_previews())
+
+
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_admin_audit_all")
 def precompute_admin_audit_all(self):
     """Precompute /api/admin/audit/all (4 grid subprocesses) into Redis (L2-90)."""
@@ -4652,6 +4664,29 @@ celery_app.conf.beat_schedule = {
         # call per run, at most. Background queue (runs the full golf aggregation).
         "task": "app.tasks.refresh_open_commentary",
         "schedule": 180.0,
+        "options": {"queue": "background"},
+    },
+    "refresh-oscars-previews": {
+        # #3322: the six category previews on GET /api/oscars are written here
+        # instead of on the request path, where they cost 10.83s and parked the
+        # event loop for every other request on the same worker process. Hourly,
+        # published with a 2h TTL so a stopped beat clears the previews rather
+        # than leaving text quoting a probability the page no longer shows.
+        # Self-gates on DATA (no major categories => no OpenAI call), so it costs
+        # one query when the markets are gone. Background queue: it runs the full
+        # Oscars aggregation and then talks to OpenAI.
+        #
+        # CRONTAB, NOT AN INTERVAL, and that is the guard's ruling rather than a
+        # preference: `test_the_unavoidable_background_floor_is_named_and_has_not
+        # _grown` holds that an interval beat slower than 180s is not a continuous
+        # floor and must be reasoned about as a CO-FIRE — visible to the census
+        # that protects the settlement sweep's window. All five existing interval
+        # background beats are <=180s; an hourly one is a different animal.
+        # :07 because it is one of the 14 minutes carrying ZERO background crontab
+        # beats, it is clear of the sweep's 10:31+13m window, and it is outside
+        # the :28-:47 accuracy-page rebuild window.
+        "task": "app.tasks.refresh_oscars_previews",
+        "schedule": crontab(minute="7"),
         "options": {"queue": "background"},
     },
     "poll-mlb-pregame": {
