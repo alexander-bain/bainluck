@@ -13,6 +13,7 @@ import CalibrationChart from "@/components/CalibrationChart";
 // UX-P128: the Source Comparison row prints numbers, so it is mountable rather
 // than inline — a render defect is not provable by grepping the page source.
 import SourceComparisonRow from "@/components/SourceComparisonRow";
+import { CalibrationCardNote } from "@/components/CalibrationCardNote";
 import {
   buildSourcePanels,
   compareMatchedBuckets,
@@ -71,7 +72,6 @@ import {
 } from "@/lib/calibrationContract";
 import {
   decideCalibrationStaleness,
-  stalenessDriftClause,
   stalenessHeadline,
   stalenessScheduleClause,
 } from "@/lib/calibrationStaleness";
@@ -570,9 +570,13 @@ export default function CalibrationPage() {
   }
 
   // Built once, after the refusal gate, because it is only ever rendered inside
-  // the banner. `null` when there is nothing honest to say about drift — which
-  // is not the same as "no drift", and is why this returns null rather than "0".
-  const driftClause = staleness ? stalenessDriftClause(staleness) : null;
+  // the banner.
+  //
+  // #4118 / notice 34: `stalenessDriftClause` is deliberately NOT called here
+  // any more. Its sentence was a coverage count in the page body, the drift it
+  // reported still travels on this element as `data-units-drifted` /
+  // `data-units-banked`, and the function is kept (with its tests) rather than
+  // deleted because reversing this is one line if Alex rules the other way.
   const scheduleClause = staleness ? stalenessScheduleClause(staleness) : null;
 
   const topCats = categories.slice(0, 3).map(c =>
@@ -825,8 +829,20 @@ export default function CalibrationPage() {
                   })
                 : "earlier"}
               {staleness.stagedAgeS !== null && ` (${formatAge(staleness.stagedAgeS)} ago)`}
-              {driftClause ? `, and ${driftClause}` : ""}. So it describes the market as of
-              then, not now.
+              {/* #4118 / standing notice 34. This clause used to read ", and 128
+                  of 128 units have drifted since". It is a coverage count in the
+                  page body — the shape the notice names first — and it is also
+                  jargon: "units" is our word for a staged census partition and
+                  a reader cannot define it, which is notice 19's rule as well.
+                  It is not the warning. The warning is the age, and the age is
+                  still here, in full, with the date it was staged.
+
+                  The drift is NOT lost, and it did not need this sentence to
+                  survive: `data-units-drifted` and `data-units-banked` are on
+                  this element already (see above), so every rail and audit that
+                  reads it keeps reading it. That is exactly where notice 34
+                  sends a coverage count — the artifact, not the page. */}
+              . So it describes the market as of then, not now.
             </>
           )}
           {staleness.kind === "undisclosed" && (
@@ -1003,30 +1019,38 @@ export default function CalibrationPage() {
       {/* Source Comparison */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">Source Comparison<CohortTag cohort={cohort} /></h2>
-        <p className="text-xs text-text-muted mb-4">
-          How each data source performs independently, sorted by ECE.{" "}
-          <strong className="text-text-secondary">ECE</strong> (n-weighted error) is the headline
-          metric &mdash; it reflects the outcomes users actually see. MCE (equal-weighted) is a
-          secondary &ldquo;worst-bucket sensitivity&rdquo; stat where a tiny bucket counts as much
-          as a huge one. Lower is better.
+        {/* Notice 34. The caption a reader needs to read the table is which way
+            is better and what it is sorted by — one line. Everything else that
+            stood here (what ECE and MCE are, why there is no per-shape column)
+            is a method note, and method notes are now one tap down. The MCE
+            column header has carried the same definition as a `title` tooltip
+            since UX-P128, which is literally the destination the notice names. */}
+        <p className="text-xs text-text-muted mb-3">
+          Each data provider on its own, sorted by ECE. Lower is better.
         </p>
         {/* Queue 316 item 2. One row per provider, and the row says which source
             keys it pooled — so the collapse is legible instead of being a
             relabelling the reader has to take on trust. */}
-        <p className="text-xs text-text-muted mb-4" data-testid="calibration-provider-note">
-          Each row is one <strong className="text-text-secondary">data provider</strong>, measured
-          by pooling its outcomes and running the same calculation used for every other row.
-          {shapeInline ? null : (
-            <>
-              {" "}Sportsbook odds arrive in three shapes (moneylines, spreads, totals); the
-              prediction markets publish a single shape each, so a per-shape column here would
-              exist for one provider and be blank for the others. The shape-by-shape breakdown is
-              in <a href="#by-source" className="text-accent-brand hover:underline">By Source</a>{" "}
-              below &mdash; open &ldquo;Break out the shapes&rdquo; inside the Sportsbooks panel to
-              see all {sources.length} keys separately.
-            </>
-          )}
-        </p>
+        <CalibrationCardNote label="How these rows are measured">
+          <p className="text-xs text-text-muted" data-testid="calibration-provider-note">
+            Each row is one <strong className="text-text-secondary">data provider</strong>, measured
+            by pooling its outcomes and running the same calculation used for every other row.{" "}
+            <strong className="text-text-secondary">ECE</strong> (n-weighted error) is the headline
+            metric &mdash; it reflects the outcomes users actually see. MCE (equal-weighted) is a
+            secondary &ldquo;worst-bucket sensitivity&rdquo; stat where a tiny bucket counts as much
+            as a huge one.
+            {shapeInline ? null : (
+              <>
+                {" "}Sportsbook odds arrive in three shapes (moneylines, spreads, totals); the
+                prediction markets publish a single shape each, so a per-shape column here would
+                exist for one provider and be blank for the others. The shape-by-shape breakdown is
+                in <a href="#by-source" className="text-accent-brand hover:underline">By Source</a>{" "}
+                below &mdash; open &ldquo;Break out the shapes&rdquo; inside the Sportsbooks panel to
+                see all {sources.length} keys separately.
+              </>
+            )}
+          </p>
+        </CalibrationCardNote>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -1142,15 +1166,25 @@ export default function CalibrationPage() {
             Does a price that moves predict better?
             <CohortTag cohort={cohort} scope="comparison" />
           </h2>
-          <p className="text-xs text-text-muted mb-4">
-            We don&rsquo;t receive trading volume for most of these markets, so we use{" "}
-            <strong>whether the price changed at all</strong> as the stand-in for whether anyone was
-            actively trading. It is a proxy, not a measurement of activity. Compared{" "}
-            <strong>bucket for bucket</strong>, so both groups are judged on outcomes we priced the
-            same. That matters: the two groups have different predicted-probability mixes, so any
-            gap between their overall figures is partly a difference in what they contain rather
-            than in how they behaved.
+          {/* Notice 34: the paragraph that used to stand here is a method note
+              in full — what our stand-in for trading is, that it is a proxy, and
+              why the two groups' overall figures are not comparable. Every word
+              of it survives one tap down. What the reader is handed first is the
+              caption that makes the table legible. */}
+          <p className="text-xs text-text-muted mb-3">
+            Same-probability rows only, so the two groups are compared like with like.
           </p>
+          <CalibrationCardNote label="What “traded” means here">
+            <p className="text-xs text-text-muted">
+              We don&rsquo;t receive trading volume for most of these markets, so we use{" "}
+              <strong>whether the price changed at all</strong> as the stand-in for whether anyone was
+              actively trading. It is a proxy, not a measurement of activity. Compared{" "}
+              <strong>bucket for bucket</strong>, so both groups are judged on outcomes we priced the
+              same. That matters: the two groups have different predicted-probability mixes, so any
+              gap between their overall figures is partly a difference in what they contain rather
+              than in how they behaved.
+            </p>
+          </CalibrationCardNote>
 
           {/* CAL-P025 / exit-exam item 2. The section used to lead with two
               cross-cohort ECE tiles, and the prose beneath them had to spend a
@@ -1196,13 +1230,18 @@ export default function CalibrationPage() {
               >
                 {matched.sentence}
               </p>
-              <p className="text-xs text-text-muted mt-2">
-                Error is actual minus predicted, in percentage points: negative = the outcome
-                happened <em>less</em> often than the price implied. Rows where either side is
-                below {MIN_CHART_BUCKET_N.toLocaleString()} outcomes are shown but greyed &mdash;
-                too thin to carry a comparison. A dash means only one cohort reaches that bucket,
-                so there is no matched pair to compare.
-              </p>
+              {/* Notice 34. `matched.sentence` above is the finding; this was
+                  the paragraph explaining how to decode the columns and what a
+                  greyed row or a dash means. It is a method note, so it folds. */}
+              <CalibrationCardNote label="Reading this table" className="mt-2 mb-0">
+                <p className="text-xs text-text-muted">
+                  Error is actual minus predicted, in percentage points: negative = the outcome
+                  happened <em>less</em> often than the price implied. Rows where either side is
+                  below {MIN_CHART_BUCKET_N.toLocaleString()} outcomes are shown but greyed &mdash;
+                  too thin to carry a comparison. A dash means only one cohort reaches that bucket,
+                  so there is no matched pair to compare.
+                </p>
+              </CalibrationCardNote>
             </div>
           ) : (
             <p className="text-xs text-text-muted mb-5" data-testid="calibration-matched-unavailable">
@@ -1842,17 +1881,33 @@ export default function CalibrationPage() {
           <section className="bg-surface-card rounded-xl p-5 border border-surface-border"
             data-testid="calibration-niche-section" data-parked-count={thin.length}>
             <h2 className="text-title-3 text-text-primary mb-1">What About Niche &amp; Long-Shot Markets?<CohortTag cohort={cohort} /></h2>
+            {/* Notice 34. Six lines of grey answered this heading with a policy
+                explanation; the answer is a number and a sentence. The number
+                the reader wants is HOW MANY are waiting — that is the card's
+                subject, not a coverage caveat about it — and the rest (the bar,
+                why the bar exists, what happens when one crosses it) is method,
+                so it folds. */}
             <p className="text-sm text-text-secondary mb-3">
-              Fair question &mdash; what about the offbeat ones (one-off culture bets, novelty props,
-              minor leagues)? A calibration curve is only honest with enough resolved outcomes behind it, so
-              we don&rsquo;t publish one for any category below{" "}
-              {minCategoryOutcomes.toLocaleString()} resolved outcomes &mdash; under that bar it&rsquo;s
-              statistical noise, not a signal. Right now{" "}
               <strong className="text-text-primary">{thin.length}</strong>{" "}
-              {thin.length === 1 ? "category is" : "categories are"} still accumulating
-              ({thinTotal.toLocaleString()} outcomes and counting). The moment one crosses the bar it
-              appears above automatically &mdash; no fake curve until we can stand behind it.
+              {thin.length === 1 ? "category" : "categories"}{" "}
+              {thin.length === 1 ? "doesn’t" : "don’t"} have enough resolved outcomes yet
+              for a curve we&rsquo;d stand behind.
             </p>
+            <CalibrationCardNote label="Why they aren’t shown yet">
+              <p className="text-xs text-text-muted">
+                Fair question &mdash; what about the offbeat ones (one-off culture bets, novelty props,
+                minor leagues)? A calibration curve is only honest with enough resolved outcomes behind it, so
+                we don&rsquo;t publish one for any category below{" "}
+                {minCategoryOutcomes.toLocaleString()} resolved outcomes &mdash; under that bar it&rsquo;s
+                statistical noise, not a signal. Right now{" "}
+                {thin.length}{" "}
+                {thin.length === 1 ? "category is" : "categories are"} still accumulating
+                ({thinTotal.toLocaleString()} outcomes and counting). The moment one crosses the bar it
+                appears above automatically &mdash; no fake curve until we can stand behind it.{" "}
+                <a href="#methodology" className="text-accent-brand hover:underline">How We Measure This</a>{" "}
+                has the sample-size bar and the full methodology.
+              </p>
+            </CalibrationCardNote>
             <p className="text-xs text-text-muted mb-2 uppercase tracking-wide">Closest to the bar</p>
             {/* UX-P189: the chip's `capitalize` class is gone. It was
                 compensating for `nicheCatLabel` returning bare single-word keys
@@ -1887,11 +1942,6 @@ export default function CalibrationPage() {
                 </span>
               )}
             </div>
-            <p className="text-xs text-text-muted">
-              How we&rsquo;ll know it&rsquo;s ready: see{" "}
-              <a href="#methodology" className="text-accent-brand hover:underline">How We Measure This</a>{" "}
-              for the sample-size bar and full methodology.
-            </p>
           </section>
         );
       })()}

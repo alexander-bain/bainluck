@@ -135,10 +135,34 @@ describe("the calibration staleness banner", () => {
   it("keeps saying WHEN the census was staged, which is the measured half", () => {
     // The ban above removes a claim; it must not be satisfiable by removing the
     // disclosure too. The frozen-inputs branch's whole job is to date the
-    // inputs, so the date and the drift both have to survive it.
+    // inputs, so the date has to survive it.
     expect(copy).toContain("staleness.stagedAt");
     expect(copy).toContain("staleness.stagedAgeS");
-    expect(copy).toContain("driftClause");
+  });
+
+  // #4118 / STANDING NOTICE 34 — this assertion used to also require
+  // `driftClause`, on the reasoning above: the date and the drift both had to
+  // survive the ban. The drift no longer survives it AS A SENTENCE, and the
+  // reasoning is not being abandoned so much as re-satisfied one layer down.
+  //
+  // Alex, 2026-09-08: coverage counts do not go in the page body; they go in
+  // "the PR, the artifact, or a tooltip". ", and 128 of 128 units have drifted
+  // since" is a coverage count, and "units" is a word for a staged census
+  // partition that no reader can define (notice 19). It was also the only
+  // clause of that banner in the banned shape — the age, the staged date and
+  // the consequence are all warnings, and all three are untouched.
+  //
+  // What made this safe rather than a quiet loss: the drift was ALREADY
+  // published on the same element as `data-units-drifted` / `data-units-banked`
+  // (#2007 item 1b put it there so a rail would not have to parse the
+  // sentence). So the count moved from the prose to the data, which is where
+  // the notice sends it, and every rail that read it still reads it. Pinned
+  // here so the pairing is asserted in the same suite that used to demand the
+  // sentence, and again in `calibrationNotice34.test.ts`.
+  it("publishes the drift as DATA now that the sentence does not carry it", () => {
+    expect(copy).not.toContain("driftClause");
+    expect(copy).toContain("data-units-drifted");
+    expect(copy).toContain("data-units-banked");
   });
 
   // #4113: the frozen-inputs body repeats the headline's currency claim one
