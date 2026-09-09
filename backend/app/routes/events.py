@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Integer, String, literal_column, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import insert
 
@@ -207,6 +208,7 @@ _PLACEHOLDER_TEAM_RE = re.compile(
 # 2% — only kills the obviously-useless deep rungs (measured: collapses a
 # 38-item ladder to the 3 meaningful lines on event 14961907).
 _SPREAD_DEEP_OTM_FLOOR = 0.02
+from app.utils.event_twin_fold import fold_twin_events
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
 from app.utils.game_state import normalize_live_game_state
 from app.utils.sport_keys import (
@@ -8927,6 +8929,59 @@ async def list_events(
 
     result = await db.execute(query)
     events = result.scalars().all()
+
+    # One game, one card — the list half of #4100. `/api/feed` folded twin rows
+    # at `ac6eb2c1`; this route did not, so `?sport=baseball_mlb&limit=60`
+    # answered with 18 duplicated fixtures in a 60-row page (measured on
+    # production 2026-09-09 04:33Z), including the very Cardinals pair the feed
+    # had just stopped showing. Same helper, same reasoning:
+    # `app/utils/event_twin_fold.py` carries it, and ruling 048 is why the
+    # registry correctly refuses to merge these rows — each twin is anchored to
+    # a DIFFERENT provider's game id, so neither is the blend.
+    #
+    # The fold sits above the enrichment stages rather than beside the response
+    # so that the odds query, the time-series metrics and
+    # `folded_probability_sources_batch` all see one row per fixture — they run
+    # over `event_ids`, so folding first also buys back the work the dropped
+    # rows would have cost.
+    #
+    # ORDERING, and what it costs: the fold runs AFTER the DB `limit`, so a
+    # caller asking for 60 can receive fewer, and `count` reports what is
+    # actually in `events`. That is deliberate. Over-fetching and truncating
+    # back to `limit` would make page one consume more raw rows than `limit`,
+    # so `offset=limit` would re-serve rows page one had already shown —
+    # offset pagination and post-query filtering cannot both be right without a
+    # cursor. Folding after the limit keeps `offset` in raw-row space, so no row
+    # is ever skipped or repeated; only the page size varies. No caller pays
+    # for this today: `fetchEvents` sends neither `limit` nor `offset`, and
+    # `leagueHorizon.ts` records that the 200 default "is not reached here".
+    # (A twin pair straddling a page boundary survives as one row on each page.
+    # Invisible within a page, and it goes away with #2693, not with a cursor.)
+    #
+    # `set_committed_value` delivers the union onto the hydrated row without
+    # marking it dirty, so no later flush can persist a serve-time blend into
+    # `events` — a plain assignment would be a write waiting for a commit
+    # (gotcha #4's neighbourhood).
+    #
+    # Gotcha #42 applied to a whole stage: the fold improves the page, it is
+    # never a precondition for having one. If it raises, the unfolded page is
+    # served — today's bug — rather than nothing.
+    try:
+        _fold = fold_twin_events(events)
+        if _fold.dropped_ids:
+            for _survivor_id, _merged in _fold.merged_sources.items():
+                _survivor = next(e for e in _fold.events if e.id == _survivor_id)
+                set_committed_value(_survivor, "win_probability_sources", _merged)
+            logger.info(
+                "events list twin fold: %d duplicate event rows collapsed, %d rows "
+                "gained a venue (dropped=%s)",
+                _fold.folded_count,
+                len(_fold.merged_sources),
+                _fold.dropped_ids[:20],
+            )
+            events = _fold.events
+    except Exception:
+        logger.exception("events list twin fold failed; serving the unfolded page")
 
     # Get the latest odds snapshots for each event, aggregated across bookmakers
     event_ids = [e.id for e in events]
