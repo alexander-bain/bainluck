@@ -199,29 +199,105 @@ export const VENUE_BANS: CopyBan[] = [
  * the string lives, enforced at render rather than over the bundle. Same shape,
  * same reason, and the same honest admission: outside the fence, this class is
  * still ungated.
+ *
+ * ═══ AMENDED BY CERT-2290 — THIS GROUP IS NOW ONE WORD ═══
+ *
+ * It held three. `books` and `bookmakers` left for `SUPPLIER_WORD_BANS` and
+ * `ALL_COPY_BANS`, because notice 33 bans those two OUTRIGHT and a fenced guard
+ * over an unfenced rule is how four of them survived #4067's sweep. What is
+ * left here is `sportsbook`, which genuinely is staged: it is the approved word
+ * in a mark and the banned word in a caption, so its scope is a real product
+ * distinction rather than a record of where somebody has swept.
  */
 export const SUPPLIER_PROSE_BANS: CopyBan[] = [
-  {
-    id: "supplier-books",
-    pattern: /\bbooks?\b/i,
-    why: 'a supplier CLASS word in prose — a mark beside a number may say "books"; a caption may not talk about our suppliers (D91, ruling 141 as amended)',
-  },
   {
     id: "supplier-sportsbook",
     pattern: /\bsportsbooks?\b/i,
     why: 'a supplier CLASS word in prose — a mark beside a number may name the class; a caption may not talk about our suppliers (D91, ruling 141 as amended)',
   },
+];
+
+/**
+ * ═══ CERT-2290 — THE TWO ABSOLUTE WORDS COME OUT OF THE FENCE ═══
+ *
+ * 🔴 **THE FENCE WAS THE DEFECT FOR THESE TWO, AND THE FIRST SHIP KEPT IT.**
+ * #4067 read notice 33 — *"the words … never appear on the site or in the app"*
+ * — and then left `books` and `bookmakers` in `SUPPLIER_PROSE_BANS`, which is
+ * scoped to the tournament surfaces. So the sweep fixed the strings it went
+ * looking for and the guard could not see the ones it missed. CERT-2290 found
+ * four in fifteen minutes, on three different surfaces:
+ *
+ *   * `/calibration` — "vig-removed consensus closing odds across 20+ bookmakers"
+ *   * `/calibration` — "a book moves its line with money" (the singular; the
+ *     pattern already rejected it, nothing was reading that surface)
+ *   * `/about` — "the whole market's honest opinion, not one book's"
+ *   * `lib/calibrationProviders.ts` + `lib/sourceColors.ts` — two local copies of
+ *     `Per-Bookmaker (Odds API)`, SHADOWING the label the server had already
+ *     corrected, so the source list, table, charts and sample title on
+ *     `/calibration` all kept printing it
+ *
+ * A staged rollout is right for `sportsbook`, which D91 protects in marks and on
+ * the calibration page. It is wrong for a word that is banned everywhere: the
+ * scope of the rule and the scope of the guard have to be the same scope, or the
+ * guard is only a record of where somebody has already looked.
+ *
+ * So these two join `ALL_COPY_BANS` and are enforced over the whole shipped
+ * bundle. **Measured before switching them on** (`.next/static/chunks`, this
+ * branch, 2026-09-08): with the four strings above repaired, the product-wide
+ * scan finds exactly TWO hits — the `/calibration` singular, fixed here, and
+ * `/privacy`'s "address book", which is the carve-out below. A rule that costs
+ * one fix and one exemption is a rule that can be switched on today rather than
+ * staged behind a list of surfaces nobody finishes.
+ *
+ * ═══ `book` IS ALSO AN ORDINARY ENGLISH NOUN ═══
+ *
+ * `/privacy` says *"we never access your address book or contact list"*, and
+ * that is not a supplier. `\bbooks?\b` cannot see the difference, and this
+ * file's own recorded failure mode is a broad rule that fires on legitimate
+ * content and gets switched off within a week — so the compounds that make
+ * `book` an ordinary object are excluded in the pattern, by name.
+ *
+ * Only `address book` is live today; the rest are here because they are the
+ * compounds a sports product plausibly reaches for next (`record books`, a
+ * `match book`, the `rule book`), and finding out one at a time via a red gate
+ * on true copy is how the exemption list becomes an argument for deleting the
+ * rule. `notebook` and `Facebook` need no arm — there is no word boundary
+ * before their `book`.
+ */
+export const SUPPLIER_WORD_BANS: CopyBan[] = [
+  {
+    id: "supplier-books",
+    pattern: /(?<!\b(?:address|phone|note|record|match|rule|text|comic|cook)\s)\bbooks?\b/i,
+    why: 'a word the site may not print AT ALL — not in prose and not as a mark (notice 33; the approved word is "sportsbooks")',
+  },
   {
     id: "supplier-bookmaker",
     pattern: /\bbookmakers?\b/i,
-    why: "a supplier CLASS word in prose, and the one spelling no mark on the site uses (D91, ruling 141 as amended)",
+    why: 'a word the site may not print AT ALL — not in prose and not as a mark (notice 33; the approved word is "sportsbooks")',
   },
 ];
 
-/** The bans that answer to `isSourceAttribution` rather than firing outright. */
-const ATTRIBUTION_AWARE_BANS: ReadonlySet<string> = new Set(
-  [...VENUE_BANS, ...SUPPLIER_PROSE_BANS].map((b) => b.id)
-);
+/**
+ * ═══ NOTICE 33 (Alex, 2026-09-08 2:00pm PT) — TWO OF THE THREE STOP BEING
+ * ATTRIBUTION-AWARE ═══
+ *
+ * D91 drew the line at PROSE, so all three class words above were judged by
+ * `isSourceAttribution` and a one-word mark beside a figure was allowed to say
+ * any of them. Alex then narrowed the vocabulary rather than the placement:
+ * *"we wouldn't EVER want to reference 'bookmakers'"*, and `books` with it. The
+ * approved word is `sportsbooks`.
+ *
+ * So the placement test still applies to `supplier-sportsbook` — that word is
+ * exactly what D91's *"small-font source marks on numbers stay and spread"*
+ * protects, and its own worked example is `Kalshi · Polymarket · 7 sportsbooks`.
+ * It does NOT apply to the other two: a banned word is banned wherever it sits,
+ * and leaving them attribution-aware would keep licensing the 9px `books`
+ * marker this ship exists to remove.
+ */
+const ATTRIBUTION_AWARE_BANS: ReadonlySet<string> = new Set([
+  ...VENUE_BANS.map((b) => b.id),
+  "supplier-sportsbook",
+]);
 
 /**
  * Source captions the SHAPE rule cannot recognise, each with the reason.
@@ -256,11 +332,18 @@ export const ATTRIBUTION_LITERALS: { literal: string; why: string }[] = [
  * class words were unbanned everywhere and this set only had to stop a legitimate
  * caption tripping the two venue NAMES. `SUPPLIER_PROSE_BANS` now fires on the
  * class words too, so this set is what keeps Alex's *"small-font source marks on
- * numbers stay"* true: the tournament list's 9px `books` marker is a clause of
- * exactly one word, and that word has to be allowed to stand alone.
+ * numbers stay"* true: the tournament list's 9px marker is a clause of exactly
+ * one word, and that word has to be allowed to stand alone.
+ *
+ * 🔴 `book`/`books`/`bookmaker`/`bookmakers` CAME BACK OUT under notice 33.
+ * They were here because a mark was allowed to say them; Alex has since banned
+ * the words themselves, so a standalone `books` is no longer a label that needs
+ * excusing — it is the defect. `sportsbook`/`sportsbooks` stay, because that is
+ * the word the mark is now supposed to use. This set exempts a word from being
+ * read as PROSE; it was never a licence, and after notice 33 the only class word
+ * it has left to exempt is the approved one.
  */
-const LABEL_WORDS =
-  /^(source|sources|and|vs|via|book|books|sportsbook|sportsbooks|bookmaker|bookmakers)$/i;
+const LABEL_WORDS = /^(source|sources|and|vs|via|sportsbook|sportsbooks)$/i;
 
 /**
  * Where one clause ends and the next begins.
@@ -949,6 +1032,10 @@ export const ALL_COPY_BANS: CopyBan[] = [
   ...VENUE_BANS,
   ...FUTURE_PROMISE_BANS,
   ...PRICE_FORMAT_BANS,
+  // CERT-2290: `books` and `bookmakers` are banned EVERYWHERE, so they are
+  // guarded everywhere. See `SUPPLIER_WORD_BANS` for the measurement that made
+  // switching them on product-wide a two-line cost rather than a rollout.
+  ...SUPPLIER_WORD_BANS,
 ];
 
 /**

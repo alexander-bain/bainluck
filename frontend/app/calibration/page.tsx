@@ -1801,10 +1801,13 @@ export default function CalibrationPage() {
                   data-outcomes={q.outcomes}
                 >
                   <div>
+                    {/* #4067 / CERT-2295 — the reason names the hold; the backend's
+                        note explaining it does not print. Same rule as the exclusions
+                        list below (see THE SERVER'S PROSE IS NOT THIS PAGE'S COPY).
+                        This section renders nothing today — the live payload has no
+                        `quarantine` key — so closing it now costs a reader nothing and
+                        stops the hole re-opening the day it does. */}
                     <span className="font-medium text-text-primary">{q.reason}</span>
-                    {q.note && (
-                      <span className="block text-xs text-text-muted mt-0.5">{q.note}</span>
-                    )}
                   </div>
                   <div className="text-right shrink-0">
                     <div className="tabular-nums font-semibold text-text-primary">
@@ -1920,6 +1923,15 @@ export default function CalibrationPage() {
                   >
                     <span className="text-xs font-mono text-text-muted whitespace-nowrap w-24 shrink-0">{c.date}</span>
                     <div className="min-w-0">
+                      {/* #4067 / CERT-2295 — THE DATE, THE TITLE AND THE ROWS. NOT THE
+                          BACKEND'S PARAGRAPH. See THE SERVER'S PROSE IS NOT THIS PAGE'S
+                          COPY, below the exclusions list. `corrections[7].description`
+                          is the specimen CERT-2295 named: a notice-33 supplier word
+                          inside a notice-34 method note, quoting our own issue number
+                          at a reader. It is quoted verbatim in the guard rather than
+                          here, because this file is itself scanned for those words by
+                          `supplierWordsAreGuardedEverywhere4067`. The intro above
+                          promises "dates and rows affected" — that is what survives. */}
                       <div className="text-sm font-medium text-text-primary">
                         {c.title}
                         {c.rows != null && (
@@ -1928,7 +1940,6 @@ export default function CalibrationPage() {
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-text-secondary">{c.description}</div>
                     </div>
                   </li>
                 ))}
@@ -1959,7 +1970,7 @@ export default function CalibrationPage() {
         <ul className="space-y-3 text-sm text-text-secondary">
           <li><strong className="text-text-primary">What&rsquo;s a calibration curve?</strong> We group every resolved prediction by its opening probability (0-10%, 10-20%, etc.) and check what percentage actually came true. If markets are well-calibrated, the points follow the diagonal line &mdash; a 30% prediction happens 30% of the time.</li>
           <li><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets (Kalshi, Polymarket), a market&rsquo;s final price settles at $1.00 (happened) or $0.00 (didn&rsquo;t happen) when it resolves.</li>
-          <li><strong className="text-text-primary">Which probability do we use?</strong> For events with a known start time (sports games, tournaments), we use <strong>closing line prices</strong> &mdash; the last traded price before the event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration because it captures all available information at the moment of truth. For sports, we use vig-removed consensus closing odds across 20+ bookmakers. For prediction markets linked to events (Kalshi, Polymarket game markets), we use the last traded price before the event starts. For markets without a fixed event start time (elections, economics, entertainment), we use the <strong>opening price after initial trading settles</strong> &mdash; the most conservative and honest measure. A year-long market&rsquo;s accuracy depends on when you measure, so a single closing line would be misleading.</li>
+          <li><strong className="text-text-primary">Which probability do we use?</strong> For events with a known start time (sports games, tournaments), we use <strong>closing line prices</strong> &mdash; the last traded price before the event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration because it captures all available information at the moment of truth. For sports, we use vig-removed consensus closing odds across 20+ sportsbooks. For prediction markets linked to events (Kalshi, Polymarket game markets), we use the last traded price before the event starts. For markets without a fixed event start time (elections, economics, entertainment), we use the <strong>opening price after initial trading settles</strong> &mdash; the most conservative and honest measure. A year-long market&rsquo;s accuracy depends on when you measure, so a single closing line would be misleading.</li>
           {/* Queue 316 item 1. This was a column in Source Comparison, where it
               competed with ECE for the reader's attention while being a
               guardrail rather than a headline: it answers "is the error spread
@@ -1996,15 +2007,57 @@ export default function CalibrationPage() {
               do not). The two bases do not measure the same, and we publish both figures rather than
               one blended number: {data.mce_closing_line?.toFixed(1)}pp on closing-line rows against{" "}
               {data.mce_opening_price?.toFixed(1)}pp on opening-price rows. A closing line is the
-              stronger test, so the gap is the cost of the fallback, not a finding about the books.
+              stronger test, so the gap is the cost of the fallback, not a finding about the sportsbooks.
             </li>
           )}
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
           <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""} across Kalshi, Polymarket, and sportsbook odds (via The Odds API). That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. We only include markets where real trading occurred &mdash; outcomes with zero bids or no trading volume are excluded, because a price without participants isn&rsquo;t a prediction. Data refreshes hourly.</li>
           {data.liquidity_filter && (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded > 0) && (
             <li>
+              {/* ═══ THE SERVER'S PROSE IS NOT THIS PAGE'S COPY (#4067, CERT-2295) ═══
+                *
+                * Every exclusion below used to print the backend's own `rule` string
+                * straight into the bullet, and #4067 was BLOCKED twice before anyone
+                * looked at what those strings actually say. Measured against the live
+                * payload on 2026-09-08:
+                *
+                *   soccer_2way_filter.rule  the notice-33 supplier word, twice, beside
+                *                            two raw source ids and "Soccer h2h is 3-way"
+                *   liquidity_filter.rule    "…never showed a real bid (yes_bid > 0) or
+                *                            trade (last_price > 0) in any snapshot…"
+                *   void_filter.rule         "…(did_not_play / withdrew)…"
+                *
+                * (The banned strings are quoted in full in the guard named below, not
+                * here — this file is itself scanned for those words by
+                * `supplierWordsAreGuardedEverywhere4067`, which is working as intended.)
+                *
+                * That is one sentence carrying a banned supplier word (notice 33), a
+                * banned betting format — `moneyline` — under the standing no-price
+                * ruling, two raw column names and two raw source ids. It is a method
+                * note written for a reviewer, which is precisely what notice 34 (Alex,
+                * 2026-09-08 4:00pm PT) says a reader never sees: *"method notes … and
+                * any sentence written to satisfy a reviewer or the bus go in the PR,
+                * the artifact, or a tooltip — never in the page body."*
+                *
+                * 🔴 SO THE FIX IS THE BINDING, NOT THE WORD. Laundering the vocabulary
+                * in the payload would satisfy the letter of CERT-2295 and leave
+                * `yes_bid > 0` on a reader's screen — and the next
+                * `rule` the calibration lane writes would re-open the same hole, because
+                * this page does not own that text and cannot review it. A page that
+                * renders prose it does not control has no copy rules at all.
+                *
+                * WHAT A READER LOSES: nothing that was theirs. The bold LABEL names the
+                * exclusion, the COUNTS say how big it is, and Alex's ruled disclosure
+                * clauses (CAL-P114/P117/P119, CERT-647) are written here in this file
+                * and are untouched. What goes is the machine's explanation of itself.
+                *
+                * WHAT IS GUARDED:
+                * `__tests__/components/supplierWordsFromCalibrationPayloadDoNotReachRenderedPage4067.test.tsx`
+                * renders this page with the real legacy phrases planted in EVERY prose
+                * field of the payload — including the ones no bullet reads today — so a
+                * future `{data.x.rule}` fails the gate on the day it is written rather
+                * than on the day a cert reads production. */}
               <strong className="text-text-primary">Liquidity filter (Kalshi).</strong>{" "}
-              {data.liquidity_filter.rule}{" "}
               <span className="text-text-primary">
                 {data.liquidity_filter.kalshi_included.toLocaleString()} included
               </span>{" "}
@@ -2020,21 +2073,18 @@ export default function CalibrationPage() {
           {data.esports_multi_bundle_filter && data.esports_multi_bundle_filter.excluded > 0 && (
             <li>
               <strong className="text-text-primary">Esports match-bundle filter.</strong>{" "}
-              {data.esports_multi_bundle_filter.rule}{" "}
               <span className="text-text-muted">{data.esports_multi_bundle_filter.excluded.toLocaleString()} excluded.</span>
             </li>
           )}
           {data.soccer_2way_filter && data.soccer_2way_filter.excluded > 0 && (
             <li>
               <strong className="text-text-primary">Soccer 2-way (draw-omission) filter.</strong>{" "}
-              {data.soccer_2way_filter.rule}{" "}
               <span className="text-text-muted">{data.soccer_2way_filter.excluded.toLocaleString()} excluded.</span>
             </li>
           )}
           {data.void_filter && data.void_filter.excluded > 0 && (
             <li>
               <strong className="text-text-primary">Void filter (did-not-play / withdrew).</strong>{" "}
-              {data.void_filter.rule}{" "}
               <span className="text-text-muted">{data.void_filter.excluded.toLocaleString()} excluded.</span>
             </li>
           )}
@@ -2050,7 +2100,6 @@ export default function CalibrationPage() {
           {data.nonexclusive_bundle_filter && data.nonexclusive_bundle_filter.excluded > 0 && (
             <li data-testid="calibration-nonexclusive-bundle-exclusion">
               <strong className="text-text-primary">Non-partition bundle filter (index ladders, prop containers).</strong>{" "}
-              {data.nonexclusive_bundle_filter.rule}{" "}
               <span className="text-text-muted">
                 {data.nonexclusive_bundle_filter.excluded.toLocaleString()} excluded
                 {data.nonexclusive_bundle_filter.excluded_by_cell
@@ -2297,7 +2346,12 @@ function BucketExamples({ state, onClose, sourceLabel }: {
         <div className="text-xs text-accent-danger py-2">Couldn&rsquo;t load examples. Try again.</div>
       ) : state.examples.length === 0 ? (
         <div className="text-xs text-text-muted py-2">
-          {state.note || "No individual examples available for this source/bucket."}
+          {/* #4067 / CERT-2295 — the drill-in used to prefer the examples endpoint's
+              own `note` over this sentence. It is the last place a server string
+              reached this page's text, and leaving it would have made the guard
+              below claim more than it proves. The endpoint serves `note: null`
+              today, so the fallback is what a reader already sees. */}
+          No individual examples available for this source/bucket.
         </div>
       ) : (
         <>

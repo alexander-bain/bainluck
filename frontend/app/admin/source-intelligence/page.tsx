@@ -468,7 +468,7 @@ export default function SourceIntelligencePage() {
             scoped to live game time only. Only sources with 20+ readings appear in the chart.
           </p>
           <p>
-            <strong>Sources.</strong> Sportsbook consensus (median across 5-15 books via The Odds API),
+            <strong>Sources.</strong> Sportsbook consensus (median across 5-15 sportsbooks via The Odds API),
             ESPN&apos;s proprietary model, our statistical model (nflfastR/Poisson-based), Kalshi
             (CFTC-regulated prediction market), Polymarket (CLOB prediction market), and the
             MLB Stats API model (baseball only).

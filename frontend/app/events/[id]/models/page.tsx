@@ -17,9 +17,9 @@ const FALLBACK_SOURCES: Record<string, WinProbSourceMeta> = {
     type: "market",
     color: sourceHex("betting"),
     description:
-      "Consensus win probability derived from sportsbook moneyline odds, aggregated across multiple bookmakers.",
+      "Consensus win probability derived from sportsbook moneyline odds, aggregated across multiple sportsbooks.",
     methodology:
-      "Moneyline odds from each bookmaker are converted to implied probabilities, then the vig (overround) is removed. The median probability across all reporting bookmakers is used as the consensus.",
+      "Moneyline odds from each sportsbook are converted to implied probabilities, then the vig (overround) is removed. The median probability across all reporting sportsbooks is used as the consensus.",
     attribution_url: "https://the-odds-api.com",
     attribution_name: "The Odds API",
     snapshot_count: 0,

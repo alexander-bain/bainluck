@@ -83,8 +83,22 @@ describe("CAL-P117 — the non-partition bundle exclusion is disclosed", () => {
     const region = disclosureRegion(SOURCE);
     // The BINDING, not just the words: a block that stopped reading the payload
     // would keep every sentence below and print none of the numbers.
-    expect(region).toContain("data.nonexclusive_bundle_filter.rule");
+    //
+    // ⚠️ #4067 / CERT-2295 — THIS USED TO PIN `…filter.rule` TOO, AND THAT ARM IS
+    // GONE ON A RULING, NOT FOR CONVENIENCE. Notice 34 (Alex, 2026-09-08 4:00pm
+    // PT) takes method notes off the page body, and the backend's `rule` string
+    // is one — the sibling soccer filter's spells out `odds_api_bookmaker`,
+    // which notice 33 bans outright. The page stopped rendering every `rule`.
+    //
+    // The arm below is why removing it costs this suite nothing: `excluded` was
+    // always the honest binding proof. A block that stopped reading the payload
+    // would print no COUNT, and the count is what Alex's ruling is about — "we
+    // publish the count per cell so that is checkable". The prose was never the
+    // disclosure; the numbers and the clauses written in this repo are.
     expect(region).toContain("data.nonexclusive_bundle_filter.excluded.toLocaleString()");
+    // And the removal is pinned, so a later editor cannot restore the paragraph
+    // without one of these two tests telling them which ruling they just undid.
+    expect(region).not.toContain("data.nonexclusive_bundle_filter.rule");
   });
 
   test("it is gated on a non-zero count, like every exclusion above it", () => {

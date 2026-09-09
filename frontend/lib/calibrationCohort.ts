@@ -153,11 +153,15 @@ export const PROXY_FOOTNOTE =
   // UX-P080 item 3 (Alex round 2). This is the definition the headline sentence
   // stopped carrying. It belongs here and not up there for the reason the whole
   // footnote exists: the short word leads, the precision rides with it. Note it
-  // states the GROUND ("a book moves its line with money"), not just the
+  // states the GROUND ("a sportsbook moves its line with money"), not just the
   // conclusion — a reader who is told sportsbook lines count as traded and not
   // told why has been asked to take our word for it, on the one page whose
   // entire job is not needing to be taken at our word.
-  "Sportsbook lines carry no price-moved flag and do not need one: a book " +
+  // #4067 repair (CERT-2290): the SECOND copy of the same sentence, and the one
+  // the bundle scan did not report — a rendered-DOM walk over the served page
+  // found it while `scanBundleSource` did not. Two guards, two different blind
+  // spots; the render is the one the reader has.
+  "Sportsbook lines carry no price-moved flag and do not need one: a sportsbook " +
   "moves its line with money, so those outcomes are traded by construction " +
   "and are counted as traded here.";
 
@@ -212,7 +216,11 @@ export function describeCohort(
   // itself in small print, on the surface whose only job is credibility.
   const partitionNote = hasNotApplicable
     ? `Sportsbook lines (${fmt(notApplicableN)} outcomes) carry no price-moved flag and ` +
-      `need none — a book moves its line with money — so they count as traded: ` +
+      // #4067 repair (CERT-2290): "a book" was the last reader-facing singular
+      // on this page. Notice 33 bans the word whatever its number, and the
+      // sentence loses nothing — it is already about sportsbook lines, named
+      // in its own first clause.
+      `need none — a sportsbook moves its line with money — so they count as traded: ` +
       `${fmt(movedN)} price-moved + ${fmt(notApplicableN)} sportsbook = ` +
       `${fmt(defaultCohortN)} traded, plus ${fmt(unchangedN)} untraded ` +
       `= ${fmt(fullN)} resolved outcomes.`
@@ -264,7 +272,7 @@ export function describeCohort(
   // it.
   //
   // The ruling that collapses the two: **sportsbook lines are traded BY
-  // CONSTRUCTION — a book moves its line with money.** So the absent
+  // CONSTRUCTION — a sportsbook moves its line with money.** So the absent
   // `price_moved` flag on those rows was never evidence that the price test
   // failed on them; it is evidence that the test is unnecessary for them. The
   // old copy inherited the flag's shape instead of the fact's, and every

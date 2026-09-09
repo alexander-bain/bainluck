@@ -334,7 +334,7 @@ export default function ScoreDifferentialChart({
     // the reader is told where the number IS rather than that there is none.
     const played = playedUnits(vocab, { home: null, away: null }, linescore);
     if (played) {
-      const lead = `The scoreboard reports ${vocab.scoreboardUnit}, so the line below is the books' projected ${vocab.unitSingular} margin.`;
+      const lead = `The scoreboard reports ${vocab.scoreboardUnit}, so the line below is the sportsbooks' projected ${vocab.unitSingular} margin.`;
       // #3240: holding the number and drawing the map are two facts, and the
       // pointer may only be printed on the second. Where there is no card to
       // point at, the note carries the count itself — that page knew the games
@@ -354,7 +354,7 @@ export default function ScoreDifferentialChart({
         ? `${lead} The ${vocab.unit} played are on the ${vocab.totalTitle.toLowerCase()} below.`
         : `${lead} ${homeShort} ${won} ${withUnit(played.home, vocab)} to ${awayShort}'s ${played.away}.`;
     }
-    return `The scoreboard reports ${vocab.scoreboardUnit}, so ${playedCountAbsence(vocab.unit, isClosed)}. The line below is the books' projected ${vocab.unitSingular} margin.`;
+    return `The scoreboard reports ${vocab.scoreboardUnit}, so ${playedCountAbsence(vocab.unit, isClosed)}. The line below is the sportsbooks' projected ${vocab.unitSingular} margin.`;
   })();
 
   // Build chart data by merging projected and actual score data on timeline.

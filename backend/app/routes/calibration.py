@@ -1787,7 +1787,7 @@ async def calibration_examples(
 
     elif source == "odds_api_bookmaker":
         note = (
-            "Per-bookmaker closing lines are aggregated from odds snapshots — "
+            "Per-sportsbook closing lines are aggregated from odds snapshots — "
             "individual rows aren't sampled here. See the moneyline (Odds API) "
             "examples for representative games."
         )

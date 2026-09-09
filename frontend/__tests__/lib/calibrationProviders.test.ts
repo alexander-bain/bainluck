@@ -264,12 +264,20 @@ describe("makeSourceLabeller — the payload's names, with house style on top", 
     // level — while the FAMILY row above it reads "Sportsbooks (Odds API)".
     // A server label must never silently overwrite a deliberate local choice,
     // or the two rows collapse into the same words.
+    //
+    // 🔴 CERT-2290 — THIS PRECEDENCE IS ALSO HOW #4067 SHIPPED A BANNED WORD.
+    // The backend corrected `odds_api_bookmaker` to "Per-sportsbook (Odds API)"
+    // and the page never saw it, because the local map wins here BY DESIGN.
+    // The mechanism is right and stays; the consequence is that a vocabulary
+    // sweep is not done when the server is fixed. It is done when every local
+    // override is fixed too — which is what
+    // `__tests__/lib/supplierWordsAreGuardedEverywhere4067.test.ts` now holds.
     const label = makeSourceLabeller({
       odds_api: { label: "Sportsbooks" },
-      odds_api_bookmaker: { label: "Per-Bookmaker" },
+      odds_api_bookmaker: { label: "Something the server made up" },
     });
     expect(label("odds_api")).toBe("Odds API");
-    expect(label("odds_api_bookmaker")).toBe("Per-Bookmaker (Odds API)");
+    expect(label("odds_api_bookmaker")).toBe("Per-sportsbook (Odds API)");
   });
 
   it("falls back to the CAL-P1024 prettifier on a payload banked before `label`", () => {

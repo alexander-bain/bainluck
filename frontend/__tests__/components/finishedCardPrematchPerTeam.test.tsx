@@ -162,7 +162,7 @@ describe("the /sports FINAL card", () => {
     );
 
     expect(printedPercent(books, "feed-card-prematch-home")).toBe(60);
-    expect(books).toContain("Pre-match · books");
+    expect(books).toContain("Pre-match · sportsbooks");
     expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pre-match ·");
   });
 
@@ -207,7 +207,7 @@ describe("the /sports FINAL card", () => {
     );
 
     expect(books).toContain('data-prematch-source="books"');
-    expect(books).toContain("Pre-match · books");
+    expect(books).toContain("Pre-match · sportsbooks");
     expect(renderFeedCard(KALSHI_FINAL)).toContain('data-prematch-source="kalshi"');
   });
 
@@ -267,7 +267,7 @@ describe("the Discover FINAL card", () => {
       })
     );
 
-    expect(html).toContain("Pre-match · books");
+    expect(html).toContain("Pre-match · sportsbooks");
   });
 
   it("speaks the same venue-free sentence as /sports, on both rungs", () => {

@@ -181,7 +181,7 @@ export default function AboutPage() {
           <div className="bg-surface-card rounded-2xl p-6 border border-surface-border shadow-card">
             <div className="bg-surface-deep rounded-xl p-5 border border-surface-border">
               {[
-                { label: "Betting Odds (20+ books)", value: "61%" },
+                { label: "Betting Odds (20+ sportsbooks)", value: "61%" },
                 { label: "ESPN Win Probability", value: "58%" },
                 { label: "Kalshi", value: "63%" },
                 { label: "Polymarket", value: "59%" },

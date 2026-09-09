@@ -593,11 +593,22 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
       /bookmaker/i
     );
 
+    // BANNED SINCE NOTICE 33, AND THIS ARM IS INVERTED, NOT DELETED. It used to
+    // assert the opposite — that the tournament list's 9px `books` marker was
+    // allowed, because D91 drew its line at PROSE and a one-word clause beside a
+    // figure is attribution. Alex then narrowed the VOCABULARY instead: *"we
+    // wouldn't EVER want to reference 'bookmakers'"*, `books` with it, approved
+    // word `sportsbooks`. So the marker is still allowed and still a mark — it
+    // just says a different word, which is what the next two arms hold.
+    expect(() =>
+      assertPlain('<span>73%</span><span class="text-[9px]">books</span>', "canary")
+    ).toThrow(/books?/i);
+
     // ALLOWED — Alex's *"small-font source marks on numbers stay and spread"*.
     // The tournament list's 9px marker is a one-word clause beside a figure;
     // if this side ever goes red the ban has eaten the attribution D91 keeps.
     expect(() =>
-      assertPlain('<span>73%</span><span class="text-[9px]">books</span>', "canary")
+      assertPlain('<span>73%</span><span class="text-[9px]">sportsbooks</span>', "canary")
     ).not.toThrow();
     expect(() => assertPlain("<figcaption>Sportsbooks</figcaption>", "canary")).not.toThrow();
     // D91's own worked example of the mark it wants, verbatim from the ruling.

@@ -197,7 +197,12 @@ def test_the_declared_map_is_not_carrying_dead_entries(produced):
     [
         ("datagolf", "DataGolf"),          # curated: the brand, not "Datagolf"
         ("odds_api", "Odds API"),
-        ("odds_api_bookmaker", "Per-Bookmaker (Odds API)"),
+        # Notice 33 / D92 = B (Alex, 2026-09-08): "bookmaker" is banned from
+        # everything a reader sees, so the curated name for this key moved to the
+        # approved word. The KEY is untouched — `odds_api_bookmaker` is what the
+        # producer emits and what `test_every_produced_source_is_named` above
+        # holds this map to; only the opinion about how to say it changed.
+        ("odds_api_bookmaker", "Per-sportsbook (Odds API)"),
     ],
 )
 def test_curated_names_are_opinions_not_generated(raw, expected):
