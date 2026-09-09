@@ -41,6 +41,14 @@ enum TeamShortName {
 
     /// Words that designate a *kind of club* or a *variant of a side* rather
     /// than naming a team. Lowercased, with trailing punctuation stripped.
+    ///
+    /// #4250 — this set and the browser's `CLUB_TYPE_SUFFIXES` in
+    /// `frontend/lib/teamShortName.ts` are ONE rule with two spellings, and
+    /// they had drifted apart in both directions: the browser was missing
+    /// `afc` and printed "Sunderland AFC" as **"AFC"**, and this set was
+    /// missing four words the browser measured. They are now compared by
+    /// `frontend/__tests__/teamDesignatorParityAcrossClients.test.ts`, which
+    /// reds if a token is added to one client and not the other.
     private static let designators: Set<String> = [
         // Club-type suffixes and prefixes used worldwide.
         "fc", "sc", "cf", "ac", "afc", "cfc", "sk", "if", "ik", "fk", "bk",
@@ -48,9 +56,21 @@ enum TeamShortName {
         "rc", "ssc", "psv", "hk", "il", "ff", "gif", "bif", "fsv", "spvgg",
         "kv", "rkc", "nec", "az", "sl", "cs", "ec", "se", "ad", "ce", "cp",
         "gd",
+        // #4250, measured as TRAILING tokens on production 2026-09-09 (counts
+        // are distinct multi-word `events` team names, both sides).
+        "wfc", // 8   Arsenal WFC, Manchester City WFC
+        "sad", // 8   Portimonense SAD (the Iberian legal suffix)
+        "lfc", // 2   Liverpool LFC
+        "pfk", // 2   Neftçi PFK
+        "nps", // 2   Volos NPS
         // English generic club words.
         "united", "city", "town", "county", "club", "athletic", "atletico",
         "rovers", "wanderers", "albion",
+        // #4250, the four the browser measured and this set lacked.
+        "state", // 33
+        "calcio", // 4
+        "academy", // 2
+        "sporting", // 1
         // Reserve, age-group and gender variants.
         "ii", "iii", "iv", "b", "w", "women", "res", "u19", "u20", "u21", "u23",
         // Person suffixes.
