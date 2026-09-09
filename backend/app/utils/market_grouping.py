@@ -839,6 +839,14 @@ CONTAINER_FOLD_MIN_SHARED_AFFIX_CHARS = 8
 #: about one entity and already has a correct card of its own.
 CONTAINER_FOLD_MIN_MEMBERS = 2
 
+#: How far a member's two legs may drift from summing to 1 before the member is
+#: refused a place on the card. #4203: the legs of one binary are written by two
+#: passes, and when a market closes at the venue the ``No`` leg goes to 1.000
+#: while the ``Yes`` leg freezes at whatever it last was — Belinda Bencic sat at
+#: ``Yes 0.833 / No 1.000`` for 21 hours and the venue had her closed at 0, so
+#: the fold ranked an eliminated player 2nd on "To Reach the Final". Measured on
+#: production 2026-09-08: 183 of 10,524 open container members drift past this.
+CONTAINER_FOLD_MAX_LEG_SUM_DRIFT = 0.05
 
 
 def _shared_affixes(names: list[str]) -> tuple[str, str]:
@@ -937,6 +945,35 @@ def extract_container_member_entities(names: list[str]) -> Optional[list[str]]:
     return entities
 
 
+def _legs_agree(probability: Optional[float], complement: Optional[float]) -> bool:
+    """Do a member's Yes and No legs describe the same world?
+
+    #4203. Each container member is one binary with two rows, and the two rows
+    are not written together: when the market closed at the venue, Bencic's
+    ``No`` went to 1.000 at ``08:50:04`` and her ``Yes`` was written 0.833 ten
+    seconds later and then never moved. Either number alone looks fine. Together
+    they sum to 1.833, which no binary can do, and the fold ranked the stale one.
+
+    So the pair is the check. A member whose legs sum away from 1 is carrying at
+    least one number we know is wrong, and nothing here can tell WHICH — the
+    venue can, and this code is not allowed to call it. It is refused a place on
+    the card rather than ranked. Deliberately NOT ``1 - complement``: that would
+    invent a price out of a row we have equal reason to distrust, and an invented
+    price is exactly what #4163 forbids for the parent.
+
+    A member with no ``No`` leg at all is unjudgeable, not suspect, and is kept —
+    the check must not quietly empty a card built from a source that only ever
+    stores one side.
+    """
+    if probability is None:
+        return False
+    if complement is None:
+        return True
+    return abs((float(probability) + float(complement)) - 1.0) <= (
+        CONTAINER_FOLD_MAX_LEG_SUM_DRIFT
+    )
+
+
 def detect_container_field_groups(
     members_by_group: dict[str, list[dict]],
     parent_names: dict[str, str],
@@ -962,15 +999,19 @@ def detect_container_field_groups(
 
     ``members_by_group`` maps group_id → the group's FULL membership (not the
     slice that happened to land in the caller's pool), each dict carrying
-    ``id``, ``name``, ``probability`` (the Yes leg) and optionally ``source``.
-    Passing a partial roster here is the #2789 failure — a card headed "To Reach
-    the Final" whose top row is not the leader because the leader was not loaded.
+    ``id``, ``name``, ``probability`` (the Yes leg), ``complement_probability``
+    (the No leg, used only to check the pair — see ``_legs_agree`` and #4203) and
+    optionally ``source``. Passing a partial roster here is the #2789 failure — a
+    card headed "To Reach the Final" whose top row is not the leader because the
+    leader was not loaded.
 
     Returns group_id → ``{"title", "market_ids", "entries", "sources",
     "member_total"}`` with ``entries`` ranked most-likely first. A group that
     cannot be titled, cannot be split into distinct entities, or has fewer than
-    ``CONTAINER_FOLD_MIN_MEMBERS`` priced members is absent from the result and
-    keeps the per-member cards it has today.
+    ``CONTAINER_FOLD_MIN_MEMBERS`` members whose legs agree is absent from the
+    result and keeps the per-member cards it has today. Un-folding is the honest
+    fallback, not a regression of #4153: a group we cannot rank truthfully should
+    not be presented as a ranked field.
     """
     result: dict[str, dict] = {}
 
@@ -979,8 +1020,11 @@ def detect_container_field_groups(
         if not title:
             continue
         priced = [
-            m for m in members
-            if m.get("probability") is not None and (m.get("name") or "").strip()
+            m
+            for m in members
+            if m.get("probability") is not None
+            and (m.get("name") or "").strip()
+            and _legs_agree(m.get("probability"), m.get("complement_probability"))
         ]
         if len(priced) < CONTAINER_FOLD_MIN_MEMBERS:
             continue

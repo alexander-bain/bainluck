@@ -2016,12 +2016,18 @@ async def load_container_field_folds(
     if not parent_names:
         return {}
 
+    # BOTH legs, not just the Yes. #4203: the two rows of one binary are written
+    # by separate passes, so a member that has gone closed at the venue can sit
+    # at Yes 0.833 / No 1.000 indefinitely — and the Yes alone looks like a
+    # perfectly good price. The No leg is fetched only so the fold can check the
+    # pair and refuse the member; it is never rendered and never inverted.
     member_rows = await db.execute(
         select(
             FuturesMarket.group_id,
             FuturesMarket.id,
             FuturesMarket.name,
             FuturesMarket.source,
+            FuturesOutcome.name,
             FuturesOutcome.current_probability,
         )
         .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
@@ -2029,19 +2035,32 @@ async def load_container_field_folds(
             FuturesMarket.group_id.in_(list(parent_names.keys())),
             FuturesMarket.market_type == "container_member",
             FuturesMarket.status.in_(["active", "open"]),
-            func.lower(FuturesOutcome.name) == "yes",
+            func.lower(FuturesOutcome.name).in_(["yes", "no"]),
         )
     )
-    members_by_group: dict[str, list[dict]] = defaultdict(list)
-    for group_id, market_id, name, source, probability in member_rows.all():
-        members_by_group[str(group_id)].append(
+    members_by_id: dict[int, dict] = {}
+    for group_id, market_id, name, source, leg, probability in member_rows.all():
+        member = members_by_id.setdefault(
+            market_id,
             {
+                "group_id": str(group_id),
                 "id": market_id,
                 "name": name,
                 "source": source,
-                "probability": probability,
-            }
+                "probability": None,
+                "complement_probability": None,
+            },
         )
+        key = (
+            "probability"
+            if (leg or "").strip().lower() == "yes"
+            else "complement_probability"
+        )
+        member[key] = probability
+
+    members_by_group: dict[str, list[dict]] = defaultdict(list)
+    for member in members_by_id.values():
+        members_by_group[member["group_id"]].append(member)
 
     return detect_container_field_groups(members_by_group, parent_names)
 

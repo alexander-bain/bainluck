@@ -51,9 +51,11 @@ class _StubSession:
     def __init__(self, results):
         self._results = list(results)
         self.calls = 0
+        self.statements = []
 
     async def execute(self, _stmt):
         self.calls += 1
+        self.statements.append(_stmt)
         if not self._results:
             raise AssertionError(
                 f"the route made {self.calls} reads; the fixture canned "
@@ -161,7 +163,13 @@ def _parents():
     ]
 
 
-def _members():
+def _members(complements=None):
+    """Both legs of every member, the shape the route reads since #4203.
+
+    ``complements`` overrides the No leg for a named entity; anything not named
+    gets the coherent ``1 - Yes`` a healthy market has.
+    """
+    complements = complements or {}
     rows = []
     mid = 1
     for template, group, members in (
@@ -169,15 +177,17 @@ def _members():
         (_BALLON, "polymarket:811116", _BALLON_DOR),
     ):
         for entity, probability in members:
-            rows.append(
-                (group, mid, template.format(entity), "polymarket", probability)
-            )
+            name = template.format(entity)
+            no_leg = complements.get(entity, 1 - probability)
+            rows.append((group, mid, name, "polymarket", "Yes", probability))
+            if no_leg is not None:
+                rows.append((group, mid, name, "polymarket", "No", no_leg))
             mid += 1
     return rows
 
 
-async def _serve(limit=20):
-    session = _StubSession([_pool(), _parents(), _members()])
+async def _serve(limit=20, complements=None):
+    session = _StubSession([_pool(), _parents(), _members(complements)])
     return await grouped_feed(
         request=_Request(),
         response=_Response(),
@@ -311,3 +321,65 @@ async def test_a_pool_with_nothing_to_fold_makes_no_extra_reads():
     assert session.calls == 1
     assert payload["group_counts"]["container_field"] == 0
     assert len(payload["feed"]) == 1
+
+
+# ── #4203 at the route: a contradicting member never reaches the card ──────
+
+
+@pytest.mark.asyncio
+async def test_a_member_whose_legs_contradict_is_not_served_on_the_card():
+    """The production case, end to end.
+
+    Bencic held ``Yes 0.833`` and ``No 1.000`` while the venue had her closed at
+    0, and the #4153 fold ranked her 2nd on "To Reach the Final". The route must
+    read both legs and drop her — with the fold otherwise intact, which is why
+    this asserts the surviving order rather than just her absence.
+    """
+    payload = await _serve(complements={"Belinda Bencic": 1.000})
+    card = next(
+        c
+        for c in payload["feed"]
+        if c.get("type") == "market" and c["market"]["name"].startswith("US Open 2026")
+    )
+    rows = [r["name"] for r in card["market"]["outcomes"]]
+    assert "Belinda Bencic" not in rows
+    assert rows[:3] == ["Maria Sakkari", "Coco Gauff", "Elena Rybakina"]
+
+
+@pytest.mark.asyncio
+async def test_the_dropped_members_market_is_not_left_behind_as_its_own_card():
+    """Dropping her from the ranking must not resurrect the wall #4153 removed.
+
+    ``market_ids`` covers every member of the group, refused ones included, so
+    the leg is still claimed by the folded card and never re-emerges as one of
+    the twelve "Will <player> …?" cards.
+    """
+    payload = await _serve(complements={"Belinda Bencic": 1.000})
+    titles = [c["market"]["name"] for c in payload["feed"] if c.get("type") == "market"]
+    assert not [t for t in titles if t.startswith("Will ") and "advance" in t]
+
+
+@pytest.mark.asyncio
+async def test_the_membership_read_asks_for_both_legs():
+    """The stub answers any statement, so the SQL itself needs pinning.
+
+    Every other #4203 test feeds `complement_probability` in through canned
+    rows, which means a revert of the membership query to ``name == 'yes'``
+    would leave `_legs_agree` reading `None` for every member — kept, unjudged,
+    Bencic back on the card — with all of them still green. This reads the
+    third statement the route actually issued.
+    """
+    session = _StubSession([_pool(), _parents(), _members()])
+    await grouped_feed(
+        request=_Request(),
+        response=_Response(),
+        category=None,
+        sport=None,
+        sports_only=True,
+        limit=20,
+        db=session,
+    )
+    sql = str(
+        session.statements[2].compile(compile_kwargs={"literal_binds": True})
+    ).lower()
+    assert "'yes'" in sql and "'no'" in sql
