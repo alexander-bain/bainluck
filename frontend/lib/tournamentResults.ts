@@ -127,8 +127,17 @@ export interface TournamentResults {
    * Finished matches at this tournament whose two players the register does
    * not both carry — a COVERAGE fact, and most of the qualifying draw by
    * design. Distinct from `winner_not_registered`, which is a join problem.
+   *
+   * #4280: this now counts only the matches where NEITHER side resolves. The
+   * ones where exactly one does are published and counted in `mixed_pairings`.
    */
   unregistered_pairs: number;
+  /**
+   * Rows published with ONE register-pinned side and one named by the
+   * scoreboard (#4280) — `source_pairing: "mixed"`. Optional on payloads
+   * cached from before the field existed.
+   */
+  mixed_pairings?: number;
   winner_not_registered: number;
   source_competitions: number;
   source_scored: number;
@@ -140,8 +149,13 @@ export interface TournamentResults {
   /** How many `matches` carry a pre-match probability (UX-P146). */
   with_prematch?: number;
   /**
-   * Ruling 8's coverage gate, counted in PLAYER SLOTS (`2 * count`), not rows
-   * (UX-P206). `player_slots - with_face - with_flag` is the initials tail.
+   * Ruling 8's coverage gate, counted in PLAYER SLOTS, not rows (UX-P206).
+   * `player_slots - with_face - with_flag` is the initials tail.
+   *
+   * NOT `2 * count`, and it never was after #4124: only slots the REGISTER
+   * pins are counted, so a `scoreboard` row contributes 0 and a `mixed` row
+   * contributes 1. A gate that assumed `2 * count` would read this page's
+   * coverage as falling every time the doubles played.
    * Optional on payloads cached from before the fields existed.
    */
   player_slots?: number;
@@ -648,10 +662,17 @@ export function completionNote(matches: TournamentResult[]): string | null {
  *
  * `matchup_by_pair.get(..., f"espn:{comp_id}")` is the exact line, and the
  * fallback is reached only when the register has no matchup for the two
- * players. Both players ARE registered on such a row — a result with an
- * unregistered player never reaches this list at all; it is counted in
- * `unregistered_pairs`. So the prefix means precisely: *we know both these
- * people and we could not tie this fixture to a market of ours*.
+ * players. So the prefix means precisely: *we could not tie this fixture to a
+ * market of ours*, which is what `untied` counts and is unchanged.
+ *
+ * ── #4280: IT NO LONGER IMPLIES BOTH PLAYERS ARE REGISTERED.
+ * This note used to add "Both players ARE registered on such a row", on the
+ * grounds that a result with an unregistered player never reached the list.
+ * That stopped being true when `build_results` began publishing a match with
+ * ONE registered side (`source_pairing: "mixed"`), so read the pairing off
+ * `source_pairing` and never off this prefix. The COUNT is unaffected: a half
+ * row has no register matchup either, so `untied` is still exactly "rows whose
+ * pairing the register does not carry".
  */
 const SCOREBOARD_MATCHUP_PREFIX = "espn:";
 
