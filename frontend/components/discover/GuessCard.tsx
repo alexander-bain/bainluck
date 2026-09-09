@@ -136,7 +136,34 @@ export function GuessCard({
       <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: catGradient }}>
         <span className="text-white text-sm">🎯</span>
         <span className="text-white/90 text-xs font-bold uppercase tracking-wider">What are the odds?</span>
-        <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ml-auto`}>
+        {/* #4181 — the chip skin here is the ON-DARK one, not the card one.
+            `catStyle.bg`/`catStyle.text` (`bg-indigo-500/15` + `text-indigo-600`)
+            are tuned for the WHITE card surface below; painted on `catGradient`
+            — the dark banner of the same hue — a 15% tint of the hue over the
+            hue leaves the fill essentially the gradient, and mid-dark `*-600`
+            text on it disappears. Measured across all eighteen categories in
+            `CATEGORY_GRADIENTS`: every one lands between 1.12:1 (cricket) and
+            2.14:1 (boxing) against a 4.5 bar for 10px text, while the sibling
+            "What are the odds?" on the same strip reads 8.56:1. It fails by
+            construction, not by palette accident, so a per-category tweak is
+            the wrong shape of fix.
+
+            `bg-white/20 text-white` was the obvious candidate and is wrong: it
+            lightens the fill TOWARD the text and still fails 6 of 18 (cricket
+            3.28). The fill has to go DARKER, which is what `ForYouChip` already
+            does for `tone === "onImage"` (`shared.tsx`) — the same question,
+            already answered in this directory.
+
+            Its exact `bg-black/30 text-white/90` is NOT reused verbatim, for a
+            reason worth writing down: the chip is `ml-auto`, so on a `135deg`
+            gradient it sits over the SECOND, lighter stop, and the midpoint is
+            not the case to size against. At the light stop that skin leaves
+            cricket (`#14b8a6`) at 4.18:1 — under the bar, on the pixels the
+            chip actually covers. A 40% scrim with full-strength white makes the
+            worst of all thirty-six stops 6.09:1, which is headroom rather than
+            a number tuned to today's palette. `guessBannerChipContrast` locks
+            it. */}
+        <span className="bg-black/40 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ml-auto">
           {catStyle.emoji} {category}
         </span>
       </div>
