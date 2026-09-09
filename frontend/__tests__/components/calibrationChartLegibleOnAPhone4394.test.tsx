@@ -71,15 +71,23 @@ describe("#4394 — the geometry gives way, not the type", () => {
     expect(g.width - 55 - 20).toBe(g.height - 25 - 50);
   });
 
-  test("the same card leaves the By Source panels alone", () => {
-    // 298/330 = 0.903 and 272/300 = 0.907, both above the 0.85 trigger. These
-    // seven charts were never the defect and the fix must not touch them —
-    // this is the control that fails if the trigger is loosened to "narrower".
-    expect(chartGeometry(330, 260, 298)).toEqual({
-      width: 330, height: 260, reauthored: false, xLabelStep: 10,
+  test("the same card leaves the By Source panels' GEOMETRY alone", () => {
+    // 298/330 = 0.903 and 272/300 = 0.907, both above the 0.85 trigger. This is
+    // the control that fails if REAUTHOR_BELOW is ever loosened to "narrower":
+    // these seven panels keep their authored box and are never re-drawn.
+    //
+    // #4400 amended what this control covers. It used to pin `xLabelStep: 10`
+    // here too, on the reading that "untouched" meant every field — but their
+    // eleven labels were overlapping by 1.4px and 4.4px on production at both
+    // 390px and 1280px, so that pin was holding the defect in place. The step
+    // is now decided on pitch, not on re-authoring, and it is 20 for these
+    // panels: see calibrationAxisLabelPitch4400.test.tsx. The GEOMETRY claim —
+    // the one this test was written to make — is unchanged and is what is left.
+    expect(chartGeometry(330, 260, 298)).toMatchObject({
+      width: 330, height: 260, reauthored: false,
     });
-    expect(chartGeometry(300, 230, 272)).toEqual({
-      width: 300, height: 230, reauthored: false, xLabelStep: 10,
+    expect(chartGeometry(300, 230, 272)).toMatchObject({
+      width: 300, height: 230, reauthored: false,
     });
   });
 
@@ -95,13 +103,13 @@ describe("#4394 — the geometry gives way, not the type", () => {
     expect(chartGeometry(700, 340, 595).reauthored).toBe(false);
   });
 
-  test("re-authoring thins the x-labels and nothing else does", () => {
+  test("the shipped re-authored case still thins its x-labels to every 20%", () => {
     // The gridlines stay every 10% in both arms (see the component); it is the
     // LABELS that cannot fit. A re-authored chart that kept step 10 would be
-    // the 5.1px smear again at full size.
+    // the 5.1px smear again at full size. #4400 rewrote WHY this is 20 — the
+    // 324px card gives 24.9px of pitch for 29.4px of label — but not that it is.
     expect(chartGeometry(700, 340, CARD_PX_AT_390).xLabelStep).toBe(20);
     expect(chartGeometry(700, 340, null).xLabelStep).toBe(10);
-    expect(chartGeometry(330, 260, 298).xLabelStep).toBe(10);
   });
 
   test("a container narrower than anything drawable is floored, not honoured", () => {
