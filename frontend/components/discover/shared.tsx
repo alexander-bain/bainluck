@@ -189,6 +189,13 @@ export function DismissBtn({ onDismiss }: { onDismiss?: () => void }) {
  * on `/preferences`, inside `ThemeBundleCard` and in `GroupedFeedRenderer`,
  * none of which pass `onDismiss`; those must not pay for a button that is
  * never drawn.
+ *
+ * ⚠️ THESE RESERVE THE ✕, AND NOTHING ELSE (#4131). The corner has a second
+ * claimant — `TrendBadge` at `right-12`, 91px wide — and 36px does not clear
+ * it. The answer is NOT a bigger number here: a pad sized to today's longest
+ * string is a pad that breaks on tomorrow's. A second corner element joins the
+ * row's flow instead (`TrendBadge inFlow`), so the only thing these two helpers
+ * ever have to reserve is the one 28px button they were measured against.
  */
 export function dismissCornerPad(onDismiss?: () => void): string {
   return onDismiss ? "pr-9" : "";
@@ -200,9 +207,44 @@ export function dismissCornerBadge(onDismiss?: () => void): string {
 
 // ── Trend Badge ──
 
-export function TrendBadge() {
+/** The pill's own look, shared by both placements so they cannot drift apart. */
+const TREND_SKIN =
+  "items-center gap-1 bg-orange-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full";
+
+/**
+ * "🔥 Trending", in one of two placements.
+ *
+ * `corner` (default) floats it over a hero photo or gradient strip — Variant A,
+ * Variant B and `EventCard`, whose top rows are left-aligned so nothing of the
+ * reader's is under it.
+ *
+ * `inFlow` puts it in a text card's meta row, where the corner is NOT free.
+ * #4131: on the three text cards the corner placement painted the pill straight
+ * over the "Resolves …" date. Measured on production 2026-09-08 at 390px: the
+ * pill is 91px wide and its left edge sits 139px from the card's right, while
+ * `dismissCornerPad` reserves 36px — so the pill covered the rightmost 87px of
+ * the row's 264px of usable width and the reader got "Resolves Se" and no date.
+ *
+ * Widening the pad was rejected deliberately. Reserving the real 123px leaves
+ * 177px for a row whose two runs measure ~172px ("📊 CYCLING" + "Resolves Sep
+ * 14, 2026") — correct for exactly today's strings, broken by the next longer
+ * category word. In the flow the row wraps instead of hiding anything, which is
+ * the same argument `ForYouChip` above already makes: a card's meta row takes
+ * layout space; a fourth floating chip is how a card becomes unreadable.
+ *
+ * This is #3777 recurring with the second corner element — that fix measured
+ * the ✕ and padded for it, and the badge was never added to the sum.
+ */
+export function TrendBadge({ inFlow = false }: { inFlow?: boolean } = {}) {
+  if (inFlow) {
+    return (
+      <span className={`inline-flex shrink-0 ${TREND_SKIN}`} data-trend-placement="flow">
+        🔥 Trending
+      </span>
+    );
+  }
   return (
-    <div className="absolute top-3 right-12 z-10 flex items-center gap-1 bg-orange-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full">
+    <div className={`absolute top-3 right-12 z-10 flex ${TREND_SKIN}`} data-trend-placement="corner">
       🔥 Trending
     </div>
   );
