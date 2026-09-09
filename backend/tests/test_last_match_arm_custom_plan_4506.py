@@ -225,11 +225,26 @@ class TestItPutsItBack:
 
     @pytest.mark.asyncio
     async def test_it_restores_even_when_the_arm_raises(self):
-        """A statement_timeout inside the block must not leak the GUC onward."""
+        """A statement_timeout inside the block must not leak the GUC onward.
+
+        Written as try/except rather than `pytest.raises` so the propagation is
+        an assertion of its own: an `@asynccontextmanager` whose generator
+        catches at the `yield` and does not re-raise SWALLOWS the error, and a
+        swallowed `statement_timeout` here would serve a dropdown that silently
+        lost its events arm. The restore and the re-raise are two properties and
+        this pins both.
+        """
         db = _Recorder()
-        with pytest.raises(RuntimeError):
+        propagated = False
+        try:
             async with _forced_custom_plan(db):
                 raise RuntimeError("query cancelled")
+        except RuntimeError:
+            propagated = True
+        assert propagated, (
+            "the manager swallowed the error — a cancelled arm would look like "
+            "a player with no matches rather than like a failure"
+        )
         assert _sets(db)[-1] == (
             f"SET LOCAL plan_cache_mode = '{_PLAN_CACHE_MODE_RESTING}'"
         )
