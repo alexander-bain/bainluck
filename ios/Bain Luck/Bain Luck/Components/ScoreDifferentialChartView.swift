@@ -16,6 +16,12 @@ struct ScoreDifferentialChartView: View {
     var awayTeamColor: Color?
     var homeTeamAbbrev: String?
     var awayTeamAbbrev: String?
+    /// #4117 — the served crest, the first rung of the avatar ladder. Optional
+    /// with a nil default because the ladder derives one from the team name for
+    /// most teams anyway; passing it is what lets a served crest outrank a
+    /// derived one, exactly as it does in the gutter above this chart.
+    var homeTeamLogo: String?
+    var awayTeamLogo: String?
     var forcedDomain: ClosedRange<Date>?
 
     /// The chart's height and its gutter's width, named because the gutter's
@@ -112,18 +118,34 @@ struct ScoreDifferentialChartView: View {
                     // footprint rather than overdrawing the heading beside it.
                     VStack {
                         let run = ChartGutter.run(chartHeight: Self.chartHeight, verticalPadding: 8)
+                        // #4117 — the crest, from the same shared rung the Win
+                        // Probability gutter above this one climbs. Without it this
+                        // page drew crests in one gutter and bare abbreviations in
+                        // its immediate neighbour, for the same two teams.
                         ChartGutterLabel(run: run, width: Self.gutterWidth) {
-                            Text(homeShort.uppercased())
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(homeTeamColor ?? .blue)
-                                .lineLimit(1)
+                            HStack(spacing: 3) {
+                                if let url = ChartGutterCrest.resolvedURL(
+                                    servedURL: homeTeamLogo, teamName: homeTeam, sportKey: sportKey) {
+                                    ChartGutterCrest(url: url)
+                                }
+                                Text(homeShort.uppercased())
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(homeTeamColor ?? .blue)
+                                    .lineLimit(1)
+                            }
                         }
                         Spacer()
                         ChartGutterLabel(run: run, width: Self.gutterWidth) {
-                            Text(awayShort.uppercased())
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(awayTeamColor ?? .red)
-                                .lineLimit(1)
+                            HStack(spacing: 3) {
+                                if let url = ChartGutterCrest.resolvedURL(
+                                    servedURL: awayTeamLogo, teamName: awayTeam, sportKey: sportKey) {
+                                    ChartGutterCrest(url: url)
+                                }
+                                Text(awayShort.uppercased())
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(awayTeamColor ?? .red)
+                                    .lineLimit(1)
+                            }
                         }
                     }
                     .frame(width: Self.gutterWidth)

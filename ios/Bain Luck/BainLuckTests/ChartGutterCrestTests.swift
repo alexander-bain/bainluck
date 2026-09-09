@@ -32,7 +32,7 @@ final class ChartGutterCrestTests: XCTestCase {
 
     /// THE SHIP. The 51 sides: no served url, a name the ESPN rung knows.
     func testANamedTeamWithNoServedURLStillGetsACrest() {
-        let url = OddsChartView.gutterCrestURL(
+        let url = ChartGutterCrest.resolvedURL(
             servedURL: nil, teamName: "Los Angeles Dodgers", sportKey: "baseball_mlb")
         XCTAssertNotNil(url, "the gutter drew nothing for a team the ESPN rung names")
         XCTAssertEqual(url?.absoluteString, espnTeamLogoURL(for: "Los Angeles Dodgers"))
@@ -42,7 +42,7 @@ final class ChartGutterCrestTests: XCTestCase {
     /// one is a worse bug than the blank this replaced.
     func testAServedURLStillWins() {
         XCTAssertEqual(
-            OddsChartView.gutterCrestURL(
+            ChartGutterCrest.resolvedURL(
                 servedURL: served, teamName: "Los Angeles Dodgers", sportKey: "baseball_mlb"
             )?.absoluteString,
             served
@@ -53,7 +53,7 @@ final class ChartGutterCrestTests: XCTestCase {
     /// and nothing behind it, and treating it as one blanks the slot.
     func testAnEmptyServedURLFallsThroughRatherThanWinning() {
         XCTAssertEqual(
-            OddsChartView.gutterCrestURL(
+            ChartGutterCrest.resolvedURL(
                 servedURL: "", teamName: "Los Angeles Dodgers", sportKey: "baseball_mlb"
             )?.absoluteString,
             espnTeamLogoURL(for: "Los Angeles Dodgers")
@@ -66,9 +66,9 @@ final class ChartGutterCrestTests: XCTestCase {
     /// are dictionary lookups that miss on `""`, so there is nothing to draw and
     /// nothing is drawn — no guess, no crash.
     func testNoTeamNameAndNoServedURLMeansNoCrest() {
-        XCTAssertNil(OddsChartView.gutterCrestURL(
+        XCTAssertNil(ChartGutterCrest.resolvedURL(
             servedURL: nil, teamName: nil, sportKey: "baseball_mlb"))
-        XCTAssertNil(OddsChartView.gutterCrestURL(
+        XCTAssertNil(ChartGutterCrest.resolvedURL(
             servedURL: nil, teamName: "", sportKey: "baseball_mlb"))
     }
 
@@ -81,7 +81,7 @@ final class ChartGutterCrestTests: XCTestCase {
     /// regression dressed as a guard.
     func testAServedURLSurvivesAMissingName() {
         XCTAssertEqual(
-            OddsChartView.gutterCrestURL(
+            ChartGutterCrest.resolvedURL(
                 servedURL: served, teamName: nil, sportKey: "baseball_mlb"
             )?.absoluteString,
             served
@@ -95,9 +95,9 @@ final class ChartGutterCrestTests: XCTestCase {
     /// "..._world_cup" key — the exact mistake #2977's guard was written to catch
     /// on the Discover hero, arriving at a third call site.
     func testTheWholeSportKeyReachesTheFlagRung() {
-        let whole = OddsChartView.gutterCrestURL(
+        let whole = ChartGutterCrest.resolvedURL(
             servedURL: nil, teamName: "Brazil", sportKey: "soccer_fifa_world_cup")
-        let truncated = OddsChartView.gutterCrestURL(
+        let truncated = ChartGutterCrest.resolvedURL(
             servedURL: nil, teamName: "Brazil", sportKey: "soccer")
         XCTAssertNotNil(whole)
         XCTAssertNotEqual(
@@ -123,13 +123,13 @@ final class ChartGutterCrestTests: XCTestCase {
     func testAClubIsNotHandedACountrysFlag() {
         XCTAssertNotNil(flagURL(for: "America", width: 80), "the hazard itself must be real")
 
-        let domestic = OddsChartView.gutterCrestURL(
+        let domestic = ChartGutterCrest.resolvedURL(
             servedURL: nil, teamName: "America", sportKey: "soccer_mexico_ligamx")
         XCTAssertNil(domestic, "a domestic club was handed a national flag")
 
         // …and the same name in a competition that IS international still gets one.
         XCTAssertEqual(
-            OddsChartView.gutterCrestURL(
+            ChartGutterCrest.resolvedURL(
                 servedURL: nil, teamName: "America", sportKey: "soccer_copa_america"
             )?.absoluteString,
             flagURL(for: "America", width: 80)
@@ -148,7 +148,7 @@ final class ChartGutterCrestTests: XCTestCase {
         for name in names {
             for key in keys {
                 for servedURL in [nil, "", served] as [String?] {
-                    let mine = OddsChartView.gutterCrestURL(
+                    let mine = ChartGutterCrest.resolvedURL(
                         servedURL: servedURL, teamName: name, sportKey: key)
                     let shared = teamAvatarURL(
                         servedURL: servedURL, teamName: name, sportKey: key

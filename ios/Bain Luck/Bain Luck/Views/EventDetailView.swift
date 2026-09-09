@@ -312,6 +312,8 @@ struct EventDetailView: View {
                             awayTeamColor: teamColors(event).away,
                             homeTeamAbbrev: event.homeTeamData?.abbreviation,
                             awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                            homeTeamLogo: event.homeTeamData?.logoSmall,
+                            awayTeamLogo: event.awayTeamData?.logoSmall,
                             forcedDomain: sharedChartDomain
                         )
                     }
