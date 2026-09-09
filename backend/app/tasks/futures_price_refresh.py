@@ -995,10 +995,28 @@ async def _fetch_kalshi_prices(service, external_id: str):
     return priced
 
 
-async def _fetch_polymarket_prices(service, event_ids: list[str]) -> dict:
+async def _fetch_polymarket_prices(service, event_ids: list[str]) -> tuple[dict, dict]:
     """Prices for a batch of Polymarket event ids, keyed by event id.
 
-    A value is either a list of priced items or :data:`VENUE_SETTLED`.
+    Returns ``(priced_by_event, unpriced_legs_by_event)``. A value in the first
+    is either a list of priced items or :data:`VENUE_SETTLED`; a value in the
+    second is the condition ids this pass was SERVED and the venue quotes no
+    price for (#4000) — see :func:`_retire_unpriced_legs` below.
+
+    THE SECOND DICT EXISTS BECAUSE ``continue`` THROWS AWAY A FACT WE WERE TOLD.
+    The per-leg refusal below drops an unpriced leg from the write set, which is
+    right — there is no price to write — and leaves whatever number the row was
+    last given standing. Declining to write is not withdrawing what is written,
+    and #4000's first attempt shipped the withdrawal onto the discovery poll,
+    which cannot reach these markets at all: `_poll_polymarket_markets`
+    paginates newest-first under a hard 2,000-event cap (#219E), a window that
+    measured ten hours wide on 2026-09-09, while all 104 affected events carry
+    startDates between 2025-07 and 2026-07. Zero were reachable, so zero were
+    retired. This task reaches them precisely because it does NOT paginate — it
+    addresses known markets by id (#2199) — and bucketing the cohort's
+    ``last_updated`` by minute-of-hour proves it is the only writer that does:
+    1,168 rows across 83 of the 104 markets land in the ``:50`` bucket, and the
+    ``:15`` bucket where the poll runs holds none.
 
     THE SETTLED CHECK RUNS BEFORE THE COHERENCE GUARD, and the order is the
     point. #2222's Polymarket row (``86515``, the Alpha Arena field) is closed
@@ -1017,10 +1035,19 @@ async def _fetch_polymarket_prices(service, event_ids: list[str]) -> dict:
     ``opening_probability`` permanently because opening is COALESCEd).
     """
     from app.tasks.polymarket import _resolve_market_probability, complementary_book
+
+    # Left on its own line rather than folded into the import above, because
+    # `test_reuses_the_source_price_guards_rather_than_reimplementing` pins that
+    # line's exact spelling to prove this path cannot write a price the ingest
+    # path would have refused. Wrapping it to fit a third name would have bought
+    # my own change by blunting a guard that is still doing its job — the pin is
+    # brittle about formatting, but it is right about the rule.
+    from app.tasks.polymarket import _unpriced_leg_external_ids
     from app.utils.winner_field_coherence import field_is_incoherent
 
     raw_events = await service.get_events_by_ids(event_ids)
     out: dict = {}
+    unpriced_out: dict = {}
     for raw in raw_events:
         event = service._parse_event(raw)
         if not event or not event.markets:
@@ -1089,7 +1116,16 @@ async def _fetch_polymarket_prices(service, event_ids: list[str]) -> dict:
             )
             continue
         out[str(event.id)] = priced
-    return out
+        # #4000: keyed to an event we DID price, on purpose. One live quote is
+        # the venue answering for this event, which makes "no quote on this leg"
+        # a statement about the leg rather than about the venue — the one
+        # distinction a by-id refresh cannot otherwise make, since a dark venue
+        # and a dead leg arrive down the same wire. A field nobody quotes at all
+        # never reaches this line (`if not priced: continue` above) and so
+        # retires nothing, which is stricter than the discovery poll's placement
+        # and deliberately so.
+        unpriced_out[str(event.id)] = _unpriced_leg_external_ids(event)
+    return out, unpriced_out
 
 
 # --- entry point -------------------------------------------------------------
@@ -1131,6 +1167,12 @@ async def _refresh_stale_futures_prices(
         # mode this whole mechanism is engineered against.
         "venue_settled": 0,
         "venue_settled_cleared": 0,
+        # #4000. Prices WITHDRAWN because the venue quotes none — the counterpart
+        # to `unknown_outcomes`, which counts a price we could not place. Reported
+        # unconditionally, including as zero: the first attempt at this fix ran to
+        # a clean success on every pass while retiring nothing, and a stat that
+        # only appears when it fires cannot tell that apart from a quiet cohort.
+        "legs_retired": 0,
         "errors": [],
         "by_source": {},
         "remaining_stale": None,
@@ -1310,6 +1352,7 @@ async def _refresh_stale_futures_prices(
         # --- Polymarket: batched by id, so the whole backlog costs ~25 calls ---
         if poly_markets:
             from app.services.polymarket_api import PolymarketAPIService
+            from app.tasks.polymarket import _retire_unpriced_legs
 
             poly_service = PolymarketAPIService()
             try:
@@ -1344,8 +1387,8 @@ async def _refresh_stale_futures_prices(
                         break
                     chunk = ids[i : i + POLYMARKET_ID_BATCH]
                     try:
-                        priced_by_event = await _fetch_polymarket_prices(
-                            poly_service, chunk
+                        priced_by_event, unpriced_by_event = (
+                            await _fetch_polymarket_prices(poly_service, chunk)
                         )
                     except Exception as exc:  # one bad batch must not wipe the run
                         stats["errors"].append(f"polymarket batch {i}: {exc}")
@@ -1372,6 +1415,16 @@ async def _refresh_stale_futures_prices(
                                 written = await _write_prices(
                                     session, market["id"], "polymarket", priced, stats
                                 )
+                                # #4000: same transaction as the refresh it rides,
+                                # so a row can never be left retired by a pass whose
+                                # prices rolled back. Runs after the write, so a leg
+                                # that regained a price this pass has already been
+                                # rewritten and is no longer in the unpriced list.
+                                retired = await _retire_unpriced_legs(
+                                    session,
+                                    market["id"],
+                                    unpriced_by_event.get(event_id) or [],
+                                )
                                 await session.commit()
                             except Exception as exc:
                                 await session.rollback()
@@ -1379,6 +1432,16 @@ async def _refresh_stale_futures_prices(
                                     f"polymarket {market['external_id']}: {exc}"
                                 )
                                 continue
+                            if retired:
+                                stats["legs_retired"] = (
+                                    stats.get("legs_retired", 0) + retired
+                                )
+                                logger.info(
+                                    "futures_price_refresh: market %s — withdrew our "
+                                    "price on %d leg(s) the venue quotes no price "
+                                    "for (#4000)",
+                                    market["id"], retired,
+                                )
                             if written:
                                 stats["markets_priced"] += 1
                                 stats["snapshots_written"] += written
