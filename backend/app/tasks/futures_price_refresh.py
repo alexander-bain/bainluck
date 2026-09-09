@@ -1398,6 +1398,46 @@ async def _sweep_unreached_kalshi_frozen(
             )
 
 
+async def _kalshi_reach_arm(
+    session, stats: dict, exclude_ids: list[int], service=None
+) -> None:
+    """Own the credential, the client and the call for :func:`_sweep_unreached_kalshi_frozen`.
+
+    A helper with TWO call sites in the task, which is the whole point. The
+    reach arm chooses its own population — live Kalshi markets holding
+    frozen-certain legs, ordered by volume — and that population is disjoint
+    from the stale batch by construction, since the batch is handed over as
+    ``exclude_ids``. So the arm's work does not depend on the batch containing
+    anything, and both of the task's exits have to run it:
+
+    * the normal path, where the batched arm has already spent what it wants of
+      the shared delisted budget, and
+    * the early return taken when NOTHING is stale — the pass on which this arm
+      is the only Kalshi reach there is.
+
+    The arm shipped scoped inside the batched arm's ``if kalshi_markets:``, and
+    that was argued from production's batch never being empty (1,044 Kalshi
+    markets on the 22:53Z pass, 2026-09-09). That is a fact about today's data,
+    not a property of the code, and it is the same shape of reasoning as the
+    six-hour staleness gate that made the arm necessary in the first place.
+
+    A missing key is recorded on the summary rather than in ``errors``:
+    ``errors`` drives :func:`_terminal` to ``partial`` for the whole pass, which
+    would be a verdict about the pricing run and not about this arm.
+    """
+    if service is None:
+        import os
+
+        if not os.getenv("KALSHI_API_KEY"):
+            stats["unreached_skipped_no_key"] = True
+            return
+        from app.services.kalshi_api import KalshiAPIService
+
+        service = KalshiAPIService()
+
+    await _sweep_unreached_kalshi_frozen(session, service, list(exclude_ids), stats)
+
+
 async def _fetch_polymarket_prices(service, event_ids: list[str]) -> tuple[dict, dict]:
     """Prices for a batch of Polymarket event ids, keyed by event id.
 
@@ -1610,6 +1650,13 @@ async def _refresh_stale_futures_prices(
         "unreached_control_delisted": 0,
         "unreached_control_indeterminate": 0,
         "unreached_budget_exhausted": False,
+        # The reach arm now runs on every pass, including one whose stale batch
+        # holds no Kalshi market at all, so "it found nothing" and "it never got
+        # to look" are two more states that must not share a zero. A missing key
+        # is NOT appended to `errors`: that would turn every keyless environment's
+        # pass `partial` (see `_terminal`), which is a verdict about the pass and
+        # not about this arm.
+        "unreached_skipped_no_key": False,
         "errors": [],
         "by_source": {},
         "remaining_stale": None,
@@ -1754,6 +1801,19 @@ async def _refresh_stale_futures_prices(
         selected = kalshi_markets + poly_markets
 
         if not selected:
+            # THE REACH ARM RUNS ON THIS EXIT TOO. "Nothing is stale" is a
+            # statement about the batch, and the arm's population is the markets
+            # the batch cannot see — an actively traded market is never stale, so
+            # this is the pass on which its delisted legs are MOST likely to be
+            # sitting unswept. Returning here without it is the same defect as
+            # the six-hour staleness gate, one level up.
+            #
+            # Before the terminal below, so the arm's own errors reach the
+            # summary. This branch sets its terminal literally rather than
+            # through `_terminal`, so an arm error does not downgrade it — that
+            # is deliberate: a reach-arm failure is not a failure of a pricing
+            # pass that had no prices to fetch.
+            await _kalshi_reach_arm(session, stats, [])
             # Gotcha #53: an empty result is a response SHAPE, not an absence.
             # "Nothing stale" and "everything stale was just attempted" are
             # opposite states, so they get different terminals.
@@ -1902,120 +1962,124 @@ async def _refresh_stale_futures_prices(
                 await poly_service.close()
 
         # --- Kalshi: one call per event ticker; no batch endpoint exists ---
-        if kalshi_markets:
-            import os
+        #
+        # The credential check and the service gate BOTH Kalshi arms, not just
+        # the batched one, because the #4253 reach arm selects its own
+        # population and must run on a pass whose stale batch holds no Kalshi
+        # market at all (CERT-2421 follow-up
+        # `4253-RUN-UNREACHED-SWEEP-WITH-AN-EMPTY-STALE-BATCH`).
+        import os
 
-            if not os.getenv("KALSHI_API_KEY"):
-                stats["errors"].append("KALSHI_API_KEY not configured")
-            else:
-                from app.services.kalshi_api import KalshiAPIService
+        kalshi_service = None
+        if os.getenv("KALSHI_API_KEY"):
+            from app.services.kalshi_api import KalshiAPIService
 
-                kalshi_service = KalshiAPIService()
-                # One scan for the whole batch, before the loop — see
-                # `_scan_kalshi_frozen_certain`. A failure here must not cost the
-                # pass its prices, so it degrades to "no candidates".
+            kalshi_service = KalshiAPIService()
+        elif kalshi_markets:
+            # Unchanged, and still conditional on the BATCH: this error is about
+            # markets that were selected and then not priced. Making it
+            # unconditional would turn every keyless pass `partial` (see
+            # `_terminal`), which is a verdict about the whole pass and not about
+            # one arm — the reach arm reports its own skip in
+            # `unreached_skipped_no_key`.
+            stats["errors"].append("KALSHI_API_KEY not configured")
+
+        if kalshi_service is not None and kalshi_markets:
+            # One scan for the whole batch, before the loop — see
+            # `_scan_kalshi_frozen_certain`. A failure here must not cost the
+            # pass its prices, so it degrades to "no candidates".
+            try:
+                frozen_certain = await _scan_kalshi_frozen_certain(
+                    session, [m["id"] for m in kalshi_markets]
+                )
+            except Exception as exc:
+                await session.rollback()
+                stats["errors"].append(f"kalshi frozen scan: {exc}")
+                frozen_certain = {}
+            for market in kalshi_markets:
+                if time.monotonic() - started > _TIME_BUDGET_S:
+                    stats["budget_hit"] = True
+                    break
+                _note_attempt(market)
                 try:
-                    frozen_certain = await _scan_kalshi_frozen_certain(
-                        session, [m["id"] for m in kalshi_markets]
+                    priced = await _fetch_kalshi_prices(
+                        kalshi_service, market["external_id"]
                     )
                 except Exception as exc:
-                    await session.rollback()
-                    stats["errors"].append(f"kalshi frozen scan: {exc}")
-                    frozen_certain = {}
-                for market in kalshi_markets:
-                    if time.monotonic() - started > _TIME_BUDGET_S:
-                        stats["budget_hit"] = True
-                        break
-                    _note_attempt(market)
+                    stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
+                    continue
+                if priced is VENUE_SETTLED:
+                    stats["venue_settled"] += 1
                     try:
-                        priced = await _fetch_kalshi_prices(
-                            kalshi_service, market["external_id"]
-                        )
+                        await _stamp_venue_settled(session, market["id"])
+                        await session.commit()
                     except Exception as exc:
-                        stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
-                        continue
-                    if priced is VENUE_SETTLED:
-                        stats["venue_settled"] += 1
-                        try:
-                            await _stamp_venue_settled(session, market["id"])
-                            await session.commit()
-                        except Exception as exc:
-                            await session.rollback()
-                            stats["errors"].append(
-                                f"kalshi stamp {market['external_id']}: {exc}"
-                            )
-                        continue
-                    if priced is None:
-                        stats["not_found"] += 1
-                        continue
+                        await session.rollback()
+                        stats["errors"].append(
+                            f"kalshi stamp {market['external_id']}: {exc}"
+                        )
+                    continue
+                if priced is None:
+                    stats["not_found"] += 1
+                    continue
+                try:
+                    written = await _write_prices(
+                        session, market["id"], "kalshi", priced, stats
+                    )
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
+                    continue
+                if written:
+                    stats["markets_priced"] += 1
+                    stats["snapshots_written"] += written
+                    stats["by_source"]["kalshi"] = (
+                        stats["by_source"].get("kalshi", 0) + written
+                    )
+                    if market["registered"]:
+                        stats["registered_priced"] += 1
+                    if market["served"]:
+                        stats["served_priced"] += 1
+                    await _clear_if_stamped(session, market, stats)
+                else:
+                    stats["unpriceable"] += 1
+
+                # #4253, AFTER the write on purpose. The event read above
+                # proves the venue is reachable and this market is live, so
+                # a 404 on one of its legs means that leg specifically is
+                # gone — not that the venue is down. Running it before the
+                # write would also race the fresh price the write is about
+                # to put on the row.
+                candidates = frozen_certain.get(market["id"])
+                if candidates:
                     try:
-                        written = await _write_prices(
-                            session, market["id"], "kalshi", priced, stats
+                        retired = await _retire_delisted_kalshi_legs(
+                            session, kalshi_service, market["id"], candidates, stats
                         )
                         await session.commit()
                     except Exception as exc:
                         await session.rollback()
-                        stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
-                        continue
-                    if written:
-                        stats["markets_priced"] += 1
-                        stats["snapshots_written"] += written
-                        stats["by_source"]["kalshi"] = (
-                            stats["by_source"].get("kalshi", 0) + written
+                        stats["errors"].append(
+                            f"kalshi retire {market['external_id']}: {exc}"
                         )
-                        if market["registered"]:
-                            stats["registered_priced"] += 1
-                        if market["served"]:
-                            stats["served_priced"] += 1
-                        await _clear_if_stamped(session, market, stats)
                     else:
-                        stats["unpriceable"] += 1
-
-                    # #4253, AFTER the write on purpose. The event read above
-                    # proves the venue is reachable and this market is live, so
-                    # a 404 on one of its legs means that leg specifically is
-                    # gone — not that the venue is down. Running it before the
-                    # write would also race the fresh price the write is about
-                    # to put on the row.
-                    candidates = frozen_certain.get(market["id"])
-                    if candidates:
-                        try:
-                            retired = await _retire_delisted_kalshi_legs(
-                                session, kalshi_service, market["id"], candidates, stats
+                        if retired:
+                            stats["kalshi_legs_retired"] += retired
+                            logger.info(
+                                "futures_price_refresh: withdrew %s delisted "
+                                "Kalshi leg(s) on market %s (%s)",
+                                retired, market["id"], market["external_id"],
                             )
-                            await session.commit()
-                        except Exception as exc:
-                            await session.rollback()
-                            stats["errors"].append(
-                                f"kalshi retire {market['external_id']}: {exc}"
-                            )
-                        else:
-                            if retired:
-                                stats["kalshi_legs_retired"] += retired
-                                logger.info(
-                                    "futures_price_refresh: withdrew %s delisted "
-                                    "Kalshi leg(s) on market %s (%s)",
-                                    retired, market["id"], market["external_id"],
-                                )
-                    await asyncio.sleep(0.15)
+                await asyncio.sleep(0.15)
 
-                # #4253 reach arm, LAST: the batched loop above spends the
-                # delisted budget first, so adding this cannot change what that
-                # arm does on any pass — when the budget binds, this one simply
-                # gets nothing. See `_KALSHI_UNREACHED_FROZEN_SQL`.
-                #
-                # Scoped inside `if kalshi_markets:` deliberately. A pass with an
-                # empty Kalshi batch skips the arm, which costs nothing the arm
-                # is for: it is idempotent, its population self-drains, and in
-                # production the batch is never empty (1,044 Kalshi markets
-                # attempted on the 22:53Z pass measured 2026-09-09). Hoisting it
-                # out would dedent the whole block for a case that does not occur.
-                await _sweep_unreached_kalshi_frozen(
-                    session,
-                    kalshi_service,
-                    [m["id"] for m in kalshi_markets],
-                    stats,
-                )
+        # #4253 reach arm, LAST and unconditional — see `_kalshi_reach_arm`. The
+        # batched loop above spends the shared delisted budget first, so this
+        # cannot change what that arm does on any pass; when the budget binds,
+        # this one simply gets nothing.
+        await _kalshi_reach_arm(
+            session, stats, [m["id"] for m in kalshi_markets], service=kalshi_service
+        )
 
         # Two TTLs, because there are two clocks. An identity market marked for
         # 6h would be unreachable for five hours after every refresh, which is
