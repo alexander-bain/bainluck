@@ -50,6 +50,7 @@ unique.
 from __future__ import annotations
 
 import ast
+import inspect
 import pathlib
 from datetime import datetime, timedelta, timezone
 
@@ -201,17 +202,29 @@ class TestThePredicate:
     def test_the_bound_is_mandatory_and_keyword_only(self):
         """A bound that defaults to unbounded is the defect wearing a parameter.
 
-        The two bad calls are splatted rather than written out. Spelled
-        literally, the positional one is a static "too many arguments" error to
-        CodeQL — a `failure` check-run conclusion, which standing notice 32
-        refuses outright — even though the call is deliberate and the test
-        asserts it raises. The splat keeps the guard and drops the false alert.
+        Asserted on the SIGNATURE rather than by making the two bad calls. Two
+        reasons, and the second is the better one:
+
+        1. Written literally, the positional call is a static "too many
+           arguments" ERROR to CodeQL (`py/call/wrong-arguments`) — a `failure`
+           check-run conclusion, which standing notice 32 refuses outright. A
+           splat did not fool it either; the analyser resolves the tuple.
+        2. `pytest.raises(TypeError)` is a weaker claim than it looks. It passes
+           for a function that raises TypeError for some entirely unrelated
+           reason, and it would keep passing if `sport_ids` grew a default of
+           `None` and the body raised on it — which is the exact regression this
+           guards. The signature is the contract, so assert the contract.
         """
-        missing, positional = ([_Row()],), ([_Row()], OWN)
-        with pytest.raises(TypeError):
-            row_for_statpal_id(*missing)
-        with pytest.raises(TypeError):
-            row_for_statpal_id(*positional)
+        param = inspect.signature(row_for_statpal_id).parameters["sport_ids"]
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY, (
+            "`sport_ids` must be keyword-only, so a caller cannot pass a bound "
+            f"by position and get the argument order wrong. Got {param.kind}."
+        )
+        assert param.default is inspect.Parameter.empty, (
+            "`sport_ids` must have NO default. A bound that defaults to "
+            "anything is the unbounded read wearing a parameter, and the next "
+            "caller inherits the defect silently (#4322)."
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -461,8 +474,12 @@ def _stub_soccer_service(monkeypatch, now):
 
 def _fixtures(now):
     """The two fixtures StatPal serves, colliding one FIRST."""
-    from app.services.statpal_api import StatPalFixture
+    # Module alias, not `from ... import`: the file reaches this module both
+    # ways otherwise, which is a real CodeQL finding (py/import-and-import-from)
+    # and therefore a `failure` conclusion that standing notice 32 refuses.
+    import app.services.statpal_api as statpal_api
 
+    StatPalFixture = statpal_api.StatPalFixture
     return [
         StatPalFixture(
             fixture_id=COLLIDING_FIXTURE_ID,
