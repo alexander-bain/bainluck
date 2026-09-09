@@ -1100,12 +1100,6 @@ _KALSHI_RETIRE_DELISTED_SQL = text(
        AND external_id = ANY(:tickers)
        AND current_probability = 1.0
        AND is_winner IS NOT TRUE
-       AND NOT EXISTS (
-             SELECT 1
-               FROM futures_outcomes crowned
-              WHERE crowned.market_id = :market_id
-                AND crowned.is_winner IS TRUE
-           )
  RETURNING id
     """
 )
