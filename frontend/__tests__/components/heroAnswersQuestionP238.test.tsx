@@ -130,21 +130,56 @@ function compactPercent(html: string): string | null {
  * only thing this ship changes.
  */
 function feedHeadline(html: string): { percent: string | null; label: string | null } {
-  const pct = /<div class="font-mono text-sm font-bold text-text-primary">([^<]*)</.exec(html);
-  const anchor = 'max-w-[100px]">';
-  const at = html.indexOf(anchor);
+  const pctRe = /<div class="font-mono text-sm font-bold text-text-primary">([^<]*)<\/div>/;
+  const pct = pctRe.exec(html);
+  if (!pct) return { percent: null, label: null };
+
+  // The label is the block that FOLLOWS the headline percent, and it is anchored on
+  // that SIBLING RELATIONSHIP rather than on a Tailwind width literal.
+  //
+  // It used to be anchored on the string `max-w-[100px]">`. #4245 raised that cap to
+  // 130px while fixing the label's own truncation (`truncate` had been on the flex
+  // container, where text-overflow cannot apply, so long names were being clipped off
+  // the LEFT edge with no ellipsis). The anchor stopped matching, `label` silently
+  // became null, and the two assertions below failed as "received value must be a
+  // string" — a matcher error, which reads as a broken test rather than as the finding
+  // this file exists to report. A guard pinned to a pixel value is a guard that goes
+  // dark the first time somebody changes that pixel value for an unrelated reason.
+  //
+  // The name now sits in its own <span>, so the tag strip below is what flattens it —
+  // which is also why this extractor cannot be a leaf-node reader.
+  // Depth-aware, because the label block nests: the entity-image placeholder renders
+  // its own <div> with the initials in it ("NV" for Neuralink), so stopping at the
+  // FIRST `</div>` closes the placeholder and yields the initials alone. The old
+  // two-chunk slice was hand-tuned to skip exactly that one nesting; counting instead
+  // means the extractor survives the next child either component grows.
+  const rest = html.slice(pct.index + pct[0].length);
+  const openEnd = rest.indexOf(">");
+  let depth = 1;
+  let i = openEnd + 1;
+  let close = -1;
+  while (i < rest.length && depth > 0) {
+    const nextOpen = rest.indexOf("<div", i);
+    const nextClose = rest.indexOf("</div>", i);
+    if (nextClose < 0) break;
+    if (nextOpen >= 0 && nextOpen < nextClose) {
+      depth += 1;
+      i = nextOpen + 4;
+    } else {
+      depth -= 1;
+      if (depth === 0) close = nextClose;
+      i = nextClose + 6;
+    }
+  }
   const label =
-    at < 0
+    openEnd < 0 || close < 0
       ? null
-      : html
-          .slice(at + anchor.length, at + anchor.length + 400)
-          .split("</div>")
-          .slice(0, 2)
-          .join(" ")
+      : rest
+          .slice(openEnd + 1, close)
           .replace(new RegExp("<[^>]*>", "g"), " ")
           .replace(/\s+/g, " ")
           .trim();
-  return { percent: pct ? pct[1].trim() : null, label };
+  return { percent: pct[1].trim(), label };
 }
 
 // ── The defect: the hero was the negation of its own question ───────────────
