@@ -2010,6 +2010,7 @@ async def statpal_authority_agreement(
         SWITCH_IS_WIRED,
         SWITCH_WIRING_NOTE,
         authority_for,
+        discovery_state,
         flip_permitted,
     )
     from app.services.authority_ledger import read_ledger_days
@@ -2052,6 +2053,36 @@ async def statpal_authority_agreement(
             "switch_wired": SWITCH_IS_WIRED,
             "switch_note": SWITCH_WIRING_NOTE,
         }
+
+        # Published for EVERY sport, including the measurement populations, and
+        # that is the whole point of it being here (CERT-2245's follow-up
+        # `SOCCER-3366-IDLESS-REFUSAL-REACHABILITY`).
+        #
+        # `flip_permitted` answers "may this be flipped?", and for a measurement
+        # population it answers "wrong question" and returns before it ever
+        # reaches the discovery reasoning. So soccer's `failover.why` told a
+        # reader there was nothing to flip and never mentioned that soccer's
+        # ingest parser mints no id — the build step that comes first, measured
+        # at 274 of 274 and 195 of 195 fixtures carrying none. The reason
+        # existed; soccer could not reach it.
+        #
+        # "Does discovery work for this sport?" has an honest answer even where
+        # "may it be flipped?" does not, so it is asked separately and answered
+        # for all of them. Same function `flip_permitted` reads, never a second
+        # copy: a disclosure written twice is a disclosure that drifts.
+        discovery_code, discovery_why = discovery_state(sport_key)
+        entry["authority"]["discovery"] = {
+            "code": discovery_code,
+            "why": discovery_why,
+            "note": (
+                "whether a StatPal DISCOVERY pass could create a game we are "
+                "missing, which is separate from whether this sport may be "
+                "flipped. A sport with no working discovery can still post a "
+                "perfect agreement row, because it is scored only over the "
+                "games we already have."
+            ),
+        }
+
 
         # "If ESPN went dark for this sport RIGHT NOW, would anything happen?"
         # (#3473, program step 7.) The step-7 analogue of `switch_note`: the
