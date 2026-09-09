@@ -462,6 +462,85 @@ describe("#3525 — the win-probability chart prints nothing past its own edge",
     expect(Number(/stroke-width="([\d.]+)"/.exec(attrs)?.[1])).toBeGreaterThanOrEqual(2.5);
   });
 
+  it("backs that number with an opaque plate the glyphs fit inside", () => {
+    // #4338, and the reason the assertion above is not the whole of it: a halo
+    // traces each glyph's OUTLINE, so it is enough over one line and not over
+    // four. At the plot's right-hand end — which is *now*, and by construction
+    // the densest ink on the chart — four series paths were measured crossing
+    // this label's box on production (2026-09-09, `/events/15307447` at 390px).
+    // They filled the counters of the digits and ate the `%`, and at 1× the
+    // number scanned as `363%`.
+    //
+    // ═══ THIS ASSERTS COVER, NOT THE PRESENCE OF A RECT ═══
+    //
+    // A plate that exists but is too small is the same defect with an extra
+    // element in the DOM, so the box is computed here and required to CONTAIN
+    // the glyphs — and it is computed from THIS file's own measurements of the
+    // shipped font, never from the component's constants. Those are rounded up
+    // deliberately; if the guard imported them, an implementation that sized
+    // the plate off a wrong ratio would agree with a guard making the identical
+    // mistake, which is the trap this file's header opens with.
+    const html = chartHtml();
+    const callout = /<text([^>]*font-family="monospace"[^>]*)>(\d+%)<\/text>/.exec(html);
+    expect(callout).not.toBeNull();
+    const label = callout![2];
+    const textRight = Number(/\bx="(-?[\d.]+)"/.exec(callout![1])?.[1]);
+    const rowY = Number(/\by="(-?[\d.]+)"/.exec(callout![1])?.[1]);
+    const fontPx = Number(/font-size="([\d.]+)"/.exec(callout![1])?.[1]);
+    expect(fontPx).toBeGreaterThan(0);
+
+    // Measured off the shipped render, not assumed: bold monospace advanced
+    // 6.604px per glyph at `font-size: 11` — 0.6004em — and `getBBox().height`
+    // was 13px, centred on `y` by `dominantBaseline="central"`. The stroke halo
+    // adds 1.5px on every side beyond that, and it has to be covered too, or the
+    // plate's own edge cuts through the glyph outlines.
+    const MEASURED_ADVANCE_EM = 0.6004;
+    const MEASURED_GLYPH_BOX_EM = 13 / 11;
+    const HALO_PX = 1.5;
+    const glyphs = {
+      left: textRight - label.length * fontPx * MEASURED_ADVANCE_EM - HALO_PX,
+      right: textRight + HALO_PX,
+      top: rowY - (fontPx * MEASURED_GLYPH_BOX_EM) / 2 - HALO_PX,
+      bottom: rowY + (fontPx * MEASURED_GLYPH_BOX_EM) / 2 + HALO_PX,
+    };
+
+    // The plate is the opaque white rect on the label's row. Selecting it by
+    // geometry rather than by document order means a future reshuffle of the
+    // callout group cannot quietly hand this assertion some other rect.
+    const plates = [...html.matchAll(/<rect\b([^>]*)>/g)]
+      .map((match) => match[1])
+      .filter((a) => /fill="#FFFFFF"/i.test(a) && !/fill-opacity/.test(a))
+      .map((a) => ({
+        left: Number(/\bx="(-?[\d.]+)"/.exec(a)?.[1]),
+        top: Number(/\by="(-?[\d.]+)"/.exec(a)?.[1]),
+        width: Number(/\bwidth="([\d.]+)"/.exec(a)?.[1]),
+        height: Number(/\bheight="([\d.]+)"/.exec(a)?.[1]),
+      }))
+      .filter((r) => Number.isFinite(r.left) && Number.isFinite(r.top))
+      .filter((r) => r.top <= rowY && r.top + r.height >= rowY);
+    expect(plates).toHaveLength(1);
+    const plate = plates[0];
+
+    expect(plate.left).toBeLessThanOrEqual(glyphs.left);
+    expect(plate.left + plate.width).toBeGreaterThanOrEqual(glyphs.right);
+    expect(plate.top).toBeLessThanOrEqual(glyphs.top);
+    expect(plate.top + plate.height).toBeGreaterThanOrEqual(glyphs.bottom);
+
+    // Painted UNDER the glyphs — an opaque plate emitted after the text would
+    // erase the number completely, which is a worse bug than the one being
+    // fixed and would pass every cover assertion above.
+    expect(html.indexOf(`<rect x="${plate.left}"`)).toBeLessThan(
+      html.indexOf(`>${label}</text>`)
+    );
+
+    // …and it must not swallow the dot it is pointing at. The dot is the thing
+    // the label is FOR, and a plate wide enough to reach it would blank the
+    // endpoint marker's own glow.
+    const dot = /<circle cx="([\d.]+)" cy="([\d.]+)" r="8"([^>]*)>/.exec(html);
+    expect(dot).not.toBeNull();
+    expect(plate.left + plate.width).toBeLessThanOrEqual(Number(dot![1]) - 8);
+  });
+
   it("prints `50%` exactly once, on the axis that owns it", () => {
     // The deleted label was a DUPLICATE as well as a clipped one: `yTicks`
     // includes 50, so the left axis already prints `50%` on this exact line.

@@ -63,6 +63,42 @@ const BAIN_LUCK_CONFIG = {
   dataKey: "bainLuckDelta",
 };
 
+// ── The current-probability callout's BACKING PLATE (#4338) ──────────────────
+//
+// #3561 made the callout legible over ONE line by haloing the glyphs — a white
+// stroke painted under the fill. #4338 is what that halo cannot do. The label
+// sits at the right-hand end of the plot, which is *now*, and is by construction
+// the densest ink on the chart: measured on production 2026-09-09 at 390px
+// (`/events/15307447`, Andreeva–Gauff), FOUR series paths cross the label's own
+// box — the blend, and three source lines. A 1.5px halo traces each glyph's
+// outline; it cannot keep four lines out of the counters of a `3` and a `5`, and
+// the `%` — the glyph with the most enclosed area — loses outright. At 1× the
+// number scanned as `363%`.
+//
+// So the same white the halo already paints is filled ACROSS the glyph box
+// instead of only around each glyph. That is deliberately not a new visual
+// element: it reads as a slightly wider halo, not as a chip, because the plot's
+// background is this exact white. It is also the only fix available — #3561
+// already established that the label must stay on the dot's row at every slope,
+// so it cannot be moved out of the ink, only made to sit legibly on top of it.
+//
+// The plate is SIZED, not guessed. `<text>` has no layout box in SVG, so the
+// width comes from the string: measured on the same load, bold 11px monospace
+// advances 6.604px per glyph — 0.6004em, exactly the monospace ratio — and the
+// glyph box is 13px tall, centred on `y` by `dominantBaseline="central"`.
+const CALLOUT_FONT_PX = 11;
+// Both rounded UP off those measurements, so the plate is never narrower or
+// shorter than the glyphs it has to cover. `chartTextStaysInsideThePlot`
+// asserts the cover using the MEASURED numbers, not these — two artifacts
+// sharing one constant agree about a wrong input perfectly (that file's header).
+const CALLOUT_MONO_ADVANCE_EM = 0.62;
+const CALLOUT_GLYPH_BOX_EM = 1.2;
+// Horizontal padding also has to clear the text's own 3px halo (1.5px a side).
+const CALLOUT_PLATE_PAD_X = 3;
+const CALLOUT_PLATE_PAD_Y = 2;
+/** Gap between the label's right edge and the dot it labels — #3525's `cx - 12`. */
+const CALLOUT_GAP_PX = 12;
+
 interface OddsChartProps {
   history: OddsHistoryPoint[];
   homeTeam: string;
@@ -1820,6 +1856,13 @@ export default function OddsChart({
                   const fillColor = showBlendLine
                     ? BAIN_LUCK_CONFIG.color
                     : sourceHex("betting");
+                  // #4338 — the plate under the number. Anchored `end` at
+                  // `cx - CALLOUT_GAP_PX`, so the glyphs run LEFT from there.
+                  const label = `${currentCallout.homeProb}%`;
+                  const textRight = cx - CALLOUT_GAP_PX;
+                  const glyphWidth =
+                    label.length * CALLOUT_FONT_PX * CALLOUT_MONO_ADVANCE_EM;
+                  const glyphHeight = CALLOUT_FONT_PX * CALLOUT_GLYPH_BOX_EM;
                   return (
                     <g>
                       {/* Outer glow */}
@@ -1860,9 +1903,26 @@ export default function OddsChart({
                           to stay on the dot's row — it is labelling the dot — so
                           it is made legible OVER ink instead. A painted-under
                           white stroke is slope-independent and needs no
-                          geometry. */}
+                          geometry.
+
+                          #4338, THE THICKET: a halo is enough over ONE line and
+                          not over the four that cross this label at the plot's
+                          busiest end. See `CALLOUT_MONO_ADVANCE_EM` above for
+                          the measurement and for why the answer is to fill the
+                          same white across the glyph box rather than to move
+                          the label — which #3561 already ruled out. The plate is
+                          painted here, immediately under the text and after the
+                          dot, so paint order is glow → dot → plate → glyphs. */}
+                      <rect
+                        x={textRight - glyphWidth - CALLOUT_PLATE_PAD_X}
+                        y={cy - glyphHeight / 2 - CALLOUT_PLATE_PAD_Y}
+                        width={glyphWidth + CALLOUT_PLATE_PAD_X * 2}
+                        height={glyphHeight + CALLOUT_PLATE_PAD_Y * 2}
+                        rx={3}
+                        fill="#FFFFFF"
+                      />
                       <text
-                        x={cx - 12}
+                        x={textRight}
                         y={cy}
                         textAnchor="end"
                         dominantBaseline="central"
@@ -1874,7 +1934,10 @@ export default function OddsChart({
                         fontWeight={700}
                         fontFamily="monospace"
                       >
-                        {currentCallout.homeProb}%
+                        {/* The same `label` the plate was sized from. Printing
+                            `{currentCallout.homeProb}%` here instead would let
+                            the string and its backing drift apart silently. */}
+                        {label}
                       </text>
                     </g>
                   );
