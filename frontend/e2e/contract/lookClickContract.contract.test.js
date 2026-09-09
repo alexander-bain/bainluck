@@ -334,6 +334,90 @@ process.exit(0);
   });
 });
 
+describe("#4408 — the shot carries no fabricated :hover", () => {
+  // The rail never moved the mouse. Playwright's pointer starts at (0,0) and
+  // stays where a click left it, so SHOT_SCROLL scrolls content under a
+  // stationary pointer and photographs whatever lands there in `:hover`.
+  // Measured on /tournaments/us-open at 390px: `SHOT_CLICKS="Men's"` +
+  // `SHOT_SCROLL=900` painted one finished match grey, in three disjoint
+  // blocks with a white seam, while its identical siblings stayed white. A DOM
+  // census found NO element with a grey background — so it was invisible to a
+  // probe and visible only in the PNG, which is the worst pairing there is for
+  // a rule that says "screenshot it and judge it".
+
+  test("the park point is outside the viewport, at every size the rail is used at", () => {
+    // The property, not the number. (0,0) hovers the logo and (2,2) still
+    // hovers the sticky header — both measured — so an edit to either of those
+    // "obviously fine" corners has to fail here.
+    const viewports = [
+      { width: 390, height: 844 }, // the phone-width LOOK, and the measured case
+      { width: 1280, height: 2200 }, // shop-shot's defaults
+      { width: 1, height: 1 },
+      { width: 3000, height: 4000 },
+    ];
+    for (const vp of viewports) {
+      const p = evalInModule(`m.pointerParkPoint(${JSON.stringify(vp)})`);
+      assert.ok(
+        p.x < 0 && p.y < 0,
+        `park point ${JSON.stringify(p)} is inside ${vp.width}x${vp.height}; ` +
+          "a pointer anywhere in the viewport hovers something, and on a " +
+          "phone-width shot of a touch surface a hover state is never evidence",
+      );
+    }
+  });
+
+  test("a missing or nonsense viewport still parks outside", () => {
+    // shop-shot parses W/H out of the environment, so NaN is reachable from a
+    // typo. Falling back to (0,0) there would restore the bug precisely on the
+    // path nobody tests by hand.
+    for (const arg of ["", "{}", '{width: NaN, height: NaN}', "{width: -5, height: 0}"]) {
+      const p = evalInModule(`m.pointerParkPoint(${arg || "undefined"})`);
+      assert.ok(p.x < 0 && p.y < 0, `pointerParkPoint(${arg}) returned ${JSON.stringify(p)}`);
+    }
+  });
+
+  test("parking is the default, and the opt-out is explicit", () => {
+    assert.equal(evalInModule("m.shouldParkPointer(undefined)"), true);
+    assert.equal(evalInModule("m.shouldParkPointer('')"), true);
+    assert.equal(evalInModule("m.shouldParkPointer('0')"), true);
+    // A lane photographing a hover-only affordance needs the pointer left
+    // alone; removing that capability would trade one blind spot for another.
+    assert.equal(evalInModule("m.shouldParkPointer('1')"), false);
+    assert.equal(evalInModule("m.shouldParkPointer('true')"), false);
+  });
+
+  test("shop-shot parks the pointer BEFORE the shutter, not after", () => {
+    // A pure function nobody calls proves nothing about reach, and a park that
+    // happens after the screenshot is exactly as useless as no park at all.
+    // Ordering is the whole property, so it is asserted on positions rather
+    // than on the presence of a line.
+    const src = codeOnly(fs.readFileSync(SHOP_SHOT, "utf8"));
+    const park = src.indexOf("pointerParkPoint(");
+    const move = src.indexOf("mouse.move(");
+    const shot = src.indexOf("page.screenshot(");
+    assert.ok(park !== -1, "shop-shot.mjs never calls pointerParkPoint()");
+    assert.ok(move !== -1, "shop-shot.mjs never moves the pointer");
+    assert.ok(
+      src.includes("shouldParkPointer("),
+      "shop-shot.mjs ignores shouldParkPointer(), so SHOT_KEEP_POINTER does nothing",
+    );
+    assert.ok(shot !== -1, "shop-shot.mjs takes no screenshot");
+    assert.ok(
+      move < shot,
+      "the pointer is parked after the first page.screenshot() — the shot it " +
+        "was meant to protect is already taken",
+    );
+    // Hover is recomputed at the pointer's position on every scroll, so the
+    // park must also precede the scroll that SHOT_SCROLL performs.
+    const scrollTo = src.indexOf("window.scrollTo(");
+    assert.ok(
+      scrollTo === -1 || move < scrollTo,
+      "the pointer is parked after the SHOT_SCROLL scroll; content scrolled " +
+        "under a stationary pointer is what fabricated the hover in the first place",
+    );
+  });
+});
+
 describe("#3968 — the extraction cannot rot", () => {
   test("shop-shot.mjs CALLS the extracted logic rather than keeping a copy", () => {
     // Without this, every assertion above can stay green while `shop-shot.mjs`

@@ -123,6 +123,57 @@ export function parseScroll(raw) {
 }
 
 /**
+ * Where to leave the pointer before the shutter opens.
+ *
+ * Playwright's pointer starts at (0,0) and STAYS wherever a click left it, so
+ * every shot is taken with a mouse hovering something. `SHOT_SCROLL` then
+ * scrolls the page under that stationary pointer, and whatever row happens to
+ * land at those coordinates renders in its `:hover` state. Measured on
+ * `/tournaments/us-open` at 390px: the `Men's` tab sits at y≈166, so a
+ * `SHOT_CLICKS="Men's" SHOT_SCROLL=900` shot photographs the finished match at
+ * page y≈1066 — a Tiafoe/Michelsen row painted grey in three disjoint blocks
+ * with a white seam through it — while its identical siblings stay white. A
+ * lane reading that PNG sees a layout defect that does not exist, and the
+ * inverse is worse: a hover tint can cover a real one.
+ *
+ * The clincher is that these are PHONE-WIDTH shots of a touch surface. No
+ * reader we are photographing for has a pointer at all, so a hover state in a
+ * 390px LOOK is never evidence about anything.
+ *
+ * So the point must be OUTSIDE the viewport, which is why this takes the
+ * viewport and returns a negative offset rather than a corner: (0,0) hovers the
+ * logo and (2,2) still hovers the sticky header (measured — `:hover` resolved 5
+ * deep there), whereas off-viewport resolves `document.querySelectorAll(':hover')`
+ * to EMPTY, not even `body`.
+ *
+ * @param {{width?: number, height?: number}} [viewport]
+ * @returns {{x: number, y: number}} a point guaranteed outside the viewport
+ */
+export function pointerParkPoint({ width, height } = {}) {
+  // Proportional to the viewport, so it stays outside one of any size, and
+  // never a bare literal that reads as "just off the top-left of a phone".
+  const w = Number.isFinite(width) && width > 0 ? width : 0;
+  const h = Number.isFinite(height) && height > 0 ? height : 0;
+  return { x: -Math.max(8, Math.ceil(w * 0.02)), y: -Math.max(8, Math.ceil(h * 0.02)) };
+}
+
+/**
+ * Whether to park the pointer at all.
+ *
+ * Parking is the default because a fabricated hover is the failure that costs a
+ * reader a wrong judgement. But a lane deliberately photographing a hover-only
+ * affordance — a tooltip, a hover-revealed control — needs the pointer left
+ * where its click put it, and removing that capability to fix the artifact
+ * would just trade one blind spot for another.
+ *
+ * @param {string|undefined} raw the `SHOT_KEEP_POINTER` value
+ * @returns {boolean}
+ */
+export function shouldParkPointer(raw) {
+  return !(raw === "1" || raw === "true");
+}
+
+/**
  * Delete any screenshot already sitting at the output path.
  *
  * A failed run must not leave the PREVIOUS run's screenshot under this run's
