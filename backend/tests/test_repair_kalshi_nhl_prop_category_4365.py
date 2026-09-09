@@ -9,21 +9,21 @@ Two subjects, and the second is the more valuable one.
    every sport token in its literals, which this one cannot do, because its
    target IS a sport.
 
-2. **The ticker branch must keep covering every NHL prop family.** This is the
-   guard #4365 asked for, pointed somewhere different from where the issue
-   pointed it.
+2. **The ticker must keep outranking the name rules.** This is the guard #4365
+   asked for, pointed somewhere different from where the issue pointed it.
 
    The issue proposed guarding the *fallback* — pinning that the name-only
    branch reads ``"… : Points"`` as basketball. A guard that asserts current
    wrong behaviour cements it: it goes red when somebody FIXES the defect, which
-   is precisely backwards. And it would not have caught this incident, because
-   the fallback did not change.
+   is precisely backwards.
 
-   What actually happened in April 2026 is that ``KXNHLPTS`` / ``KXNHLAST`` were
-   not in the ticker map, so step 1 of the cascade declined and the rows fell
-   through to a fallback that was always wrong. The silent dependency is
-   *ticker coverage*, so that is what gets pinned. It goes red the way it went
-   wrong.
+   What actually happened, dated from the history rather than guessed: the rows
+   were ingested 2026-04-22 16:45:24 UTC, and ``97862989`` *"Fix Kalshi sport
+   misclassification: ticker before name rules"* is dated 2026-04-22 17:34:44
+   −0700 = 2026-04-23 00:34 UTC — about eight hours later. The ticker was in the
+   map the whole time (``kxnhlpts`` since 2026-03-30, ``2e2b2dba``); it just ran
+   SECOND. So the silent dependency is cascade ORDER, and that is what gets
+   pinned. It goes red the way it went wrong.
 
 The write itself needs no database here: the planning half is pure, and gate 2
 is a function call. What a real Postgres adds is the UPDATE's rowcount, which is
@@ -293,68 +293,104 @@ def test_a_real_basketball_prop_is_refused_by_gate_2(name, ticker):
 # ---------------------------------------------------------------------------
 
 
-#: Every Kalshi NHL prop ticker family reachable today, including the two whose
-#: absence in April 2026 produced this repair's entire population. The list is
-#: the point: it is an inventory of what step 1 of the cascade must keep
-#: covering, and adding a new NHL prop family without adding it here is how the
-#: April defect recurs.
-_NHL_PROP_TICKER_FAMILIES = (
-    "KXNHLPTS",     # points   — MISSING in April 2026; made row 12508872
-    "KXNHLAST",     # assists  — MISSING in April 2026; made row 12508876
-    "KXNHLGOALS",
-    "KXNHLSAVES",
-    "KXNHLSOG",
-    "KXNHLPOINTS",
-)
+#: The specimen. Row 12508872's own stored name and ticker.
+_SHIP_NAME = "PIT Penguins at PHI Flyers: Points"
+_SHIP_TICKER = "KXNHLPTS-26APR22PITPHI"
 
 
-@pytest.mark.parametrize("family", _NHL_PROP_TICKER_FAMILIES)
-def test_every_nhl_prop_ticker_family_still_resolves_to_hockey(family):
-    """Step 1 of the cascade must keep covering every NHL prop family.
-
-    🔴 THIS IS THE GUARD, and it is deliberately not the one #4365 proposed.
+def test_the_ticker_outranks_the_name_rules():
+    """🔴 THIS IS THE GUARD, and it is deliberately not the one #4365 proposed.
 
     The issue suggested pinning the fallback's answer — that the name-only
-    branch reads `"… : Points"` as basketball. Two things are wrong with that.
-    It asserts a defect, so it goes red when somebody fixes it. And it would
-    have caught nothing here: the fallback never changed. What changed is that
-    the ticker map did not yet know `KXNHLPTS` / `KXNHLAST`, so the authoritative
-    branch declined and a known-bad fallback answered.
+    branch reads ``"… : Points"`` as basketball. That asserts a defect, so it
+    goes red when somebody FIXES it, which is backwards.
 
-    Pinned on the ticker ALONE — `event_ticker` supplied, name deliberately
-    empty — so this cannot pass on name evidence and quietly stop testing step 1.
-    That is the difference between guarding the dependency and guarding the
-    outcome.
-    """
-    from app.tasks.kalshi import _categorize_kalshi_market
+    What actually made these two rows, dated from the history rather than
+    guessed:
 
-    assert _categorize_kalshi_market("", None, event_ticker=f"{family}-26APR22PITPHI") == (
-        rail.TARGET_CATEGORY
-    ), (
-        f"the ticker family {family} no longer resolves to hockey through step 1 "
-        "of the cascade. This is exactly how rows 12508872/12508876 were born: "
-        "the ticker branch declined and `_STAT_TO_SPORT` answered `basketball` "
-        "for `points`/`assists`, which are core NHL stats. Any NHL prop ingested "
-        "while this is red is mis-tagged, and #1888's "
-        "`coalesce(nullif(existing,'other'), new)` write then freezes it forever."
-    )
+    * the rows were ingested **2026-04-22 16:45:24 UTC**;
+    * ``97862989`` *"Fix Kalshi sport misclassification: ticker before name
+      rules"* is dated **2026-04-22 17:34:44 −0700**, i.e. 2026-04-23 00:34 UTC —
+      about eight hours AFTER the rows existed, and that is the commit date, not
+      the deploy;
+    * before it, step 2 (name rules) ran BEFORE the ticker. So ``: Points`` →
+      ``basketball`` won over an NHL ticker that was already in the map
+      (``kxnhlpts`` landed 2026-03-30 in ``2e2b2dba``).
 
+    That commit's own message describes the identical symptom for a different
+    market: ``KXNHLEAST-26`` stored ``basketball`` and invisible in the NHL grid.
 
-def test_the_ticker_guard_is_not_passing_on_name_evidence():
-    """The positive control for the guard above.
-
-    A guard keyed on an unmapped ticker must FAIL, or the one above proves
-    nothing — it would pass for any string. This pins that an unknown NHL-ish
-    ticker with no name evidence does not reach `hockey` by some other route.
+    So the dependency is **cascade ORDER**, not ticker coverage, and order is
+    what this pins. Revert ``97862989`` and this goes red. It is also why the
+    fallback is deliberately left alone: with the order correct, the fallback
+    cannot reach a Kalshi NHL prop at all.
     """
     from app.tasks.kalshi import _categorize_kalshi_market
 
     assert _categorize_kalshi_market(
-        "", None, event_ticker="KXNOTAREALFAMILY-26APR22PITPHI"
-    ) != rail.TARGET_CATEGORY, (
-        "an unmapped ticker with no name evidence classified as hockey, so "
-        "`test_every_nhl_prop_ticker_family_still_resolves_to_hockey` would pass "
-        "for a family that step 1 does not actually cover"
+        _SHIP_NAME, None, event_ticker=_SHIP_TICKER
+    ) == rail.TARGET_CATEGORY, (
+        "the name rules have overtaken the ticker in `_categorize_kalshi_market` "
+        "again. This is exactly how rows 12508872/12508876 were born on "
+        "2026-04-22, hours before `97862989` put the ticker first: "
+        "`_STAT_TO_SPORT` answers `basketball` for `points`/`assists`, which are "
+        "core NHL stats. Any NHL prop ingested while this is red is mis-tagged, "
+        "and #1888's `coalesce(nullif(existing,'other'), new)` write then freezes "
+        "it forever."
+    )
+
+
+def test_the_ordering_guard_above_still_has_teeth():
+    """The mutation anchor for the guard above.
+
+    ``test_the_ticker_outranks_the_name_rules`` only proves something while the
+    two branches DISAGREE about this specimen. If the name-only branch ever
+    returns hockey too, that test passes no matter which branch ran, and the
+    ordering invariant silently stops being tested.
+
+    🔴 A red here is not "the fallback broke" — it is most likely somebody
+    fixing `_STAT_TO_SPORT` to be team-aware, which is welcome. It means: pick a
+    new specimen where the branches still disagree, or retire the ordering guard
+    because the fallback is no longer dangerous.
+
+    Asserted as ``!= hockey`` rather than ``== basketball`` on purpose: pinning
+    the exact wrong answer would cement it, and a fallback repaired to `other`
+    or `None` should not fail anything.
+    """
+    from app.utils.futures_categorization import categorize_by_rules
+
+    assert categorize_by_rules(_SHIP_NAME) != rail.TARGET_CATEGORY, (
+        "the name-only branch now agrees with the ticker for "
+        f"{_SHIP_NAME!r}, so `test_the_ticker_outranks_the_name_rules` would "
+        "pass whichever branch answered. Re-point it at a specimen where they "
+        "still disagree, or retire it."
+    )
+
+
+def test_ticker_resolution_is_prefix_based_not_per_family():
+    """Why there is no per-family inventory in this file.
+
+    The first draft of this guard parametrized over six NHL prop ticker families
+    (`KXNHLPTS`, `KXNHLAST`, `KXNHLGOALS`, …) and asserted each resolved to
+    hockey. All six passed — and all six were the SAME assertion, because
+    `get_sport_key_from_ticker` matches on the `kxnhl` prefix: `KXNHLBANANA`
+    resolves to `icehockey_nhl` too. Such a list cannot detect a lost family, so
+    it was documentation wearing a test's clothes.
+
+    This records the real behaviour instead, so the next person does not rebuild
+    that inventory. If resolution ever becomes per-family, this goes red and a
+    real inventory guard becomes both possible and necessary.
+    """
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    assert get_sport_key_from_ticker("KXNHLPTS-26APR22PITPHI") == "icehockey_nhl"
+    assert get_sport_key_from_ticker("KXNHLBANANA-26APR22PITPHI") == "icehockey_nhl", (
+        "ticker resolution is no longer `kxnhl`-prefix based. A per-family "
+        "inventory guard is now meaningful and this cohort wants one."
+    )
+    assert get_sport_key_from_ticker("KXNOTAREALPREFIX-26APR22PITPHI") is None, (
+        "an arbitrary ticker resolves to a sport, so no ticker-keyed assertion "
+        "in this file proves anything"
     )
 
 

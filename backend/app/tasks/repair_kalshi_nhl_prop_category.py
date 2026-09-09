@@ -1,4 +1,4 @@
-"""#4365 part 2 — move the two NHL prop rows a since-closed ticker gap left as basketball.
+"""#4365 part 2 — move the two NHL prop rows a since-fixed cascade order left as basketball.
 
 ## what these rows are, and why the classifier fix cannot reach them
 
@@ -7,14 +7,29 @@
 2026-04-22 under tickers ``KXNHLPTS-26APR22PITPHI`` and ``KXNHLAST-26APR22PITPHI``.
 
 On this HEAD the shipped classifier already answers ``hockey`` for both: step 1
-of ``_categorize_kalshi_market``'s cascade resolves those two ticker families to
-``icehockey_nhl``. **That was not true in April**, and the gap is the whole
-story. With no ticker to lean on, the cascade fell to step 2, and
-``_STAT_TO_SPORT`` — a table headed *"Stats that uniquely identify a sport"* —
-maps ``points`` and ``assists`` to basketball. They are core NHL stats, so the
-table's premise is false for exactly these two keys.
+of the cascade resolves the ticker to ``icehockey_nhl`` and the ticker is
+consulted FIRST. **The ordering is the whole story, and it is younger than the
+rows.**
 
-The ticker map has since been fixed. The rows have not, because
+Dated from the history rather than reasoned about:
+
+* the rows were ingested **2026-04-22 16:45:24 UTC**;
+* ``97862989`` *"Fix Kalshi sport misclassification: ticker before name rules"*
+  is dated **2026-04-22 17:34:44 −0700** = 2026-04-23 00:34 UTC — roughly eight
+  hours after the rows already existed, and that is its commit time, not its
+  deploy;
+* before that commit, step 2 (name rules) ran BEFORE the ticker.
+
+So the ticker was never missing: ``kxnhlpts`` and ``kxnhlast`` entered the map on
+2026-03-30 in ``2e2b2dba``. It simply did not get to speak first. The name rules
+did, and ``_STAT_TO_SPORT`` — a table headed *"Stats that uniquely identify a
+sport"* — maps ``points`` and ``assists`` to basketball. Both are core NHL stats,
+so the table's premise is false for exactly those two keys.
+
+``97862989``'s own message describes the identical symptom for another market:
+``KXNHLEAST-26`` stored ``basketball`` and therefore invisible in the NHL grid.
+
+The ordering has since been fixed. The rows have not, because
 ``app/tasks/kalshi.py`` writes the tag through::
 
     coalesce(nullif(FuturesMarket.llm_sport_category, "other"), sport_category)
@@ -132,7 +147,8 @@ def _shipped_classification(name: str, external_id: Optional[str]) -> str:
     of "second opinion" this repair must not invent.
 
     ``external_id`` is passed and matters: for this cohort the ticker IS the
-    evidence — it is what the classifier now reads and could not read in April.
+    evidence — it is what the classifier now reads FIRST and, in April, read
+    only after the name rules had already answered.
     """
     from app.tasks.kalshi import _categorize_kalshi_market
 

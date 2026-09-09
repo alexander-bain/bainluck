@@ -484,12 +484,13 @@ _REPAIRS = {
     # forbidding every sport token in its literals).
     #
     # 🔴 The issue called this class "latent, blast radius 0 stored rows". It is
-    # 2, and the cause is not the one filed. `_STAT_TO_SPORT` does map `points`
-    # and `assists` to basketball despite both being core NHL stats — but the
-    # ticker branch runs first and covers `KXNHLPTS`/`KXNHLAST` TODAY. It did not
-    # in April 2026, when these two rows were written, and #1888's
+    # 2. `_STAT_TO_SPORT` maps `points` and `assists` to basketball despite both
+    # being core NHL stats, and in April 2026 that answered FIRST: `97862989`
+    # ("ticker before name rules", 2026-04-22 17:34 -0700) postdates the rows'
+    # 2026-04-22 16:45 UTC ingest by ~8h. The ticker was in the map since
+    # 2026-03-30 (`2e2b2dba`); it just did not get to speak first. #1888's
     # `coalesce(nullif(existing,'other'), new)` has frozen them since. So the
-    # bound here is the residue of a closed gap, not of a live one.
+    # bound is the residue of a closed ordering bug, not of a live one.
     #
     # Measured, not assumed: all 1,609 rows matching the game-prop shape
     # `^.+ (at|vs\.?|@) .+: *(points|assists)` and stored `basketball` were
