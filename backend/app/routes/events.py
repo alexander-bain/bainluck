@@ -7,6 +7,7 @@ import os
 import re
 import time
 from collections import Counter
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 from copy import deepcopy
@@ -6584,10 +6585,19 @@ async def typeahead_search(
     def _ta_names_participant(ev) -> bool:
         return query_names_participant(q, (ev.home_team_name, ev.away_team_name))
 
+    # `None` = the arm never ran, which is a THIRD state and not the same fact as
+    # "ran and was not armed" (#4506). A probe that cannot tell those apart reads
+    # every fast keystroke as a success.
+    _ta_last_match_plan: dict | None = None
     if not any(_ta_names_participant(ev) for ev in _ta_rows):
-        _ta_last = (
-            await db.execute(_last_match_query(event_name_filter, now))
-        ).scalars().all()
+        # #4506: the generic plan Postgres caches for this arm after five
+        # executions costs 86% of an `nfl` keystroke on production. The context
+        # manager says why, and restores `auto` before the futures stages run.
+        async with _forced_custom_plan(db, read_back=debug_timing) as _ta_plan:
+            _ta_last = (
+                await db.execute(_last_match_query(event_name_filter, now))
+            ).scalars().all()
+        _ta_last_match_plan = _ta_plan
         _ta_mark("last_match_query")
         # PREPENDED, not appended. `_ta_events[:_EVENT_POOL_SIZE]` truncates the
         # pool BEFORE anything is scored, so a Jannik match sitting behind four
@@ -7385,6 +7395,11 @@ async def typeahead_search(
                                   "total_ms": sum(_ta_stage_ms.values())}
         result["debug_shed"] = {"outcome_arm_shed": _ta_outcome_arm_shed,
                                 "degraded": _ta_degraded}
+        # #4506, and its own key for the same reason `debug_shed` is: this is a
+        # GUC name and two booleans, and `total_ms` is a SUM over the timing map.
+        # `null` here means the or-LAST arm did not run at all — read it before
+        # reading `last_match_query`, which is absent in that case too.
+        result["debug_plan"] = {"last_match": _ta_last_match_plan}
 
     # Cache the assembled suggestions (incl. top_outcomes) per query. The read at
     # the top of this endpoint had no matching write — the cache never populated,
@@ -16901,6 +16916,91 @@ def _last_match_query(event_name_filter, now: datetime):
         .order_by(Event.commence_time.desc())
         .limit(_EVENT_POOL_FETCH_LIMIT)
     )
+
+
+#: #4506. `auto` is Postgres' resting value (production `pg_settings`,
+#: 2026-09-09: `boot_val = reset_val = auto`), and `auto` means "after five
+#: executions of a prepared statement, switch to a GENERIC plan and keep it".
+#: For `_last_match_query` that switch is the whole defect — see the context
+#: manager below.
+_LAST_MATCH_PLAN_CACHE_MODE = "force_custom_plan"
+_PLAN_CACHE_MODE_RESTING = "auto"
+
+
+@asynccontextmanager
+async def _forced_custom_plan(db: AsyncSession, read_back: bool = False):
+    """Run the or-LAST arm under a CUSTOM plan, never the cached generic one. #4506.
+
+    WHY. `_last_match_query` is a parameterised text predicate (FTS-OR-ILIKE on
+    home/away) with an abort-early `ORDER BY commence_time DESC LIMIT n`. Under
+    `plan_cache_mode = auto` Postgres executes it five times, decides the generic
+    plan is no worse on the average parameter, and pins it — and the generic
+    plan's row estimate for a parameter it cannot see is 811 rows, so it walks
+    `ix_events_commence_time` BACKWARDS expecting to fill the LIMIT early. The
+    real answer is 0 rows, so it scans the entire 30-day completed window
+    (58,116 rows) to prove it. Measured on production 2026-09-09:
+
+        route stage `last_match_query`   median 618 ms = 86% of an `nfl` keystroke
+        pg_stat_statements, this arm     428 calls, mean 142.5 ms, max 2159.4 ms
+        the SAME SQL with LITERALS       alcaraz 1.1 · nfl 2.6 · sinner 2.9 ms
+
+    The literal form is what a custom plan is: with the parameter visible the
+    estimate is 30, not 811, and it takes the BitmapOr over the FTS and trigram
+    indexes. Every measured class prefers the custom plan, which is exactly the
+    case `force_custom_plan` exists for.
+
+    WHY NOT THE THREE CHEAPER FIXES, all measured and all refused
+    (`artifacts-lane1-217/lastmatch-arm-measurements.md`):
+
+      * an `OFFSET 0` optimisation fence — `nfl` 535 → 5.7 ms, but `fc`
+        1.9 → 1246 ms, because a 51,031-row predicate genuinely WANTS the
+        backward index scan the fence forbids.
+      * `ORDER BY … DESC NULLS LAST` — the exact mirror, 0.44 → 287.91 ms.
+        No static ordering is right for both the 0-row and the 51,031-row class,
+        which is the argument for choosing the plan per-parameter instead.
+      * skipping the arm when a sport-alias vocabulary consumes the query — LOSSY.
+        6 of 32 aliases match real completed rows; `wimbledon` is AFC Wimbledon,
+        a real club with six matches in the window.
+
+    🔴 SCOPED TO THIS ONE STATEMENT, AND THAT IS WHY IT DISARMS. `SET LOCAL`
+    lasts for the whole transaction, and `futures_query` and
+    `headline_contenders` run AFTER this arm in the same request — leaving the
+    GUC armed would charge every one of them a replan they did not ask for. A
+    later `SET LOCAL` overrides an earlier one, so restoring `auto` in the
+    `finally` costs one round trip and bounds the blast radius to the arm.
+
+    🔴 `SET LOCAL` OUTSIDE A TRANSACTION IS A SILENT NO-OP, which would ship an
+    inert fix that measures as "no change" and reads as "the diagnosis was
+    wrong". `get_db` hands out a plain `AsyncSession` (no AUTOCOMMIT), and the
+    arm runs after several statements, so a transaction is always open by now —
+    but "always" is the word that ages, so `read_back` asks Postgres what it
+    actually holds and the answer is served under `?debug_timing=1`. That
+    distinguishes the two failure modes the post-deploy measurement has to tell
+    apart: `auto` in the echo means the arming never took, `force_custom_plan`
+    with the latency unmoved means the diagnosis was wrong.
+    """
+    state: dict = {"armed": False, "mode": None}
+    try:
+        await db.execute(
+            text(f"SET LOCAL plan_cache_mode = '{_LAST_MATCH_PLAN_CACHE_MODE}'")
+        )
+        state["armed"] = True
+        if read_back:
+            state["mode"] = (
+                await db.execute(text("SHOW plan_cache_mode"))
+            ).scalar()
+    except Exception as exc:  # noqa: BLE001 — never fail the dropdown on the guard itself
+        logger.warning("last-match plan_cache_mode not armed: %s", exc)
+    try:
+        yield state
+    finally:
+        if state["armed"]:
+            try:
+                await db.execute(
+                    text(f"SET LOCAL plan_cache_mode = '{_PLAN_CACHE_MODE_RESTING}'")
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("last-match plan_cache_mode not disarmed: %s", exc)
 
 
 def _typeahead_evidence(item: dict, q: str | None = None) -> "_SearchEvidence":
