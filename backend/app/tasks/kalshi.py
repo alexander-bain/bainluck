@@ -320,6 +320,91 @@ def _kalshi_outcome_name(event_title, market, market_count: int) -> str:
     return _parse_kalshi_ticker_name(market.ticker)
 
 
+def _ticker_leg(ticker: str) -> str:
+    """The last segment of a Kalshi ticker — the part that varies per leg.
+
+    Deliberately NOT ``_parse_kalshi_ticker_name``, which walks backwards past
+    every purely-numeric segment. That skip is why a numbered field event
+    collapses: ``KXTRUMPAGCOUNT-29-5`` steps over ``5`` and ``29`` and lands on
+    the SERIES, which every leg shares (#4316).
+    """
+    return (ticker or "").rsplit("-", 1)[-1].strip()
+
+
+def _distinguishing_candidates(event_title, market) -> tuple[str, ...]:
+    """The ways to tell one leg of an event from another, best read first.
+
+    Each is taken VERBATIM — the placeholder and question filters are
+    deliberately not applied. This ladder only ever runs on names that have
+    already collided, and a label that tells two rows apart beats one that does
+    not, even when it is a bare number or a question.
+    """
+    return (
+        (market.yes_sub_title or "").strip(),
+        (market.subtitle or "").strip(),
+        (market.title or "").strip() if market.title != event_title else "",
+        _ticker_leg(market.ticker),
+    )
+
+
+def kalshi_outcome_names(event_title, markets) -> dict[str, str]:
+    """Ticker -> display name for every market of ONE Kalshi event.
+
+    #4316. ``_kalshi_outcome_name`` decides each leg in isolation, so nothing
+    stopped it returning the SAME string for every leg of an event — and on a
+    numbered field market ("How many Attorneys General will Trump have?") that
+    is exactly what it did: five outcomes at 54.5% / 23% / 3.2% / 3.2% / 1.05%,
+    all five reading ``Kxtrumpagcount``, on an open tier-2 market. The hero, all
+    three chart legend entries and the movement caption printed that one string.
+
+    Two different routes reach it, which is why the repair belongs here and not
+    in another ladder rung:
+
+    * the leg's ``title`` EQUALS the event title, so step 4 never applied and
+      the ladder fell to the shared series ticker. Long-standing; the AG market
+      above.
+    * the leg's ``title`` is a QUESTION, so #4246's guard refuses it and the
+      ladder falls to the same shared ticker. Introduced by #4246 and latent:
+      ``KXAKSENATEROUND-26``, ``KXHOUSEWINSTATE-OHD``,
+      ``KXTRUMPENDORSELOSS-26SEP16`` and ``KXNUMREDISTRICTING-26NOV03`` still
+      held their distinct questions and would collapse on their next poll.
+
+    The invariant this establishes: **a name that cannot tell two rows apart is
+    not a name.** Legs keep whatever the ordinary ladder gave them; only a
+    collided group is re-derived, and only from a candidate that resolves the
+    whole group distinctly. If nothing does, the ladder's answer stands — a
+    duplicate name is still better than a fabricated one.
+    """
+    markets = list(markets)
+    names = {
+        m.ticker: _kalshi_outcome_name(event_title, m, len(markets)) for m in markets
+    }
+
+    collided: dict[str, list] = {}
+    for m in markets:
+        collided.setdefault(names[m.ticker], []).append(m)
+
+    for group in collided.values():
+        if len(group) < 2:
+            continue
+        for rung in range(len(_distinguishing_candidates(event_title, group[0]))):
+            proposed = [
+                (m.ticker, _distinguishing_candidates(event_title, m)[rung])
+                for m in group
+            ]
+            values = [v for _, v in proposed]
+            # Measured against ``len(group)``, NOT against the length of a
+            # ticker-keyed dict: two markets of one event can carry the SAME
+            # ticker, and keying the proposal by ticker collapsed them to a
+            # single pair that then satisfied "all distinct" trivially. A tie
+            # the venue gives us no way to break must stay a tie.
+            if all(values) and len(set(values)) == len(group):
+                names.update(proposed)
+                break
+
+    return names
+
+
 # Spread threshold (decimal probability) below which a two-sided Kalshi book is
 # considered TIGHT enough for its midpoint to be real price discovery. Mirrors
 # the Polymarket has_real_trading rule (gotcha #19) and the has_real_trading
@@ -1244,10 +1329,12 @@ async def _poll_kalshi_markets():
                     # read THIS pass. They used to be dropped on the floor here;
                     # they are now carried to the placeholder write below.
                     unpriced_data = []
+                    # #4316: named as a SET, so no two legs of this event can
+                    # end up sharing one string. Per-market naming cannot see
+                    # the collision it is creating.
+                    outcome_names = kalshi_outcome_names(event.title, event.markets)
                     for market in event.markets:
-                        outcome_name = _kalshi_outcome_name(
-                            event.title, market, len(event.markets)
-                        )
+                        outcome_name = outcome_names[market.ticker]
 
                         # Calculate probability from bid/ask midpoint or last price.
                         # The spread guard lives in _kalshi_yes_probability so it is
@@ -3111,6 +3198,9 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                         ).all()
                     }
                     rank_base = len(existing)
+                    # #4316, same reason as the main poll: name the legs as a
+                    # set so this backfill cannot mint the collision either.
+                    venue_names = kalshi_outcome_names(row.name, venue_markets)
 
                     for offset, venue_market in enumerate(venue_markets, 1):
                         prob = _kalshi_yes_probability(
@@ -3132,9 +3222,7 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                             # only use is the "is this market's title just the
                             # event's title?" test. Every other branch reads the
                             # venue market itself.
-                            name = _kalshi_outcome_name(
-                                row.name, venue_market, len(venue_markets)
-                            )
+                            name = venue_names[venue_market.ticker]
                             await session.execute(
                                 pg_insert(FuturesOutcome)
                                 .values(
@@ -5530,15 +5618,14 @@ async def _create_settled_market(
         return "skip"
     stats["markets_created"] += 1
 
+    # #4246: this was a second, hand-inlined copy of `_kalshi_outcome_name`'s
+    # ladder, so a ban added to the helper was not a ban — the settled-events
+    # backfill would keep minting the names the poll had just stopped minting.
+    # One helper, one ladder. #4316 makes that one helper the SET-level one, so
+    # a settled card cannot show one string against five different results.
+    settled_names = kalshi_outcome_names(event.title, event.markets)
     for m in event.markets:
-        # #4246: this was a second, hand-inlined copy of `_kalshi_outcome_name`'s
-        # ladder, so a ban added to the helper was not a ban — the settled-events
-        # backfill would keep minting the names the poll had just stopped
-        # minting. One helper, one ladder. The only behaviour that moves is the
-        # last resort, which becomes the parsed ticker ("Eur") instead of the raw
-        # one ("KXPGARYDER-RC27-EUR") — strictly the better read, and a settled
-        # card is where a reader meets these names as results.
-        outcome_name = _kalshi_outcome_name(event.title, m, len(event.markets))
+        outcome_name = settled_names[m.ticker]
         prob = m.last_price if (m.last_price and 0 < m.last_price < 1) else None
         american = probability_to_american(prob) if prob else None
         # CAL-P1004 (#1852 forward half) — the same fabricated loss as the poll's
