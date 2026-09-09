@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
+import { isNamedSource, sourceLabel } from "@/lib/sourceLabels";
 
 /** Shared with backend SOURCE_DISAGREEMENT_THRESHOLD_PP and Discover comparison card. */
 export const SOURCE_DISAGREEMENT_PP = 5;
@@ -39,32 +40,6 @@ function aggSourceColor(source: string): string {
   return SOURCE_COLOR_REGISTRY[canonicalSourceKey(source)]?.hex ?? BOOKMAKER_COLORS[source] ?? "#888";
 }
 
-const SOURCE_LABELS: Record<string, string> = {
-  draftkings: "DraftKings",
-  fanduel: "FanDuel",
-  betmgm: "BetMGM",
-  bovada: "Bovada",
-  pointsbet: "PointsBet",
-  williamhill: "William Hill",
-  caesars: "Caesars",
-  bet365: "Bet365",
-  unibet: "Unibet",
-  barstool: "Barstool",
-  betrivers: "BetRivers",
-  mybookieag: "MyBookie",
-  superbook: "SuperBook",
-  lowvig: "LowVig",
-  betonlineag: "BetOnline",
-  betus: "BetUS",
-  wynnbet: "WynnBet",
-  espnbet: "ESPN Bet",
-  fanatics: "Fanatics",
-  fliff: "Fliff",
-  hardrockbet: "Hard Rock",
-  kalshi: "Kalshi",
-  polymarket: "Polymarket",
-};
-
 interface SourceRow {
   source: string;
   outcomes: Record<number, number>; // outcome_id → probability (%)
@@ -97,9 +72,14 @@ export function SourceAggregationBlock({
   const [expanded, setExpanded] = useState(false);
 
   const { spread, isDisagreement, freshCount, sortedSources } = useMemo(() => {
-    const fresh = sources.filter((s) => !s.stale);
+    // #4284: drop sources this app cannot name before anything is derived, so the
+    // "{freshCount} sources" line, the spread sentence and the rows below all
+    // describe the same set. The old unknown branch title-cased instead, which
+    // put "Betanysports" and "Williamhill_us" on the page as if they were brands.
+    const named = sources.filter((s) => isNamedSource(s.source));
+    const fresh = named.filter((s) => !s.stale);
     if (!primaryOutcomeId || fresh.length < 2) {
-      return { spread: 0, isDisagreement: false, freshCount: fresh.length, sortedSources: sources };
+      return { spread: 0, isDisagreement: false, freshCount: fresh.length, sortedSources: named };
     }
     const probs = fresh
       .map((s) => s.outcomes[primaryOutcomeId])
@@ -108,7 +88,7 @@ export function SourceAggregationBlock({
     const min = Math.min(...probs);
     const sp = Math.round((max - min) * 10) / 10;
     // Sort: fresh alphabetically, then stale alphabetically
-    const sorted = [...sources].sort((a, b) => {
+    const sorted = [...named].sort((a, b) => {
       if (a.stale !== b.stale) return a.stale ? 1 : -1;
       return a.source.localeCompare(b.source);
     });
@@ -176,9 +156,7 @@ export function SourceAggregationBlock({
                 ? src.outcomes[primaryOutcomeId]
                 : null;
               const color = aggSourceColor(src.source);
-              const label =
-                SOURCE_LABELS[src.source] ||
-                src.source.charAt(0).toUpperCase() + src.source.slice(1);
+              const label = sourceLabel(src.source);
 
               const diff =
                 prob != null && aggregatedProbability != null
