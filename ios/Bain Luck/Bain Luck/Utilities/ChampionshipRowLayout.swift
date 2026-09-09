@@ -93,12 +93,29 @@ enum ChampionshipRowLayout {
     ///   so `100.0%` is in range, and #3581 has the field publishing 91.4% today.
     static let valueBadgeWidth: CGFloat = 76
 
-    /// The badge column when any row in the card says "clinched".
+    /// The badge column when EVERY row in the card says "clinched".
     ///
-    /// Same measurement, plus the checkmark and the word: 89.33 pt at `2.0%`,
-    /// 94.00 at `91.3%` — which is the row photographed breaking in #3574,
-    /// against a 70 pt column — 95.33 at `99.9%`, and 99.67 at `100.0%`.
-    static let clinchedBadgeWidth: CGFloat = 100
+    /// ## This constant used to mean the opposite, and was 100
+    ///
+    /// It was "the column when ANY row says clinched", sized for a checkmark and
+    /// the word *on top of* a trend badge — 94.00 pt at `91.3%`, 99.67 at
+    /// `100.0%`. #4108 removed the trend badge from a clinched row, because a
+    /// settled row claiming a 90.9-point 24h move is a false statement that
+    /// reads as the probability. With the trend gone, `✓ clinched` measures
+    /// **53.5 pt** and a clinched row is now the NARROWEST thing this column
+    /// draws, not the widest.
+    ///
+    /// So the rule inverts. A card is one column wide for every row (see
+    /// `badgeWidth(for:)`), and a card with one clinched row still has ordinary
+    /// siblings wanting the full `valueBadgeWidth`. Only a card where *every*
+    /// row is clinched can take the narrow column — a team that has clinched its
+    /// division, pennant and championship alike.
+    ///
+    /// 🔴 Sizing a mixed card to this width would truncate the ordinary rows,
+    /// which is #3574 again with the roles swapped. `ChampionshipRowLayoutTests`
+    /// asserts that direction explicitly now; the old suite only ever compared
+    /// this constant against clinched rows and would have passed.
+    static let allClinchedBadgeWidth: CGFloat = 56
 
     /// A stage at or below this is shown as a percentage, above it as "clinched".
     static let clinchedProbability: Double = 0.99
@@ -125,9 +142,14 @@ enum ChampionshipRowLayout {
     /// own content would give the three bars three different track lengths, and
     /// bars of different lengths cannot be compared to each other — which is the
     /// only reason to draw three of them.
+    /// The column is the card's WIDEST row, and since #4108 that is an ordinary
+    /// row whenever the card has one — `allSatisfy`, not `contains`. Inverted
+    /// from the original `contains` reading, which was correct only while a
+    /// clinched row was the wider of the two.
     static func badgeWidth(for stages: [ProgressionStageData]) -> CGFloat {
-        stages.contains { isClinched(probability: $0.probability) }
-            ? clinchedBadgeWidth
+        guard !stages.isEmpty else { return valueBadgeWidth }
+        return stages.allSatisfy { isClinched(probability: $0.probability) }
+            ? allClinchedBadgeWidth
             : valueBadgeWidth
     }
 
