@@ -15,6 +15,8 @@
  * - formatTimeUntil
  */
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   getCategoryForLeague,
   getCategoryForFutures,
@@ -312,6 +314,114 @@ describe('getLeagueDisplay', () => {
 
   test('single-part key uppercases', () => {
     expect(getLeagueDisplay('unknown')).toBe('UNKNOWN');
+  });
+
+  /**
+   * #4247 — A CATCH-ALL BUCKET NAMES ITS FAMILY OR IT IS NOT A WORD.
+   *
+   * Production served `mma_other (24)` as a filter chip on
+   * /search?q=Whittaker beside a correctly-labelled `🥊 Boxing (1)`.
+   *
+   * TWO defects, one visible and one behind it:
+   *   1. The chip rendered the SERVED `sport.name`, and 15 rows in the `sports`
+   *      table store the raw key in that column (census below).
+   *   2. `getLeagueDisplay` — the map the chip should have used — answered
+   *      "OTHER" for all fourteen `*_other` keys and "ESPORTS" for the bare one.
+   *      So routing the chip through the map alone would have traded a key for
+   *      a word that still names no sport.
+   *
+   * Asserting only "the label is not lowercase" is what the issue's own
+   * verification line asked for and it is too weak to fail: "OTHER" passes it.
+   * Every key below is therefore pinned to the exact string it must print.
+   */
+  describe('#4247 catch-all buckets name their family', () => {
+    /**
+     * Measured: `SELECT key, name FROM sports` where the name is the key,
+     * production, 2026-09-09, 15 rows, truncated:false. Event counts are from
+     * the same read. THIS LIST IS A SNAPSHOT — if a new bucket appears in the
+     * table after ~2026-12 it will not be in here, and nothing below will
+     * notice. Re-run the census, do not trust the list's age.
+     */
+    const PRODUCTION_BUCKETS: Array<[string, string]> = [
+      ['americanfootball_other', 'Other Football'],
+      ['baseball_other', 'Other Baseball'],
+      ['basketball_other', 'Other Basketball'],
+      ['boxing_other', 'Other Boxing'],
+      ['cricket_other', 'Other Cricket'],
+      ['esports', 'Esports'],
+      ['esports_other', 'Other Esports'],
+      ['golf_other', 'Other Golf'],
+      ['icehockey_other', 'Other Hockey'],
+      ['lacrosse_other', 'Other Lacrosse'],
+      ['mma_other', 'Other MMA'],
+      ['motorsport_other', 'Other Motorsport'],
+      ['rugby_other', 'Other Rugby'],
+      ['soccer_other', 'Other Soccer'],
+      ['tennis_other', 'Other Tennis'],
+    ];
+
+    test.each(PRODUCTION_BUCKETS)('%s renders as "%s"', (key, expected) => {
+      expect(getLeagueDisplay(key)).toBe(expected);
+    });
+
+    test('no bucket renders as a raw key or as the bare word OTHER', () => {
+      for (const [key] of PRODUCTION_BUCKETS) {
+        const display = getLeagueDisplay(key);
+        expect(display).not.toBe(key);
+        expect(display).not.toContain('_');
+        expect(display).not.toMatch(/^[a-z_]+$/); // the issue's own line
+        expect(display).not.toBe('OTHER'); // what the map answered before
+      }
+    });
+
+    /**
+     * The reason the label is "Other MMA" and not the "MMA" the issue asked
+     * for. Both keys in each pair are populated in production (mma 1,704 vs
+     * 375; boxing 888 vs 57; esports 89,588 vs 777), so the family word alone
+     * would draw two identical chips that filter to different result sets —
+     * worse for a reader than the raw key, which at least distinguished them.
+     */
+    test('a bucket never collides with its own named sibling', () => {
+      const pairs: Array<[string, string]> = [
+        ['mma_mixed_martial_arts', 'mma_other'],
+        ['boxing_boxing', 'boxing_other'],
+        ['esports', 'esports_other'],
+      ];
+      for (const [named, bucket] of pairs) {
+        // Survival first: both sides must actually resolve to something.
+        expect(getLeagueDisplay(named)).toBeTruthy();
+        expect(getLeagueDisplay(bucket)).toBeTruthy();
+        expect(getLeagueDisplay(bucket)).not.toBe(getLeagueDisplay(named));
+      }
+    });
+
+    /**
+     * `rugby_other` is the one bucket whose family was unreachable: the rugby
+     * category listed only "rugbyleague_"/"rugbyunion_", so the key matched no
+     * category and lost its emoji as well as its word.
+     */
+    test('rugby_other reaches the rugby category, emoji included', () => {
+      expect(getCategoryForLeague('rugby_other')?.key).toBe('rugby');
+      expect(getEmojiForLeague('rugby_other')).toBe('🏉');
+      expect(getEmojiForLeague('rugby_other')).not.toBe('🏆'); // the fallback
+      // The added prefix must not have stolen the two it sits beside.
+      expect(getCategoryForLeague('rugbyleague_nrl')?.key).toBe('rugby');
+      expect(getCategoryForLeague('rugbyunion_six_nations')?.key).toBe('rugby');
+    });
+
+    /**
+     * Anchored on the code, because the chip is inside a `useSearchParams`
+     * client page that `renderToStaticMarkup` cannot mount. `sport.name` now
+     * appears nowhere in the file, so this is unambiguous.
+     */
+    test('the search chip reads the label map, not the served name', () => {
+      const src = readFileSync(
+        join(__dirname, '..', '..', 'app', 'search', 'page.tsx'),
+        'utf8'
+      );
+      expect(src).toContain('getLeagueDisplay(sport.key)'); // survival
+      expect(src).not.toContain('{sport.name}');
+    });
   });
 });
 

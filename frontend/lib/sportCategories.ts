@@ -162,7 +162,11 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     key: "rugby",
     name: "Rugby",
     emoji: "🏉",
-    prefixes: ["rugbyleague_", "rugbyunion_"],
+    // #4247: "rugby_" is not redundant with the two below — neither
+    // "rugbyleague_" nor "rugbyunion_" matches `rugby_other`, the bucket the
+    // sports table actually holds (307 events), which fell through to the
+    // trophy emoji and the word "OTHER".
+    prefixes: ["rugby_", "rugbyleague_", "rugbyunion_"],
     tier: 2,
   },
   {
@@ -796,6 +800,25 @@ export function getCategoryForFutures(
 export function getLeagueDisplay(leagueKey: string): string {
   if (LEAGUE_DISPLAY[leagueKey]) {
     return LEAGUE_DISPLAY[leagueKey];
+  }
+
+  // #4247: the catch-all buckets are exactly the keys the map has no word for,
+  // so the fallback below would print "OTHER" (or, where the served name is
+  // used raw, "mma_other"). Name the family instead. "Other MMA", not "MMA":
+  // mma_mixed_martial_arts already displays as "MMA" and both buckets are
+  // populated, so the family word alone would render two identical chips.
+  if (leagueKey.endsWith("_other")) {
+    const family = getCategoryForLeague(leagueKey);
+    if (family) {
+      return `Other ${family.name}`;
+    }
+  }
+
+  // A bare category key ("esports") is not covered by the prefix match above,
+  // which looks for "esports_".
+  const bareCategory = SPORT_CATEGORIES.find((cat) => cat.key === leagueKey);
+  if (bareCategory) {
+    return bareCategory.name;
   }
 
   // Generate a display name from the key
