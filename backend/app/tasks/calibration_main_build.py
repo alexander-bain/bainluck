@@ -403,6 +403,14 @@ CANCEL_CAUSE_INCOMPLETE = "incomplete"
 #: wrong; it simply stopped existing.
 CANCEL_CAUSE_INTERRUPTED = "interrupted"
 
+#: Prefix for the gauge that says why NO unit cost may be quoted off this beat.
+#:
+#: Lifted out of the three call sites by CAL-P1066 (#4314) so the sampler can
+#: import it instead of retyping it — CAL-P993's rule, which was unavailable to
+#: ``staged:cursor_`` only because its emitter is the ruling-009 frozen module.
+#: This one is emitted here, so the better pattern applies.
+UNIT_COST_REASON_PREFIX = "staged:unit_cost_reason:"
+
 
 def cancel_cause(exc: BaseException) -> Optional[str]:
     """``incomplete`` | ``interrupted`` | ``None`` — WHY a beat ended cancelled.
@@ -2001,7 +2009,7 @@ def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
     if completed_mean is None:
         # Every unit this beat was cancelled. Distinct from "no unit ran", and
         # the state in which no unit cost may be quoted at all.
-        runner.ledger.record_gauge("staged:unit_cost_reason:no_unit_completed", 1)
+        runner.ledger.record_gauge(f"{UNIT_COST_REASON_PREFIX}no_unit_completed", 1)
     else:
         runner.ledger.record_gauge("staged:unit_ms_mean_completed", int(completed_mean))
 
@@ -2147,7 +2155,7 @@ def _carry_unit_costs(runner: PhaseRunner, prior: dict[str, Any]) -> dict[str, A
         return carried
     if _level_self_blocked(runner):
         carried.pop(PHASE_FUTURES)
-        runner.ledger.record_gauge("staged:unit_cost_reason:withdrawn_self_blocked", 1)
+        runner.ledger.record_gauge(f"{UNIT_COST_REASON_PREFIX}withdrawn_self_blocked", 1)
         return carried
     banked = runner.ledger.stages.get("staged:units_banked")
     if banked is None:
@@ -2155,7 +2163,7 @@ def _carry_unit_costs(runner: PhaseRunner, prior: dict[str, Any]) -> dict[str, A
         # has already recorded which. Re-stamping from a number we do not have
         # would be inventing one, so the level is carried as-is and SAYS it is
         # unverified rather than reading as freshly confirmed (gotcha #53).
-        runner.ledger.record_gauge("staged:unit_cost_reason:units_done_unverified", 1)
+        runner.ledger.record_gauge(f"{UNIT_COST_REASON_PREFIX}units_done_unverified", 1)
         return carried
     banked = int(banked)
     if int(futures.get("units_done") or 0) != banked:
