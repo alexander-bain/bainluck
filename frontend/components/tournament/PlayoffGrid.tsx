@@ -470,6 +470,44 @@ export default function PlayoffGrid({
 }) {
   const [expanded, setExpanded] = React.useState(initialExpanded);
 
+  /* 🔴 ABOVE THE EMPTY-GRID EARLY RETURN, AND NOT BY PREFERENCE. These four
+     hooks first sat beside `marked`, below `if (grid.rows.length === 0) return
+     <Nothing to chart yet/>` — three `react-hooks/rules-of-hooks` errors, caught
+     by `npm run build` and NOT by `npm run typecheck` (gotcha #10: build is the
+     ESLint gate, typecheck is the TS gate, and this class is invisible to the
+     second). It is a real crash, not a lint opinion: a draw that gains its
+     first priced row goes from 1 hook to 5 between renders. */
+  /* #4171 item 3's affordance. `scrollWidth - clientWidth - scrollLeft > 4`
+     rather than `> 0`: sub-pixel layout leaves a fraction of a pixel at a real
+     scroll end on a device pixel ratio that is not 1, and a cue that never
+     turns off at the end is worse than none — it says "more to the right"
+     forever. 4px is latency/282b's threshold on the sibling table; same number
+     on purpose. */
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const headerRef = React.useRef<HTMLDivElement | null>(null);
+  const [canScrollRight, setCanScrollRight] = React.useState(false);
+  const [headerHeight, setHeaderHeight] = React.useState(0);
+
+  const syncScrollCue = React.useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
+    setHeaderHeight(headerRef.current?.getBoundingClientRect().height ?? 0);
+  }, []);
+
+  React.useEffect(() => {
+    syncScrollCue();
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // Re-measured on RESIZE, not only on mount: the cue is `lg:hidden` and the
+    // header changes height at that same breakpoint, so a window dragged across
+    // it would otherwise keep a stale height. `expanded` is in the deps because
+    // "show all" changes `scrollWidth`.
+    const observer = new ResizeObserver(syncScrollCue);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [syncScrollCue, expanded, grid.columns.length, grid.rows.length]);
+
   if (grid.rows.length === 0 || grid.columns.length === 0) {
     return (
       <div
@@ -541,12 +579,42 @@ export default function PlayoffGrid({
 
       {/* ONE SCROLLER around header AND rows (ruling 5). Two scrollers, or a
           scrolling body under a fixed header, is how a column header ends up
-          over the wrong column. */}
+          over the wrong column.
+
+          ═══ #4171 item 3: IT ALWAYS SCROLLED, IT JUST NEVER SAID SO ═══
+
+          Filed as "the grid overflows horizontally at 390px … the TITLE column
+          is clipped … a reader on a phone cannot see the column the whole grid
+          builds to". The clip is real and reproduces, but the conclusion does
+          not: 5 columns is `2*14 + 118 + 5*54 + 5*6 = 446px` of grid inside a
+          `GRID_CARD_CONTENT_PX` 332px card, so `gridScrolls` is true and this
+          container has had `overflow-x-auto`, snap points and a rounded scroll
+          floor since #3072/#3087. TITLE is one swipe away and always has been.
+
+          What was missing is the AFFORDANCE. Nothing on screen distinguished
+          "the table ends here" from "there is more to the right", so a reader
+          with no reason to try a horizontal swipe never learns the column
+          exists — which produces exactly the complaint that was filed.
+
+          Same defect, same week, same fix as #4261 on `TournamentProgressionTable`
+          (latency/282b, `aa22d84c`): a short fade at the right edge, drawn only
+          while there is more to reach. Deliberately the same treatment and not a
+          new one — notice 35, one family everywhere.
+
+          🔴 AND THE SAME TRAP, WHICH THEY PAID FOR AND I AM NOT PAYING AGAIN.
+          Their first cut faded the full height and washed out the last 32px of
+          every cell, which on that table is where the bars differ — the
+          affordance erased the encoding it shipped beside. This grid has
+          `SparkBar` under every numeric cell for the same reason, so the cue is
+          clamped to the HEADER ROW's measured height and never covers a bar. */}
+      <div className="relative">
       <div
         className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${
           scrolls ? GRID_COL_TRACK_FIXED : GRID_COL_TRACK_FLEX
         } ${scrolls ? `overflow-x-auto lg:overflow-x-visible ${GRID_SCROLL_SNAP}` : ""}`}
         data-testid="grid-scroller"
+        ref={scrollRef}
+        onScroll={syncScrollCue}
       >
         {/* The phone's scroll floor. `lg:min-w-0` retires it in a desktop
             window, where the grid is already wider than this and pinning it to
@@ -560,6 +628,7 @@ export default function PlayoffGrid({
             className="grid items-center gap-1.5 border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted lg:px-5 lg:py-2.5 lg:text-[10.5px]"
             style={{ gridTemplateColumns: template }}
             data-testid="grid-header"
+            ref={headerRef}
           >
             <span className={scrolls ? GRID_STICKY_NAME : undefined}>Player</span>
             {grid.columns.map((column) => (
@@ -649,6 +718,21 @@ export default function PlayoffGrid({
             />
           )}
         </div>
+      </div>
+        {/* Clamped to the header row's MEASURED height, not a guess: the row is
+            `text-[9.5px]` on a phone and `lg:text-[10.5px] lg:py-2.5` above it,
+            so a hard-coded height would cover a `SparkBar` at one breakpoint or
+            float above the header at the other. Drawn only while there is more
+            to reach, so a grid already scrolled to its end — or one narrow
+            enough not to scroll at all — shows nothing. */}
+        {canScrollRight && headerHeight > 0 && (
+          <div
+            aria-hidden="true"
+            data-testid="grid-scroll-affordance"
+            style={{ height: headerHeight }}
+            className="pointer-events-none absolute top-0 right-0 w-8 rounded-tr-2xl bg-gradient-to-l from-surface-card to-transparent lg:hidden"
+          />
+        )}
       </div>
 
       {/* ═══ notice 34 / #4122: THE LEGEND AND ITS COUNTERS ARE GONE ═══
