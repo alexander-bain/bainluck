@@ -210,13 +210,22 @@ async def repair_senate_categories(
     apply: bool = Query(False, description="Write the change; default is a dry run"),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    """#4229 — move the Kalshi Senate rows that are stored under a sport tag.
+    """#4229 / #4365 — move the Kalshi Senate rows stored under a sport tag.
 
     The classifier fix cannot reach these rows: `app/tasks/kalshi.py` writes
     `llm_sport_category` through `coalesce(nullif(existing, 'other'), new)`, so
-    an existing real tag is never overwritten (#1888 honest-empty). Polymarket
-    rows in the same class assign unconditionally and retag on their own poll,
-    so they are out of scope by design.
+    an existing real tag is never overwritten (#1888 honest-empty).
+
+    🔴 This docstring used to continue: "Polymarket rows in the same class
+    assign unconditionally and retag on their own poll, so they are out of
+    scope by design." **The second half is false**, and the module it describes
+    already carries the correction (lane1b/106); this copy was missed. A writer
+    only rewrites a row it is HANDED, and Polymarket discovery never hands it
+    these — the scan is ~10.6h wide and the rows are months outside it. Two of
+    four self-healed only because they were inside the horizon, which is how the
+    claim survived a builder and a grader. Polymarket's half is
+    `app/tasks/repair_polymarket_senate_category.py`; it is out of scope here
+    because the evidence channel differs, NOT because those rows self-correct.
 
     Bounded by an enumerated id list AND gated per row by the SHIPPED
     classifier, so a mislisted id is refused rather than relabelled. Dry run by
