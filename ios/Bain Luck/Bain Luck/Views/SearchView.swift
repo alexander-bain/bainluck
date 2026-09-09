@@ -966,8 +966,17 @@ struct SearchView: View {
                         .monospacedDigit()
                 }
             } else if let odds = event.currentOdds,
-                      let home = odds.homeProbability {
-                Text(formatProbability(home))
+                      // #4306 — the title above is away-first and the score arm
+                      // above prints `away - home`, so the lone number here
+                      // describes the side named FIRST. It used to draw
+                      // `homeProbability`, which inverted every scheduled row.
+                      let firstNamed = firstNamedSideNumber(
+                          away: odds.awayProbability,
+                          home: odds.homeProbability,
+                          servedAway: odds.awayRenderedPercent,
+                          servedHome: odds.homeRenderedPercent
+                      ) {
+                Text(formatProbability(firstNamed.probability, renderedPercent: firstNamed.percent))
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .monospacedDigit()

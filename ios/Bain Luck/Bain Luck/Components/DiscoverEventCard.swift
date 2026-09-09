@@ -111,10 +111,22 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var shareMessage: String {
-        if let prob = event.currentOdds?.homeProbability {
-            return "\(event.awayTeam) vs \(event.homeTeam) — \(Int((prob * 100).rounded()))% on Bain Luck"
-        }
-        return "\(event.awayTeam) vs \(event.homeTeam) on Bain Luck"
+        // #4306 — the same `duelPercents` call the card body makes, so the
+        // sentence a reader shares carries the two integers they were looking
+        // at. Rounding here independently would print a share that disagrees
+        // with its own card by a point.
+        let duel = duelPercents(
+            away: event.currentOdds?.awayProbability,
+            home: event.currentOdds?.homeProbability,
+            servedAway: event.currentOdds?.awayRenderedPercent,
+            servedHome: event.currentOdds?.homeRenderedPercent
+        )
+        return eventShareMessage(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            awayPercent: duel[0],
+            homePercent: duel[1]
+        )
     }
 
     var body: some View {
