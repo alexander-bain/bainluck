@@ -22,6 +22,7 @@ import pytest
 
 from app.config.authority_by_sport import (
     DISCOVERY_NO_BEAT,
+    DISCOVERY_NO_BEAT_AND_PARSER_BLIND,
     DISCOVERY_PARSER_MINTS_NO_ID,
     DISCOVERY_PARSES_BUT_MINTS_NO_ID,
     DISCOVERY_SCHEDULED,
@@ -127,6 +128,13 @@ class TestEverySportTheEndpointIteratesHasAnAnswer:
         assert code in {
             DISCOVERY_SCHEDULED,
             DISCOVERY_PARSER_MINTS_NO_ID,
+            # Added by #3193's follow-up: tennis was reading the bare
+            # `NO-BEAT` because nothing consulted
+            # `DISCOVERY_NO_BEAT_AND_NO_PARSE`. This closed set is what caught
+            # the new code arriving — kept closed for that reason, and the
+            # map→arm table in `test_a_refusal_reason_tennis_cannot_reach_3193`
+            # is what stops the NEXT one being added with no arm at all.
+            DISCOVERY_NO_BEAT_AND_PARSER_BLIND,
             DISCOVERY_NO_BEAT,
             "BEAT-WITHOUT-A-WORKING-PARSE",
         }
