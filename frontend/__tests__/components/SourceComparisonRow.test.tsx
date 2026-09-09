@@ -158,6 +158,72 @@ describe("SourceComparisonRow — a measured source is unchanged", () => {
     );
   });
 
+  // #4214's SURVIVOR — and the reason it survived is in the test above.
+  //
+  // `label` on this rail is the identity function, so every assertion in this
+  // suite reads raw payload keys. That models nothing a reader has seen since
+  // CAL-P1024 gave the page a label vocabulary, and it is exactly why the
+  // defect was invisible here: with real labels the row printed
+  //
+  //   Sportsbooks (Odds API)
+  //   Per-sportsbook (Odds API) · Odds API · Totals (Odds API) · Spreads (Odds API)
+  //
+  // — the qualifier four more times, under a heading that had already said it,
+  // in a first column narrow enough to wrap it to seven lines at 390px.
+  //
+  // The KPI tile's copy of this bug was fixed a commit earlier and this one was
+  // not, because the two compose the same two vocabularies independently. They
+  // now share `withoutGroupQualifier`. Found by photographing the deployed
+  // page, not by reading the diff.
+  describe("with the REAL labels a reader sees, not the identity fixture", () => {
+    const realLabel = (s: string) =>
+      ({
+        odds_api: "Odds API",
+        odds_api_bookmaker: "Per-sportsbook (Odds API)",
+        odds_api_spreads: "Spreads (Odds API)",
+        odds_api_totals: "Totals (Odds API)",
+      })[s] ?? s;
+
+    const realHtml = renderToStaticMarkup(
+      <table><tbody>
+        {orderSourceRows([SPORTSBOOKS_INPUT]).map(r => (
+          <SourceComparisonRow key={r.provider} row={r} sourceLabel={realLabel} toggleLabel={TOGGLE} />
+        ))}
+      </tbody></table>
+    );
+    const realText = textOf(realHtml);
+
+    test("says the provider qualifier once, in the row heading, not once per member", () => {
+      expect(realText).toContain("Sportsbooks (Odds API)");
+      expect(realText).toContain("Odds API · Per-sportsbook · Spreads · Totals");
+    });
+
+    test("the qualifier appears exactly once in the whole cell", () => {
+      // The reader-visible symptom, counted rather than phrased: four repeats
+      // was the bug and one is the fix, so this fails in both directions.
+      expect(realText.split("Odds API").length - 1).toBe(2); // the heading, and the un-shaped moneyline key
+    });
+
+    test("still names every pooled key — the strip drops a word, never a source", () => {
+      for (const shape of ["Per-sportsbook", "Odds API", "Totals", "Spreads"]) {
+        expect(realText).toContain(shape);
+      }
+    });
+
+    test("a provider whose label carries no qualifier is untouched", () => {
+      const html = renderToStaticMarkup(
+        <table><tbody>
+          {orderSourceRows([{ ...SPORTSBOOKS_INPUT, provider: "acme", label: "Acme" }]).map(r => (
+            <SourceComparisonRow key={r.provider} row={r} sourceLabel={realLabel} toggleLabel={TOGGLE} />
+          ))}
+        </tbody></table>
+      );
+      expect(textOf(html)).toContain(
+        "Odds API · Per-sportsbook (Odds API) · Spreads (Odds API) · Totals (Odds API)"
+      );
+    });
+  });
+
   test("renders 0.0pp when a source genuinely measured zero error", () => {
     // The distinction the whole fix rests on: 0.0 with outcomes behind it is a
     // real result and must still print, in green, in first place.

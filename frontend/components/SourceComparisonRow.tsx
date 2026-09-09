@@ -1,4 +1,5 @@
 import type { SourceRow } from "@/lib/calibrationSourceRows";
+import { withoutGroupQualifier } from "@/lib/calibrationProviderPanels";
 
 /**
  * One row of `/calibration`'s Source Comparison table.
@@ -51,8 +52,13 @@ export default function SourceComparisonRow({
       <td className="py-2.5 pr-4 font-medium text-text-primary">
         {row.label}
         {row.sources.length > 1 && (
+          /* #4214's survivor. This read "Per-sportsbook (Odds API) · Odds API ·
+             Totals (Odds API) · Spreads (Odds API)" under a row already headed
+             "Sportsbooks (Odds API)" — four repeats of the qualifier in a first
+             column narrow enough to wrap it to seven lines at 390px. Same rule
+             as the KPI tile, same function, so the two cannot diverge again. */
           <span className="block text-xs font-normal text-text-muted">
-            {row.sources.map(sourceLabel).join(" · ")}
+            {row.sources.map(s => withoutGroupQualifier(sourceLabel(s), row.label)).join(" · ")}
           </span>
         )}
       </td>
