@@ -1988,6 +1988,7 @@ async def _transition_event_statuses_impl() -> dict:
                 event.espn_id,
                 event.statpal_fixture_id,
                 last_snaps.get(event.id),
+                sport_key,
             )
             bound_hours = wall_clock_bound_hours(sport_key, max_hours, never_observed)
 

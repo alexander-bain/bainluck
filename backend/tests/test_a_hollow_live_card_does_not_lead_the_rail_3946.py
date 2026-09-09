@@ -76,6 +76,57 @@ A_SIGNAL = {
     "statpal_fixture_id": "9912345",
 }
 
+#: Two sports, because the fifth column no longer means the same thing in both
+#: (#4075). `tennis_atp`'s StatPal anchor is an observation — the live board is
+#: read — so it rescues a row. `soccer_epl`'s is a SHADOW: the board is fenced
+#: off from ingestion on purpose while the stamper writes ids hourly, so it
+#: rescues nothing. Every fixture in this file defaults to the LIT sport, which
+#: is what keeps §1–§3 reading exactly as they did before #4075.
+LIT_SPORT_ID = 1
+DARK_SPORT_ID = 2
+SPORT_KEYS = {LIT_SPORT_ID: "tennis_atp", DARK_SPORT_ID: "soccer_epl"}
+
+
+def _create_schema(md):
+    """The two tables `never_observed_columns()` now reads, under SQLite.
+
+    `sports` is here because the fifth conjunct stopped being a bare `IS NULL`
+    and became "no anchor, OR an anchor that means nothing for this sport",
+    which is a subquery over `sports.key`.
+    """
+    from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table
+
+    assert isinstance(md, MetaData)
+    events = Table(
+        "events",
+        md,
+        Column("id", Integer, primary_key=True),
+        Column("status", String),
+        Column("commence_time", DateTime(timezone=True)),
+        Column("sport_id", Integer),
+        Column("home_score", Integer),
+        Column("away_score", Integer),
+        Column("period", String),
+        Column("espn_id", String),
+        Column("statpal_fixture_id", String),
+    )
+    sports = Table(
+        "sports",
+        md,
+        Column("id", Integer, primary_key=True),
+        Column("key", String),
+    )
+    return events, sports
+
+
+def _seed_sports(conn, sports):
+    from sqlalchemy import insert
+
+    conn.execute(
+        insert(sports),
+        [{"id": sid, "key": key} for sid, key in SPORT_KEYS.items()],
+    )
+
 
 def _order_under(clause, rows):
     """Execute `clause` against a real `events` table and return the ids.
@@ -86,46 +137,27 @@ def _order_under(clause, rows):
     is the shipping one, rendering `events.<column>` by name, so it binds here
     unchanged.
     """
-    from sqlalchemy import (
-        Column,
-        DateTime,
-        Integer,
-        MetaData,
-        String,
-        Table,
-        create_engine,
-        insert,
-        select,
-    )
+    from sqlalchemy import MetaData, create_engine, insert, select
 
     from app.models.models import Event
 
     md = MetaData()
-    events = Table(
-        "events",
-        md,
-        Column("id", Integer, primary_key=True),
-        Column("status", String),
-        Column("commence_time", DateTime(timezone=True)),
-        Column("home_score", Integer),
-        Column("away_score", Integer),
-        Column("period", String),
-        Column("espn_id", String),
-        Column("statpal_fixture_id", String),
-    )
+    events, sports = _create_schema(md)
     engine = create_engine("sqlite://")
     md.create_all(engine)
     with engine.begin() as conn:
+        _seed_sports(conn, sports)
         conn.execute(insert(events), list(rows))
         stmt = select(Event.id).order_by(clause, Event.commence_time.asc())
         return [row[0] for row in conn.execute(stmt)]
 
 
-def _row(event_id, status, commence, **signals):
+def _row(event_id, status, commence, sport_id=LIT_SPORT_ID, **signals):
     row = {
         "id": event_id,
         "status": status,
         "commence_time": datetime.fromisoformat(commence).replace(tzinfo=timezone.utc),
+        "sport_id": sport_id,
     }
     row.update({c: None for c in SIGNAL_COLUMNS})
     row.update(signals)
@@ -292,61 +324,72 @@ class TestTheSqlAgreesWithThePythonPredicate:
     about. So the whole column vocabulary is swept: all 2^5 combinations of
     silence and signal, executed as SQL and compared against the Python
     predicate. A column added to one and not the other fails here.
+
+    Since #4075 the sweep runs 2^5 × BOTH SPORTS, because the fifth column stopped
+    meaning one thing: a StatPal anchor is an observation for `tennis_atp` and a
+    shadow for `soccer_epl`. Sweeping only one sport would pass on a change that
+    taught the sport to one half and not the other — which is exactly the drift
+    this class exists to catch.
     """
 
+    @pytest.mark.parametrize("sport_id", (LIT_SPORT_ID, DARK_SPORT_ID))
     @pytest.mark.parametrize(
         "signals", list(product((None, "SIGNAL"), repeat=len(SIGNAL_COLUMNS)))
     )
-    def test_every_combination_of_silence_and_signal_agrees(self, signals):
+    def test_every_combination_of_silence_and_signal_agrees(self, signals, sport_id):
         values = {
             column: (A_SIGNAL[column] if flag else None)
             for column, flag in zip(SIGNAL_COLUMNS, signals)
         }
         expected = event_has_never_been_observed(
-            *(values[c] for c in SIGNAL_COLUMNS), None
+            *(values[c] for c in SIGNAL_COLUMNS), None, SPORT_KEYS[sport_id]
         )
 
         from sqlalchemy import case
 
         demoted = _order_under(
             case((never_observed_columns(), 1), else_=0),
-            [_row(1, "live", "2026-09-08 14:20:00", **values)],
+            [_row(1, "live", "2026-09-08 14:20:00", sport_id=sport_id, **values)],
         )
         # One row, so the order proves nothing; run the predicate as a value.
         assert demoted == [1]
-        assert self._never_observed_in_sql(values) is expected
+        assert self._never_observed_in_sql(values, sport_id) is expected
+
+    def test_the_shadow_anchor_is_the_only_thing_the_two_sports_disagree_on(self):
+        """The sweep above is 64 assertions and would stay green if the sport
+        dimension did nothing at all. This names the ONE cell that must differ,
+        so a change that quietly stops distinguishing the sports fails loudly
+        instead of passing twice.
+        """
+        anchor_only = {c: None for c in SIGNAL_COLUMNS}
+        anchor_only["statpal_fixture_id"] = A_SIGNAL["statpal_fixture_id"]
+
+        lit = event_has_never_been_observed(
+            *(anchor_only[c] for c in SIGNAL_COLUMNS), None, "tennis_atp"
+        )
+        dark = event_has_never_been_observed(
+            *(anchor_only[c] for c in SIGNAL_COLUMNS), None, "soccer_epl"
+        )
+        # tennis: the authority is watching, so the anchor speaks and rescues it.
+        assert lit is False
+        # soccer: the board is dark, so the anchor is a number nobody read.
+        assert dark is True
+        assert self._never_observed_in_sql(anchor_only, LIT_SPORT_ID) is False
+        assert self._never_observed_in_sql(anchor_only, DARK_SPORT_ID) is True
 
     @staticmethod
-    def _never_observed_in_sql(values) -> bool:
-        from sqlalchemy import (
-            Column,
-            DateTime,
-            Integer,
-            MetaData,
-            String,
-            Table,
-            create_engine,
-            insert,
-            select,
-        )
+    def _never_observed_in_sql(values, sport_id=LIT_SPORT_ID) -> bool:
+        from sqlalchemy import MetaData, create_engine, insert, select
 
         md = MetaData()
-        events = Table(
-            "events",
-            md,
-            Column("id", Integer, primary_key=True),
-            Column("status", String),
-            Column("commence_time", DateTime(timezone=True)),
-            *(
-                Column(c, Integer if c.endswith("_score") else String)
-                for c in SIGNAL_COLUMNS
-            ),
-        )
+        events, sports = _create_schema(md)
         engine = create_engine("sqlite://")
         md.create_all(engine)
         with engine.begin() as conn:
+            _seed_sports(conn, sports)
             conn.execute(
-                insert(events), [_row(1, "live", "2026-09-08 14:20:00", **values)]
+                insert(events),
+                [_row(1, "live", "2026-09-08 14:20:00", sport_id=sport_id, **values)],
             )
             return bool(conn.execute(select(never_observed_columns())).scalar_one())
 
@@ -355,8 +398,18 @@ class TestTheSqlAgreesWithThePythonPredicate:
         WHICH column is which, as long as both read all five. This pins the
         order, so `SIGNAL_COLUMNS` cannot quietly stop describing the function
         it is a transcription of.
+
+        `sport_key` is pinned LAST and as a REQUIRED parameter (#4075): the
+        column vocabulary is what `SIGNAL_COLUMNS` transcribes, and the sport is
+        not a column of it. A default here would let a caller fall back to the
+        pre-#4075 reading in silence, so the absence of a default is the
+        assertion.
         """
         import inspect
 
-        params = list(inspect.signature(event_has_never_been_observed).parameters)
-        assert params == [*SIGNAL_COLUMNS, "last_snapshot"]
+        signature = inspect.signature(event_has_never_been_observed)
+        params = list(signature.parameters)
+        assert params == [*SIGNAL_COLUMNS, "last_snapshot", "sport_key"]
+        assert (
+            signature.parameters["sport_key"].default is inspect.Parameter.empty
+        ), "sport_key must stay required — its safe-looking default is the old bug"

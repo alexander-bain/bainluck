@@ -37,6 +37,8 @@ neither ever asked whether that field held a start anybody reported. See
 """
 from datetime import timedelta
 
+from app.utils.sport_keys import statpal_anchor_is_shadow
+
 # ── Is this commence_time a START, or a stand-in for one? (q076) ─────────────
 #
 #: The one ``events.commence_time_source`` value that says, in the writer's own
@@ -571,7 +573,13 @@ UNOBSERVED_MAX_HOURS: dict[str, float] = {
 
 
 def event_has_never_been_observed(
-    home_score, away_score, period, espn_id, statpal_fixture_id, last_snapshot
+    home_score,
+    away_score,
+    period,
+    espn_id,
+    statpal_fixture_id,
+    last_snapshot,
+    sport_key,
 ) -> bool:
     """Has ANYTHING that reports on play ever said a word about this row?
 
@@ -589,17 +597,38 @@ def event_has_never_been_observed(
     authority knows about and can settle, so it keeps its sport's full maximum
     however quiet it happens to be right now.
 
+    🔴 THAT LAST SENTENCE IS FALSE FOR A SPORT WHOSE LIVE BOARD WE DO NOT READ,
+    which is why ``sport_key`` is a REQUIRED argument and not a convenience.
+    Soccer's live board is fenced off from ingestion on purpose
+    (``statpal_api.LIVESCORES_INGESTION_DARK_SPORTS``) while the authority
+    stamper still writes soccer anchors hourly, so a soccer
+    ``statpal_fixture_id`` says "we have a number for this row", NOT "something
+    is watching it play". Reading it as an observation bought 68 otherwise
+    silent soccer rows soccer's 4.0h default instead of the 2.5h
+    :data:`UNOBSERVED_MAX_HOURS` bound written for exactly them — 1.5 extra
+    hours of a LIVE badge on a match nothing is reporting on (#4075, the
+    regression ``dd753773`` introduced against the bound #3946 narrowed).
+    :func:`~app.utils.sport_keys.statpal_anchor_is_shadow` is the one place that
+    decides; every other sport's anchor protects exactly as it did before.
+
+    ``sport_key`` is required rather than defaulted because the safe-looking
+    default (``None`` ⇒ "not a shadow sport") is precisely the old, wrong
+    behaviour, and it would come back silently in any caller that forgot it.
+
     ``last_snapshot`` must come from :data:`LAST_POST_COMMENCE_SNAPSHOT_SQL`
     (venue prices already excluded) and NONE means "no play source has ever
     captured this row post-commence" — a strictly stronger absence than the
     staleness :func:`game_may_still_be_running` reads.
     """
+    anchor_is_an_observation = (
+        statpal_fixture_id is not None and not statpal_anchor_is_shadow(sport_key)
+    )
     return (
         home_score is None
         and away_score is None
         and period is None
         and espn_id is None
-        and statpal_fixture_id is None
+        and not anchor_is_an_observation
         and last_snapshot is None
     )
 

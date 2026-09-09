@@ -411,6 +411,17 @@ class TestThePositionAgreesWithTheLabel:
         the same reason the other three are — so the real expression binds — and
         a row supplies its `home_score`; the other three stay NULL, which is the
         production shape (`tennis_atp` populates none of them, ever).
+
+        #4075 widened it once more, past the `events` table: the anchor conjunct
+        became "no anchor, OR an anchor that means nothing for this sport", which
+        is a subquery over `sports.key`. So `sport_id` and a `sports` table are
+        created here too — again only so the shipping expression binds. Every row
+        below is `tennis_atp`, whose anchor is a real observation, and none of
+        them carries a `statpal_fixture_id` anyway; the sport cannot change an
+        answer in this file. Which sport an anchor speaks for is
+        `test_a_shadow_soccer_anchor_does_not_buy_a_live_badge_4075.py`'s
+        question, and the two halves' agreement is swept in
+        `test_a_hollow_live_card_does_not_lead_the_rail_3946.py` §4.
         """
         from sqlalchemy import (
             Column, DateTime, Integer, MetaData, String, Table,
@@ -425,18 +436,27 @@ class TestThePositionAgreesWithTheLabel:
             Column("id", Integer, primary_key=True),
             Column("status", String),
             Column("commence_time", DateTime(timezone=True)),
+            Column("sport_id", Integer),
             Column("home_score", Integer),
             Column("away_score", Integer),
             Column("period", String),
             Column("espn_id", String),
             Column("statpal_fixture_id", String),
         )
+        Table(
+            "sports", md,
+            Column("id", Integer, primary_key=True),
+            Column("key", String),
+        )
         engine = create_engine("sqlite://")
         md.create_all(engine)
         with engine.begin() as conn:
             conn.exec_driver_sql(
-                "INSERT INTO events (id,status,commence_time,home_score) "
-                "VALUES (?,?,?,?)",
+                "INSERT INTO sports (id,key) VALUES (1,'tennis_atp')"
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO events (id,status,commence_time,home_score,sport_id) "
+                "VALUES (?,?,?,?,1)",
                 list(self.ROWS if rows is None else rows),
             )
             stmt = select(Event.id).order_by(clause, Event.commence_time.asc())
