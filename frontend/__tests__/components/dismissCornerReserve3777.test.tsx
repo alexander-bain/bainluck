@@ -33,6 +33,26 @@
  * Both directions matter: an absence-only guard passes on a card that renders
  * nothing at all, and a presence-only guard would not have caught the
  * over-reservation on the three non-dismissible surfaces.
+ *
+ * ── #4131: the corner's SECOND claimant ──────────────────────────────────────
+ *
+ * #3777 measured the ✕ and padded for it. It never added `TrendBadge` — also
+ * absolute, also in that corner, 91px wide at `right-12` — to the sum, so a
+ * card that is trending AND dismissible had the pill painted straight over the
+ * date the pad had just uncovered. Measured on production 2026-09-08 at 390px
+ * (discover/001, on #4131): pill left edge 139px from the card's right against
+ * 36px reserved; the reader got "Resolves Se" and no date at all.
+ *
+ * The fix is a placement, not a bigger number: on the three TEXT cards the pill
+ * joins the meta row (`TrendBadge inFlow`), so it takes layout space and the row
+ * wraps. On the IMAGE cards (Variant A, Variant B, `EventCard`) it stays in the
+ * corner, because there it floats over a photo or a gradient crest strip and
+ * their top rows are left-aligned — the same reason #3777 found them clean.
+ *
+ * So the invariant these tests hold is: **the reserved corner has exactly one
+ * occupant, the ✕.** A guard that only asserted "the pill is in flow" would be
+ * satisfied by a card that stopped drawing the pill at all, so every claim below
+ * carries its positive control.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -49,8 +69,10 @@ import { FuturesCard } from "../../components/discover/FuturesCard";
 import { ComparisonCard } from "../../components/discover/ComparisonCard";
 import { ConceptCard } from "../../components/discover/ConceptCard";
 import { TournamentCard } from "../../components/discover/TournamentCard";
+import { EventCard } from "../../components/discover/EventCard";
 import {
   DismissBtn,
+  TrendBadge,
   dismissCornerPad,
   dismissCornerBadge,
 } from "../../components/discover/shared";
@@ -59,6 +81,7 @@ import type {
   FeedFuturesData,
   FeedConceptData,
   FeedTournamentData,
+  FeedEventData,
 } from "@/lib/types";
 
 const DISMISS = () => {};
@@ -86,6 +109,16 @@ function classTokens(tag: string): string[] {
  * the test off the exact Tailwind ordering.
  */
 function enclosingClasses(html: string, marker: string): string[] {
+  return ancestorClasses(html, marker, 0);
+}
+
+/**
+ * `up = 0` is the marker's own parent (`enclosingClasses`); `up = 1` is that
+ * element's parent, and so on. #4131 needs the grandparent — the meta ROW the
+ * pill now lives in — and asserting on the real tree beats matching a class
+ * string that source-order changes would silently move.
+ */
+function ancestorClasses(html: string, marker: string, up: number): string[] {
   const at = html.indexOf(marker);
   if (at < 0) throw new Error(`marker not found in markup: ${marker}`);
   const stack: string[][] = [];
@@ -99,8 +132,8 @@ function enclosingClasses(html: string, marker: string): string[] {
       stack.push(classTokens(full));
     }
   }
-  if (!stack.length) throw new Error(`marker is not inside any element: ${marker}`);
-  return stack[stack.length - 1];
+  if (stack.length <= up) throw new Error(`marker has no ancestor ${up} levels up: ${marker}`);
+  return stack[stack.length - 1 - up];
 }
 
 /** The `class` tokens of a fragment's ROOT element. */
@@ -194,6 +227,24 @@ function tournamentData(): FeedTournamentData {
     commence_time: null,
     resolution_date: null,
   } as unknown as FeedTournamentData;
+}
+
+function eventData(): FeedEventData {
+  return {
+    id: 93,
+    home_team: "Boston Red Sox",
+    away_team: "New York Yankees",
+    sport_key: "baseball_mlb",
+    sport_label: "MLB",
+    llm_sport_category: "baseball_mlb",
+    status: "upcoming",
+    commence_time: "2026-10-01T23:05:00Z",
+    current_odds: { home_probability: 0.55, away_probability: 0.45 },
+  } as unknown as FeedEventData;
+}
+
+function eventItem(data: FeedEventData): FeedItem {
+  return { type: "event", score: 90, reason: "", headline: "", data } as unknown as FeedItem;
 }
 
 // ── 1. the invariant ─────────────────────────────────────────────────────────
@@ -344,5 +395,160 @@ describe("#3777 non-dismissible surfaces reserve nothing", () => {
       // Positive control — the card rendered something.
       expect(html).toContain("<article");
     }
+  });
+});
+
+// ── 4. #4131 — the corner has exactly one occupant ───────────────────────────
+
+const PILL = "🔥 Trending";
+
+describe("#4131 the trend pill has two placements and they cannot drift", () => {
+  const corner = renderToStaticMarkup(<TrendBadge />);
+  const flow = renderToStaticMarkup(<TrendBadge inFlow />);
+
+  it("the corner placement is still the absolute overlay the image cards need", () => {
+    const cls = rootClasses(corner);
+    expect(cls).toContain("absolute");
+    expect(cls).toContain("top-3");
+    expect(cls).toContain("right-12");
+    expect(cls).toContain("z-10");
+    expect(corner).toContain('data-trend-placement="corner"');
+    expect(corner).toContain(PILL);
+  });
+
+  it("the in-flow placement takes layout space and claims no corner", () => {
+    const cls = rootClasses(flow);
+    expect(cls).toContain("inline-flex");
+    expect(cls).not.toContain("absolute");
+    // The whole point: no inset utility at all, so it cannot be over anything.
+    expect(cls.some((c) => /^(?:top|right|bottom|left)-/.test(c))).toBe(false);
+    expect(flow).toContain('data-trend-placement="flow"');
+    expect(flow).toContain(PILL);
+  });
+
+  it("both placements wear the same pill, so one cannot be restyled alone", () => {
+    // Anchored on the look, not the layout — a shared constant is the fix, and
+    // this fails the moment someone hand-edits one of the two class strings.
+    for (const token of ["bg-orange-500/90", "text-[10px]", "rounded-full", "px-2", "py-0.5"]) {
+      expect(rootClasses(corner)).toContain(token);
+      expect(rootClasses(flow)).toContain(token);
+    }
+  });
+});
+
+describe("#4131 text cards put the pill in the meta row, never over the date", () => {
+  /**
+   * The claim, in one shape for all three: the pill renders, it renders INSIDE
+   * the row that carries the dismiss reserve, and it renders BEFORE that row's
+   * right-hand run. Before the fix the pill was a sibling of the card's padding
+   * container, so its index was LOWER than the row's — restoring the absolute
+   * badge fails `rowAt < pillAt`, and deleting the pill fails `toContain`.
+   */
+  function expectPillInRow(html: string, rowMarker: string, rightRun: string) {
+    const pillAt = html.indexOf(PILL);
+    const rowAt = html.indexOf(rowMarker);
+    const rightAt = html.indexOf(rightRun);
+    expect(pillAt).toBeGreaterThan(-1);
+    expect(rowAt).toBeGreaterThan(-1);
+    expect(rightAt).toBeGreaterThan(-1);
+    expect(rowAt).toBeLessThan(pillAt);
+    expect(pillAt).toBeLessThan(rightAt);
+    expect(enclosingClasses(html, PILL)).toContain("inline-flex");
+    // Nothing in this card sits on the badge line any more — the reserved
+    // corner is the ✕'s alone, which is what `dismissCornerPad` is sized for.
+    expect(html).not.toContain("right-12");
+    // …and the ✕ is still there to justify the reserve.
+    expect(html).toContain('aria-label="Less like this"');
+  }
+
+  it("heatmap", () => {
+    const data = heatmapData();
+    const html = renderToStaticMarkup(
+      <FuturesCard item={itemFor(data)} data={data} liked={false} setLiked={() => {}} trending onDismiss={DISMISS} />,
+    );
+    expectPillInRow(html, `gap-1.5 mb-1 ${dismissCornerPad(DISMISS)}`, "Resolves Mar 31, 2027");
+  });
+
+  it("leaderboard", () => {
+    const data = leaderboardData();
+    const html = renderToStaticMarkup(
+      <FuturesCard item={itemFor(data)} data={data} liked={false} setLiked={() => {}} trending onDismiss={DISMISS} />,
+    );
+    expect(html).toContain('data-card-format="leaderboard"');
+    expectPillInRow(html, `items-center gap-1.5 ${dismissCornerPad(DISMISS)}`, "Resolves Feb 14, 2027");
+  });
+
+  it("comparison", () => {
+    const data = leaderboardData();
+    const html = renderToStaticMarkup(
+      <ComparisonCard item={itemFor(data)} data={data} liked={false} setLiked={() => {}} trending onDismiss={DISMISS} />,
+    );
+    expect(html).toContain('data-card-format="comparison"');
+    expectPillInRow(html, `gap-1.5 mb-1 ${dismissCornerPad(DISMISS)}`, "Resolves Feb 14, 2027");
+  });
+
+  it("the row that now holds the pill wraps, so the date moves down rather than being squeezed", () => {
+    // Without `flex-wrap` the three runs share one line and the browser shrinks
+    // them instead — the same information loss by another mechanism. Read off
+    // the pill's real PARENT row, not off a class string in the source.
+    const heat = heatmapData();
+    const board = leaderboardData();
+    const rows = [
+      renderToStaticMarkup(
+        <FuturesCard item={itemFor(heat)} data={heat} liked={false} setLiked={() => {}} trending onDismiss={DISMISS} />,
+      ),
+      renderToStaticMarkup(
+        <FuturesCard item={itemFor(board)} data={board} liked={false} setLiked={() => {}} trending onDismiss={DISMISS} />,
+      ),
+      renderToStaticMarkup(
+        <ComparisonCard item={itemFor(board)} data={board} liked={false} setLiked={() => {}} trending onDismiss={DISMISS} />,
+      ),
+    ];
+    for (const html of rows) {
+      const row = ancestorClasses(html, PILL, 1);
+      expect(row).toContain("flex");
+      expect(row).toContain("flex-wrap");
+      expect(row).toContain(dismissCornerPad(DISMISS));
+    }
+  });
+
+  it("no pill at all when the card is not trending, and the card still renders", () => {
+    for (const [Card, data] of [
+      [FuturesCard, heatmapData()],
+      [FuturesCard, leaderboardData()],
+      [ComparisonCard, leaderboardData()],
+    ] as const) {
+      const html = renderToStaticMarkup(
+        <Card item={itemFor(data)} data={data} liked={false} setLiked={() => {}} trending={false} onDismiss={DISMISS} />,
+      );
+      expect(html).not.toContain(PILL);
+      expect(html).not.toContain("data-trend-placement");
+      expect(html).toContain("<article");
+      expect(html).toContain("Resolves ");
+    }
+  });
+});
+
+describe("#4131 image cards keep the corner, because nothing of the reader's is there", () => {
+  it("EventCard floats the pill over the crest strip", () => {
+    const data = eventData();
+    const html = renderToStaticMarkup(
+      <EventCard item={eventItem(data)} data={data} liked={false} setLiked={() => {}} trending onDismiss={DISMISS} />,
+    );
+    expect(html).toContain('data-trend-placement="corner"');
+    expect(enclosingClasses(html, PILL)).toContain("absolute");
+    expect(enclosingClasses(html, PILL)).toContain("right-12");
+    // Positive control: the strip the pill floats over is the card's own art,
+    // and the matchup — the thing a reader must not lose — is below it.
+    expect(html).toContain("Boston Red Sox");
+  });
+
+  it("EventCard draws no pill when it is not trending", () => {
+    const data = eventData();
+    const html = renderToStaticMarkup(
+      <EventCard item={eventItem(data)} data={data} liked={false} setLiked={() => {}} trending={false} onDismiss={DISMISS} />,
+    );
+    expect(html).not.toContain(PILL);
+    expect(html).toContain("Boston Red Sox");
   });
 });

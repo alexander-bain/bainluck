@@ -62,16 +62,18 @@ export function ComparisonCard({
       data-card-format="comparison"
     >
       <DismissBtn onDismiss={onDismiss} />
-      {trending && <TrendBadge />}
 
       <div className="p-4">
         {/* Header — #3777: `dismissCornerPad` keeps the resolution date out
             from under the dismiss button, the same collision measured on the
-            heatmap and leaderboard cards. */}
-        <div className={`flex items-center gap-1.5 mb-1 ${dismissCornerPad(onDismiss)}`}>
+            heatmap and leaderboard cards. #4131: the 🔥 pill was the corner's
+            second claimant, covering the date outright, so it sits in the row
+            and the row wraps rather than hiding anything. */}
+        <div className={`flex flex-wrap items-center gap-1.5 mb-1 ${dismissCornerPad(onDismiss)}`}>
           <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">
             {catStyle.emoji} {category}
           </span>
+          {trending && <TrendBadge inFlow />}
           <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>
         </div>
 

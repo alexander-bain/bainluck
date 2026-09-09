@@ -214,14 +214,17 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     return (
       <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={data.name} data-card-format="heatmap">
         <DismissBtn onDismiss={onDismiss} />
-        {trending && <TrendBadge />}
 
         <div className="p-4">
           {/* #3777: `dismissCornerPad` keeps the resolution date out from under
               the dismiss button. Measured before the fix: 7 of 7 heatmap cards
-              on production had ~21% of "Resolves <date>" covered — the year. */}
-          <div className={`flex items-center gap-1.5 mb-1 ${dismissCornerPad(onDismiss)}`}>
+              on production had ~21% of "Resolves <date>" covered — the year.
+              #4131: the 🔥 pill was the corner's second claimant and covered the
+              date whole ("Resolves Se"). It is in the row now, so the row wraps
+              at phone width instead of anything being painted over. */}
+          <div className={`flex flex-wrap items-center gap-1.5 mb-1 ${dismissCornerPad(onDismiss)}`}>
             <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
+            {trending && <TrendBadge inFlow />}
             <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>
           </div>
           <Link href={detailHref} onClick={onDetailClick} className="block group">
@@ -314,7 +317,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     return (
       <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.name}`} data-card-format="leaderboard">
         <DismissBtn onDismiss={onDismiss} />
-        {trending && <TrendBadge />}
 
         <div className="p-3 pb-2">
           {/* L2-160 — muted category header (no internal-taxonomy "Distribution"
@@ -323,10 +325,14 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           {/* #3777: `dismissCornerPad` keeps the confidence glyph out from under
               the dismiss button. Measured before the fix: 16 of 16 leaderboard
               cards on production had all three bars covered 100%, so the
-              how-well-sourced signal was invisible at phone width. */}
+              how-well-sourced signal was invisible at phone width.
+              #4131: the 🔥 pill is the corner's second claimant and 36px never
+              cleared its 91px, so it joins this row rather than floating over
+              it. The row already wraps. */}
           <div className={`mb-1.5 flex flex-wrap items-center gap-1.5 ${dismissCornerPad(onDismiss)}`}>
             <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
             <TemporalBadge badge={data.temporal_badge} />
+            {trending && <TrendBadge inFlow />}
             <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
               {resolveText && <span>{resolveText}</span>}
               {data.confidence_tier && resolveText && <span>·</span>}
