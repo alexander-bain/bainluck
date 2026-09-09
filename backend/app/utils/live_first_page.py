@@ -230,12 +230,37 @@ def hoist_live_events_into_first_page(
         if swaps <= 0:
             return items, meta
 
+        # WHICH slots to vacate and WHICH live row goes into each are two
+        # decisions, and only the first one wants "worst first" (live/123,
+        # #4460). Pairing `displaceable` index-for-index with `live_in_tail` ran
+        # them together: `displaceable` counts DOWN from the last slot and
+        # `live_in_tail` is in served order, so the best available live row was
+        # placed in the last slot of the page and the worst in the earliest —
+        # the hoisted run read in exactly reverse rank order.
+        #
+        # On Discover that is diffuse. On `/sports` it is the whole rail:
+        # `groupFeedIntoSections` partitions the payload and **never re-sorts**,
+        # so "Live Now" renders these rows in the order they are left in here.
+        # Measured on production 2026-09-09 14:15 PT the live run served
+        # 38, 45, 68, 72, 73, 76 — strictly ascending — and the section opened
+        # with a non-league FA Cup tie (`tier:3`) above the US Open and four MLB
+        # games. On the 2026-09-03 corpus the same inversion put Naomi Osaka —
+        # the name #2709 was filed about — fifth of nine, behind a match the
+        # ranker served 119th.
+        #
+        # Vacating the WORST slots is untouched: the selection above still walks
+        # back-first and still skips `MARQUEE_PIN_KEY`, so the same slots are
+        # freed, the same items are displaced, and `compose_lead`'s prefix is
+        # protected by both mechanisms exactly as before. Sorting the chosen
+        # slots ascending only decides the ORDER of the rows placed into them.
+        chosen_slots = sorted(displaceable[:swaps])
+
         new_window = list(window)
         new_tail = list(tail)
         # Best available live row (the tail is already in served order, so
-        # "first" IS "best") pairs with the worst displaceable window slot.
+        # "first" IS "best") takes the earliest of the slots being vacated.
         for pair in range(swaps):
-            w_idx = displaceable[pair]
+            w_idx = chosen_slots[pair]
             t_idx = live_in_tail[pair]
             new_window[w_idx], new_tail[t_idx] = new_tail[t_idx], new_window[w_idx]
 

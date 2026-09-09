@@ -257,3 +257,103 @@ class TestBudget:
         assert sum(1 for it in out[:20] if is_hoistable_live_event(it)) == 10
         assert sum(1 for it in out[:20] if not is_hoistable_live_event(it)) == 10
         assert meta["unhoisted"] == 2901
+
+
+# ---------------------------------------------------------------------------
+# live/123 (#4460) — the rail read BACKWARDS
+# ---------------------------------------------------------------------------
+
+
+def _row_name(item: dict) -> str:
+    data = item.get("data") or {}
+    return str(data.get("home_team") or data.get("id") or "?")
+
+
+class TestHoistedRowsKeepTheirServedOrder:
+    """The hoist put the ranker's BEST live game in the page's WORST slot.
+
+    `displaceable` is built back-first (slot 20, 19, 18 …) and `live_in_tail` is
+    in served order (best first), so pairing them index-for-index sent the best
+    live row to the last slot and the worst to the earliest — the hoisted run
+    read in exactly reverse rank order.
+
+    On Discover that is diffuse. On `/sports` it is the whole section: the client
+    partitions the payload with `groupFeedIntoSections`, which **preserves the
+    served order inside each section and never re-sorts**, so every hoisted row
+    lands in "Live Now" in the order this function leaves it. Measured on
+    production 2026-09-09 14:15 PT, the live run served
+    38, 45, 68, 72, 73, 76 — strictly ascending — and the section led with a
+    non-league FA Cup tie (`tier:3`, score 38) above the US Open and four MLB
+    games.
+
+    Choosing the worst slots to VACATE is correct and is untouched here: the
+    front of the deck and `compose_lead`'s prefix must not be displaced. Which
+    live row goes into which of those already-chosen slots is a separate
+    decision, and it is the one that was wrong.
+    """
+
+    def test_the_corpus_hoisted_run_reads_in_served_order(self):
+        """The ranker's order survives the hoist. RED before the fix: the list
+        comes back exactly reversed."""
+        items = _corpus()
+        window_size = 20
+        beyond = [
+            _row_name(it) for it in items[window_size:] if is_hoistable_live_event(it)
+        ]
+        assert beyond, "corpus must hold live rows beyond the window"
+
+        out, meta = hoist_live_events_into_first_page(
+            items, first_page_size=window_size
+        )
+        hoisted_set = set(beyond)
+        in_window = [
+            _row_name(it)
+            for it in out[:window_size]
+            if is_hoistable_live_event(it) and _row_name(it) in hoisted_set
+        ]
+
+        assert meta["hoisted"] == len(beyond)
+        assert in_window == beyond
+
+    def test_osaka_is_not_buried_behind_four_lower_ranked_matches(self):
+        """The named case from #2709. She was served 102nd, hoisted to slot 18,
+        and read fifth of the nine live rows — behind Darderi, served 119th."""
+        items = _corpus()
+        out, _ = hoist_live_events_into_first_page(items, first_page_size=20)
+        names = [_row_name(it) for it in out[:20] if is_hoistable_live_event(it)]
+
+        assert "Naomi Osaka" in names
+        assert "Luciano Darderi" in names
+        # Served 102nd vs 119th — the ranker's order, kept.
+        assert names.index("Naomi Osaka") < names.index("Luciano Darderi")
+        # And the best row the hoist had available leads the run, not trails it.
+        assert names.index("Pittsburgh Pirates") < names.index("Luciano Darderi")
+
+    def test_the_best_live_row_takes_the_earliest_vacated_slot(self):
+        """Synthetic control: three live rows beyond a full window of fillers."""
+        items = _filler(20) + [
+            _event(id="best"),
+            _event(id="middle"),
+            _event(id="worst"),
+        ]
+        out, meta = hoist_live_events_into_first_page(items, first_page_size=20)
+        placed = [
+            (i, _row_name(it))
+            for i, it in enumerate(out[:20])
+            if is_hoistable_live_event(it)
+        ]
+
+        assert meta["hoisted"] == 3
+        assert [name for _, name in placed] == ["best", "middle", "worst"]
+
+    def test_the_same_slots_are_vacated_and_nothing_is_lost(self):
+        """The fix re-pairs; it must not re-choose. Same window membership, same
+        multiset overall, same length."""
+        items = _corpus()
+        out, _ = hoist_live_events_into_first_page(items, first_page_size=20)
+
+        assert len(out) == len(items)
+        assert sorted(map(id, out)) == sorted(map(id, items))
+        # The front of the deck is never touched by the hoist on this corpus:
+        # the earliest vacated slot is 12, so slots 1-11 are byte-identical.
+        assert [id(x) for x in out[:11]] == [id(x) for x in items[:11]]
