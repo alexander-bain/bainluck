@@ -6,8 +6,9 @@
  *    (a future commence_time must never render a LIVE chip — gotcha #14: the
  *    backend status writer can flip 'live' hours before first pitch);
  *  - settled games arrive as EITHER 'completed' OR 'closed';
- *  - doubleheaders (two games vs the same opponent on the same calendar day)
- *    render as distinct G1/G2 cards.
+ *  - a G1/G2 chip is drawn only where the provider itself says "doubleheader,
+ *    game N" — never inferred from two rows sharing an opponent and a day,
+ *    because that is also exactly what a duplicate looks like (#2866).
  *
  * Kept SSR-safe and side-effect-free so they can be unit-tested and used in
  * both the client component and any future server render.
@@ -76,71 +77,58 @@ export function isGameSuspended(
   return hasNoReportedResult(game.status, game.commence_time, now);
 }
 
-/** Local calendar-day key (YYYY-M-D) used to group doubleheaders. */
-function dayKey(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-}
-
 /**
- * Leagues where two games against the same opponent on one calendar day is a
- * real thing that happens. Today that is baseball and nothing else.
+ * Assign 1-based game numbers to doubleheaders, **from the provider's own
+ * doubleheader metadata and from nothing else** (#2866). A game gets a number
+ * iff its row says `doubleheader === true` and carries a positive integer
+ * `game_number`. Everything else is omitted from the map, so the caller renders
+ * no G-chip. No payload serves those fields yet, so today the answer is always
+ * `{}` — and that is the correct answer, not a placeholder.
  *
- * An ALLOWLIST, deliberately, not a "not NFL" denylist: a denylist silently
- * re-breaks for every league added later, and the failure mode is a lie told
- * confidently (see below). Matched case-insensitively against the `league`
- * route segment.
- */
-const DOUBLEHEADER_LEAGUES = new Set(["mlb"]);
-
-/**
- * Assign 1-based game numbers to doubleheaders. Only games that share an
- * opponent AND calendar day with at least one sibling get a number; solo games
- * are omitted from the map (so the caller renders no G-chip for them).
- * Ordering within a day is by commence_time ascending.
+ * 🔴 THE SAME-DAY-OPPONENT INFERENCE IS GONE, AND ITS ABSENCE IS THE FIX. This
+ * function used to group games by (opponent, calendar day) and number any pair
+ * it found. That was the last step which turned a DATA defect into a plausible
+ * product feature: the Bears page carried `@ Tennessee Titans G1` and
+ * `@ Tennessee Titans G2`, same day, same 24–15 result — five cards for three
+ * real games — because 47 of 50 NFL preseason rows exist twice.
  *
- * **`league` is required, and outside {@link DOUBLEHEADER_LEAGUES} the answer is
- * always `{}` (#2866).** Ungated, this function was the last step that turned a
- * DATA defect into a plausible product feature: the Bears page carried
- * `@ Tennessee Titans G1` and `@ Tennessee Titans G2`, same day, same 24–15
- * result — five cards for three real games — because 47 of 50 NFL preseason
- * rows exist twice and this grouped them into a "doubleheader". NFL teams do
- * not play twice in a day, so the chips were not describing the schedule, they
- * were explaining away a duplicate.
+ * lane1/087 gated that inference to MLB, which stopped the NFL case. It could
+ * not stop the class, because **the gate and the inference answer different
+ * questions**: "can a doubleheader happen in this league" is not "did this
+ * pair of rows happen twice". Inside MLB — where duplicates also occur, and
+ * where a doubleheader is genuinely common — a twin and a real doubleheader are
+ * *identical* under same-day pairing, so the chip could still explain a
+ * duplicate away. It just did it on one league instead of all of them.
  *
- * **This does not fix the duplicate and must not be read as fixing it.** The
- * pair still renders twice; it just no longer arrives dressed as deliberate.
- * The data half is `matching-symptom` under D35 and belongs to #2693.
+ * So the league allowlist is gone too, and deliberately: with an authority
+ * field the allowlist is no longer a safety rail, it is a second gate that can
+ * only be WRONG. It would suppress a true NPB or KBO doubleheader the moment
+ * the provider vouches for one, which is the same "silently re-breaks for the
+ * next league" failure the allowlist was originally chosen to avoid. The
+ * parameter is removed rather than ignored so that no caller can believe it
+ * still means something.
+ *
+ * **This does not fix the duplicate and must not be read as fixing it.** A twin
+ * pair still renders twice; it just cannot arrive dressed as deliberate. The
+ * data half is `matching-symptom` under D35 and belongs to #2693.
+ *
+ * **What unblocks the chips:** `schedule_sentinel.py` already parses MLB Stats
+ * API's `doubleHeader` and `gameNumber` into `TruthGame`. Carrying them onto
+ * `Event` and emitting them from `_format_event_brief` is lane1's, and needs no
+ * further frontend change — the chips resume by themselves.
  */
 export function assignGameNumbers(
   games: TeamGameBrief[],
-  league: string,
 ): Record<number, number> {
-  if (!DOUBLEHEADER_LEAGUES.has((league || "").toLowerCase())) return {};
-
-  const groups = new Map<string, TeamGameBrief[]>();
-  for (const g of games) {
-    const dk = dayKey(g.commence_time);
-    if (!dk) continue;
-    const key = `${(g.opponent || "").toLowerCase()}|${dk}`;
-    const arr = groups.get(key) ?? [];
-    arr.push(g);
-    groups.set(key, arr);
-  }
-
   const out: Record<number, number> = {};
-  for (const arr of groups.values()) {
-    if (arr.length < 2) continue;
-    const sorted = [...arr].sort(
-      (a, b) =>
-        new Date(a.commence_time || 0).getTime() -
-        new Date(b.commence_time || 0).getTime(),
-    );
-    sorted.forEach((g, i) => {
-      out[g.id] = i + 1;
-    });
+  for (const g of games) {
+    if (g.doubleheader !== true) continue;
+    const n = g.game_number;
+    // A number is required, and it must be a real 1-based ordinal. `0`, a
+    // non-integer and a NaN are all "the authority did not actually say"; a
+    // chip reading `G0` would be the same confident lie in a new font.
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1) continue;
+    out[g.id] = n;
   }
   return out;
 }

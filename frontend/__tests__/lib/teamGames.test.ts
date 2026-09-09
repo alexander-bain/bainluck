@@ -71,66 +71,92 @@ describe("isGameSettled — completed AND closed", () => {
   });
 });
 
-describe("assignGameNumbers — doubleheaders", () => {
-  test("two games vs the same opponent on the same day get G1/G2 in time order", () => {
-    // Local (no Z) datetimes so the calendar-day grouping is timezone-stable.
-    const g2 = brief({ id: 2, opponent: "New York Yankees", commence_time: "2026-07-22T19:00:00" });
-    const g1 = brief({ id: 1, opponent: "New York Yankees", commence_time: "2026-07-22T13:00:00" });
-    const nums = assignGameNumbers([g2, g1], "mlb");
-    expect(nums[1]).toBe(1);
-    expect(nums[2]).toBe(2);
-  });
-
-  test("a solo game gets no number", () => {
-    const solo = brief({ id: 9, opponent: "New York Yankees", commence_time: "2026-07-22T13:00:00" });
-    expect(assignGameNumbers([solo], "mlb")[9]).toBeUndefined();
-  });
-
-  test("same opponent on different days are not a doubleheader", () => {
-    const a = brief({ id: 1, opponent: "Yankees", commence_time: "2026-07-22T13:00:00" });
-    const b = brief({ id: 2, opponent: "Yankees", commence_time: "2026-07-23T13:00:00" });
-    const nums = assignGameNumbers([a, b], "mlb");
-    expect(nums[1]).toBeUndefined();
-    expect(nums[2]).toBeUndefined();
-  });
-});
-
-describe("assignGameNumbers — a duplicate is not a doubleheader (#2866)", () => {
-  // The exact production shape 082 photographed on the Bears page: the same
-  // opponent, the same calendar day, the same result — two rows for one game,
-  // because 47 of 50 NFL preseason rows have a regular-season twin.
-  const twin = () => [
-    brief({ id: 1, opponent: "Tennessee Titans", commence_time: "2026-08-29T17:00:00" }),
-    brief({ id: 2, opponent: "Tennessee Titans", commence_time: "2026-08-29T17:00:00" }),
+describe("assignGameNumbers — a G-chip comes from the provider, or not at all (#2866)", () => {
+  // The exact production shape lane1/082 photographed on the Bears page: same
+  // opponent, same calendar day, same result — two rows for ONE game, because
+  // 47 of 50 NFL preseason rows have a regular-season twin. Every arm below
+  // reuses it, because the point of this suite is that no property of these two
+  // rows can produce a chip.
+  const twin = (o: Partial<TeamGameBrief> = {}) => [
+    brief({ id: 1, opponent: "Tennessee Titans", commence_time: "2026-08-29T17:00:00", ...o }),
+    brief({ id: 2, opponent: "Tennessee Titans", commence_time: "2026-08-29T17:00:00", ...o }),
   ];
 
-  test("an NFL same-day pair gets NO chips — the duplicate is not explained away", () => {
-    const nums = assignGameNumbers(twin(), "nfl");
-    expect(nums[1]).toBeUndefined();
-    expect(nums[2]).toBeUndefined();
-  });
-
-  test("CONTROL: the identical pair in MLB still gets G1/G2", () => {
-    // Both arms, and they differ ONLY by league. Without this arm a function
-    // hard-wired to return {} would pass the guard above perfectly — which is
-    // the whole failure mode of a one-armed test.
-    const nums = assignGameNumbers(twin(), "mlb");
-    expect(nums[1]).toBe(1);
-    expect(nums[2]).toBe(2);
-  });
-
-  test("the gate is an ALLOWLIST: an unknown or empty league gets no chips", () => {
-    // A denylist ("not nfl") would silently re-break for every league added
-    // later. These stand in for that future league.
-    for (const league of ["nba", "nhl", "epl", "ncaaf", "", "MLB-ish"]) {
-      const nums = assignGameNumbers(twin(), league);
+  test("a same-day opponent pair with no authority gets NO chips — in ANY league", () => {
+    // lane1/087 gated the old inference to MLB. That stopped the NFL case and
+    // not the class: inside MLB a twin and a real doubleheader are IDENTICAL
+    // under same-day pairing, so the chip could still launder a duplicate. The
+    // MLB arm is the one that used to be a passing "CONTROL" asserting G1/G2 —
+    // it is now the regression this suite exists for, so it is listed FIRST.
+    for (const league of ["mlb", "MLB", "nfl", "nba", "nhl", "epl", "ncaaf", "", "MLB-ish"]) {
+      const nums = assignGameNumbers(twin());
       expect(nums[1]).toBeUndefined();
       expect(nums[2]).toBeUndefined();
+      // The league is not an argument any more, and that is deliberate. Reading
+      // it here keeps the loop honest about what it is sweeping over: the
+      // answer must be the same for every one of these, INCLUDING baseball.
+      expect(league).toBeDefined();
     }
   });
 
-  test("the allowlist is case-insensitive, so a route segment cannot miss it", () => {
-    expect(assignGameNumbers(twin(), "MLB")[1]).toBe(1);
+  test("CONTROL: the provider's own doubleheader metadata DOES get G1/G2", () => {
+    // Without this arm a function hard-wired to `return {}` would pass every
+    // guard above perfectly — the one-armed-test failure mode. `doubleHeader`
+    // and `gameNumber` are MLB Stats API's own field names, already parsed by
+    // schedule_sentinel.py's TruthGame.
+    const [g1, g2] = twin();
+    const nums = assignGameNumbers([
+      { ...g2, doubleheader: true, game_number: 2 },
+      { ...g1, doubleheader: true, game_number: 1 },
+    ]);
+    expect(nums[1]).toBe(1);
+    expect(nums[2]).toBe(2);
+  });
+
+  test("the number is the PROVIDER's, not the array's — order cannot renumber a game", () => {
+    // The old function derived N from position after sorting by commence_time.
+    // Two games of a doubleheader routinely share a placeholder start time, so
+    // that ordering was unstable exactly where it mattered. Here game 2 is
+    // listed first and is still game 2.
+    const nums = assignGameNumbers([
+      brief({ id: 7, doubleheader: true, game_number: 2 }),
+      brief({ id: 8, doubleheader: true, game_number: 1 }),
+    ]);
+    expect(nums[7]).toBe(2);
+    expect(nums[8]).toBe(1);
+  });
+
+  test("a vouched game numbers alone — half a pair is still the provider's word", () => {
+    // Only one of the two can fall inside the recents window. Suppressing the
+    // survivor would be inventing a "pair must be present" rule the provider
+    // never stated.
+    expect(assignGameNumbers([brief({ id: 3, doubleheader: true, game_number: 2 })])[3]).toBe(2);
+  });
+
+  test("doubleheader:true with an unusable game_number gets NO chip", () => {
+    // Missing, null, zero, negative, fractional, NaN. Each is "the authority
+    // did not actually say"; a `G0` chip would be the same confident lie in a
+    // new font. `false as never`-free: these are the shapes JSON can deliver.
+    const bad = [undefined, null, 0, -1, 1.5, NaN] as (number | null | undefined)[];
+    for (const game_number of bad) {
+      const nums = assignGameNumbers([brief({ id: 4, doubleheader: true, game_number })]);
+      expect(nums[4]).toBeUndefined();
+    }
+  });
+
+  test("a game_number WITHOUT doubleheader:true gets NO chip", () => {
+    // MLB stamps `gameNumber: 1` on ordinary single games too, so the number
+    // alone is not a claim of anything. Both fields, or no chip.
+    for (const doubleheader of [undefined, null, false]) {
+      const nums = assignGameNumbers([brief({ id: 5, doubleheader, game_number: 1 })]);
+      expect(nums[5]).toBeUndefined();
+    }
+  });
+
+  test("today's real payload — no authority fields at all — yields an empty map", () => {
+    // The state on production the day this shipped: `_format_event_brief` emits
+    // neither field. Empty is the CORRECT answer here, not a placeholder.
+    expect(assignGameNumbers(twin())).toEqual({});
   });
 });
 

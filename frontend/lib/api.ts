@@ -656,6 +656,17 @@ export interface TeamGameBrief {
   win_probability: number | null; // 0-1, team-relative, current aggregate
   pregame_win_probability?: number | null; // 0-1, team-relative, pre-game/closing (backend gap)
   completed_at?: string | null;
+  // #2866 — the ONLY thing a G1/G2 chip may be drawn from. Both are the
+  // provider's own words: MLB Stats API's `doubleHeader` and `gameNumber`,
+  // already parsed into `TruthGame` by `backend/app/tasks/schedule_sentinel.py`
+  // but never carried onto `Event` or emitted by `_format_event_brief`. So they
+  // are absent from every payload today, and `assignGameNumbers` returns {}.
+  // They are declared here rather than after the fact because the alternative
+  // — inferring a doubleheader from a same-day opponent pair — is what dressed
+  // a duplicate row as a deliberate feature. Optional, and they stay optional:
+  // a missing authority is "we do not know", never "no".
+  doubleheader?: boolean | null;
+  game_number?: number | null;
 }
 
 export interface TeamPageResponse {

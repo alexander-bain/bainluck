@@ -147,11 +147,12 @@ export default function TeamPage() {
     ? getLeagueDisplay(team.sport_key)
     : team.sport_name || league.toUpperCase();
 
-  // Doubleheader detection: same opponent + same day → G1/G2 chips. Gated on
-  // the league, because outside baseball a same-day repeat is a duplicate row,
-  // not a doubleheader, and the chips were laundering it (#2866).
-  const upcomingGameNos = assignGameNumbers(upcoming_events, league);
-  const recentGameNos = assignGameNumbers(recent_events, league);
+  // G1/G2 chips, drawn only from the provider's own doubleheader metadata —
+  // never inferred from a same-day opponent pair, which is indistinguishable
+  // from a duplicate row and was laundering one (#2866). No payload carries
+  // that metadata yet, so both maps are empty and no game shows a chip.
+  const upcomingGameNos = assignGameNumbers(upcoming_events);
+  const recentGameNos = assignGameNumbers(recent_events);
 
   // Hero headline number — the team's "price" is its championship probability
   // (the blend-is-the-product ruling: one number per question). Prefer the
