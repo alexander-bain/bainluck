@@ -465,8 +465,13 @@ def _full_shelf():
     rows += [
         row(11544821, "Flu Hospitalization Rate Week 15, 2026?"),
         row(16625227, "Flu Hospitalization Rate Week 17, 2026?"),
-        row(18121552, "Flu Hospitalization Rate Week 18, 2026?"),
-        row(32600266, "Flu Hospitalization Rate Week 22, 2026?"),
+        # These two sit on the weather SHELF but carry `category='tech'` in
+        # production (census 2026-09-09 06:4x PT). The shelf and the category are
+        # separate columns and the repair reads each from the row, so a fixture
+        # that made all four uniformly `weather` would be modelling a population
+        # production does not have.
+        row(18121552, "Flu Hospitalization Rate Week 18, 2026?", category="tech"),
+        row(32600266, "Flu Hospitalization Rate Week 22, 2026?", category="tech"),
     ]
     rows += [row(9000 + i, n) for i, n in enumerate(GENUINELY_WEATHER)]
     rows.append(dict(CHINA_CYCLONES))
@@ -605,3 +610,24 @@ def test_the_apply_reports_which_receipt_is_in_force():
     src = inspect.getsource(mod.repair)
     assert '"undo_receipt": undo_receipt' in src
     assert "RECEIPT_PLAN_SUPERSET" in src
+
+
+def test_a_row_whose_category_is_not_weather_keeps_its_own_prior_value():
+    """`llm_sport_category` (the shelf) and `category` are separate columns.
+
+    Two flu rows sit on the weather SHELF while carrying `category='tech'`. The
+    apply's write is a compare-and-set on the EXACT prior pair, so a plan that
+    assumed `from_category='weather'` for them would match no row and the repair
+    would silently do nothing for exactly the rows the reader complained about.
+    """
+    plan, _ = build_plan(_full_shelf())
+    by_id = {p["id"]: p for p in plan}
+
+    for mid in (18121552, 32600266):
+        assert by_id[mid]["from_category"] == "tech", by_id[mid]
+        assert by_id[mid]["from_shelf"] == "weather"
+        assert by_id[mid]["to_shelf"] == "health"
+
+    # ...and the ones that really are `weather` are unaffected by the distinction.
+    for mid in (11544821, 16625227):
+        assert by_id[mid]["from_category"] == "weather"
