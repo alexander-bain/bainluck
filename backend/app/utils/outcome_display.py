@@ -91,6 +91,112 @@ def is_field_outcome(name: str | None) -> bool:
     return bool(_FIELD_OUTCOME_RE.match((name or "").strip()))
 
 
+def drop_incoherent_near_certain(
+    items: Sequence[_T],
+    prob_of: Callable[[_T], float | None],
+    *,
+    mutually_exclusive: bool,
+    market_is_open: bool,
+    is_winner_of: Callable[[_T], bool | None] | None = None,
+) -> list[_T]:
+    """Remove every leg of a single-winner field that is at/above the NEAR-CERTAINTY
+    bar when MORE THAN ONE of them is — because then none of them is a real price.
+
+    #4253. The rule is not a new one: ``winner_field_coherence.field_is_incoherent``
+    already states it, and capture and grading already obey it. Display is the third
+    site, and it never adopted it — which is verbatim the drift this module and that
+    one both exist to prevent. The bar and the predicate are IMPORTED, never
+    re-derived here, so the three sites cannot disagree about what the defect is.
+
+    NAME-BLIND, and that is the whole difference from
+    :func:`drop_dominant_field_outcomes`. That guard is gated on
+    ``is_field_outcome(name)``, so it only ever removes a row *called* "Other" or
+    "The Field". Measured live 2026-09-09, the rows doing the damage carry perfectly
+    real names and walk straight through it:
+
+    * ``/api/futures/12764689`` (*Dancing with the Stars*) — ``Contestant 22 1.0 ·
+      Contestant 16 1.0 · Contestant 33 1.0 · Contestant 43 1.0 · Contestant 45 1.0``
+    * ``/api/futures/114045`` (*Lead Bank in SpaceX's IPO?*) — ``Goldman Sachs 1.0``
+      heading four more banks at 1.0
+    * ``/api/futures/113419`` (*Next CEO of Apple?*) — ``John Ternus 1.0``
+
+    Five different candidates, each certain to win the same single-winner prize.
+
+    APPLY THIS TO THE WHOLE FIELD, BEFORE THE SORT AND THE ``[:N]`` SLICE. Both
+    failure modes below were measured on the specimens above, and each on its own is
+    enough to make a post-slice call do nothing at all:
+
+    * **It under-detects.** ``113419`` holds 22 outcomes of which 19 are frozen at
+      1.0, but only ONE survives into the displayed four — so a slice-local count
+      sees a single near-certain leg, which is exactly what an honest settled market
+      looks like, and the predicate correctly declines to fire.
+    * **It self-cancels.** ``12764689`` sorts 50 junk 1.0s above its 2 real legs, so
+      every row in the ``[:5]`` slice is junk; dropping them all would empty the
+      list, ``NEVER EMPTIES`` returns the input unchanged, and the reader still sees
+      five contestants at 100%.
+
+    Judging the RAW price rather than the rendered one is deliberate, and is the
+    opposite placement from ``_FIELD_DOMINANT_MIN`` (which is documented as judging
+    the number rendered). These legs are why the rendered number is wrong:
+    :func:`normalize_display_probs` bails out above ``_FIELD_SUM_MAX`` (#1200), and a
+    run of frozen 1.0s pushes the sum there by itself — 12764689's field sums past
+    50 — so the whole market renders raw and there is no "rendered" number to judge
+    that the junk has not already corrupted. Removing them first is what lets the
+    #23 squeeze see a coherent field again, the same reasoning #1201 applies to a run
+    of untraded 0.5 midpoints.
+
+    NEVER EMPTIES, matching :func:`drop_dominant_field_outcomes` and
+    :func:`display_rank_order`: if every leg is near-certain the input is returned
+    unchanged, because an honest-empty decision belongs to the surface and a silent
+    zero-outcome card is a worse artifact than a labelled one. Seven markets (100
+    rows) are wholly frozen and stay wholly frozen under this rule; they need the
+    ingest half, not the display half.
+
+    Non-mutually-exclusive families are never judged, for the reason gotcha #23 and
+    #199 give: golf make-cut / top-N legs are simultaneously true and several of them
+    are legitimately near-certain at once. The one card on `/api/feed` 2026-09-09
+    holding two legs at 0.95 is *Pylon: First Week Pure Album Sales* — ``Above 5K`` /
+    ``Above 12K`` / ``Above 20K``, a nested threshold ladder that is flagged
+    ``mutually_exclusive = false`` and is correctly refused here.
+
+    TWO EXEMPTIONS, both measured, both load-bearing:
+
+    * **A CROWNED LEG IS NEVER DROPPED.** ``is_winner`` is a settlement, not a quote
+      — the same reason ``_retire_unpriced_legs`` (#4000) refuses to touch one. 397
+      resolved Polymarket markets and 239 resolved Kalshi markets hold a crowned
+      winner at >= 0.95 *beside* another near-certain leg and still have survivors
+      below the bar, so a rule without this exemption would delete the actual result
+      from every one of them and leave the losers on the page. That is the standing
+      "settled means settled" ruling broken by a display helper.
+    * **OPEN MARKETS ONLY.** A resolved market that shows several 1.0s and never got
+      a winner stamped is the #1527 GRADING defect, which belongs to the grader that
+      owns ``winners_are_incoherent`` — not to a display drop that would paper over
+      it. 131 resolved markets are in that state and are deliberately left alone.
+
+    Note the asymmetry: a crowned leg still COUNTS toward incoherence detection (one
+    real winner plus four frozen 1.0s is exactly the field this is for) but is exempt
+    from removal. Detection and suppression are different questions.
+    """
+    from app.utils.winner_field_coherence import NEAR_CERTAIN_PROB, field_is_incoherent
+
+    kept_all = list(items)
+    if not market_is_open:
+        return kept_all
+    if not field_is_incoherent(
+        (prob_of(i) for i in kept_all), mutually_exclusive=mutually_exclusive
+    ):
+        return kept_all
+
+    def _drop(i: _T) -> bool:
+        p = prob_of(i)
+        if p is None or float(p) < NEAR_CERTAIN_PROB:
+            return False
+        return not (is_winner_of(i) if is_winner_of is not None else False)
+
+    kept = [i for i in kept_all if not _drop(i)]
+    return kept if kept else kept_all
+
+
 def normalize_display_probs(
     outcomes: list[dict],
     key: str = "probability",
