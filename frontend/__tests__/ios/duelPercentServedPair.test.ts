@@ -35,6 +35,8 @@ import { join } from "path";
 
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 
+import { swiftCode, swiftCodeKeepingStrings } from "../helpers/swiftSource";
+
 const REPO_ROOT = join(__dirname, "../../..");
 const IOS_ROOT = join(REPO_ROOT, "ios");
 const APP_ROOT = join(IOS_ROOT, "Bain Luck/Bain Luck");
@@ -54,7 +56,7 @@ const SURFACES = [
 const read = (path: string) => readFileSync(path, "utf8");
 
 /**
- * The file with its comments and string bodies removed.
+ * The file with its comments removed — and its string bodies removed too.
  *
  * 🔴 THIS IS NOT TIDINESS. The first run of this guard failed on THREE files and
  * every one of them was its own explanatory comment: the fix documents the defect
@@ -63,59 +65,50 @@ const read = (path: string) => readFileSync(path, "utf8");
  * `toContain` — is the same mistake pointed the other way, so the POSITIVE checks
  * read this too.
  *
- * String bodies go with them because a Swift source line may legitimately contain
- * `//` inside a URL literal (`WidgetAPIClient` has one), and a naive line-comment
- * strip would delete the rest of that line and quietly shorten the scan.
+ * 🔴 AND STRIPPING THE STRINGS IS ONLY RIGHT FOR SOME OF THEM. Swift computes
+ * inside `\( )`, so a percentage is normally WRITTEN inside a string literal —
+ * which means the strip that protects this guard from its own prose also deletes
+ * the place the defect lives. Use `codeSeeingRenderedText` for anything whose
+ * subject is a rendered value; see #4337 and the two `blindTo…` cases below.
+ * This one is for identifier bans, where a string could only be quoting the name.
  */
 function code(path: string): string {
-  const src = read(path);
-  let out = "";
-  let i = 0;
-  let inString = false;
-  let inLine = false;
-  let blockDepth = 0;
-  while (i < src.length) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (inLine) {
-      if (c === "\n") {
-        inLine = false;
-        out += c;
-      }
-      i += 1;
-    } else if (blockDepth > 0) {
-      if (c === "/" && next === "*") {
-        blockDepth += 1;
-        i += 2;
-      } else if (c === "*" && next === "/") {
-        blockDepth -= 1;
-        i += 2;
-      } else {
-        if (c === "\n") out += c;
-        i += 1;
-      }
-    } else if (inString) {
-      if (c === "\\") i += 2;
-      else {
-        if (c === '"') inString = false;
-        i += 1;
-      }
-    } else if (c === "/" && next === "/") {
-      inLine = true;
-      i += 2;
-    } else if (c === "/" && next === "*") {
-      blockDepth = 1;
-      i += 2;
-    } else if (c === '"') {
-      inString = true;
-      out += c;
-      i += 1;
-    } else {
-      out += c;
-      i += 1;
-    }
-  }
-  return out;
+  return swiftCode(read(path));
+}
+
+/**
+ * The two banned shapes, as constants, because the capability test below has to
+ * exercise THE SAME predicate the production scan does.
+ *
+ * A capability test written against its own private copy of the regex proves the
+ * copy works and says nothing about the guard — it would keep passing while the
+ * real assertion was edited into blindness. One definition, two call sites.
+ */
+/** `x.awayRenderedPercent ?? <anything>` — one side of the pair decided alone. */
+const PER_SIDE_COALESCE = /(away|home)RenderedPercent\s*\?\?/g;
+/** A second, private opinion about the percentage, beside the shared decision. */
+const PRIVATE_PERCENT = /Int\(\([^)]*\* 100\)\.rounded\(\)\)/;
+
+/**
+ * THE TWO PRODUCTION SCANS. Each takes RAW Swift source and answers one question.
+ *
+ * 🔴 THE STRIP IS INSIDE THEM ON PURPOSE, AND SO IS THE RAW INPUT. If the choice
+ * of strip lived at the call site, the capability test in section 0 could
+ * exercise the string-keeping read while the real assertion quietly went back to
+ * the blind one, and it would still pass — a capability test that cannot observe
+ * the thing it certifies. Taking raw source is what makes that impossible: there
+ * is no call site left that can choose a read. Section 0 calls these exact two
+ * functions, so it is measuring the production predicate and not a copy of it.
+ */
+
+/** Every per-side coalesce in raw Swift source. Non-empty is the defect. */
+function perSideCoalesces(swiftSrc: string): string[] {
+  return swiftCodeKeepingStrings(swiftSrc).match(PER_SIDE_COALESCE) ?? [];
+}
+
+/** Whether raw Swift source keeps a second, private opinion about the pair. */
+function hasPrivatePercent(swiftSrc: string): boolean {
+  return PRIVATE_PERCENT.test(swiftCodeKeepingStrings(swiftSrc));
 }
 
 function swiftFilesUnder(dir: string): string[] {
@@ -144,6 +137,75 @@ describe("#2279 — the files this guard reads all exist", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 0. THE GUARD'S OWN CAPABILITY. #4337.
+//
+// The scans below are negative assertions over a production tree that is clean,
+// so they pass whether or not they can see anything. That is exactly how both of
+// them shipped BLIND: the strip they read through deletes string bodies, Swift
+// computes inside `\( )`, and so `Text("\(Int((p * 100).rounded()))%")` was
+// scanned as `Text(")` and satisfied a ban on the very expression it contains.
+//
+// 🔴 THIS IS DELIBERATELY NOT "the production tree still contains a case". A
+// liveness assertion over the population dies the moment the population is
+// correct, which here is always. The subject is the SCAN, fed a specimen.
+// ---------------------------------------------------------------------------
+
+describe("#4337 — the scans can see a defect written where Swift writes it", () => {
+  /** A surface that has re-introduced both defects, in interpolated `Text`. */
+  const DEFECTIVE = [
+    "struct SomeCard: View {",
+    "    var body: some View {",
+    '        Text("\\(Int((event.awayProbability * 100).rounded()))%")',
+    '        Text("\\(odds.homeRenderedPercent ?? 50)%")',
+    "    }",
+    "}",
+  ].join("\n");
+
+  it("the specimen really does contain both defects before any strip", () => {
+    // Without this the rest of the describe could pass on a typo'd specimen —
+    // a fixture that misrepresents the defect makes every assertion below
+    // vacuous. Raw regexes on purpose: no read is involved yet.
+    expect(DEFECTIVE).toMatch(PRIVATE_PERCENT);
+    expect(DEFECTIVE.match(PER_SIDE_COALESCE) ?? []).toHaveLength(1);
+  });
+
+  it("THE PRODUCTION SCANS see both", () => {
+    // 🔴 THE ONE THAT MATTERS. These are the exact two functions the whole-tree
+    // ratchet and the per-surface ban call — not a copy of their regex and not a
+    // read chosen here. If either is edited back to the string-stripping read,
+    // this test goes red.
+    expect(hasPrivatePercent(DEFECTIVE)).toBe(true);
+    expect(perSideCoalesces(DEFECTIVE)).toHaveLength(1);
+  });
+
+  it("the string-stripping read is blind to both — the bug this closes", () => {
+    // Pinned rather than deleted: it is WHY the scans strip the way they do, and
+    // it is what an edit back to `code()` would restore. This one cannot route
+    // through the scans — they force the correct read — so it applies the
+    // regexes directly. Its subject is the old READ, not the production
+    // predicate; the test above is what covers the predicate.
+    const blind = swiftCode(DEFECTIVE);
+    expect(blind).not.toMatch(PRIVATE_PERCENT);
+    expect(blind.match(PER_SIDE_COALESCE) ?? []).toHaveLength(0);
+    expect(blind).toContain('Text(")');
+  });
+
+  it("the scans still strip comments, so a fix may document itself", () => {
+    // The original reason for any strip at all. If this regressed, every surface
+    // would red on its own explanatory comment and someone would revert the lot.
+    const documented = [
+      '// Was: Text("\\(Int((p * 100).rounded()))%") — see #2279.',
+      "/* and awayRenderedPercent ?? 50 was the per-side form. */",
+      "let awayPct = duel[0]",
+    ].join("\n");
+    expect(hasPrivatePercent(documented)).toBe(false);
+    expect(perSideCoalesces(documented)).toHaveLength(0);
+    // …and the strip took only the comments, not the code beside them.
+    expect(swiftCodeKeepingStrings(documented)).toContain("let awayPct = duel[0]");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 1. The shape, read as source. This is the ratchet: it catches a REINTRODUCTION
 //    anywhere in the tree, including on a surface that does not exist yet.
 // ---------------------------------------------------------------------------
@@ -163,11 +225,13 @@ describe("#2279 — no native surface coalesces the served pair per side", () =>
   it.each(files.map((f) => [f.slice(IOS_ROOT.length + 1), f]))(
     "%s does not fall back per side",
     (_label, path) => {
-      const src = code(path);
-      // `x.awayRenderedPercent ?? <anything>` is the defect, whatever the right
-      // hand side is: it decides one side of the pair on its own.
-      const perSide = src.match(/(away|home)RenderedPercent\s*\?\?/g) ?? [];
-      expect(perSide).toHaveLength(0);
+      // 🔴 STRINGS KEPT ON PURPOSE (#4337), inside `perSideCoalesces`. This is
+      // the file's primary ratchet — the whole-tree scan whose job is to stop a
+      // FIFTH surface repeating the defect — and the most likely way a SwiftUI
+      // view writes it is `Text("\(odds.awayRenderedPercent ?? 50)%")`. Under
+      // the string-stripping read that line is scanned as `Text(")` and the ban
+      // passes on it. Raw source in: this call site cannot pick the wrong read.
+      expect(perSideCoalesces(read(path))).toHaveLength(0);
     },
   );
 });
@@ -190,7 +254,11 @@ describe("#2279 — every surface routes the choice through one decision", () =>
       expect(src).toMatch(/awayPct = duel\[0\]/);
       expect(src).toMatch(/homePct = duel\[1\]/);
       // It must not keep a second, private opinion about the pair alongside it.
-      expect(src).not.toMatch(/Int\(\([^)]*\* 100\)\.rounded\(\)\)/);
+      // 🔴 STRINGS KEPT (#4337), inside `hasPrivatePercent`: Swift rounds INSIDE
+      // the interpolation, so the banned expression's natural home is
+      // `Text("\(Int((p * 100).rounded()))%")` — precisely the text the
+      // string-stripping read deletes.
+      expect(hasPrivatePercent(read(path))).toBe(false);
     },
   );
 
