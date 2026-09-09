@@ -10695,8 +10695,86 @@ async def _resolve_concept_champion(db: AsyncSession, key: str) -> Optional[dict
         return None
 
 
-async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
-    """Resolve the FAVOURITE of an unsettled concept for its feed card (#1882).
+def _bout_from_competitors(primary: dict, competitors: list[dict]) -> Optional[dict]:
+    """The card's main event as a BOUT, from an envelope's own competitor list, or
+    ``None`` (#3058). Shaped exactly like `_attach_headline_bouts`' output so the
+    two sources are interchangeable to every renderer.
+
+    GATED ON THE ARCHETYPE, NOT ON THE COUNT ALONE. `co_equal_list` is the
+    two-sided archetype — a fight card is a container of bouts. The field
+    archetypes publish a different kind (`event:f1:italian-grand-prix-2026` reads
+    `winner_field` with 22 drivers on production 2026-09-09), and a Grand Tour or
+    a golf major is emphatically not a bout even on the day its field thins to
+    two: "0 fights on the card" was Queue #250's version of this mistake. So the
+    kind is checked as well as the count, and a two-entry `winner_field` stays an
+    outright.
+
+    No `commence_time`: the envelope's competitor list does not carry one, and
+    the renderer already falls back to the card's `start_date`
+    (`conceptHeadlineBout`, `eventConceptDisplay.ts`). Inventing one from the
+    card's own start would be asserting a bout time we never read.
+    """
+    if primary.get("kind") != "co_equal_list":
+        return None
+    if len(competitors) != 2:
+        return None
+    sides = sorted(competitors, key=lambda c: float(c["probability"]), reverse=True)
+    pair = [
+        {"name": (c.get("name") or "").strip(), "probability": float(c["probability"])}
+        for c in sides
+    ]
+    # Same admission test the callers' renderers apply, applied here so an
+    # unusable pair is never serialized: `_conceptBoutIsUsable` (discover/utils.ts)
+    # and `conceptHeadlineBout` both demand two named sides in [0, 1].
+    if not all(c["name"] and 0.0 <= c["probability"] <= 1.0 for c in pair):
+        return None
+    # Two names that fold to one competitor is not a bout — it is one side read
+    # twice, and printing "Kape 62% / Kape 38%" is worse than printing one name.
+    # Case AND internal whitespace are folded: the two sources of a fight card
+    # already disagree about spacing and capitalisation of the same fighter
+    # (`_concept_surname` exists for that reason), so an exact compare would let
+    # the duplicate through on the difference this comparison is meant to ignore.
+    def _identity(name: str) -> str:
+        return " ".join(name.split()).casefold()
+
+    if _identity(pair[0]["name"]) == _identity(pair[1]["name"]):
+        return None
+    return {"competitors": pair, "commence_time": None}
+
+
+async def _resolve_concept_leader(
+    db: AsyncSession, key: str
+) -> tuple[Optional[dict], Optional[dict]]:
+    """Resolve the FAVOURITE of an unsettled concept for its feed card (#1882),
+    and — when that field is a two-sided bout — the BOUT itself (#3058).
+
+    Returns ``(leader, bout)``. Either may be ``None``; a bout is only ever
+    returned alongside the leader it was derived from, because it is the same
+    two entries of the same list.
+
+    **Why the bout comes out of here rather than from its own resolver (#3058).**
+    `_attach_headline_bouts` (ux/1070 item 2, `event_combat.py`) already gives a
+    card its main event as two fighters and two numbers — but it can only reach a
+    card whose main event came from Kalshi, because it keys on `main_event_id`,
+    which `list_card_concepts` sets on the Kalshi branch and leaves ``None`` for
+    an events-table-only card. Measured on production 2026-09-09 (`GET
+    /api/feed?limit=250`, edition `65262ed88e6057a7`), **2 of 9** UFC concept
+    cards carried a `headline_bout`; the other seven printed one name and one
+    percentage for a two-participant question — Alex's original #3058 sentence,
+    *"a two-fighter bout rendered as a one-line outright card"*, still true after
+    the wrong-fight half of it was fixed.
+
+    For all nine of those cards this function had ALREADY read an envelope whose
+    `primary.competitors` held exactly two priced sides — `event:ufc:26dec27`
+    carried `Manel Kape 0.6211 / Joshua Van 0.3789` — taken the max, and
+    discarded the complement. So the second side costs no read: it is the other
+    element of the list the leader came out of.
+
+    That co-location is also the correctness argument. Both sides come from ONE
+    `primary.competitors` list on ONE envelope, so this is a single source's own
+    pair and never two sources assembled into a sum that is not 100 (#2582's
+    class) — the same constraint `_attach_headline_bouts` states for its own
+    read. A resolver that fetched the runner-up separately could not promise it.
 
     The sibling of `_resolve_concept_champion` above, for the other end of the
     lifecycle. That function answers "who won"; this one answers "who is favoured",
@@ -10754,7 +10832,7 @@ async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
         # CACHE-ONLY paragraph above for the measurement that removed it.
         envelope = await _read_cached_concept_envelope(key)
         if not envelope:
-            return None
+            return None, None
 
         primary = envelope.get("primary") or {}
         competitors = [
@@ -10765,7 +10843,7 @@ async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
             and isinstance(c.get("probability"), (int, float))
         ]
         if not competitors:
-            return None
+            return None, None
 
         # Do NOT trust the envelope's ordering — take the max explicitly. The
         # adapters sort favourite-first today, and a card that silently leads with
@@ -10777,12 +10855,12 @@ async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
         # An independent-binary field can sum well past 100% (gotcha #23); a
         # single leader reading over 1.0 is corrupt rather than merely confident.
         if not 0.0 <= probability <= 1.0:
-            return None
+            return None, None
 
         movement = leader.get("movement_24h")
         if not isinstance(movement, (int, float)):
             movement = leader.get("probability_change_24h")
-        return {
+        resolved = {
             "name": (leader["name"] or "").strip(),
             "probability": probability,
             "movement_24h": (
@@ -10790,9 +10868,10 @@ async def _resolve_concept_leader(db: AsyncSession, key: str) -> Optional[dict]:
             ),
             "field_size": len(competitors),
         }
+        return resolved, _bout_from_competitors(primary, competitors)
     except Exception as e:  # never break the feed for a probability flourish
         logger.warning("Feed: failed to resolve concept leader for %s: %s", key, e)
-        return None
+        return None, None
 
 
 async def _score_event_concepts(
@@ -10876,8 +10955,8 @@ async def _score_event_concepts(
         # result, never with a probability that is now history. The exclusivity is
         # enforced here, at the one place both are resolved, rather than left to
         # each renderer to remember.
-        _leader = (
-            None
+        _leader, _envelope_bout = (
+            (None, None)
             if _is_whathit
             else await _resolve_concept_leader(db, c["key"])
         )
@@ -10909,7 +10988,22 @@ async def _score_event_concepts(
         # lopsided bout of the night, often not even the one the card is named
         # for), so it is BOTH a thing to render and a thing that can render:
         # a card carrying a real bout is never the bare tile Q407 Item 3 drops.
-        _headline_bout = c.get("headline_bout") if not _is_whathit else None
+        #
+        # #3058 coverage half: `_attach_headline_bouts` only reaches a card whose
+        # main event came from Kalshi (it keys on `main_event_id`, which is None
+        # for an events-table-only card), so 7 of 9 UFC cards on the 2026-09-09
+        # feed had no bout and printed one name for a two-sided question. The
+        # envelope the leader was just read from already held both priced sides,
+        # so it stands in when the attach step could not reach the card.
+        #
+        # The Kalshi-attached bout WINS when both exist. It is the main event's
+        # own `futures_outcomes` pair and carries a real `commence_time`; the
+        # envelope pair carries none and would replace a known bout time with the
+        # card's start date. Preferring the attached one also keeps this a pure
+        # coverage change: every card that had a bout before has the same bout now.
+        _headline_bout = (
+            (c.get("headline_bout") or _envelope_bout) if not _is_whathit else None
+        )
         _concept_can_render = bool(_leader) or bool(_headline_bout) or bool(
             _is_whathit
             and _champion

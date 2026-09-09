@@ -203,7 +203,7 @@ class TestTheProductionSpecimen:
     async def test_a_live_primary_resolves_the_leader(self, warm_cache):
         fake, _ = warm_cache
         _warm(fake)
-        leader = await _resolve_concept_leader(None, CONCEPT_KEY)
+        leader, _bout = await _resolve_concept_leader(None, CONCEPT_KEY)
         assert leader is not None
         assert leader["name"] == "Tadej Pogacar"
         assert leader["probability"] == pytest.approx(0.751)
@@ -221,7 +221,7 @@ class TestTheProductionSpecimen:
         assert fake.get(keys.primary) is None, "the primary must be gone"
         assert fake.get(keys.stale) is not None, "the mirror must still hold it"
 
-        leader = await _resolve_concept_leader(None, CONCEPT_KEY)
+        leader, _bout = await _resolve_concept_leader(None, CONCEPT_KEY)
         assert leader is not None, (
             "the leader is in the mirror the detail page is serving right now; "
             "a feed card that shows no favourite here is #1948"
@@ -244,7 +244,7 @@ class TestTheProductionSpecimen:
 
         fake.setex(cache_keys(CONCEPT_KEY).primary, ENVELOPE_TTL, encode_payload(newer))
 
-        leader = await _resolve_concept_leader(None, CONCEPT_KEY)
+        leader, _bout = await _resolve_concept_leader(None, CONCEPT_KEY)
         assert leader["name"] == "Fresh Rider"
 
     async def test_a_cold_cache_still_yields_no_leader_and_never_builds(
@@ -261,7 +261,7 @@ class TestTheProductionSpecimen:
                 return {"primary": {"competitors": VUELTA_COMPETITORS}}
 
         monkeypatch.setattr(ec, "get_adapter", lambda domain: _Adapter())
-        assert await _resolve_concept_leader(None, CONCEPT_KEY) is None
+        assert await _resolve_concept_leader(None, CONCEPT_KEY) == (None, None)
         assert built == [], "the cache-only rule (#1934) must not be softened by this fix"
 
 
@@ -272,13 +272,13 @@ class TestTheMirrorIsBoundedRatherThanTrusted:
         fake, _ = warm_cache
         _warm(fake, age_seconds=feed_mod.CONCEPT_MIRROR_MAX_AGE_SECONDS - 60)
         fake.advance(ENVELOPE_TTL + 1)
-        assert await _resolve_concept_leader(None, CONCEPT_KEY) is not None
+        assert (await _resolve_concept_leader(None, CONCEPT_KEY))[0] is not None
 
     async def test_a_mirror_past_the_bound_falls_back_to_the_count(self, warm_cache):
         fake, _ = warm_cache
         _warm(fake, age_seconds=feed_mod.CONCEPT_MIRROR_MAX_AGE_SECONDS + 60)
         fake.advance(ENVELOPE_TTL + 1)
-        assert await _resolve_concept_leader(None, CONCEPT_KEY) is None
+        assert await _resolve_concept_leader(None, CONCEPT_KEY) == (None, None)
 
     async def test_the_bound_resolves_at_call_time(self, warm_cache, monkeypatch):
         """Ruling 084: an overridable threshold is read where it is used.
@@ -290,9 +290,9 @@ class TestTheMirrorIsBoundedRatherThanTrusted:
         fake, _ = warm_cache
         _warm(fake, age_seconds=7200)
         fake.advance(ENVELOPE_TTL + 1)
-        assert await _resolve_concept_leader(None, CONCEPT_KEY) is None
+        assert await _resolve_concept_leader(None, CONCEPT_KEY) == (None, None)
         monkeypatch.setattr(feed_mod, "CONCEPT_MIRROR_MAX_AGE_SECONDS", 86400)
-        assert await _resolve_concept_leader(None, CONCEPT_KEY) is not None
+        assert (await _resolve_concept_leader(None, CONCEPT_KEY))[0] is not None
 
     async def test_the_age_bound_is_stricter_than_the_producers_mirror(self):
         # The feed must never be the LOOSER of the two, which would mean a card
