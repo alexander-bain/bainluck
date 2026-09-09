@@ -219,18 +219,30 @@ class TestSportsFirstPage:
 class TestTheLiveHoistStillHasTheLastWord:
     """#2709 is Alex's P1 and this ship must not cost it a slot.
 
-    The two passes touch the same twenty slots, so "they compose" is a claim
-    that needs a control, not a comment. A live game buried under a wall of
-    same-rail results is the case where both fire.
+    Every pass in this chain touches the same twenty slots, so "they compose" is
+    a claim that needs a control, not a comment. A live game buried under a wall
+    of same-rail results is the case where they all fire.
+
+    THERE ARE THREE OF THEM NOW, NOT TWO (#4497 added
+    `cap_futures_on_games_led_first_page` between the rail cap and the hoist),
+    and the class name has outlived its literal reading: the hoist still runs
+    last, but on these pools it now finds the work already done. That is the
+    ship working, not the hoist failing — see
+    `test_the_passes_compose_and_every_live_game_still_lands`.
     """
 
     def _deep_live_pool(self) -> list[dict]:
-        """Live games buried BELOW a market tail deeper than the cap's surplus.
+        """Live games buried BELOW a market tail deeper than the rail cap's surplus.
 
-        Sized on purpose. The cap has 15 slots of surplus and takes replacements
-        in served order, so a 20-market tail absorbs all of them and the live
-        rows are still beyond the window when the cap is done — which is the
-        only arrangement where the hoist has anything left to do.
+        Sized on purpose. The rail cap has 15 slots of surplus and takes
+        replacements in served order, so a 20-market tail absorbs all of them and
+        the live rows are still beyond the window when that cap is done.
+
+        That USED to make this the only arrangement where the hoist had anything
+        left to do, and #4497 changed it: the window the rail cap leaves is now
+        13 futures deep, so the futures cap reaches past them and promotes the
+        live rows itself. The pool still exercises the same buried-live case;
+        which pass rescues them is no longer fixed, and no test here asserts it.
         """
         upsets = [_finished(100 + i, 98.0 - i, "Recent upset") for i in range(18)]
         markets = [_market(i, 60.0 - i) for i in range(20)]
@@ -244,14 +256,36 @@ class TestTheLiveHoistStillHasTheLastWord:
         buried_live = [_live(300 + i, 50.0 - i) for i in range(4)]
         return upsets + markets + buried_live
 
-    def test_both_passes_fire_when_the_live_games_are_out_of_the_caps_reach(self):
-        _out, meta = apply_discover_display_chain(
+    def test_the_passes_compose_and_every_live_game_still_lands(self):
+        """Renamed and re-pointed by #4497, which inserted a THIRD pass
+        (`cap_futures_on_games_led_first_page`) into this chain.
+
+        This used to assert `live_first_page["hoisted"] > 0` — that the hoist
+        specifically earned the promotion. That assertion was about credit, not
+        about the reader, and the futures cap now takes the work off it: this
+        pool's tail is 20 futures deep, so the rail cap fills the window with
+        futures, the futures cap then trades four of them for the four buried
+        live games, and the hoist correctly finds `live_available_beyond: 0`
+        and reports `hoisted: 0`. Every live game is on page one either way.
+
+        The class docstring below it already ruled on exactly this, for exactly
+        this reason, in `..._shallow`'s own words: "what the surface owes the
+        reader is the live game ON the page, not a particular pass taking credit
+        for it." Keeping the credit assertion here would have made a strict
+        improvement — the reader gets the live game one pass earlier — read as a
+        regression. So the composition is asserted on the OUTCOME, and each pass
+        is asserted to have fired on its own meta rather than through the next
+        one's idleness.
+        """
+        out, meta = apply_discover_display_chain(
             self._deep_live_pool(), limit=20, ctx=PersonalizationContext(), **SPORTS
         )
         assert meta["finished_rail_cap"]["swapped"] > 0
-        assert (
-            meta["live_first_page"]["hoisted"] > 0
-        ), "the hoist must still fire after the cap has reordered the window"
+        assert meta["futures_first_page_cap"]["swapped"] > 0
+        # The #2709 guarantee, stated where it is owed: on the page.
+        assert len(_live_on_page(out)) == 4
+        assert meta["live_first_page"]["unhoisted"] == 0
+        assert meta["live_first_page"]["live_in_window_after"] == 4
 
     def test_every_buried_live_game_reaches_the_first_page_deep(self):
         out, meta = apply_discover_display_chain(
