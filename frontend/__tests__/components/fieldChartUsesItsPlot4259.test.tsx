@@ -92,9 +92,11 @@ describe("#4259 the field chart uses its plot", () => {
     const html = renderToStaticMarkup(
       <FuturesChart historyData={HISTORY} selectedOutcomes={ALL} showAxes fieldCeiling />,
     );
-    // Ceiling 0.25, so McIlroy at 0.119/0.25 = 47.6% of the plot.
+    // #4374 added the 0.15 rung between 0.1 and 0.25, and this field lands on it:
+    // ceiling 0.15, so McIlroy at 0.119/0.15 = 79.3% of the plot. It was 47.6% on
+    // the 0.25 rung — #4259's fix, still short because the rung was 2.5x too tall.
     expect(leaderHeight(html)).toBeGreaterThan(0.4);
-    expect(leaderHeight(html)).toBeCloseTo(0.476, 2);
+    expect(leaderHeight(html)).toBeCloseTo(0.793, 2);
   });
 
   test("the acceptance in the issue: McIlroy and Lowry are visibly different heights", () => {
@@ -127,7 +129,8 @@ describe("#4259 the field chart uses its plot", () => {
       <FuturesChart historyData={HISTORY} selectedOutcomes={ALL} showAxes fieldCeiling />,
     );
     // A moving ceiling with no labels would be strictly worse than a fixed one.
-    expect(html).toContain("25%");
+    // The top rung is 0.15 since #4374 (it was 0.25 when #4259 shipped).
+    expect(html).toContain("15%");
     expect(html).not.toContain("100%");
   });
 
