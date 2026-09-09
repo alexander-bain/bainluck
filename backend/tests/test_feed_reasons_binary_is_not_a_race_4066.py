@@ -112,17 +112,48 @@ def test_the_taiwan_card_answers_its_question_instead_of_leading_a_race():
         now=NOW,
     )
 
-    assert copy.context_summary == "4% chance"
-    assert copy.headline == "4% chance"
-    assert copy.reason == "Will China invade Taiwan by end of 2026: 4% chance"
+    # #4056 SUPERSEDES the three literals that were here ("4% chance" twice and
+    # "Will China invade Taiwan by end of 2026: 4% chance"). #4066's ship — a yes/no
+    # question is not a race and takes no "leads" copy — is unchanged and is still
+    # asserted below. What changed is the REPLACEMENT: `multi_source` is not a story,
+    # so restating the hero's own number as prose beneath it is the empty case wearing
+    # text, and the slot is now empty (standing notice 34).
+    assert copy == ("", "", "")
 
     # The served defect, gone from all three strings. Asserted as the whole
     # construction: the outcome name is a SUBSTRING of the market name here, so
     # "the outcome name is absent" would fail on the correct reason too — what
     # must be absent is the name used as a RUNNER.
+    #
+    # 🔴 These three are VACUOUS on the empty strings above and are kept only so the
+    # loop survives if the terminal ever becomes non-empty again. The version of this
+    # rule with teeth is `test_a_moving_yes_no_card_still_refuses_leads_copy` below,
+    # which runs it over a card whose copy is NOT empty. Do not let this loop be the
+    # only place #4066 is guarded.
     for served in (copy.reason, copy.headline, copy.context_summary):
         assert "leads" not in served
         assert f"{TAIWAN_OUTCOME} (4%)" not in served
+        assert f"{TAIWAN_OUTCOME} leads at" not in served
+
+
+def test_a_moving_yes_no_card_still_refuses_leads_copy():
+    """#4066 with teeth, after #4056 emptied the no-signal terminal.
+
+    A binary that HAS moved gets real copy, so the anti-"leads" assertions here run
+    against non-empty strings. Without this, #4056's empty terminal would satisfy
+    every "leads" check in the file by vacuity and #4066 would be unguarded.
+    """
+    copy = compose_binary_card_copy(
+        market_name=TAIWAN,
+        highlight_reasons=["major_movement_24h"],
+        affirmative_probability=TAIWAN_PROB,
+        top_mover_change=0.06,
+        now=NOW,
+    )
+
+    assert copy.headline and copy.context_summary and copy.reason
+    for served in (copy.reason, copy.headline, copy.context_summary):
+        assert "leads" not in served
         assert f"{TAIWAN_OUTCOME} leads at" not in served
 
 
@@ -181,7 +212,10 @@ def test_an_undated_lifetime_move_is_not_published_on_a_yes_no_card():
         now=NOW,
     )
 
-    assert copy.context_summary == "59% chance"
+    # #4056 — was `== "59% chance"`. The rule this test names is unchanged: no
+    # baseline date, no movement sentence. With the movement sentence refused and
+    # nothing else true, the slot is now empty rather than the number restated.
+    assert copy.context_summary == ""
     assert "37.5" not in copy.context_summary
 
 
@@ -230,8 +264,11 @@ def test_all_three_generators_route_a_yes_no_market_away_from_leads():
         assert "leads" not in served
         assert "across 2 sources" not in served
 
-    assert headline == "4% chance"
-    assert summary == "4% chance"
+    # #4056 — was `== "4% chance"` for both. All three generators still ROUTE a
+    # yes/no market through `compose_binary_card_copy` (that is what this test is
+    # for); the value they route to is now empty on a card with no story.
+    assert headline == ""
+    assert summary == ""
 
 
 def test_a_field_market_keeps_its_leads_copy():
