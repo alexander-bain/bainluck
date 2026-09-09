@@ -41,6 +41,12 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     /// L2-238: present ONLY when the build was not complete.
     let buildQuality: String?
     let degradedReason: String?
+    /// #4110: which ordered list this response is. Changes iff ordered
+    /// MEMBERSHIP changes — never on a price, probability, score or reason move.
+    /// Absent is a real state, not a legacy shim: an older backend, and every
+    /// empty refusal, deliberately carry no token so three different failures are
+    /// not reconciled as one agreed ordering. See `DiscoverFeedReconcile`.
+    let edition: String?
 
     /// The cache status the backend uses for the truthful no-data terminal.
     static let unavailableCacheStatus = "unavailable"
@@ -89,6 +95,11 @@ nonisolated struct FeedResponse: Decodable, Sendable {
         cache = try? c.decodeIfPresent(FeedCacheMetadata.self, forKey: .cache)
         buildQuality = try? c.decodeIfPresent(String.self, forKey: .buildQuality)
         degradedReason = try? c.decodeIfPresent(String.self, forKey: .degradedReason)
+        // #4110: tolerant for the same reason as the three above — a malformed
+        // token degrades to ABSENT, which `DiscoverFeedReconcile` reads as "the
+        // server states no ordering opinion" and reconciles. The one thing it
+        // must never do is take the whole feed down over a string.
+        edition = try? c.decodeIfPresent(String.self, forKey: .edition)
 
         var itemsContainer = try c.nestedUnkeyedContainer(forKey: .items)
         var decoded: [FeedItem] = []
@@ -104,6 +115,7 @@ nonisolated struct FeedResponse: Decodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case items, total, limit, offset, hasMore, cache, buildQuality, degradedReason
+        case edition
     }
 }
 
