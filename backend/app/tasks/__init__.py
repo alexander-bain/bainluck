@@ -3340,8 +3340,10 @@ def link_tennis_statpal_fixtures(self, apply=True):
     ±36h window, and stamps BOTH `events.statpal_fixture_id` and the
     `('statpal', 'tennis:<id>', 'game')` anchor. Exactly one candidate or it
     writes nothing — two of our rows for one StatPal match is a duplicate, and
-    it is reported rather than resolved (D35, #2693). Doubles are refused
-    before the question is asked.
+    it is reported rather than resolved (D35, #2693). **Doubles join too, on the
+    unordered surname pair**, since authority/069: both teams must agree, and a
+    pair that does not read as two players on both sides is receipted rather
+    than half-matched.
 
     `apply=False` plans and writes nothing. The 240s soft limit is well clear of
     the realtime queue's cadence and of the global 300s (#966); the work is
