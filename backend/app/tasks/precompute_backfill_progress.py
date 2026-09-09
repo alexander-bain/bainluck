@@ -92,11 +92,14 @@ DENSE_POINTS = 15
 # line or two lonely dots). Measured as snapshots / open-hours per outcome.
 BAR_POINTS_PER_HOUR = 1.0
 
-# chart_density hard bounds (#202). Unlike the density/cohort tiles — which are
-# self-bounded by `fm.status='resolved' AND resolution_date >= :since` (a small,
-# fixed window) — the chart_density tile also scans OPEN markets (resolution_date
-# IS NULL passes the filter): an unbounded, growing population whose outcomes
-# carry huge live-polled snapshot counts. Left bounded only by `random() < :frac`,
+# chart_density hard bounds (#202). When this was written the density/cohort
+# tiles were believed self-bounded by `fm.status='resolved' AND resolution_date
+# >= :since` (thought to be "a small, fixed window"), so only chart_density —
+# which also scans OPEN markets (resolution_date IS NULL passes the filter) —
+# was capped. ⚠️ THAT PREMISE EXPIRED; see CENSUS_* below, which capped the
+# other two under #4444. The resolved window is ~948,000 markets, and the two
+# "self-bounded" tiles became the two largest disk consumers in the database
+# while this capped one stayed cheap. Left bounded only by `random() < :frac`,
 # the per-outcome COUNT(*) probe against futures_odds_snapshots (the largest
 # table) grew with the population until it blew past the worker's 150s
 # statement_timeout — erroring the tile and blinding the Flow Sentinel's
@@ -111,6 +114,139 @@ BAR_POINTS_PER_HOUR = 1.0
 #     failure this sentinel exists to catch).
 CHART_DENSITY_SAMPLE_CAP = 12000
 CHART_DENSITY_SNAP_CAP = 5000
+
+# ── density + success-cohort hard bounds (#4444, ship #4456) ──────────────────
+# The two tiles above this line were left uncapped on the premise recorded in the
+# #202 comment. Measured on `pg_stat_statements` over 2026-08-31 18:50Z →
+# 2026-09-09 21:18Z (9.1 d), they were the two largest disk readers in the whole
+# database:
+#
+#     statement                     calls   GB read   GB/call
+#     density   (WITH ro AS …)        227     566.0     2.493
+#     cohort    (WITH ro AS …)        226     448.9     1.986
+#     chart_density (WITH uv AS …)    225      91.9     0.409   ← the capped one
+#
+# 1,015 GB of the window's 7,940 GB database-wide — 12.8%, and 8x the accuracy
+# rebuild they share the 2-slot `heavy` queue with. `shared_buffers` is 4 GB, so
+# sweeping ~110 GB/day of random reads through it evicts the pages the rebuild
+# and the reader's own pages depend on (measured on the rebuild's lookups:
+# 4,098 ms cold vs 661 ms warm, 6x — #3437). Each probe is dear because
+# `futures_odds_snapshots` has `autovacuum_count = 0` (#3716): no usable
+# visibility map, so the COUNT can never go index-only and every counted row
+# costs a heap fetch.
+#
+#   * CENSUS_SNAP_CAP — derived from DENSE_POINTS, NOT a literal, because the
+#     derivation is the correctness proof. At DENSE_POINTS + 1 both surviving
+#     predicates (`snaps >= DENSE_POINTS` and `snaps >= 1`) are EXACT for every
+#     row — unchanged, not merely "directionally safe" the way the chart_density
+#     cap above argues. Anything <= DENSE_POINTS would silently zero the dense
+#     rate; the guard test asserts strict `>`.
+#     What the cap DOES cost is the mean: a capped count cannot report datagolf's
+#     honest 270.8 snapshots. So the mean is published as `avg_snapshots_capped`
+#     with `snap_cap` beside it, never as a bare `avg_snapshots` (see #4444).
+#   * CENSUS_GROUP_SAMPLE_CAP — max outcomes probed PER GROUP, applied with
+#     ROW_NUMBER() OVER (PARTITION BY <the tile's own GROUP BY> ORDER BY random()).
+#     ⚠️ Deliberately NOT chart_density's flat `LIMIT :cap`. These tiles' groups
+#     run 3 → 36,909 rows (28 source×month groups, measured 2026-09-09), and a
+#     LIMIT with no ORDER BY takes SCAN order, which correlates with id, which
+#     correlates with resolution month — it would truncate to the oldest months
+#     and drop the newest entirely, gutting the per-month trend the tile exists
+#     for. The window sorts only the already-thinned rows, with no probes
+#     attached, and every group keeps a real random sample.
+CENSUS_SNAP_CAP = DENSE_POINTS + 1
+CENSUS_GROUP_SAMPLE_CAP = 2000
+
+# ⚠️ `os AS MATERIALIZED` / `d AS MATERIALIZED` — LOAD-BEARING, not a style
+# choice, and the fix to a defect that was live in ALL THREE tiles. A CTE
+# referenced once is inlined (PG12+), which duplicates its target-list
+# subquery once per reference to the column — so `snaps`, read three times in
+# the density SELECT (`>= :dense`, `>= 1`, `AVG`), was probing
+# futures_odds_snapshots THREE TIMES PER OUTCOME. Read off the production
+# planner, 2026-09-09 (`EXPLAIN`, plan only, SubPlan nodes counted):
+#
+#     tile           SubPlan probes as-written    MATERIALIZED    total cost
+#     density                     3                    1        1,058,458 -> 777,104
+#     cohort                      2                    1          928,703 -> 789,305
+#     chart_density               3                    1           19,505 ->  16,848
+#
+# The value is a deterministic count per row and the CTE holds no volatile
+# function, so evaluating it once instead of three times returns the same
+# number. Dropping the keyword restores a 2-3x cost with nothing else looking
+# wrong, which is why the guard asserts it.
+#
+# Extracted to module constants for the same reason CHART_DENSITY_SQL is: the
+# guard test asserts the bounds are still IN the SQL without needing a live DB.
+DENSITY_SQL = """
+    WITH ro AS (
+        SELECT fo.id AS oid, fm.source AS source,
+               to_char(fm.resolution_date, 'YYYY-MM') AS mon,
+               fo.calibration_probability AS cp,
+               ROW_NUMBER() OVER (
+                   PARTITION BY fm.source, to_char(fm.resolution_date, 'YYYY-MM')
+                   ORDER BY random()
+               ) AS rn
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fm.resolution_date >= :since
+          AND random() < :frac
+    ),
+    os AS MATERIALIZED (
+        SELECT ro.source, ro.mon, ro.cp,
+               (SELECT COUNT(*) FROM (
+                    SELECT 1 FROM futures_odds_snapshots s
+                    WHERE s.outcome_id = ro.oid
+                    LIMIT :snapcap
+                ) capped) AS snaps
+        FROM ro
+        WHERE ro.rn <= :percap
+    )
+    SELECT source, mon,
+           COUNT(*) AS sampled,
+           COUNT(*) FILTER (WHERE snaps >= :dense) AS ge_dense,
+           COUNT(*) FILTER (WHERE snaps >= 1) AS any_snap,
+           COUNT(*) FILTER (WHERE cp IS NOT NULL) AS has_cal,
+           ROUND(AVG(snaps)::numeric, 1) AS avg_snaps
+    FROM os
+    GROUP BY source, mon
+    ORDER BY mon DESC, source
+"""
+
+SUCCESS_COHORT_SQL = """
+    WITH ro AS (
+        SELECT fo.id AS oid, fm.source AS source,
+               fo.calibration_probability AS cp,
+               fo.resolution_source AS rs,
+               ROW_NUMBER() OVER (
+                   PARTITION BY fm.source ORDER BY random()
+               ) AS rn
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fm.resolution_date >= :since
+          AND random() < :frac
+    ),
+    os AS MATERIALIZED (
+        SELECT ro.source, ro.cp, ro.rs,
+               (SELECT COUNT(*) FROM (
+                    SELECT 1 FROM futures_odds_snapshots s
+                    WHERE s.outcome_id = ro.oid
+                    LIMIT :snapcap
+                ) capped) AS snaps
+        FROM ro
+        WHERE ro.rn <= :percap
+    )
+    SELECT source,
+           COUNT(*) AS sampled,
+           COUNT(*) FILTER (WHERE cp IS NOT NULL) AS has_cal,
+           COUNT(*) FILTER (WHERE snaps >= :dense) AS ge_dense,
+           COUNT(*) FILTER (WHERE cp IS NOT NULL AND snaps >= :dense) AS cal_and_dense,
+           COUNT(*) FILTER (WHERE rs IN
+               ('api_settlement','game_score','box_score')) AS authoritative
+    FROM os
+    GROUP BY source
+    ORDER BY sampled DESC
+"""
 
 # Extracted to a module constant so the guard test can assert it stays bounded
 # (never regresses to a raw full-population scan) without needing a live DB.
@@ -130,7 +266,7 @@ CHART_DENSITY_SQL = """
           AND random() < :frac
         LIMIT :cap
     ),
-    d AS (
+    d AS MATERIALIZED (
         SELECT uv.source,
                GREATEST(EXTRACT(EPOCH FROM (uv.ended - uv.opened)) / 3600.0, 1.0) AS open_hours,
                (SELECT COUNT(*) FROM (
@@ -223,34 +359,10 @@ async def _precompute_backfill_progress() -> dict:
             # then a per-outcome index probe on ix_futures_odds_snapshots_outcome_id.
             try:
                 await _begin_census(session, start, _DEADLINE_S)
-                dens = await session.execute(text("""
-                    WITH ro AS (
-                        SELECT fo.id AS oid, fm.source AS source,
-                               to_char(fm.resolution_date, 'YYYY-MM') AS mon,
-                               fo.calibration_probability AS cp
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        WHERE fm.status = 'resolved'
-                          AND fm.resolution_date >= :since
-                          AND random() < :frac
-                    ),
-                    os AS (
-                        SELECT ro.source, ro.mon, ro.cp,
-                               (SELECT COUNT(*) FROM futures_odds_snapshots s
-                                WHERE s.outcome_id = ro.oid) AS snaps
-                        FROM ro
-                    )
-                    SELECT source, mon,
-                           COUNT(*) AS sampled,
-                           COUNT(*) FILTER (WHERE snaps >= :dense) AS ge_dense,
-                           COUNT(*) FILTER (WHERE snaps >= 1) AS any_snap,
-                           COUNT(*) FILTER (WHERE cp IS NOT NULL) AS has_cal,
-                           ROUND(AVG(snaps)::numeric, 1) AS avg_snaps
-                    FROM os
-                    GROUP BY source, mon
-                    ORDER BY mon DESC, source
-                """), {"since": _density_since, "frac": DENSITY_SAMPLE_FRAC,
-                       "dense": DENSE_POINTS})
+                dens = await session.execute(text(DENSITY_SQL), {
+                    "since": _density_since, "frac": DENSITY_SAMPLE_FRAC,
+                    "dense": DENSE_POINTS, "snapcap": CENSUS_SNAP_CAP,
+                    "percap": CENSUS_GROUP_SAMPLE_CAP})
                 by_month = []
                 for r in dens.all():
                     sampled = r.sampled or 0
@@ -261,12 +373,20 @@ async def _precompute_backfill_progress() -> dict:
                         "dense_ge15_pct": round(100.0 * (r.ge_dense or 0) / max(sampled, 1), 1),
                         "any_snapshot_pct": round(100.0 * (r.any_snap or 0) / max(sampled, 1), 1),
                         "calibration_prob_pct": round(100.0 * (r.has_cal or 0) / max(sampled, 1), 1),
-                        "avg_snapshots": float(r.avg_snaps) if r.avg_snaps is not None else 0.0,
+                        # #4444: NOT `avg_snapshots`. The per-outcome count is
+                        # capped at CENSUS_SNAP_CAP, so this mean is bounded by
+                        # it and cannot report a genuinely dense source's real
+                        # figure (datagolf read 270.8 before the cap). The two
+                        # rate fields above are exact; this one is not, and its
+                        # name has to say so. `snap_cap` travels beside it.
+                        "avg_snapshots_capped": float(r.avg_snaps) if r.avg_snaps is not None else 0.0,
                     })
                 response["density_by_month"] = {
                     "since": DENSITY_SINCE,
                     "sampled": True,
                     "sample_frac": DENSITY_SAMPLE_FRAC,
+                    "group_sample_cap": CENSUS_GROUP_SAMPLE_CAP,
+                    "snap_cap": CENSUS_SNAP_CAP,
                     "dense_threshold_points": DENSE_POINTS,
                     "by_source_month": by_month,
                 }
@@ -280,35 +400,10 @@ async def _precompute_backfill_progress() -> dict:
             # calibration_probability AND >=15 history points.
             try:
                 await _begin_census(session, start, _DEADLINE_S)
-                coh = await session.execute(text("""
-                    WITH ro AS (
-                        SELECT fo.id AS oid, fm.source AS source,
-                               fo.calibration_probability AS cp,
-                               fo.resolution_source AS rs
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        WHERE fm.status = 'resolved'
-                          AND fm.resolution_date >= :since
-                          AND random() < :frac
-                    ),
-                    os AS (
-                        SELECT ro.source, ro.cp, ro.rs,
-                               (SELECT COUNT(*) FROM futures_odds_snapshots s
-                                WHERE s.outcome_id = ro.oid) AS snaps
-                        FROM ro
-                    )
-                    SELECT source,
-                           COUNT(*) AS sampled,
-                           COUNT(*) FILTER (WHERE cp IS NOT NULL) AS has_cal,
-                           COUNT(*) FILTER (WHERE snaps >= :dense) AS ge_dense,
-                           COUNT(*) FILTER (WHERE cp IS NOT NULL AND snaps >= :dense) AS cal_and_dense,
-                           COUNT(*) FILTER (WHERE rs IN
-                               ('api_settlement','game_score','box_score')) AS authoritative
-                    FROM os
-                    GROUP BY source
-                    ORDER BY sampled DESC
-                """), {"since": _cohort_start, "frac": DENSITY_SAMPLE_FRAC,
-                       "dense": DENSE_POINTS})
+                coh = await session.execute(text(SUCCESS_COHORT_SQL), {
+                    "since": _cohort_start, "frac": DENSITY_SAMPLE_FRAC,
+                    "dense": DENSE_POINTS, "snapcap": CENSUS_SNAP_CAP,
+                    "percap": CENSUS_GROUP_SAMPLE_CAP})
                 cohort = []
                 for r in coh.all():
                     sampled = r.sampled or 0
@@ -324,6 +419,8 @@ async def _precompute_backfill_progress() -> dict:
                     "since": SUCCESS_COHORT_START,
                     "sampled": True,
                     "sample_frac": DENSITY_SAMPLE_FRAC,
+                    "group_sample_cap": CENSUS_GROUP_SAMPLE_CAP,
+                    "snap_cap": CENSUS_SNAP_CAP,
                     "sla_definition": "calibration_probability IS NOT NULL AND >=15 history points",
                     "by_source": cohort,
                 }
