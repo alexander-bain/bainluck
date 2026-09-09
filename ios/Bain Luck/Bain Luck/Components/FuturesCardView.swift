@@ -28,8 +28,8 @@ struct FuturesCardView: View {
                     Text("\(count) sources")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
-                } else if let source = futures.source {
-                    Text(source.capitalized)
+                } else if let source = SourceLabels.label(for: futures.source) {
+                    Text(source)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }

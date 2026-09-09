@@ -1,12 +1,5 @@
 import SwiftUI
 
-private let sourceLabels: [String: String] = [
-    "odds_api": "Sportsbooks",
-    "kalshi": "Kalshi",
-    "polymarket": "Polymarket",
-    "datagolf": "DataGolf",
-]
-
 // MARK: - View
 
 struct LeagueGridView: View {
@@ -223,12 +216,14 @@ struct LeagueGridView: View {
             }
 
             HStack(spacing: 4) {
-                Text(sourceLabels[market.source] ?? market.source.capitalized)
-                    .font(.caption2)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(market.source == "kalshi" ? Color.green.opacity(0.1) : Color.blue.opacity(0.1))
-                    .clipShape(Capsule())
+                if let sourceLabel = SourceLabels.label(for: market.source) {
+                    Text(sourceLabel)
+                        .font(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(market.source == "kalshi" ? Color.green.opacity(0.1) : Color.blue.opacity(0.1))
+                        .clipShape(Capsule())
+                }
                 if let count = market.outcomeCount, count > 3 {
                     Text("+\(count - 3) more")
                         .font(.caption2)

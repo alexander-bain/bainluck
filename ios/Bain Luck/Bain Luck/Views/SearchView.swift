@@ -1114,29 +1114,24 @@ struct SearchView: View {
         .padding(.vertical, 2)
     }
 
+    @ViewBuilder
     private func searchSourceBadge(_ source: String) -> some View {
-        let label: String
-        let color: Color
-        switch source {
-        case "polymarket":
-            label = "Polymarket"
-            color = .blue
-        case "kalshi":
-            label = "Kalshi"
-            color = Color(hex: "#22c55e")
-        case "odds_api":
-            label = "Sportsbooks"
-            color = Color(hex: "#d97706")
-        default:
-            label = source.capitalized
-            color = .gray
+        if let label = SourceLabels.label(for: source) {
+            let color: Color = {
+                switch source {
+                case "polymarket": return .blue
+                case "kalshi": return Color(hex: "#22c55e")
+                case "odds_api": return Color(hex: "#d97706")
+                default: return .gray
+                }
+            }()
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(color)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(color.opacity(0.12))
+                .clipShape(Capsule())
         }
-        return Text(label)
-            .font(.system(size: 9, weight: .medium))
-            .foregroundStyle(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.12))
-            .clipShape(Capsule())
     }
 }

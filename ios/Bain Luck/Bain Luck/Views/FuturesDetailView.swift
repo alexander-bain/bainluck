@@ -193,8 +193,8 @@ struct FuturesDetailView: View {
                             .padding(.vertical, 4)
                             .background(.black.opacity(0.24), in: Capsule())
                     }
-                    if let source = market.source {
-                        Text(sourceLabel(source).uppercased())
+                    if let source = market.source, let label = sourceLabel(source) {
+                        Text(label.uppercased())
                             .font(.system(size: 9, weight: .heavy))
                             .tracking(0.8)
                             .foregroundStyle(.white.opacity(0.78))
@@ -311,13 +311,8 @@ struct FuturesDetailView: View {
         }
     }
 
-    private func sourceLabel(_ source: String) -> String {
-        switch source {
-        case "polymarket": return "Polymarket"
-        case "kalshi": return "Kalshi"
-        case "odds_api": return "Sportsbooks"
-        default: return source.capitalized
-        }
+    private func sourceLabel(_ source: String) -> String? {
+        SourceLabels.label(for: source)
     }
 
     // MARK: - Metadata Section
@@ -444,24 +439,31 @@ struct FuturesDetailView: View {
                 }
             }
 
-            // Bookmakers
-            if let bookmakers = market.bookmakers, !bookmakers.isEmpty {
+            // Where the probabilities came from. The noun follows what the sources
+            // actually ARE — a model is named, not counted as a sportsbook (#4135).
+            if let attribution = SourceLabels.attribution(for: market.bookmakers ?? []) {
+                let chips = SourceLabels.sportsbookChips(for: market.bookmakers ?? [])
                 VStack(alignment: .leading, spacing: 6) {
                     Divider()
                         .overlay(DS.border)
-                    Text("Probabilities from \(bookmakers.count) sportsbook\(bookmakers.count != 1 ? "s" : "")")
+                    Text(attribution)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(DS.textMuted)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(bookmakers, id: \.self) { bk in
-                                Text(formatBookmaker(bk))
-                                    .font(.system(size: 10, weight: .medium))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(DS.trackBg)
-                                    .clipShape(Capsule())
-                                    .foregroundStyle(DS.textSecondary)
+                    if !chips.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                // Keyed by position, not by name: two keys can map
+                                // to one brand (`caesars`, `williamhill_us`), and a
+                                // duplicated ForEach id is undefined behaviour.
+                                ForEach(Array(chips.enumerated()), id: \.offset) { _, name in
+                                    Text(name)
+                                        .font(.system(size: 10, weight: .medium))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(DS.trackBg)
+                                        .clipShape(Capsule())
+                                        .foregroundStyle(DS.textSecondary)
+                                }
                             }
                         }
                     }
@@ -728,25 +730,4 @@ struct FuturesDetailView: View {
         return endDate?.ISO8601Format()
     }
 
-    // MARK: - Bookmaker Formatting
-
-    private func formatBookmaker(_ key: String) -> String {
-        let names: [String: String] = [
-            "draftkings": "DraftKings",
-            "fanduel": "FanDuel",
-            "betmgm": "BetMGM",
-            "caesars": "Caesars",
-            "pointsbet": "PointsBet",
-            "betrivers": "BetRivers",
-            "bovada": "Bovada",
-            "pinnacle": "Pinnacle",
-            "espnbet": "ESPN BET",
-            "betonlineag": "BetOnline",
-            "superbook": "SuperBook",
-            "williamhill_us": "Caesars",
-            "fliff": "Fliff",
-            "hardrockbet": "Hard Rock",
-        ]
-        return names[key] ?? key.replacingOccurrences(of: "_", with: " ").capitalized
-    }
 }

@@ -243,13 +243,8 @@ func settledProbabilityText(_ f: RelatedFuture) -> String {
     return formatProbabilityOrDash(f.probability)
 }
 
-private func sourceLabel(_ source: String?) -> String {
-    switch source {
-    case "polymarket": return "Polymarket"
-    case "kalshi": return "Kalshi"
-    case "odds_api": return "Sportsbooks"
-    default: return source?.capitalized ?? ""
-    }
+private func sourceLabel(_ source: String?) -> String? {
+    SourceLabels.label(for: source)
 }
 
 private func sourceColor(_ source: String?) -> Color {
@@ -2009,8 +2004,8 @@ private struct SourceBadge: View {
     let source: String?
 
     var body: some View {
-        if let source, !source.isEmpty {
-            Text(sourceLabel(source))
+        if let source, let label = sourceLabel(source) {
+            Text(label)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(sourceColor(source))
                 .padding(.horizontal, 6)
