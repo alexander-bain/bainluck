@@ -1,6 +1,9 @@
 # LAT-P275 step 1 — the attended `events` FTS index (#4140)
 
-**Status:** awaiting an attended window. Gate is written and RED.
+**Status:** ✅ **DONE.** Alex ran both statements ~10:50am PT 2026-09-09; both indexes are live and
+`indisvalid`. The after-gate is **GREEN on all three criteria** —
+`docs/audits/latency/lat-p275-events-gate-after.json`. **Step 2 was then measured and REFUSED** —
+see "Step 2" at the bottom, which is now the important section on this page.
 **Ship:** the search dropdown stops stalling mid-word. **Pillar:** DISCOVER (Instant Answers).
 **Run by:** Alex, attended, outside Alembic (ruling 131 + gotcha #31 — `CREATE INDEX CONCURRENTLY`
 must never go in a migration; the Heroku release phase times out at ~5 min and took the site down
@@ -133,6 +136,38 @@ Those milliseconds are `count(*)` under `EXPLAIN ANALYZE` on a bloated table —
 from #4140's 127-263 ms, which timed the arm inside the real LIMITed query. Both are honest; it is
 why the verdict rides on the ratio and the plan shape rather than on a millisecond budget.
 
+### The GREEN, banked 2026-09-09 (`lat-p275-events-gate-after.json`)
+
+```
+yank      fts=   0.1ms ctrl=105.8ms ratio=0.00  shape=ok  sem=ok  n=  0(+0 since pin)  PASS
+yankees   fts=   0.6ms ctrl=114.8ms ratio=0.01  shape=ok  sem=ok  n=301(+2 since pin)  PASS
+celt      fts=   0.2ms ctrl=177.7ms ratio=0.00  shape=ok  sem=ok  n=  0(+0 since pin)  PASS
+celtics   fts=   0.5ms ctrl=103.5ms ratio=0.00  shape=ok  sem=ok  n=185(+0 since pin)  PASS
+red sox   fts=   0.8ms ctrl=105.9ms ratio=0.01  shape=ok  sem=ok  n=326(+2 since pin)  PASS
+dodg      fts=   0.2ms ctrl=112.2ms ratio=0.00  shape=ok  sem=ok  n=  0(+0 since pin)  PASS
+VERDICT: GREEN   (exit 0)
+```
+
+`yank` 3,575.2 ms → 0.1 ms. BitmapOr over both new indexes, zero Seq Scan, id sets unmoved.
+
+#### Criterion 3 needed a population pin, and that is a lesson, not a footnote
+
+The first after-run came back **RED on semantics** for `yankees` and `red sox` — and the index was
+fine. `events` is written continuously, so the frozen id-set baseline had been overtaken by **four
+MLB fixtures ingested that morning** (`created_at` 2026-09-09, `LOST=0` on both terms — every
+baseline id was still there). `celtics`, out of season, did not move.
+
+A criterion that compares a live table against a frozen capture **grades the calendar**: it goes RED
+with age, stays RED, and teaches the next lane to wave its own gate through. So criterion 3 now pins
+the population to the baseline's own capture instant (`_meta.pin_created_at_utc`, backfilled here to
+`2026-09-09T01:02:55.806834` — the max `created_at` over all 790 baseline ids, with the first
+post-baseline row landing at 06:02). That restores an **exact set equality** over the rows the
+baseline actually captured, so it still catches a row the index hides *and* a row it invents, while
+rows ingested since are counted and printed (`+2 since pin`) rather than graded.
+
+Verified by mutation, not by reasoning: adding one phantom id to the `celtics` baseline makes the
+gate print `sem=LOST:1,GAINED:0` and exit 1, with the five sibling terms still passing.
+
 ---
 
 ## Free-riding on the same attended window — a SEPARATE decision, needs its own yes
@@ -140,10 +175,20 @@ why the verdict rides on the ratio and the plan shape rather than on a milliseco
 `events` carries **~143 MB of exactly duplicated trigram GIN**, confirmed present in the same
 `pg_indexes` read:
 
-| keep | drop (duplicate) |
-|---|---|
-| `ix_events_home_team_name_trgm` | `ix_events_home_trgm` |
-| `ix_events_away_team_name_trgm` | `ix_events_away_trgm` |
+🔴 **THIS TABLE WAS INVERTED AND IS CORRECTED HERE (2026-09-09).** As first written it said to keep
+the `_team_name_trgm` pair and drop the short-name pair — which is backwards, and would have dropped
+the two indexes doing essentially all the work. Fresh `pg_stat_user_indexes` read, 2026-09-09:
+
+| keep | scans | drop (duplicate) | scans |
+|---|---|---|---|
+| `ix_events_home_trgm` | **3,014,900** | `ix_events_home_team_name_trgm` | 21,928 |
+| `ix_events_away_trgm` | **2,986,521** | `ix_events_away_team_name_trgm` | 50,367 |
+
+The pair to keep is also the correctly-tuned one: three of the four carry
+`WITH (gin_pending_list_limit='256')` and `ix_events_home_team_name_trgm` is the lone exception, so
+the original table would have dropped a tuned index in favour of an untuned one **and** moved 3M
+scans onto it. They are otherwise identical (`gin (col gin_trgm_ops)`), so either name can serve —
+which is exactly why the scan counts, not the names, decide.
 
 Dropping the pair halves GIN write amplification on a continuously-written, ~437%-bloated table.
 
@@ -154,8 +199,70 @@ same breath as the `CREATE`s.
 
 ---
 
-## Step 2 is NOT in this branch, and not yet
+## Step 2 — built, measured, and REFUSED (2026-09-09)
 
-The LAT-P140-style UNION split of `event_team_filter` does not ship in the same branch as this
-index and **does not ship at all until the index is live and this gate is green** —
-split-before-index makes the arm *worse* (the FTS half alone is 1.25-3.46 s).
+The precondition was met — index live, gate GREEN — so the LAT-P140-style UNION split of
+`event_team_filter` was built and measured against production before shipping. **It is a
+regression, and it does not ship.** The code was written and reverted; what survives is this
+section and the numbers.
+
+### It is slower, on 7 of 9 terms
+
+Both forms compiled from the live ORM, interleaved, 3 rounds, `EXPLAIN ANALYZE`, **with the route's
+real scope conditions** (`status IN ('live','scheduled')`, the 7-day `commence_time` window,
+`not_a_proven_duplicate()`):
+
+| term | OR (ships today) | UNION split | | term | OR | UNION |
+|---|---|---|---|---|---|---|
+| `yank` | 16.2 ms | 18.8 ms | | `soccer` | 19.5 ms | 24.0 ms |
+| `yankees` | 18.0 ms | 38.0 ms | | `nfl` | 19.1 ms | 22.6 ms |
+| `red sox` | **19.4 ms** | **96.1 ms** | | `lakers` | 53.5 ms | 66.4 ms |
+| `chi` | 40.8 ms | 62.6 ms | | `celtics` | 43.4 ms | 34.2 ms |
+| `dodg` | 27.0 ms | 22.4 ms | | | | |
+
+Worst case **53.5 → 96.1 ms**, median **19.5 → 34.2 ms**. Read the worst case: on the futures twin
+the split was right precisely because the worst case *fell* 14x. Here it nearly doubles.
+
+Recall is unaffected either way — set-identical on 10/10 terms by `count(*)` + server-side `md5` of
+the ORDER-BY-id id set, 146 rows compared, 9 terms non-empty. The split is not wrong, just slower.
+
+### Why — and this corrects #4140's premise
+
+**Zero `Seq Scan` nodes in either form.** The scoped query never seq-scans `events` and drives off
+`ix_events_status_commence`, not off any text index: `status IN ('live','scheduled')` AND a 7-day
+`commence_time` window is already a tight candidate set, and the text predicate is a cheap recheck
+over it. Splitting into arms therefore *multiplies the driving scan* — three arms each re-walk the
+same scope index, then pay an `IN` semi-join to union the results. No arrangement of the UNION fixes
+that, because the scope, not the text half, is what drives the plan.
+
+**Proved by counterfactual, not inferred.** Re-running the OR with a deliberately unindexable FTS
+half — one-argument `to_tsvector(x)`, which cannot use a two-argument expression index (the #4130
+trap, used on purpose here) — reproduces the pre-index world:
+
+| term | indexed FTS half | unindexable FTS half | Seq Scans | driving index |
+|---|---|---|---|---|
+| `yank` | 84.3 ms | 99.1 ms | 0 | `ix_events_status_commence` |
+| `red sox` | 74.8 ms | 56.5 ms | 0 | `ix_events_status_commence` |
+| `chi` | 50.6 ms | 47.1 ms | 0 | `ix_events_status_commence` |
+| `nfl` | 38.4 ms | 55.7 ms | 0 | `ix_events_status_commence` |
+
+Same speed, same plan, no seq scan — **with the FTS half unindexable.** So for `/typeahead` the OR
+was never the problem and the index changes nothing.
+
+#4140's headline number (`yank` 127-263 ms, 234,575 rows removed, Seq Scan) is real but it measured
+the **recall arm on its own, without the route's scope conditions** — a query `/typeahead` never
+runs. Live production `events_query` sampled the same day: 35-89 ms median across eight terms.
+
+### What is actually true after all this
+
+* The index is **live, valid, additive and GREEN**, and it does what its gate says: the *unscoped*
+  events FTS arm goes 3,575 ms → 0.1 ms. Nothing about that is retracted, and it costs nothing to
+  keep. Any surface that runs that arm unscoped now has it indexed.
+* `/typeahead` was not the surface paying for it, so **`/typeahead` does not get measurably faster**
+  from either step. The honest ship from LAT-P275/P288 is the index and the gate, not a latency win
+  on the dropdown.
+* **Do not re-open the UNION split for this arm** without first showing that the driving index has
+  changed. The measurement to repeat is the counterfactual table above, not the bare-arm timing.
+* The general lesson, which is the one worth carrying: **measure the arm inside the query that
+  actually runs.** A recall predicate timed without its scope is a different query, and it can be
+  three orders of magnitude off in the direction that invents work.

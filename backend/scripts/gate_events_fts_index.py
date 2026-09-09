@@ -35,6 +35,23 @@ nothing, so the planner abandons the GINs for the whole OR and sequentially
 scans `events`. Measured for #4140 on `yank`: **127-263 ms with 234,575 rows
 removed by the filter**, where the arm could answer in ~2 ms.
 
+⚠️ AMENDED 2026-09-09, AFTER THE INDEX LANDED — READ THIS BEFORE QUOTING THE
+PARAGRAPH ABOVE. That measurement is of the recall arm ON ITS OWN. The query
+`/typeahead` actually runs also carries `status IN ('live','scheduled')`, a
+7-day `commence_time` window and `not_a_proven_duplicate()`, and with those
+present the planner drives off `ix_events_status_commence` and **never seq-scans
+`events` at all** — before or after this DDL. Proved by counterfactual: re-run
+the OR with a deliberately unindexable one-arg `to_tsvector` half and it still
+shows zero Seq Scan nodes at the same speed (`yank` 99.1 ms vs 84.3 ms indexed).
+Live production `events_query` the same day was 35-89 ms, not 127-263 ms.
+
+So this index is real and additive — the numbers this gate grades are the
+UNSCOPED arm, and there it is a 3,575 ms -> 0.1 ms collapse — but it is NOT a
+`/typeahead` latency win, and the LAT-P140-style UNION split that was supposed
+to follow it was measured and REFUSED (it makes the scoped arm slower: worst
+case 53.5 -> 96.1 ms). Full numbers and the reasoning:
+`docs/audits/latency/lat-p275-events-fts-index-spec.md`, "Step 2".
+
 Note what the index does NOT do: it does not change recall. On a mid-word
 prefix like `yank`, `websearch_to_tsquery('english','yank')` does not match the
 lexeme `yanke`, so the FTS half returns **zero rows** — it is pure cost today.
@@ -118,6 +135,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -156,6 +174,11 @@ BASELINE = os.path.join(
     "latency",
     "lat-p275-events-red.json",
 )
+
+#: Baseline key holding the capture metadata rather than a term's id set. Not a
+#: term, so the grading loop skips it — a leading underscore keeps it out of the
+#: way of any real search term this gate might grow.
+_META_KEY = "_meta"
 
 #: Mid-word prefixes are the keystrokes that stall (#4140's `yank`); whole words
 #: are where the FTS half actually earns its recall ("Yankee ..." for `yankees`,
@@ -275,8 +298,27 @@ def _fts_sql(term: str) -> str:
     return _literal(select(func.count()).select_from(Event).where(_event_fts_predicate(term)))
 
 
-def _ids_sql(term: str) -> str:
-    return _literal(select(Event.id).where(_event_fts_predicate(term)).order_by(Event.id))
+def _ids_sql(term: str, pin: str | None = None) -> str:
+    """Ids the term returns; `pin` freezes the POPULATION to the baseline's.
+
+    `events` is written continuously, so an unpinned id set grows every day that
+    passes between the capture and the grade — four MLB fixtures ingested on
+    2026-09-09 were enough to drift `yankees` and `red sox` while the index was
+    provably correct (LOST=0 on both). Comparing an unpinned set against a
+    frozen baseline therefore grades the calendar, not the index: it goes RED
+    with age and stays RED, which is the failure mode that teaches a lane to
+    ignore its own gate. Pinning on `created_at` restores an EXACT set equality
+    over the population the baseline actually captured, so criterion 3 still
+    catches both directions — a row the index hides AND a row it invents.
+    """
+    query = select(Event.id).where(_event_fts_predicate(term))
+    if pin is not None:
+        # A `str` here compiles to a bare quoted literal that SQLAlchemy will
+        # not render for a DateTime column under `literal_binds`; parse it so
+        # the pin travels as a real timestamp. `created_at` is `timestamp
+        # WITHOUT time zone` and the capture stamps UTC, so this stays naive.
+        query = query.where(Event.created_at <= datetime.fromisoformat(pin))
+    return _literal(query.order_by(Event.id))
 
 
 def _control_sql(term: str) -> str:
@@ -298,12 +340,17 @@ def _capture(terms: list[str]) -> int:
     Criterion 3 compares against this, so it is what proves the index changed
     only the cost and not the answer.
     """
-    baseline: dict[str, dict] = {}
+    # Stamp the pin BEFORE reading any ids. `events` is written continuously, so
+    # a pin taken afterwards could sit later than a row that landed mid-capture
+    # and silently admit it to the "baseline population" on every later grade.
+    pin = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    baseline: dict[str, dict] = {_META_KEY: {"pin_created_at_utc": pin}}
     for term in terms:
-        rows = _post(_ids_sql(term), analyze=False).get("rows") or []
+        rows = _post(_ids_sql(term, pin=pin), analyze=False).get("rows") or []
         ids = sorted(int(row[0]) for row in rows)
         baseline[term] = {"ids": ids, "n": len(ids)}
         print(f"  {term:<12} n={len(ids)}")
+    print(f"  population pinned at created_at <= {pin} (UTC)")
     with open(BASELINE, "w") as handle:
         json.dump(baseline, handle, indent=1)
     print(f"wrote {BASELINE}")
@@ -333,7 +380,8 @@ def main() -> int:
 
     with open(BASELINE) as handle:
         baseline = json.load(handle)
-    terms = list(baseline)
+    pin = (baseline.get(_META_KEY) or {}).get("pin_created_at_utc")
+    terms = [term for term in baseline if term != _META_KEY]
 
     # ASSERT THE DENOMINATOR. With no terms the three fail-lists stay empty and
     # the verdict below computes GREEN having graded nothing — a gate that
@@ -345,6 +393,17 @@ def main() -> int:
         return 2
     if args.rounds < 1:
         print(f"ERROR: --rounds {args.rounds} grades nothing", file=sys.stderr)
+        return 2
+    # An unpinned baseline cannot be graded on semantics: `events` grows under
+    # it, so criterion 3 would drift to RED on the calendar. That is the harness
+    # missing an input, not a verdict on the index — exit 2, never 1.
+    if pin is None and not args.skip_semantics:
+        print(
+            f"ERROR: baseline {BASELINE} has no {_META_KEY}.pin_created_at_utc — "
+            "criterion 3 would grade ingest, not the index. Re-capture, or pass "
+            "--skip-semantics to grade shape and budget only.",
+            file=sys.stderr,
+        )
         return 2
 
     print(f"gate_events_fts_index  label={args.label}  terms={len(terms)}  rounds={args.rounds}")
@@ -390,10 +449,24 @@ def main() -> int:
 
         semantics_ok = True
         got_ids: list[int] = []
+        lost: list[int] = []
+        gained: list[int] = []
+        n_since_pin = 0
         if not args.skip_semantics:
-            rows = _post(_ids_sql(term), analyze=False).get("rows") or []
+            rows = _post(_ids_sql(term, pin=pin), analyze=False).get("rows") or []
             got_ids = sorted(int(row[0]) for row in rows)
-            semantics_ok = got_ids == sorted(baseline[term]["ids"])
+            want = set(baseline[term]["ids"])
+            have = set(got_ids)
+            # Report both directions BY NAME. "DRIFT" alone sent this gate's
+            # first after-run to RED without saying that nothing was lost.
+            lost = sorted(want - have)
+            gained = sorted(have - want)
+            semantics_ok = not lost and not gained
+            # Rows ingested since the pin are expected and are NOT graded; they
+            # are printed so the pinned number can never be mistaken for the
+            # live one.
+            live = _post(_ids_sql(term), analyze=False).get("rows") or []
+            n_since_pin = len(live) - len(got_ids)
 
         if not shape_ok:
             shape_fail.append(term)
@@ -416,6 +489,9 @@ def main() -> int:
             "budget_ok": budget_ok,
             "semantics_ok": semantics_ok,
             "n_ids": len(got_ids),
+            "ids_lost": lost,
+            "ids_gained_within_pin": gained,
+            "n_ingested_since_pin": n_since_pin,
         }
 
         flag = "PASS" if (shape_ok and budget_ok and semantics_ok) else "FAIL"
@@ -423,10 +499,11 @@ def main() -> int:
             ("MISSING:" + ",".join(missing)) if missing
             else ("seq_scan" if seq_scans else "no BitmapOr")
         )
+        sem_note = "ok" if semantics_ok else f"LOST:{len(lost)},GAINED:{len(gained)}"
         print(
             f"  {term:<12} fts={fts_med:8.1f}ms ctrl={ctrl_med:8.1f}ms "
             f"ratio={ratio:5.2f}  shape={shape_note}  "
-            f"sem={'ok' if semantics_ok else 'DRIFT'}  {flag}"
+            f"sem={sem_note}  n={len(got_ids)}(+{n_since_pin} since pin)  {flag}"
         )
 
     green = not (shape_fail or budget_fail or semantics_fail)
@@ -445,6 +522,7 @@ def main() -> int:
                     "verdict": "GREEN" if green else "RED",
                     "ratio_threshold": RATIO_THRESHOLD,
                     "expected_indexes": list(EXPECTED_INDEXES),
+                    "pin_created_at_utc": pin,
                     "terms": results,
                 },
                 handle,

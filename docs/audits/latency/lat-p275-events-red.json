@@ -1,4 +1,8 @@
 {
+ "_meta": {
+  "pin_created_at_utc": "2026-09-09T01:02:55.806834",
+  "pin_note": "Backfilled 2026-09-09 by LAT-P288. The original --capture predates the pin field; this value is the max(created_at) over all 790 baseline ids, read from production, and the earliest row ingested after it is 2026-09-09T06:02:00 \u2014 so the pinned population reproduces the captured sets exactly."
+ },
  "yank": {
   "ids": [],
   "n": 0
