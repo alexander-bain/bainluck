@@ -3,7 +3,6 @@
 import React from "react";
 
 import LiquidityMark from "../LiquidityMark";
-import { LIQUIDITY_DEFINITION } from "@/lib/liquidity";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
@@ -502,6 +501,9 @@ export default function PlayoffGrid({
   // Over the WHOLE grid, not the five visible rows: the key explains a symbol
   // that is one "show more" away, and a key that appears on expand would look
   // like the marks appeared with it.
+  /* `marked` no longer prints. It rides the section as `data-marked` so a probe
+     can still read the count the deleted `grid-liquidity-key` paragraph used to
+     say out loud (notice 34 / #4122). */
   const marked = markedCellCount(grid);
 
   return (
@@ -510,7 +512,10 @@ export default function PlayoffGrid({
       data-columns={grid.columns.length}
       data-rows={grid.rows.length}
       data-priced={grid.pricedCells}
+      data-total-cells={grid.totalCells}
+      data-no-market={grid.noMarketCells}
       data-alarms={grid.alarmCells}
+      data-marked={marked}
       data-scrolls={scrolls ? "true" : "false"}
     >
       <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
@@ -650,78 +655,46 @@ export default function PlayoffGrid({
         </div>
       </div>
 
-      {/* THE LEGEND, AND THE COUNTERS. Every cell is in exactly one bucket and
-          the buckets add to the total — a grid that cannot account for its own
-          cells is not one anybody should trust. */}
-      {/* max-w on the PROSE, not on the grid (Alex: "sensible max-width for
-          text sections only"). The table above wants every pixel of a 1280px
-          shell; this paragraph at that width is ~200 characters a line. */}
-      <p
-        className="mt-2 max-w-[80ch] text-[11px] leading-snug text-text-muted"
-        data-testid="grid-legend"
-      >
-        <b className="font-semibold text-text-secondary" data-testid="grid-coverage">
-          {grid.pricedCells} of {grid.totalCells}
-        </b>{" "}
-        {/* UX-P146: was "cells carry a market price" / "every number is a price
-            somebody quoted". Alex's product-wide ruling on the noun. */}
-        cells carry a number from a real market.{" "}
-        {grid.noMarketCells > 0 && (
-          <span data-testid="grid-no-market">
-            {/* Ruling 141 (Alex, 2026-08-28): venue names are banned in reader
-                copy — "we asked Kalshi and Polymarket and neither runs that
-                market" told a tennis reader our sourcing. The admission it
-                carried is the load-bearing half and survives intact: the cell
-                is blank because the QUESTION is not being answered anywhere,
-                not because we failed to read it. */}
-            <b className="font-semibold text-text-secondary">{grid.noMarketCells}</b> say{" "}
-            <span className="uppercase">no mkt</span> — nobody is answering that
-            question, so we have nothing to show.{" "}
-          </span>
-        )}
-        Nothing here is calculated from anything else: every number is one a market
-        quoted for exactly the question in its column.
-      </p>
+      {/* ═══ notice 34 / #4122: THE LEGEND AND ITS COUNTERS ARE GONE ═══
 
-      {/* ═══ THE ILLIQUIDITY KEY (UX-P157, Alex's ruling / #2256) ═══
+          `grid-legend` printed "N of M cells carry a number from a real
+          market", then "K say NO MKT — nobody is answering that question, so we
+          have nothing to show", then "Nothing here is calculated from anything
+          else: every number is one a market quoted for exactly the question in
+          its column." A coverage count, an explanation of our own emptiness,
+          and a method note — all three of the kinds notice 34 bans, in one
+          paragraph, on the same page Alex was reading.
 
-          Said ONCE, under the grid, and only when the grid actually has marks
-          on it — a key to a symbol that is not on screen is furniture. The two
-          glyphs are the real component at the real size, not a drawing of it:
-          if the mark ever changes shape this key changes with it, which is the
-          only way a key stays true without anybody remembering to update it. */}
-      {marked > 0 && (
-        <p
-          className="mt-1.5 flex max-w-[80ch] items-start gap-1.5 text-[11px] leading-snug text-text-muted"
-          data-testid="grid-liquidity-key"
-          data-marked={marked}
-        >
-          <span className="mt-[3px] flex shrink-0 items-center gap-1">
-            <LiquidityMark
-              facts={{ liquidity: "thin", liquidity_reasons: ["no_trades_24h"] }}
-              size="sm"
-              decorative
-            />
-            <LiquidityMark
-              facts={{
-                liquidity: "barely",
-                liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
-              }}
-              size="sm"
-              decorative
-            />
-          </span>
-          {/* The lead-in is a COUNT and nothing else. It used to restate what
-              the definition says next ("come off a market barely anybody is
-              trading"), which put the same clause on screen twice in a row —
-              the verbosity Alex's 2026-08-29 ruling was about, one paragraph
-              below the tooltip it was about. */}
-          <span>
-            <b className="font-semibold text-text-secondary">{marked}</b> of{" "}
-            {grid.pricedCells} numbers here carry a mark. {LIQUIDITY_DEFINITION}
-          </span>
-        </p>
-      )}
+          Nothing a reader needs is lost, because the grid already answers all
+          of it PER CELL. `gridCellExplanation` builds a sentence for every
+          single cell — including `no_market`, whose text is exactly the
+          admission this paragraph aggregated — and it is hung on the cell's own
+          `title` and `sr-only`. A cell reading NO MKT is therefore explained
+          where a reader is actually looking, on hover and to a screen reader,
+          rather than by a paragraph below the fold that they must map back onto
+          a cell themselves.
+
+          The three counters ride the section as `data-priced`,
+          `data-total-cells` and `data-no-market`, so the "every cell is in
+          exactly one bucket and the buckets add to the total" property the old
+          comment cared about is still checkable — by a probe, from the markup,
+          which is a stricter check than a reader adding up prose. */}
+
+      {/* ═══ notice 34 (Alex, 2026-09-08 4:00pm PT) / #4122: THE GRID
+          LIQUIDITY KEY IS GONE ═══
+
+          `grid-liquidity-key` printed a count ("N of M numbers here carry a
+          mark") followed by the whole of LIQUIDITY_DEFINITION — so the Bracket
+          tab carried both a coverage count and a method note, two of the three
+          kinds the ruling bans, in one paragraph.
+
+          Same disposal as the Tournament tab: the definition already rides
+          every mark as `title` / `aria-label` via `LiquidityMark`, which is the
+          tooltip notice 34 points method notes at. The count moved to
+          `data-marked` on the grid section for probes.
+
+          The marks on the cells are untouched — this removed the key, not the
+          symbols it described. */}
 
       <SumCheck grid={grid} />
     </section>

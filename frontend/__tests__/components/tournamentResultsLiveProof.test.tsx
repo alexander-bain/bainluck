@@ -135,8 +135,12 @@ describe("the payload production served on 2026-09-01 at 22:59Z", () => {
     // fix adds links, it does not hide the matches it cannot route.
     expect(rows.length).toBe(mens.length);
     expect(mens.length).toBeGreaterThan(80);
-    expect(html).toContain('data-testid="results-link-note"');
-    expect(html).toContain(`28 of ${mens.length}`);
+    // notice 34 / #4122: the count is on the section, not in a sentence. The
+    // real-payload property is unchanged — 28 of 90 route, derived rather than
+    // frozen — it is simply asserted where the number now lives.
+    expect(html).toContain('data-linked="28"');
+    expect(html).toContain(`data-link-total="${mens.length}"`);
+    expect(html).not.toContain("open a match page");
   });
 
   it("never routes one of the 90 ESPN-only rows", () => {

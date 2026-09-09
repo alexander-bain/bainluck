@@ -248,16 +248,25 @@ describe("the rendered finished list", () => {
     }
   });
 
-  it("counts the note over the rows it can actually route", () => {
+  it("counts the routed rows over the rows it can actually route", () => {
     const html = markup(BY_MATCHUP, BY_ESPN);
     expect(html).toContain('data-linked="3"');
-    expect(html).toContain('data-total="4"');
+    // Renamed from `data-total` when the counts moved onto the section, which
+    // already carries `data-count` (notice 34 / #4122).
+    expect(html).toContain('data-link-total="4"');
   });
 
-  it("still names the gap — a list that routes some rows must say which", () => {
-    expect(markup(BY_MATCHUP, BY_ESPN)).toContain(
-      "open a match page. We cannot link the rest to one yet."
-    );
+  it("keeps the gap countable without naming it to the reader", () => {
+    // #2568's property was that a list where only some rows are clickable must
+    // not read as a broken page. notice 34 says that reassurance is not the
+    // reader's to carry, so the sentence went and the numbers stayed: 3 of 4 is
+    // still recoverable from the markup, which is what a probe or a sentinel
+    // needs and all that the old sentence really encoded.
+    const html = markup(BY_MATCHUP, BY_ESPN);
+    expect(html).not.toContain("open a match page. We cannot link the rest to one yet.");
+    expect(html).not.toContain('data-testid="results-link-note"');
+    expect(html).toContain('data-linked="3"');
+    expect(html).toContain('data-link-total="4"');
   });
 });
 

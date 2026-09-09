@@ -4,9 +4,7 @@ import React from "react";
 
 import LiquidityMark from "../LiquidityMark";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
-import { LIQUIDITY_DEFINITION, isMarked, readLiquidity } from "@/lib/liquidity";
 import {
-  FRESHNESS_DEFINITION,
   answerOutcome,
   curatedProps,
   curatedPropsEmptyReason,
@@ -580,37 +578,27 @@ function PropCard({
   );
 }
 
-/**
- * WHERE THE ROUND QUESTIONS WENT — and why this sentence is unconditional.
- *
- * UX-P138 printed it only when `curated.dropped.advance > 0`, i.e. only when a
- * reach question was in the payload and got rotated out at render. UX-P139
- * removed those eight from the register itself (`props_declined`), which is the
- * more correct fix — one market in two collections is a divergence waiting to
- * happen — and the side effect was that the pointer disappeared with them.
- *
- * That made the sentence a fact about our BUILD PIPELINE rather than about the
- * page: it appeared when the rotation happened to fire and vanished once the
- * same decision was made one layer earlier, even though what it tells the
- * reader ("reach-a-round questions live on the Bracket tab") became MORE true,
- * not less. On a page whose ship is "a hub that orients at a glance", an
- * orientation line that blinks out when the underlying structure hardens is
- * backwards. So it is structural now, and the count rides it only while a
- * rotation is genuinely what happened.
- */
-function MovedToGrid({ dropped }: { dropped: number }) {
-  return (
-    <p
-      className="mt-2 text-[11px] text-text-muted"
-      data-testid="props-moved-to-grid"
-      data-dropped={dropped}
-    >
-      {dropped > 0
-        ? `${dropped} question${dropped === 1 ? " about reaching a round is" : "s about reaching a round are"} on the Bracket tab.`
-        : "Questions about reaching a round — the quarters, the semis, the final — are on the Bracket tab."}
-    </p>
-  );
-}
+/* ═══ notice 34 / #4122: `MovedToGrid` IS GONE ═══
+
+   It printed either "Questions about reaching a round — the quarters, the
+   semis, the final — are on the Bracket tab." or, when a rotation had fired,
+   "N questions about reaching a round are on the Bracket tab."
+
+   The counted variant is plainly banned: it is a count about our own render
+   pipeline, printed to the reader.
+
+   THE UNCOUNTED VARIANT IS THE ONE JUDGEMENT CALL IN #4122, so it is written
+   down rather than buried. It is wayfinding, not a coverage count, a
+   limitation or a method note — none of notice 34's three named kinds. It goes
+   anyway, because the Bracket tab it points at is a full-width top-level tab
+   sitting a couple of inches above this line on every viewport, in both
+   screenshots on the issue. A grey footnote announcing a tab the reader can
+   already see is furniture, and notice 34's positive rule is "the number, the
+   small source mark, and at most one short caption".
+
+   If Alex wants the pointer back it belongs as that one caption, on the
+   section heading, uncounted. Restoring it is a three-line change; that is why
+   this note names the shape rather than just deleting the code. */
 
 export default function TournamentProps({
   markets,
@@ -643,7 +631,15 @@ export default function TournamentProps({
     // who can close it.
     const reason = curatedPropsEmptyReason(curated);
     return (
-      <section data-testid="tournament-props" data-considered={curated.considered}>
+      <section
+      data-testid="tournament-props"
+      data-considered={curated.considered}
+      /* #4122: the reach-question count the deleted `MovedToGrid` pointer
+         used to print. On BOTH branches, so "how many moved to the Bracket
+         tab" is answerable from the markup whether or not this section has
+         any cards left in it. */
+      data-dropped-advance={curated.dropped.advance}
+    >
         <h2
           className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted"
           data-testid="props-heading"
@@ -690,7 +686,6 @@ export default function TournamentProps({
             None have a probability against them today.
           </p>
         </div>
-        <MovedToGrid dropped={curated.dropped.advance} />
       </section>
     );
   }
@@ -707,33 +702,31 @@ export default function TournamentProps({
   // refuses it — so it satisfied this test while having already dropped its age
   // chip, and the section printed the definition of a unit that appeared
   // nowhere beneath it.
-  const anyQuiet = shown.some(
-    (market) =>
-      propIncompleteComparison(market) === null &&
-      propSettlement(market) === null &&
-      propFreshness(market).state !== "fresh"
-  );
-  // The same gate for the mark, over the CARD and every row it prints: a field
-  // card can be unmarked itself while a tail row inside it carries a mark, and
-  // an unexplained symbol is worse than the number it sits beside.
-  //
-  // ⚠️ A SETTLED CARD CONTRIBUTES NEITHER (UX-P211, CERT-516's second half).
-  // This scanned every card's outcomes regardless of settlement, so a section
-  // whose only marks had just been suppressed still printed the legend for
-  // them — an explainer for a symbol that is not on screen, about a trade
-  // nobody can make. The card gate and this one have to agree or one of them
-  // is describing a page that is not being rendered.
-  const anyThin = shown.some(
-    (market) =>
-      propSettlement(market) === null &&
-      (isMarked(readLiquidity(market.liquidity)) ||
-        (market.outcomes ?? []).some((outcome) =>
-          isMarked(readLiquidity(outcome.liquidity))
-        ))
-  );
+  /* `anyQuiet` went with the freshness-definition paragraph it gated
+     (notice 34 / #4122): its only job was deciding whether to print that
+     paragraph. Per-card freshness state is untouched — `propFreshness` is
+     still read per market above. */
+  /* `anyThin` and its liquidity legend are gone (notice 34 / #4122). That gate
+     existed for one purpose — deciding whether to print LIQUIDITY_DEFINITION as
+     a paragraph — so it went with the paragraph, and `isMarked`/`readLiquidity`
+     are no longer imported here.
+ 
+     No mark changed. `LiquidityMark` does its own gating (`if (!isMarked(level))
+     return null`) and builds its own per-mark sentence via `liquidityReveal`,
+     which it hangs on `title` and `aria-label`. That is the tooltip notice 34
+     sends method notes to, and it is per mark rather than one aggregate
+     paragraph describing marks the reader has to go and find. */
 
   return (
-    <section data-testid="tournament-props" data-considered={curated.considered}>
+    <section
+      data-testid="tournament-props"
+      data-considered={curated.considered}
+      /* #4122: the reach-question count the deleted `MovedToGrid` pointer
+         used to print. On BOTH branches, so "how many moved to the Bracket
+         tab" is answerable from the markup whether or not this section has
+         any cards left in it. */
+      data-dropped-advance={curated.dropped.advance}
+    >
       <h2
         className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted"
         data-testid="props-heading"
@@ -758,52 +751,31 @@ export default function TournamentProps({
         )}
       </div>
 
-      {/* WHAT THE AGE MEANS, ONCE (UX-P154, Alex's item 3).
+      {/* ═══ notice 34 (Alex, 2026-09-08 4:00pm PT) / #4122: BOTH DEFINITION
+          PARAGRAPHS THAT CLOSED THIS SECTION ARE GONE ═══
 
-          "32 hours ago" is ambiguous — created? updated? last traded? — and
-          the answer is none of those: it is when a probability for that
-          question last reached us. That is a definition, so it belongs once
-          under the section and not on every card, where it would be four
-          repetitions of a footnote. The cards carry the STATUS; this carries
-          the UNIT. */}
-      {anyQuiet && (
-        <p
-          className="mt-2 max-w-[62ch] text-[11px] leading-snug text-text-muted"
-          data-testid="props-freshness-definition"
-        >
-          {FRESHNESS_DEFINITION}
-        </p>
-      )}
+          `props-freshness-definition` printed FRESHNESS_DEFINITION — *"'Last
+          number' is when we last saw a new probability for a question — not
+          when it was created, and not when it last changed hands."*
+          `props-liquidity-definition` printed LIQUIDITY_DEFINITION — *"We mark
+          a number when the market behind it is barely being traded…"*.
 
-      {/* AND WHAT THE MARK MEANS, ONCE (UX-P157, Alex's illiquidity ruling).
-          Same rule as the sentence above it and deliberately a SECOND
-          paragraph, not an extension of the first: age and thinness are two
-          independent facts about a question, and a reader who has worked out
-          what one mark means has learned nothing about the other. Gated on a
-          mark actually being on screen. */}
-      {anyThin && (
-        <p
-          className="mt-1.5 flex max-w-[62ch] items-start gap-1.5 text-[11px] leading-snug text-text-muted"
-          data-testid="props-liquidity-definition"
-        >
-          <span className="mt-[3px] flex shrink-0 items-center gap-1">
-            <LiquidityMark
-              facts={{ liquidity: "thin", liquidity_reasons: ["no_trades_24h"] }}
-              size="sm"
-              decorative
-            />
-            <LiquidityMark
-              facts={{
-                liquidity: "barely",
-                liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
-              }}
-              size="sm"
-              decorative
-            />
-          </span>
-          <span>{LIQUIDITY_DEFINITION}</span>
-        </p>
-      )}
+          Notice 34 gives three examples of the prose it bans, and quotes BOTH
+          of these among them: *method notes ("last number is when we last
+          saw…", "we mark a number when the market behind it is barely
+          traded…")*. They were transcribed off this component.
+
+          Where the ruling sends them instead is "a tooltip on the source
+          mark", and both are already there, per mark rather than once per
+          section: `LiquidityMark` builds its own sentence with
+          `liquidityReveal` and hangs it on `title` and `aria-label`, and the
+          age lives on the card that carries it. So these paragraphs were an
+          aggregate re-telling of what each glyph already says on hover and to
+          a screen reader — deleting them costs a sighted reader nothing and a
+          non-visual reader nothing.
+
+          No mark, no badge and no age changed. This removes the prose that
+          described them, not the signals themselves. */}
 
       {/* A COMBINED CARD SAYS IT IS ONE (UX-P154, Alex's item 1). Not an
           apology — the opposite. Two questions became one card and every
@@ -821,7 +793,6 @@ export default function TournamentProps({
           one card.
         </p>
       )}
-      <MovedToGrid dropped={curated.dropped.advance} />
     </section>
   );
 }
