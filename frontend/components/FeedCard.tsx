@@ -974,8 +974,25 @@ function FuturesFeedCard({
                 RESOLVED
               </span>
             )}
+            {/* #4244 — the pill YIELDS; the date never does.
+                This pill was `flex-shrink-0` inside a `min-w-0` group that does not
+                clip, so a generated headline ("New favorite: Alexandre Pantoja (47%)")
+                simply rendered PAST its group and painted on top of the "Resolves Dec
+                31, 2026" caption to its right — 21 of 39 futures cards on production
+                /sports at 390px, up to 77.6 shared pixel columns. Nothing was pushed
+                off-screen; two strings shared the same pixels, which is why it read as
+                glyph soup rather than as truncation.
+                The covered string is the resolution date, i.e. the one that says whether
+                "83%" is about next week or about December 2027 — so the priority is not
+                a judgement call. The pill now shrinks and ellipsises (`min-w-0 truncate`
+                — it is a flex item, so it blockifies and text-overflow applies to it),
+                while the right-hand group keeps `flex-shrink-0`. The two remaining
+                shrink-0 children of this group are fixed strings — the RESOLVED badge and
+                the personalization badge — so no VARIABLE-length text in the row is
+                unshrinkable any more, which is the property that makes the overlap
+                unreachable rather than merely unlikely at one width. */}
             {item.headline && (
-              <span className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
+              <span className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold min-w-0 truncate">
                 {item.headline}
               </span>
             )}
@@ -984,7 +1001,12 @@ function FuturesFeedCard({
               multiplier={item.multiplier}
               personalizationReasons={item.personalization_reasons}
             />
-            <span className="text-[11px] text-text-muted tracking-wide truncate">
+            {/* #4244 — `truncate` alone does not let a flex item shrink: min-width
+                defaults to auto, so the item floors at its own min-content and pushes
+                its siblings out of the group instead. The category chip was the string
+                that landed on the date's first glyphs (14.3 shared columns on every
+                affected card, alongside the pill's 19.6–77.6). */}
+            <span className="text-[11px] text-text-muted tracking-wide min-w-0 truncate">
               <span className="mr-0.5">{catEmoji}</span>
               {catName}
             </span>
@@ -1044,11 +1066,26 @@ function FuturesFeedCard({
               <div className="font-mono text-sm font-bold text-text-primary">
                 {formatProbability(leaderProb, { rendered: heroPercent })}
               </div>
-              <div className="flex items-center justify-end gap-1 text-[11px] text-text-muted truncate max-w-[100px]">
+              {/* #4245, second half — `truncate` was on this FLEX container, and that
+                  never ellipsises. text-overflow applies to the box that owns the text;
+                  here the name is a bare text node, so it lives in an ANONYMOUS flex item
+                  whose own overflow is visible, and the container's overflow:hidden just
+                  cuts it dead. With `justify-end` the cut lands on the LEFT edge, where an
+                  ellipsis could not paint even if it applied — so the reader got
+                  "xander Volkanovski" and "s Angeles Dodgers": a word fragment with no
+                  signal that anything was removed. Measured on production /sports at
+                  390px: 6 cards, 11.4–52.9 px of the name silently gone off the left.
+                  (This is also why a scrollWidth-based probe reports zero here — start-edge
+                  overflow does not count towards scrollWidth in LTR.)
+                  The name now sits in its own span that carries the truncation, so the cut
+                  happens at the END and prints an ellipsis; the cap rises 100 -> 130px so
+                  the common case is not cut at all. The main row's other half is
+                  `line-clamp-2`, so the 30px comes out of a title that reflows. */}
+              <div className="flex items-center justify-end gap-1 text-[11px] text-text-muted min-w-0 max-w-[130px]">
                 {isNonSports && leader && (
                   <EntityImage type="wikipedia" name={leader.name} size={14} />
                 )}
-                {leader.name}
+                <span className="truncate">{leader.name}</span>
               </div>
               {/* UX-P275: gate on whether the move PRINTS, not on the wire
                   fraction being nonzero — see `isRenderedMove`. */}
@@ -1086,9 +1123,23 @@ function FuturesFeedCard({
                   : fallbackPercents[i];
               return (
               <div key={outcome.id} className="flex items-center gap-2">
+                {/* #4245, first half — the name column was a flat `w-20` (80px) while
+                    the bar beside it took `flex-1` and measured 212px at 390px. So the
+                    one cell that has to carry an identity was the starved one, and the
+                    one that only has to carry a length was over-provisioned: 15 of 39
+                    futures cards on production cut their RANK-1 name — "Alexander V…",
+                    "Los Angeles …", "Aryna Sabal…". Two of the live UFC cards lead with
+                    an "Alexander", so the truncation was not merely ugly, it was
+                    ambiguous between two different fighters.
+                    Derived rather than assumed, per the standing layout-fit note: the bar
+                    takes a fixed, still-legible 112px (176px once there is room for it)
+                    and the name takes what is left — ~180px at 390px, 2.2x its old budget.
+                    A FIXED bar is also the better comparison instrument: every row's bar
+                    is now the same length on every card, which is what makes two rows
+                    comparable at a glance. */}
                 <span
                   title={outcome.name}
-                  className={`text-[11px] w-20 truncate shrink-0 ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}
+                  className={`text-[11px] flex-1 min-w-0 truncate ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}
                 >
                   {/* L2-243 Item 1 — show the real outcome name (CSS-truncated),
                       not the trailing word only, which turned "Costa Rica" into
@@ -1099,7 +1150,7 @@ function FuturesFeedCard({
                     not a printed number — but `aria-valuenow` is the number that
                     is printed, so a screen reader hears the card, not a second
                     rounding of it. */}
-                <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
+                <div className="w-28 sm:w-44 shrink-0 h-1.5 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`}
                     style={{ width: `${(outcome.probability ?? 0) * 100}%` }}
