@@ -600,7 +600,31 @@ BACKGROUND_INTERVAL_FLOOR = frozenset(
 #:
 #: It is a CRONTAB precisely so it stays here, as a countable co-fire, rather
 #: than in `BACKGROUND_INTERVAL_FLOOR` where a 180 s interval would have put it.
-SWEEP_WINDOW_COFIRE_CEILING = 17
+#: 🔴 **RE-DERIVED at lane1/217 (2026-09-09, #4469): 17 -> 18.** The SAME beat,
+#: `sync-tennis-from-espn`, went `*/10` -> `*/5`, so its contribution to this
+#: window went one fire -> **two**. No beat was added or removed; every other
+#: row below is unmoved. The cadence entry shipped `*/10` while the paragraph
+#: directly above it in the same commit argued `*/5`, and the gap was
+#: reader-visible: 483 s median score-stamp age against an 8.4 s price stamp
+#: (live/122, 95 polls on event 15307447). Obtained by running the census in
+#: `test_the_run_window_does_not_sit_under_a_growing_pile` over the assembled
+#: schedule and printing the total, never by adding one (#1910):
+#:
+#:     10:31 +13m  TOTAL 18
+#:       7  precompute-discover-candidate-base
+#:       2  sync-tennis-from-espn      2  warm-event-concepts
+#:       2  warm-futures-categories    1  discover-new-events
+#:       1  link-tournament-matchups
+#:       1  refresh-registered-tournament-prices
+#:       1  run-freshness-watchdog     1  update-max-movement
+#:
+#: COST OF THE SECOND FIRE: one more of the ~3 s passes costed above, so ~6 s of
+#: one slot inside a 780 s window on a two-slot queue — 0.8 % of one slot, against
+#: a sweep whose own deadline is the 780. The upstream read is not new traffic of
+#: a new kind: `tournament_slate` already fetches the same ESPN scoreboard every
+#: three minutes, so `*/5` stays the slower of the two reads, which is the part
+#: the beat's own comment calls deliberate.
+SWEEP_WINDOW_COFIRE_CEILING = 18
 
 
 def _effective_queue(entry):
