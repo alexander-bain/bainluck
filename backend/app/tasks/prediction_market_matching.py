@@ -5140,6 +5140,48 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
 # Live Game Price Polling
 # =============================================================================
 
+
+def _clear_withdrawn_outcome(outcome, now, stats: dict) -> bool:
+    """Take the price off a leg the venue has withdrawn. #4356, CERT-2384's repair.
+
+    The twin of the CLEAR in ``_refresh_linked_game_books``, carrying the same
+    three conditions for the same three reasons — but written as Python tests
+    on the ORM object rather than as a SQL ``WHERE``, because this poller
+    updates through ORM attribute assignment and mixing a Core ``update()`` into
+    its flush ordering is gotcha #5.
+
+    * ``is_winner is not True`` — never un-price a graded row (gotcha #21).
+    * ``calibration_probability is None`` — never wipe a captured closing line,
+      which is calibration's evidence.
+    * ``current_probability is not None`` — idempotent, so a leg cleared once is
+      not restamped every two minutes. ``last_updated`` is a freshness gate
+      other code reads (``routes/playoffs.py`` drops a stale outcome from the
+      grid), so a restamp is not free.
+
+    Deliberately does NOT stamp ``price_changed_at``: no write in this file
+    stamps it, and setting it on withdrawals alone would make the column mean
+    one thing for a price that moved here and another for a price that went
+    away here. That gap is pre-existing and is not this repair's to close.
+    """
+    if outcome.current_probability is None:
+        return False
+    if outcome.is_winner is True:
+        return False
+    if outcome.calibration_probability is not None:
+        return False
+
+    outcome.current_probability = None
+    outcome.current_american_odds = None
+    outcome.current_yes_bid = None
+    outcome.current_yes_ask = None
+    # A 24h delta describing a price that no longer exists is not a delta.
+    # Same finding as the sibling clear's #2024 consumer audit.
+    outcome.probability_change_24h = None
+    outcome.last_updated = now
+    stats["kalshi_outcomes_withdrawn_cleared"] += 1
+    return True
+
+
 async def _poll_live_prediction_market_prices():
     """
     Fast-poll current prices for prediction markets linked to LIVE events.
@@ -5191,6 +5233,11 @@ async def _poll_live_prediction_market_prices():
         "kalshi_outcomes_updated": 0,
         "kalshi_books_unreadable": 0,
         "kalshi_outcome_unmatched": 0,
+        # #4356 (CERT-2384's repair). Kept apart from `kalshi_books_unreadable`
+        # for the same reason those two are kept apart from each other: a leg
+        # the venue has WITHDRAWN is a fact about the listing, an unreadable
+        # book is a fact about the quote, and one number cannot say both.
+        "kalshi_outcomes_withdrawn_cleared": 0,
         "futures_snapshots_written": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
@@ -5264,7 +5311,11 @@ async def _poll_live_prediction_market_prices():
             # #3569: the 2-hour poll's price policy, imported rather than
             # restated. A second dialect for reading one venue's book is how
             # this branch drifted out of the venue's schema unnoticed.
-            from app.tasks.kalshi import _kalshi_yes_probability
+            # Both IMPORTED from the 2-hour poll, never re-derived here. One
+            # price policy per venue, and — #4356 — one definition of "the venue
+            # took this leg back": two writers that disagreed about which legs
+            # are real is the whole defect CERT-2384 blocked on.
+            from app.tasks.kalshi import _is_withdrawn_leg, _kalshi_yes_probability
 
             service = KalshiAPIService()
             try:
@@ -5295,22 +5346,55 @@ async def _poll_live_prediction_market_prices():
                             yes_ask = km.yes_ask
                             last_price = km.last_price
 
+                            # #4356, CERT-2384's named repair
+                            # (`4356-LIVE-POLLER-CANNOT-RESTORE-WITHDRAWN-LEG`).
+                            # This fetch is `status=None` and ignored `km.status`
+                            # entirely, so it recomputed a WITHDRAWN leg's stale
+                            # one-sided book (0 / 0.39 / 0 -> 39% by the ask-only
+                            # rung) and wrote it straight back every two minutes
+                            # from T-3h. Clearing the leg in
+                            # `_refresh_linked_game_books` alone is therefore not
+                            # the ship: this poller would restore it exactly when
+                            # the reader is most likely to be looking, during the
+                            # game. Both writers have to agree.
+                            withdrawn = _is_withdrawn_leg(km.status)
+
                             # One price policy per venue: the same spread guard
                             # the 2-hour poll uses (gotcha #19 / #181), so a
                             # wide one-sided book cannot fabricate a ~0.50
                             # quote here that the full poll would have refused.
-                            prob = _kalshi_yes_probability(yes_bid, yes_ask, last_price)
-                            if prob is None:
-                                stats["kalshi_books_unreadable"] += 1
-                                continue
+                            prob = (
+                                None
+                                if withdrawn
+                                else _kalshi_yes_probability(yes_bid, yes_ask, last_price)
+                            )
+                            if not withdrawn:
+                                if prob is None:
+                                    stats["kalshi_books_unreadable"] += 1
+                                    continue
 
-                            if prob <= 0 or prob >= 1:
-                                stats["kalshi_books_unreadable"] += 1
-                                continue
+                                if prob <= 0 or prob >= 1:
+                                    stats["kalshi_books_unreadable"] += 1
+                                    continue
 
                             # Find matching outcome by ticker (batch-loaded)
                             ticker = km.ticker or ""
                             outcome = outcome_lookup.get((market.id, ticker))
+
+                            if withdrawn:
+                                # NO single-outcome fallback on this path. The
+                                # fallback below exists to land a PRICE that has
+                                # nowhere else to go; reusing it here would clear
+                                # a row the venue never named, which is the one
+                                # way this repair could destroy a real price.
+                                if outcome is not None:
+                                    _clear_withdrawn_outcome(outcome, now, stats)
+                                else:
+                                    stats["kalshi_outcome_unmatched"] += 1
+                                # Deliberately no FuturesOddsSnapshot: a chart
+                                # point for a leg the venue has taken back is
+                                # the same fiction as the price itself.
+                                continue
 
                             if not outcome:
                                 market_outcomes = outcomes_by_market.get(market.id, [])

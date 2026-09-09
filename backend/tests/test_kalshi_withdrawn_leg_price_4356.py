@@ -402,3 +402,121 @@ async def test_the_clear_refuses_a_graded_row_and_a_captured_closing_line(monkey
     # Idempotence: `last_updated` is a freshness gate other code reads, so a
     # leg already cleared must not be restamped on every subsequent pass.
     assert "current_probability is not null" in where, "the clear would restamp forever"
+
+
+# --------------------------------------------------------------------------
+# 5. CERT-2384's repair: the SECOND writer
+# --------------------------------------------------------------------------
+#
+# Clearing the leg hourly in `_refresh_linked_game_books` is not the ship.
+# `_poll_live_prediction_market_prices` runs every two minutes from T-3h — i.e.
+# exactly while a reader is watching the game — fetches Kalshi with
+# `status=None`, and used to recompute the withdrawn leg's stale one-sided book
+# (0 / 0.39 / 0 -> 39% via the ask-only rung) and write it straight back.
+#
+# The stored-row round trip is
+# `tests/integration/test_live_poll_kalshi_prices_real_postgres.py`
+# (`TestTheLivePollerCannotRestoreAWithdrawnLeg`), run by CI's `search-recall`
+# job — there is no local Postgres in the agent sandbox. These arms are the fast
+# half: they execute the clear itself and pin the branch that reaches it.
+
+import inspect as _inspect
+
+from app.tasks import prediction_market_matching as pmm
+
+
+class _OutcomeRow:
+    """The three columns the clear reads, and the five it writes."""
+
+    def __init__(self, prob=0.39, is_winner=None, calibration_probability=None):
+        self.current_probability = prob
+        self.current_american_odds = -160
+        self.current_yes_bid = 0.0
+        self.current_yes_ask = 0.39
+        self.probability_change_24h = 0.02
+        self.is_winner = is_winner
+        self.calibration_probability = calibration_probability
+        self.last_updated = "OLD"
+
+
+def _clear(row):
+    stats = {"kalshi_outcomes_withdrawn_cleared": 0}
+    changed = pmm._clear_withdrawn_outcome(row, "NOW", stats)
+    return changed, stats
+
+
+def test_the_live_polls_clear_takes_every_price_column_off():
+    row = _OutcomeRow()
+    changed, stats = _clear(row)
+    assert changed is True
+    assert stats["kalshi_outcomes_withdrawn_cleared"] == 1
+    for col in (
+        "current_probability",
+        "current_american_odds",
+        "current_yes_bid",
+        "current_yes_ask",
+        "probability_change_24h",
+    ):
+        assert getattr(row, col) is None, f"{col} survived the clear"
+    assert row.last_updated == "NOW"
+
+
+def test_the_live_polls_clear_refuses_a_graded_row():
+    """Gotcha #21 — never un-price a row the venue has called."""
+    row = _OutcomeRow(is_winner=True)
+    changed, stats = _clear(row)
+    assert changed is False
+    assert row.current_probability == 0.39
+    assert stats["kalshi_outcomes_withdrawn_cleared"] == 0
+
+
+def test_the_live_polls_clear_refuses_a_captured_closing_line():
+    """Calibration's evidence outranks this repair."""
+    row = _OutcomeRow(calibration_probability=0.41)
+    changed, _ = _clear(row)
+    assert changed is False
+    assert row.current_probability == 0.39
+
+
+def test_the_live_polls_clear_is_idempotent():
+    """`last_updated` is a freshness gate (`routes/playoffs.py` drops a stale
+    outcome from the grid), so a leg cleared once must not be restamped every
+    two minutes for the rest of the day."""
+    row = _OutcomeRow(prob=None)
+    changed, stats = _clear(row)
+    assert changed is False
+    assert row.last_updated == "OLD", "restamped a row it did not change"
+    assert stats["kalshi_outcomes_withdrawn_cleared"] == 0
+
+
+def test_the_live_poller_asks_the_same_question_as_the_hourly_pass():
+    """One definition of 'the venue took this leg back', imported not re-derived.
+
+    Two writers that disagreed about which legs are real is the defect
+    CERT-2384 blocked on; two writers with two predicates is the same defect
+    waiting to come back.
+    """
+    src = _inspect.getsource(pmm._poll_live_prediction_market_prices)
+    assert "_is_withdrawn_leg(km.status)" in src, (
+        "the live poller no longer reads the venue's status through the shared "
+        "predicate"
+    )
+    assert "from app.tasks.kalshi import _is_withdrawn_leg" in src, (
+        "the predicate is re-derived locally instead of imported"
+    )
+
+
+def test_the_withdrawn_branch_returns_before_the_snapshot():
+    """A chart point for a withdrawn leg outlives the cleared row.
+
+    Pinned positionally: the withdrawn branch's `continue` must come BEFORE the
+    Kalshi snapshot insert, or the clear lands and the chart keeps the fiction.
+    """
+    src = _inspect.getsource(pmm._poll_live_prediction_market_prices)
+    clear_at = src.index("_clear_withdrawn_outcome(outcome, now, stats)")
+    snapshot_at = src.index('bookmaker="kalshi"')
+    assert clear_at < snapshot_at
+    between = src[clear_at:snapshot_at]
+    assert "continue" in between, (
+        "the withdrawn branch falls through to the snapshot write"
+    )

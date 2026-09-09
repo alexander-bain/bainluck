@@ -404,3 +404,242 @@ class TestTheRepairDidNotBecomeWriteAnyNumber:
         assert stats["kalshi_fetched"] == 0
         assert service.get_markets.await_count == 0
         assert (await _outcomes(pg_session))[LAR]["prob"] is None
+
+
+# =============================================================================
+# #4356 / CERT-2384's named repair: 4356-LIVE-POLLER-CANNOT-RESTORE-WITHDRAWN-LEG
+# =============================================================================
+#
+# CERT-2384 blocked the first presentation of #4356 on exactly the right ground.
+# Clearing a withdrawn leg in `_refresh_linked_game_books` (hourly) is correct
+# and is NOT the ship, because THIS poller — every two minutes from T-3h, i.e.
+# precisely while a reader is watching the game — fetches `status=None`, ignored
+# `km.status`, recomputed the withdrawn leg's stale one-sided book (0 / 0.39 /
+# 0 -> 39% via the ask-only rung) and wrote it straight back, with a snapshot.
+#
+# The specimen: Kalshi opened `KXNFLFIRSTTD-26SEP10SFLAR-LARNONE` at 23:15Z on
+# Sep 2, opened `...-NONE` 35 minutes later, and marked the first `inactive`.
+# Byte-identical `rules_primary`, `rules_secondary` and `custom_strike` — one
+# outcome duplicated and taken back. `EventProps` renders the top 2 outcomes by
+# probability, so the withdrawn leg was the card's HEADLINE row at 39% while the
+# live leg said 2%.
+#
+# These arms are on a real server because the claim is "the price is GONE from
+# the table", and the failure mode is a write that puts it back. A statement
+# assertion cannot see a second writer.
+
+WD_EVENT = "KXNFLFIRSTTD-26SEP10SFLAR"
+WD_WITHDRAWN = f"{WD_EVENT}-LARNONE"
+WD_LIVE = f"{WD_EVENT}-NONE"
+WD_PLAYER = f"{WD_EVENT}-LARKWILLIAMS23"
+
+
+def _leg_payload(ticker: str, status: str, *, bid: str, ask: str, sub: str) -> dict:
+    """A venue leg in the CURRENT `*_dollars` dialect (#3569)."""
+    return {
+        "ticker": ticker,
+        "event_ticker": WD_EVENT,
+        "title": f"{sub}: 1st Touchdown",
+        "yes_sub_title": sub,
+        "status": status,
+        "yes_bid_dollars": bid,
+        "yes_ask_dollars": ask,
+        "last_price_dollars": "0.0000",
+        "volume_fp": "0",
+    }
+
+
+async def _seed_withdrawn(session, *, legs):
+    """The First Touchdown market, with every leg ALREADY holding a price.
+
+    Unlike `_seed` this starts from a PRICED table, because the defect is a
+    stale price surviving — a seed of NULLs could not tell a clear from a
+    no-op.
+
+    `legs` is `{ticker: (probability, is_winner, calibration_probability)}`.
+    """
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+
+    sport = Sport(key="americanfootball_nfl", name="NFL", group="American Football")
+    session.add(sport)
+    await session.flush()
+
+    event = Event(
+        sport_id=sport.id,
+        home_team_name="Los Angeles R",
+        away_team_name="San Francisco",
+        commence_time=datetime.now(timezone.utc) + timedelta(hours=2),
+        status="scheduled",
+    )
+    session.add(event)
+    await session.flush()
+
+    market = FuturesMarket(
+        source="kalshi",
+        external_id=WD_EVENT,
+        event_id=event.id,
+        name="San Francisco vs Los Angeles R: First Touchdown",
+        category="championship",
+        llm_sport_category="football",
+        market_type="first_touchdown",
+        status="open",
+    )
+    session.add(market)
+    await session.flush()
+
+    for ticker, (prob, winner, calib) in legs.items():
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=ticker,
+                name="No Touchdown" if ticker.endswith("NONE") else "Kyren Williams",
+                current_probability=prob,
+                current_yes_bid=0.0,
+                current_yes_ask=prob,
+                is_winner=winner,
+                calibration_probability=calib,
+            )
+        )
+    await session.flush()
+    await session.commit()
+    return event, market
+
+
+async def _wd_outcomes(session):
+    rows = await session.execute(
+        text(
+            "SELECT o.external_id, o.current_probability, o.current_yes_bid, "
+            "       o.current_yes_ask, o.current_american_odds "
+            "FROM futures_outcomes o JOIN futures_markets m ON m.id = o.market_id "
+            "WHERE m.external_id = :t"
+        ),
+        {"t": WD_EVENT},
+    )
+    return {
+        r[0]: {"prob": r[1], "bid": r[2], "ask": r[3], "american": r[4]}
+        for r in rows.fetchall()
+    }
+
+
+class TestTheLivePollerCannotRestoreAWithdrawnLeg:
+    """CERT-2384's required repair, proven on stored rows."""
+
+    async def test_the_withdrawn_leg_is_cleared_and_the_live_one_is_priced(
+        self, pg_session
+    ):
+        """The ship. Both halves in ONE pass, because the risk is a fix that
+        clears everything or clears nothing — either passes a one-leg test."""
+        await _seed_withdrawn(
+            pg_session,
+            legs={
+                WD_WITHDRAWN: (0.39, None, None),
+                WD_LIVE: (0.02, None, None),
+            },
+        )
+        payload = [
+            _leg_payload(WD_WITHDRAWN, "inactive", bid="0.0000", ask="0.3900",
+                         sub="No Touchdown"),
+            _leg_payload(WD_LIVE, "active", bid="0.0100", ask="0.0300",
+                         sub="No Touchdown"),
+        ]
+        stats = await _run_poll(pg_session, payload)
+
+        rows = await _wd_outcomes(pg_session)
+
+        # THE SHIP: the withdrawn leg carries no price at all.
+        assert rows[WD_WITHDRAWN]["prob"] is None, (
+            "the live poller restored the withdrawn leg's price — this is the "
+            "defect CERT-2384 blocked on"
+        )
+        for col in ("bid", "ask", "american"):
+            assert rows[WD_WITHDRAWN][col] is None, f"{col} survived on a withdrawn leg"
+
+        # THE CONTROL THAT MATTERS MOST: the live leg is still repriced. A
+        # repair that stops the poller writing would pass the assertion above.
+        assert rows[WD_LIVE]["prob"] is not None
+        assert float(rows[WD_LIVE]["prob"]) == pytest.approx(0.02, abs=1e-6)
+        assert stats["kalshi_outcomes_updated"] == 1
+        assert stats["kalshi_outcomes_withdrawn_cleared"] == 1
+
+    async def test_no_snapshot_is_written_for_a_withdrawn_leg(self, pg_session):
+        """A chart point for a leg the venue took back is the same fiction as
+        the price. The snapshot is what makes it survive on the chart even
+        after the row is cleared."""
+        await _seed_withdrawn(
+            pg_session,
+            legs={WD_WITHDRAWN: (0.39, None, None), WD_LIVE: (0.02, None, None)},
+        )
+        await _run_poll(
+            pg_session,
+            [
+                _leg_payload(WD_WITHDRAWN, "inactive", bid="0.0000", ask="0.3900",
+                             sub="No Touchdown"),
+                _leg_payload(WD_LIVE, "active", bid="0.0100", ask="0.0300",
+                             sub="No Touchdown"),
+            ],
+        )
+        snaps = await _kalshi_snapshots(pg_session)
+        assert WD_WITHDRAWN not in snaps, "charted a withdrawn leg"
+        assert WD_LIVE in snaps, "the live leg lost its chart point"
+
+    @pytest.mark.parametrize("status", ["closed", "settled", "finalized"])
+    async def test_a_finished_leg_keeps_its_closing_line(self, pg_session, status):
+        """The control the over-broad version of this fix fails.
+
+        `inactive` is how a market is TAKEN BACK; `closed`/`settled`/`finalized`
+        are how one ENDS, and their last price is the closing line calibration
+        reads (gotcha #21). Measured against the venue over 3,898 legs of six
+        linked series: active 663, finalized 3,234, inactive 1.
+        """
+        await _seed_withdrawn(pg_session, legs={WD_PLAYER: (0.095, None, None)})
+        await _run_poll(
+            pg_session,
+            [_leg_payload(WD_PLAYER, status, bid="0.0900", ask="0.1000",
+                          sub="Kyren Williams")],
+        )
+        rows = await _wd_outcomes(pg_session)
+        assert rows[WD_PLAYER]["prob"] is not None, (
+            f"a {status} leg lost its closing line"
+        )
+
+    async def test_a_graded_withdrawn_leg_is_left_alone(self, pg_session):
+        """Gotcha #21: never un-price a row that has been called."""
+        await _seed_withdrawn(pg_session, legs={WD_WITHDRAWN: (0.39, True, None)})
+        await _run_poll(
+            pg_session,
+            [_leg_payload(WD_WITHDRAWN, "inactive", bid="0.0000", ask="0.3900",
+                          sub="No Touchdown")],
+        )
+        rows = await _wd_outcomes(pg_session)
+        assert rows[WD_WITHDRAWN]["prob"] is not None, "wiped a graded row"
+
+    async def test_a_captured_closing_line_is_left_alone(self, pg_session):
+        """Calibration's evidence outranks this repair."""
+        await _seed_withdrawn(pg_session, legs={WD_WITHDRAWN: (0.39, None, 0.41)})
+        await _run_poll(
+            pg_session,
+            [_leg_payload(WD_WITHDRAWN, "inactive", bid="0.0000", ask="0.3900",
+                          sub="No Touchdown")],
+        )
+        rows = await _wd_outcomes(pg_session)
+        assert rows[WD_WITHDRAWN]["prob"] is not None, "wiped a captured closing line"
+
+    async def test_a_withdrawn_leg_we_do_not_hold_clears_nothing(self, pg_session):
+        """The single-outcome fallback must NOT be reused on this path.
+
+        That fallback lands a price that has nowhere else to go. Reusing it for
+        a withdrawn leg would clear a row the venue never named — the one way
+        this repair could destroy a real price — and a market with exactly ONE
+        outcome is the shape that triggers it.
+        """
+        await _seed_withdrawn(pg_session, legs={WD_PLAYER: (0.095, None, None)})
+        await _run_poll(
+            pg_session,
+            [_leg_payload("KXNFLFIRSTTD-26SEP10SFLAR-GHOST", "inactive",
+                          bid="0.0000", ask="0.3900", sub="No Touchdown")],
+        )
+        rows = await _wd_outcomes(pg_session)
+        assert rows[WD_PLAYER]["prob"] is not None, (
+            "cleared the only outcome in the market on the strength of a leg "
+            "the venue named differently"
+        )
