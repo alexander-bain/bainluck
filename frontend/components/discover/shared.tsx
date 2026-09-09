@@ -279,12 +279,18 @@ export function ForYouChip({ cue, tone = "light" }: { cue: ForYouCue | null; ton
       className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.04em] px-1.5 py-0.5 rounded border ${skin}`}
       data-testid="for-you-cue"
       data-for-you-reason={cue.reasonId}
-      // The visible text is the class; the title says what the badge IS, so a
+      // The visible text is the MARK; the title carries the whole sentence, so a
       // reader who wonders why the feed is showing them this gets the answer
       // without a settings page.
+      //
+      // #4429 — Alex: "far too big — a small mark, not a badge". The chip was
+      // already 10px with 6px/2px padding, so the size was never the problem:
+      // `A category you follow` is a 21-character sentence, and set uppercase
+      // with letter-spacing it ran as a bar across the card. The mark is one or
+      // two words; the sentence did not go anywhere, it moved into the hover.
       title={`In your feed because: ${cue.label.toLowerCase()}`}
     >
-      {cue.label}
+      {cue.mark}
     </span>
   );
 }

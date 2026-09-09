@@ -71,8 +71,17 @@ import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 // The three reader states every path is rendered in.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The label `your_team:0.35` must produce, from `forYouCue.ts`'s vocabulary. */
-const BOOSTED_LABEL = "One of your teams";
+/**
+ * What `your_team:0.35` must PRINT, from `forYouCue.ts`'s vocabulary.
+ *
+ * #4429 turned the chip's text from the sentence into a mark; the sentence moved
+ * to the `title`. This constant follows the printed text, because that is what
+ * "every path renders the cue" is a claim about. `BOOSTED_SENTENCE` below keeps
+ * the other half honest: a path that dropped the tooltip would still satisfy the
+ * mark on its own.
+ */
+const BOOSTED_LABEL = "Your team";
+const BOOSTED_SENTENCE = "In your feed because: one of your teams";
 const CUE_TESTID = 'data-testid="for-you-cue"';
 
 /** A real net uprank with a nameable reason — the cue is TRUE here. */
@@ -352,6 +361,11 @@ describe("PART 1 — every card path renders the cue for a boosted reader", () =
     expect(html).toContain(CUE_TESTID);
     expect(html).toContain('data-for-you-reason="your_team"');
     expect(html).toContain(BOOSTED_LABEL);
+    // #4429 — the mark alone is not the cue. A path that printed the short mark
+    // and dropped the tooltip would satisfy every other arm here while taking
+    // the explanation away, which is the half of this feature the standing feed
+    // rule (deterministic explanations are first-class) is actually about.
+    expect(html).toContain(BOOSTED_SENTENCE);
   });
 });
 
@@ -361,6 +375,7 @@ describe("🔴 PART 1 — no path labels a DOWNRANKED card 'for you'", () => {
     expect(html).toContain(p.marker);
     expect(html).not.toContain(CUE_TESTID);
     expect(html).not.toContain(BOOSTED_LABEL);
+    expect(html).not.toContain(BOOSTED_SENTENCE);
   });
 });
 
