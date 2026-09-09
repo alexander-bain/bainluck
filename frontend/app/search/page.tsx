@@ -473,7 +473,10 @@ function SearchContent() {
               }`}
             >
               <span>{getEmojiForLeague(sport.key)}</span>
-              <span>{sport.name}</span>
+              {/* #4247: 15 `sports` rows store the raw key as their name
+                  ("mma_other", "esports"), so the served name reaches the chip
+                  unlabelled. The client's own map is the house style. */}
+              <span>{getLeagueDisplay(sport.key)}</span>
               <span className="text-xs opacity-75">({sport.count})</span>
             </button>
           ))}
