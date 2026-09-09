@@ -387,6 +387,69 @@ class TestThePluralControl:
 
 
 # ==========================================================================
+@_asyncio
+class TestTheArmSurvivesTheTruncation:
+    """A crowded namesake pool. The arm can be REACHED and still not be SEEN.
+
+    `_ta_events[:_EVENT_POOL_SIZE]` cuts the pool to four BEFORE anything is
+    scored, so admitting the player's match and then queueing it behind four
+    live namesakes drops it on the way to the scorer. The dropdown then looks
+    exactly as it does with the arm switched off, and every assertion in
+    `TestTheRepair` passes on the two-row fixture above because two rows plus
+    one leaves room.
+
+    Production supports the crowded shape: `%sinner%` returns eleven esports
+    rows in the last week, four of them dated 2026-09-06 or later.
+    """
+
+    @pytest_asyncio.fixture
+    async def crowded(self, monkeypatch):
+        rec = _Recorder(
+            upcoming=[
+                _event(
+                    eid=15_307_780 + i,
+                    home=home,
+                    away=away,
+                    status="live",
+                    commence=_NOW - timedelta(minutes=45),
+                )
+                for i, (home, away) in enumerate(
+                    [
+                        ("Spirit Academy", "Saint Sinners"),
+                        ("Sinners", "NIP"),
+                        ("Sinners", "Team Nemesis"),
+                        ("K27", "Sinners"),
+                        ("BBL", "Sinners"),
+                    ]
+                )
+            ],
+            last_match=_jannik_last_match(),
+            futures=_props(),
+        )
+        async for ac in _client(rec, monkeypatch):
+            yield ac, rec
+
+    async def test_his_match_still_reaches_the_scorer(self, crowded):
+        """Appending instead of prepending fails here and nowhere else."""
+        client, rec = crowded
+        texts = _texts(await _suggest(client, "sinner"))
+        assert rec.last_match_calls == 1
+        # The EXACT event text, never a surname substring: two of his props are
+        # also named after this opponent ("Jannik Sinner vs Miomir Kecmanovic:
+        # Set 1 Winner"), so a `"Kecmanovic" in texts` probe passes on a page
+        # that dropped the match entirely. Caught by mutation, not by review.
+        assert JANNIK in texts, (
+            "his match was admitted and then truncated away before scoring — "
+            f"the arm ran and the reader still cannot see it: {texts}"
+        )
+
+    async def test_and_it_still_leads(self, crowded):
+        client, _ = crowded
+        texts = _texts(await _suggest(client, "sinner"))
+        assert texts[0] == JANNIK, f"q=sinner leads with {texts[0]!r}"
+
+
+# ==========================================================================
 class TestTheRuleUnderneath:
     """The predicate itself, singular against plural, with no route in the way."""
 
