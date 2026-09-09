@@ -60,8 +60,10 @@ from app.utils.tournament_slate import (
     build_props,
     build_results,
     build_slate,
+    first_round_size,
     slate_competition_ids,
 )
+from app.utils.tournament_progress import build_progress
 
 logger = logging.getLogger(__name__)
 
@@ -1661,7 +1663,27 @@ async def _build_sections(
         # that. It also puts the two evals — column sums and monotonicity — next
         # to the data they judge instead of in a component.
         rest["grids"] = build_grids(
-            register, boards=base.get("boards") or [], prices=prices, now=now
+            register,
+            boards=base.get("boards") or [],
+            prices=prices,
+            now=now,
+            # WHAT THE DRAW HAS ALREADY DECIDED (#4174). Read from `espn`, the
+            # raw scoreboard, NOT from `rest["results"]` below: that list drops
+            # a match unless BOTH names resolve, which is right for publishing a
+            # score and wrong for knowing that one named player is out. See
+            # `tournament_progress`, CERT-2360.
+            progress=build_progress(
+                register,
+                espn,
+                # "Round 2" is R64 in a slam and R32 in a 64-draw, so the round
+                # cannot be read without the draw's own size. The register is
+                # the authority for it, through the slate's own reader.
+                draw_sizes={
+                    str(draw): first_round_size(reg, draw)
+                    for draw in {m.get("draw") for m in reg.matchups}
+                    if draw
+                },
+            ),
         )
         # DECIDED MATCHES, WITH THE SCORE (UX-P139, Alex's item 9). A separate
         # section rather than a field on the slate, because a slate structurally
