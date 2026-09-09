@@ -65,9 +65,13 @@ const WIDE_AND_SHORT: ReadonlyArray<readonly [string, number, number, number]> =
 
 const CONTAINER_PX = 324; // the real inner width of a /calibration card at 390px
 
+// #4394 wrapped the svg in a measuring <div> (a ResizeObserver needs a box that is NOT the
+// element it resizes, or re-authoring the svg's width feeds back into its own measurement), so
+// the svg is no longer the first tag in the markup. Everything below is about the svg itself and
+// is unchanged; only the way it is located moved.
 const svgTag = (markup: string): string => {
-  const m = markup.match(/^<svg\b[^>]*>/);
-  if (!m) throw new Error("no root <svg> in the rendered markup");
+  const m = markup.match(/<svg\b[^>]*>/);
+  if (!m) throw new Error("no <svg> in the rendered markup");
   return m[0];
 };
 
@@ -113,12 +117,23 @@ describe("#4330 — the svg scales its height with its width", () => {
   );
 
   test.each(WIDE_AND_SHORT)(
-    "%s: the viewBox predicts the height the probe measured on production",
+    "%s: the viewBox predicts the height the SERVER render draws at 324px",
     (_label, width, height, measuredDrawnH) => {
       // Ties the guard to the live measurement. The browser scales the viewBox
       // to the container width, so the rendered height is C x H/W — and if
       // someone changes the viewBox formula, this stops agreeing with the
       // number in #4330 instead of failing silently somewhere else.
+      //
+      // #4394 AMENDMENT — WHAT THIS NUMBER NOW DESCRIBES. 157.4 and 185.1 were
+      // measured on production BEFORE #4394. They are still exactly what the
+      // markup below produces, and still what a reader with no JS sees, but they
+      // are no longer what production measures at 390px: once the ResizeObserver
+      // fires, these two call sites re-author to a square 324x324 box drawn at
+      // 1:1. The post-fix production table lives with its own guard, in
+      // `__tests__/components/calibrationChartLegibleOnAPhone4394.test.tsx`.
+      // Left here rather than deleted because the SERVER render is precisely
+      // what this file is about, and a number with no stated as-of is the thing
+      // that goes stale silently.
       const vb = render(width, height).match(/viewBox="0 0 (\d+) (\d+)"/);
       expect(vb).not.toBeNull();
       const [vbW, vbH] = [Number(vb![1]), Number(vb![2])];
