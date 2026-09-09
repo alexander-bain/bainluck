@@ -27,7 +27,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | label-defect-routes
              | polymarket-sport-category-census | polymarket-sport-category
              | polymarket-leg-label-census | polymarket-leg-label
-             | authority-id-collisions }
+             | authority-id-collisions | weather-shelf-disease }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
