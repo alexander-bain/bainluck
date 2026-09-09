@@ -993,7 +993,10 @@ def auto_create_time_is_invented(market, now) -> bool:
 
     Production held **70** rows for "Mets v Dodgers - Game 4", 62 for
     "Galatasaray v AZ Alkmaar" and 61 for "Whittaker v Chimaev", 1,912 phantom
-    rows across 100 matchups, growing ~15/day. `/api/events/search?q=Whittaker`
+    rows across 100 matchups, growing **15 fictional fixtures / ~42 rows a day**
+    (measured 2026-09-09 12:08Z: 15 distinct name pairs at ~3 mints each on the
+    ~7-8h cadence — the 15 is a FIXTURE count, and reading it as a row count
+    understates the generator threefold). `/api/events/search?q=Whittaker`
     returned 25 results of which **24 were the same 2024 fight**, one of them
     flagged `live`.
 

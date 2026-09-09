@@ -9,7 +9,10 @@ structured match (which keys on time) can ever find it again. The next poll
 creates a SECOND row, at a new `now`. Go to 1.
 
 Measured on production 2026-09-09: **1,912 phantom rows across 100 matchups**,
-growing ~15/day. Worst single matchup 70 rows. `/api/events/search?q=Whittaker`
+growing **15 fictional fixtures / ~42 rows a day** (12:08Z: 15 distinct name
+pairs at ~3 mints each on the ~7-8h cadence; the 15 is a FIXTURE count and
+reading it as a row count understates the generator threefold). Worst single
+matchup 70 rows. `/api/events/search?q=Whittaker`
 returned 25 results of which **24 were the same resolved 2024 fight**, one of
 them flagged `live`, burying the one real Whittaker bout on the card.
 

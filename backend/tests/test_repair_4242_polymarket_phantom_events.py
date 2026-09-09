@@ -54,7 +54,8 @@ restore = _load("restore_4242_polymarket_phantom_events")
 # ---------------------------------------------------------------------------
 
 def _row(rid, *, status="closed", markets=0, dates=0, nulls=0,
-         market_time=None, other=0, identity=0, pins=0, preservable=0):
+         market_time=None, other=0, identity=0, pins=0, preservable=0,
+         unmovable=0):
     return {
         "id": rid,
         "status": status,
@@ -67,6 +68,11 @@ def _row(rid, *, status="closed", markets=0, dates=0, nulls=0,
         # helper keeps describing the shape it always described.
         "has_provider_identity": identity,
         "n_user_pins": pins,
+        # #4319. Non-derived rows of an exception table that CANNOT be moved —
+        # a foreign anchor. Kept SEPARATE from `preservable` because that is the
+        # distinction the bug erased: both are "does not match the exception
+        # predicate", and only one of them has somewhere to go.
+        "n_unmovable_substance": unmovable,
         "n_preservable": preservable,
     }
 
@@ -734,7 +740,15 @@ def test_the_plan_only_ever_reads_duplicate_groups():
 #: DELETED by the policy CERT-2357 blocked.
 _FIVE_CLASSES = {
     "provider id (espn_id / statpal_fixture_id on the event)": _row(201, identity=1),
-    "game anchor (an anchor that is not polymarket/market)": _row(202, other=1),
+    # #4319 CORRECTED. This class used to be modelled `other=1`, i.e. as though a
+    # foreign anchor landed in `n_other_substantive`. It does not and never did:
+    # `event_provider_anchors` is in DERIVED_EXCEPTIONS, so the plan SQL counts
+    # its non-derived rows in the exception bucket. The fixture was describing a
+    # row the query cannot produce, so every assertion below passed while the
+    # shipped SQL routed a foreign anchor to PRESERVE and deleted it.
+    # `test_the_plan_routes_a_foreign_anchor_to_the_refusal_side` pins the
+    # routing so this fixture can no longer drift away from the query again.
+    "game anchor (an anchor that is not polymarket/market)": _row(202, unmovable=1),
     "non-Polymarket snapshot (a kalshi curve)": _row(203, preservable=1),
     "non-taxonomy analysis (a line_movement analysis)": _row(204, preservable=1),
     "user pin (the pseudo-FK with no constraint behind it)": _row(205, pins=1),
@@ -873,6 +887,141 @@ def test_a_foreign_curve_and_a_real_analysis_are_moved_not_destroyed():
     # and the card count is one
     assert db.execute("SELECT id FROM events").fetchall() == [(402,)]
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# #4319 — a foreign anchor is a REFUSAL, not preservable substance
+#
+# CERT-2365's follow-up. The plan SQL counted the non-derived rows of EVERY
+# exception table into one `n_preservable` bucket, `classify` turns that bucket
+# into PRESERVE, and `Matchup.doomed_ids` deletes a PRESERVE row after
+# re-pointing only the tables in PRESERVABLE_TABLES. `event_provider_anchors` is
+# deliberately not in that tuple, so a foreign anchor was counted as substance
+# worth keeping and then dropped by CASCADE without ever being moved.
+#
+# Production carried zero such rows (all 24 anchors on the population are
+# polymarket/market), so the specimen cannot come from production and these
+# tests seed it. Both halves run: the SQL ROUTING is pinned, and the behaviour
+# is EXECUTED — a source scan alone would pass on a query that still counted the
+# anchor in the wrong bucket.
+# ---------------------------------------------------------------------------
+
+def test_the_plan_routes_a_foreign_anchor_to_the_refusal_side():
+    """The anchor predicate must appear under `n_unmovable_substance`, not under
+    `n_preservable`.
+
+    This is the pin the corrected `_FIVE_CLASSES` fixture needs: without it the
+    fixture is once again free to describe a row the query cannot produce.
+    """
+    sql = repair.plan_sql(repair.CATALOGUE_2026_09_09)
+
+    unmovable = sql.split("AS n_unmovable_substance")[0].rsplit("n_user_pins", 1)[-1]
+    preservable = sql.split("AS n_preservable")[0].rsplit(
+        "AS n_unmovable_substance", 1)[-1]
+
+    assert "event_provider_anchors" in unmovable, (
+        "the anchor is not counted on the refusal side — a foreign anchor would "
+        "fall through to PRESERVE and be deleted by CASCADE unmoved (#4319)"
+    )
+    assert "event_provider_anchors" not in preservable, (
+        "the anchor is counted as preservable; PRESERVABLE_TABLES cannot move it, "
+        "so the row would be deleted after a re-point that skips its table"
+    )
+    # …and the two that CAN move are still on the preservable side, or the fix
+    # has simply refused everything and cleans nothing.
+    for movable in repair.PRESERVABLE_TABLES:
+        assert movable in preservable, (
+            f"{movable} left the preservable bucket — the repair would now defer "
+            f"the substance it is supposed to move, and the Whittaker pile stays"
+        )
+        assert movable not in unmovable, movable
+
+
+def test_the_refusal_only_set_is_derived_from_preservable_tables():
+    """Membership is computed, not restated. A fourth exception added next month
+    and left out of PRESERVABLE_TABLES must land in the refusal set by itself —
+    the safe direction — because a restated list going stale is this whole bug.
+    """
+    assert repair.refusal_only_exceptions() == ("event_provider_anchors",)
+
+    original = repair.DERIVED_EXCEPTIONS.copy()
+    try:
+        repair.DERIVED_EXCEPTIONS["shiny_new_child"] = ("c.kind = 'derived'", "seeded")
+        assert repair.refusal_only_exceptions() == (
+            "event_provider_anchors", "shiny_new_child",
+        ), "a new exception nobody classified was assumed movable"
+    finally:
+        repair.DERIVED_EXCEPTIONS.clear()
+        repair.DERIVED_EXCEPTIONS.update(original)
+
+    assert repair.refusal_only_exceptions() == ("event_provider_anchors",)
+
+
+def test_a_foreign_anchor_defers_and_survives_the_apply():
+    """EXECUTED. The row and its anchor are both still there afterwards.
+
+    The counterpart of `test_a_foreign_curve_and_a_real_analysis_are_moved_not_
+    destroyed`: same matchup shape, same shipped `apply_matchup`, but the phantom
+    carries an anchor nothing can move instead of a curve that can.
+    """
+    db = sqlite3.connect(":memory:")
+    db.executescript(_SCHEMA)
+
+    _event(db, 601)                                   # the phantom + foreign anchor
+    db.execute("INSERT INTO event_provider_anchors VALUES (?,?,?,?)",
+               (6010, 601, "espn", "game"))
+    _event(db, 602, status="live")                    # the survivor
+    db.execute("INSERT INTO futures_markets VALUES (?,?,?)", (9601, 602, _FIGHT_DATE))
+    db.commit()
+
+    phantom = _row(601, unmovable=1)
+    assert repair.classify(phantom) == "DEFER", (
+        "a foreign anchor reached a class other than DEFER — if it is PRESERVE, "
+        "the row is deleted after a re-point that never touches the anchor"
+    )
+
+    m = _matchup("Whittaker", "Chimaev", [phantom, _holder(602, _FIGHT_DATE,
+                                                           status="live")])
+    assert m.doomed_ids == [], f"the anchored row would be DELETED: {m.doomed_ids}"
+    assert m.repoint_ids == []
+    assert [r["id"] for r in m.deferred] == [601]
+
+    counts = asyncio.run(repair.apply_matchup(_SqliteSession(db), m))
+    assert counts["deleted_events"] == 0, counts
+    assert counts["repointed"] == 0, counts
+
+    assert db.execute("SELECT id FROM events ORDER BY id").fetchall() == [(601,), (602,)]
+    assert db.execute(
+        "SELECT event_id FROM event_provider_anchors WHERE id=6010").fetchone() == (601,)
+    db.close()
+
+
+def test_the_control_a_derived_anchor_on_the_same_row_still_deletes():
+    """Both directions. Swap the foreign anchor for a polymarket/market one and
+    the identical row must become an ORPHAN and be deleted — otherwise the
+    refusal refuses every anchor and the repair has stopped cleaning the pile it
+    is named after.
+    """
+    db = sqlite3.connect(":memory:")
+    db.executescript(_SCHEMA)
+
+    _event(db, 611)
+    db.execute("INSERT INTO event_provider_anchors VALUES (?,?,?,?)",
+               (6110, 611, "polymarket", "market"))
+    _event(db, 612, status="live")
+    db.execute("INSERT INTO futures_markets VALUES (?,?,?)", (9611, 612, _FIGHT_DATE))
+    db.commit()
+
+    plain = _row(611)          # a derived anchor contributes to NO refusal column
+    assert repair.classify(plain) == "ORPHAN"
+
+    m = _matchup("Whittaker", "Chimaev", [plain, _holder(612, _FIGHT_DATE,
+                                                         status="live")])
+    assert m.doomed_ids == [611]
+
+    counts = asyncio.run(repair.apply_matchup(_SqliteSession(db), m))
+    assert counts["deleted_events"] == 1, counts
+    assert db.execute("SELECT id FROM events").fetchall() == [(612,)]
 
 
 def test_the_undo_puts_a_moved_row_back_on_its_own_parent():
