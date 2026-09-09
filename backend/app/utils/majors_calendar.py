@@ -69,6 +69,53 @@ def _as_utc_date(value: Any) -> date | None:
     return None
 
 
+def calendar_window_state(
+    entry: dict[str, Any] | None,
+    now: datetime,
+    post_settlement_hours: int = 36,
+) -> str | None:
+    """Where ``now`` sits in a calendar ENTRY's window: the one clock.
+
+    Returns "upcoming" / "live" / "whathit" / "past", or None when the entry is
+    missing or its dates are unusable.
+
+    Windows, anchored on the entry's inclusive end DAY (settlement = the UTC
+    midnight AFTER the ``end`` date, so the whole finish day still counts live):
+      - "upcoming" while  now       <  start 00:00 UTC
+      - "live"     while  start     <= now <  settlement
+      - "whathit"  while  settlement<= now <  settlement + post_settlement_hours
+      - "past"     once   now       >= settlement + post_settlement_hours
+
+    Split out of `marquee_pin_state` (#4449) because that function answers a
+    PIN question and collapses "not yet" and "long over" into the same None —
+    fine for a pin, useless to a caller deciding upcoming-vs-settled. Two very
+    different states behind one empty answer is gotcha #53, so the discriminating
+    read gets its own name and `marquee_pin_state` keeps its exact contract by
+    delegating here. The date math lives once.
+
+    Pure and defensive; naive ``now`` is read as UTC.
+    """
+    if not entry:
+        return None
+    start_d = _as_utc_date(entry.get("start"))
+    end_d = _as_utc_date(entry.get("end"))
+    if start_d is None or end_d is None:
+        return None
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    start_dt = datetime.combine(start_d, time.min, tzinfo=timezone.utc)
+    # Settlement = midnight after the end day, so the finish day itself reads "live".
+    settlement_dt = datetime.combine(end_d, time.min, tzinfo=timezone.utc) + timedelta(days=1)
+    whathit_end = settlement_dt + timedelta(hours=post_settlement_hours)
+    if now < start_dt:
+        return "upcoming"
+    if now < settlement_dt:
+        return "live"
+    if now < whathit_end:
+        return "whathit"
+    return "past"
+
+
 def marquee_pin_state(
     concept_key: str,
     now: datetime,
@@ -95,18 +142,5 @@ def marquee_pin_state(
     entry = entries.get(str(concept_key))
     if not entry or not entry.get("marquee"):
         return None
-    start_d = _as_utc_date(entry.get("start"))
-    end_d = _as_utc_date(entry.get("end"))
-    if start_d is None or end_d is None:
-        return None
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    start_dt = datetime.combine(start_d, time.min, tzinfo=timezone.utc)
-    # Settlement = midnight after the end day, so the finish day itself reads "live".
-    settlement_dt = datetime.combine(end_d, time.min, tzinfo=timezone.utc) + timedelta(days=1)
-    whathit_end = settlement_dt + timedelta(hours=post_settlement_hours)
-    if start_dt <= now < settlement_dt:
-        return "live"
-    if settlement_dt <= now < whathit_end:
-        return "whathit"
-    return None
+    state = calendar_window_state(entry, now, post_settlement_hours)
+    return state if state in ("live", "whathit") else None
