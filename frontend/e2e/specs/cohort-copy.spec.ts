@@ -341,6 +341,46 @@ const has = (id: string, text: string, needle: string): Claim => ({
 const attr = async (page: Page, sel: string, name: string): Promise<string | null> =>
   page.locator(sel).first().getAttribute(name, { timeout: 5_000 }).catch(() => null);
 
+/**
+ * The page's population arithmetic, read as DATA rather than as a sentence.
+ *
+ * #4340 / notice 34. This used to be `has(..., text, "349,310 price-moved +
+ * 40,075 sportsbook = 389,385 traded, plus 263,022 untraded = 652,407 resolved
+ * outcomes")` — an `innerText` claim on a paragraph that existed, in part, so
+ * that this claim could read it. The page kept four lines of coverage
+ * arithmetic on a phone reader's screen to keep a probe green, which is the
+ * failing-self-audit shape notice 34's clause of 2026-09-09 names.
+ *
+ * The sentence is now inside the disclosure it reconciles, so `innerText` does
+ * not return it. Nothing else changed: every term still travels on an element
+ * this rail already reads, and the chain is asserted term by term with the same
+ * numbers, so the claim is if anything stricter than the string it replaces —
+ * a reworded sentence used to break it; a wrong NUMBER now does.
+ */
+async function partitionArithmetic(
+  page: Page,
+  expected: { moved: number; sportsbook: number; traded: number; untraded: number; total: number }
+): Promise<Claim> {
+  const moved = Number(await attr(page, '[data-testid="calibration-cohort-toggle"]', "data-moved-n"));
+  const sportsbook = Number(await attr(page, '[data-testid="calibration-cohort-toggle"]', "data-not-applicable-n"));
+  const untraded = Number(await attr(page, '[data-testid="calibration-cohort-toggle"]', "data-unchanged-n"));
+  const total = Number(await attr(page, '[data-testid="calibration-population-count"]', "data-full-n"));
+  const traded = moved + sportsbook;
+  const got = { moved, sportsbook, traded, untraded, total };
+  const ok =
+    moved === expected.moved &&
+    sportsbook === expected.sportsbook &&
+    traded === expected.traded &&
+    untraded === expected.untraded &&
+    total === expected.total &&
+    traded + untraded === total;
+  return {
+    id: "partition.arithmetic_published_as_data",
+    ok,
+    detail: `${JSON.stringify(got)} vs ${JSON.stringify(expected)}`,
+  };
+}
+
 /** The claims every rendered (non-error) state must satisfy. */
 async function commonRenderedClaims(text: string, page: Page): Promise<Claim[]> {
   const claims: Claim[] = [];
@@ -395,11 +435,9 @@ async function productionNumberClaims(text: string, page: Page): Promise<Claim[]
     // sentence saying what it is a proxy for. This is the RENDERED half of the
     // pairing `calibrationCohort.test.ts` asserts on the copy module.
     has("copy.proxy_footnote_rendered", text, "shorthand for a price test, not a trade count"),
-    has(
-      "copy.activity_partition_reconciles_on_screen",
-      text,
-      "349,310 price-moved + 40,075 sportsbook = 389,385 traded, plus 263,022 untraded = 652,407 resolved outcomes"
-    ),
+    await partitionArithmetic(page, {
+      moved: 349_310, sportsbook: 40_075, traded: 389_385, untraded: 263_022, total: 652_407,
+    }),
     // The definition did not vanish with the apology — it moved to the footnote.
     // Without this the page could assert "counted as traded" and never say why,
     // on the one page whose whole job is not needing to be taken at our word.
@@ -471,11 +509,9 @@ test.describe("calibration cohort copy", () => {
         has("copy.headline_follows_the_swap", text, "Showing traded markets (303,097)"),
         has("copy.sportsbook_named_as_a_subset", text, "303,097 traded outcomes (including 40,075 sportsbook lines)"),
         has("copy.excluded_side_counted", text, "Excluded: 349,310 untraded outcomes, whose price never moved off its opening line."),
-        has(
-          "copy.activity_partition_reconciles_on_screen",
-          text,
-          "263,022 price-moved + 40,075 sportsbook = 303,097 traded, plus 349,310 untraded = 652,407 resolved outcomes"
-        ),
+        await partitionArithmetic(p, {
+          moved: 263_022, sportsbook: 40_075, traded: 303_097, untraded: 349_310, total: 652_407,
+        }),
         has("direction.sentence_names_the_other_cohort", text, "untraded cohort carries the higher calibration error")
       );
       const direction = await attr(p, '[data-testid="calibration-activity-section"]', "data-activity-direction");

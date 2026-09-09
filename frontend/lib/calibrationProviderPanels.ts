@@ -170,8 +170,25 @@ export function buildProviderPanels(
  * write, and the page renders nothing rather than describing a disclosure that
  * is not on it.
  */
+/**
+ * The panels the sentence is about, as data.
+ *
+ * #4340 folded the sentence away from the reader (notice 34), and the remedy
+ * that clause names is that the FACT keeps travelling even when the prose
+ * stops rendering. By Source carries this list on `data-shape-breakdown-
+ * providers`, and the sentence below is built from the same call — so an
+ * attribute and a paragraph can never disagree about which providers publish
+ * more than one shape. Splitting them into two filters would be exactly the
+ * second-expression drift the header above was written about.
+ */
+export function shapeBreakdownProviders(
+  panels: readonly ProviderPanel[]
+): ProviderPanel[] {
+  return panels.filter(p => p.hasShapeBreakdown);
+}
+
 export function shapeBreakdownNote(panels: readonly ProviderPanel[]): string | null {
-  const withShapes = panels.filter(p => p.hasShapeBreakdown);
+  const withShapes = shapeBreakdownProviders(panels);
   if (!withShapes.length) return null;
   const names = withShapes.map(p => p.label).join(" and ");
   return (
