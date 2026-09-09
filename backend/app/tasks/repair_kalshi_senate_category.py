@@ -13,10 +13,22 @@ move a single stored row, and the difference is the whole ship.
 
 which is #1888's honest-empty rule: **an existing real tag is never
 overwritten.** So a row already stamped ``hockey`` keeps ``hockey`` through
-every future poll, forever, no matter what the classifier now says. Polymarket
-is the opposite — ``app/tasks/polymarket.py`` assigns unconditionally, so its
-four rows in this class retag on the next poll and are deliberately NOT in
-scope here.
+every future poll, forever, no matter what the classifier now says.
+
+🔴 **CORRECTION (lane1b/106, 2026-09-09).** This paragraph used to continue:
+"Polymarket is the opposite — ``app/tasks/polymarket.py`` assigns
+unconditionally, so its four rows in this class retag on the next poll and are
+deliberately NOT in scope here." The first clause is true; **the second does not
+follow, and CERT-2376 quoted it as covering the whole twelve-row cohort.** A
+writer only rewrites a row it is handed, and Polymarket discovery never hands it
+these: the scan is 10.6 hours wide and both remaining events are months outside
+it (``updated_at`` 2026-05-17 and 2026-06-18, on a poll that stamps
+``func.now()`` every upsert). Two of the four DID self-heal, because they were
+inside the horizon — which is why the claim survived a builder and a grader. **A
+claim about the WRITE is not a claim about the ROW.** The Polymarket half is
+``app/tasks/repair_polymarket_senate_category.py``, which gates on the venue's
+own tags; it is out of scope *here* because the evidence channel differs, not
+because those rows correct themselves.
 
 CERT-2372 blocked the classifier-only SHA for exactly this reason: the Fed
 Chair card still reads HOCKEY after deploy. This is the named repair,
