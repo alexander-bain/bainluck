@@ -77,14 +77,55 @@ const SOURCE_ACRONYMS: ReadonlySet<string> = new Set([
 export function prettifySourceKey(raw: string): string {
   const tokens = raw.split(/[_\s]+/).filter(Boolean);
   if (!tokens.length) return raw;
-  return tokens
-    .map((t) => {
-      const lower = t.toLowerCase();
-      return SOURCE_ACRONYMS.has(lower)
-        ? lower.toUpperCase()
-        : lower.charAt(0).toUpperCase() + lower.slice(1);
-    })
-    .join(" ");
+  return houseStyleSupplierWords(
+    tokens
+      .map((t) => {
+        const lower = t.toLowerCase();
+        return SOURCE_ACRONYMS.has(lower)
+          ? lower.toUpperCase()
+          : lower.charAt(0).toUpperCase() + lower.slice(1);
+      })
+      .join(" ")
+  );
+}
+
+/**
+ * ═══ NOTICE 33, AT THE LAST DOOR A SOURCE NAME COMES THROUGH (#4067) ═══
+ *
+ * The two maps above are an ALLOWLIST, and an allowlist cannot answer for a key
+ * it has never met. Both fallbacks below it can print the banned word:
+ *
+ *   • `prettifySourceKey("odds_api_bookmaker_closing")` → "Odds API Bookmaker
+ *     Closing". Our own generator, producing the word Alex banned, from a key
+ *     nobody has mapped yet.
+ *   • `makeSourceLabeller` falls back to the SERVER's `source_labels` name for
+ *     an unmapped key — and the server's name for the one mapped key it has is
+ *     `Per-Bookmaker (Odds API)`. That is the exact string CERT-2290 found on
+ *     production; the repair mapped that key, which fixes the instance and
+ *     leaves the door.
+ *
+ * 🔴 THE MAP IS THE FIX FOR A NAME; THIS IS THE FIX FOR THE CLASS. A new
+ * calibration source key is added by a different lane, in a different repo half,
+ * and arrives here already rendered. There is no review step between the two
+ * where somebody would think of notice 33 — so the rule has to hold without one.
+ *
+ * Applied at the exit of BOTH label functions rather than at their call sites:
+ * the page resolves labels in a dozen places (tabs, table rows, chart legends,
+ * the sample-drill-in title) and a rule applied per call site is a rule with a
+ * hole per call site.
+ *
+ * ⚠️ IT DOES NOT TOUCH THE KEY. `odds_api_bookmaker` stays exactly that on the
+ * wire, in `data-source`, and in every rail keyed on it — notice 33 (as
+ * clarified 2026-09-08 3:52pm PT) is about what a READER sees, and renaming a
+ * machine key would be an API contract change with no reader benefit.
+ */
+export function houseStyleSupplierWords(name: string): string {
+  // `\bbooks\b` cannot match inside "sportsbooks" — there is no word boundary
+  // between `sports` and `books` — so the approved word passes through whole.
+  return name.replace(/\b(bookmakers|bookmaker|books|book)\b/gi, (match) => {
+    const approved = /s$/i.test(match) ? "sportsbooks" : "sportsbook";
+    return /^[A-Z]/.test(match) ? approved.charAt(0).toUpperCase() + approved.slice(1) : approved;
+  });
 }
 
 /** Reader-facing provider names. */
@@ -188,7 +229,11 @@ export function makeSourceLabeller(
     // A blank or whitespace-only label is an absent one, not a name — rendering
     // it would leave the reader looking at nothing at all, which is worse than
     // the guess this whole path exists to improve on.
-    if (typeof name === "string" && name.trim()) return name.trim();
+    //
+    // #4067: the server's name is reader text the moment it is returned, so it
+    // goes through the same door as our own generated one. See
+    // `houseStyleSupplierWords`.
+    if (typeof name === "string" && name.trim()) return houseStyleSupplierWords(name.trim());
     return prettifySourceKey(src);
   };
 }
