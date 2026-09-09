@@ -22,7 +22,9 @@ import {
   clickFailHint,
   parseClickSteps,
   parseScroll,
+  pointerParkPoint,
   readStep,
+  shouldParkPointer,
 } from './shot-click-contract.mjs';
 
 function findPlaywright() {
@@ -185,6 +187,16 @@ try {
   // scroll offset in CSS pixels, and the shot is the viewport at that offset —
   // one readable screen. `top` is 0. The document height goes to stderr either
   // way, because knowing a page is 53 screens tall is itself a finding.
+  // Park the pointer off-viewport so the shot carries no `:hover` (see
+  // `pointerParkPoint`). Before the scroll AND before the shutter: hover is
+  // recomputed at the pointer's position on every scroll, so a pointer left on
+  // the tab it clicked ends up hovering whatever content scrolls under it.
+  if (shouldParkPointer(process.env.SHOT_KEEP_POINTER)) {
+    const park = pointerParkPoint({ width: W, height: H });
+    await page.mouse.move(park.x, park.y);
+    await page.waitForTimeout(300);
+  }
+
   const docHeight = await page.evaluate(() => document.body.scrollHeight);
   const scroll = process.env.SHOT_SCROLL;
   const shot = parseScroll(scroll);

@@ -34,6 +34,15 @@
 # page under a filename that said otherwise, and the LOOK rule read it as a pass (ux/1052 lost one
 # that way). If you genuinely want "tap it if it's there", say so: SHOT_CLICK_OPTIONAL=1.
 #
+# 2026-09-09 (#4408): the pointer is PARKED OFF-VIEWPORT before every shot, so no shot carries a
+# `:hover`. It used to be left wherever SHOT_CLICKS clicked, and SHOT_SCROLL then scrolled content
+# underneath it: `SHOT_CLICKS="Men's" SHOT_SCROLL=900` on /tournaments/us-open at 390px painted one
+# finished match grey, in three disjoint blocks with a white seam, while its identical siblings
+# stayed white — a layout defect that did not exist. A DOM census found no grey background on any
+# element, so it was invisible to a probe and visible only in the PNG. These are phone-width shots
+# of a touch surface: a reader has no pointer, so a hover state in a LOOK is never evidence.
+# Deliberately photographing a hover-only affordance? SHOT_KEEP_POINTER=1.
+#
 # 2026-09-01 (ux/976): rewritten to delegate to shop-shot.mjs. The old `npx playwright screenshot`
 # path CANNOT launch Chromium in the agent sandbox, and — worse — it exited 0 while producing no
 # file, so a dead camera read as a clean pass. This version exits non-zero if no PNG is written.
