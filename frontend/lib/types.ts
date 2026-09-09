@@ -752,6 +752,9 @@ export interface GroupedFeedResponse {
     threshold: number;
     exact_score?: number;
     placement_grid?: number;
+    // #4153 — Polymarket container groups folded into one field card. Optional
+    // because a cached payload written before that deploy has no such key.
+    container_field?: number;
   };
 }
 
