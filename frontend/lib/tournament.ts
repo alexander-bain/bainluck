@@ -285,12 +285,30 @@ export function readingCountLabel(count: number): string {
  * still the payload field it reads; only the rendering changed.
  */
 export function rowFreshnessLabel(row: TournamentRow): string | null {
+  return rowFreshness(row)?.label ?? null;
+}
+
+/**
+ * The board's half of #4283 — the same admission plus what a renderer needs.
+ * Mirrors `slateRowFreshness` deliberately, for the reason UX-P135 gives: a
+ * reader should not have to learn two vocabularies for one idea, and neither
+ * should the two components that draw it.
+ *
+ *     kind: "age"     an age-bearing method note  → draw a `FreshnessDot`
+ *     kind: "answer"  "no reading yet", an answer → keep it in the body
+ */
+export function rowFreshness(
+  row: TournamentRow
+): { label: string; kind: "age" | "answer"; ageHours: number | null } | null {
   if (rowIsPresentedAsLive(row)) return null;
   const when = stalenessLabel(row.age_hours);
-  if (row.mixed_freshness && row.stale_sources.length > 0) {
-    return `${readingCountLabel(row.stale_sources.length)} ${when}`;
-  }
-  return when;
+  const label =
+    row.mixed_freshness && row.stale_sources.length > 0
+      ? `${readingCountLabel(row.stale_sources.length)} ${when}`
+      : when;
+  const ageHours =
+    row.age_hours !== null && Number.isFinite(row.age_hours) ? row.age_hours : null;
+  return { label, kind: ageHours === null ? "answer" : "age", ageHours };
 }
 
 export interface BoardNotice {

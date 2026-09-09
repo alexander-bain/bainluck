@@ -320,6 +320,50 @@ export interface SlateData {
  * not have to learn two vocabularies for one idea (UX-P135).
  */
 export function slateRowFreshnessLabel(match: SlateMatch): string | null {
+  return slateRowFreshness(match)?.label ?? null;
+}
+
+/**
+ * The same admission, plus the two things a RENDERER needs and a string cannot
+ * carry (#4283).
+ *
+ * `kind` is the load-bearing one. Notice 34 bans a method note from the page
+ * body but says nothing against an ANSWER — "No probability yet" is a reply to
+ * the question the reader came with (ruling 027, ruling 138), and burying it in
+ * a tooltip would be the honest-empty failure, not a fix for it. So:
+ *
+ *     kind: "age"     an age-bearing method note  → draw a `FreshnessDot`
+ *     kind: "answer"  an answer to the reader     → keep it in the body
+ *
+ * 🔴 THE KIND IS DECIDED AT THE BRANCH, NOT INFERRED FROM `age_hours`. The first
+ * cut of this function read "an age exists ⇒ it is a method note", and its own
+ * guard caught it: the UNPRICED branch returns "No probability yet" for a
+ * fixture four days out that nonetheless carries an `age_hours`, so the answer
+ * was classified as a note and would have been buried in a tooltip — the exact
+ * ruling-027 failure this split exists to prevent. What makes a return a note is
+ * which question it answers, and only the branch knows that.
+ *
+ * `slateRowFreshnessLabel` is the thin string wrapper over this, so the two can
+ * never disagree about what the row says; every existing caller and assertion
+ * keeps reading the sentence.
+ */
+export function slateRowFreshness(
+  match: SlateMatch
+): { label: string; kind: "age" | "answer"; ageHours: number | null } | null {
+  const found = slateRowFreshnessText(match);
+  if (found === null) return null;
+  const ageHours =
+    found.kind === "age" &&
+    match.age_hours !== null &&
+    Number.isFinite(match.age_hours)
+      ? match.age_hours
+      : null;
+  return { label: found.label, kind: found.kind, ageHours };
+}
+
+function slateRowFreshnessText(
+  match: SlateMatch
+): { label: string; kind: "age" | "answer" } | null {
   if (slateRowIsPresentedAsLive(match)) return null;
   if (match.priced === false) {
     // Not an age. "Never priced" would be technically true and read as a
@@ -328,20 +372,21 @@ export function slateRowFreshnessLabel(match: SlateMatch): string | null {
     // Ruling 138: "No market yet" answered a probability question with an
     // inventory fact. Worded identically to `propFreshnessLabel` so the two
     // halves of the page do not teach two vocabularies for one idea.
-    return "No probability yet";
+    return { label: "No probability yet", kind: "answer" };
   }
   if (!match.coherent && match.price_state === "live") {
     // Muted for disagreement, not for age. The incoherent block already says
     // so in words; repeating an age here would name the wrong problem.
     return null;
   }
+  const hasAge = match.age_hours !== null && Number.isFinite(match.age_hours);
   const when = slateStalenessLabel(match.age_hours);
   if (match.mixed_freshness && match.stale_sides.length > 0) {
     const names = match.stale_sides.map((key) => {
       const side = match.sides.find((s) => s.entity_key === key);
       return side ? side.display_name : key;
     });
-    return `${names.join(" + ")} ${when}`;
+    return { label: `${names.join(" + ")} ${when}`, kind: hasAge ? "age" : "answer" };
   }
   // #3881: this used to return the bare age. On the US Open hub that put an
   // amber "7 hours ago" on the same line as "1:00 PM · MEN'S SINGLES", under a
@@ -360,9 +405,10 @@ export function slateRowFreshnessLabel(match: SlateMatch): string | null {
   //
   // Only an AGE takes the prefix. With no age at all `slateStalenessLabel`
   // returns "no reading yet", which already names its own subject — prefixing
-  // that would read "Last number no reading yet".
-  if (match.age_hours === null || !Number.isFinite(match.age_hours)) return when;
-  return `Last number ${when}`;
+  // that would read "Last number no reading yet". It is an ANSWER for the same
+  // reason: it reports that we have nothing, not how our pipeline works.
+  if (!hasAge) return { label: when, kind: "answer" };
+  return { label: `Last number ${when}`, kind: "age" };
 }
 
 /** Human age, rounded DOWN — "8 days ago" must never flatter to "7". */

@@ -4,6 +4,7 @@ import React from "react";
 
 import EventCardShell from "@/components/EventCardShell";
 import LiquidityMark from "@/components/LiquidityMark";
+import { FreshnessDot } from "@/components/FreshnessDot";
 import { formatLinescore } from "@/lib/linescore";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
@@ -506,13 +507,27 @@ function MatchRow({
             <span aria-hidden="true">·</span>
           )}
           {entry.drawLabel && <span>{entry.drawLabel}</span>}
-          {entry.freshnessLabel !== null && (
+          {/* #4283 / notice 34: an AGE is a method note about our pipeline and
+              goes to the mark's tooltip and its `sr-only` label; an ANSWER
+              ("No probability yet", "no reading yet") is a reply to the
+              question the reader arrived with and stays in the body, or
+              ruling 027's honest-empty becomes a silent-empty. The split is
+              `slateRowFreshness().kind`, never a phrase match here. */}
+          {entry.freshness !== null && entry.freshness.kind === "answer" && (
             <span
               className="normal-case tracking-normal text-accent-warning"
               data-testid="match-age"
             >
-              {entry.freshnessLabel}
+              {entry.freshness.label}
             </span>
+          )}
+          {entry.freshness !== null && entry.freshness.kind === "age" && (
+            <FreshnessDot
+              label={entry.freshness.label}
+              ageHours={entry.freshness.ageHours}
+              testId="match-age"
+              className="normal-case tracking-normal"
+            />
           )}
         </div>
 
