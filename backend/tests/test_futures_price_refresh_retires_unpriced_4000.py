@@ -319,7 +319,9 @@ class _RetirementHarness:
         session = self._Session(self)
 
         @contextlib.asynccontextmanager
-        async def _fake_session():
+        async def _fake_session(**_budget):
+            # #4482: statement/lock budgets arrive as kwargs on
+            # `get_task_session` rather than as `SET`s on the session.
             yield session
 
         monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)

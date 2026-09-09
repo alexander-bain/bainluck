@@ -620,11 +620,13 @@ async def run_cliff_drain(
 
     service = KalshiAPIService()
     try:
-        async with get_task_session() as session:
-            # Bound the longest single DB op. A hung statement cannot be
-            # interrupted by a loop-boundary check (gotcha: budget-guard-inner-op).
-            await session.execute(text("SET statement_timeout = '60s'"))
-            await session.execute(text("SET lock_timeout = '15s'"))
+        # Bound the longest single DB op. A hung statement cannot be
+        # interrupted by a loop-boundary check (gotcha: budget-guard-inner-op).
+        # #4482: armed on the connection — this body commits per drained row, and
+        # a `SET` does not survive the pool replacing the connection under it.
+        async with get_task_session(
+            statement_timeout_ms=60_000, lock_timeout_ms=15_000
+        ) as session:
 
             # --- pass 1: the at-risk band, on its own watermark -------------
             if at_risk_limit > 0:
@@ -918,8 +920,14 @@ async def _count_remaining(
     past Heroku's 30s router cap and H12 the endpoint.
     """
     try:
-        async with get_task_session() as session:
-            await session.execute(text(f"SET statement_timeout = '{int(timeout_s)}s'"))
+        # #4482: on the connection. These three probes run a single statement and
+        # never commit, so a `SET` would in fact hold — but the distinction is
+        # invisible at the call site, and a probe that later grows a second
+        # statement past a commit would lose its bound with no error. One way to
+        # arm a budget, so there is nothing to get wrong.
+        async with get_task_session(
+            statement_timeout_ms=int(timeout_s) * 1000
+        ) as session:
             value = (
                 await session.execute(
                     text(_REMAINING_SQL),
@@ -958,8 +966,14 @@ async def _count_at_risk(
     the false GREEN this rail exists to end.
     """
     try:
-        async with get_task_session() as session:
-            await session.execute(text(f"SET statement_timeout = '{int(timeout_s)}s'"))
+        # #4482: on the connection. These three probes run a single statement and
+        # never commit, so a `SET` would in fact hold — but the distinction is
+        # invisible at the call site, and a probe that later grows a second
+        # statement past a commit would lose its bound with no error. One way to
+        # arm a budget, so there is nothing to get wrong.
+        async with get_task_session(
+            statement_timeout_ms=int(timeout_s) * 1000
+        ) as session:
             row = (
                 await session.execute(
                     text(_AT_RISK_COUNT_SQL),
@@ -1169,8 +1183,14 @@ _CENSUS_SQL = """
 
 async def _cohort_census(timeout_s: int = TASK_PROBE_TIMEOUT_S) -> dict[str, Any]:
     try:
-        async with get_task_session() as session:
-            await session.execute(text(f"SET statement_timeout = '{int(timeout_s)}s'"))
+        # #4482: on the connection. These three probes run a single statement and
+        # never commit, so a `SET` would in fact hold — but the distinction is
+        # invisible at the call site, and a probe that later grows a second
+        # statement past a commit would lose its bound with no error. One way to
+        # arm a budget, so there is nothing to get wrong.
+        async with get_task_session(
+            statement_timeout_ms=int(timeout_s) * 1000
+        ) as session:
             row = (
                 await session.execute(
                     text(_CENSUS_SQL),

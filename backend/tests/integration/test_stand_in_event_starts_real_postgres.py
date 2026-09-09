@@ -265,7 +265,9 @@ def _install_real_session(monkeypatch, engine):
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     @asynccontextmanager
-    async def _session():
+    async def _session(**_budget):
+        # #4482: the per-job statement/lock budget is a kwarg on
+        # `get_task_session` now, not a `SET` executed on the session.
         async with maker() as session:
             yield session
 

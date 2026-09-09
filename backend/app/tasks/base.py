@@ -14,7 +14,11 @@ from app.services.database import DATABASE_URL, build_connect_args
 logger = logging.getLogger(__name__)
 
 
-def _get_task_engine():
+def _get_task_engine(
+    *,
+    statement_timeout_ms: int | None = None,
+    lock_timeout_ms: int | None = None,
+):
     """Create a fresh async engine for Celery task execution.
 
     This creates a new engine that's bound to the current event loop,
@@ -26,8 +30,17 @@ def _get_task_engine():
     calibration build included — so it is the engine whose sessions were
     resting at an UNBOUNDED ``statement_timeout`` and leaving orphaned Postgres
     backends behind on every release-time SIGKILL.
+
+    #4482: the two optional budgets go down the same channel, per engine. They
+    are why this function takes arguments at all — see ``build_connect_args``
+    for why a per-job budget cannot be a ``SET`` or a ``SET LOCAL`` on the
+    session and has to be a property of the connection.
     """
-    connect_args = build_connect_args(DATABASE_URL)
+    connect_args = build_connect_args(
+        DATABASE_URL,
+        statement_timeout_ms=statement_timeout_ms,
+        lock_timeout_ms=lock_timeout_ms,
+    )
 
     return create_async_engine(
         DATABASE_URL,
@@ -40,14 +53,38 @@ def _get_task_engine():
 
 
 @asynccontextmanager
-async def get_task_session():
+async def get_task_session(
+    *,
+    statement_timeout_ms: int | None = None,
+    lock_timeout_ms: int | None = None,
+):
     """Create a fresh async session for Celery task execution.
 
     This creates a new engine and session maker bound to the current
     event loop, avoiding conflicts between Celery's forked processes
     and asyncio event loops.
+
+    #4482 — HOW TO ARM A TIGHTER BUDGET THAN THE RESTING ONE. Pass
+    ``statement_timeout_ms`` / ``lock_timeout_ms`` here; do NOT execute a bare
+    ``SET statement_timeout`` on the yielded session. The session releases its
+    connection to the pool at every ``commit()``, and once ``pool_recycle``
+    (1800 s, in :func:`_get_task_engine`) or ``pool_pre_ping`` replaces it, the
+    fresh connection has
+    none of your ``SET``s — the statement bound silently reverts to the resting
+    30 minutes and ``lock_timeout``, which has no resting value, to unbounded.
+    These kwargs reach the connection through asyncpg's startup packet, so
+    every connection this engine ever opens carries them. A guard test
+    (``tests/test_task_session_query_budget_4482.py``) refuses a bare ``SET`` of
+    either GUC anywhere in ``app/`` so the ninth site cannot land.
+
+    ``SET LOCAL`` remains correct — and is untouched by this — where the bound
+    is meant to end with its transaction, which is most of ``backfill_winners``
+    and all of ``calibration_main_build``.
     """
-    engine = _get_task_engine()
+    engine = _get_task_engine(
+        statement_timeout_ms=statement_timeout_ms,
+        lock_timeout_ms=lock_timeout_ms,
+    )
     session_maker = async_sessionmaker(
         engine,
         class_=AsyncSession,

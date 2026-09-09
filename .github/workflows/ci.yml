@@ -1443,6 +1443,38 @@ jobs:
             exit 1
           fi
 
+      - name: "#4482 a task's query budget survives the pool (real Postgres)"
+        # Eight task sites armed a 60-90s statement bound and a 15-20s lock bound
+        # with a bare `SET`, on a comment's assumption that it "persists across
+        # the incremental commits on this one connection". The session returns
+        # its connection to the pool at every commit, and `pool_recycle=1800` or
+        # a `pool_pre_ping` failure hands back a fresh, unarmed one — the bound
+        # silently becoming the 30-minute resting value, and the lock bound
+        # becoming unbounded, since `lock_timeout` has no resting value.
+        #
+        # Real Postgres because all three load-bearing claims are the server's:
+        # that asyncpg's startup packet accepts `lock_timeout` at all (a refused
+        # GUC fails the CONNECT, so every task loses its database, which no mock
+        # can reproduce); that `"7000"` arrives as `7s`; and that the budget
+        # rides a connection the pool REPLACED.
+        #
+        # The rig is differential and both arms have to render: the fix arm
+        # asserts `pg_backend_pid()` actually changed, and the control arm
+        # reproduces the bare `SET` and asserts it LOSES the bound at the same
+        # point. Same arms reading the same thing would be a clean diff over a
+        # rig that measured nothing.
+        #
+        # Same skip-detection as every gate in this job: adding the file is not
+        # adding the gate.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_task_session_budget_recycle_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/budget4482.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/budget4482.txt; then
+            echo "::error::#4482 query-budget gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

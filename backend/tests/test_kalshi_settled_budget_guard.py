@@ -126,14 +126,34 @@ def test_caller_breaks_before_heavy_sql_when_fetch_consumes_budget():
 def test_session_has_statement_and_lock_timeouts():
     """#969-Q109b: a loop-boundary guard can't interrupt a single hung DB op
     (a commit blocking on the live poller's lock ran ~285-480s past the guard
-    and busted the 900s wall). The session MUST set statement_timeout +
-    lock_timeout so any single statement/commit fails fast instead of hanging."""
-    src = inspect.getsource(_backfill_from_settled_events)
-    assert "SET statement_timeout" in src, (
-        "no statement_timeout — a single hung SQL op can overrun the soft wall"
+    and busted the 900s wall). The session MUST carry statement_timeout +
+    lock_timeout so any single statement/commit fails fast instead of hanging.
+
+    #4482: the budget rides the CONNECTION now, not a ``SET`` on the session,
+    because this loop commits per market and the pool takes the connection back
+    at every commit — once it was recycled, the 90s/20s pair was gone and the
+    statement fell back to a 30-minute resting bound with no lock bound at all,
+    which is the very overrun this guard was written for. Asserted on the parsed
+    call: the old substring form would have been satisfied by a comment.
+    """
+    import ast
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_backfill_from_settled_events)))
+    armed = [
+        {kw.arg: ast.unparse(kw.value) for kw in n.keywords if kw.arg}
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and getattr(n.func, "id", None) == "get_task_session"
+        and any(kw.arg == "statement_timeout_ms" for kw in n.keywords)
+    ]
+    assert armed, (
+        "no statement budget on the session — a single hung SQL op can overrun "
+        "the soft wall"
     )
-    assert "SET lock_timeout" in src, (
-        "no lock_timeout — a commit blocked on a poller lock can hang the task"
+    assert all("lock_timeout_ms" in a for a in armed), (
+        "no lock budget — a commit blocked on a poller lock can hang the task, "
+        "and lock_timeout has no resting value to fall back to"
     )
 
 

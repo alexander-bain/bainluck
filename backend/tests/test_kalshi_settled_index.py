@@ -122,13 +122,45 @@ async def test_redis_unavailable_still_attempts_build():
 
 def test_called_from_backfill_before_statement_timeout():
     """The helper is invoked inside the backfill, before statement_timeout is set
-    (so the index build isn't killed by the 90s cap)."""
+    (so the index build isn't killed by the 90s cap).
+
+    #4482 moved the arming from a ``SET`` on the session to a kwarg on
+    ``get_task_session``, so the budget now belongs to the CONNECTION and starts
+    the instant that session opens. The ordering this guard exists to protect is
+    unchanged and, if anything, sharper: the index build must happen before the
+    armed session is opened at all, not merely before a statement inside it.
+    Asserted on the parsed call rather than on a substring — the old form read
+    ``src.index("SET statement_timeout")``, which a comment mentioning the
+    string would have satisfied just as well as the code did.
+    """
+    import ast
+    import textwrap
+
     from app.tasks.kalshi import _backfill_from_settled_events
 
-    src = inspect.getsource(_backfill_from_settled_events)
-    assert "_ensure_futures_outcomes_external_id_index()" in src
-    call_idx = src.index("_ensure_futures_outcomes_external_id_index()")
-    timeout_idx = src.index("SET statement_timeout")
-    assert call_idx < timeout_idx, (
-        "index helper must be called before statement_timeout is set"
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_backfill_from_settled_events)))
+
+    index_calls = [
+        n.lineno
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and getattr(n.func, "id", None) == "_ensure_futures_outcomes_external_id_index"
+    ]
+    armed_sessions = [
+        n.lineno
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and getattr(n.func, "id", None) == "get_task_session"
+        and any(kw.arg == "statement_timeout_ms" for kw in n.keywords)
+    ]
+
+    assert index_calls, "the backfill no longer builds the external_id index"
+    assert armed_sessions, (
+        "the backfill's session no longer arms a statement budget — a single "
+        "hung SQL op can overrun the 900s soft wall again"
+    )
+    assert min(index_calls) < min(armed_sessions), (
+        "the index build must run before the budgeted session opens, on its own "
+        "unarmed autocommit connection; inside it, CREATE INDEX CONCURRENTLY "
+        "would be killed by the 90s cap"
     )
