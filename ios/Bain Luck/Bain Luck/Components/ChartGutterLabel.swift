@@ -69,6 +69,69 @@ struct ChartGutterLabel<Content: View>: View {
     }
 }
 
+/// The crest drawn beside a gutter label's abbreviation.
+///
+/// WHY THIS TYPE EXISTS (#4117). The Win Probability gutter drew each team's
+/// crest beside its abbreviation and the Score Differential gutter ~200pt below
+/// it — same page, same two teams, same sideways-label idiom — drew the
+/// abbreviations bare. #3988 had fixed the crest inside `OddsChartView`, which
+/// is precisely what made its neighbour the next private rung of the ladder
+/// #2977 named. The page contradicted itself within one scroll.
+///
+/// So the crest moves out of the chart that happened to get it first, and lives
+/// beside `ChartGutterLabel` where the next gutter will find it. Copying the
+/// nine lines a third time is what guarantees a third occurrence.
+struct ChartGutterCrest: View {
+    /// The crest's square. It is laid out along the label's RUN — `ChartGutterLabel`
+    /// applies `.frame(width: run)` before rotating — so this is a length along the
+    /// chart's edge, not a width across the gutter, and 14 clears the narrower
+    /// (22pt) of the two gutters as comfortably as the wider one.
+    static let side: CGFloat = 14
+
+    let url: URL
+
+    /// Which url this side should try: `teamAvatarURL`'s answer and no rung of
+    /// its own (#2977).
+    ///
+    /// `sportKey` is passed WHOLE. `isInternationalSport` matches on the full key
+    /// (`soccer_fifa_world_cup`), so a truncated "soccer" would blind the flag
+    /// rung; the ladder's own comment says so and this is the fourth caller to
+    /// have to honour it.
+    ///
+    /// The nil name is handed straight through as `""` rather than short-circuited,
+    /// and that is deliberate. Bailing early on a missing name would drop a crest
+    /// we were HANDED — `servedURL` is the ladder's first rung and needs no name at
+    /// all — which would have been a fresh regression dressed as a guard. Both
+    /// derived rungs are dictionary lookups that miss on `""`, so delegation
+    /// already gives the right answer and this function keeps no rung of its own.
+    static func resolvedURL(servedURL: String?, teamName: String?, sportKey: String?) -> URL? {
+        teamAvatarURL(servedURL: servedURL, teamName: teamName ?? "", sportKey: sportKey)
+            .flatMap(URL.init(string:))
+    }
+
+    /// The crest itself, with the loading and failure states told apart.
+    ///
+    /// The old code passed `placeholder: { EmptyView() }` under a fixed 14pt
+    /// frame, which is #2977's second defect: `placeholder` is the FAILURE state
+    /// as well as the loading one, so a 404 reserved a 14pt gap forever and left
+    /// a hole beside the abbreviation. Here the two are separated —
+    ///
+    ///   - loading  → hold the square so the label does not jump when it arrives
+    ///   - failed   → collapse entirely; the abbreviation always renders and is
+    ///                the real label, so a reserved gap next to it is just a hole
+    var body: some View {
+        AsyncImage(url: url) { phase in
+            if let image = phase.image {
+                image.resizable().scaledToFit().frame(width: Self.side, height: Self.side)
+            } else if phase.error != nil {
+                EmptyView()
+            } else {
+                Color.clear.frame(width: Self.side, height: Self.side)
+            }
+        }
+    }
+}
+
 /// Geometry shared by every chart gutter.
 enum ChartGutter {
     /// The gap left between the two labels so a long home name and a long away

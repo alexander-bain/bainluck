@@ -458,9 +458,9 @@ struct OddsChartView: View {
                             // Home team (top)
                             ChartGutterLabel(run: run) {
                                 HStack(spacing: 3) {
-                                    if let url = OddsChartView.gutterCrestURL(
+                                    if let url = ChartGutterCrest.resolvedURL(
                                         servedURL: homeTeamLogo, teamName: homeTeamName, sportKey: sportKey) {
-                                        gutterCrest(url)
+                                        ChartGutterCrest(url: url)
                                     }
                                     Text(homeShort.uppercased())
                                         .font(.system(size: 11, weight: .bold))
@@ -472,9 +472,9 @@ struct OddsChartView: View {
                             // Away team (bottom)
                             ChartGutterLabel(run: run) {
                                 HStack(spacing: 3) {
-                                    if let url = OddsChartView.gutterCrestURL(
+                                    if let url = ChartGutterCrest.resolvedURL(
                                         servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) {
-                                        gutterCrest(url)
+                                        ChartGutterCrest(url: url)
                                     }
                                     Text(awayShort.uppercased())
                                         .font(.system(size: 11, weight: .bold))
@@ -519,66 +519,13 @@ struct OddsChartView: View {
         }
     }
 
-    // MARK: - Gutter Crest (#3988)
+    // MARK: - Gutter Crest (#3988 → #4117)
 
-    /// Which picture the chart gutter's 14pt crest should try.
-    ///
-    /// #3988 — this was `if let logo = homeTeamLogo, let url = URL(string: logo)`
-    /// and nothing else: the THIRD private, one-rung avatar ladder on iOS, after
-    /// the two #2977 replaced on the Discover surfaces. A nil served url drew
-    /// nothing even for a team `espnTeamLogoURL(for:)` names by heart. Measured
-    /// on the production feed of 2026-09-08 (`/api/feed?limit=200&event_pct=0.6`,
-    /// 59 event cards / 118 sides): **95 sides carry no avatar url at all, and 51
-    /// of those are teams the ESPN rung resolves** — every MLB team on the page.
-    /// So the gutter was mostly bare beside a Sports row drawing real crests for
-    /// the same games.
-    ///
-    /// Everything the shared ladder needs was already on this view —
-    /// `homeTeamName`/`awayTeamName` (:163) and `sportKey` (:177) — which is why
-    /// #3988 is a call-site change and not a new mechanism.
-    ///
-    /// `sportKey` is passed WHOLE. `isInternationalSport` matches on the full key
-    /// (`soccer_fifa_world_cup`), so a truncated "soccer" would blind the flag
-    /// rung; the ladder's own comment says so and this is the third caller to
-    /// have to honour it.
-    /// The nil name is handed straight through as `""` rather than short-circuited,
-    /// and that is deliberate. Bailing early on a missing name would drop a crest
-    /// we were HANDED — `servedURL` is the ladder's first rung and needs no name at
-    /// all — which would have been a fresh regression dressed as a guard. Both
-    /// derived rungs are dictionary lookups that miss on `""`, so delegation
-    /// already gives the right answer and this function keeps no rung of its own.
-    /// (`EventDetail.homeTeam` is non-optional, so on the live call site the name
-    /// is always there; this is about not re-deciding the ladder, not about `nil`.)
-    static func gutterCrestURL(servedURL: String?, teamName: String?, sportKey: String?) -> URL? {
-        teamAvatarURL(servedURL: servedURL, teamName: teamName ?? "", sportKey: sportKey)
-            .flatMap(URL.init(string:))
-    }
-
-    /// The crest itself, with the loading and failure states told apart.
-    ///
-    /// The old code passed `placeholder: { EmptyView() }` under a fixed 14pt
-    /// frame, which is #2977's second defect: `placeholder` is the FAILURE state
-    /// as well as the loading one, so a 404 reserved a 14pt gap forever and left
-    /// a hole beside the abbreviation. Here the two are separated —
-    ///
-    ///   - loading  → hold the 14pt so the label does not jump when it arrives
-    ///   - failed   → collapse entirely; the abbreviation always renders and is
-    ///                the real label, so a reserved gap next to it is just a hole
-    ///
-    /// — which is also what clears this file's by-name entry in
-    /// `frontend/__tests__/ios/teamAvatarLadderSingleSource.test.ts`.
-    @ViewBuilder
-    private func gutterCrest(_ url: URL) -> some View {
-        AsyncImage(url: url) { phase in
-            if let image = phase.image {
-                image.resizable().scaledToFit().frame(width: 14, height: 14)
-            } else if phase.error != nil {
-                EmptyView()
-            } else {
-                Color.clear.frame(width: 14, height: 14)
-            }
-        }
-    }
+    // The crest and the ladder call that picks it now live on `ChartGutterCrest`
+    // in `ChartGutterLabel.swift`, beside the label they sit next to. #3988 fixed
+    // this gutter and by doing so made the Score Differential gutter 200pt below
+    // it the next private rung — #4117 — so the shared thing is a shared thing.
+    // The measurement that justified the ladder call is on `resolvedURL` there.
 
     // MARK: - Fullscreen Chart
 
@@ -632,18 +579,35 @@ struct OddsChartView: View {
                                 GeometryReader { geo in
                                     let run = ChartGutter.run(chartHeight: geo.size.height, verticalPadding: 0)
                                     VStack {
+                                        // #4117 — the same crest as the inline gutter.
+                                        // #3988 fixed the chart above and left its own
+                                        // fullscreen twin bare 120 lines below it, which
+                                        // is the whole reason the crest is now shared
+                                        // rather than written per call site.
                                         ChartGutterLabel(run: run) {
-                                            Text(homeShort.uppercased())
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundStyle(teamColors?.home ?? .blue)
-                                                .lineLimit(1)
+                                            HStack(spacing: 3) {
+                                                if let url = ChartGutterCrest.resolvedURL(
+                                                    servedURL: homeTeamLogo, teamName: homeTeamName, sportKey: sportKey) {
+                                                    ChartGutterCrest(url: url)
+                                                }
+                                                Text(homeShort.uppercased())
+                                                    .font(.system(size: 10, weight: .bold))
+                                                    .foregroundStyle(teamColors?.home ?? .blue)
+                                                    .lineLimit(1)
+                                            }
                                         }
                                         Spacer()
                                         ChartGutterLabel(run: run) {
-                                            Text(awayShort.uppercased())
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundStyle(teamColors?.away ?? .red)
-                                                .lineLimit(1)
+                                            HStack(spacing: 3) {
+                                                if let url = ChartGutterCrest.resolvedURL(
+                                                    servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) {
+                                                    ChartGutterCrest(url: url)
+                                                }
+                                                Text(awayShort.uppercased())
+                                                    .font(.system(size: 10, weight: .bold))
+                                                    .foregroundStyle(teamColors?.away ?? .red)
+                                                    .lineLimit(1)
+                                            }
                                         }
                                     }
                                 }
