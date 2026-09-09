@@ -312,10 +312,12 @@ def singles_order_allowances() -> dict[str, list[dict[str, Any]]]:
     not the other. A fourth provenance is therefore a test failure before it is
     a silent under-disclosure.
 
-    Singles only, and the caller enforces that. CERT-1948: the doubles join keys
-    on an unordered pair of surnames, so no re-ordering tolerance can move a
-    doubles number, and publishing one there claimed a reliance that row never
-    had.
+    Singles only, and the caller enforces that. CERT-1948: the doubles join
+    compares an unordered pair of ``(surname, initial)`` keys and never a token
+    multiset, so no re-ordering tolerance can move a doubles number, and
+    publishing one there claimed a reliance that row never had. (#4095 widened
+    that comparison to read the initial; it did not give doubles a token
+    reading, so the CERT-1948 conclusion is unchanged.)
     """
     return {
         # Judgement first: the reader who has time for one entry should spend it
@@ -722,10 +724,10 @@ def pair_tennis_sides(
 
     `draw` says WHICH draw, and it exists only so the row can be honest about
     the reviewed order allowances (CERT-1948). Those two classes are singles
-    player names, and the doubles join keys on an unordered pair of surnames:
-    measured over the pinned corpus, **0 of 1,674 doubles names have a token
-    multiset in `ORDER_ALIASES`**, so the tolerance cannot move a doubles
-    number. Publishing it on the doubles row claimed a tolerance that row never
+    player names, and the doubles join compares an unordered pair of
+    `(surname, initial)` keys rather than a token multiset: measured over the
+    pinned corpus, **0 of 1,674 doubles names have a token multiset in
+    `ORDER_ALIASES`**, so the tolerance cannot move a doubles number. Publishing it on the doubles row claimed a tolerance that row never
     relied on — the row saying something untrue about its own pass, which is the
     exact failure this ship exists to stop, committed by the ship itself.
 

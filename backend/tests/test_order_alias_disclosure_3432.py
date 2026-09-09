@@ -199,8 +199,10 @@ class TestThePublishedRowSaysIt:
 
     def test_the_doubles_row_still_discloses_nothing(self, rows):
         """CERT-1948 survives three keys. The doubles join reads an unordered
-        pair of surnames, so no re-ordering tolerance can move its number, and
-        claiming one would be the same lie in the other direction."""
+        pair of `(surname, initial)` keys and never a token multiset, so no
+        re-ordering tolerance can move its number, and claiming one would be the
+        same lie in the other direction. #4095 widened that comparison to read
+        the initial and left this conclusion where it was."""
         assert rows[DOUBLES]["allowances"] == {}
         for name in TENNIS_ALLOWANCE_NAMES:
             assert name not in rows[DOUBLES]["allowances"]
