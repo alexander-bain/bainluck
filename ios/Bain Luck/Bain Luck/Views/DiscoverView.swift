@@ -746,7 +746,12 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         }
                     ) {
-                        NativeFuturesDiscoverCard(data: f, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: f.hookDescription ?? item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
+                        // #4265 — one caption chain with web (`feedContextSnippet`),
+                        // and `""` counts as absent. `??` did not: the wire sends
+                        // `context_summary: ""` on ~20% of futures cards, which won
+                        // the old chain outright and left three cards in the
+                        // 2026-09-09 edition captioned on web and blank in the app.
+                        NativeFuturesDiscoverCard(data: f, feedContext: DiscoverCaption.feedCaption(contextSummary: item.contextSummary, headline: item.headline, reason: item.reason, hookDescription: f.hookDescription), expandedContext: DiscoverCaption.firstMeaningful([f.hookDescription, item.reason, item.headline]), navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
                         }, onContextExpand: {
                             recordInteraction(for: item, action: .contextExpand, source: "context")
