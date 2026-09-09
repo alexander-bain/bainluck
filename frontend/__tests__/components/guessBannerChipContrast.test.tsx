@@ -169,6 +169,24 @@ function bannerOf(markup: string): string {
   return m[1];
 }
 
+/**
+ * The visible text of a fragment of static markup: the runs of characters that
+ * sit OUTSIDE any tag.
+ *
+ * Read positively — the runs after each `>` — rather than by stripping tags.
+ * A strip (`replace(/<[^>]*>/g, "")`) is sanitizer-shaped, and CodeQL rightly
+ * refuses it as `js/incomplete-multi-character-sanitization`: one pass leaves a
+ * bare `<script` behind. Nothing here is sanitizing anything. This asks what a
+ * person would SEE in the chip, so it reads the text rather than deleting the
+ * markup — which also means a category name hiding in an ATTRIBUTE (an `alt`,
+ * a `title`) no longer satisfies the assertion below.
+ */
+function visibleText(markup: string): string {
+  const lead = /^[^<>]*/.exec(markup)?.[0] ?? "";
+  const afterTags = markup.match(/>[^<>]*/g) ?? [];
+  return lead + afterTags.map((run) => run.slice(1)).join("");
+}
+
 /** Class values from `CATEGORY_COLORS` — the white-card skin, banned up here. */
 const CARD_SKIN_CLASSES = [
   /\bbg-[a-z]+-\d00\/15\b/, // bg-indigo-500/15 &c
@@ -196,8 +214,9 @@ describe("#4181 · PART 1 — the banner chip wears the on-dark skin, and still 
       //    satisfied by deleting the chip.
       const chip = /<span class="([^"]*rounded-full[^"]*ml-auto[^"]*)">([\s\S]*?)<\/span>/.exec(banner);
       expect(chip).not.toBeNull();
-      const [, chipClasses, chipText] = chip!;
-      expect(chipText.replace(/<[^>]*>/g, "").trim().length).toBeGreaterThan(0);
+      const [, chipClasses, chipInner] = chip!;
+      const chipText = visibleText(chipInner);
+      expect(chipText.trim().length).toBeGreaterThan(0);
       expect(chipText).toContain(cat);
 
       // 2. It wears the on-dark skin.
