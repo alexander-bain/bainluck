@@ -257,13 +257,29 @@ class TestEveryTierDeclares:
         first = await calibration.public_calibration(db=object())
         assert first["availability"] == AVAILABILITY_FRESH
 
-        # Second read cannot reach Redis at all — it must come off the memo.
+        # Second read: Redis is dead, so nothing below tier 1 can produce a FRESH
+        # answer — every lower tier stale-marks what it serves.
         dead = _use(monkeypatch, _DeadRedis())
         second = await calibration.public_calibration(db=object())
         assert second["availability"] == AVAILABILITY_FRESH
         assert second["total_outcomes"] == 1_000_000
-        # ...and prove it: tier 1 answering means Redis was never consulted.
-        assert dead.calls == 0
+        # ...and prove it was TIER 1, without using the call count.
+        #
+        # CERT-2299 retired `dead.calls == 0` as a discriminator, and it is worth
+        # being explicit about why rather than just changing the number: the memo
+        # now consults the store BEFORE answering, so the read happens whether
+        # tier 1 answers or declines. The count went from proving something to
+        # proving nothing, which is exactly the defanging this class's `calls`
+        # counter was added to catch — so it is replaced, not merely re-tuned.
+        #
+        # `availability` is the honest discriminator here: tier 1 is the only tier
+        # that can return FRESH with a dead Redis. Every tier below it constructs
+        # its answer through `_degraded`, which always stale-marks.
+        assert "cache" not in second, "a lower tier would have stale-marked this copy"
+        assert dead.calls == 1, (
+            "exactly one bounded GET: the memo consults the store once (CERT-2299) "
+            "and does not fall through to a second read"
+        )
 
     async def test_a_memo_of_an_unvalidated_copy_never_heals_to_fresh(self, monkeypatch):
         """An incomplete payload with a recent timestamp is recent AND still
@@ -285,7 +301,14 @@ class TestEveryTierDeclares:
         dead = _use(monkeypatch, _DeadRedis())
         second = await calibration.public_calibration(db=object())
         assert second["availability"] == AVAILABILITY_DEGRADED
-        assert dead.calls == 0, "tier 1 must be the tier that declined to heal"
+        # CERT-2299: `dead.calls == 0` no longer distinguishes tier 1 from a
+        # fall-through (the memo consults the store either way), and DEGRADED is
+        # not on its own a discriminator here the way FRESH is in the test above —
+        # a lower tier can also answer degraded. The `cache` block is: tier 1
+        # re-serves the memo untouched, while every tier below builds its answer
+        # through `_degraded`, which always stale-marks.
+        assert "cache" not in second, "tier 1 must be the tier that declined to heal"
+        assert dead.calls == 1, "one bounded GET, not a fall-through to a second read"
 
     async def test_dated_last_good_declares_stale(self, monkeypatch):
         from app.routes import calibration
