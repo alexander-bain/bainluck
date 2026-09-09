@@ -42,14 +42,15 @@ sweep a matrix and no anchor can rot (gotcha #44).
 
 from datetime import timedelta
 
-from sqlalchemy import and_, case, or_
+from sqlalchemy import and_, case, or_, select
 
-from app.models.models import Event
+from app.models.models import Event, Sport
 from app.utils.event_completion import (
     EVENT_SUSPENDED,
     RECENT_RAIL_STATUSES,
     UPCOMING_GRACE,
 )
+from app.utils.sport_keys import STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES
 
 #: The statuses that mean "this happened and we know how it went" — the settled
 #: rail's whole vocabulary after #3748.
@@ -208,7 +209,45 @@ def never_observed_columns():
         Event.away_score.is_(None),
         Event.period.is_(None),
         Event.espn_id.is_(None),
-        Event.statpal_fixture_id.is_(None),
+        or_(
+            Event.statpal_fixture_id.is_(None),
+            Event.sport_id.in_(shadow_anchor_sport_ids()),
+        ),
+    )
+
+
+def shadow_anchor_sport_ids():
+    """The `sports.id`s whose StatPal anchor proves nothing is watching. #4075.
+
+    The SQL half of
+    :func:`~app.utils.sport_keys.statpal_anchor_is_shadow`, and the reason
+    :func:`never_observed_columns` reads its fifth conjunct as "no anchor, OR an
+    anchor that means nothing here" rather than a flat ``IS NULL``. Soccer's
+    live board is fenced off from ingestion on purpose while the authority
+    stamper writes soccer anchors hourly, so on those rows the id is a number
+    from a board nothing reads — see that function and
+    :data:`~app.utils.sport_keys.STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES`.
+
+    An UNCORRELATED subquery over ``sports``, which is a few dozen rows and is
+    hoisted and hashed once per statement rather than evaluated per candidate —
+    the one cost this rail could not afford, given an ORDER BY that already
+    leads with a ``CASE`` and so cannot be served by any index.
+
+    ``Event.sport_id`` is NOT NULL, so the ``NOT IN`` reading this takes inside
+    :func:`started_live_and_observed`'s ``~never_observed_columns()`` cannot go
+    three-valued on a missing sport.
+
+    ``like(f"{prefix}%")`` is ``str.startswith`` written where a ``WHERE`` can
+    spend it — the same prefix semantics the Python predicate uses, which is
+    what keeps the 2^5 × sport agreement sweep honest.
+    """
+    return select(Sport.id).where(
+        or_(
+            *(
+                Sport.key.like(f"{prefix}%")
+                for prefix in STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES
+            )
+        )
     )
 
 

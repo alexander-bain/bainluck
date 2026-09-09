@@ -288,6 +288,7 @@ async def detect_and_close_stale_events(session) -> dict:
                 event.espn_id,
                 event.statpal_fixture_id,
                 None,
+                sport_key,
             )
             if never_observed and hours_since_start <= max_hours:
                 last_snap = await _last_post_commence_snapshot(session, event.id)
@@ -299,6 +300,7 @@ async def detect_and_close_stale_events(session) -> dict:
                     event.espn_id,
                     event.statpal_fixture_id,
                     last_snap,
+                    sport_key,
                 )
             bound_hours = wall_clock_bound_hours(sport_key, max_hours, never_observed)
             if hours_since_start <= bound_hours:

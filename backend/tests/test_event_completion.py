@@ -790,7 +790,10 @@ class TestUnobservedWallClockBound:
     """The predicate and the lookup, before either net is asked about them."""
 
     def test_a_row_nothing_ever_reported_on_is_unobserved(self):
-        assert event_has_never_been_observed(None, None, None, None, None, None) is True
+        assert (
+            event_has_never_been_observed(None, None, None, None, None, None, "tennis_atp")
+            is True
+        )
 
     @pytest.mark.parametrize("field,value", [
         ("home_score", 0),
@@ -806,14 +809,18 @@ class TestUnobservedWallClockBound:
         # `espn_id`, and a zero score is a score. A one-signal version of this
         # rule over a mixed population is the CERT-2256 error.
         kwargs = dict(home_score=None, away_score=None, period=None, espn_id=None,
-                      statpal_fixture_id=None, last_snapshot=None)
+                      statpal_fixture_id=None, last_snapshot=None,
+                      sport_key="tennis_atp")
         kwargs[field] = value
         assert event_has_never_been_observed(**kwargs) is False
 
     def test_a_zero_zero_score_still_counts_as_reported(self):
         # 0-0 is what a source SAID, not an absence — the `is None` test is the
         # whole difference and a falsy check would erase it.
-        assert event_has_never_been_observed(0, 0, None, None, None, None) is False
+        assert (
+            event_has_never_been_observed(0, 0, None, None, None, None, "tennis_atp")
+            is False
+        )
 
     def test_an_observed_row_keeps_its_sports_full_maximum(self):
         assert wall_clock_bound_hours("tennis_atp_us_open", 6.0, False) == 6.0

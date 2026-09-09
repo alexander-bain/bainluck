@@ -189,6 +189,49 @@ STATPAL_SPORT_MAPPING: dict[str, str] = {
 # Other sports return 404 for the PBP endpoint — skip them to save API calls.
 STATPAL_PBP_SPORTS: set[str] = {"nfl"}
 
+# OUR sport-key prefixes whose `events.statpal_fixture_id` is a SHADOW anchor:
+# stamped by the AUTHORITY door, never read by the LIVE writer. #4075.
+#
+# Everywhere else an anchor means "the authority knows about this row and can
+# settle it", which is why `event_completion.event_has_never_been_observed`
+# lets one keep a row's full sport maximum. For a sport in
+# `statpal_api.LIVESCORES_INGESTION_DARK_SPORTS` that premise is false BY
+# CONSTRUCTION: the live board is fenced off from ingestion on purpose (read
+# that constant for why), so the id is a number from a board nothing reads.
+# The soccer stamper has run hourly since `dd753773`, so soccer rows now carry
+# these ids in quantity.
+#
+# Keyed by OUR sport-key PREFIX rather than by the seven soccer keys in
+# `STATPAL_SPORT_MAPPING`, for the reason `statpal_sync._INJURY_EVENT_SPORT_PREFIX`
+# gives: most soccer events sit under keys that map never names
+# (`soccer_brazil_campeonato`, `soccer_mexico_ligamx`, `soccer_other`, …), and
+# restricting to the schedule map would leave most of the population still
+# reading its anchor as an observation.
+#
+# `str.startswith`, matching BOTH neighbours this has to agree with:
+# `event_completion.wall_clock_bound_hours` (`UNOBSERVED_MAX_HOURS` prefixes)
+# and the injury attach's `Sport.key.like(f"{prefix}%")`. That is what lets
+# `event_rails.never_observed_columns` be a transcription of the Python
+# predicate rather than a second reading of it.
+STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES: frozenset[str] = frozenset({"soccer"})
+
+
+def statpal_anchor_is_shadow(sport_key: Optional[str]) -> bool:
+    """Does a StatPal fixture id on THIS sport's row prove nothing is watching?
+
+    True ⇒ the anchor is a shadow and confers no observation. See
+    :data:`STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES`.
+
+    A missing ``sport_key`` reads as NOT shadow, which keeps the anchor's
+    protective meaning for every sport this set does not name — the same
+    direction :func:`wall_clock_bound_hours` defaults in.
+    """
+    key = sport_key or ""
+    return any(
+        key.startswith(prefix) for prefix in STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES
+    )
+
+
 # StatPal sports whose LIVE endpoint numbers fixtures in a DIFFERENT id space
 # from the one `events.statpal_fixture_id` must hold, mapped to the live field
 # that carries the right one. #3094, under D55.
