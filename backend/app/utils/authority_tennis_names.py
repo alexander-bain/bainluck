@@ -793,7 +793,18 @@ def resolve_tennis_name(
     """
     theirs_is_doubles = is_doubles_name(theirs)
     if theirs_is_doubles:
-        if doubles_key(theirs) is None:
+        # `doubles_side_keys`, not `doubles_key` — the reader the JOIN below
+        # actually uses (#4095 follow-up `ALIGN-DOUBLES-READABILITY-CONTRACT`).
+        # The two differ on exactly one class, a side that is initials all the
+        # way down: `doubles_key` calls `S-/ Ostapenko` a clean pair of strings
+        # and `doubles_teams_agree` refuses it, because `S-` names nobody. Under
+        # the old gate such a name fell through to a join that could never agree
+        # and came back `NO-CANDIDATE` — "we do not have this player", said about
+        # a name we never read — where the singles arm two lines below has always
+        # answered `UNREADABLE` for its own initials-only case. Same defect, same
+        # answer, and the outcome a receipt can act on: one sends a person to look
+        # for a missing row, the other sends them to the parser.
+        if doubles_side_keys(theirs) is None:
             return TennisResolution(UNREADABLE)
     elif statpal_tennis_key(theirs) is None:
         return TennisResolution(UNREADABLE)
