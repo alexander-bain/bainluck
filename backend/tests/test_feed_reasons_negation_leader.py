@@ -181,7 +181,10 @@ class TestContextSummary:
             leader_probability=0.725,
             source_count=1,
         )
-        assert "No leads at 72%" in summary
+        # 72% -> 73% with #4146 (0.725 is a .5 boundary; the card prints 73).
+        # The subject of this test is the LABEL, not the number, and the label
+        # assertion below is untouched.
+        assert "No leads at 73%" in summary
         assert NEURALINK_NO_LABEL not in summary
 
     def test_an_ordinary_leader_is_untouched(self):
@@ -247,7 +250,8 @@ class TestReasonAndHeadline:
             source_count=1,
             market_name=NEURALINK_MARKET,
         )
-        assert headline == "Resolving soon: No leads at 72%"
+        # 72% -> 73%, same .5 boundary as above (#4146).
+        assert headline == "Resolving soon: No leads at 73%"
 
     def test_mover_and_surprise_labels_get_the_same_rule(self):
         # The movement branches take a DIFFERENT name argument. A fix applied

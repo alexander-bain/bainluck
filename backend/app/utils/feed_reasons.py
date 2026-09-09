@@ -10,6 +10,8 @@ import re
 from datetime import datetime, timezone
 from typing import NamedTuple, Optional
 
+from app.utils.graded_card import rendered_percent
+
 #: Words about our own machinery — the ordering of our leaderboard, the number of
 #: rows we hold for a question, whether our sources agree with each other. None of
 #: them is a thing that happened in the world, so none of them may reach a reader
@@ -276,6 +278,31 @@ def humanize_outcome_names_for_feed(
 def _point_change(value: float) -> float:
     """Convert a probability delta to percentage points for display."""
     return round(abs(value) * 100, 1)
+
+
+def _display_pct(probability: float, printed: Optional[int] = None) -> int:
+    """The whole percent a SENTENCE states about `probability`. (#4146)
+
+    ``printed`` is the percent the card's own row shows, when the caller has it.
+    That is the number the sentence has to state, because it is the number the
+    reader can see three millimetres away — and on a complement pair it is
+    DERIVED (`100 - leader`, #2060's rule) rather than rounded from this
+    probability at all, so no rounding of the raw value can reproduce it.
+
+    Without a printed percent, fall back to `rendered_percent`: the shared
+    implementation of this decision (ruling 021), driven through
+    `contracts/rendered_percent.json` in all three runtimes. **Never `round()`**
+    — Python's built-in is banker's rounding, so `round(70.5)` is 70 while the
+    card, web and native all print 71. Eleven of forty-five cards on production
+    Discover stated a percent their own card did not print, every one of them on
+    a .5 boundary, because this module derived its own.
+    """
+    if printed is not None:
+        return int(printed)
+    # `or 0` would be wrong here: 0% is a real percent and None is "no price",
+    # and the two must not collapse (the contract's first row says so).
+    value = rendered_percent(probability)
+    return 0 if value is None else value
 
 
 def _normalized_copy_tokens(text: str | None) -> list[str]:
@@ -577,6 +604,7 @@ def compose_binary_card_copy(
     market_name: Optional[str],
     highlight_reasons: list[str],
     affirmative_probability: float,
+    rendered_affirmative_percent: Optional[int] = None,
     top_mover_change: Optional[float] = None,
     top_surprise_change: Optional[float] = None,
     top_surprise_opened_at: Optional[datetime] = None,
@@ -593,7 +621,7 @@ def compose_binary_card_copy(
     if "stale_past_resolution" in reasons:
         return BinaryCardCopy("", "", "")
 
-    pct = round(affirmative_probability * 100)
+    pct = _display_pct(affirmative_probability, rendered_affirmative_percent)
     answer = f"{pct}% chance"
     title = _short_market_name(market_name) if market_name else ""
 
@@ -662,7 +690,7 @@ def generate_event_reason(
                     winner_opening_prob = opening_home_prob
                 else:
                     winner_opening_prob = 1 - opening_home_prob
-                pct = round(winner_opening_prob * 100)
+                pct = _display_pct(winner_opening_prob)
                 return f"Won as {pct}% underdog"
             return "Upset result"
         # #4094 — NO INTRA-GAME MOVEMENT SENTENCE ON A FINAL CARD.
@@ -764,8 +792,10 @@ def generate_futures_reason(
     top_surprise_change: Optional[float] = None,
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
+    rendered_leader_percent: Optional[int] = None,
     source_count: int = 1,
     affirmative_probability: Optional[float] = None,
+    rendered_affirmative_percent: Optional[int] = None,
     top_surprise_opened_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
 ) -> str:
@@ -783,6 +813,7 @@ def generate_futures_reason(
             market_name=market_name,
             highlight_reasons=highlight_reasons,
             affirmative_probability=affirmative_probability,
+            rendered_affirmative_percent=rendered_affirmative_percent,
             top_mover_change=top_mover_change,
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
@@ -803,7 +834,7 @@ def generate_futures_reason(
     # Leader change (most interesting)
     if "leader_change" in reasons:
         if leader_name and leader_probability is not None:
-            pct = round(leader_probability * 100)
+            pct = _display_pct(leader_probability, rendered_leader_percent)
             return f"New favorite: {leader_name} ({pct}%) now leads {market_name}"
         return f"New favorite in {market_name}"
 
@@ -843,14 +874,14 @@ def generate_futures_reason(
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name):
                 return f"{market_name} resolving this week"
-            pct = round(leader_probability * 100)
+            pct = _display_pct(leader_probability, rendered_leader_percent)
             return f"{market_name} resolving soon, {leader_name} leads at {pct}%"
         return f"{market_name} resolving this week"
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name):
                 return f"{market_name} resolves this month"
-            pct = round(leader_probability * 100)
+            pct = _display_pct(leader_probability, rendered_leader_percent)
             return f"{market_name} resolves this month, {leader_name} leads at {pct}%"
         return f"{market_name} resolving this month"
 
@@ -887,7 +918,7 @@ def generate_futures_reason(
     if leader_name and leader_probability is not None:
         if _weak_outcome_label(leader_name):
             return market_name
-        pct = round(leader_probability * 100)
+        pct = _display_pct(leader_probability, rendered_leader_percent)
         return f"{leader_name} ({pct}%) leads {market_name}"
 
     return market_name
@@ -901,9 +932,11 @@ def generate_futures_headline(
     top_surprise_change: Optional[float] = None,
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
+    rendered_leader_percent: Optional[int] = None,
     source_count: int = 1,
     market_name: Optional[str] = None,
     affirmative_probability: Optional[float] = None,
+    rendered_affirmative_percent: Optional[int] = None,
     top_surprise_opened_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
 ) -> str:
@@ -915,6 +948,7 @@ def generate_futures_headline(
             market_name=market_name,
             highlight_reasons=highlight_reasons,
             affirmative_probability=affirmative_probability,
+            rendered_affirmative_percent=rendered_affirmative_percent,
             top_mover_change=top_mover_change,
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
@@ -933,7 +967,7 @@ def generate_futures_headline(
 
     if "leader_change" in reasons:
         if leader_name and leader_probability is not None:
-            return f"New favorite: {leader_name} ({round(leader_probability * 100)}%)"
+            return f"New favorite: {leader_name} ({_display_pct(leader_probability, rendered_leader_percent)}%)"
         return "New favorite"
 
     # (No `source_divergence` branch — see `generate_futures_reason`.)
@@ -964,7 +998,7 @@ def generate_futures_headline(
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name) and market_name:
                 return f"{_short_market_name(market_name)} resolving soon"
-            return f"Resolving soon: {leader_name} leads at {round(leader_probability * 100)}%"
+            return f"Resolving soon: {leader_name} leads at {_display_pct(leader_probability, rendered_leader_percent)}%"
         return "Resolving soon"
 
     if "resolving_soon_30d" in reasons:
@@ -998,7 +1032,7 @@ def generate_futures_headline(
     if leader_name and leader_probability is not None:
         if _weak_outcome_label(leader_name) and market_name:
             return _short_market_name(market_name)
-        return f"{leader_name} leads at {round(leader_probability * 100)}%"
+        return f"{leader_name} leads at {_display_pct(leader_probability, rendered_leader_percent)}%"
 
     return ""
 
@@ -1010,8 +1044,10 @@ def generate_futures_context_summary(
     market_name: Optional[str] = None,
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
+    rendered_leader_percent: Optional[int] = None,
     source_count: int = 1,
     affirmative_probability: Optional[float] = None,
+    rendered_affirmative_percent: Optional[int] = None,
     top_mover_change: Optional[float] = None,
     top_surprise_change: Optional[float] = None,
     top_surprise_opened_at: Optional[datetime] = None,
@@ -1035,6 +1071,7 @@ def generate_futures_context_summary(
             market_name=market_name,
             highlight_reasons=highlight_reasons,
             affirmative_probability=affirmative_probability,
+            rendered_affirmative_percent=rendered_affirmative_percent,
             top_mover_change=top_mover_change,
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
@@ -1054,7 +1091,7 @@ def generate_futures_context_summary(
         if _weak_outcome_label(leader_name):
             return ""
         if leader_name and leader_probability is not None:
-            return f"{leader_name} leads at {round(leader_probability * 100)}%"
+            return f"{leader_name} leads at {_display_pct(leader_probability, rendered_leader_percent)}%"
         return ""
 
     leader = leader_clause()

@@ -4679,6 +4679,45 @@ def _apply_card_percents(top_outcomes_data: list[dict]) -> str | None:
     return card_sum_reason(probabilities)
 
 
+def _printed_leader_percent(top_outcomes_data: list[dict]) -> int | None:
+    """The percent the card's TOP ROW prints (#4146).
+
+    The sentence beside a card has to state the number the card states. It is
+    read off the row here rather than recomputed from the probability, because
+    recomputing it is what the defect was: `feed_reasons` rounded the raw value
+    with the built-in and disagreed with this row on every .5 boundary.
+    """
+    if not top_outcomes_data:
+        return None
+    percent = top_outcomes_data[0].get("rendered_percent")
+    return None if percent is None else int(percent)
+
+
+def _printed_affirmative_percent(
+    top_outcomes_data: list[dict],
+    raw_names: list[str],
+) -> int | None:
+    """The percent the card prints for the AFFIRMATIVE side of a yes/no card.
+
+    Not simply the leader's: #2060's pair rule rounds the leader once and derives
+    the other side as `100 - leader`, so when the No side leads, the Yes row's
+    printed percent is a DERIVED number that no rounding of the raw affirmative
+    probability reproduces. `binary_affirmative_probability` reads the raw names
+    (before `humanize_outcome_names_for_feed` rewrites "Yes" into a restatement
+    of the question), so this takes the same pre-humanization names to find the
+    same row.
+    """
+    if not top_outcomes_data:
+        return None
+    if len(top_outcomes_data) == 1:
+        return _printed_leader_percent(top_outcomes_data)
+    for index, name in enumerate(raw_names[: len(top_outcomes_data)]):
+        if (name or "").strip().lower() == "yes":
+            percent = top_outcomes_data[index].get("rendered_percent")
+            return None if percent is None else int(percent)
+    return None
+
+
 def _top_outcomes_for_trace(
     market: FuturesMarket,
 ) -> tuple[list[dict], str | None, float | None]:
@@ -7561,8 +7600,51 @@ async def _score_sports_mode_futures(
             top_surprise_opened_at,
         ) = _biggest_move_from_opening(outcomes_data)
 
+        # #4146 — THE PRINTED PERCENTS ARE COMPUTED BEFORE THE SENTENCES, because
+        # the sentences have to state them. This block used to sit below the three
+        # composers, so the only percent they could put in a sentence was one they
+        # derived themselves, and eleven of forty-five live cards stated a number
+        # their own card did not print. Nothing here reads anything the composers
+        # produce; the move is an ordering change only.
+        # Build compact feed data (same shape as _score_futures)
+        # UX-P005 class (a): display rank = position in the probability-sorted
+        # list, never the stored `rank` column (which disagrees on ~23% of
+        # feed-surfaced markets).
+        top_outcomes_data = [
+            {
+                "id": o.id,
+                "name": o.name,
+                "probability": (
+                    float(o.current_probability) if o.current_probability else None
+                ),
+                "rank": position,
+                "movement": (
+                    float(o.probability_change_24h)
+                    if o.probability_change_24h
+                    else None
+                ),
+            }
+            for position, o in enumerate(card_outcomes[:3], start=1)
+        ]
+        # The pre-humanization names, for `_printed_affirmative_percent`: after
+        # the rewrite below a "Yes" row is a restatement of the question.
+        _raw_card_names = [o["name"] for o in top_outcomes_data]
+        top_outcomes_data = humanize_outcome_names_for_feed(
+            top_outcomes_data, market.name
+        )
+        top_outcomes_data = _normalize_feed_probabilities(
+            top_outcomes_data, card_outcomes
+        )
+        # #2088 criterion 3: the printed percents and the reason they may not total
+        # 100. AFTER the scale, so the rule is applied to the displayed basis.
+        _card_sum_reason = _apply_card_percents(top_outcomes_data)
+
         # D1 clause b (#4066) — read the RAW names, before humanization.
         affirmative_probability = binary_affirmative_probability(outcomes_data)
+        _printed_leader = _printed_leader_percent(top_outcomes_data)
+        _printed_affirmative = _printed_affirmative_percent(
+            top_outcomes_data, _raw_card_names
+        )
 
         _h_leader = (
             humanize_binary_outcome_name(leader_name, market.name)
@@ -7589,9 +7671,11 @@ async def _score_sports_mode_futures(
                 top_surprise_change=top_surprise_change,
                 leader_name=_h_leader,
                 leader_probability=display_leader_prob,
+                rendered_leader_percent=_printed_leader,
                 source_count=source_count,
                 market_name=market.name,
                 affirmative_probability=affirmative_probability,
+                rendered_affirmative_percent=_printed_affirmative,
                 top_surprise_opened_at=top_surprise_opened_at,
                 now=now,
             )
@@ -7603,8 +7687,10 @@ async def _score_sports_mode_futures(
             market_name=market.name,
             leader_name=_h_leader,
             leader_probability=display_leader_prob,
+            rendered_leader_percent=_printed_leader,
             source_count=source_count,
             affirmative_probability=affirmative_probability,
+            rendered_affirmative_percent=_printed_affirmative,
             top_mover_change=top_mover_change,
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
@@ -7678,41 +7764,13 @@ async def _score_sports_mode_futures(
             top_surprise_change=top_surprise_change,
             leader_name=_h_leader,
             leader_probability=display_leader_prob,
+            rendered_leader_percent=_printed_leader,
             source_count=source_count,
             affirmative_probability=affirmative_probability,
+            rendered_affirmative_percent=_printed_affirmative,
             top_surprise_opened_at=top_surprise_opened_at,
             now=now,
         )
-
-        # Build compact feed data (same shape as _score_futures)
-        # UX-P005 class (a): display rank = position in the probability-sorted
-        # list, never the stored `rank` column (which disagrees on ~23% of
-        # feed-surfaced markets).
-        top_outcomes_data = [
-            {
-                "id": o.id,
-                "name": o.name,
-                "probability": (
-                    float(o.current_probability) if o.current_probability else None
-                ),
-                "rank": position,
-                "movement": (
-                    float(o.probability_change_24h)
-                    if o.probability_change_24h
-                    else None
-                ),
-            }
-            for position, o in enumerate(card_outcomes[:3], start=1)
-        ]
-        top_outcomes_data = humanize_outcome_names_for_feed(
-            top_outcomes_data, market.name
-        )
-        top_outcomes_data = _normalize_feed_probabilities(
-            top_outcomes_data, card_outcomes
-        )
-        # #2088 criterion 3: the printed percents and the reason they may not total
-        # 100. AFTER the scale, so the rule is applied to the displayed basis.
-        _card_sum_reason = _apply_card_percents(top_outcomes_data)
 
         source_names = (
             (_canonical_source_names_cache or {}).get(
@@ -8858,7 +8916,69 @@ async def _score_futures(
             ) = _biggest_move_from_opening(outcomes_data)
 
             # D1 clause b (#4066) — read the RAW names, before humanization.
+            # #4146 — THE PRINTED PERCENTS ARE COMPUTED BEFORE THE SENTENCES,
+            # because the sentences have to state them. This block used to sit
+            # below the three composers, so the only percent they could put in a
+            # sentence was one they derived themselves, and eleven of forty-five
+            # live cards stated a number their own card did not print. Nothing
+            # here reads anything the composers produce; ordering change only.
+            # card_outcomes + _display_scale computed above (Queue 283) so the
+            # headline/context leader copy shares the mini-list's basis.
+            # Build compact futures data for the feed. #235 Item 2: null the 24h
+            # movement badge for near-0% outcomes — a thin placeholder nominee ticking
+            # a few tenths of a point is not a "mover" (the "+0.3% on a 0% outcome"
+            # display class).
+            # UX-P005 class (a): the DISPLAY rank is the outcome's position in
+            # this probability-sorted list, not the stored `rank` column. On
+            # 2026-08-06, 14 of 61 feed-surfaced markets carried rank=1 on an
+            # outcome that was not the probability leader — any consumer that
+            # trusts the stored column (native list ordering, "the favorite")
+            # names the wrong winner while the probabilities beside it disagree.
+            top_outcomes_data = [
+                {
+                    "id": o.id,
+                    "name": o.name,
+                    "probability": (
+                        float(o.current_probability) if o.current_probability else None
+                    ),
+                    "rank": position,
+                    "movement": (
+                        float(o.probability_change_24h)
+                        if o.probability_change_24h
+                        and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
+                        else None
+                    ),
+                }
+                # Show top 3 in feed card
+                for position, o in enumerate(card_outcomes[:3], start=1)
+            ]
+
+            # The pre-humanization names, for `_printed_affirmative_percent`:
+            # after the rewrite below a "Yes" row restates the question.
+            _raw_card_names = [o["name"] for o in top_outcomes_data]
+            # Humanize Yes/No outcome names for feed card display (BR49)
+            top_outcomes_data = humanize_outcome_names_for_feed(
+                top_outcomes_data, market.name
+            )
+
+            # Normalize probabilities for independent binary markets (gotcha #58).
+            # Use the ALL-outcomes sum to distinguish mutually-exclusive markets
+            # (sum ~100-150%) from threshold/cumulative markets (sum >>200%).
+            # Threshold markets (e.g. "rank 3+", "rank 4+") have non-exclusive
+            # outcomes whose raw probabilities are meaningful — normalizing them
+            # flattens an 81% leader to 33% when the top 3 are all high.
+            top_outcomes_data = _normalize_feed_probabilities(
+                top_outcomes_data, card_outcomes
+            )
+            # #2088 criterion 3: the printed percents and the reason they may not
+            # total 100. AFTER the scale, so the rule sees the displayed basis.
+            _card_sum_reason = _apply_card_percents(top_outcomes_data)
+
             affirmative_probability = binary_affirmative_probability(outcomes_data)
+            _printed_leader = _printed_leader_percent(top_outcomes_data)
+            _printed_affirmative = _printed_affirmative_percent(
+                top_outcomes_data, _raw_card_names
+            )
 
             # Humanize Yes/No outcome names for display (BR49).
             # Scoring/filtering above uses the raw names; display-facing
@@ -8889,9 +9009,11 @@ async def _score_futures(
                     top_surprise_change=top_surprise_change,
                     leader_name=_h_leader,
                     leader_probability=display_leader_prob,
+                    rendered_leader_percent=_printed_leader,
                     source_count=source_count,
                     market_name=market.name,
                     affirmative_probability=affirmative_probability,
+                    rendered_affirmative_percent=_printed_affirmative,
                     top_surprise_opened_at=top_surprise_opened_at,
                     now=now,
                 )
@@ -8903,8 +9025,10 @@ async def _score_futures(
                 market_name=market.name,
                 leader_name=_h_leader,
                 leader_probability=display_leader_prob,
+                rendered_leader_percent=_printed_leader,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
+                rendered_affirmative_percent=_printed_affirmative,
                 top_mover_change=top_mover_change,
                 top_surprise_change=top_surprise_change,
                 top_surprise_opened_at=top_surprise_opened_at,
@@ -9241,60 +9365,13 @@ async def _score_futures(
                 top_surprise_change=top_surprise_change,
                 leader_name=_h_leader,
                 leader_probability=display_leader_prob,
+                rendered_leader_percent=_printed_leader,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
+                rendered_affirmative_percent=_printed_affirmative,
                 top_surprise_opened_at=top_surprise_opened_at,
                 now=now,
             )
-
-            # card_outcomes + _display_scale computed above (Queue 283) so the
-            # headline/context leader copy shares the mini-list's basis.
-            # Build compact futures data for the feed. #235 Item 2: null the 24h
-            # movement badge for near-0% outcomes — a thin placeholder nominee ticking
-            # a few tenths of a point is not a "mover" (the "+0.3% on a 0% outcome"
-            # display class).
-            # UX-P005 class (a): the DISPLAY rank is the outcome's position in
-            # this probability-sorted list, not the stored `rank` column. On
-            # 2026-08-06, 14 of 61 feed-surfaced markets carried rank=1 on an
-            # outcome that was not the probability leader — any consumer that
-            # trusts the stored column (native list ordering, "the favorite")
-            # names the wrong winner while the probabilities beside it disagree.
-            top_outcomes_data = [
-                {
-                    "id": o.id,
-                    "name": o.name,
-                    "probability": (
-                        float(o.current_probability) if o.current_probability else None
-                    ),
-                    "rank": position,
-                    "movement": (
-                        float(o.probability_change_24h)
-                        if o.probability_change_24h
-                        and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
-                        else None
-                    ),
-                }
-                # Show top 3 in feed card
-                for position, o in enumerate(card_outcomes[:3], start=1)
-            ]
-
-            # Humanize Yes/No outcome names for feed card display (BR49)
-            top_outcomes_data = humanize_outcome_names_for_feed(
-                top_outcomes_data, market.name
-            )
-
-            # Normalize probabilities for independent binary markets (gotcha #58).
-            # Use the ALL-outcomes sum to distinguish mutually-exclusive markets
-            # (sum ~100-150%) from threshold/cumulative markets (sum >>200%).
-            # Threshold markets (e.g. "rank 3+", "rank 4+") have non-exclusive
-            # outcomes whose raw probabilities are meaningful — normalizing them
-            # flattens an 81% leader to 33% when the top 3 are all high.
-            top_outcomes_data = _normalize_feed_probabilities(
-                top_outcomes_data, card_outcomes
-            )
-            # #2088 criterion 3: the printed percents and the reason they may not
-            # total 100. AFTER the scale, so the rule sees the displayed basis.
-            _card_sum_reason = _apply_card_percents(top_outcomes_data)
 
             source_names = (
                 (_canonical_source_names_cache or {}).get(
