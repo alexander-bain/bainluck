@@ -114,6 +114,104 @@ def _resolve_story_title(story_key: str) -> tuple[str, str]:
         )
     return _derive_story_title(story_key), "fallback"
 
+
+# ── A GROUP'S REASON IS ITS SHARED QUESTION (D1 clause c, #4066) ─────────────
+#
+# Seven of the twenty items served on production 2026-09-08 21:07Z were bundles,
+# and every one of them gave the same reason: "2 related markets", "3 related
+# markets", "4 related markets" — rendered on the card as "· 2 related". That is
+# a count of inventory. It tells a reader how many rows are behind a chevron and
+# nothing about why the rows belong together, which is the only thing that makes
+# a group worth a slot instead of its members taking their own.
+#
+# The plan Alex commissioned puts it exactly: "'Awards Season · 5 related' is
+# navigation. 'Which of this month's releases is best positioned for awards
+# attention?' is an editorial question." Rulings 143/145 want the same thing.
+#
+# So each story family gets ONE authored sentence, phrased as the question its
+# members are all answers to. Authored rather than derived because the shared
+# question is an editorial judgement about a family — "Middle East" covers
+# ceasefires, strikes and hostage releases, and no token-overlap heuristic
+# recovers "Where is the Middle East conflict heading?" from those names.
+#
+# A family with no authored question falls back to the phrase its members
+# literally share (the awards path's `_derive_race_label`); a family with
+# neither shares no question we can state, and does not get a bundle slot — its
+# members compete individually, which is where they were before folding.
+AUTHORED_STORY_QUESTIONS = {
+    # Geopolitics
+    "story:middle_east_conflict": "Where is the Middle East conflict heading?",
+    "story:russia_ukraine": "How does the war in Ukraine end?",
+    # Politics / government
+    "story:us_2028_election": "Who wins in 2028?",
+    "story:regional_us_elections": "Who wins this year's US local races?",
+    "story:us_state_races": "Who wins the big state races?",
+    "story:foreign_local_elections": "Who wins the elections nobody is covering?",
+    "story:us_federal_power": "Who holds power in Washington?",
+    "story:us_government_stakes": "What is Washington about to do?",
+    # Economics / markets
+    "story:macro_rates": "What does the Fed do next?",
+    "story:oil": "Where is the oil price going?",
+    "story:single_stock_earnings": "Who beats their earnings number?",
+    "story:ipo_markets": "Who goes public, and at what price?",
+    "story:spacex_ipo": "Does SpaceX go public, and at what valuation?",
+    # Tech / science
+    "story:ai": "Which AI model comes out on top?",
+    "story:spacex_launches": "What does SpaceX launch next?",
+    "story:aliens_disclosure": "Does anyone confirm we are not alone?",
+    # Culture / entertainment
+    "story:major_entertainment_events": "Who wins awards season?",
+    "story:music_charts": "Who tops the charts?",
+    "story:drake_iceman": "How does the Drake record land?",
+    # Sport
+    "story:fifa_world_cup": "Who wins the World Cup?",
+    "story:basketball_finals_path": "Who reaches the NBA Finals?",
+    "story:ufc_events": "Who wins on the next card?",
+    "story:grand_slam_tennis": "Who wins the Slam?",
+    "story:golf_truist_championship": "Who wins the Truist Championship?",
+}
+
+
+def resolve_story_question(
+    story_key: str, member_names: list[str]
+) -> tuple[str | None, str]:
+    """``(question, source)`` for a story family, or ``(None, "none")``.
+
+    ``source`` is ``authored`` / ``derived`` / ``none`` and rides the bundle's
+    debug block, so a family folding on a derived phrase is visible in ops
+    rather than having to be inferred from the copy.
+
+    🔴 THE DERIVED PATH USES `_shared_member_phrase`, NOT `_derive_race_label`,
+    AND THE DIFFERENCE IS THE WHOLE GUARD. `_derive_race_label` falls back to
+    the SHORTEST MEMBER NAME when the members share no phrase — correct for the
+    awards bundler, whose members are already known to be one race by
+    `group_id`, and catastrophic here, where the fallback would manufacture a
+    shared question out of one member's title. Two markets with nothing in
+    common ("Oil above $90 in December?", "Taylor Swift engaged by New Year?")
+    came back as "Who wins Oil above $90?" while this called the label helper —
+    a group asserting a common question that does not exist. No shared phrase
+    means no question means no bundle.
+    """
+    authored = AUTHORED_STORY_QUESTIONS.get(story_key)
+    if authored:
+        return authored, "authored"
+    shared = _shared_member_phrase(member_names)
+    if shared:
+        return f"Who wins {shared}?", "derived"
+    # A story_key is itself an assertion that these markets are one story
+    # (`feed_market_quality._story_key` computed it from their names and
+    # categories), so a family we simply have not written a sentence for still
+    # has a question — a weaker one. This tier exists so clause (c) does not
+    # quietly undo Queue 307's generalization, which made ANY story_key
+    # foldable: every key on page one today is authored, so this is the tail,
+    # and `_resolve_story_title` already logs each unknown key once so the tail
+    # can be authored rather than guessed at.
+    title, title_source = _resolve_story_title(story_key)
+    if title_source == "fallback" and title != "Related markets":
+        return f"What's the latest on {title}?", "story_title"
+    return None, "none"
+
+
 _THEME_TITLES = {
     "ipo_valuation": "IPO valuation ranges",
     "commodity_ranges": "Commodity price ranges",
@@ -187,15 +285,23 @@ def _bundle_id(theme: str, items: list[dict[str, Any]]) -> str:
 
 
 def _bundle_subtitle(theme: str, count: int) -> str:
+    """The comparison bundle's shared question (D1 clause c, #4066).
+
+    These four themes already knew what their members had in common — the old
+    strings said it as a count and a basis ("4 IPO markets compared by valuation
+    range"). Said as the question the members are answers to, the same fact
+    tells a reader what they will learn by opening it. The count is not lost: it
+    is the member list the card renders directly underneath.
+    """
     if theme == "ipo_valuation":
-        return f"{count} IPO markets compared by valuation range"
+        return "Which of these companies is priced highest to list?"
     if theme == "commodity_ranges":
-        return f"{count} commodity markets compared by price range"
+        return "Where do these commodity prices land?"
     if theme == "rotten_tomatoes_scores":
-        return f"{count} score markets compared by threshold"
+        return "Which of these lands best with the critics?"
     if theme == "weather_distributions":
-        return f"{count} weather markets compared by range"
-    return f"{count} markets compared"
+        return "How warm does it get in these cities?"
+    return f"What do these {count} markets say together?"
 
 
 def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -233,6 +339,7 @@ def _make_bundle_item(theme: str, items: list[dict[str, Any]]) -> dict[str, Any]
             "id": _bundle_id(theme, items),
             "title": title,
             "kind": "comparison",
+            "shared_question": _bundle_subtitle(theme, len(items)),
             "comparison_theme": theme,
             "item_count": len(items),
             "member_ids": member_ids,
@@ -370,7 +477,14 @@ def _theme_bundle_id(story_key: str, items: list[dict[str, Any]]) -> str:
 
 def _make_theme_bundle_item(
     story_key: str, items: list[dict[str, Any]]
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
+    """The folded bundle, or None when the family shares no statable question.
+
+    Returns None rather than folding on "N related markets" (D1 clause c):
+    a group that cannot say what its members have in common is not a story, and
+    its members are better off competing for their own slots — which is exactly
+    where they were before this bundler ran.
+    """
     # Members ranked by feed score (most feed-worthy leads the mini-ranked-peek);
     # the bundle competes for ONE slot scored by its best member.
     ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
@@ -378,16 +492,21 @@ def _make_theme_bundle_item(
     sort_time = max(float(item.get("_sort_time") or 0) for item in ranked)
     label, title_source = _resolve_story_title(story_key)
     member_ids = [_futures_data(item).get("id") for item in ranked]
+    member_names = [str(_futures_data(item).get("name") or "") for item in ranked]
+    question, question_source = resolve_story_question(story_key, member_names)
+    if not question:
+        return None
     return {
         "type": "bundle",
         "score": score,
-        "reason": f"{len(ranked)} related markets",
+        "reason": question,
         "headline": label,
         "data": {
             "id": _theme_bundle_id(story_key, ranked),
             "title": label,
             "kind": "theme",
             "story_key": story_key,
+            "shared_question": question,
             "item_count": len(ranked),
             "member_ids": member_ids,
             "items": [_public_member_item(item) for item in ranked],
@@ -395,6 +514,7 @@ def _make_theme_bundle_item(
                 "grouped_by": "story_key",
                 "story_key": story_key,
                 "title_source": title_source,
+                "question_source": question_source,
                 "member_ids": member_ids,
                 "member_names": [
                     _futures_data(item).get("name") for item in ranked
@@ -463,7 +583,12 @@ def assemble_story_theme_bundles(
         chosen = members[:max_items_per_bundle]
         if len(chosen) < min_items:
             continue
-        bundle_by_story[story_key] = _make_theme_bundle_item(story_key, chosen)
+        bundle = _make_theme_bundle_item(story_key, chosen)
+        if bundle is None:
+            # No statable shared question — leave the members unfolded rather
+            # than spend a slot on "N related markets" (D1 clause c, #4066).
+            continue
+        bundle_by_story[story_key] = bundle
         represented_ids.update(_item_id(item) for item in chosen)
 
     if not represented_ids:
@@ -555,16 +680,18 @@ def _contains_subseq(tokens: list[str], seq: list[str]) -> bool:
     return any(tokens[i : i + n] == seq for i in range(len(tokens) - n + 1))
 
 
-def _derive_race_label(names: list[str]) -> str:
-    """Derive a race/group label from member names.
+def _shared_member_phrase(names: list[str]) -> str | None:
+    """The longest contiguous word run present in EVERY member name, or None.
 
-    Uses the longest contiguous word run shared by ALL member names (the common
-    race phrase, e.g. "best actor at the 99th academy awards"); falls back to the
-    shortest member name. Best-effort — the mini-ranked-peek members disambiguate.
+    The strict half of `_derive_race_label`: a phrase the members demonstrably
+    share, with no fallback to one member's own title. Runs shorter than two
+    words are not evidence of a shared subject ("the", "2026"), so they return
+    None. Factored out for `resolve_story_question`, which must be able to tell
+    "these belong together and here is why" from "these were adjacent".
     """
     cleaned = [n.strip() for n in names if n and n.strip()]
-    if not cleaned:
-        return "Related markets"
+    if len(cleaned) < 2:
+        return None
     token_lists = [_name_tokens(n) for n in cleaned]
     base = min(token_lists, key=len)
     best: list[str] = []
@@ -576,11 +703,31 @@ def _derive_race_label(names: list[str]) -> str:
             if all(_contains_subseq(tl, seq) for tl in token_lists):
                 best = seq
                 break
-    if len(best) >= 2:
-        label = " ".join(best)
+    if len(best) < 2:
+        return None
+    phrase = _LABEL_LEAD_RE.sub("", " ".join(best)).rstrip("? ").strip()
+    return phrase or None
+
+
+def _derive_race_label(names: list[str]) -> str:
+    """Derive a race/group label from member names.
+
+    Uses the longest contiguous word run shared by ALL member names (the common
+    race phrase, e.g. "best actor at the 99th academy awards"); falls back to the
+    shortest member name. Best-effort — the mini-ranked-peek members disambiguate.
+
+    🔴 THE FALLBACK MAKES THIS WRONG FOR ANY CALLER THAT HAS NOT ALREADY PROVEN
+    ITS MEMBERS BELONG TOGETHER. Callers keying on `group_id` have; a story-key
+    cluster has not. Those want `_shared_member_phrase` above.
+    """
+    cleaned = [n.strip() for n in names if n and n.strip()]
+    if not cleaned:
+        return "Related markets"
+    shared = _shared_member_phrase(cleaned)
+    if shared:
+        label = shared
     else:
         label = min(cleaned, key=len)
-        label = _LABEL_LEAD_RE.sub("", label).rstrip("? ").strip()
     label = _LABEL_LEAD_RE.sub("", label).rstrip("? ").strip()
     if not label:
         return "Related markets"
@@ -597,15 +744,21 @@ def _make_awards_bundle_item(
     member_ids = [_futures_data(item).get("id") for item in ranked]
     names = [str(_futures_data(item).get("name") or "") for item in ranked]
     label = _derive_race_label(names)
+    # D1 clause c (#4066): an awards cluster's shared question is the race its
+    # members literally share, which `_derive_race_label` already extracted —
+    # "Best Actor at the 99th Academy Awards" becomes "Who wins Best Actor at
+    # the 99th Academy Awards?". Nothing else here changes.
+    question = f"Who wins {label}?"
     return {
         "type": "bundle",
         "score": score,
-        "reason": f"{len(ranked)} related markets",
+        "reason": question,
         "headline": label,
         "data": {
             "id": f"theme:{group_id}:{'-'.join(str(m) for m in member_ids)}",
             "title": label,
             "kind": "theme",
+            "shared_question": question,
             "group_id": group_id,
             "item_count": len(ranked),
             "member_ids": member_ids,
@@ -728,12 +881,16 @@ def _make_swings_bundle_item(scored: list[tuple[float, dict[str, Any]]]) -> dict
     return {
         "type": "bundle",
         "score": score,
-        "reason": f"{len(ranked)} markets moving today",
+        # D1 clause c (#4066): this one already named a signal rather than
+        # inventory — the members share "what moved most today", which IS the
+        # question. Phrased as one.
+        "reason": "What moved most today?",
         "headline": SWINGS_THEME_LABEL,
         "data": {
             "id": f"theme:swings:{'-'.join(str(m) for m in member_ids)}",
             "title": SWINGS_THEME_LABEL,
             "kind": "theme",
+            "shared_question": "What moved most today?",
             "story_key": "swings",
             "item_count": len(ranked),
             "member_ids": member_ids,

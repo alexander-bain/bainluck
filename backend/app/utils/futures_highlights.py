@@ -796,17 +796,23 @@ def compute_futures_highlight(
     result.score = min(98, result.score)
 
     # === Determine primary reason for display ===
+    #
+    # D1 clause a (#4066): the two `*_surprise` codes measure against OPENING,
+    # an instant this list cannot name, so they sit below every code that is
+    # anchored to a time and their copy no longer claims a baseline. The dated
+    # sentence is composed in `feed_reasons` where `opening_captured_at` is in
+    # hand; these strings are only the last-resort label when it has nothing.
     priority_order = [
         ("leader_change", "New favorite"),
         ("source_divergence", "Sources disagree"),
         ("major_movement_24h", "Big odds movement"),
-        ("major_surprise", "Big shift from opening"),
         ("volume_spike", "Trading surge"),
         ("rank_shakeup", "Rankings shakeup"),
         ("moderate_movement_24h", "Odds moving"),
-        ("moderate_surprise", "Odds shifted"),
         ("resolving_soon_7d", "Resolving soon"),
         ("resolving_soon_30d", "Resolving this month"),
+        ("major_surprise", "Well off its opening price"),
+        ("moderate_surprise", "Off its opening price"),
         ("multi_source", "Multi-source"),
     ]
 

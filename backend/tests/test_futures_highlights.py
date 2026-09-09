@@ -489,24 +489,35 @@ class TestDeterministicFuturesHeadlines:
         )
 
         assert "major_surprise" in result.reasons
-        assert result.primary_reason == "Big shift from opening"
+        # D1 clause a (#4066): the last-resort label no longer asserts a
+        # baseline it cannot name. The dated sentence is composed in
+        # `feed_reasons`, where the baseline's date is (or is not) in hand.
+        assert result.primary_reason == "Well off its opening price"
 
+        opened_at = datetime(2026, 3, 4, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 8, 21, 7, tzinfo=timezone.utc)
         headline = generate_futures_headline(
             result.reasons,
             top_surprise_name="OpenAI release",
             top_surprise_change=0.27,
+            top_surprise_opened_at=opened_at,
+            now=now,
         )
         reason = generate_futures_reason(
             "Will OpenAI release GPT-5 before July?",
             result.reasons,
             top_surprise_name="OpenAI release",
             top_surprise_change=0.27,
+            top_surprise_opened_at=opened_at,
+            now=now,
         )
-        assert headline == "OpenAI release up 27.0 points from opening"
+        assert headline == "OpenAI release up 27.0 points since Mar 4"
         assert reason == (
-            "OpenAI release moved up 27.0 points from opening in "
+            "OpenAI release is up 27.0 points since Mar 4 in "
             "Will OpenAI release GPT-5 before July?"
         )
+        assert "from opening" not in headline
+        assert "from opening" not in reason
 
     def test_past_resolution_penalty_removed(self):
         """#141/Item 3: the dead 'stale_past_resolution' penalty is gone.

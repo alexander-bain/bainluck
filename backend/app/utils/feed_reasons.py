@@ -7,7 +7,8 @@ repeating scores, odds, or team names visible on the card.
 """
 
 import re
-from typing import Optional
+from datetime import datetime, timezone
+from typing import NamedTuple, Optional
 
 
 def _side_label(name: str) -> str:
@@ -399,6 +400,198 @@ def _answering_side_label(label: str | None, market_name: str | None) -> str | N
     return label
 
 
+# ── A MOVEMENT REASON NAMES THE DAY IT IS MEASURED FROM (D1 clause a, #4066) ──
+#
+# "moved up 37.5 points from opening" was item 10 of the twenty served on
+# production 2026-09-08 21:07Z. It is accurate and it is not news: opening may be
+# this morning or it may be eleven months ago, and the sentence does not say
+# which, so a reader takes it for today's move. The rule from the D1 brief is
+# that a movement claim carries a baseline the reader can place on a calendar,
+# and that a lifetime move is CONTEXT — dated, and never the line a card leads
+# with when something more recent exists.
+#
+# `futures_outcomes.opening_captured_at` is that date and is already on the row
+# the feed has loaded: 93,037 of the 106,976 top-5 outcomes of open markets carry
+# it (87%, measured on production 2026-09-08). The 13% that do not get no
+# movement sentence at all rather than an undated one.
+
+_MONTH_ABBR = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+def format_baseline_date(
+    when: Optional[datetime],
+    now: Optional[datetime] = None,
+) -> Optional[str]:
+    """Render a baseline instant as a date, or None when there is no instant.
+
+    "Sep 4" inside the current calendar year, "Sep 4, 2025" outside it — the
+    year is what stops a reader reading an eleven-month-old baseline as this
+    week's. Naive datetimes are read as UTC, which is how every writer in
+    `tasks/` stores them.
+    """
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    label = f"{_MONTH_ABBR[when.month - 1]} {when.day}"
+    if when.year != reference.year:
+        return f"{label}, {when.year}"
+    return label
+
+
+# ── A YES/NO QUESTION IS NOT A RACE (D1 clause b, #4066) ─────────────────────
+#
+# Items 8 and 10 of the same twenty, verbatim:
+#
+#   'China invade Taiwan by end of 2026 (4%) leads Will China invade Taiwan by
+#    end of 2026?'
+#   'China x Philippines military clash moved up 37.5 points from opening in
+#    China x Philippines military clash before 2027?'
+#
+# Both markets serve exactly ONE outcome (`outcome_count: 1`), named for the
+# question with its interrogative stripped. Fed to the field templates below,
+# the single entrant is announced as leading a race against itself. Nothing
+# leads when there is nothing to lead, and the reader is told a percentage
+# without being told what it is the percentage OF.
+#
+# The affirmative probability IS the answer to the question, so a binary card
+# states it and never uses the verb "leads".
+#
+# 🔴 THE RESOLUTION CONDITION IS DELIBERATELY NOT REPEATED IN THIS COPY. The
+# card already prints its own "Resolves <date>" chip
+# (`frontend/components/discover/utils.ts` -> `formatResolvesLabel`), and that
+# chip renders the instant in the READER's timezone while this module would
+# render it in UTC. `Will China invade Taiwan by end of 2026?` carries
+# `resolution_date` 2026-12-31T00:00Z and its chip reads "Resolves Dec 30,
+# 2026", so a second date emitted here would sit beside the first and disagree
+# with it. The question, the probability and the deadline all reach the reader;
+# they reach it from the two places that each own one.
+
+
+class BinaryCardCopy(NamedTuple):
+    """The three display strings for a yes/no card, composed together.
+
+    One composer rather than three parallel ladders: the headline, the reason
+    and the context summary have to agree about which signal the card is here
+    for, and they drifted apart the last three times they were written
+    separately.
+    """
+
+    reason: str
+    headline: str
+    context_summary: str
+
+
+def binary_affirmative_probability(outcomes: list[dict]) -> Optional[float]:
+    """The AFFIRMATIVE probability when these outcomes are a yes/no question.
+
+    Returns None for a genuine field — every market for which the "leads"
+    templates are the right ones. Two shapes count as a yes/no question:
+
+    * ONE outcome: the market carries only the affirmative side, so its
+      probability is the answer to the question (both live specimens above).
+    * TWO outcomes literally named Yes and No: the affirmative is the "Yes"
+      row, whichever of the pair happens to be ahead.
+
+    Takes the RAW outcome dicts, i.e. before `humanize_binary_outcome_name`
+    rewrites a bare "Yes" into a restatement of the question — after that
+    rewrite the pair is no longer recognisable as yes/no.
+    """
+    usable = [
+        outcome
+        for outcome in (outcomes or [])
+        if isinstance(outcome, dict) and outcome.get("probability") is not None
+    ]
+    if len(usable) == 1 and len(outcomes or []) == 1:
+        return float(usable[0]["probability"])
+    if len(usable) == 2:
+        by_side = {
+            (outcome.get("name") or "").strip().lower(): outcome for outcome in usable
+        }
+        if set(by_side) == {"yes", "no"}:
+            return float(by_side["yes"]["probability"])
+    return None
+
+
+def _points(value: float) -> str:
+    """ "37.5 points" / "1 point" — never "1.0 points"."""
+    magnitude = _point_change(value)
+    if magnitude == int(magnitude):
+        magnitude = int(magnitude)
+    return f"{magnitude} point{'' if magnitude == 1 else 's'}"
+
+
+def compose_binary_card_copy(
+    *,
+    market_name: Optional[str],
+    highlight_reasons: list[str],
+    affirmative_probability: float,
+    top_mover_change: Optional[float] = None,
+    top_surprise_change: Optional[float] = None,
+    top_surprise_opened_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> BinaryCardCopy:
+    """Compose a yes/no card's three strings, freshest real signal first.
+
+    The order below IS the editorial rule: what moved, then what is about to
+    resolve, then — only if nothing else is true — a dated lifetime move, then
+    the bare probability. A lifetime move never outranks a live one and never
+    appears undated.
+    """
+    reasons = set(highlight_reasons or [])
+    if "stale_past_resolution" in reasons:
+        return BinaryCardCopy("", "", "")
+
+    pct = round(affirmative_probability * 100)
+    answer = f"{pct}% chance"
+    title = _short_market_name(market_name) if market_name else ""
+
+    def composed(headline: str, context: str) -> BinaryCardCopy:
+        reason = f"{title}: {context}" if title else context
+        return BinaryCardCopy(reason, headline, context)
+
+    moved_today = (
+        "major_movement_24h" in reasons or "moderate_movement_24h" in reasons
+    ) and top_mover_change is not None
+    if moved_today:
+        direction = "Up" if top_mover_change > 0 else "Down"
+        return composed(
+            f"{direction} {_points(top_mover_change)} today",
+            f"{direction} {_points(top_mover_change)} today — now {answer}",
+        )
+
+    if "resolving_soon_7d" in reasons:
+        return composed("Resolving this week", f"{answer}, resolving this week")
+    if "resolving_soon_30d" in reasons:
+        return composed("Resolves this month", f"{answer}, resolves this month")
+
+    since = format_baseline_date(top_surprise_opened_at, now=now)
+    if since and top_surprise_change is not None:
+        direction = "Up" if top_surprise_change > 0 else "Down"
+        return composed(
+            f"{direction} {_points(top_surprise_change)} since {since}",
+            f"{direction} {_points(top_surprise_change)} since {since} — now {answer}",
+        )
+
+    return composed(answer, answer)
+
+
 def generate_event_reason(
     home_team: str,
     away_team: str,
@@ -530,6 +723,9 @@ def generate_futures_reason(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     source_count: int = 1,
+    affirmative_probability: Optional[float] = None,
+    top_surprise_opened_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
 ) -> str:
     """
     Generate a one-line explanation for why a futures market is interesting.
@@ -537,6 +733,19 @@ def generate_futures_reason(
     Returns a human-readable reason string for the feed card.
     """
     reasons = set(highlight_reasons)
+
+    # A yes/no question never reaches the field templates below — it has no
+    # field. See `compose_binary_card_copy`.
+    if affirmative_probability is not None:
+        return compose_binary_card_copy(
+            market_name=market_name,
+            highlight_reasons=highlight_reasons,
+            affirmative_probability=affirmative_probability,
+            top_mover_change=top_mover_change,
+            top_surprise_change=top_surprise_change,
+            top_surprise_opened_at=top_surprise_opened_at,
+            now=now,
+        ).reason
 
     # Once, before any branch reads them: a label that merely negates the
     # market's own question can never be this sentence's subject. Applied to
@@ -577,16 +786,6 @@ def generate_futures_reason(
             return f"{_side_label(top_mover_name)} moved {direction} {pct} points today in {market_name}"
         return f"Big odds movement in {market_name}"
 
-    # Surprise vs opening
-    if "major_surprise" in reasons:
-        if top_surprise_name and top_surprise_change is not None:
-            if _weak_outcome_label(top_surprise_name):
-                return f"Big shift from opening in {market_name}"
-            direction = "up" if top_surprise_change > 0 else "down"
-            pct = _point_change(top_surprise_change)
-            return f"{_side_label(top_surprise_name)} moved {direction} {pct} points from opening in {market_name}"
-        return f"Big shift from opening in {market_name}"
-
     # Rankings shakeup
     if "rank_shakeup" in reasons:
         return f"Multiple ranking changes in {market_name}"
@@ -600,15 +799,6 @@ def generate_futures_reason(
             pct = _point_change(top_mover_change)
             return f"{_side_label(top_mover_name)} odds shifted {direction} {pct} points today in {market_name}"
         return f"Odds shifting in {market_name}"
-
-    if "moderate_surprise" in reasons:
-        if top_surprise_name and top_surprise_change is not None:
-            if _weak_outcome_label(top_surprise_name):
-                return f"Odds shifted from opening in {market_name}"
-            direction = "up" if top_surprise_change > 0 else "down"
-            pct = _point_change(top_surprise_change)
-            return f"{_side_label(top_surprise_name)} shifted {direction} {pct} points from opening in {market_name}"
-        return f"Odds shifted from opening in {market_name}"
 
     # Resolving soon
     if "resolving_soon_7d" in reasons:
@@ -625,6 +815,30 @@ def generate_futures_reason(
             pct = round(leader_probability * 100)
             return f"{market_name} resolves this month, {leader_name} leads at {pct}%"
         return f"{market_name} resolving this month"
+
+    # Lifetime move, DATED and DEMOTED (D1 clause a, #4066).
+    #
+    # This used to sit two branches above `rank_shakeup`, so "moved up 37.5
+    # points from opening" beat a rank shakeup, a resolution inside the week and
+    # every other live signal to the front of the card — an undated number of
+    # unknown age presented as the morning's news. It now runs after every
+    # signal that is anchored to a time, and it only speaks when it can name the
+    # day it is measured from; an outcome with no `opening_captured_at` says
+    # nothing here rather than saying "from opening".
+    since_opening = format_baseline_date(top_surprise_opened_at, now=now)
+    if (
+        since_opening
+        and top_surprise_change is not None
+        and ("major_surprise" in reasons or "moderate_surprise" in reasons)
+    ):
+        if not _weak_outcome_label(top_surprise_name):
+            direction = "up" if top_surprise_change > 0 else "down"
+            pct = _point_change(top_surprise_change)
+            return (
+                f"{_side_label(top_surprise_name)} is {direction} {pct} points "
+                f"since {since_opening} in {market_name}"
+            )
+        return f"{market_name} has shifted since {since_opening}"
 
     # Multi-source
     if "multi_source" in reasons:
@@ -653,9 +867,23 @@ def generate_futures_headline(
     leader_probability: Optional[float] = None,
     source_count: int = 1,
     market_name: Optional[str] = None,
+    affirmative_probability: Optional[float] = None,
+    top_surprise_opened_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
 ) -> str:
     """Generate compact, specific card text for futures Discover cards."""
     reasons = set(highlight_reasons)
+
+    if affirmative_probability is not None:
+        return compose_binary_card_copy(
+            market_name=market_name,
+            highlight_reasons=highlight_reasons,
+            affirmative_probability=affirmative_probability,
+            top_mover_change=top_mover_change,
+            top_surprise_change=top_surprise_change,
+            top_surprise_opened_at=top_surprise_opened_at,
+            now=now,
+        ).headline
 
     # Same single point as the other two generators. `market_name` is optional
     # here, and `_answering_side_label` is a no-op without it — a headline with
@@ -689,16 +917,6 @@ def generate_futures_headline(
             return f"{_short_market_name(market_name)} odds {direction} {_point_change(top_mover_change)} points"
         return f"{_side_label(top_mover_name)} {direction} {_point_change(top_mover_change)} points today"
 
-    if (
-        "major_surprise" in reasons
-        and top_surprise_name
-        and top_surprise_change is not None
-    ):
-        direction = "up" if top_surprise_change > 0 else "down"
-        if _weak_outcome_label(top_surprise_name) and market_name:
-            return f"{_short_market_name(market_name)} shifted {_point_change(top_surprise_change)} points"
-        return f"{_side_label(top_surprise_name)} {direction} {_point_change(top_surprise_change)} points from opening"
-
     if "rank_shakeup" in reasons:
         return "Multiple ranking changes"
 
@@ -711,16 +929,6 @@ def generate_futures_headline(
         if _weak_outcome_label(top_mover_name) and market_name:
             return f"{_short_market_name(market_name)} odds {direction} {_point_change(top_mover_change)} points"
         return f"{_side_label(top_mover_name)} {direction} {_point_change(top_mover_change)} points today"
-
-    if (
-        "moderate_surprise" in reasons
-        and top_surprise_name
-        and top_surprise_change is not None
-    ):
-        direction = "up" if top_surprise_change > 0 else "down"
-        if _weak_outcome_label(top_surprise_name) and market_name:
-            return f"{_short_market_name(market_name)} shifted {_point_change(top_surprise_change)} points"
-        return f"{_side_label(top_surprise_name)} {direction} {_point_change(top_surprise_change)} points from opening"
 
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
@@ -735,6 +943,23 @@ def generate_futures_headline(
                 return f"{_short_market_name(market_name)} resolves this month"
             return f"{leader_name} leads; resolves this month"
         return "Resolving this month"
+
+    # Lifetime move — same demotion and same dating rule as
+    # `generate_futures_reason`; see the comment there.
+    since_opening = format_baseline_date(top_surprise_opened_at, now=now)
+    if (
+        since_opening
+        and top_surprise_name
+        and top_surprise_change is not None
+        and ("major_surprise" in reasons or "moderate_surprise" in reasons)
+    ):
+        direction = "up" if top_surprise_change > 0 else "down"
+        if _weak_outcome_label(top_surprise_name) and market_name:
+            return f"{_short_market_name(market_name)} shifted since {since_opening}"
+        return (
+            f"{_side_label(top_surprise_name)} {direction} "
+            f"{_point_change(top_surprise_change)} points since {since_opening}"
+        )
 
     if "multi_source" in reasons:
         return (
@@ -759,6 +984,11 @@ def generate_futures_context_summary(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     source_count: int = 1,
+    affirmative_probability: Optional[float] = None,
+    top_mover_change: Optional[float] = None,
+    top_surprise_change: Optional[float] = None,
+    top_surprise_opened_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
 ) -> str:
     """Generate short visible context copy for Discover cards.
 
@@ -768,6 +998,21 @@ def generate_futures_context_summary(
     """
     headline = (headline or "").strip()
     reasons = set(highlight_reasons)
+
+    # This is the string the web card prints under its title, so it is where the
+    # binary-as-race defect was actually READ ("China invade Taiwan by end of
+    # 2026 leads at 4%", production 2026-09-08). It composes from the same place
+    # as the headline it sits beneath.
+    if affirmative_probability is not None:
+        return compose_binary_card_copy(
+            market_name=market_name,
+            highlight_reasons=highlight_reasons,
+            affirmative_probability=affirmative_probability,
+            top_mover_change=top_mover_change,
+            top_surprise_change=top_surprise_change,
+            top_surprise_opened_at=top_surprise_opened_at,
+            now=now,
+        ).context_summary
 
     # Same single point as `generate_futures_reason`, and before the closure
     # below captures it.

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.utils.feed_reasons import (
     generate_event_reason,
     generate_futures_context_summary,
@@ -6,6 +8,15 @@ from app.utils.feed_reasons import (
     humanize_binary_outcome_name,
     humanize_outcome_names_for_feed,
 )
+
+# D1 clause a (#4066) — a move against opening is only publishable once it can
+# name the day it is measured from, so every specimen below carries both halves.
+# Both instants are FIXED: the year-boundary behaviour of `format_baseline_date`
+# is the thing under test, and an anchor computed off the wall clock would test a
+# different sentence every January (gotcha #44).
+NOW = datetime(2026, 9, 8, 21, 7, tzinfo=timezone.utc)
+OPENED_THIS_YEAR = datetime(2026, 3, 4, 12, 0, tzinfo=timezone.utc)
+OPENED_LAST_YEAR = datetime(2025, 11, 20, 12, 0, tzinfo=timezone.utc)
 
 
 def test_futures_headline_names_major_mover():
@@ -23,9 +34,44 @@ def test_futures_headline_names_opening_surprise():
         highlight_reasons=["major_surprise"],
         top_surprise_name="Fed cut",
         top_surprise_change=-0.187,
+        top_surprise_opened_at=OPENED_THIS_YEAR,
+        now=NOW,
     )
 
-    assert headline == "Fed cut down 18.7 points from opening"
+    assert headline == "Fed cut down 18.7 points since Mar 4"
+    assert "from opening" not in headline
+
+
+def test_futures_headline_dates_an_opening_from_a_previous_year():
+    """The year is what stops a ten-month-old baseline reading as this week's."""
+    headline = generate_futures_headline(
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="Fed cut",
+        top_surprise_change=-0.187,
+        top_surprise_opened_at=OPENED_LAST_YEAR,
+        now=NOW,
+    )
+
+    assert headline == "Fed cut down 18.7 points since Nov 20, 2025"
+
+
+def test_futures_headline_says_nothing_when_the_opening_has_no_date():
+    """D1 clause a: no baseline date, no movement sentence.
+
+    13% of the top-5 outcomes of open markets carry no `opening_captured_at`
+    (93,037 of 106,976, production 2026-09-08). Those used to publish "down 18.7
+    points from opening" — a number of unknown age presented as news. They now
+    publish nothing here and the card falls through to whatever it can prove.
+    """
+    headline = generate_futures_headline(
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="Fed cut",
+        top_surprise_change=-0.187,
+        top_surprise_opened_at=None,
+        now=NOW,
+    )
+
+    assert headline == ""
 
 
 def test_futures_headline_uses_market_context_for_numeric_outcome_labels():
@@ -34,11 +80,13 @@ def test_futures_headline_uses_market_context_for_numeric_outcome_labels():
         top_surprise_name="9",
         top_surprise_change=0.65,
         market_name="How many spots will Drake have in the Billboard top 10?",
+        top_surprise_opened_at=OPENED_THIS_YEAR,
+        now=NOW,
     )
 
     assert (
         headline
-        == "How many spots will Drake have in the Billboard top 10 shifted 65.0 points"
+        == "How many spots will Drake have in the Billboard top 10 shifted since Mar 4"
     )
 
 
@@ -48,9 +96,11 @@ def test_futures_headline_uses_market_context_for_date_outcome_labels():
         top_surprise_name="May 18",
         top_surprise_change=-0.505,
         market_name="Iran closes its airspace by...?",
+        top_surprise_opened_at=OPENED_THIS_YEAR,
+        now=NOW,
     )
 
-    assert headline == "Iran closes its airspace by... shifted 50.5 points"
+    assert headline == "Iran closes its airspace by... shifted since Mar 4"
 
 
 def test_futures_reason_explains_opening_surprise_with_market_context():
@@ -59,11 +109,15 @@ def test_futures_reason_explains_opening_surprise_with_market_context():
         highlight_reasons=["major_surprise"],
         top_surprise_name="No change",
         top_surprise_change=0.21,
+        top_surprise_opened_at=OPENED_THIS_YEAR,
+        now=NOW,
     )
 
     assert (
-        reason == "No change moved up 21.0 points from opening in Fed Decision in July?"
+        reason
+        == "No change is up 21.0 points since Mar 4 in Fed Decision in July?"
     )
+    assert "from opening" not in reason
 
 
 def test_futures_reason_uses_market_context_for_weak_outcome_labels():
@@ -72,9 +126,46 @@ def test_futures_reason_uses_market_context_for_weak_outcome_labels():
         highlight_reasons=["major_surprise"],
         top_surprise_name="0 (0 bps)",
         top_surprise_change=0.593,
+        top_surprise_opened_at=OPENED_THIS_YEAR,
+        now=NOW,
     )
 
-    assert reason == "Big shift from opening in How many Fed rate cuts in 2026?"
+    assert reason == "How many Fed rate cuts in 2026? has shifted since Mar 4"
+
+
+def test_futures_reason_falls_through_an_undated_opening_to_the_market_name():
+    reason = generate_futures_reason(
+        market_name="How many Fed rate cuts in 2026?",
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="0 (0 bps)",
+        top_surprise_change=0.593,
+        top_surprise_opened_at=None,
+        now=NOW,
+    )
+
+    assert "from opening" not in reason
+    assert "points" not in reason
+
+
+def test_a_live_signal_outranks_a_dated_lifetime_move():
+    """D1 clause a: "from opening" is context, never the line a card leads with.
+
+    `major_surprise` used to sit two branches above `rank_shakeup` and above the
+    resolution window, so a market resolving inside the week led with a move of
+    unknown age instead. Both signals are true here; the timed one wins.
+    """
+    headline = generate_futures_headline(
+        highlight_reasons=["major_surprise", "resolving_soon_7d"],
+        top_surprise_name="Fed cut",
+        top_surprise_change=-0.187,
+        top_surprise_opened_at=OPENED_THIS_YEAR,
+        leader_name="Fed cut",
+        leader_probability=0.62,
+        market_name="Fed Decision in September?",
+        now=NOW,
+    )
+
+    assert headline == "Resolving soon: Fed cut leads at 62%"
 
 
 def test_futures_reason_describes_movement_as_points_not_percent():
@@ -165,9 +256,11 @@ def test_futures_headline_describes_moderate_opening_change_deterministically():
         highlight_reasons=["moderate_surprise"],
         top_surprise_name="Yes",
         top_surprise_change=-0.052,
+        top_surprise_opened_at=OPENED_THIS_YEAR,
+        now=NOW,
     )
 
-    assert headline == "Yes side down 5.2 points from opening"
+    assert headline == "Yes side down 5.2 points since Mar 4"
 
 
 def test_futures_context_summary_uses_leader_when_headline_missing():
@@ -292,9 +385,11 @@ def test_futures_headline_formats_binary_side_naturally():
         highlight_reasons=["major_surprise"],
         top_surprise_name="No",
         top_surprise_change=0.3,
+        top_surprise_opened_at=OPENED_THIS_YEAR,
+        now=NOW,
     )
 
-    assert headline == "No side up 30.0 points from opening"
+    assert headline == "No side up 30.0 points since Mar 4"
 
 
 def test_futures_context_summary_expands_generic_resolving_copy():

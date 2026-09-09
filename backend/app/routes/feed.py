@@ -129,6 +129,7 @@ from app.utils.feed_market_quality import (
 )
 from app.utils.feed_reasons import (
     generate_event_reason,
+    binary_affirmative_probability,
     generate_futures_context_summary,
     generate_futures_headline,
     generate_futures_reason,
@@ -4672,6 +4673,44 @@ def _top_outcomes_for_trace(
     return outcomes_data, leader_name, leader_prob
 
 
+def _biggest_move_from_opening(
+    outcomes_data: list[dict],
+) -> tuple[str | None, float | None, datetime | None]:
+    """The largest move against opening, WITH the day that opening was taken.
+
+    D1 clause a (#4066). Three serving paths computed the first two of these
+    inline, in three identical loops. The THIRD value is the one that decides
+    whether the sentence may be written at all — a move "from opening" whose
+    opening has no date is not a fact about this morning — so it is returned
+    from the same place rather than bolted onto three loops that can drift.
+
+    🔴 IT READS A KEY, NOT AN ATTRIBUTE, AND TODAY THAT KEY IS NEVER PRESENT.
+    `opening_captured_at` is deliberately NOT in the outcome projection — see
+    the refusal recorded in `app/utils/futures_market_snapshot.py`, which prices
+    it at +12% on the shared `futures.market_load` wire. Reading it off the ORM
+    row instead is not a workaround: it is an unprojected lazy load inside the
+    per-item serializer, i.e. MissingGreenlet and a futures pool of zero
+    (CERT-622, gotcha #42). `tests/test_feed_outcome_projection_cert622.py`
+    caught exactly that on the first draft of this function. So the date is
+    absent, the dated sentence does not fire, and the undated one is not
+    published either — which is the honest state until the baseline is built.
+    """
+    name: str | None = None
+    change: float | None = None
+    opened_at: datetime | None = None
+    for outcome in outcomes_data:
+        opening = outcome.get("opening_probability")
+        current = outcome.get("probability")
+        if opening is None or current is None:
+            continue
+        move = current - opening
+        if change is None or abs(move) > abs(change):
+            name = outcome.get("name")
+            change = move
+            opened_at = outcome.get("opening_captured_at")
+    return name, change, opened_at
+
+
 def _market_runtime_filter_trace(
     market: FuturesMarket,
     outcomes_data: list[dict],
@@ -5086,19 +5125,15 @@ def _score_market_trace(
                 top_mover_change = outcome["probability_change_24h"]
                 break
 
-    top_surprise_name = None
-    top_surprise_change = None
-    for outcome in outcomes_data:
-        opening = outcome.get("opening_probability")
-        current = outcome.get("probability")
-        if opening is None or current is None:
-            continue
-        surprise_change = current - opening
-        if top_surprise_change is None or abs(surprise_change) > abs(
-            top_surprise_change
-        ):
-            top_surprise_name = outcome.get("name")
-            top_surprise_change = surprise_change
+    (
+        top_surprise_name,
+        top_surprise_change,
+        top_surprise_opened_at,
+    ) = _biggest_move_from_opening(outcomes_data)
+
+    # D1 clause b (#4066) — computed from the RAW outcome names, before any
+    # humanization; a yes/no question has no field and takes no "leads" copy.
+    affirmative_probability = binary_affirmative_probability(outcomes_data)
 
     headline = (
         generate_futures_headline(
@@ -5111,6 +5146,9 @@ def _score_market_trace(
             leader_probability=leader_prob,
             source_count=source_count,
             market_name=market.name,
+            affirmative_probability=affirmative_probability,
+            top_surprise_opened_at=top_surprise_opened_at,
+            now=now,
         )
         or highlight_result.primary_reason
     )
@@ -5121,6 +5159,11 @@ def _score_market_trace(
         leader_name=leader_name,
         leader_probability=leader_prob,
         source_count=source_count,
+        affirmative_probability=affirmative_probability,
+        top_mover_change=top_mover_change,
+        top_surprise_change=top_surprise_change,
+        top_surprise_opened_at=top_surprise_opened_at,
+        now=now,
     )
 
     # Snippet v2: prefer cached angle-based snippet when flag is on
@@ -5261,6 +5304,9 @@ def _score_market_trace(
                 leader_name=leader_name,
                 leader_probability=leader_prob,
                 source_count=source_count,
+                affirmative_probability=affirmative_probability,
+                top_surprise_opened_at=top_surprise_opened_at,
+                now=now,
             ),
             "primary_reason": highlight_result.primary_reason,
             "reasons": highlight_result.reasons,
@@ -7409,19 +7455,14 @@ async def _score_sports_mode_futures(
                     top_mover_change = o["probability_change_24h"]
                     break
 
-        top_surprise_name = None
-        top_surprise_change = None
-        for o in outcomes_data:
-            opening = o.get("opening_probability")
-            current = o.get("probability")
-            if opening is None or current is None:
-                continue
-            surprise_change = current - opening
-            if top_surprise_change is None or abs(surprise_change) > abs(
-                top_surprise_change
-            ):
-                top_surprise_name = o.get("name")
-                top_surprise_change = surprise_change
+        (
+            top_surprise_name,
+            top_surprise_change,
+            top_surprise_opened_at,
+        ) = _biggest_move_from_opening(outcomes_data)
+
+        # D1 clause b (#4066) — read the RAW names, before humanization.
+        affirmative_probability = binary_affirmative_probability(outcomes_data)
 
         _h_leader = (
             humanize_binary_outcome_name(leader_name, market.name)
@@ -7450,6 +7491,9 @@ async def _score_sports_mode_futures(
                 leader_probability=display_leader_prob,
                 source_count=source_count,
                 market_name=market.name,
+                affirmative_probability=affirmative_probability,
+                top_surprise_opened_at=top_surprise_opened_at,
+                now=now,
             )
             or highlight_result.primary_reason
         )
@@ -7460,6 +7504,11 @@ async def _score_sports_mode_futures(
             leader_name=_h_leader,
             leader_probability=display_leader_prob,
             source_count=source_count,
+            affirmative_probability=affirmative_probability,
+            top_mover_change=top_mover_change,
+            top_surprise_change=top_surprise_change,
+            top_surprise_opened_at=top_surprise_opened_at,
+            now=now,
         )
 
         quality = classify_market_quality(
@@ -7530,6 +7579,9 @@ async def _score_sports_mode_futures(
             leader_name=_h_leader,
             leader_probability=display_leader_prob,
             source_count=source_count,
+            affirmative_probability=affirmative_probability,
+            top_surprise_opened_at=top_surprise_opened_at,
+            now=now,
         )
 
         # Build compact feed data (same shape as _score_futures)
@@ -8699,19 +8751,14 @@ async def _score_futures(
                         top_mover_change = o["probability_change_24h"]
                         break
 
-            top_surprise_name = None
-            top_surprise_change = None
-            for o in outcomes_data:
-                opening = o.get("opening_probability")
-                current = o.get("probability")
-                if opening is None or current is None:
-                    continue
-                surprise_change = current - opening
-                if top_surprise_change is None or abs(surprise_change) > abs(
-                    top_surprise_change
-                ):
-                    top_surprise_name = o.get("name")
-                    top_surprise_change = surprise_change
+            (
+                top_surprise_name,
+                top_surprise_change,
+                top_surprise_opened_at,
+            ) = _biggest_move_from_opening(outcomes_data)
+
+            # D1 clause b (#4066) — read the RAW names, before humanization.
+            affirmative_probability = binary_affirmative_probability(outcomes_data)
 
             # Humanize Yes/No outcome names for display (BR49).
             # Scoring/filtering above uses the raw names; display-facing
@@ -8744,6 +8791,9 @@ async def _score_futures(
                     leader_probability=display_leader_prob,
                     source_count=source_count,
                     market_name=market.name,
+                    affirmative_probability=affirmative_probability,
+                    top_surprise_opened_at=top_surprise_opened_at,
+                    now=now,
                 )
                 or highlight_result.primary_reason
             )
@@ -8754,6 +8804,11 @@ async def _score_futures(
                 leader_name=_h_leader,
                 leader_probability=display_leader_prob,
                 source_count=source_count,
+                affirmative_probability=affirmative_probability,
+                top_mover_change=top_mover_change,
+                top_surprise_change=top_surprise_change,
+                top_surprise_opened_at=top_surprise_opened_at,
+                now=now,
             )
 
             quality = classify_market_quality(
@@ -9087,6 +9142,9 @@ async def _score_futures(
                 leader_name=_h_leader,
                 leader_probability=display_leader_prob,
                 source_count=source_count,
+                affirmative_probability=affirmative_probability,
+                top_surprise_opened_at=top_surprise_opened_at,
+                now=now,
             )
 
             # card_outcomes + _display_scale computed above (Queue 283) so the

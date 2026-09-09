@@ -50,6 +50,7 @@ collapse, because it leaves the question's PREDICATE out of the label.
 """
 
 import re
+from datetime import datetime, timezone
 
 import pytest
 
@@ -252,6 +253,13 @@ class TestAFittingEchoIsStillAnEcho:
         so this pins the real sentence and not a plausible one. `major_surprise`
         is the highlight the card carried; `_side_label` is what turns the
         collapsed `Yes` into `Yes side` in movement copy.
+
+        D1 clause a (#4066) landed on the same specimen and changed the OTHER
+        half of this sentence: a move against opening now names the day it is
+        measured from, and publishes nothing at all when it cannot. So the
+        movement sentence needs a baseline date to exist — the subject of THIS
+        test, that the label is no longer the question echoed back, is
+        unchanged and is still asserted below.
         """
         market = "China x Philippines military clash before 2027?"
         label = humanize_binary_outcome_name("Yes", market)
@@ -260,9 +268,11 @@ class TestAFittingEchoIsStillAnEcho:
             highlight_reasons=["major_surprise"],
             top_surprise_name=label,
             top_surprise_change=0.375,
+            top_surprise_opened_at=datetime(2026, 1, 4, 9, 30, tzinfo=timezone.utc),
+            now=datetime(2026, 9, 8, 21, 7, tzinfo=timezone.utc),
         )
         assert reason == (
-            "Yes side moved up 37.5 points from opening in "
+            "Yes side is up 37.5 points since Jan 4 in "
             "China x Philippines military clash before 2027?"
         )
         # The served defect, verbatim.
@@ -271,6 +281,26 @@ class TestAFittingEchoIsStillAnEcho:
             "opening in China x Philippines military clash before 2027?"
         )
         assert reason.lower().count("philippines") == 1
+
+    def test_the_philippines_card_says_nothing_when_its_opening_has_no_date(self):
+        """D1 clause a (#4066), on this file's own specimen.
+
+        The echo is gone either way — that is what #3517 fixed. What #4066 adds
+        is that an undated move is not published at all, so the card falls
+        through to whatever it can prove rather than dating a number by
+        implication.
+        """
+        market = "China x Philippines military clash before 2027?"
+        reason = generate_futures_reason(
+            market_name=market,
+            highlight_reasons=["major_surprise"],
+            top_surprise_name=humanize_binary_outcome_name("Yes", market),
+            top_surprise_change=0.375,
+            top_surprise_opened_at=None,
+        )
+
+        assert "from opening" not in reason
+        assert "37.5" not in reason
 
     def test_the_pair_stays_canonical_so_the_web_hero_still_flips(self):
         """Same contract #3491 pins, over the band #3517 newly collapses."""
