@@ -3,6 +3,7 @@ import {
   shapeBreakdownNote,
   type ProviderPanelInput,
   providerKpiDetail,
+  withoutGroupQualifier,
 } from "@/lib/calibrationProviderPanels";
 import { groupSourcesByProvider } from "@/lib/calibrationProviders";
 import { ece } from "@/lib/calibrationMath";
@@ -343,6 +344,18 @@ describe("providerKpiDetail — UX-P080 item 2 (Alex round 2)", () => {
         const shape = realLabel(src).replace(" (Odds API)", "");
         expect(out).toContain(shape);
       }
+    });
+
+    // The fallback branch inside `withoutGroupQualifier`, which the render
+    // tests cannot reach: no production label is only its own qualifier, so a
+    // mutant that deletes the fallback survives every one of them. Reached
+    // directly here instead, because an unreachable branch and an unguarded
+    // branch look identical from the outside and only one of them is fine.
+    test("a member that IS the qualifier keeps its name rather than becoming empty", () => {
+      expect(withoutGroupQualifier(" (Odds API)", "Sportsbooks (Odds API)")).toBe(" (Odds API)");
+      expect(withoutGroupQualifier("Totals (Odds API)", "Sportsbooks (Odds API)")).toBe("Totals");
+      expect(withoutGroupQualifier("Kalshi", "Sportsbooks (Odds API)")).toBe("Kalshi");
+      expect(withoutGroupQualifier("Totals (Odds API)", "Kalshi")).toBe("Totals (Odds API)");
     });
 
     test("a group with no qualifier is composed exactly as before", () => {

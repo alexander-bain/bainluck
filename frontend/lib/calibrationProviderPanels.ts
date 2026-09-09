@@ -230,26 +230,48 @@ export function providerKpiDetail(
   return groups
     .map(g => {
       if (g.sources.length <= 1) return g.label;
-      const qualifier = /\s*\(([^()]+)\)\s*$/.exec(g.label);
-      const members = g.sources.map(s => stripQualifier(shapeLabel(s), qualifier?.[1]));
+      const qualifier = groupQualifier(g.label);
+      const members = g.sources.map(s => withoutGroupQualifier(shapeLabel(s), g.label));
       return qualifier
-        ? `${g.label.slice(0, qualifier.index)} (${qualifier[1]}: ${members.join(", ")})`
+        ? `${g.label.slice(0, qualifier.at)} (${qualifier.text}: ${members.join(", ")})`
         : `${g.label} (${members.join(", ")})`;
     })
     .join(" · ");
 }
 
 /**
- * Drop a trailing `(qualifier)` from a label when the context already said it.
+ * A group label's trailing parenthetical, if it has one.
  *
- * Returns the label untouched when there is no qualifier, when it does not
+ * `"Sportsbooks (Odds API)"` → `{ text: "Odds API", at: 12 }`; `"Kalshi"` → null.
+ */
+function groupQualifier(groupLabel: string): { text: string; at: number } | null {
+  const m = /\s*\(([^()]+)\)\s*$/.exec(groupLabel);
+  return m ? { text: m[1], at: m.index } : null;
+}
+
+/**
+ * Drop a trailing `(qualifier)` from a member label when the group already said it.
+ *
+ * #4214, AND ITS SURVIVOR. `providerKpiDetail` was the render this was filed
+ * against, and fixing that one alone left the defect on screen: the Source
+ * Comparison TABLE composes the same two vocabularies independently
+ * (`SourceComparisonRow`, `row.sources.map(sourceLabel)`), under a first column
+ * narrow enough that "Per-sportsbook (Odds API) · Odds API · Totals (Odds API)
+ * · Spreads (Odds API)" wrapped to seven lines at 390px. It was the more
+ * visible of the two, and it was found by photographing the deployed page
+ * rather than by reading the diff. So the rule lives here, exported, and both
+ * call sites use it — the guard for this class is that a second render path
+ * cannot quietly keep the old composition.
+ *
+ * Returns the label untouched when the group has no qualifier, when it does not
  * match, or when stripping would leave nothing — a member that IS the qualifier
  * still has to be named, and an empty list entry is worse than a repeated word.
  */
-function stripQualifier(label: string, qualifier: string | undefined): string {
-  if (!qualifier) return label;
-  const suffix = ` (${qualifier})`;
-  if (!label.endsWith(suffix)) return label;
-  const stripped = label.slice(0, -suffix.length).trim();
-  return stripped.length > 0 ? stripped : label;
+export function withoutGroupQualifier(memberLabel: string, groupLabel: string): string {
+  const qualifier = groupQualifier(groupLabel);
+  if (!qualifier) return memberLabel;
+  const suffix = ` (${qualifier.text})`;
+  if (!memberLabel.endsWith(suffix)) return memberLabel;
+  const stripped = memberLabel.slice(0, -suffix.length).trim();
+  return stripped.length > 0 ? stripped : memberLabel;
 }
