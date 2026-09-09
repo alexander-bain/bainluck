@@ -1,12 +1,23 @@
 "use client";
 
 // #999 L2-64/L2-71 Event Concept Page — "Race to the title" full-width chart.
-// Plots the top contenders' BLENDED probability lines over time on a FIXED,
-// labeled 0–100 axis with STRAIGHT segments (no smoothing) — the D1/#883 binds. A
+// Plots the top contenders' BLENDED probability lines over time on a labeled,
+// zero-anchored axis with STRAIGHT segments (no smoothing) — the D1 bind. A
 // range switcher (24h / 7d / All) and a top-N switcher control the view. L2-71:
 // the series come FROM the envelope (competitor.history) — no separate fetch; the
 // range switcher filters those points client-side. Honest-empty when no
 // per-competitor history exists yet — never invent a line.
+//
+// #4259: the axis was a flat 0–100. "Race to the title" is a contender FIELD, and a
+// field cannot put a line near 100% by construction, so every contender drew in the
+// bottom tenth — the complaint Alex filed as #2451 against the tournament chart
+// ("fix the scale, do not smooth the line"), reproduced here because #2451's ladder
+// shipped only in `contenderChart.ts`. `fieldCeiling` steps the TOP down the shared
+// rungs (10/25/50/75/100%); zero is still the floor and the labels still state the
+// top, so nothing is amplified — see `lib/chartCeiling.ts`. A leader above 87% lands
+// back on 1.0, so a runaway favourite still reads as one.
+// (The old header credited this axis to "#883"; #883 is the futures page redesign
+// and carries no axis rule. The rule is P4 of docs/chart-design-spec.md.)
 
 import { useMemo, useState } from "react";
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
@@ -150,6 +161,7 @@ export default function RaceToTitleChart({
           historyData={outcomes}
           selectedOutcomes={selected}
           fixedYAxis
+          fieldCeiling
           showAxes
           showLegend={showLegend}
           height={280}

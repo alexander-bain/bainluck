@@ -343,7 +343,16 @@ export function EvolutionView({
         {/* L2-149: the field kernel is now FuturesChart (hand-rolled SVG, no
             smoothing, fixed 0–100 axis by default) — the recharts EvolutionChart
             engine is gone. Selection/hover/combined/round-markers are preserved;
-            the shared outcomeColors map keeps lines and sidebar dots in lockstep. */}
+            the shared outcomeColors map keeps lines and sidebar dots in lockstep.
+
+            #4259 — `fieldCeiling`: this is THE field chart, and a full-field event
+            cannot mathematically put a line above ~30% (a 60-golfer tournament's
+            favourite is 8–15%). Measured on /categories/golf before this fix: the
+            whole 8-player contender field occupied 9.57% of the plot height, leader
+            at 12.22%, with the 25/50/75/100% gridlines labelling empty space — which
+            is #2451's complaint word for word, on the one field chart that never got
+            #2451's fix. The axis top now steps down the shared ladder; zero stays the
+            floor and the labels state the top. See lib/chartCeiling.ts. */}
         <FuturesChart
           historyData={windowedOutcomes}
           selectedOutcomes={effectiveSelectedIds}
@@ -352,6 +361,7 @@ export function EvolutionView({
           onHoverOutcome={setHighlightedOutcomeId}
           timeMarkers={timeMarkers}
           showCombinedProbability={showCombinedProbability}
+          fieldCeiling
           showAxes
           showLegend={false}
           height={isFullscreen ? 600 : 300}

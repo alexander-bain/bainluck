@@ -34,13 +34,36 @@ interface FuturesChartProps {
   className?: string;
   /** Use step interpolation (hold value until next point) for sparse data */
   stepInterpolation?: boolean;
-  /** Pin the y-axis to a fixed 0–100% domain (#883 blend-line principle: the
-   *  futures/field chart never rescales to the data max — movement stays honestly
-   *  proportional and charts stay comparable). L2-149 made this the NON-OPTIONAL
-   *  default for the consolidated field kernel: it is opt-OUT (`fixedYAxis={false}`),
-   *  not opt-in. Auto-scaling is only for the rare surface that deliberately wants
-   *  it. */
+  /** Pin the y-axis to a fixed 0–100% domain: the futures/field chart never
+   *  rescales to the data max — movement stays honestly proportional and charts stay
+   *  comparable. L2-149 made this the NON-OPTIONAL default for the consolidated field
+   *  kernel: it is opt-OUT (`fixedYAxis={false}`), not opt-in. Auto-scaling is only
+   *  for the rare surface that deliberately wants it.
+   *
+   *  PROVENANCE (corrected #4259): this rule is **P4 of `docs/chart-design-spec.md`** —
+   *  "Fixed 0–100 axis, no drama-zoom … auto-zooming the Y-axis to amplify small moves
+   *  is a volatility-drama trick — an enticement pattern (no-gambling-enticements, D1)".
+   *  It was cited here and in `lib/chartZoom.ts` as the "#883 blend-line principle",
+   *  but #883 is the futures *page redesign* issue and says nothing about axis domains.
+   *  The misattribution sent #4259 looking for a rule that was not where it was named;
+   *  cite the spec, because that is the text that decides whether a zoom is allowed. */
   fixedYAxis?: boolean;
+  /** #4259: this surface draws a FIELD — many outcomes, where nobody can be near
+   *  100% by construction (a 60-golfer tournament's favourite is 8–15%). The axis
+   *  top then steps down the #2451 ladder (10/25/50/75/100%) instead of sitting at a
+   *  flat 100%, so the contenders use the plot instead of stacking on the floor.
+   *
+   *  This is Alex's own ruling on this exact defect — *"Fix the scale, do not smooth
+   *  the line"* — which shipped for the tournament ContenderChart in #2451 and was
+   *  never applied here, so #4259 is #2451 reproduced on the golf hub. Zero is always
+   *  the floor, the ladder is coarse (so the axis holds still for weeks rather than
+   *  amplifying every wiggle, which is what P4 forbids), and the y labels state the
+   *  top — see `lib/chartCeiling.ts` for the whole argument.
+   *
+   *  Opt-in per call site, so a two-sided market keeps its 0–100% axis. Even when
+   *  passed it is self-limiting: any field with a line above 87% lands back on the
+   *  1.0 rung, and `mini` sparklines are excluded (no labels to declare a moved top). */
+  fieldCeiling?: boolean;
   /** L2-135: vertical state markers giving the time axis a real sense of time —
    *  golf round boundaries (R1/R2/R3/R4), the settled-page state-marker language
    *  applied to the evolution chart. Each marker is a dashed line + top label,
@@ -95,6 +118,7 @@ export function FuturesChart({
   className,
   stepInterpolation = false,
   fixedYAxis = true,
+  fieldCeiling = false,
   timeMarkers,
   outcomeColors,
   highlightedOutcomeId,
@@ -228,7 +252,7 @@ export function FuturesChart({
   const zoomBound = computeZoomBound(dataMax);
   const canZoom = canZoomSeries(dataMax, allowZoom, mini);
   const isZoomed = canZoom && zoomed;
-  maxProb = resolveYAxisMax({ dataMax, fixedYAxis, zoomed, allowZoom, mini });
+  maxProb = resolveYAxisMax({ dataMax, fixedYAxis, zoomed, allowZoom, mini, fieldCeiling });
 
   const chartWidth = mini ? 400 : 800;
   const effectiveHeight = height ?? (mini ? 80 : 200);

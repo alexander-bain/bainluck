@@ -867,9 +867,12 @@ function TournamentModal({
         {/* Chart */}
         {historyData && historyData.length > 0 && (
           <div className="px-5 py-4 border-b border-surface-border">
+            {/* #4259: the tournament modal draws the same golf field as the hub chart
+                above it — same squash, same #2451 ladder. */}
             <FuturesChart
               historyData={historyData}
               greenTheme
+              fieldCeiling
               height={240}
             />
           </div>

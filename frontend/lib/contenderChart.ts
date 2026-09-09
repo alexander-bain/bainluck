@@ -24,6 +24,8 @@
  */
 
 import type { TournamentRow, TournamentTrendPoint } from "./tournament";
+// #4259: the #2451 ceiling ladder is shared with FuturesChart — see lib/chartCeiling.ts.
+import { ceilingForMax } from "./chartCeiling";
 
 /**
  * ═══ #4173: THE CHART'S DOMAIN IS INSTANTS, AND A DAY IS ONE OF THEM ═══
@@ -699,12 +701,15 @@ export interface ChartGeometry {
  * A moving ceiling with no y-axis labels would be strictly worse than a fixed
  * one: the reader would have no way to know the top had changed. The labels are
  * the other half of this fix, not a decoration on it — see `chartYLabels`.
+ *
+ * ### The ladder itself moved out (#4259)
+ *
+ * `CEILING_STEPS` / `CEILING_HEADROOM` / the step search now live in
+ * `lib/chartCeiling.ts`, because `FuturesChart` — the OTHER field chart, drawing the
+ * golf hub and the futures detail page — never got this fix and reproduced #2451
+ * exactly. Sharing the rungs is what stops the two charts drifting apart again. The
+ * behaviour of this function is unchanged.
  */
-const CEILING_STEPS = [0.1, 0.25, 0.5, 0.75, 1] as const;
-
-/** Room above the leader, so the top line is not welded to the frame. */
-const CEILING_HEADROOM = 1.15;
-
 export function chartCeiling(series: ChartSeries[], timeframe: Timeframe): number {
   let max = 0;
   for (const entry of series) {
@@ -723,8 +728,7 @@ export function chartCeiling(series: ChartSeries[], timeframe: Timeframe): numbe
       max = current;
     }
   }
-  const wanted = max * CEILING_HEADROOM;
-  return CEILING_STEPS.find((step) => step >= wanted) ?? 1;
+  return ceilingForMax(max);
 }
 
 /**

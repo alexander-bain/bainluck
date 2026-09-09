@@ -3,10 +3,17 @@
 // L2-132 Event Concept Page — WINNER EVOLUTION chart. For a LIVE/upcoming
 // winner-field concept (the World Cup): the probability path the title picture
 // has taken so far — the tournament's story to date — for the top contenders, on
-// a fixed 0–100 axis. It is the live analogue of SettledPathChart: both reuse the
-// shared FuturesChart and fetch the winner market's history by
+// a zero-anchored, labelled axis. It is the live analogue of SettledPathChart: both
+// reuse the shared FuturesChart and fetch the winner market's history by
 // `evolution_market_id`. Renders nothing until there are ≥2 real points — we
 // never invent a series. Step interpolation suits the sparse futures snapshots.
+//
+// #4259: that axis was a flat 0–100, and a winner FIELD cannot put a line near 100%
+// by construction (a World Cup board's favourite is ~15%), so every contender drew
+// on the floor — the defect Alex filed as #2451 against the tournament chart, whose
+// ladder had shipped only in `contenderChart.ts`. `fieldCeiling` steps the TOP down
+// the shared rungs; zero stays the floor and the labels state the top, so nothing is
+// amplified. A field with a leader above 87% lands back on 1.0 and is unchanged.
 
 import { useMemo, useState } from "react";
 import useSWR from "swr";
@@ -88,6 +95,7 @@ export default function WinnerEvolutionChart({
         <FuturesChart
           historyData={windowed}
           fixedYAxis
+          fieldCeiling
           stepInterpolation
           showAxes
           showLegend
