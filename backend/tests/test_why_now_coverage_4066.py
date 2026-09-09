@@ -199,8 +199,12 @@ def test_a_bundle_scores_on_its_members_not_on_having_a_question():
         "headline": "2028 Election",
         "data": {
             "title": "2028 Election",
+            # Was "Multiple ranking changes" until #4160 took that string off
+            # the screen and out of WHY_NOW_MARKERS. The point of this test is
+            # that a bundle inherits a member's why-now, so it needs a member
+            # signal that is still one.
             "items": [
-                {"headline": "Multiple ranking changes"},
+                {"headline": "New favorite: J.D. Vance (24%)"},
             ],
         },
     }

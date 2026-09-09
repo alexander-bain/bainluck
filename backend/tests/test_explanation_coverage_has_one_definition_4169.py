@@ -16,7 +16,10 @@ counts hits passes vacuously the moment fewer cards are diagnosed, so each one
 says how many cards went in as well as how many scored.
 """
 
-from app.utils.feed_market_quality import classify_market_quality, has_specific_explanation
+from app.utils.feed_market_quality import (
+    classify_market_quality,
+    has_specific_explanation,
+)
 from app.utils.feed_quality_debug import diagnose_feed_items, summarize_feed_diagnostics
 
 # The card that was on production page one, verbatim in the fields the metric
@@ -70,7 +73,11 @@ def _bundle(title: str, headline: str, reason: str) -> dict:
 def test_a_live_event_with_an_empty_reason_is_not_explained():
     """The exact card, and the exact number the metric printed over it."""
     top20 = [BLANK_LIVE_EVENT] + [
-        _futures(f"Market {i}", f"Contender {i} leads at {40 + i}%", f"Contender {i} (4{i}%) leads Market {i}")
+        _futures(
+            f"Market {i}",
+            f"Contender {i} leads at {40 + i}%",
+            f"Contender {i} (4{i}%) leads Market {i}",
+        )
         for i in range(19)
     ]
     diagnosed = diagnose_feed_items(top20)

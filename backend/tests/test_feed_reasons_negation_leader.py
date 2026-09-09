@@ -186,7 +186,8 @@ class TestContextSummary:
 
     def test_an_ordinary_leader_is_untouched(self):
         summary = generate_futures_context_summary(
-            headline="Tracked by 2 sources",
+            # A producible headline: "Tracked by 2 sources" left with #4160.
+            headline="Los Angeles Dodgers leads at 31%",
             highlight_reasons=["multi_source"],
             market_name="MLB World Series Winner",
             leader_name="Los Angeles Dodgers",
@@ -279,9 +280,10 @@ class TestReasonAndHeadline:
             leader_probability=0.31,
             source_count=2,
         )
-        assert reason == (
-            "Los Angeles Dodgers (31%) leads MLB World Series Winner across 2 sources"
-        )
+        # The trailing " across 2 sources" left with #4160/#4133; what this test
+        # is for — an ordinary leader label survives the negation guard intact —
+        # is unchanged.
+        assert reason == "Los Angeles Dodgers (31%) leads MLB World Series Winner"
 
 
 # ── CERT-624 round 2 ─────────────────────────────────────────────────────────

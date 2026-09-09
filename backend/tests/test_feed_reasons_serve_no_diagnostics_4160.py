@@ -168,8 +168,7 @@ def test_why_now_markers_are_disjoint_from_the_ban_list():
         if any(phrase in marker.lower() for phrase in DIAGNOSTIC_PHRASES)
     ]
     assert not credited_but_banned, (
-        "WHY_NOW_MARKERS credits banned pipeline vocabulary: "
-        f"{credited_but_banned}"
+        "WHY_NOW_MARKERS credits banned pipeline vocabulary: " f"{credited_but_banned}"
     )
 
 
@@ -187,8 +186,12 @@ def test_the_ban_list_itself_still_catches_what_it_is_for():
     assert contains_diagnostic_phrase("Multiple ranking changes in Fed decision")
     assert contains_diagnostic_phrase("Sources disagree (2)")
     assert contains_diagnostic_phrase("3 sources disagree, but Lula leads at 52%")
-    assert contains_diagnostic_phrase("Brazil Presidential Election tracked by 2 sources")
+    assert contains_diagnostic_phrase(
+        "Brazil Presidential Election tracked by 2 sources"
+    )
     # And does not fire on the honest sentences that replaced them.
-    assert not contains_diagnostic_phrase("Luiz Inácio Lula da Silva (52%) leads Brazil Presidential Election")
+    assert not contains_diagnostic_phrase(
+        "Luiz Inácio Lula da Silva (52%) leads Brazil Presidential Election"
+    )
     assert not contains_diagnostic_phrase("New favorite: Hike 25bps (55%)")
     assert not contains_diagnostic_phrase("Jair Bolsonaro moved up 6.1 points today")
