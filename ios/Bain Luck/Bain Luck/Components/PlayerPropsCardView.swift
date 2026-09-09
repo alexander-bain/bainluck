@@ -131,9 +131,9 @@ struct PlayerPropsCardView: View {
                         .font(.subheadline)
                         .fontWeight(.semibold)
 
-                    // Source badge
-                    if let src = sources.first {
-                        Text(src.uppercased())
+                    // Source badge — #4351: named, or not drawn.
+                    if let src = SourceLabels.label(for: sources.first) {
+                        Text(src)
                             .font(.system(size: 10, weight: .heavy))
                             .foregroundStyle(.blue)
                             .padding(.horizontal, 8)

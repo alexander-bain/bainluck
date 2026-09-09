@@ -311,12 +311,13 @@ d("#4135 — the app names a source or draws none", () => {
     /**
      * ═══ THIS SUITE WAS GREEN WITH `ODDS_API` ON THE FIRST DISCOVER CARD ═══
      *
-     * `RAW_KEY_FALLBACK` above bans `source.capitalized` and nothing else, so five
-     * sites spelling the same defect `.uppercased()` or `?? "literal"` were never
-     * candidates. The scan asserted the tree was clean, and the app's default
-     * screen read `ODDS_API` — a database value with an underscore in it — on the
-     * MLB World Series card. Measured on `GET /api/feed?limit=60`, 2026-09-09:
-     * 48 of 60 cards drew one of these marks, two of them `ODDS_API`.
+     * `RAW_KEY_FALLBACK` above bans `source.capitalized` and nothing else, so NINE
+     * sites across seven files — spelling the same defect `.uppercased()`,
+     * `?? "literal"`, or just printing the key — were never candidates. The scan
+     * asserted the tree was clean, and the app's default screen read `ODDS_API`, a
+     * database value with an underscore in it, on the MLB World Series card.
+     * Measured on `GET /api/feed?limit=60`, 2026-09-09: 48 of 60 cards drew one of
+     * these marks, two of them `ODDS_API`.
      *
      * The wiring half missed them for a second, independent reason: its `sites`
      * list was DISCOVERED by grepping for the old `switch source`, so a surface
@@ -335,6 +336,58 @@ d("#4135 — the app names a source or draws none", () => {
 
     /** A source key with a fabricated stand-in: `market.source ?? "kalshi"`. */
     const INVENTED_SOURCE = /\bsource\s*\?\?\s*"/;
+
+    /**
+     * ═══ THE ALIAS SCAN, AND WHY IT IS THE ONLY ONE THAT MATTERS ═══
+     *
+     * The first version of this ship shipped `RAW_KEY_UPPERCASED` above and pinned
+     * the four sites it knew. Then the post-fix LOOK photographed a Discover card
+     * still reading `KALSHI` — `DistributionCardView`, and two more like it, each
+     * spelling the defect
+     *
+     *     if let src = data.source { Text(src.uppercased()) }
+     *
+     * The drawn line says `src`. It contains no `source`, no `capitalized`, no key,
+     * nothing any of the three line patterns in this file can match — and the
+     * binding that gives it meaning is on the line ABOVE. Every negative scan here
+     * was blind to the commonest spelling of the very defect it exists to ban, and
+     * a screenshot is what found it, not the suite.
+     *
+     * So the scan resolves the alias instead of guessing the next spelling: bind
+     * every local that comes from a `source`/`sources` expression, then ban
+     * re-casing or drawing THAT NAME. A binding that already went through
+     * `SourceLabels` is not an alias for a key — it is a name — so it is skipped,
+     * which is also why the fixed sites read `Text(src)` and stay green.
+     */
+    function aliasOffenders(): string[] {
+      return swiftFiles(IOS_ROOT)
+        .flatMap((path) => {
+          const rel = path.slice(IOS_ROOT.length + 1);
+          const body = stripComments(readFileSync(path, "utf8"));
+
+          // The binding must be the source FIELD ITSELF, not any expression that
+          // mentions one. `let label = sourceLabel(source)` is a name already, and
+          // binding it would make every later `Text(label)` in that file an
+          // offender — aliases here are file-scoped, so a loose left-hand side
+          // poisons the whole file. Verified against RelatedFuturesView, which
+          // holds both spellings.
+          const aliases = new Set<string>();
+          for (const m of body.matchAll(/\blet\s+(\w+)\s*=\s*([^\n{,]+)/g)) {
+            if (!/^(?:[A-Za-z_][\w.]*\.)?sources?(?:\.first)?$/.test(m[2].trim())) continue;
+            aliases.add(m[1]);
+          }
+          if (aliases.size === 0) return [];
+
+          const names = [...aliases].map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+          const drawnRaw = new RegExp(`\\b(?:${names})\\b\\s*\\.(?:uppercased\\(\\)|capitalized)|Text\\(\\s*(?:${names})\\s*\\)`);
+
+          return body
+            .split("\n")
+            .filter((line) => drawnRaw.test(line))
+            .map((line) => `${rel} — ${line.trim()}`);
+        })
+        .sort();
+    }
 
     /**
      * The two survivors, each a decision with its reason, in the KNOWN_SURVIVOR
@@ -372,6 +425,37 @@ d("#4135 — the app names a source or draws none", () => {
       expect(offenders(RAW_KEY_UPPERCASED)).toEqual([]);
     });
 
+    it("no view draws or re-cases a LOCAL bound from a source key", () => {
+      expect(aliasOffenders()).toEqual([]);
+    });
+
+    it("the alias scan resolves real bindings and catches the line that beat the line scans", () => {
+      // The scan is only as good as its binding step, and a binding step that
+      // matched nothing would make the assertion above vacuous — the exact way
+      // this file was already green while `ODDS_API` was on the screen.
+      const distribution = stripComments(
+        readFileSync(join(IOS_ROOT, "Components/DistributionCardView.swift"), "utf8")
+      );
+      expect(distribution).toContain("SourceLabels.label(for: data.source)");
+
+      // Verbatim from origin/master 10cbbcfd. Neither line pattern in this file
+      // matches the drawn line; the alias scan does, and only because it read the
+      // binding above it.
+      const preFix = [
+        `                if let src = data.source {`,
+        `                    Text(src.uppercased())`,
+      ].join("\n");
+      expect(RAW_KEY_UPPERCASED.test(preFix.split("\n")[1])).toBe(false);
+      expect(INVENTED_SOURCE.test(preFix.split("\n")[1])).toBe(false);
+      expect(/\bsource\??\.capitalized\b/.test(preFix.split("\n")[1])).toBe(false);
+
+      const aliases = [...preFix.matchAll(/\blet\s+(\w+)\s*=\s*([^\n]*\bsources?\b[^\n]*)/g)]
+        .filter((m) => !m[2].includes("SourceLabels"))
+        .map((m) => m[1]);
+      expect(aliases).toEqual(["src"]);
+      expect(/\bsrc\b\s*\.uppercased\(\)/.test(preFix)).toBe(true);
+    });
+
     it("no view invents a source name where the payload gave none", () => {
       expect(offenders(INVENTED_SOURCE)).toEqual(INVENTED_SOURCE_SURVIVORS);
     });
@@ -399,14 +483,10 @@ d("#4135 — the app names a source or draws none", () => {
     });
 
     /**
-     * `Text(src.uppercased())` — the fourth deleted line — contains no token a
-     * line scan can key on. `src` was bound to `data.source` on the line ABOVE,
-     * so neither new pattern sees it and neither did the old one.
-     *
-     * That is a real hole in every scan in this file, and the answer is not a
-     * cleverer regex. Each site is pinned POSITIVELY instead: its declaration
-     * reaches the resolver AND does not re-case what comes back. A mutant has to
-     * defeat both, and re-aliasing through a local variable defeats neither.
+     * The alias scan is the net; these are the belt. Each site is ALSO pinned
+     * positively — its declaration reaches the resolver and does not re-case what
+     * comes back — because a negative scan can only ever say "the spellings I
+     * know are absent", and this file has now been wrong about that twice.
      */
     function declarationBody(relPath: string, declaration: string): string {
       const source = stripComments(readFileSync(join(IOS_ROOT, relPath), "utf8"));
@@ -430,14 +510,19 @@ d("#4135 — the app names a source or draws none", () => {
       expect(body).not.toContain(".capitalized");
     });
 
-    it("the two Discover files and RelatedFuturesView reach the resolver at all", () => {
+    it("every one of the seven files reaches the resolver at all", () => {
       // The coarse net under the slices: a rewrite that renames the declarations
       // above would skip every `it.each` case via a red slice, but this one still
-      // has to hold.
+      // has to hold. All seven files #4351 touched are here, including the four
+      // the first cut of this ship missed and a LOOK found.
       for (const rel of [
         "Components/DiscoverFuturesCard.swift",
         "Views/DiscoverView.swift",
         "Components/RelatedFuturesView.swift",
+        "Components/DistributionCardView.swift",
+        "Components/HeatMapCardView.swift",
+        "Components/PlayerPropsCardView.swift",
+        "Views/TeamDetailView.swift",
       ]) {
         const source = stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
         expect([rel, source.includes("SourceLabels.label(for:")]).toEqual([rel, true]);

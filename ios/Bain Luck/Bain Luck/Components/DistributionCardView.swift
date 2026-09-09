@@ -111,8 +111,10 @@ struct DistributionCardView: View {
                 Spacer()
                 // #490: confidence signal (1-3 bars) — renders nothing when absent.
                 SignalBarsView(tier: data.confidenceTier)
-                if let src = data.source {
-                    Text(src.uppercased())
+                // #4351: named, or not drawn — was `src.uppercased()`, which is
+                // how this card printed `ODDS_API`.
+                if let src = SourceLabels.label(for: data.source) {
+                    Text(src)
                         .font(.system(size: 9, weight: .heavy))
                         .foregroundStyle(.blue)
                         .padding(.horizontal, 7)

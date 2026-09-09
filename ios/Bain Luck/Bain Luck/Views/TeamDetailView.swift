@@ -120,7 +120,9 @@ struct TeamDetailView: View {
                                     if let rank = future.rank, let total = future.totalOutcomes {
                                         Text("#\(rank) of \(total)").font(.caption2).foregroundStyle(.secondary)
                                     }
-                                    if let src = future.source {
+                                    // #4351: this one did not even shout — the team
+                                    // page printed the key verbatim, `odds_api`.
+                                    if let src = SourceLabels.label(for: future.source) {
                                         Text(src).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
                                     }
                                 }
