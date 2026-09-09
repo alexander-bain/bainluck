@@ -16,6 +16,7 @@ import {
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { shareContent } from "@/lib/share";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { Button } from "@/components/ui/button";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -111,7 +112,7 @@ export default function ChallengePage({ params }: ChallengePageProps) {
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
 
   const shareUrl = useMemo(() => {
-    if (typeof window === "undefined") return `https://bainluck.com/challenge/${challengeCode}`;
+    if (typeof window === "undefined") return `${getSiteUrl()}/challenge/${challengeCode}`;
     return window.location.href;
   }, [challengeCode]);
 
