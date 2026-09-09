@@ -10875,6 +10875,19 @@ def _event_is_really_finished(event, now) -> bool:
     return event.commence_time is None or event.commence_time <= now
 
 
+def _own_axis(value, inverted):
+    """A leg's probability on ITS OWN axis, given an over-axis ``value``.
+
+    #4390: ``over_probability`` / ``pregame_mark`` are normalised onto the OVER
+    (yes) axis, so an under/no leg carries its SIBLING's number. That is the
+    right contract for a consumer that reasons about the question — and the
+    wrong one for a row rendered under the leg's own name.
+    """
+    if value is None or not inverted:
+        return value
+    return round(1.0 - value, 4)
+
+
 def _build_props_script(player_props, event_is_finished):
     """#195: flatten graded/priced player props into the PropsSection contract.
 
@@ -10884,6 +10897,28 @@ def _build_props_script(player_props, event_is_finished):
     ``graded_label`` (WHAT HIT). The frontend derives its state (script /
     divergence / graded) from event status and gates the whole section on this
     array being present and non-empty.
+
+    #4390 — THE NUMBER BELONGS TO THE NAME THE ROW IS WEARING.
+
+    ``label`` is the leg's own ``outcome_name`` ("No", "Under 8.5"), but
+    ``over_probability`` and ``pregame_mark`` are normalised onto the over/yes
+    axis. Pairing them printed the SIBLING's probability under this leg's name:
+    live on `/events/15307447` THE SCRIPT read "No 37%" directly above
+    "Yes 37%" for one Polymarket question whose stored openings are 0.635 / 0.365.
+    One of those two rows is a false statement about the row's own label, and a
+    reader has no way to tell which.
+
+    The rest of this surface already answers "the number belongs to the name" —
+    the same card renders "Set 1 Winner · Coco Gauff 60% / Mirra Andreeva 42%",
+    each side on its own axis — and so does the concept-page builder
+    (`utils/event_concept.py`, which reads the leader's OWN probability). The
+    inverted legs were the only rows disagreeing, so they are the ones that move.
+
+    ``over_probability`` itself is UNCHANGED: `lib/propDivergence.ts` collapses
+    O/U siblings by reasoning on that axis, and `movement` is already own-axis.
+    This flips the two fields THE SCRIPT prints, and only for a leg that is
+    inverted — a row whose number was already true of its own label is
+    byte-identical.
     """
     script: list[dict] = []
     for pp in player_props:
@@ -10909,11 +10944,15 @@ def _build_props_script(player_props, event_is_finished):
                 actual = pp.get("actual")
                 if actual is not None:
                     graded_label = f"{actual} — {graded_result}"
+        # #4390: `_inverted` is set by the endpoint's own over/under
+        # classification, so this never re-derives orientation from the label —
+        # the two would drift the moment either list of prefixes changed.
+        inverted = bool(pp.get("_inverted"))
         script.append({
             "key": f"{pp.get('market_name', '')}|{pp.get('outcome_name', '')}",
             "label": label,
-            "pregame_mark": pp.get("pregame_mark"),
-            "current": pp.get("over_probability"),
+            "pregame_mark": _own_axis(pp.get("pregame_mark"), inverted),
+            "current": _own_axis(pp.get("over_probability"), inverted),
             "graded_result": graded_result,
             "graded_label": graded_label,
         })
@@ -11485,6 +11524,10 @@ async def _build_game_markets(
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": tt_opening_over,
                         "pregame_mark": _resolve_pregame_mark(market, o, is_over, is_under, tt_opening_over),
+                        # #4390: this leg's numbers above are on the OVER axis,
+                        # i.e. its sibling's. THE SCRIPT renders the row under
+                        # this leg's own name and needs to know that.
+                        "_inverted": bool(is_under and not is_over),
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
@@ -11548,6 +11591,10 @@ async def _build_game_markets(
                     "over_probability": round(over_prob, 4),
                     "opening_over_probability": opening_over,
                     "pregame_mark": _resolve_pregame_mark(market, o, is_over, is_under, opening_over),
+                    # #4390: see the team_total branch — the over-axis numbers
+                    # belong to the sibling leg, and THE SCRIPT prints this one's
+                    # name beside them.
+                    "_inverted": bool(is_under and not is_over),
                     "source": market.source,
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
