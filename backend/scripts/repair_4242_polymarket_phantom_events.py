@@ -49,43 +49,113 @@ and a group with two real fixtures keeps two survivors, each on its own date.
 **2. `DELETE FROM events` destroys children in eight tables.** The measured
 split is what makes this repair small and provably lossless:
 
-    orphans   1,843 (96%)  hold ZERO futures_markets  -> deleted
-    holders      65        markets agree on one date  -> RE-DATED, never moved
-    ambiguous     6        markets disagree           -> DEFERRED, reported
+    orphans   1,841 (96%)  no market, only derived children -> deleted
+    holders      65        markets agree on one date        -> RE-DATED, never moved
+    preserve      2        real substance, one survivor     -> MOVED, then deleted
+    ambiguous     6        markets disagree                 -> DEFERRED, reported
+
+Those four numbers are the SHIPPED `plan_sql()` run against production on
+2026-09-09 over all 1,914 duplicate-group rows, not a hand count: provider
+identities 0, user pins 0, substantive children 0, preservable 2. The two
+preservable rows are `15305758` (Whittaker / Chimaev — the fixture this ship is
+named after) and `15305765` (Viktoria Plzen / Ferencvaros), and each sits in a
+matchup with EXACTLY ONE survivor, which is what makes the move well defined.
+Before CERT-2357 those two were counted among the orphans and deleted outright.
 
 All **10** live rows in the population are holders, not orphans. That is the
 "false-live duplicate" on the #4242 screenshot, and re-dating fixes it at the
 source rather than hiding it.
 
 ------------------------------------------------------------------------------
-WHAT MAKES DELETING AN ORPHAN LOSSLESS — a refusal, not an assumption
+WHAT MAKES DELETING AN ORPHAN LOSSLESS — the canonical inventory, then refusals
 ------------------------------------------------------------------------------
 
-Measured on the 1,914: `odds_snapshots` 0 · `odds_aggregated` 0 ·
-`espn_snapshots` 0 · `event_participants` 0 · `game_moments` 0 ·
-`score_snapshots` 0 · `scoring_plays` 0 · `ranking_judgments` 0. There is no
-odds or scores history on this population to lose.
+CERT-2357 withheld the token from the first version of this file because its
+deletion policy was a HAND-TYPED list of children that overrode the catalogue.
+It named the repair `4242-DELETE-ONLY-PROVEN-DERIVED-ROWS`: use the canonical
+inventory by default, refuse provider-identified and pinned rows, and encode
+narrow production-measured exceptions for what is provably derived. The BLOCK
+was right, and it was right about a real overreach: this file used to call
+`line_movement_analyses` "a regenerable LLM taxonomy cache", and that is true of
+711 of its 713 rows and FALSE of 2 of them.
 
-That is a measurement of today, and a repair run next week runs against a
-different database. So it is enforced rather than trusted: a row is an ORPHAN
-only when every one of :data:`SUBSTANTIVE_CHILD_TABLES` is empty on it. A row
-that has acquired real data since is not an orphan, it is a DEFER, and it is
-reported. The only children an orphan may carry are the three in
-:data:`DERIVED_CHILD_TABLES`:
+So the default is now inverted. :func:`fk_children` reads `pg_constraint` at run
+time and every child table of `events` is SUBSTANTIVE — a row carrying one is
+DEFERRED — unless it appears in :data:`DERIVED_EXCEPTIONS` *and* the row matches
+that exception's predicate. A thirteenth child table added by a migration next
+month needs no edit here to be safe: it is refused because it is unknown, and
+:func:`unknown_children` prints it by name.
 
-* `win_prob_snapshots` (3,084) — event-level curves, keyed `(event_id, source)`
-  with no `market_id`, every one derived from the phantom's own price. DELETED
-  with the row (CASCADE), never re-pointed onto anything: injecting a phantom's
+THE THREE EXCEPTIONS, each with the predicate that makes it derived, the count
+it was measured at, and the query that measured it (2026-09-09, whole
+population, `scripts/` census — a dated census, not a standing fact):
+
+* `win_prob_snapshots` WHERE `source = 'polymarket'` — event-level curves keyed
+  `(event_id, source)` with no `market_id`, derived from the phantom's own
+  price. Deleted with the row (CASCADE), never re-pointed: injecting a phantom's
   curve into a real match is gotcha #46 and a direct hit on *the blend is the
-  product*.
-* `event_provider_anchors` (22) — DELETED (CASCADE). Never re-pointed. Anchor
-  uniqueness is `(source, source_id, id_kind)` and **`event_id` is not in it**,
-  so a wrong re-point is silently accepted forever, permanently asserting a
-  provider id against the wrong fixture, with no constraint to catch it. The
-  #2871 repair learned this the same way.
-* `line_movement_analyses` (713) — DELETED explicitly, BEFORE the events,
-  because its FK is NO ACTION and would otherwise block the delete. It is a
-  regenerable LLM taxonomy cache describing the phantom's garbage name.
+  product*. **3 rows in the population are NOT polymarket** (all `kalshi`) and
+  are therefore real foreign observations — see PRESERVE below.
+* `event_provider_anchors` WHERE `source = 'polymarket' AND id_kind = 'market'`
+  — deleted (CASCADE), **and never re-pointed under any predicate**. Anchor
+  uniqueness is `(source, source_id, id_kind)` and `event_id` is not in it, so a
+  wrong re-point is silently accepted forever, permanently asserting a provider
+  id against the wrong fixture with no constraint to catch it (#2871 learned
+  this the same way). All 24 anchors in the population match the exception; a
+  row carrying any other anchor is DEFERRED, never preserved and never deleted.
+* `line_movement_analyses` WHERE `analysis_type = 'taxonomy_enrichment'` —
+  deleted explicitly, BEFORE the events, because its FK is NO ACTION. **2 rows
+  in the population are `line_movement` analyses**, which are observations about
+  a market's movement and not a cache of anything — see PRESERVE below.
+
+`market_link_changes` and `market_match_receipts` carry an event id with NO FK
+**on purpose** — models.py is explicit that the forensic has to outlive its
+subject. They are lane1b's under D39 and this script does not touch them. A
+deleted phantom keeps its receipt, which is the point of one.
+
+`user_pins` is the one refusal the catalogue cannot supply: `pin_type='event'` +
+`target_id` is a PSEUDO-FK with no constraint behind it, so a deleted event
+leaves a pin pointing at nothing and no error is raised. It is named in
+:data:`PSEUDO_FK_REFUSALS` and measured at 0 on the population; a row with a pin
+is DEFERRED whatever else is true of it.
+
+------------------------------------------------------------------------------
+PRESERVE — the five rows that carry substance, and why re-pointing them is
+not the thing #2871 forbade
+------------------------------------------------------------------------------
+
+Five events in the 2,641 carry a child that is real rather than derived: three
+foreign (`kalshi`) curves and two `line_movement` analyses. Deleting them is the
+overreach CERT-2357 caught. Deferring all five is honest but leaves an extra
+Whittaker card on the very search this ship is named after — `15305758` IS
+Whittaker/Chimaev — so "the pile is gone" would fail on its own headline.
+
+So a PRESERVE row's substance is **moved to the surviving canonical event of the
+same matchup, in the same transaction, before the row is deleted**. Nothing is
+destroyed and the card count still goes to one.
+
+The asymmetry with an anchor is the whole argument and is stated out loud so a
+grader does not read "re-point" and reasonably conclude #2871 was ignored: **an
+anchor asserts an identity** — "this event IS polymarket market X" — and a
+re-pointed one asserts a phantom's identity against a real fixture forever, with
+no constraint to catch it. **A curve sample and a line-movement analysis assert
+no identity.** They are observations about a matchup at a time, they carry no
+provider id, and neither `win_prob_snapshots` nor `line_movement_analyses` has
+any unique index beyond its own `id` (checked on production, not assumed), so a
+re-point can neither collide nor overwrite.
+
+It is refused unless it is provable. A PRESERVE row is only deleted when its
+matchup has **exactly one** survivor; with none or with two (two legs of one
+tie, the `FCSB / PAOK` shape) there is no single event the observation belongs
+to, so the row is DEFERRED instead. :func:`apply_matchup` re-asserts that at
+write time and raises rather than guessing.
+
+As measured today this arm moves TWO rows: the 3 kalshi curves sit on events
+whose matchup has one member, so they are singletons, outside the duplicate-group
+population this repair touches, and cannot be deleted by it at all. The arm still
+exists for them because the generator is non-convergent — a singleton becomes a
+duplicate group the next time it mints — and a refusal that only works on
+today's census is not a refusal.
 
 `market_link_changes` and `market_match_receipts` carry an event id with NO FK
 **on purpose** — models.py is explicit that the forensic has to outlive its
@@ -93,10 +163,10 @@ subject. They are lane1b's under D39 and this script does not touch them. A
 deleted phantom keeps its receipt, which is the point of one.
 
 ------------------------------------------------------------------------------
-THE THREE ARMS
+THE FOUR ARMS
 ------------------------------------------------------------------------------
 
-**DELETE — 1,843 orphans.** A fabricated date and two team names is the whole
+**DELETE — 1,841 orphans.** A fabricated date and two team names is the whole
 of their content.
 
 35 of the 100 matchups are all-orphan and therefore disappear entirely. That was
@@ -180,37 +250,101 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # string literal here would drift from it silently.
 from app.utils.event_completion import EVENT_SUSPENDED  # noqa: E402
 
-# A row carrying ANY of these is not an orphan, whatever the census said last
-# week. Measured 0 across the whole population on 2026-09-09 — this list is what
-# turns that measurement into a refusal rather than an assumption.
-#
-# `futures_markets` leads because it is also the HOLDER test: a row that holds a
-# market is the row the venue points at, and it is re-dated rather than deleted.
-SUBSTANTIVE_CHILD_TABLES = (
-    "futures_markets",
-    "odds_snapshots",
-    "odds_aggregated",
+#: The HOLDER test, and the reason `futures_markets` is not just another child:
+#: a row that holds a market is the row the venue points at, so it is re-dated
+#: rather than deleted. Every OTHER child of `events` comes from the catalogue.
+HOLDER_TABLE = "futures_markets"
+
+#: The canonical inventory as it read on production 2026-09-09 — twelve FK
+#: children. This is a RECORD, not the policy: :func:`fk_children` re-reads
+#: `pg_constraint` every run and :func:`unknown_children` reports the difference,
+#: so a table added since is refused rather than missed. Kept so the guard suite
+#: can assert the shipped default against a known shape without a database.
+CATALOGUE_2026_09_09 = (
     "espn_snapshots",
     "event_participants",
+    "event_provider_anchors",
+    "futures_markets",
     "game_moments",
+    "line_movement_analyses",
+    "odds_aggregated",
+    "odds_snapshots",
+    "ranking_judgments",
     "score_snapshots",
     "scoring_plays",
-    "ranking_judgments",
-)
-
-#: Everything else an orphan may carry. All three are derived from the phantom
-#: itself or regenerable, and all three are DELETED — never re-pointed. See the
-#: module docstring for why each one would be worse re-pointed than deleted.
-DERIVED_CHILD_TABLES = (
     "win_prob_snapshots",
-    "event_provider_anchors",
-    "line_movement_analyses",
 )
 
-#: The only one of the three whose FK is NO ACTION, so the only one that has to
-#: be deleted explicitly before the parent. The other two CASCADE. Asserted
-#: against the live catalogue by the guard suite rather than trusted here.
+#: THE NARROW EXCEPTIONS. `{table: (derived_predicate, measured_note)}`.
+#:
+#: A child row is DERIVED — deletable with its parent — only when its table is
+#: here AND the row satisfies the predicate. Anything else in the same table is
+#: substance: it either PRESERVES (re-pointed to the survivor) or DEFERS.
+#:
+#: Each predicate is rendered into the plan SQL with the child aliased `c`. Each
+#: carries the count it was measured at, the date, and the query — a census in a
+#: comment reads as a standing fact unless it says when it was taken.
+DERIVED_EXCEPTIONS = {
+    "win_prob_snapshots": (
+        "c.source = 'polymarket'",
+        "2026-09-09: 3 of the population's curve rows are NOT polymarket (all "
+        "kalshi). SELECT count(*) FROM win_prob_snapshots w JOIN pop p ON "
+        "p.id = w.event_id WHERE w.source <> 'polymarket'",
+    ),
+    "event_provider_anchors": (
+        "c.source = 'polymarket' AND c.id_kind = 'market'",
+        "2026-09-09: 24 anchors on the population, ALL polymarket/market, 0 "
+        "foreign. SELECT count(*) FROM event_provider_anchors a JOIN pop p ON "
+        "p.id = a.event_id WHERE NOT (a.source = 'polymarket' AND "
+        "a.id_kind = 'market')",
+    ),
+    "line_movement_analyses": (
+        "c.analysis_type = 'taxonomy_enrichment'",
+        "2026-09-09: 2 of the population's analyses are `line_movement`, not "
+        "taxonomy. SELECT count(*) FROM line_movement_analyses l JOIN pop p ON "
+        "p.id = l.event_id WHERE l.analysis_type <> 'taxonomy_enrichment'",
+    ),
+}
+
+#: Of the three exceptions, the tables whose non-derived rows may be MOVED to the
+#: survivor rather than deferred. `event_provider_anchors` is deliberately absent
+#: and must stay absent: an anchor asserts an identity, and a re-pointed one
+#: asserts a phantom's identity against a real fixture forever (#2871). A curve
+#: sample and a line-movement analysis assert none.
+PRESERVABLE_TABLES = ("win_prob_snapshots", "line_movement_analyses")
+
+#: Backed up, and therefore restorable, whether they leave by CASCADE, by an
+#: explicit DELETE, or by being re-pointed onto the survivor.
+DERIVED_CHILD_TABLES = tuple(DERIVED_EXCEPTIONS)
+
+#: The only exception table whose FK is NO ACTION, so the only one that has to be
+#: deleted explicitly before the parent. The other two CASCADE. Asserted against
+#: the live catalogue by the guard suite rather than trusted here.
 NO_ACTION_DERIVED_TABLES = ("line_movement_analyses",)
+
+#: Refusals the catalogue cannot supply. `user_pins` points at an event through
+#: `(pin_type, target_id)` with NO foreign key, so deleting the event leaves a
+#: pin pointing at nothing and raises nothing. Measured 0 on the population
+#: 2026-09-09: SELECT count(*) FROM user_pins u JOIN pop p ON p.id = u.target_id
+#: WHERE u.pin_type = 'event'.
+PSEUDO_FK_REFUSALS = (
+    ("user_pins", "target_id", "pin_type = 'event'"),
+)
+
+#: Provider identity on the event ROW itself. A row that any authority can name
+#: is not a phantom, whatever its dates look like. Both measured 0 on the
+#: population 2026-09-09.
+IDENTITY_COLUMNS = ("espn_id", "statpal_fixture_id")
+
+#: Read `pg_constraint` rather than `information_schema`: the latter hides
+#: constraints on tables the connected role cannot see, which would silently
+#: SHRINK the refusal set — the one direction an inventory must never fail in.
+_FK_CHILDREN_SQL = """
+SELECT DISTINCT c.conrelid::regclass::text AS child_table
+FROM pg_constraint c
+WHERE c.contype = 'f' AND c.confrelid = 'events'::regclass
+ORDER BY 1
+"""
 
 BAK_PREFIX = "bak_4242_"
 
@@ -237,17 +371,58 @@ _POPULATION = """
     AND abs(extract(epoch FROM (e.commence_time - e.created_at))) < 300
 """
 
-_SUBSTANTIVE_COUNTS = "\n           + ".join(
-    f"(SELECT count(*) FROM {t} c WHERE c.event_id = d.id)"
-    for t in SUBSTANTIVE_CHILD_TABLES[1:]
-)
+def substantive_tables(catalogue):
+    """Every catalogue child that is neither the holder table nor an exception.
 
-# One read builds the whole plan. Per row: how many markets it holds, whether
-# those markets agree about the date, and whether it carries any substantive
-# child other than a market.
-_PLAN_SQL = f"""
+    The default is SUBSTANTIVE. A table nobody has classified lands here and
+    defers the rows that carry it, which is the safe direction: the cost of a
+    wrong DEFER is a row this repair does not clean, and the cost of a wrong
+    delete is a real observation destroyed on a dyno whose stdout nobody reads.
+    """
+    return tuple(t for t in sorted(catalogue)
+                 if t != HOLDER_TABLE and t not in DERIVED_EXCEPTIONS)
+
+
+def unknown_children(catalogue):
+    """Catalogue children this file has never classified. Printed, never ignored."""
+    known = {HOLDER_TABLE, *DERIVED_EXCEPTIONS, *CATALOGUE_2026_09_09}
+    return tuple(t for t in sorted(catalogue) if t not in known)
+
+
+def plan_sql(catalogue):
+    """One read builds the whole plan, from the CATALOGUE rather than a list here.
+
+    Per row: how many markets it holds, whether those markets agree about the
+    date, and then the four refusal counts — substantive children, provider
+    identity, pseudo-FK pins, and children of an exception table that do NOT
+    match that exception's predicate (the preservable substance).
+    """
+    subs = substantive_tables(catalogue) or ("events",)  # a no-op arm, never empty
+    substantive_counts = "\n           + ".join(
+        f"(SELECT count(*) FROM {t} c WHERE c.event_id = d.id)"
+        # `events` can only appear via the empty-catalogue guard above, and a
+        # self-join on the doomed row itself would count 1 and defer everything.
+        # Rendering 0 keeps the SQL valid and the arm inert.
+        if t != "events" else "0"
+        for t in subs
+    )
+    preservable_counts = "\n           + ".join(
+        f"(SELECT count(*) FROM {t} c WHERE c.event_id = d.id "
+        f"AND NOT ({pred}))"
+        for t, (pred, _note) in sorted(DERIVED_EXCEPTIONS.items())
+        if t in catalogue
+    ) or "0"
+    identity = " OR ".join(f"d.{c} IS NOT NULL" for c in IDENTITY_COLUMNS)
+    pins = "\n           + ".join(
+        f"(SELECT count(*) FROM {tbl} c WHERE c.{col} = d.id AND c.{pred})"
+        for tbl, col, pred in PSEUDO_FK_REFUSALS
+    ) or "0"
+    identity_cols = "".join(f", e.{c}" for c in IDENTITY_COLUMNS)
+    group_cols = "".join(f", d.{c}" for c in IDENTITY_COLUMNS)
+    return f"""
 WITH pop AS (
-    SELECT e.id, e.status, e.home_team_name, e.away_team_name, e.commence_time
+    SELECT e.id, e.status, e.home_team_name, e.away_team_name,
+           e.commence_time{identity_cols}
     FROM events e
     WHERE {_POPULATION}
 ),
@@ -265,10 +440,14 @@ SELECT d.id, d.status, d.home_team_name, d.away_team_name, d.commence_time,
        count(*) FILTER (WHERE f.id IS NOT NULL AND f.commence_time IS NULL)
            AS n_null_market_times,
        min(f.commence_time) AS market_time,
-       ({_SUBSTANTIVE_COUNTS}) AS n_other_substantive
+       ({substantive_counts}) AS n_other_substantive,
+       (CASE WHEN {identity} THEN 1 ELSE 0 END) AS has_provider_identity,
+       ({pins}) AS n_user_pins,
+       ({preservable_counts}) AS n_preservable
 FROM dup d
-LEFT JOIN futures_markets f ON f.event_id = d.id
-GROUP BY d.id, d.status, d.home_team_name, d.away_team_name, d.commence_time
+LEFT JOIN {HOLDER_TABLE} f ON f.event_id = d.id
+GROUP BY d.id, d.status, d.home_team_name, d.away_team_name,
+         d.commence_time{group_cols}
 ORDER BY d.home_team_name, d.away_team_name, d.id
 """
 
@@ -314,6 +493,21 @@ SQL = {
     ),
     # NO ACTION children go first or the parent delete is refused by the FK.
     "child_delete": "DELETE FROM {tbl} WHERE event_id = ANY(CAST(:doomed AS int[]))",
+    # PRESERVE. Runs BEFORE `child_delete`, so a row this moves onto the survivor
+    # is no longer `event_id = ANY(:doomed)` when the delete arrives and is left
+    # alone. `NOT ({derived})` is the exception's own predicate negated — the
+    # same text the plan counted with, so the rows moved are exactly the rows
+    # counted (a second, paraphrased predicate here is how a repair moves a
+    # different set than the one it reported).
+    # `AS c` and not a bare alias: Postgres accepts both, and the guard suite
+    # executes this statement against sqlite, which accepts only the explicit
+    # form. The alias itself is not optional — the exception predicates are
+    # written against `c` so that ONE text can be rendered into both the plan's
+    # count and this UPDATE.
+    "repoint": (
+        "UPDATE {tbl} AS c SET event_id = :survivor "
+        "WHERE c.event_id = ANY(CAST(:doomed AS int[])) AND NOT ({derived})"
+    ),
     "event_delete": "DELETE FROM events WHERE id = ANY(CAST(:doomed AS int[]))",
     # The two `events` columns this repair writes, and it writes them together.
     # `events` has NO `updated_at` column (only `created_at`) — naming one here
@@ -345,23 +539,41 @@ def backup_is_exact(recon):
 
 
 def classify(row):
-    """ORPHAN / HOLDER / DEFER for one row. Pure — this is the whole decision.
+    """ORPHAN / HOLDER / PRESERVE / DEFER for one row. Pure — the whole decision.
 
-    ORPHAN  nothing points at it: no market and no substantive child of any kind.
-    HOLDER  holds a market, holds nothing else substantive, and its markets
-            agree about the date, so the venue's own date is recoverable.
-    DEFER   everything else. Two market dates on one row is two fixtures already
-            merged; a substantive child that was measured at zero has appeared
-            since. Both are reported, neither is guessed at.
+    ORPHAN    nothing points at it: no market, and every child it carries is
+              provably derived under its table's exception predicate.
+    HOLDER    holds a market, refuses nothing, and its markets agree about the
+              date, so the venue's own date is recoverable.
+    PRESERVE  would be an orphan except that it carries real substance — a
+              foreign curve or a line-movement analysis. Deletable only after
+              that substance is moved to the survivor, and only when the matchup
+              has exactly one; :class:`Matchup` decides that, not this function,
+              because it is a fact about the GROUP and not about the row.
+    DEFER     everything else, and everything unrecognised. Two market dates on
+              one row is two fixtures already merged; a substantive child that
+              was measured at zero has appeared since; the row carries a provider
+              identity, a user's pin, or a child of a table nobody classified.
+              All reported, none guessed at.
+
+    THE REFUSALS COME FIRST and they are unconditional. A row that any authority
+    can name, or that a user has pinned, is never deleted by this repair no
+    matter how phantom-shaped the rest of it looks.
     """
+    if row.get("has_provider_identity"):
+        return "DEFER"
+    if row.get("n_user_pins"):
+        return "DEFER"
     if row["n_other_substantive"]:
         return "DEFER"
-    if not row["n_markets"]:
-        return "ORPHAN"
-    if row["n_market_dates"] == 1 and not row["n_null_market_times"] \
-            and row["market_time"] is not None:
-        return "HOLDER"
-    return "DEFER"
+    if row["n_markets"]:
+        if row["n_market_dates"] == 1 and not row["n_null_market_times"] \
+                and row["market_time"] is not None:
+            return "HOLDER"
+        return "DEFER"
+    if row.get("n_preservable"):
+        return "PRESERVE"
+    return "ORPHAN"
 
 
 class Matchup:
@@ -388,12 +600,37 @@ class Matchup:
         return [r for r in self.rows if classify(r) == "HOLDER"]
 
     @property
+    def preservable(self):
+        """PRESERVE rows this matchup can actually place, i.e. none unless there
+        is EXACTLY ONE survivor to place them on.
+
+        Zero survivors: the whole matchup disappears and there is nowhere for the
+        observation to go. Two: the group holds two legs of one tie and choosing
+        between them is choosing which real fixture a real observation describes.
+        Both fall through to :attr:`deferred` — the row is left standing, which
+        keeps the observation attached to something and costs one uncleaned card.
+        """
+        if len(self.holders) != 1:
+            return []
+        return [r for r in self.rows if classify(r) == "PRESERVE"]
+
+    @property
     def deferred(self):
-        return [r for r in self.rows if classify(r) == "DEFER"]
+        placed = {id(r) for r in self.preservable}
+        return [r for r in self.rows
+                if classify(r) == "DEFER"
+                or (classify(r) == "PRESERVE" and id(r) not in placed)]
 
     @property
     def doomed_ids(self):
-        return [r["id"] for r in self.orphans]
+        """Deleted this pass: the orphans, plus the PRESERVE rows whose substance
+        has somewhere to go. The latter are only ever deleted AFTER the re-point
+        in the same transaction."""
+        return [r["id"] for r in self.orphans + self.preservable]
+
+    @property
+    def repoint_ids(self):
+        return [r["id"] for r in self.preservable]
 
     @property
     def survivor_ids(self):
@@ -402,7 +639,7 @@ class Matchup:
     def __repr__(self):
         return (f"<{self.home} vs {self.away}: {len(self.rows)} rows, "
                 f"{len(self.orphans)} orphan / {len(self.holders)} holder / "
-                f"{len(self.deferred)} defer>")
+                f"{len(self.preservable)} preserve / {len(self.deferred)} defer>")
 
 
 def _chunks(seq, n=CHUNK):
@@ -410,12 +647,29 @@ def _chunks(seq, n=CHUNK):
         yield seq[i:i + n]
 
 
-async def build_plan(session):
+async def fk_children(session):
+    """THE CANONICAL INVENTORY: every table with a foreign key to `events`.
+
+    Read fresh every run. This is the default the whole policy hangs off — the
+    hand-typed list this file used to carry is what CERT-2357 blocked.
+    """
+    from sqlalchemy import text
+    return tuple((await session.execute(text(_FK_CHILDREN_SQL))).scalars().all())
+
+
+async def build_plan(session, catalogue=None):
     """Read the population and group it by name. No writes."""
     from sqlalchemy import text
 
+    if catalogue is None:
+        catalogue = await fk_children(session)
+    if HOLDER_TABLE not in catalogue:
+        raise RuntimeError(
+            f"the catalogue does not list {HOLDER_TABLE} as a child of events — "
+            f"the inventory read failed or the schema moved. Refusing to run.")
+
     rows = [dict(r) for r in
-            (await session.execute(text(_PLAN_SQL))).mappings().all()]
+            (await session.execute(text(plan_sql(catalogue)))).mappings().all()]
 
     matchups = {}
     for r in rows:
@@ -431,12 +685,20 @@ async def build_plan(session):
     # comprehensions over the same predicate, so a classify() that grew a fourth
     # answer would silently drop rows out of the plan instead of failing.
     for m in ordered:
-        n = len(m.orphans) + len(m.holders) + len(m.deferred)
+        n = (len(m.orphans) + len(m.holders) + len(m.preservable)
+             + len(m.deferred))
         if n != len(m.rows):
             raise RuntimeError(
                 f"{m!r}: {n} classified rows for {len(m.rows)} members — "
                 f"classify() returned something no arm handles. Refusing to run."
             )
+        # A row must never be both deleted and left standing. The arms are four
+        # independent comprehensions over one predicate, so this is cheap and it
+        # is the invariant an off-by-one in `preservable` would break.
+        if set(m.doomed_ids) & {r["id"] for r in m.deferred}:
+            raise RuntimeError(
+                f"{m!r}: a row is in both the doomed and the deferred arm. "
+                f"Refusing to run.")
     return ordered, len(rows)
 
 
@@ -520,8 +782,33 @@ async def apply_matchup(session, m):
     """
     from sqlalchemy import text
 
-    counts = {"deleted_children": 0, "deleted_events": 0, "redated": 0}
+    counts = {"deleted_children": 0, "deleted_events": 0, "redated": 0,
+              "repointed": 0}
     doomed = m.doomed_ids
+    repoint = m.repoint_ids
+
+    # PRESERVE, and it goes FIRST — before the NO ACTION delete and before the
+    # parent delete, so the moved row is already pointing at the survivor when
+    # they run and neither statement can reach it.
+    if repoint:
+        if len(m.survivor_ids) != 1:
+            # Unreachable via `Matchup.preservable`, which returns [] unless
+            # there is exactly one. Re-asserted at WRITE time because the cost of
+            # the two disagreeing is a real observation attached to the wrong
+            # fixture, and because a future edit to either is the likeliest way
+            # for them to disagree.
+            raise RuntimeError(
+                f"{m!r}: {len(repoint)} rows to preserve but "
+                f"{len(m.survivor_ids)} survivors. Refusing to guess which "
+                f"fixture the observation belongs to.")
+        survivor = m.survivor_ids[0]
+        for tbl in PRESERVABLE_TABLES:
+            derived, _note = DERIVED_EXCEPTIONS[tbl]
+            res = await session.execute(
+                text(SQL["repoint"].format(tbl=tbl, derived=derived)),
+                {"doomed": repoint, "survivor": survivor},
+            )
+            counts["repointed"] += res.rowcount or 0
 
     if doomed:
         for tbl in NO_ACTION_DERIVED_TABLES:
@@ -575,32 +862,83 @@ async def run(args):
             if args.apply or args.backup:
                 return
 
-        matchups, rows = await build_plan(s)
+        # THE CANONICAL INVENTORY, read before the plan and printed before the
+        # arms. A reader must be able to see what the refusal set was on the run
+        # that did the writing, not on the day the file was written.
+        catalogue = await fk_children(s)
+        unknown = unknown_children(catalogue)
+        print(f"\n=== canonical inventory: {len(catalogue)} FK children of "
+              f"events ===")
+        print(f"  holder            : {HOLDER_TABLE}")
+        print(f"  derived exceptions: "
+              f"{', '.join(f'{t} [{p}]' for t, (p, _) in sorted(DERIVED_EXCEPTIONS.items()))}")
+        print(f"  substantive       : {', '.join(substantive_tables(catalogue))}")
+        print(f"  pseudo-FK refusals: "
+              f"{', '.join(f'{t}.{c} WHERE {p}' for t, c, p in PSEUDO_FK_REFUSALS)}")
+        if unknown:
+            print(f"  ⚠️  UNCLASSIFIED, treated as substantive so every row "
+                  f"carrying one DEFERS: {', '.join(unknown)}")
+        missing = [t for t in CATALOGUE_2026_09_09 if t not in catalogue]
+        if missing:
+            print(f"  ⚠️  in the 2026-09-09 record but NOT in the catalogue "
+                  f"now: {', '.join(missing)}")
+
+        matchups, rows = await build_plan(s, catalogue)
         if args.limit:
             matchups = matchups[:args.limit]
 
         n_orphan = sum(len(m.orphans) for m in matchups)
         n_holder = sum(len(m.holders) for m in matchups)
+        n_preserve = sum(len(m.preservable) for m in matchups)
         n_defer = sum(len(m.deferred) for m in matchups)
         vanishing = [m for m in matchups if not m.holders and not m.deferred]
 
         print(f"\n=== plan: {len(matchups)} matchups / {rows} rows ===")
-        print(f"  DELETE  (orphans, no market and no substantive child): {n_orphan}")
-        print(f"  RE-DATE (holders, markets agree on one date)         : {n_holder}")
-        print(f"  DEFER   (ambiguous — reported, untouched)            : {n_defer}")
-        print(f"  matchups that disappear entirely (all-orphan)        : "
+        print(f"  DELETE   (orphans, no market, only provably derived children): "
+              f"{n_orphan}")
+        print(f"  RE-DATE  (holders, markets agree on one date)                : "
+              f"{n_holder}")
+        print(f"  PRESERVE (real substance moved to the one survivor, then "
+              f"deleted): {n_preserve}")
+        print(f"  DEFER    (ambiguous or refused — reported, untouched)        : "
+              f"{n_defer}")
+        print(f"  matchups that disappear entirely (all-orphan)                : "
               f"{len(vanishing)}")
 
+        if n_preserve:
+            print("\n  PRESERVED rows — a foreign curve or a line-movement "
+                  "analysis re-pointed onto the surviving canonical event "
+                  "before the phantom is deleted. An ANCHOR is never moved "
+                  "(#2871); a row carrying one defers:")
+            for m in matchups:
+                for r in m.preservable:
+                    print(f"    → {m.home} vs {m.away} (id {r['id']}, "
+                          f"{r['n_preservable']} preservable child rows) "
+                          f"→ survivor {m.survivor_ids[0]}")
+
         if n_defer:
-            print("\n  DEFERRED rows — two fixtures already merged onto one row, or "
-                  "a substantive child that was measured at zero has appeared. "
-                  "File as matching-symptom under #2693 (D35), do not guess:")
+            print("\n  DEFERRED rows — two fixtures already merged onto one row, "
+                  "a substantive child that was measured at zero has appeared, a "
+                  "provider identity, a user's pin, or substance with no single "
+                  "survivor to hold it. File as matching-symptom under #2693 "
+                  "(D35), do not guess:")
             for m in matchups:
                 for r in m.deferred[:1]:
-                    print(f"    ~ {m.home} vs {m.away} (id {r['id']}, "
-                          f"{r['n_markets']} markets across "
-                          f"{r['n_market_dates']} dates, "
-                          f"{r['n_other_substantive']} other substantive children)")
+                    why = []
+                    if r.get("has_provider_identity"):
+                        why.append("PROVIDER ID")
+                    if r.get("n_user_pins"):
+                        why.append(f"{r['n_user_pins']} user pin(s)")
+                    if r["n_other_substantive"]:
+                        why.append(f"{r['n_other_substantive']} substantive children")
+                    if r.get("n_preservable") and len(m.holders) != 1:
+                        why.append(f"{r['n_preservable']} preservable rows but "
+                                   f"{len(m.holders)} survivors")
+                    if r["n_markets"] and r["n_market_dates"] != 1:
+                        why.append(f"{r['n_markets']} markets across "
+                                   f"{r['n_market_dates']} dates")
+                    print(f"    ~ {m.home} vs {m.away} (id {r['id']}: "
+                          f"{'; '.join(why) or 'see classify()'})")
 
         print("\n  first 10 matchups:")
         for m in matchups[:10]:
@@ -626,7 +964,8 @@ async def run(args):
 
         if not args.apply:
             print(f"\nDRY-RUN — no writes. Pass --backup to copy, then --apply to "
-                  f"delete {n_orphan} orphans and re-date {n_holder} holders.")
+                  f"delete {n_orphan} orphans, preserve-and-delete "
+                  f"{n_preserve}, and re-date {n_holder} holders.")
             return
 
         if not clean:
@@ -637,7 +976,8 @@ async def run(args):
 
         # ---- apply ----
         print(f"\n=== applying to {len(matchups)} matchups ===")
-        tot = {"deleted_children": 0, "deleted_events": 0, "redated": 0}
+        tot = {"deleted_children": 0, "deleted_events": 0, "redated": 0,
+               "repointed": 0}
         failures = []
         for i, m in enumerate(matchups, 1):
             # One bad matchup must never wipe the pass (gotcha #42).

@@ -22,11 +22,28 @@ WHAT IT PUTS BACK, in FK-safe order (parents before children):
      precisely why the repair backed them up: nothing in its own text names
      them, so nothing but the backup can find them again. All three have FKs to
      `events`, which is why step 1 has to come first.
+  4. `event_id` on the PRESERVED children — puts back the rows the repair MOVED
+     rather than deleted.
 
-NOTHING IS MOVED BACK, because nothing was moved. The repair re-points no
-market: a holder keeps the markets it already had, so `futures_markets` is
-untouched and there is no re-point ledger to unwind. That is the single biggest
-difference from the #2871 undo and it makes this one strictly smaller.
+WHAT WAS MOVED, AND WHY STEP 4 EXISTS (changed under CERT-2357's named repair
+`4242-DELETE-ONLY-PROVEN-DERIVED-ROWS`). The repair no longer deletes every
+derived-looking child. A phantom carrying real substance — a foreign
+(non-polymarket) curve sample, or a `line_movement` analysis that is not the
+regenerable taxonomy cache — has that substance RE-POINTED onto the surviving
+canonical event of its matchup before the phantom is deleted.
+
+Those rows are therefore still live after the repair, under a different
+`event_id`, and an undo that only re-inserted deleted rows would leave them
+attached to the survivor forever. Step 4 restores `event_id` from the backup for
+every backed-up child row that still exists live with a different parent. It is
+an equality-guarded UPDATE, so it is idempotent like the rest, and it runs after
+step 1 because the original parent has to be back before a child can point at it
+again.
+
+No MARKET is ever moved: a holder keeps the markets it already had, so
+`futures_markets` is untouched. No ANCHOR is ever moved either — that is the
+#2871 rule and the repair refuses it by construction — so neither table has a
+re-point to unwind.
 
 Idempotent and re-runnable: every step is a `WHERE NOT EXISTS` / equality-guarded
 write, so a partial restore followed by a full one converges.
@@ -73,6 +90,24 @@ FROM {bak} b
 WHERE e.id = b.id
   AND (e.commence_time IS DISTINCT FROM b.commence_time
        OR e.status IS DISTINCT FROM b.status)
+"""
+
+
+# Step 4. `event_id` is the ONLY column the repair rewrites on a child row, so it
+# is the only one put back. Guarded with `IS DISTINCT FROM` for the same reason
+# the events restore is: a NULL on either side makes `<>` evaluate to NULL and
+# the row is silently skipped, which is what an undo can least afford.
+#
+# The join is on `id`, not on `event_id` — after a re-point the two disagree by
+# definition, and joining on the thing that changed would match nothing and
+# report a clean zero (gotcha #53: a zero-yield undo step must not read as a
+# successful one).
+RESTORE_CHILD_PARENT_SQL = """
+UPDATE {tbl} c
+SET event_id = b.event_id
+FROM {bak} b
+WHERE c.id = b.id
+  AND c.event_id IS DISTINCT FROM b.event_id
 """
 
 
@@ -141,6 +176,14 @@ async def run(apply, drop_backups):
         """))).scalar() or 0
         print(f"  {'events date + status':>24}: {redated:>7} rows reverted")
 
+        for t in CHILD_TABLES:
+            moved = (await s.execute(text(f"""
+                SELECT count(*) FROM {BAK_PREFIX}{t} b
+                JOIN {t} c ON c.id = b.id
+                WHERE c.event_id IS DISTINCT FROM b.event_id
+            """))).scalar() or 0
+            print(f"  {t + ' event_id':>24}: {moved:>7} re-points undone")
+
         if not apply:
             print("\nDRY-RUN — no writes. Pass --apply to restore.")
             return
@@ -175,6 +218,16 @@ async def run(apply, drop_backups):
             """))).rowcount or 0
             await s.commit()
             print(f"restored {n} {t}")
+
+        # 4. the re-points. A PRESERVED child was moved, not deleted, so it is
+        #    already live under the survivor's id and step 3 skipped it (its `id`
+        #    exists). This is the step that puts it back on its own parent, and
+        #    it runs last because step 1 has to have re-created that parent.
+        for t in CHILD_TABLES:
+            n = (await s.execute(text(RESTORE_CHILD_PARENT_SQL.format(
+                tbl=t, bak=BAK_PREFIX + t)))).rowcount or 0
+            await s.commit()
+            print(f"un-re-pointed {n} {t}")
 
         if drop_backups:
             for t in tables:
