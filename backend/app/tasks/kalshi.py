@@ -219,17 +219,35 @@ def _parse_kalshi_ticker_name(ticker: str) -> str:
 
 import re as _re
 
+# A PLACEHOLDER SUFFIX IS A SINGLE LETTER OR A RUN OF DIGITS — NEVER A WORD
+# (#4246). These patterns exist to catch Kalshi's obfuscated labels ("Team A",
+# "Option 1"), and they are matched IGNORECASE, so the old `[A-Z0-9]+` arm
+# swallowed any single word after one of the nouns. Measured on production
+# 2026-09-09: `yes_sub_title` "Team USA", "Team Europe" and "Team World" were
+# all read as placeholders, and so was the fighter **Song Yadong** — "Song" is
+# one of the nouns. Each rejection fell through to `_kalshi_outcome_name` step
+# 4, which handed back the market's own QUESTION, so "2027 Ryder Cup Winner"
+# ranked "Will Team Europe win the Ryder Cup?" at 54% as if it were a
+# contender. 373 outcome rows on 55 open `field` markets carried a question as
+# their name that morning.
+#
+# `_PLACEHOLDER_SUFFIX` keeps every case the old arm was written for ("Team 1",
+# "Team A", "Option 12", "Song A") and stops it eating real names. The four
+# nouns that were already letter-only (Ticker/App/Movie/Show) are left exactly
+# as they were — widening them would newly swallow the film "Movie 43".
+_PLACEHOLDER_SUFFIX = r"(?:[A-Z]|[0-9]+)"
+
 _GENERIC_OUTCOME_PATTERNS = _re.compile(
     r"^(?:"
     r"Ticker [A-Z]"  # "Ticker D", "Ticker H"
-    r"|Option [A-Z0-9]+"  # "Option 1", "Option A"
-    r"|Choice [A-Z0-9]+"  # "Choice 1"
-    r"|Person [A-Z0-9]+"  # "Person B", "Person G"
-    r"|Team [A-Z0-9]+"  # "Team 1", "Team A"
-    r"|Player [A-Z0-9]+"  # "Player 1"
-    r"|Candidate [A-Z0-9]+"  # "Candidate 1"
+    rf"|Option {_PLACEHOLDER_SUFFIX}"  # "Option 1", "Option A"
+    rf"|Choice {_PLACEHOLDER_SUFFIX}"  # "Choice 1"
+    rf"|Person {_PLACEHOLDER_SUFFIX}"  # "Person B", "Person G"
+    rf"|Team {_PLACEHOLDER_SUFFIX}"  # "Team 1", "Team A" — NOT "Team USA"
+    rf"|Player {_PLACEHOLDER_SUFFIX}"  # "Player 1"
+    rf"|Candidate {_PLACEHOLDER_SUFFIX}"  # "Candidate 1"
     r"|App [A-Z]"  # "App H", "App C"
-    r"|Song [A-Z0-9]+"  # "Song A", "Song 1"
+    rf"|Song {_PLACEHOLDER_SUFFIX}"  # "Song A", "Song 1" — NOT "Song Yadong"
     r"|Movie [A-Z]"  # "Movie B"
     r"|Show [A-Z]"  # "Show C"
     r"|[A-Z]$"  # Single letters only (not "Yes"/"No")
@@ -250,6 +268,23 @@ def _is_generic_outcome_name(name: str) -> bool:
     return bool(_GENERIC_OUTCOME_PATTERNS.match(name.strip()))
 
 
+def _is_question_title(title: str) -> bool:
+    """A name that ends in a question mark can never be a contender (#4246).
+
+    Step 4 of the ladder below hands back the MARKET's own title, and on a
+    Kalshi field event that title is a QUESTION ("Will Team Europe win the
+    Ryder Cup?", "Who will be the Bantamweight Title Holder on Dec 31, 2026?").
+    Printed as an outcome it becomes a row on the card that already asks it —
+    the same reader-visible harm #4223 banned one layer out, where a ``?`` in a
+    container fold's differing span is refused for exactly this reason.
+
+    Deliberately just the trailing ``?``: it is the predicate the issue's
+    standing guard asserts against the served payload, it needs no parsing, and
+    it cannot cut inside a proper noun the way an affix snap can.
+    """
+    return title.rstrip().endswith("?")
+
+
 def _kalshi_outcome_name(event_title, market, market_count: int) -> str:
     """Display name for one Kalshi market as an outcome of its event.
 
@@ -260,12 +295,14 @@ def _kalshi_outcome_name(event_title, market, market_count: int) -> str:
     what has to change: ``name`` is NOT NULL, so a placeholder row cannot be
     written without this.
 
-    Priority (unchanged, this is a pure move):
+    Priority:
       1. single-market event -> "Yes"
       2. ``yes_sub_title`` (the player/team name) if not generic/obfuscated
       3. ``subtitle`` if not generic
-      4. ``title`` when it differs from the event title
+      4. ``title`` when it differs from the event title AND is not a question
       5. the parsed ticker, as a last resort
+
+    Step 4's question clause is #4246. Everything else is the original ladder.
     """
     if market_count == 1:
         return "Yes"
@@ -274,7 +311,11 @@ def _kalshi_outcome_name(event_title, market, market_count: int) -> str:
         return sub
     if market.subtitle and not _is_generic_outcome_name(market.subtitle):
         return market.subtitle
-    if market.title and market.title != event_title:
+    if (
+        market.title
+        and market.title != event_title
+        and not _is_question_title(market.title)
+    ):
         return market.title
     return _parse_kalshi_ticker_name(market.ticker)
 
@@ -5489,20 +5530,15 @@ async def _create_settled_market(
         return "skip"
     stats["markets_created"] += 1
 
-    single = len(event.markets) == 1
     for m in event.markets:
-        if single:
-            outcome_name = "Yes"
-        else:
-            sub = m.yes_sub_title
-            if sub and not _is_generic_outcome_name(sub):
-                outcome_name = sub
-            elif m.subtitle and not _is_generic_outcome_name(m.subtitle):
-                outcome_name = m.subtitle
-            elif m.title and m.title != event.title:
-                outcome_name = m.title
-            else:
-                outcome_name = m.ticker
+        # #4246: this was a second, hand-inlined copy of `_kalshi_outcome_name`'s
+        # ladder, so a ban added to the helper was not a ban — the settled-events
+        # backfill would keep minting the names the poll had just stopped
+        # minting. One helper, one ladder. The only behaviour that moves is the
+        # last resort, which becomes the parsed ticker ("Eur") instead of the raw
+        # one ("KXPGARYDER-RC27-EUR") — strictly the better read, and a settled
+        # card is where a reader meets these names as results.
+        outcome_name = _kalshi_outcome_name(event.title, m, len(event.markets))
         prob = m.last_price if (m.last_price and 0 < m.last_price < 1) else None
         american = probability_to_american(prob) if prob else None
         # CAL-P1004 (#1852 forward half) — the same fabricated loss as the poll's
