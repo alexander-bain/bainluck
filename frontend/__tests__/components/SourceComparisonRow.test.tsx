@@ -96,7 +96,17 @@ describe("SourceComparisonRow — a source with no outcomes in the cohort", () =
 
   test("says so explicitly instead of leaving a blank", () => {
     expect(text).toContain("No outcomes in this cohort");
-    expect(text).toContain("not measured, not ranked");
+  });
+
+  // #4118 / standing notice 34. The cell used to go on: "— not measured, not
+  // ranked." That is an explanation of the emptiness, and the notice's rule for
+  // a number that cannot be shown honestly is to leave the space empty rather
+  // than annotate it. Pinned as a ban so the clause cannot drift back in under
+  // a reword, and pinned NARROWLY — the two tests either side of it already
+  // hold the fact and the remedy, which is what a reader needs.
+  test("does not explain the emptiness", () => {
+    expect(text).not.toContain("not measured");
+    expect(text).not.toContain("not ranked");
   });
 
   test("names the control that recovers the data", () => {

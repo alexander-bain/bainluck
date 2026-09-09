@@ -284,8 +284,75 @@ describe("providerKpiDetail — UX-P080 item 2 (Alex round 2)", () => {
 
   test("a multi-shape provider names its shapes in the subtext", () => {
     expect(providerKpiDetail(GROUPS, label)).toContain(
-      "Sportsbooks (Odds API) (moneyline, moneyline (book), spread)",
+      "Sportsbooks (Odds API: moneyline, moneyline (book), spread)",
     );
+  });
+
+  // #4214 — THE QUALIFIER, ONCE.
+  //
+  // Production read "Sportsbooks (Odds API) (Per-sportsbook (Odds API), Odds
+  // API, Totals (Odds API), Spreads (Odds API))": "Odds API" five times, three
+  // parens deep. The fixture above uses invented short labels, so it could
+  // never have caught it — these tests use the REAL strings the page composes,
+  // `PROVIDER_DISPLAY_NAMES.odds_api_family` against `SOURCE_DISPLAY_NAMES`.
+  describe("the real production labels, which are what #4214 was filed on", () => {
+    const REAL_GROUPS = [
+      { label: "Kalshi", sources: ["kalshi"] },
+      {
+        label: "Sportsbooks (Odds API)",
+        sources: ["odds_api", "odds_api_bookmaker", "odds_api_totals", "odds_api_spreads"],
+      },
+    ];
+    const realLabel = (s: string) =>
+      ({
+        kalshi: "Kalshi",
+        odds_api: "Odds API",
+        odds_api_bookmaker: "Per-sportsbook (Odds API)",
+        odds_api_totals: "Totals (Odds API)",
+        odds_api_spreads: "Spreads (Odds API)",
+      })[s] ?? s;
+
+    const out = providerKpiDetail(REAL_GROUPS, realLabel);
+
+    test("says the provider qualifier once, not once per member", () => {
+      expect(out).toBe(
+        "Kalshi · Sportsbooks (Odds API: Odds API, Per-sportsbook, Totals, Spreads)",
+      );
+    });
+
+    test("never nests a parenthesis inside a parenthesis", () => {
+      // The reader-visible symptom, pinned independently of the exact wording:
+      // scan the string and assert the depth never exceeds one.
+      let depth = 0;
+      for (const ch of out) {
+        if (ch === "(") depth += 1;
+        if (ch === ")") depth -= 1;
+        expect(depth).toBeLessThanOrEqual(1);
+        expect(depth).toBeGreaterThanOrEqual(0);
+      }
+      expect(depth).toBe(0);
+    });
+
+    test("still names every source key — UX-P080 collapses the count, not the information", () => {
+      // The one label that legitimately survives as "Odds API" is the moneyline
+      // key, which has no shape name of its own. That is a server vocabulary
+      // question (`source_labels`, CAL-P1025 / #3357) and is recorded on #4214,
+      // not guessed at in the client — so the assertion is that each key is
+      // REACHABLE, not that it reads a particular way.
+      for (const src of REAL_GROUPS[1].sources) {
+        const shape = realLabel(src).replace(" (Odds API)", "");
+        expect(out).toContain(shape);
+      }
+    });
+
+    test("a group with no qualifier is composed exactly as before", () => {
+      // The strip must be a no-op wherever there is nothing to strip: this is
+      // the regression path for every provider that is not the sportsbook
+      // family, now and later.
+      expect(
+        providerKpiDetail([{ label: "Polymarket", sources: ["a", "b"] }], (s) => s.toUpperCase()),
+      ).toBe("Polymarket (A, B)");
+    });
   });
 
   test("the shapes are NOT dropped — every source key is still reachable", () => {

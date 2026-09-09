@@ -200,16 +200,56 @@ export function shapeBreakdownNote(panels: readonly ProviderPanel[]): string | n
  * from, so the card cannot count something the tables do not. That is the
  * pairing discipline this page keeps re-learning: agreement is guaranteed by
  * shared derivation, never by two expressions that must be kept in step.
+ *
+ * #4214 — THE QUALIFIER IS SAID ONCE, NOT ONCE PER MEMBER.
+ *
+ * In production this read *"Sportsbooks (Odds API) (Per-sportsbook (Odds API),
+ * Odds API, Totals (Odds API), Spreads (Odds API))"* — "Odds API" five times,
+ * three parentheses deep, in a KPI card's subtext. Neither half was wrong: the
+ * group is named for its provider and each source label carries its own
+ * provider too, because a source label has to stand alone everywhere else on
+ * the page. Composing them nested repeated the qualifier the group had already
+ * established.
+ *
+ * So the group's trailing parenthetical is lifted out and stated once, and each
+ * member drops the copy it carried: `Sportsbooks (Odds API: Per-sportsbook,
+ * Odds API, Totals, Spreads)`.
+ *
+ * Two things this deliberately does NOT do. It does not rename any label — the
+ * page's labels come from the server's `source_labels` vocabulary since
+ * CAL-P1025 (#3357), and a client-side rename is the shadowing bug #4067 was
+ * filed for. And it drops nothing: every source key is still named, which is
+ * the promise UX-P080 item 2 made. The residual "Odds API" in the example above
+ * is the moneyline key having no shape name of its own; that is a server-side
+ * vocabulary question, recorded on #4214, not something to guess at here.
  */
 export function providerKpiDetail(
   groups: readonly { label: string; sources: readonly string[] }[],
   shapeLabel: (source: string) => string,
 ): string {
   return groups
-    .map(g =>
-      g.sources.length > 1
-        ? `${g.label} (${g.sources.map(shapeLabel).join(", ")})`
-        : g.label,
-    )
+    .map(g => {
+      if (g.sources.length <= 1) return g.label;
+      const qualifier = /\s*\(([^()]+)\)\s*$/.exec(g.label);
+      const members = g.sources.map(s => stripQualifier(shapeLabel(s), qualifier?.[1]));
+      return qualifier
+        ? `${g.label.slice(0, qualifier.index)} (${qualifier[1]}: ${members.join(", ")})`
+        : `${g.label} (${members.join(", ")})`;
+    })
     .join(" · ");
+}
+
+/**
+ * Drop a trailing `(qualifier)` from a label when the context already said it.
+ *
+ * Returns the label untouched when there is no qualifier, when it does not
+ * match, or when stripping would leave nothing — a member that IS the qualifier
+ * still has to be named, and an empty list entry is worse than a repeated word.
+ */
+function stripQualifier(label: string, qualifier: string | undefined): string {
+  if (!qualifier) return label;
+  const suffix = ` (${qualifier})`;
+  if (!label.endsWith(suffix)) return label;
+  const stripped = label.slice(0, -suffix.length).trim();
+  return stripped.length > 0 ? stripped : label;
 }

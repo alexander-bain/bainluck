@@ -58,16 +58,21 @@ export default function SourceComparisonRow({
       </td>
       {row.state === "no-cohort-data" ? (
         /* One cell across the four number columns. Four separate em-dashes
-           would still scan as a row of values; one sentence scans as the
+           would still scan as a row of values; one short line scans as the
            absence it is, and it names the remedy rather than leaving the
-           reader with a smaller mystery. */
+           reader with a smaller mystery.
+
+           #4118 / notice 34 trimmed "not measured, not ranked" out of it. That
+           clause explained the emptiness — the shape the notice bans — and the
+           notice's own instruction for an unshowable number is to leave the
+           space empty rather than annotate it. What survives is the fact and
+           the action, which are not explanations. */
         <td
           className="py-2.5 text-right text-xs text-text-muted"
           colSpan={4}
           data-testid="calibration-provider-no-data"
         >
-          No outcomes in this cohort &mdash; not measured, not ranked. Use
-          &ldquo;{toggleLabel}&rdquo; to include them.
+          No outcomes in this cohort &mdash; see &ldquo;{toggleLabel}&rdquo;.
         </td>
       ) : (
         <>
