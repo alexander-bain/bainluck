@@ -1046,12 +1046,6 @@ _KALSHI_FROZEN_CERTAIN_SQL = text(
        AND fo.current_probability = 1.0
        AND fo.is_winner IS NOT TRUE
        AND fo.external_id IS NOT NULL
-       AND NOT EXISTS (
-             SELECT 1
-               FROM futures_outcomes crowned
-              WHERE crowned.market_id = fo.market_id
-                AND crowned.is_winner IS TRUE
-           )
      ORDER BY fo.market_id, fo.external_id
     """
 )
