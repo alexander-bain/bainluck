@@ -72,7 +72,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Collection, Optional, Sequence
 
 # The one place the product decides a row has been withdrawn (#3226). Imported
 # rather than restated — unlike `KICKOFF_TOLERANCE` above, which is deliberately
@@ -168,6 +168,30 @@ SCHEDULE_NOT_SCORED = (
     "placeholders rather than a disagreement. The identity join uses the clock "
     "only to choose WHICH of two admissible pairings to make, never whether to "
     "make one."
+)
+
+#: The two halves of `anchors.mismatch`, named so the count stops being a blend
+#: of two defects with two different owners (#4263, spec rule 2).
+MISMATCH_IN_SPACE_IS = (
+    "the column holds an id this authority DOES publish, just not this "
+    "fixture's — one game's id on another game's row. A matching bug; it goes "
+    "to whoever owns the matcher, not to this lane."
+)
+MISMATCH_OUT_OF_SPACE_IS = (
+    "the column holds an id this authority's own read never published, so it "
+    "dereferences to nothing and can never be resolved. Almost always the right "
+    "contest wearing an id from the WRONG ENDPOINT of the same provider — "
+    "#3094's 364 MLB rows carrying `livescores.id` where `season-schedule.id` "
+    "anchors. A namespace bug in our writer, and this lane's."
+)
+#: Not "0", and this is the whole reason the split has a `measured` flag: a zero
+#: here would say "we looked and found none" when nobody looked (gotcha #53).
+MISMATCH_SPLIT_UNMEASURED = (
+    "not measured: this pass did not hand over the set of ids its authority "
+    "published, and without that set there is no evidence to tell a "
+    "wrong-endpoint id from a wrong-game id. `mismatch` above is the whole "
+    "count either way. NEVER inferred from the shape or length of the value "
+    "(#2879 / D55)."
 )
 
 #: Which sports have a shadow stamper, and which task banks their row.
@@ -1682,6 +1706,22 @@ def build_agreement_row(
     is_anchor_id: Callable[[Optional[str]], bool] = lambda v: bool(
         v and str(v).strip().isdigit()
     ),
+    #: Every id the authority's own read PUBLISHED this pass, from the endpoint
+    #: that anchors (#4263). Splits `anchors.mismatch` into the two unrelated
+    #: defects it has always blended: a held id the authority does publish (one
+    #: game's id on another game's row — a matching bug, lane1's) and a held id
+    #: it does not (a namespace bug in our own writer — this lane's).
+    #:
+    #: `None` is the honest degradation, not an oversight: without the space
+    #: there is no evidence to tell the two apart, so the split publishes
+    #: `measured: False` and every other number in the row is byte-identical to
+    #: what it was before this parameter existed. Callers opt in with a set they
+    #: can vouch for; the same choice `classify_fixture`'s `anchor_space` makes.
+    #:
+    #: NEVER a digit count or a length (#2879 / D55: an anchor key is explicit
+    #: per (provider, sport, id) and is never inferred from the shape of the
+    #: value). This is the read's own publication, which is evidence.
+    published_ids: Optional[Collection[str]] = None,
     pair_sides: Optional[JoinStrategy] = None,
     time_authority: bool = True,
 ) -> dict[str, Any]:
@@ -1845,6 +1885,26 @@ def build_agreement_row(
     polluted: list[dict[str, Any]] = []
     unanchored = 0
 
+    #: The union of what the caller vouched for with the refs of the fixtures
+    #: this row was built from, because a fixture IS a thing this read
+    #: published — a caller whose set covers only the anchoring endpoint (the
+    #: v1 stamper's `anchor_space` is the schedule board) would otherwise call
+    #: a live-board anchor foreign. The union can only ever SHRINK the
+    #: out-of-space bucket, which is the direction a new accusation should err
+    #: in: this bucket names our own writer as the author of a bug.
+    published_space: Optional[set[str]] = None
+    if published_ids is not None:
+        published_space = {
+            str(v).strip() for v in published_ids if v is not None and str(v).strip()
+        }
+        published_space |= {
+            str(f.ref).strip()
+            for f in fixtures
+            if f.ref is not None and str(f.ref).strip()
+        }
+    mismatch_in_space = 0
+    mismatch_out_of_space = 0
+
     for f, r in paired:
         if time_authority:
             bucket = _schedule_bucket(f, r)
@@ -1861,7 +1921,31 @@ def build_agreement_row(
         elif held and str(held).strip() == str(f.ref):
             anchored += 1
         elif held and str(held).strip():
-            anchor_mismatch.append(_row_receipt(r, statpal_id=f.ref))
+            # Split, never moved (#4263). `mismatch` keeps its definition and
+            # its count — "the column holds an id, and it is not this fixture's"
+            # — because the bus reads this row daily and a number that moves
+            # reads as a measurement changing. What is added is which KIND of
+            # mismatch, and the two go to different owners.
+            out_of_space = (
+                published_space is not None
+                and str(held).strip() not in published_space
+            )
+            if published_space is not None:
+                if out_of_space:
+                    mismatch_out_of_space += 1
+                else:
+                    mismatch_in_space += 1
+            anchor_mismatch.append(
+                _row_receipt(
+                    r,
+                    statpal_id=f.ref,
+                    **(
+                        {}
+                        if published_space is None
+                        else {"not_in_published_space": out_of_space}
+                    ),
+                )
+            )
         else:
             unanchored += 1
 
@@ -1963,6 +2047,23 @@ def build_agreement_row(
                 "anchored": anchored,
                 "unanchored": unanchored,
                 "mismatch": len(anchor_mismatch),
+                # Spec rule 2, applied to the one block that was still breaking
+                # it: publish every bucket, never a blend. `mismatch` has always
+                # held two unrelated defects with different owners, and #3094 is
+                # what that costs — 364 MLB rows wearing an id from the wrong
+                # endpoint of the same provider, for five months, while the row
+                # this gate is read off reported `polluted_column: 0`.
+                "mismatch_split": (
+                    {
+                        "measured": True,
+                        "in_published_space": mismatch_in_space,
+                        "not_in_published_space": mismatch_out_of_space,
+                        "in_published_space_is": MISMATCH_IN_SPACE_IS,
+                        "not_in_published_space_is": MISMATCH_OUT_OF_SPACE_IS,
+                    }
+                    if published_space is not None
+                    else {"measured": False, "why": MISMATCH_SPLIT_UNMEASURED}
+                ),
                 "polluted_column": len(polluted),
                 "pct_of_both": _pct(anchored, both),
                 "governs": False,

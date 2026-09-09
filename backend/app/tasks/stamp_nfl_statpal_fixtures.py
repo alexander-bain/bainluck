@@ -691,6 +691,14 @@ async def _run_stamp_nfl_statpal_fixtures(
         window=(window_start, window_end),
         measurement_window=(measure_start, measure_end),
         is_anchor_id=is_statpal_contest_id,
+        # #4263. NFL has no separate `anchor_space` to hand over because it does
+        # not need one: this sport is read with a single `season-schedule` call,
+        # so the fixtures ARE the publication and the set is vouchable here
+        # rather than reconstructed. Passing it is what turns the split on; the
+        # union inside `build_agreement_row` then makes it a no-op, which is the
+        # point — the caller says "I know what this authority published", and
+        # for NFL that sentence is true.
+        published_ids={f.fixture_id for f in fixtures if f.fixture_id},
     )
 
     # D50's seven-day count, folded into the durable ledger and attached to the
