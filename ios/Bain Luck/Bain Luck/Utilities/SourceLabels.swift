@@ -37,6 +37,19 @@ enum SourceLabels {
 
     /// Outcome-level contributors that really are sportsbooks. This set, and
     /// nothing else, earns the noun "sportsbook".
+    ///
+    /// 🔴 THIS MAP IS ALSO THE EVENT PAGE'S BOOK TABLE (#4284), so a key missing
+    /// here is a row a reader loses, not just a chip. It is sized against what
+    /// production serves: `odds_snapshots`, distinct `bookmaker`, 24h to
+    /// 2026-09-09 10:30Z — 18 keys, all named below. **Re-measure before trusting
+    /// this paragraph after 2026-12**; The Odds API adds and retires books, and a
+    /// key that appears after that date is nameless until someone runs the query
+    /// again (`SourceLabelsTests.testEveryProductionSportsbookKeyHasAName` pins
+    /// the measured set so a deletion is red, not silent).
+    ///
+    /// The seven added for #4284 — `betus`, `fanatics`, `mybookieag`, `ballybet`,
+    /// `betparx`, `rebet`, `betanysports` — were all live in that window and all
+    /// seven were printing as their raw keys on every event page.
     private static let sportsbookNames: [String: String] = [
         "draftkings": "DraftKings",
         "fanduel": "FanDuel",
@@ -53,7 +66,25 @@ enum SourceLabels {
         "williamhill_us": "Caesars",
         "fliff": "Fliff",
         "hardrockbet": "Hard Rock",
+        "betus": "BetUS",
+        "fanatics": "Fanatics",
+        "mybookieag": "MyBookie",
+        "ballybet": "Bally Bet",
+        "betparx": "betPARX",
+        "rebet": "Rebet",
+        "betanysports": "BetAnySports",
     ]
+
+    /// The reader-facing brand for one contributor key, or nil when the app
+    /// cannot name it.
+    ///
+    /// Same discipline as `label(for:)`: a key the app cannot name is a key the
+    /// app does not print. Callers drop the row rather than falling back to the
+    /// key — `betonlineag` is not a brand, it is a database value (#4284).
+    static func sportsbookName(for key: String?) -> String? {
+        guard let key, !key.isEmpty else { return nil }
+        return sportsbookNames[key]
+    }
 
     /// Contributors that are NOT sportsbooks. DataGolf is a statistical model;
     /// counting it as a sportsbook is the TRUTH defect #4135 was filed for — the

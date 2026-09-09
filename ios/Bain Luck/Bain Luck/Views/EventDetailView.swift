@@ -1025,7 +1025,11 @@ struct EventDetailView: View {
     @ViewBuilder
     private func sourcesToggle(_ event: EventDetail) -> some View {
         let sourceEntries = WinProbSourceCatalog.entries(from: event.winProbabilitySources)
-        let bookmakers = event.bookmakerOdds ?? []
+        // #4284 — the NAMED rows, not the payload. Unnameable keys draw no row, so
+        // asking `bookmakerOdds` here would open a disclosure onto an "INDIVIDUAL
+        // SPORTSBOOKS" heading with nothing under it. The list the header promises
+        // is the list this condition has to be about.
+        let bookmakers = Self.namedBookmakerRows(event.bookmakerOdds ?? [])
         if !sourceEntries.isEmpty || !bookmakers.isEmpty {
             VStack(spacing: 0) {
                 Divider()
@@ -1240,9 +1244,51 @@ struct EventDetailView: View {
         return (away, home)
     }
 
+    /// One row the book table will actually draw: the brand a reader sees, and
+    /// the pair it prints, if it has both.
+    struct NamedBookmakerRow: Identifiable {
+        /// The payload key. Stable across refreshes, and never drawn.
+        let id: String
+        /// The brand, resolved through `SourceLabels`. Never a raw key.
+        let label: String
+        let probabilities: (away: Double, home: Double)?
+    }
+
+    /// The book table's rows: named, in payload order, capped.
+    ///
+    /// #4284 — this list used to draw `bm.bookmaker ?? "Unknown"`, so every event
+    /// page in the app printed `betonlineag`, `lowvig` and `betus` at readers
+    /// while `SourceLabels` two files away already knew them as BetOnline, LowVig
+    /// and BetUS. That is #4135's defect on a fifth surface, and `SourceLabels`
+    /// exists precisely because the passthrough — not the key — is the bug.
+    ///
+    /// 🔴 THE CAP IS APPLIED AFTER THE NAMING, NOT BEFORE. Take ten and then drop
+    /// the unnameable and a new key costs a *named* book its slot: the reader
+    /// loses a row they could have read, to a row we would not have drawn. Name
+    /// first, then take ten, and the table stays full.
+    ///
+    /// An unnameable key yields no row at all rather than its raw self. That is
+    /// the same rule `sportsbookChips(for:)` follows, and the reason the caller
+    /// must ask whether this array is empty rather than asking the payload
+    /// (`bookmakerOdds` non-empty no longer implies a table).
+    static func namedBookmakerRows(
+        _ bookmakers: [BookmakerOdds], limit: Int = 10
+    ) -> [NamedBookmakerRow] {
+        bookmakers
+            .compactMap { bm -> NamedBookmakerRow? in
+                guard let key = bm.bookmaker,
+                      let label = SourceLabels.sportsbookName(for: key)
+                else { return nil }
+                return NamedBookmakerRow(
+                    id: key, label: label, probabilities: bookmakerProbabilities(bm))
+            }
+            .prefix(limit)
+            .map { $0 }
+    }
+
     private func bookmakerContent(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
-        let bookmakers = Array((event.bookmakerOdds ?? []).prefix(10))
+        let rows = Self.namedBookmakerRows(event.bookmakerOdds ?? [])
         // #4107 — the SAME defect as `sourceContent` above, one function down and
         // in the same visual list: a hardcoded label column that never tracked
         // Dynamic Type. This one was 90pt, which is the exact literal the Sources
@@ -1260,21 +1306,27 @@ struct EventDetailView: View {
         // measuring every bookmaker would charge the column for rows it never
         // prints. A list where no row has both draws no numbers at all and falls
         // back to the model's own floor.
+        //
+        // #4284 — and the labels measured are the BRANDS, because the brands are
+        // what the rows draw. Sizing on the keys is not conservative, it is just
+        // wrong in both directions: `betonlineag` is 2 characters wider than
+        // "BetOnline", `betmgm` 2 narrower than "BetMGM". The column and the row
+        // read one array now, so they cannot describe different strings.
         let columns = EventSourceLabelColumn.columns(
-            labels: bookmakers.map { $0.bookmaker ?? "Unknown" },
-            values: bookmakers.flatMap { bm -> [String] in
-                guard let pair = Self.bookmakerProbabilities(bm) else { return [] }
+            labels: rows.map(\.label),
+            values: rows.flatMap { row -> [String] in
+                guard let pair = row.probabilities else { return [] }
                 return [formatProbability(pair.away), formatProbability(pair.home)]
             },
             availableWidth: sourceRowWidth,
             typeSize: dynamicTypeSize,
             weight: .regular)
         return VStack(spacing: 0) {
-            ForEach(bookmakers, id: \.bookmaker) { bm in
+            ForEach(rows) { row in
                 sourceProbabilityRow(
-                    label: bm.bookmaker ?? "Unknown",
+                    label: row.label,
                     font: .caption,
-                    probabilities: Self.bookmakerProbabilities(bm),
+                    probabilities: row.probabilities,
                     colors: colors,
                     columns: columns)
             }

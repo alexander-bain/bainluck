@@ -67,6 +67,61 @@ final class SourceLabelsTests: XCTestCase {
         }
     }
 
+    // MARK: - Contributor brands (#4284)
+
+    /// 🔴 THE MAP IS SIZED AGAINST PRODUCTION, AND THIS IS THE MEASUREMENT.
+    /// `odds_snapshots`, distinct `bookmaker`, 24h to 2026-09-09 10:30Z: these
+    /// eighteen keys and no others. Seven of them — `betus`, `fanatics`,
+    /// `mybookieag`, `ballybet`, `betparx`, `rebet`, `betanysports` — had no name
+    /// before #4284 and were reaching event pages as raw keys.
+    ///
+    /// Since #4284 the event page DROPS a row it cannot name, so a deletion from
+    /// the map is a book that silently vanishes from every event page rather than
+    /// a cosmetic slip. That is what this pins.
+    ///
+    /// The list is a measurement with an expiry, not a constant: The Odds API
+    /// adds and retires books. Re-run the query before trusting it after
+    /// 2026-12, and add what it finds.
+    func testEveryProductionSportsbookKeyHasAName() {
+        let measured = [
+            "bovada", "betonlineag", "lowvig", "draftkings", "fanduel", "betus",
+            "betrivers", "betmgm", "fanatics", "williamhill_us", "mybookieag",
+            "fliff", "ballybet", "betparx", "espnbet", "rebet", "hardrockbet",
+            "betanysports",
+        ]
+        let nameless = measured.filter { SourceLabels.sportsbookName(for: $0) == nil }
+        XCTAssertEqual(
+            nameless, [],
+            "production serves these keys and the app cannot name them, so their rows are gone"
+        )
+    }
+
+    /// The brands whose spelling is the point — a `capitalized` fallback produces
+    /// a plausible-looking word for each of these, which is how #4135 shipped.
+    func testTheBrandsAreSpeltAsTheBrandsAndNotAsTheirKeys() {
+        let brands = [
+            "betonlineag": "BetOnline", "lowvig": "LowVig", "betus": "BetUS",
+            "betmgm": "BetMGM", "draftkings": "DraftKings", "espnbet": "ESPN BET",
+            "mybookieag": "MyBookie", "ballybet": "Bally Bet", "betparx": "betPARX",
+            "betanysports": "BetAnySports", "williamhill_us": "Caesars",
+        ]
+        for (key, brand) in brands {
+            XCTAssertEqual(SourceLabels.sportsbookName(for: key), brand)
+            XCTAssertNotEqual(SourceLabels.sportsbookName(for: key), key.capitalized)
+        }
+    }
+
+    /// Same discipline as `label(for:)`: the app names a book or draws none.
+    func testAnUnnameableContributorYieldsNothingRatherThanTheRawKey() {
+        for key in ["a_new_venue", "bet365", "DRAFTKINGS", "books", ""] {
+            XCTAssertNil(
+                SourceLabels.sportsbookName(for: key),
+                "\"\(key)\" must not reach a screen as a brand"
+            )
+        }
+        XCTAssertNil(SourceLabels.sportsbookName(for: nil))
+    }
+
     // MARK: - The noun follows what the sources ARE
 
     /// The whole ship, in one assertion: the DataGolf market's own payload no
