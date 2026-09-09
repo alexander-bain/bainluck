@@ -80,16 +80,42 @@ def test_the_fetch_limit_is_the_named_constant():
 
 
 def test_the_pool_is_capped_after_the_discards_not_before():
-    """The cap must sit BELOW the individual-sport `continue`.
+    """The cap must sit BELOW the individual-sport discard.
 
     Above it, a tennis player row would count against the three and the fix
     would reintroduce the bug it removes — slots consumed by rows that are
     thrown away.
+
+    #4489 changed the SHAPE this property is written in, not the property: the
+    discard was an `if … : continue` at the top of the loop body and is now a
+    filtering comprehension feeding `_pick_team_row_per_name`, so the discard is
+    a whole pass that completes before the loop the cap lives in. The assertion
+    is deliberately anchored on the CALL rather than on the `if` line it used to
+    be spelled with — pinning the spelling is how a live property turns into a
+    guard that reds on a refactor and says nothing about the defect.
     """
     block = _team_pool_block()
-    discard = block.index("if _is_individual_sport(row.sport_key):")
+    discard = block.index("_is_individual_sport(row.sport_key)")
     cap = block.index("if len(team_pool) >= _TEAM_POOL_SIZE:")
     assert discard < cap, (
         "the pool cap runs before the individual-sport discard, so discarded "
         "rows consume slots again"
+    )
+
+
+def test_the_same_name_collapse_also_runs_before_the_cap():
+    """#4489's sibling of the property above, and the reason it is the same bug.
+
+    A club holds one team row per competition. Collapsing those AFTER the cap
+    would let three rows of one club eat the whole pool — the `bruins` shape
+    this file was written for — and would also hand the slot to whichever row
+    the fetch happened to return first, which is what served "Ajax / UEFA CHAMPS
+    LEAGUE WOMEN" as the entity answer.
+    """
+    block = _team_pool_block()
+    collapse = block.index("_pick_team_row_per_name(")
+    cap = block.index("if len(team_pool) >= _TEAM_POOL_SIZE:")
+    assert collapse < cap, (
+        "the same-name collapse runs after the pool cap, so a club's duplicate "
+        "per-competition rows consume slots again"
     )
