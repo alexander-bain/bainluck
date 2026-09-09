@@ -1076,15 +1076,19 @@ def _rank_futures_market(items: list[dict], market_id: int) -> int | None:
     return None
 
 
+# Substrings of a headline that make a major-league game exceptional enough to
+# escape the Discover demotion. An event card's headline is exactly
+# `get_highlight_label(...)` (see the event item build below), so a keyword that
+# no label can contain is a dead arm — this tuple used to carry five of them
+# ("elimination", "buzzer", "walk-off", "historic", "comeback"), and the
+# predicate did not read the tuple at all, hard-coding the four deadest instead.
+# `test_feed_discover_event_demotion_reachability.py` parses the labels out of
+# `get_highlight_label` and fails on any keyword that cannot match one. Keep
+# them tier-gated at the call site (gotcha #24). #4504.
 _DISCOVER_EVENT_EXCEPTION_KEYWORDS = (
-    "elimination",
-    "buzzer",
-    "walk-off",
-    "historic",
-    "upset",
-    "comeback",
-    "playoff",
-    "championship",
+    "upset",  # "Recent upset", "Upset brewing", "Possible upset"
+    "playoff",  # "Playoff game"
+    "championship",  # "Championship game"
 )
 
 
@@ -1097,6 +1101,46 @@ def _discover_event_ei_score(item: dict) -> float:
         raw_score = ei or 0
     try:
         return float(raw_score)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _discover_event_is_settled(item: dict) -> bool:
+    status = ((item.get("data") or {}).get("status") or "").lower()
+    return status in ("completed", "closed")
+
+
+def _discover_event_excitement_score(item: dict) -> float:
+    """How exciting this event is, read from whichever signal its status has.
+
+    #4504. EI is written by ``build_event_feed_data`` **only** for
+    ``completed``/``closed`` events, and ``_filter_discover_event_noise`` drops
+    exactly those. So an exception keyed on EI alone can only ever fire on an
+    event that is about to be deleted: measured against the live 15:00 PT feed,
+    ``_is_discover_event_demotion_exception`` returned True for 10 of 10
+    completed events and **0 of 35** that survive the noise filter. Discover
+    page one served zero game cards as a result — not a thinned slate, an empty
+    one, which is the standing "game events are never capped into an empty tab"
+    rule (#1091) recurring on page one.
+
+    For a live or scheduled game the excitement reading that DOES exist is the
+    item's own pre-demotion feed score, which ``compute_event_base_score``
+    builds starting from the highlight score (closeness, upset, lead changes,
+    momentum). Reading it here is not circular: the demotion's question is
+    "is this game exceptional?", and that is the number that answers it. The
+    caller runs this BEFORE writing the cap, so the value is pre-demotion.
+
+    Deliberately the DISPLAY ``score``, not ``_rank_score``. ``_rank_score`` is
+    the de-saturated ordering score and is uncapped — it runs past 120 — so a
+    fixed ``85`` would mean something looser there and would drift as the
+    de-saturation constants move. ``score`` is bounded 0-98 and is the number
+    the blast radius was measured against: at ``>= 85`` it admitted 6 of 35 live
+    survivors, all tier:1/2, and 0 non-major at any bar down to 75.
+    """
+    if _discover_event_is_settled(item):
+        return _discover_event_ei_score(item)
+    try:
+        return float(item.get("score", 0) or 0)
     except (TypeError, ValueError):
         return 0.0
 
@@ -1122,29 +1166,40 @@ def _is_discover_event_demotion_exception(item: dict) -> bool:
     Routine live games — even in major leagues — belong on Sports, not Discover.
     A generic NBA regular season game at EI 70 should not outrank "Who will be
     the next James Bond?" for a general audience.
+
+    #4504: the excitement reading comes from ``_discover_event_excitement_score``,
+    which is EI for a settled game and the pre-demotion feed score for a live or
+    scheduled one. Keyed on EI alone every arm below was unreachable for any
+    event that survives the noise filter, so *every* game was capped and page one
+    served none. The score-derived arms are tier-gated (gotcha #24) — the
+    ungated ``>= 85`` arm stays EI-only, so this is strictly additive: nothing
+    exceptional today stops being exceptional.
     """
     if item.get("type") != "event":
         return False
 
-    ei_score = _discover_event_ei_score(item)
+    excitement = _discover_event_excitement_score(item)
+    settled = _discover_event_is_settled(item)
     has_major_league_context = _discover_event_has_major_league_context(item)
 
-    if ei_score >= 85:
+    if excitement >= 85 and (settled or has_major_league_context):
         return True
-    if ei_score >= 80 and has_major_league_context:
+    if excitement >= 80 and has_major_league_context:
         return True
 
+    # The keyword arm keeps its original ``>= 60`` floor — unreachable before
+    # #4504, so restoring it costs nothing live and stops a listless major-league
+    # "Playoff game" riding the word alone. The keywords are the module's own
+    # tuple, which was defined and never read: its "upset"/"comeback" entries are
+    # the ones gotcha #24 describes as tier-gated, and the four words the arm used
+    # to hard-code ("elimination", "buzzer", "walk-off", "historic") are absent
+    # from every label `get_highlight_label` can emit.
     headline = (item.get("headline") or "").lower()
-    has_high_drama_keyword = any(
-        kw in headline for kw in ("elimination", "buzzer", "walk-off", "historic")
-    )
-    if has_high_drama_keyword and has_major_league_context:
-        return True
-
-    has_postseason_keyword = any(
-        kw in headline for kw in ("playoff", "championship", "finals")
-    )
-    if has_postseason_keyword and has_major_league_context and ei_score >= 60:
+    if (
+        has_major_league_context
+        and excitement >= 60
+        and any(kw in headline for kw in _DISCOVER_EVENT_EXCEPTION_KEYWORDS)
+    ):
         return True
 
     return False
