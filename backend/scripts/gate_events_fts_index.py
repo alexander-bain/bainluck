@@ -196,13 +196,18 @@ def _post(sql: str, *, analyze: bool, timeout_ms: int = 25000) -> dict:
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
+    # Single explicit return on the last line: an exception path that exits and a
+    # body that falls off the end are indistinguishable to a reader (and to
+    # CodeQL's py/mixed-returns), and "returned None" is exactly the shape this
+    # function exists to never produce.
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
-            return json.loads(response.read())
+            payload = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:400]
         print(f"ERROR: db-query HTTP {exc.code}: {detail}", file=sys.stderr)
         sys.exit(2)
+    return payload
 
 
 def _exec_ms(plan_payload: dict) -> float:
@@ -330,6 +335,18 @@ def main() -> int:
         baseline = json.load(handle)
     terms = list(baseline)
 
+    # ASSERT THE DENOMINATOR. With no terms the three fail-lists stay empty and
+    # the verdict below computes GREEN having graded nothing — a gate that
+    # passes vacuously is worse than no gate, because it is quotable. An empty
+    # or unreadable baseline is the harness failing, so it exits 2, not 0/1
+    # (gotcha #54: only 1 is a verdict).
+    if not terms:
+        print(f"ERROR: baseline {BASELINE} has no terms — nothing to grade", file=sys.stderr)
+        return 2
+    if args.rounds < 1:
+        print(f"ERROR: --rounds {args.rounds} grades nothing", file=sys.stderr)
+        return 2
+
     print(f"gate_events_fts_index  label={args.label}  terms={len(terms)}  rounds={args.rounds}")
     print(f"  ratio threshold <= {RATIO_THRESHOLD}   expected indexes: {', '.join(EXPECTED_INDEXES)}")
     print()
@@ -338,6 +355,10 @@ def main() -> int:
     shape_fail: list[str] = []
     budget_fail: list[str] = []
     semantics_fail: list[str] = []
+    # Fail CLOSED. A gate whose verdict variable is only bound on the happy path
+    # can report GREEN by never having graded anything; `False` here means any
+    # route that skips the grading loop still exits 1.
+    green = False
 
     for term in terms:
         fts_sql, ctrl_sql = _fts_sql(term), _control_sql(term)
