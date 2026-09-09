@@ -1228,6 +1228,27 @@ jobs:
             exit 1
           fi
 
+      - name: "#4157 The live poll advances the observation clock, both venues (real Postgres)"
+        # CERT-2354's named repair. `apply_observed_price` has executed unit
+        # coverage already and it proves nothing about whether this task reaches
+        # it — a pure function is not a call site. The AST census proves the bare
+        # assignment is gone; only running the task proves the stamp is there.
+        #
+        # The discriminator is the SECOND poll, not the first: the same payload
+        # replayed must advance `price_observed_at` and leave `price_changed_at`
+        # alone. Both are asserted NOT NULL after run 1 before the equality is
+        # asserted after run 2 — pre-fix both columns are NULL forever, and
+        # `NULL == NULL` would buy the "did not move" half from the very defect
+        # the arm is pointed at. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_poll_stamps_observation_clock_4157_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/observationclock4157.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/observationclock4157.txt; then
+            echo "::error::#4157 observation-clock gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#3613 The dark-Polymarket selector, executed (real Postgres)"
         # The unit file drives the whole pass but its recording session ANSWERS
         # the selector rather than running it, so every claim about WHICH
