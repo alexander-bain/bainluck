@@ -66,6 +66,29 @@ const SOURCE_ACRONYMS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Tokens the generated name must SPELL DIFFERENTLY, because the key's own word
+ * is one a reader may never see.
+ *
+ * Standing notice 33 (Alex, 2026-09-08): "books"/"bookmaker(s)" never reach a
+ * reader; D91 makes "sportsbooks" the approved word. Wire keys are exempt —
+ * `odds_api_bookmaker` stays `odds_api_bookmaker` — but this function's whole
+ * job is turning a wire key INTO reader-facing text, so the exemption ends here.
+ *
+ * A translation rather than a curated entry, and that is the point: #4096 was
+ * found by reading the two labels that existed, while the next
+ * `odds_api_bookmaker_v2` would arrive with no curated entry and this fallback
+ * would print "Odds API Bookmaker V2" to a reader, having passed every guard
+ * that pins today's keys. Mirrors `SOURCE_TOKEN_REWRITES` in
+ * `backend/app/utils/calibration_source_labels.py`.
+ */
+const SOURCE_TOKEN_REWRITES: Readonly<Record<string, string>> = {
+  bookmaker: "sportsbook",
+  bookmakers: "sportsbooks",
+  book: "sportsbook",
+  books: "sportsbooks",
+};
+
+/**
  * A source or provider key we hold no curated name for, made readable.
  *
  * **Never returns a raw payload key**: the result carries no underscore and
@@ -79,7 +102,7 @@ export function prettifySourceKey(raw: string): string {
   if (!tokens.length) return raw;
   return tokens
     .map((t) => {
-      const lower = t.toLowerCase();
+      const lower = SOURCE_TOKEN_REWRITES[t.toLowerCase()] ?? t.toLowerCase();
       return SOURCE_ACRONYMS.has(lower)
         ? lower.toUpperCase()
         : lower.charAt(0).toUpperCase() + lower.slice(1);
@@ -119,7 +142,7 @@ const SOURCE_DISPLAY_NAMES: Record<string, string> = {
   odds_api: "Odds API",
   odds_api_spreads: "Spreads (Odds API)",
   odds_api_totals: "Totals (Odds API)",
-  odds_api_bookmaker: "Per-Bookmaker (Odds API)",
+  odds_api_bookmaker: "Per-sportsbook (Odds API)",
   datagolf: "DataGolf",
 };
 

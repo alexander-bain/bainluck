@@ -37,6 +37,8 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 
+import { BANNED, KEY_SHAPED } from "../helpers/bannedSupplierWords";
+
 const IOS_ROOT = join(__dirname, "../../../ios/Bain Luck/Bain Luck");
 const CALIBRATION_VIEW = join(IOS_ROOT, "Views/CalibrationView.swift");
 const GEOMETRY = join(IOS_ROOT, "Utilities/CalibrationSourceTableGeometry.swift");
@@ -103,39 +105,13 @@ function stringLiterals(source: string): string[] {
   return literals;
 }
 
-/**
- * The banned words, as whole words.
- *
- * `\b` is load-bearing in both directions. It keeps "sportsbook" and
- * "sportsbooks" — the APPROVED word (D91) — out of the `books?` pattern, because
- * there is no word boundary inside "sportsbooks"; and it keeps the possessive
- * "the books' projected" IN, because an apostrophe is a boundary. Both spellings
- * of the apostrophe, since the codebase uses typographic punctuation in prose.
- */
-const BANNED: Array<[string, RegExp]> = [
-  ["the supplier class word \"bookmaker(s)\" (D91: the word is \"sportsbooks\")", /\bbookmakers?\b/i],
-  ["the supplier class word \"book(s)\" (D91: the word is \"sportsbooks\")", /\bbooks?['’]?\b/i],
-];
-
-/**
- * A literal shaped like a KEY rather than a sentence is data, not prose.
- *
- * Structural, not an allowlist, and that distinction is the lesson #4021 paid
- * for: a list of known-good exceptions hands the claim to the first case nobody
- * listed. A payload key, a JSON field, an SF Symbol, a URL path and a
- * UserDefaults key are all lowercase with separators and no spaces; a sentence a
- * reader sees has a space or a capital in it. `odds_api_bookmaker` is exempt for
- * the same reason `bookmaker_count` is — they are the API's words, not ours, and
- * renaming a wire key to satisfy a copy rule would be a data change wearing a
- * ban's clothes.
- *
- * THE COST OF THE RULE, STATED: a bare `"books"` drawn as a label would pass.
- * Nothing in the app draws one (every drawn label in this codebase is
- * capitalised or part of a sentence), and widening the rule to catch it would
- * flag every payload key that contains the token — which is the trade that turns
- * a scan into a nuisance and gets it deleted.
- */
-const KEY_SHAPED = /^[a-z0-9_.:/+-]*$/;
+// The word ban itself — the two regexes and the key-shape exemption, with the
+// reasoning for each — moved to `../helpers/bannedSupplierWords` by #4096, and
+// the move is the point. This scan was correct and enforced notice 33 over
+// `ios/` alone, so the web went on saying "20+ bookmakers" in rendered prose and
+// carrying `Per-Bookmaker (Odds API)` in two label maps. `theWebNeverSaysBookmaker`
+// is the sibling that closes that, and it imports the SAME predicate so the two
+// clients cannot drift into different definitions of the ban.
 
 // A path typo would otherwise read as a clean pass — the unrunnable-check
 // failure mode a source scan is most prone to.

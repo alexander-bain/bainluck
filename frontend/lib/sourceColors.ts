@@ -46,7 +46,7 @@ export const SOURCE_COLORS: Record<string, SourceColor> = {
   // Market-type breakdowns of odds_api used on the calibration page.
   odds_api_spreads: { hex: "#0d9488", faint: "#F0FDFA", fg: "#0F766E", label: "Spreads (Odds API)" },
   odds_api_totals: { hex: "#059669", faint: "#ECFDF5", fg: "#047857", label: "Totals (Odds API)" },
-  odds_api_bookmaker: { hex: "#15803d", faint: "#F0FDF4", fg: "#166534", label: "Per-Bookmaker (Odds API)" },
+  odds_api_bookmaker: { hex: "#15803d", faint: "#F0FDF4", fg: "#166534", label: "Per-sportsbook (Odds API)" },
 
   // Models / other sources.
   espn: { hex: "#f97316", faint: "#FFF7ED", fg: "#C2410C", label: "ESPN" },

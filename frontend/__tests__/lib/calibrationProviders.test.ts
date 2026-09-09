@@ -269,7 +269,9 @@ describe("makeSourceLabeller — the payload's names, with house style on top", 
       odds_api_bookmaker: { label: "Per-Bookmaker" },
     });
     expect(label("odds_api")).toBe("Odds API");
-    expect(label("odds_api_bookmaker")).toBe("Per-Bookmaker (Odds API)");
+    // And the house style WINS even when the server's own name is the banned
+    // word — which is the whole reason #4096's backend rename was not enough.
+    expect(label("odds_api_bookmaker")).toBe("Per-sportsbook (Odds API)");
   });
 
   it("falls back to the CAL-P1024 prettifier on a payload banked before `label`", () => {

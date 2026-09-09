@@ -197,7 +197,7 @@ def test_the_declared_map_is_not_carrying_dead_entries(produced):
     [
         ("datagolf", "DataGolf"),          # curated: the brand, not "Datagolf"
         ("odds_api", "Odds API"),
-        ("odds_api_bookmaker", "Per-Bookmaker (Odds API)"),
+        ("odds_api_bookmaker", "Per-sportsbook (Odds API)"),
     ],
 )
 def test_curated_names_are_opinions_not_generated(raw, expected):
@@ -399,3 +399,136 @@ async def test_the_curve_is_unchanged_by_being_named(served):
     # beside them, and every source in them is in it.
     assert out["by_source"] == payload["by_source"]
     assert set(out[SOURCE_LABELS_FIELD]) == {"kalshi", "polymarket"}
+
+
+# ---------------------------------------------------------------------------
+# STANDING NOTICE 33 (#4096) — no supplier word a reader can see.
+#
+# Alex, 2026-09-08: *"we wouldn't EVER want to reference 'bookmakers'"*. D91
+# makes "sportsbooks" the approved word. The rule is about what a READER sees,
+# so machine keys (`odds_api_bookmaker`, `bookmaker_count`) are explicitly out
+# of scope — the notice-33 clarification says so — and only strings that travel
+# to a client as PROSE or as a LABEL are held to it.
+#
+# Two producers ship those strings and both were dirty when #4096 was filed:
+# this module's label map, and `precompute_calibration`'s published rule texts
+# and corrections log, which `/api/calibration` serves and the page renders
+# verbatim. Discovered rather than listed in both cases, so a rule text added
+# next month is covered without anyone remembering this file exists.
+#
+# The web half of the same ban lives in
+# `frontend/__tests__/lib/theWebNeverSaysBookmaker.test.ts`; the app half in
+# `frontend/__tests__/ios/appNeverSaysBookmaker.test.ts`. All three share the
+# reasoning, none shares code across the language boundary.
+# ---------------------------------------------------------------------------
+
+#: `\b` in both directions: "sportsbook(s)" is the APPROVED word and has no word
+#: boundary inside it, so it is not matched; the possessive "the books' number"
+#: is matched, because an apostrophe is a boundary. Both apostrophe spellings.
+_BANNED_SUPPLIER_WORD = re.compile(r"\bbookmakers?\b|\bbooks?['’]?\b", re.IGNORECASE)
+
+
+def _published_prose() -> dict[str, str]:
+    """Every string this producer publishes as prose, recovered by shape.
+
+    Names ending ``_RULE_TEXT`` are the exclusion notes the page prints under
+    "What's included?"; ``CALIBRATION_CORRECTIONS`` is the corrections log. Both
+    are read off the imported module rather than the file text, so a constant
+    built by concatenation is measured as the reader receives it.
+    """
+    from app.tasks import precompute_calibration as pc
+
+    prose: dict[str, str] = {
+        name: value
+        for name in dir(pc)
+        if name.endswith("_RULE_TEXT") and isinstance(value := getattr(pc, name), str)
+    }
+    for i, correction in enumerate(pc.CALIBRATION_CORRECTIONS):
+        for field in ("title", "description"):
+            text = correction.get(field)
+            if isinstance(text, str):
+                prose[f"CALIBRATION_CORRECTIONS[{i}].{field}"] = text
+    return prose
+
+
+def test_no_published_label_says_bookmaker():
+    """The map is a vocabulary of names a reader reads. Discovered, not listed."""
+    offenders = [
+        f"{key} = {label!r}"
+        for key, label in CALIBRATION_SOURCE_LABELS.items()
+        if _BANNED_SUPPLIER_WORD.search(label)
+    ]
+    assert offenders == []
+    # The KEYS are deliberately not held to the ban, and `\b` is what exempts
+    # them: `_` is a word character, so there is no boundary before "bookmaker"
+    # in `odds_api_bookmaker` and the pattern cannot see it. That is structural
+    # rather than an allowlist — the same reasoning the iOS scan records — and it
+    # is asserted here so a future tightening has to argue with this line.
+    assert not _BANNED_SUPPLIER_WORD.search("odds_api_bookmaker")
+    assert not _BANNED_SUPPLIER_WORD.search("bookmaker_count")
+
+
+def test_the_generated_name_cannot_invent_a_banned_word_either():
+    """THE NEXT KEY — the hazard a pin on today's labels cannot see.
+
+    ``odds_api_bookmaker_v2`` would arrive with no curated entry, fall through
+    to :func:`prettify_source_key`, and be published as "Odds API Bookmaker V2"
+    with every other assertion in this file still green. A denylist of
+    known-unknowns hands the claim to the first new one, so the TOKEN is
+    respelled and the class closes.
+    """
+    for key in (
+        "odds_api_bookmaker_v2",
+        "some_new_bookmaker_feed",
+        "books_consensus",
+        "sharp_book",
+    ):
+        name = prettify_source_key(key)
+        assert not _BANNED_SUPPLIER_WORD.search(name), f"{key} -> {name}"
+
+    # A respelling, not a deletion: the generated name still describes the
+    # source, or the CAL-P1024 floor has been traded for a blank.
+    assert prettify_source_key("odds_api_bookmaker_v2") == "Odds API Sportsbook V2"
+    # Whole tokens only, so an unrelated name is never mangled.
+    assert prettify_source_key("bookings_feed") == "Bookings Feed"
+
+
+def test_no_published_rule_text_or_correction_says_bookmaker():
+    """The prose `/api/calibration` serves and the accuracy page prints raw."""
+    prose = _published_prose()
+    # The recovery must actually find the strings — an empty dict would make
+    # this pass vacuously, which is the failure mode a shape-based scan has.
+    assert len(prose) >= 15, sorted(prose)
+    assert "SOCCER_2WAY_RULE_TEXT" in prose
+
+    offenders = [
+        f"{name}: ...{text[max(0, m.start() - 40):m.end() + 40]}..."
+        for name, text in prose.items()
+        if (m := _BANNED_SUPPLIER_WORD.search(text))
+    ]
+    assert offenders == []
+
+
+def test_the_ban_fires_on_the_real_pre_fix_strings():
+    """Verbatim from master before #4096 — a guard is proven by what it catches.
+
+    Both of these were live on production and both were rendered on
+    `bainluck.com/calibration`, which is where #4096 photographed them.
+    """
+    pre_fix = [
+        "in BOTH the events aggregate and the per-bookmaker curve. ",
+        "events aggregate (odds_api) and the per-bookmaker (odds_api_bookmaker) sources. ",
+        "Per-Bookmaker (Odds API)",
+    ]
+    for text in pre_fix:
+        assert _BANNED_SUPPLIER_WORD.search(text), text
+
+    # The inverse hazard: the approved word must not fire, or the guard becomes
+    # a nuisance and the next person suppresses it.
+    for text in [
+        "in BOTH the events aggregate and the per-sportsbook curve. ",
+        "events aggregate and the per-sportsbook sources. ",
+        "Per-sportsbook (Odds API)",
+        "20+ sportsbooks",
+    ]:
+        assert not _BANNED_SUPPLIER_WORD.search(text), text

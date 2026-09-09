@@ -44,7 +44,7 @@ CALIBRATION_SOURCE_LABELS: dict[str, str] = {
     "odds_api": "Odds API",
     "odds_api_spreads": "Spreads (Odds API)",
     "odds_api_totals": "Totals (Odds API)",
-    "odds_api_bookmaker": "Per-Bookmaker (Odds API)",
+    "odds_api_bookmaker": "Per-sportsbook (Odds API)",
     "datagolf": "DataGolf",
 }
 
@@ -56,6 +56,28 @@ CALIBRATION_SOURCE_LABELS: dict[str, str] = {
 SOURCE_ACRONYMS: frozenset[str] = frozenset(
     {"ai", "api", "espn", "mlb", "nba", "nfl", "nhl", "pga", "ufc", "wta"}
 )
+
+#: Tokens the generated name must SPELL DIFFERENTLY, because the key's own word
+#: is one a reader may never see.
+#:
+#: Standing notice 33 (Alex, 2026-09-08): "books"/"bookmaker(s)" never reach a
+#: reader; D91 makes "sportsbooks" the approved word. Wire keys are exempt from
+#: the ban — ``odds_api_bookmaker`` stays ``odds_api_bookmaker`` — but this
+#: function's whole job is turning a wire key INTO reader-facing text, so the
+#: exemption stops exactly here.
+#:
+#: It is a translation and not a curated entry on purpose. #4096 was found by
+#: reading the two labels that existed; the next ``odds_api_bookmaker_v2`` would
+#: arrive with no curated entry at all and this fallback would print
+#: "Odds API Bookmaker V2" to a reader, having passed every guard that pins
+#: today's keys. A denylist of known-unknowns hands the claim to the first new
+#: one; rewriting the TOKEN closes the class instead.
+SOURCE_TOKEN_REWRITES: dict[str, str] = {
+    "bookmaker": "sportsbook",
+    "bookmakers": "sportsbooks",
+    "book": "sportsbook",
+    "books": "sportsbooks",
+}
 
 #: The top-level key the serving layer publishes the vocabulary under, and the
 #: two fields inside each entry.
@@ -86,13 +108,17 @@ def prettify_source_key(raw: str) -> str:
     It is a floor, not a fix — which is why :data:`LABEL_DECLARED_FIELD` rides
     alongside it, so "nobody has named this" stays visible in the payload
     instead of being papered over by a plausible-looking string.
+
+    The floor is also where notice 33 is enforced for keys nobody has curated:
+    :data:`SOURCE_TOKEN_REWRITES` respells the banned supplier words, so no
+    input can make this function hand a reader one.
     """
     tokens = [t for t in raw.replace("-", "_").replace(" ", "_").split("_") if t]
     if not tokens:
         return raw
     out = []
     for token in tokens:
-        lower = token.lower()
+        lower = SOURCE_TOKEN_REWRITES.get(token.lower(), token.lower())
         out.append(lower.upper() if lower in SOURCE_ACRONYMS else lower.capitalize())
     return " ".join(out)
 
