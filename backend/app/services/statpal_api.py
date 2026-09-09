@@ -1,14 +1,28 @@
 """
-StatPal API client for schedules, rosters, injuries, and play-by-play data.
+StatPal API client for schedules, live scores, injuries and standings.
 
 StatPal (statpal.io) provides structured sports data across 12+ sports and
-1,000+ leagues with 5-15 second real-time latency. Key data types:
+1,000+ leagues with 5-15 second real-time latency. What this client reads —
+and the list is short because #2907 measured it rather than inheriting it:
 - Season schedules & fixtures (canonical "what is an event" source)
-- Team rosters with player positions and jersey numbers
-- Injury reports and player statuses
-- Live scores and play-by-play
-- Game start/end times (for market open/close windows)
-- Team and player statistics
+- Live scores, including game start/end times (market open/close windows)
+- Injury reports and player statuses (v2 soccer's product; 89 events carry
+  `statpal_injuries` in `win_probability_sources`, measured 2026-09-09)
+- Standings
+
+**Rosters, team stats, player stats and per-fixture play-by-play are NOT
+available and are not attempted.** The vendor's compiled OpenAPI spec publishes
+54 paths and none of them is a teams, roster, team-stats, player-stats or
+`{sport}/fixtures/{id}/playbyplay` path, for any sport; a keyed live probe 404s
+on every one of them while `/v1/nba/standings`, `/v1/nfl/live-plays` and
+`/v2/soccer/injuries-suspensions` answer 200 from the same shell. The six
+accessors that asked for them returned `[]` on every call for every sport, which
+is indistinguishable from "nothing to report" (gotcha #53), and the three beats
+above them banked 632 successes / 0 failures per 24h for work that could not
+happen. See `RETIRED_VENUE_PATHS` below and `docs/statpal-capabilities.md` §3 —
+including the one live exception, `/nfl/live-plays`, which answers 200 as a
+WHOLE-LEAGUE dump keyed by `contestid` and is therefore a new parser and a new
+join, not a repoint.
 
 API versions:
 - v1: NFL, NBA, MLB, NHL, PGA, Cricket, Esports, F1, etc.

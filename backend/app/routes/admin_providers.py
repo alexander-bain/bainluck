@@ -2452,13 +2452,22 @@ async def statpal_status(
     return {
         "api_key_configured": is_available(),
         "mapped_sports": list(STATPAL_SPORT_MAPPING.keys()),
+        # #2907, CERT-2381's repair. This dict is a DIRECTORY an operator reads
+        # to find out what they can trigger, so an entry for a route that no
+        # longer exists is not cosmetic — it is the same false-success shape the
+        # retirement removed one layer down. `sync_plays`, `sync_rosters` and
+        # `sync_team_stats` outlived their routes by one commit: the status call
+        # kept answering 200 and advertising all three while POSTing any of them
+        # returned 404.
+        #
+        # Pinned by `tests/test_statpal_status_route_contract_2907.py`, which
+        # resolves every value here against the mounted app rather than against a
+        # second list — a contract asserted from the app's own route table cannot
+        # drift from it, and a list retyped in a test is a second thing to forget.
         "endpoints": {
             "sync_schedules": "POST /api/admin/statpal/sync-schedules",
             "sync_injuries": "POST /api/admin/statpal/sync-injuries",
-            "sync_plays": "POST /api/admin/statpal/sync-plays",
-            "sync_rosters": "POST /api/admin/statpal/sync-rosters",
             "sync_standings": "POST /api/admin/statpal/sync-standings",
-            "sync_team_stats": "POST /api/admin/statpal/sync-team-stats",
             "task_status": "GET /api/admin/statpal/task/{task_id}",
         },
     }

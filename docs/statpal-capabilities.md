@@ -36,7 +36,9 @@ lane; the original commit is cherry-picked, so Alex's authorship and message are
 - Auth is an `access_key` query param; every endpoint is GET; base `statpal.io/api/v1/{sport}/…`, soccer on `/v2`.
 - A malformed call is **HTTP 200 with body `invalid-request`** — never "no data". Parse for it; test for it.
 - Refresh classes: livescores / live-plays / soccer live odds = 5–15 s products; `daily`, schedules, standings,
-  rosters, injuries = 1–12 h products and the vendor asks for ≤10 reads/hour/endpoint. Rate-limit → backoff, 429 re-raises.
+  injuries = 1–12 h products and the vendor asks for ≤10 reads/hour/endpoint. Rate-limit → backoff, 429 re-raises.
+  (**`rosters` was in this list and should not have been** — the vendor publishes no roster path for any sport;
+  §3 has the two independent venue reads and #2907 deleted the accessor, the task and the beat.)
 - Livescores remember ~24 h. History is ours to keep (we do); StatPal is not a backfill source.
 - `user-request-count` is the meter; its response echoes the key — count only, never the body, in any artifact.
 

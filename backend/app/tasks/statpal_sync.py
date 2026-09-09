@@ -1650,5 +1650,3 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
         "total_teams_updated": total_updated,
         "details": details,
     }
-
-
