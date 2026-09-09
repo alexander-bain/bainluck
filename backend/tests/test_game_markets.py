@@ -511,6 +511,11 @@ class TestGetGameMarketsFormatting:
                 # #2089 — ungraded row, so no verdict (see the note above).
                 "is_winner": None,
                 "resolution_source": None,
+                # #4189 — row-level provenance, so the container-parent
+                # suppression can be decided against the payload instead of a
+                # bucket. `totals` has carried `_market_id`/`_external_id` since
+                # long before this; every rendered row now does.
+                "_market_id": market.id,
             }
         ]
 
@@ -672,6 +677,8 @@ class TestGetGameMarketsFormatting:
                 # #2089 — ungraded row, so no verdict (see the note above).
                 "is_winner": None,
                 "resolution_source": None,
+                # #4189 — see the note on the sibling assertion above.
+                "_market_id": market.id,
             }
         ]
 

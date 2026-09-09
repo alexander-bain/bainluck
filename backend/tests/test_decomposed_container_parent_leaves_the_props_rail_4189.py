@@ -100,6 +100,23 @@ CHILDREN = [
 
 PARENT_ID = 60457478
 
+#: CERT-2340's falsifier, as one member. A REAL price, a shape that makes the
+#: parent a candidate, a name that classifies as `player_prop` — and a 99%/1%
+#: line, which `app/routes/events.py` step 9 deletes outright
+#: (`0.05 <= over_probability <= 0.95`, the "boring prop" guard). So this member
+#: appends a render-loop bucket row and is gone by the time the payload is
+#: assembled: SERVED, EMITTED, and still not on the page.
+#:
+#: `player_prop` is not an incidental choice — step 9 is the only post-loop
+#: filter that reaches a bucket on a price alone, so it is the cheapest honest
+#: way to produce the state. Ten filters run after the loop and any of them
+#: would do; this one needs no sport range, no monotonic ladder and no clock.
+POSTFILTERED_MEMBER = (
+    60457488,
+    "container_member",
+    "Andreeva vs. Gauff: Mirra Andreeva Aces",
+)
+
 
 # ---------------------------------------------------------------- fixtures --
 
@@ -195,6 +212,11 @@ def _the_production_group(
                          render loop's first gate drops it.
     * ``no_real_price``— the row is served with outcomes, but every price is
                          zero, so `has_no_real_price` drops it.
+    * ``postfiltered_prop`` — CERT-2340. The row is served, has a REAL price,
+                         clears every gate in the render loop and APPENDS ITS
+                         ROW, and is then deleted by a filter that runs after
+                         the loop. The state that a bucket-watching repair
+                         cannot see; see `POSTFILTERED_MEMBER`.
     """
     markets = [
         _make_market(
@@ -208,6 +230,19 @@ def _the_production_group(
         _make_outcome(id=900 + i, market_id=PARENT_ID, name=name, probability=prob)
         for i, (name, prob) in enumerate(PARENT_OUTCOMES)
     ]
+    if include_children and child_state == "postfiltered_prop":
+        mid, shape, name = POSTFILTERED_MEMBER
+        markets.append(
+            _make_market(id=mid, name=name, market_type=shape, group_id=GROUP)
+        )
+        outcomes.append(
+            _make_outcome(id=7100, market_id=mid, name="Yes", probability=0.99)
+        )
+        outcomes.append(
+            _make_outcome(id=7101, market_id=mid, name="No", probability=0.01)
+        )
+        return markets, outcomes
+
     if include_children:
         for n, (mid, shape, name) in enumerate(CHILDREN):
             markets.append(
@@ -454,6 +489,367 @@ class TestAServedChildIsNotYetARenderedChild:
         for child_state in ("no_outcomes", "no_real_price"):
             markets, _ = _the_production_group(child_state=child_state)
             assert _decomposed_container_parent_candidates(markets) == {PARENT_ID}
+
+
+class TestAServedChildIsNotYetAFinalChild:
+    """🔴 CERT-2340. THE ARM THE *SECOND* CUT COULD NOT REACH.
+
+    `TestAServedChildIsNotYetARenderedChild` moved the question from "is the
+    child in the served list" to "did the child append a row". That is one layer
+    better and still not the reader's layer. Ten filters run between the render
+    loop and the response — sport-range guards, four monotonicity passes, a
+    cross-source merge, the 5–95% prop guard, the #1588 window suppression — and
+    every one of them can empty a group AFTER its rows were counted as emitted.
+
+    The state below is a real-priced 99%/1% player prop. It clears every gate in
+    the loop, appends its bucket row, and is deleted at step 9. On the second
+    cut (`a509ac08`) the parent was skipped on the strength of that bucket row
+    and the payload came back `[]`.
+
+    The control is the same fixture with a NON-CANDIDATE parent
+    (`parent_shape=None`). 🔴 It must have the member PRESENT AND FAILING, not
+    removed — removing the member removes it from the predicate too, which is
+    the arm that cannot fail and is what CERT-2335 caught the first time.
+    """
+
+    @pytest.mark.asyncio
+    async def test_postfiltered_player_prop_does_not_delete_parent(self):
+        payload = await _payload(child_state="postfiltered_prop")
+        assert _every_rendered_name(payload), (
+            "the group's only member appended a bucket row and was then deleted "
+            "by a post-loop filter, so nothing of this match reached the reader "
+            "— and the parent had already been dropped in its favour. A parent "
+            "may only be dropped for a child that survives to the PAYLOAD."
+        )
+
+    @pytest.mark.asyncio
+    async def test_and_what_survives_is_the_parent(self):
+        """Non-empty is not enough: the rows left must be the container's."""
+        payload = await _payload(child_state="postfiltered_prop")
+        rendered = " ".join(_every_rendered_name(payload))
+        assert "US Open WTA: Mirra Andreeva vs Coco Gauff" in rendered, (
+            "the parent is the group's only surviving representation and its "
+            f"rows are what the reader must be left with; got {rendered!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_control_has_the_member_present_and_failing(self):
+        """The control arm, stated as an assertion rather than assumed.
+
+        A control that quietly stopped reproducing the state would make the two
+        tests above pass for the wrong reason forever. So: the member IS in the
+        served set (it makes the parent a candidate), and it is NOT in the
+        payload (a post-loop filter took it).
+        """
+        markets, _ = _the_production_group(child_state="postfiltered_prop")
+        member_id = POSTFILTERED_MEMBER[0]
+        assert member_id in {m.id for m in markets}, "the member was never served"
+        assert _decomposed_container_parent_candidates(markets) == {PARENT_ID}, (
+            "the member does not make the parent a candidate, so this fixture "
+            "cannot reproduce the defect at all"
+        )
+
+        payload = await _payload(child_state="postfiltered_prop")
+        member_name = POSTFILTERED_MEMBER[2]
+        assert not any(
+            n.startswith(f"{member_name}|") for n in _every_rendered_name(payload)
+        ), (
+            "the member survived to the payload, so this is the ordinary "
+            "renderable case and not the post-filter arm this class exists for"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_non_candidate_parent_keeps_the_same_rows(self):
+        """The differential: candidacy must change NOTHING when the group dies.
+
+        The cert's falsifier is exactly this comparison — the candidate arm came
+        back `[]` while the identical non-candidate control kept the parent.
+        """
+        _game_markets_cache.clear()
+        control = set(
+            _every_rendered_name(
+                await _payload(parent_shape=None, child_state="postfiltered_prop")
+            )
+        )
+        _game_markets_cache.clear()
+        candidate = set(
+            _every_rendered_name(
+                await _payload(parent_shape="field", child_state="postfiltered_prop")
+            )
+        )
+        assert control, "the control arm renders nothing — the fixture is broken"
+        assert candidate == control, (
+            "making the parent a suppression candidate changed the payload even "
+            f"though its group put nothing on the page: lost {control - candidate}, "
+            f"gained {candidate - control}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_renderable_case_is_still_suppressed(self):
+        """The control on the control, again: when a member DOES survive every
+        filter, the container still goes. A repair that fixed the empty-page arm
+        by never suppressing anything would pass every test above."""
+        payload = await _payload(child_state="renderable")
+        rendered = _every_rendered_name(payload)
+        assert rendered
+        assert not any(n.startswith("US Open WTA: Mirra Andreeva vs Coco Gauff|") for n in rendered), (
+            "the container's rows are back on the rail — the repair undid #4189"
+        )
+
+    def test_the_provenance_reader_answers_all_three_row_shapes(self):
+        from app.routes.events import _row_market_ids
+
+        assert _row_market_ids({"_market_ids": [1, 2], "_market_id": 1}) == {1, 2}
+        assert _row_market_ids({"_market_id": 7}) == {7}
+        assert _row_market_ids({"market_name": "no provenance"}) == set(), (
+            "an untagged row must be un-suppressable — the failure direction "
+            "for a removal is toward serving too much"
+        )
+
+
+class TestAMergedRowIsNotDisownedByItsMember:
+    """Step 9b is the only filter that MERGES two rows into one dict, so it is
+    the only place a surviving row can belong to more than one market.
+
+    The dict it keeps is `best`, one of the entries, carrying that entry's
+    single `_market_id`. When `best` is the container parent's row, the merged
+    row would be deleted as the container's at the bottom of the build — and the
+    member's price is half of the average that row displays, so the reader loses
+    a number that is still half true. `_market_ids` carries the union so the row
+    belongs to every market that fed it.
+
+    🔴 THE FIXTURE MAKES `best` THE PARENT ON PURPOSE, and that is the whole
+    reason this test can fail. Both rows are Polymarket, so neither wins the
+    Kalshi tie-break, and `max` returns the first maximal entry — the parent,
+    because markets are iterated in id order. A fixture where the member won the
+    tie-break would pass with the union deleted.
+
+    Measured 2026-09-09 across 23 live events (12 MLB, 10 soccer, the US Open
+    QF): 11 real merges involve a container parent and all 11 are the parent
+    merging with ITSELF — zero mixed. So this state is reachable in code and was
+    not observed in that sample; it is guarded rather than left to a comment,
+    because both of this ship's prior BLOCKs were rows disappearing.
+    """
+
+    MERGED_PROP = "US Open WTA: Mirra Andreeva Aces"
+
+    def _group(self):
+        markets = [
+            # id order matters: the parent must come first so that `max` picks
+            # it when neither row wins the Kalshi tie-break.
+            _make_market(
+                id=PARENT_ID, name=self.MERGED_PROP, market_type="field", group_id=GROUP
+            ),
+            _make_market(
+                id=PARENT_ID + 12, name=self.MERGED_PROP,
+                market_type="container_member", group_id=GROUP,
+            ),
+            # a second member, so the parent is genuinely redundant and the
+            # suppression actually fires — without it nothing is dropped and the
+            # test would pass on any implementation.
+            _make_market(
+                id=PARENT_ID + 2, name="Set 1 Winner: Andreeva vs Gauff",
+                market_type="container_member", group_id=GROUP,
+            ),
+        ]
+        outcomes = [
+            _make_outcome(id=8000, market_id=PARENT_ID, name="Over", probability=0.60),
+            _make_outcome(id=8001, market_id=PARENT_ID + 12, name="Over", probability=0.40),
+            _make_outcome(id=8002, market_id=PARENT_ID + 2, name="Yes", probability=0.3950),
+            _make_outcome(id=8003, market_id=PARENT_ID + 2, name="No", probability=0.6050),
+        ]
+        return markets, outcomes
+
+    async def _payload(self):
+        event = _make_event()
+        markets, outcomes = self._group()
+        return await get_game_markets(event.id, _db_for(event, markets, outcomes))
+
+    @pytest.mark.asyncio
+    async def test_the_fixture_really_merges_and_really_suppresses(self):
+        """The control: both preconditions asserted, not assumed."""
+        markets, _ = self._group()
+        assert _decomposed_container_parent_candidates(markets) == {PARENT_ID}
+        payload = await self._payload()
+        props = payload.get("player_props") or []
+        assert any(p.get("source_count") == 2 for p in props), (
+            "step 9b never merged the two rows, so this fixture cannot reach "
+            f"the state it exists for: {props}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_merged_row_survives_its_parents_suppression(self):
+        payload = await self._payload()
+        merged = [
+            p for p in (payload.get("player_props") or [])
+            if p.get("source_count") == 2
+        ]
+        assert merged, (
+            "the merged prop was deleted with the container parent, but half of "
+            "the price it carries is the MEMBER's — a row a reader should keep"
+        )
+        assert merged[0]["over_probability"] == 0.50, (
+            f"the merged average is not the two rows' mean: {merged[0]}"
+        )
+
+
+CORNERS_GROUP = "polymarket:corners-piast-katowice"
+CORNERS_PARENT = 59947650
+
+
+class TestAContainerParentNeverEvictsItsOwnMember:
+    """Step 7 keeps ONE totals row per threshold, so a container parent there
+    does not merely add a row — it can EVICT its own member's and then be
+    deleted itself, and the threshold leaves the page entirely.
+
+    🔴 THIS IS NOT HYPOTHETICAL AND THE FIXTURE IS NOT INVENTED. The rows below
+    are `group_id` `polymarket:…` on the real Piast Gliwice v Katowice fixture,
+    read off production 2026-09-09: a `field` parent whose NAME classifies as a
+    game total ("… - Total Corners") holding its children's titles as outcomes,
+    beside `quantity` members carrying the same thresholds. 14 of 634 distinct
+    container-parent names served in the last seven days classify this way.
+
+    Measured on the same day across ten real "Total Corners" events: removing
+    the preference costs 21 member rows (265 → 244), and on three of those
+    events the container's row wins the threshold, is deleted as redundant, and
+    the reader is left with neither.
+    """
+
+    def _group(self):
+        markets = [
+            _make_market(
+                id=CORNERS_PARENT,
+                name="GKS Piast Gliwice vs. GKS Katowice - Total Corners",
+                market_type="field",
+                group_id=CORNERS_GROUP,
+            ),
+            _make_market(
+                id=59947651,
+                name="GKS Piast Gliwice vs. GKS Katowice: O/U 9.5 Total Corners",
+                market_type="quantity",
+                group_id=CORNERS_GROUP,
+            ),
+            _make_market(
+                id=59947652,
+                name="GKS Piast Gliwice vs. GKS Katowice: O/U 11.5 Total Corners",
+                market_type="quantity",
+                group_id=CORNERS_GROUP,
+            ),
+        ]
+        outcomes = [
+            # the parent's "outcomes" are its children's TITLES, and
+            # `_extract_threshold` reads 9.5 and 11.5 straight out of them
+            _make_outcome(id=8100, market_id=CORNERS_PARENT,
+                          name="Total Corners: O/U 9.5", probability=0.550),
+            _make_outcome(id=8101, market_id=CORNERS_PARENT,
+                          name="Total Corners: O/U 11.5", probability=0.635),
+            _make_outcome(id=8102, market_id=59947651, name="Over", probability=0.995),
+            _make_outcome(id=8103, market_id=59947651, name="Under", probability=0.005),
+            _make_outcome(id=8104, market_id=59947652, name="Over", probability=0.095),
+            _make_outcome(id=8105, market_id=59947652, name="Under", probability=0.905),
+        ]
+        return markets, outcomes
+
+    async def _payload(self):
+        event = _make_event()
+        event.sport.key = "soccer_poland_ekstraklasa"
+        markets, outcomes = self._group()
+        return await get_game_markets(event.id, _db_for(event, markets, outcomes))
+
+    def test_the_container_is_a_candidate_and_classifies_as_a_total(self):
+        """The control: both preconditions, asserted rather than assumed."""
+        from app.routes.events import _classify_game_market
+
+        markets, _ = self._group()
+        assert _decomposed_container_parent_candidates(markets) == {CORNERS_PARENT}
+        assert _classify_game_market(markets[0].name) == "game_total", (
+            "the container no longer reaches the totals section, so this test "
+            "is guarding a branch it can never enter"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_members_threshold_is_still_on_the_page(self):
+        """9.5 only, and 11.5's absence is somebody else's rule.
+
+        Both members carry a real threshold, but 11.5 never reaches the payload
+        on either arm — the soccer entry in `_SPORT_TOTAL_RANGE` drops it long
+        after this code has run. Asserting it would make this file a guard on
+        the sport-range table, red for a reason that has nothing to do with
+        #4189 (the same trap `test_suppressing_the_parent_loses_nothing_else`
+        documents). 9.5 is the rung the eviction actually decides.
+        """
+        payload = await self._payload()
+        served = payload.get("totals") or []
+        assert 9.5 in {t["threshold"] for t in served}, (
+            "the 9.5 rung left the page entirely: the container's row won the "
+            f"per-threshold dedup and was then deleted as redundant. Got {served}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_container_costs_the_page_nothing_it_would_otherwise_show(self):
+        """The differential, the same shape the props-rail control uses.
+
+        LOST must be the container's rows and nothing else — that is the arm
+        that reds when the per-threshold dedup lets the container evict a
+        member, because then the lost set picks up the member's row too.
+
+        GAINED is NOT required to be empty here, and that is a real difference
+        from the props-rail control. At a shared threshold the dedup keeps one
+        row, and with the container a candidate the row it keeps is the
+        member's, so the member appears on a rung it was previously shut out
+        of: on this real fixture the reader stops seeing the container's 55%
+        stamp at 9.5 and starts seeing the member's own 99.5%. What GAINED must
+        never contain is a row from outside the group.
+        """
+        def _names(payload):
+            return {
+                f"{r.get('market_name')}|{r.get('outcome_name')}"
+                for section in ("totals", "player_props", "spreads",
+                                "period_markets", "other")
+                for r in (payload.get(section) or [])
+            }
+
+        event = _make_event()
+        event.sport.key = "soccer_poland_ekstraklasa"
+        markets, outcomes = self._group()
+
+        _game_markets_cache.clear()
+        markets[0].market_type = None          # not a candidate: nothing is dropped
+        before = _names(await get_game_markets(event.id, _db_for(event, markets, outcomes)))
+
+        _game_markets_cache.clear()
+        markets[0].market_type = "field"       # a candidate: the container goes
+        after = _names(await get_game_markets(event.id, _db_for(event, markets, outcomes)))
+
+        container_rows = {n for n in before if n.startswith("GKS Piast Gliwice vs. GKS Katowice - Total Corners|")}
+        assert container_rows, "the fixture never put the container on the page"
+        assert before - after == container_rows, (
+            "suppressing the container also cost the page rows that are not "
+            f"its own: {(before - after) - container_rows}"
+        )
+        member_names = {m.name for m in markets[1:]}
+        stray = {n for n in (after - before) if n.split("|")[0] not in member_names}
+        assert stray == set(), (
+            f"suppression put rows on the page from outside the group: {stray}"
+        )
+        assert after - before, (
+            "the container never occupied a member's threshold, so this fixture "
+            "no longer reaches the eviction this class exists for"
+        )
+
+    @pytest.mark.asyncio
+    async def test_and_the_rows_are_the_members_not_the_containers(self):
+        """Non-empty is not enough — the surviving row must be the member's.
+
+        Keeping the container's row would satisfy the assertion above while
+        putting "… - Total Corners" back on the page under a child's title,
+        which is #4189's original symptom in the totals section.
+        """
+        payload = await self._payload()
+        for t in payload.get("totals") or []:
+            assert "- Total Corners" not in (t.get("market_name") or ""), (
+                f"the container's own row is being served as a total: {t}"
+            )
 
 
 class TestShapesThisRuleMustNotTouch:
