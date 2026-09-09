@@ -31,6 +31,7 @@ still matches the one the producer emits.
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
@@ -62,9 +63,13 @@ KNOWN_REASONS = (
 
 
 def _producer_source() -> str:
-    import app.tasks.calibration_main_build as build
+    """The producer's own source, read the way this suite already reads a
+    writer's source (``test_calibration_cursor_decision_capture_1002``)."""
+    from app.tasks import calibration_main_build
 
-    return Path(build.__file__).read_text(encoding="utf-8")
+    return Path(inspect.getsourcefile(calibration_main_build)).read_text(
+        encoding="utf-8"
+    )
 
 
 # ---------------------------------------------------------------------------
