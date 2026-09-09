@@ -836,12 +836,19 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             // contradicts "one clean number + why it moved"). selectedOutcomes is
             // seeded to the leader; the full per-outcome breakdown lives in the
             // "All Outcomes" table down in the rail. Fixed 0-100% axis, no smoothing.
+            // #4259: "fixed 0-100%" above was the bug for the FIELD case. This page
+            // plots many-outcome markets (championship/award) whose leader sits in
+            // single digits, so every line drew on the floor. `fieldCeiling` steps the
+            // top down the #2451 ladder — zero stays the floor, the labels state the
+            // top. A binary market, and a resolved one whose winner is at 100%, both
+            // land back on the 1.0 rung untouched. See lib/chartCeiling.ts.
             <FuturesChart
               historyData={historyOutcomes}
               selectedOutcomes={selectedOutcomes}
               onToggleOutcome={toggleOutcomeSelection}
               stepInterpolation={historyData.sparse}
               fixedYAxis
+              fieldCeiling
               settled={isResolved}
             />
           )}
