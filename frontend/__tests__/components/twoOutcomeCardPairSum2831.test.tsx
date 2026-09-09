@@ -407,8 +407,11 @@ describe("the live corpus: 876 distinct pairs, 17,125 open markets", () => {
 
 // ════════════════════════════════════════════════════════════════════════════
 // THE SECOND SURFACE — a SOURCE SCAN, strictly weaker than a render, and said
-// so rather than dressed up. `app/futures/[id]/page.tsx`'s `OutcomeRow` is not
-// exported and must not become exported (UX-P274).
+// so rather than dressed up. The pair DECISION is the page's; the two price
+// columns that consume it are `OutcomeRow`'s, and #3358 moved that row out of
+// `app/futures/[id]/page.tsx` into `components/futures/OutcomeRow.tsx` (it could
+// not be exported from a `page.tsx` — UX-P274). So the scan now reads BOTH
+// files, each for the half of the contract it actually holds.
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -428,6 +431,7 @@ function codeOf(rel: string): string {
 
 describe("the futures detail page (SOURCE SCAN — weaker than a render)", () => {
   const page = codeOf("app/futures/[id]/page.tsx");
+  const row = codeOf("components/futures/OutcomeRow.tsx");
 
   it("decides the pair once, from the unsorted market set", () => {
     expect(page).toContain("renderedOutcomeRowPercents");
@@ -439,16 +443,24 @@ describe("the futures detail page (SOURCE SCAN — weaker than a render)", () =>
   });
 
   it("passes it to BOTH price columns", () => {
-    expect(page).toMatch(/formatProbability\(outcome\.probability,\s*\{\s*rendered\s*\}\)/);
-    expect(page).toMatch(
+    // #3358: the columns are the ROW's now. Asserted where the code is, or the
+    // positive would read the page and find nothing.
+    expect(row).toMatch(/formatProbability\(outcome\.probability,\s*\{\s*rendered\s*\}\)/);
+    expect(row).toMatch(
       /formatProbability\(outcome\.opening_probability,\s*\{\s*rendered:\s*renderedOpening\s*\}\)/,
     );
   });
 
   it("leaves no bare formatProbability on an outcome price", () => {
     // The whole defect is a call site that rounds a second time on its own.
-    expect(page).not.toMatch(/formatProbability\(outcome\.probability\)/);
-    expect(page).not.toMatch(/formatProbability\(outcome\.opening_probability\)/);
+    // Both files: a ban that follows the code out of a file stops covering the
+    // file it left, and this is a negative — a subject holding none of this code
+    // passes it for free, so moving it rather than widening it would have
+    // silently retired half the guard.
+    for (const code of [row, page]) {
+      expect(code).not.toMatch(/formatProbability\(outcome\.probability\)/);
+      expect(code).not.toMatch(/formatProbability\(outcome\.opening_probability\)/);
+    }
   });
 
   it("looks the row up by id, so re-sorting cannot re-assign a number", () => {
@@ -465,7 +477,11 @@ describe("anti-drift", () => {
     // A default of `null` would compile at the next call site and print 101
     // again with every test in this file still green — which is precisely how
     // the row came to round independently in the first place.
-    for (const rel of ["components/FuturesCard.tsx", "app/futures/[id]/page.tsx"]) {
+    // #3358: `OutcomeRow`'s prop table moved with it out of the page.
+    for (const rel of [
+      "components/FuturesCard.tsx",
+      "components/futures/OutcomeRow.tsx",
+    ]) {
       const code = codeOf(rel);
       expect(code).toMatch(/^\s*rendered: number \| null;$/m);
       expect(code).not.toMatch(/rendered\?: number \| null/);
