@@ -48,6 +48,56 @@ export function groupedFeedKey(userId: string | null | undefined): SportsFeedKey
 }
 
 /**
+ * The DEFERRED lookup that fills the Finished section (#4454, second pass).
+ *
+ * ═══ WHY A SECOND REQUEST EXISTS AT ALL ═══
+ *
+ * The first pass of #4454 shipped, deployed, and rendered nothing. The section
+ * logic was right; it was never handed a settled game. Page one asks for 20
+ * items and the ranker puts last night's finals from position 30 down —
+ * measured on production 2026-09-09:
+ *
+ *     limit=20  16 events   0 settled          <- what the page asks for
+ *     limit=40  25 events   1 settled          Shelton-Alcaraz at position 30
+ *     limit=100 60 events  20 settled
+ *
+ * So the reader only ever met a Finished section by scrolling past thirty cards,
+ * which is not "findable the morning after" in any sense Alex would accept.
+ *
+ * ═══ WHY NOT JUST RAISE THE PAGE'S LIMIT ═══
+ *
+ * Because `app/sports/page.tsx` tracks that request's ~1.8s wire time and the
+ * latency lane is actively defending it. Tripling the FIRST-PAINT payload to
+ * populate a section below the fold is the wrong trade. This key is deliberately
+ * distinct so the deferred lookup lands in its own SWR cache slot and can never
+ * overwrite, delay or race the payload page one renders from.
+ *
+ * ═══ WHY IT IS CHEAPER THAN IT LOOKS ═══
+ *
+ * The lookup passes `include_futures=false`, which makes the window far denser
+ * in the only card type it cares about. Measured the same afternoon:
+ *
+ *     limit=60 WITH futures      36 events   7 settled
+ *     limit=40 WITHOUT futures   36 events   7 settled   marquee at position 22
+ *
+ * Same yield, a third smaller payload. `FINISHED_LOOKUP_LIMIT` is that 40.
+ */
+export function sportsFinishedLookupKey(userId: string | null | undefined): SportsFeedKey {
+  return userId ? ["feed-sports-finished", userId] : ["feed-sports-finished-anon"];
+}
+
+/**
+ * How deep the deferred lookup reads.
+ *
+ * 40 with futures excluded, which is the measured knee: it clears the marquee
+ * final (position 22) with room to spare and returns seven of them, while
+ * staying smaller on the wire than a 60-item pull that yields exactly the same
+ * seven. Raising it buys more of the day's results, not a better chance at the
+ * one that matters, and the section is capped for the reader anyway.
+ */
+export const FINISHED_LOOKUP_LIMIT = 40;
+
+/**
  * A stable identity token for the current key, used to detect a genuine
  * identity change (anon → user, user → different user, user → logout). When this
  * changes the page must drop paginated tail state accumulated under the previous

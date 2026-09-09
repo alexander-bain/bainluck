@@ -23,7 +23,13 @@ import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/
 import { admittedPropStripRows } from "@/lib/sports/propStripAdmission";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/discover/foregroundTerminal";
-import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
+import {
+  sportsFeedKey,
+  groupedFeedKey,
+  sportsFeedIdentity,
+  sportsFinishedLookupKey,
+  FINISHED_LOOKUP_LIMIT,
+} from "@/lib/sports/feedKey";
 import SportsFeedBootScript from "@/components/sports/SportsFeedBootScript";
 import { applyFinishedCardGuard } from "@/lib/sports/finishedCardGuard";
 import {
@@ -105,6 +111,32 @@ export default function SportsPage() {
       );
     },
     { refreshInterval: 30000, keepPreviousData: true }
+  );
+
+  // #4454 SECOND PASS — the finals the ranked page-one window cannot reach.
+  //
+  // The first pass shipped and rendered nothing: page one asks for 20 items and
+  // the ranker puts last night's finals from position 30 down, so
+  // `partitionFinishedGames` was handed a payload with nothing to partition. The
+  // whole reasoning, the measurements and why the page's own limit stays at 20
+  // are on `sportsFinishedLookupKey`.
+  //
+  // DEFERRED ON PURPOSE: gated on `feedData`, so it cannot start until page one
+  // has resolved and can never compete with it for the connection. Its own SWR
+  // key keeps it in a separate cache slot. `include_futures: false` makes the
+  // window dense in the only card type it wants. A failure here is silent by
+  // design — the section simply stays as small as page one could make it, which
+  // is exactly the pre-#4454 behaviour, never an error state on the tab.
+  const { data: finishedLookup } = useSWR(
+    feedData ? sportsFinishedLookupKey(user?.uid) : null,
+    () =>
+      fetchFeed({
+        limit: FINISHED_LOOKUP_LIMIT,
+        offset: 0,
+        mode: "sports",
+        include_futures: false,
+      }),
+    { refreshInterval: 300000, keepPreviousData: true }
   );
 
   // Grouped futures feed (player props, playoff progressions, etc.). Same auth
@@ -369,12 +401,35 @@ export default function SportsPage() {
     return { ...applyFinishedCardGuard(rest), finishedGames: finished };
   }, [mergedItems]);
 
+  // #4454 SECOND PASS — every settled game the reader could have, from either
+  // source, deduped.
+  //
+  // Page one contributes the finals it happens to carry (usually none) and the
+  // scroll tail contributes more as the reader pages; the deferred lookup
+  // contributes the ones neither will reach in time. `getSportsItemId` is the
+  // same key pagination already dedups on, so a final that arrives BOTH ways
+  // cannot render twice — and page one's copy wins, because it is the one whose
+  // prices the rest of the page was built from.
+  //
+  // The lookup's items go through `feedItemHasRenderableContent` and
+  // `partitionFinishedGames` exactly as page one's do. It is the same ladder, not
+  // a second one: a card that page one would have refused for an empty envelope
+  // must not walk in through the side door.
+  const finishedPool = useMemo(() => {
+    const seen = new Set(guardedFeed.finishedGames.map(getSportsItemId));
+    const renderable = (finishedLookup?.items ?? []).filter(feedItemHasRenderableContent);
+    const extra = partitionFinishedGames(renderable).finished.filter(
+      (item) => !seen.has(getSportsItemId(item))
+    );
+    return extra.length === 0 ? guardedFeed.finishedGames : [...guardedFeed.finishedGames, ...extra];
+  }, [guardedFeed, finishedLookup]);
+
   // The Finished section: today's finals first, then yesterday's, most recent
   // first inside a day, cut to one screen. Pure and ordered here; rendered below
   // Upcoming, because a result is not something a reader can still act on.
   const finishedSection = useMemo(
-    () => buildFinishedSection(guardedFeed.finishedGames),
-    [guardedFeed]
+    () => buildFinishedSection(finishedPool),
+    [finishedPool]
   );
 
   // =========================================================================
