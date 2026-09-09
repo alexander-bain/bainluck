@@ -708,6 +708,9 @@ class PhaseRunner:
         #: publish. Read by the orchestrator, which is the only place that knows
         #: the publish is done. Default False, so a build that never took the
         #: reorder behaves exactly as it did before.
+        #:
+        #: CAL-P1064 (#4275) adds the second setter, in :func:`build_runner`: a
+        #: beat that CARRIES the futures phase never reaches the first one.
         self.rebuild_deferred: bool = False
 
     # -- staging --------------------------------------------------------------
@@ -719,6 +722,11 @@ class PhaseRunner:
         ordering). One-way: nothing clears it within a beat, because the only
         consumer runs once, at the end, and a flag that could be un-set would
         make "did the rebuild get its window?" depend on read order.
+
+        Two callers, and they are mutually exclusive by construction — the
+        futures phase (it ran, and chose to publish from the served bank first)
+        and :func:`build_runner` (the phase was carried, so it never ran at all;
+        CAL-P1064, #4275). Idempotent either way.
         """
         self.rebuild_deferred = True
 
@@ -2328,6 +2336,29 @@ async def build_runner(
     )
     for phase in checkpoint.completed_phases:
         runner.carry(phase)
+    if runner.is_carried(PHASE_FUTURES):
+        # CAL-P1064 (#4275). A resumed beat reuses the futures phase's banked
+        # rows, so ``_run_staged_futures`` — the ONLY caller of
+        # :meth:`PhaseRunner.defer_rebuild` — never runs, and the post-publish
+        # rebuild pass took its ``not_deferred`` early return. The beat then
+        # published in 23-47 s and handed back twenty-two minutes of window with
+        # the census still incomplete: 2 of 2 such beats banked zero units, and
+        # the rebuild sat at 91/128 across four hours on 2026-09-09.
+        #
+        # The two states are independent, which is the whole bug: the phase
+        # checkpoint says "these payload rows are already computed", the staged
+        # CURSOR says how much of the 128-unit census exists. Carrying the first
+        # has never implied anything about the second.
+        #
+        # Deferring here rather than in the frozen module's futures phase is not
+        # only D45 hygiene — the futures phase is precisely the code a carried
+        # beat does not execute, so there is nowhere in it this could go.
+        runner.defer_rebuild()
+        # Its OWN stage name. "Deferred because the served bank already covered
+        # the plan" and "deferred because the phase was carried" are different
+        # facts about a beat, and a shared entry would make the second invisible
+        # in exactly the ledger built to find it (ruling 075 clause 2).
+        runner.ledger.record_stage("staged:rebuild_deferred:carried", 0)
     return runner, action
 
 
