@@ -229,6 +229,25 @@ def test_the_dispatcher_can_actually_call_this_rail():
     assert params[1].kind is not inspect.Parameter.KEYWORD_ONLY
 
 
+def _catalog_names() -> set[str]:
+    """The names inside `admin_repairs`' ``name ∈ { … }`` block, and only those.
+
+    🔴 NOT a substring scan of the whole docstring. That is how the sibling
+    guards are written and it passes for the wrong reason: the docstring also
+    carries a running re-sync log ("…adding kalshi-nhl-prop-category in the
+    commit that registered it…"), so a name deleted from the catalog is still
+    found in the prose about it. Mutation-proven — removing this name from the
+    catalog block left the substring form green.
+    """
+    import app.routes.admin_repairs as mod
+
+    doc = mod.__doc__ or ""
+    start = doc.index("name ∈ {")
+    end = doc.index("}", start)
+    block = doc[start:end]
+    return {part.strip() for part in block.split("{", 1)[1].split("|")}
+
+
 def test_the_rail_is_registered_and_the_catalog_did_not_drift():
     """The registry entry and the docstring catalog, in the commit that added them.
 
@@ -241,9 +260,33 @@ def test_the_rail_is_registered_and_the_catalog_did_not_drift():
         "app.tasks.repair_kalshi_nhl_prop_category",
         "repair",
     )
-    doc = mod.__doc__ or ""
-    for name in mod._REPAIRS:
-        assert name in doc, f"{name} missing from the docstring catalog"
+
+    catalog = _catalog_names()
+    assert "kalshi-nhl-prop-category" in catalog, (
+        "this rail is registered but absent from the docstring catalog block"
+    )
+    missing = sorted(set(mod._REPAIRS) - catalog)
+    assert not missing, f"{missing} registered but missing from the catalog block"
+
+
+def test_the_catalog_parser_is_not_matching_everything():
+    """Positive control for `_catalog_names`.
+
+    An over-greedy parse — one that swallowed the whole docstring — would make
+    the drift assertion above vacuous in exactly the way it was written to
+    avoid. So: the block is a real, bounded set, and a name that appears in the
+    docstring's PROSE but not in the catalog is not reported as present.
+    """
+    catalog = _catalog_names()
+    assert 20 < len(catalog) < 100, f"implausible catalog size {len(catalog)}"
+    assert all(" " not in n and n for n in catalog), (
+        f"the parse produced non-name fragments: "
+        f"{sorted(n for n in catalog if ' ' in n or not n)}"
+    )
+    assert "commit" not in catalog and "registered" not in catalog, (
+        "the parse is reaching into the re-sync prose, which is the failure "
+        "this parser exists to avoid"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +440,149 @@ def test_ticker_resolution_is_prefix_based_not_per_family():
 # ---------------------------------------------------------------------------
 # D51: the restore has to survive a paste
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# `repair()`'s own branching — the safety gate, exercised rather than described
+# ---------------------------------------------------------------------------
+#
+# 🔴 These exist because mutation testing found the hole. Every gate-2 assertion
+# above calls `_shipped_classification` DIRECTLY, so replacing the gate inside
+# `repair()` with `elif False:` — disabling the safety gate entirely — left all
+# 18 tests green. A test of the predicate is not a test of the branch that uses
+# it.
+
+
+class _Row:
+    """One `futures_markets` row as the repair reads it (attribute access)."""
+
+    def __init__(self, id, name, source, external_id, llm_sport_category):
+        self.id = id
+        self.name = name
+        self.source = source
+        self.external_id = external_id
+        self.llm_sport_category = llm_sport_category
+
+
+class _FakeSession:
+    """Enough session to run the PLAN half. It refuses to write.
+
+    `apply=True` is deliberately not exercised here: the UPDATE's rowcount is
+    the one thing that needs a real server, and the senate sibling already
+    proves that one-statement shape in CI's real-Postgres job. What is proven
+    here is the decision — which rows reach the UPDATE at all.
+    """
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.executed_writes = 0
+
+    async def execute(self, statement):
+        # A SELECT returns the rows; anything else is a write this test forbids.
+        if statement.__visit_name__ != "select":
+            self.executed_writes += 1
+            raise AssertionError(
+                "the plan half issued a write — `apply=False` must never reach "
+                "the UPDATE"
+            )
+        rows = self._rows
+
+        class _Result:
+            def all(self):
+                return rows
+
+        return _Result()
+
+    async def commit(self):  # pragma: no cover - reaching this is the failure
+        raise AssertionError("`apply=False` committed")
+
+
+_SHIP_ROW = _Row(
+    12508872, _SHIP_NAME, "kalshi", _SHIP_TICKER, "basketball",
+)
+#: A REAL basketball prop, wrongly present in the bound. Gate 2 must refuse it.
+_CONTROL_ROW = _Row(
+    999_999_001, "LAL Lakers at BOS Celtics: Points", "kalshi",
+    "KXNBAPTS-26APR22LALBOS", "basketball",
+)
+#: Right name, wrong venue. Gate 3 must refuse it.
+_FOREIGN_VENUE_ROW = _Row(
+    999_999_002, _SHIP_NAME, "polymarket", _SHIP_TICKER, "basketball",
+)
+#: Already correct. Must be refused rather than re-written.
+_ALREADY_ROW = _Row(
+    999_999_003, _SHIP_NAME, "kalshi", _SHIP_TICKER, "hockey",
+)
+
+
+async def _plan(rows):
+    session = _FakeSession(rows)
+    return await rail.repair(session, apply=False)
+
+
+@pytest.mark.asyncio
+async def test_the_ship_row_is_planned():
+    out = await _plan([_SHIP_ROW])
+    assert [p["id"] for p in out["planned"]] == [12508872]
+    assert out["refused"] == []
+    assert out["changed"] == 0, "a dry run must change nothing"
+    assert out["terminal"] == "dry_run"
+
+
+@pytest.mark.asyncio
+async def test_gate_2_refuses_a_real_basketball_prop_inside_repair():
+    """THE SAFETY GATE, exercised through `repair()` rather than around it.
+
+    A mislisted id must be REFUSED by name, not relabelled. Mutating the gate to
+    `elif False:` makes this test — and only this class of test — go red.
+    """
+    out = await _plan([_CONTROL_ROW])
+    assert out["planned"] == [], (
+        "a genuine basketball prop was planned for relabelling as hockey; the "
+        "shipped-classifier gate is not being consulted inside `repair()`"
+    )
+    assert [r["reason"] for r in out["refused"]] == ["classifier_disagrees"]
+
+
+@pytest.mark.asyncio
+async def test_gate_3_refuses_another_venue_and_an_already_correct_row():
+    out = await _plan([_FOREIGN_VENUE_ROW, _ALREADY_ROW])
+    assert out["planned"] == []
+    assert sorted(r["reason"] for r in out["refused"]) == [
+        "already_correct",
+        "not_kalshi",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_gates_hold_when_the_rows_arrive_together():
+    """The mixed batch — one row moving must not carry its neighbours.
+
+    Asserted separately because a gate can be correct per row and still be
+    written outside the loop, in which case one qualifying row admits the lot.
+    """
+    out = await _plan([_SHIP_ROW, _CONTROL_ROW, _FOREIGN_VENUE_ROW, _ALREADY_ROW])
+    assert [p["id"] for p in out["planned"]] == [12508872]
+    assert len(out["refused"]) == 3
+    assert out["examined"] == 4
+
+
+@pytest.mark.asyncio
+async def test_a_missing_id_is_reported_not_silently_dropped():
+    """The bound names two rows. If one is gone, the payload must say so —
+    otherwise a repair that reached half its population reads as a full run."""
+    out = await _plan([_SHIP_ROW])
+    assert out["missing_ids"] == [12508876]
+
+
+@pytest.mark.asyncio
+async def test_the_restore_travels_on_the_dry_run():
+    """D51: an operator must be able to read the undo BEFORE deciding to apply."""
+    out = await _plan([_SHIP_ROW])
+    assert out["restore_sql"] == (
+        "UPDATE futures_markets SET llm_sport_category = 'basketball' "
+        "WHERE id IN (12508872);"
+    )
 
 
 def test_the_restore_line_is_a_statement_not_a_dict_repr():
