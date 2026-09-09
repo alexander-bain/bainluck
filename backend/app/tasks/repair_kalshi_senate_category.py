@@ -124,6 +124,39 @@ def _shipped_classification(name: str, external_id: Optional[str]) -> str:
     return _categorize_kalshi_market(name or "", None, event_ticker=external_id)
 
 
+def restore_sql(planned: list[dict[str, Any]]) -> str:
+    """The D51 undo, as statements that can be pasted and run.
+
+    🔴 ONE STATEMENT PER DISTINCT BEFORE-VALUE, not one statement for all rows.
+    The first version of this logged::
+
+        UPDATE futures_markets SET llm_sport_category = {109237: 'hockey'}
+         WHERE id IN (109237);
+
+    — the before-value *map* interpolated where the value belongs, which is not
+    valid SQL and would fail on paste. That is worse than no restore line: D51
+    is granted to a repair that "ships a one-command restore", so a line that
+    looks like one and is not is the exact thing the grant assumes away.
+
+    Grouping by before-value is what makes a single statement honest. Today
+    every row is `hockey`, so this emits one statement; if the bound ever spans
+    two prior categories it emits two, and neither is wrong.
+    """
+    by_before: dict[Optional[str], list[int]] = {}
+    for row in planned:
+        by_before.setdefault(row["before"], []).append(row["id"])
+
+    lines = []
+    for before, ids in sorted(by_before.items(), key=lambda kv: str(kv[0])):
+        ids_csv = ", ".join(str(i) for i in sorted(ids))
+        value = "NULL" if before is None else f"'{before}'"
+        lines.append(
+            f"UPDATE futures_markets SET llm_sport_category = {value} "
+            f"WHERE id IN ({ids_csv});"
+        )
+    return "\n".join(lines)
+
+
 async def repair(session, apply: bool = False) -> dict[str, Any]:
     """Plan (and optionally apply) the #4229 Kalshi category correction.
 
@@ -181,14 +214,10 @@ async def repair(session, apply: bool = False) -> dict[str, Any]:
         await session.commit()
         changed = result.rowcount or 0
         logger.warning(
-            "#4229 repair applied: %s rows -> %s. D51 RESTORE: "
-            "UPDATE futures_markets SET llm_sport_category = %s WHERE id IN (%s);",
+            "#4229 repair applied: %s rows -> %s. D51 RESTORE:\n%s",
             changed,
             TARGET_CATEGORY,
-            # Every planned row's before-value is the same only if they agree;
-            # log them per id so the restore is exact even if they do not.
-            {p["id"]: p["before"] for p in planned},
-            ", ".join(str(p["id"]) for p in planned),
+            restore_sql(planned),
         )
 
     return {
@@ -197,5 +226,9 @@ async def repair(session, apply: bool = False) -> dict[str, Any]:
         "refused": refused,
         "missing_ids": missing,
         "changed": changed,
+        # The D51 undo travels WITH the plan, on the dry run too — an operator
+        # should be able to read the restore before deciding to apply, not only
+        # in a log line they have to go and find afterwards.
+        "restore_sql": restore_sql(planned),
         "terminal": "changed" if apply else "dry_run",
     }

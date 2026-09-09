@@ -165,6 +165,49 @@ def test_only_politics_can_be_written():
     assert rail.TARGET_CATEGORY == "politics"
 
 
+def test_the_restore_line_is_a_statement_not_a_dict_repr():
+    """D51's undo must survive a paste.
+
+    The first CI run logged `SET llm_sport_category = {109237: 'hockey'}` — the
+    before-value map interpolated where the value belongs. It reads like a
+    restore and is not one, which is worse than omitting it, because D51 is
+    granted on the promise that a one-command restore exists.
+
+    The real-Postgres gate executes the emitted text; this asserts the shape
+    everywhere, including on a machine with no server.
+    """
+    sql = rail.restore_sql(
+        [
+            {"id": 109237, "before": "hockey"},
+            {"id": 109373, "before": "hockey"},
+        ]
+    )
+    assert sql == (
+        "UPDATE futures_markets SET llm_sport_category = 'hockey' "
+        "WHERE id IN (109237, 109373);"
+    )
+    assert "{" not in sql and "}" not in sql, "a dict repr leaked into the SQL"
+
+
+def test_the_restore_splits_by_distinct_before_value():
+    """One statement for all rows is only correct while they agree."""
+    sql = rail.restore_sql(
+        [
+            {"id": 1, "before": "hockey"},
+            {"id": 2, "before": "basketball"},
+            {"id": 3, "before": None},
+        ]
+    )
+    lines = sql.splitlines()
+    assert len(lines) == 3, f"expected one statement per before-value, got {lines}"
+    assert "= 'basketball' WHERE id IN (2)" in sql
+    assert "= NULL WHERE id IN (3)" in sql, "a NULL before-value must not quote"
+
+
+def test_an_empty_plan_produces_no_restore_statement():
+    assert rail.restore_sql([]) == ""
+
+
 @pytest.mark.parametrize(
     "name,ticker",
     [

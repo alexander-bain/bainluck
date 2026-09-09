@@ -45,10 +45,16 @@ Four rows, each paired with the defect it catches:
   Senators vs Hartford Wolf Pack"*, NOT in the id list. Guards the other
   direction: the repair must not widen itself into a name predicate, which
   would sweep the 133 resolved Belleville/Ottawa rows that match ``senat*``.
-* **the Polymarket row** (``114420``) — in the id list, classifies
-  ``politics``, but ``source='polymarket'``. Must be refused with reason
-  ``not_kalshi``: that writer assigns unconditionally and owns its own rows, so
-  this rail must not race it.
+* **the Polymarket row** (``114420``) — classifies ``politics`` but is
+  ``source='polymarket'``. It is **not** in the shipped
+  :data:`SENATE_ROW_IDS`, by design, so the ``not_kalshi`` branch is
+  unreachable through the production bound. The test therefore forces it into
+  the bound by monkeypatch, which is the only way to give that guard a
+  specimen that reaches it — a branch behind an unreachable condition is dead
+  code wearing a test. Must be refused with reason ``not_kalshi``: that writer
+  assigns unconditionally and owns its own rows, so this rail must not race it.
+  (First CI run caught exactly this: the assertion raised ``KeyError`` because
+  the row was never examined, not because the guard was wrong.)
 
 ## the arm that proves red-first
 
@@ -245,16 +251,69 @@ async def test_belleville_outside_the_list_is_never_examined(session):
 
 @needs_postgres
 @pytest.mark.asyncio
-async def test_the_polymarket_row_is_refused_as_not_kalshi(session):
-    """That writer assigns unconditionally and owns its own rows."""
-    from app.tasks.repair_kalshi_senate_category import repair
+async def test_the_shipped_bound_never_reaches_a_polymarket_row(session):
+    """The production id list is Kalshi-only, so the row is never examined."""
+    from app.tasks.repair_kalshi_senate_category import SENATE_ROW_IDS, repair
 
+    assert POLYMARKET_ID not in SENATE_ROW_IDS
     await _seed(session)
     result = await repair(session, apply=True)
 
     assert await _category(session, POLYMARKET_ID) == "hockey"
+    seen = {r["id"] for r in result["planned"]} | {r["id"] for r in result["refused"]}
+    assert POLYMARKET_ID not in seen
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_polymarket_row_forced_into_the_bound_is_refused(session, monkeypatch):
+    """Give the `not_kalshi` guard a specimen that actually reaches it.
+
+    The branch is unreachable through the shipped bound, so without this
+    monkeypatch it is dead code that no test can distinguish from a guard that
+    works. That writer assigns unconditionally and owns its own rows; this rail
+    must refuse rather than race it.
+    """
+    from app.tasks import repair_kalshi_senate_category as rail
+
+    await _seed(session)
+    monkeypatch.setattr(
+        rail, "SENATE_ROW_IDS", (SUBJECT_ID, POLYMARKET_ID), raising=True
+    )
+
+    result = await rail.repair(session, apply=True)
+
+    assert await _category(session, POLYMARKET_ID) == "hockey"
     refusals = {r["id"]: r["reason"] for r in result["refused"]}
     assert refusals[POLYMARKET_ID] == "not_kalshi"
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_logged_restore_is_runnable_sql_that_really_restores(session):
+    """D51 is granted for a "one-command restore" — so run the command.
+
+    The first CI run logged
+    `SET llm_sport_category = {109237: 'hockey'}`: the before-value map
+    interpolated where the value belongs. It reads like a restore and would
+    fail on paste, which is worse than none at all. So this executes the
+    emitted text verbatim and requires the row to come back.
+    """
+    from sqlalchemy import text
+
+    from app.tasks.repair_kalshi_senate_category import repair
+
+    await _seed(session)
+    result = await repair(session, apply=True)
+    assert await _category(session, SUBJECT_ID) == "politics"
+
+    statements = [s for s in result["restore_sql"].split(";") if s.strip()]
+    assert statements, "apply produced no restore statement"
+    for statement in statements:
+        await session.execute(text(statement))
+    await session.commit()
+
+    assert await _category(session, SUBJECT_ID) == "hockey"
 
 
 @needs_postgres
