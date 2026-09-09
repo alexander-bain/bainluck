@@ -93,7 +93,28 @@ export default function UpcomingTournaments({
               className="bg-surface-card rounded-lg border border-surface-border p-3 flex items-center justify-between gap-3"
             >
               <div className="min-w-0">
-                <div className="text-sm text-text-primary truncate">
+                {/* #4342 — `line-clamp-2`, NOT `truncate`.
+                    The row's right block is `shrink-0`, so the name absorbs every
+                    pixel of squeeze: at 390px the row is 308px wide inside its
+                    padding and the chip+dates take 116.8-158.3px of it, leaving the
+                    name 138-179px for up to 243.1px of content. Seven of the ten
+                    live tournaments truncated mid-word — `Alfred Dunhill Links C…`,
+                    `Open de Espana pres…` — which is the half that names the thing.
+
+                    Letting it take a second line renders all ten complete for
+                    +140px across the whole list (measured by cloning the live row),
+                    where moving the chip+dates onto their own line costs +250px and
+                    loses the right-aligned date column that makes the list scannable.
+                    Short names still take one line, so the height is spent only
+                    where it is needed.
+
+                    The two classes CANNOT be combined: `truncate` sets
+                    `white-space: nowrap`, which silently defeats the clamp and would
+                    ship the exact bug this fixes. `line-clamp-2` is also already the
+                    house idiom for a card title here (FeedCard, FuturesCard,
+                    CombinedFeedCard), so this is the shared pattern, not a bespoke
+                    one. It keeps an ellipsis for anything longer than two lines. */}
+                <div className="text-sm text-text-primary line-clamp-2">
                   {event.name}
                 </div>
                 {where && (
