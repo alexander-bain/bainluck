@@ -1411,6 +1411,38 @@ jobs:
             exit 1
           fi
 
+      - name: "#4444 the census caps do not move the numbers (real Postgres)"
+        # The two `precompute_backfill_progress` tiles ran an uncapped
+        # per-outcome `COUNT(*)` over `futures_odds_snapshots` and became the two
+        # largest disk readers in the database — 1,015 GB of a 7,940 GB window,
+        # 8x the accuracy rebuild they share the `heavy` queue with. Capping them
+        # is only safe if the numbers are unchanged, and three of the four things
+        # that rests on cannot be read off the SQL:
+        #
+        #   * `WHERE ro.rn <= :percap` filtering a window function's output is
+        #     what stops the correlated probe running for unsampled rows. If the
+        #     planner evaluated the target list first the fix would save nothing
+        #     while every text assertion stayed green.
+        #   * `snaps >= DENSE_POINTS` surviving a cap of `DENSE_POINTS + 1`
+        #     EXACTLY — an off-by-one is a silently wrong dense rate everywhere.
+        #   * the small-group control, which is why this is a PARTITIONed cap and
+        #     not chart_density's flat `LIMIT`: a global limit returns `percap`
+        #     rows in scan order and drops the newest month entirely.
+        #
+        # It is also the only thing that executes the module's two raw-SQL
+        # constants at all.
+        #
+        # Same skip-detection as every gate in this job: adding the file is not
+        # adding the gate.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_census_cap_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/census4444.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/census4444.txt; then
+            echo "::error::#4444 census-cap gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

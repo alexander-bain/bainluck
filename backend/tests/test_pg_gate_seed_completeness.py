@@ -50,6 +50,7 @@ from app.models.models import Base
 COVERED = (
     "test_bookmaker_count_real_postgres.py",
     "test_calibration_mode_price_source_scope_pg.py",
+    "test_census_cap_real_postgres.py",
     "test_calibration_mode_price_source_scope_peers_pg.py",
     "test_calibration_vm_variant_join_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
