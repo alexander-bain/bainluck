@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 # --- the tiers -------------------------------------------------------------
@@ -90,16 +91,41 @@ UNRANKABLE = None
 #:
 #: The ratified market > event > team relation is untouched by this: it governs
 #: the three kinds it names, and nothing here reorders them.
+#:
+#: `entity_event` (#4411, Alex 2026-09-09: "typing a player's name returns a pile
+#: of props above the match itself") is the ONE case that outranks a market, and
+#: it is not a re-litigation of the ratified relation — it is a different kind.
+#: A plain `event` is a row the query merely LANDED ON; an `entity_event` is a row
+#: the query NAMED, because the query's tokens sit inside one participant's own
+#: name. `alcaraz` against "Ben Shelton vs Carlos Alcaraz" names a participant;
+#: `nba mvp` against any game names none, so `nba mvp` still answers with the
+#: award market and `british open` / `ai` / `ipo` are likewise untouched.
+#:
+#: This is the same shape as ruling 041's team floor: the entity does not win by
+#: being an entity, it wins by matching something it OWNS. The difference is only
+#: that a team owns an alias row and a tennis player owns nothing but the
+#: participant field on the fixture, so there is no alias for it to win MC0 on.
+#:
+#: The numbers below moved (market 2 -> 3, event 3 -> 4, team 4 -> 5) purely to
+#: open slot 2. Every PAIRWISE relation that existed before is identical; only
+#: the new kind is interleaved. Nothing may read these as absolute values.
 KIND_ORDER: dict[str, int] = {
     "event_concept": 0,
     "concept": 0,
     "hub": 1,
-    "futures": 2,
-    "market": 2,
-    "event": 3,
-    "team": 4,
+    "entity_event": 2,
+    "futures": 3,
+    "market": 3,
+    "event": 4,
+    "team": 5,
 }
 _KIND_ORDER_FALLBACK = 9
+
+#: The kind an `event` is promoted to when the query names one of its own
+#: participants. Named rather than inlined so the route and the guard tests
+#: cannot drift from the dict above by a typo — an unknown kind would silently
+#: take `_KIND_ORDER_FALLBACK` and sort last, which is the opposite of the ship.
+ENTITY_EVENT_KIND = "entity_event"
 
 # --- the knobs -------------------------------------------------------------
 # FIVE knobs, against a ratified ceiling of eight. Every default here is
@@ -201,6 +227,36 @@ def tokens(text: str) -> tuple[str, ...]:
     lowered = unicodedata.normalize("NFKD", (text or "").casefold())
     lowered = "".join(c for c in lowered if not unicodedata.combining(c))
     return tuple(_fold_token(m) for m in _TOKEN_RE.findall(lowered))
+
+
+def _name_tokens(text: str) -> tuple[str, ...]:
+    """`tokens` WITHOUT the plural strip. Accents and case still fold.
+
+    The recall tiers want `yankee` and `yankees` to be one token, because they
+    are asking "did the user land on this row". #4411's promotion asks a
+    different question — "did the user NAME this participant" — and there the
+    plural is not noise, it is the whole difference between two entities:
+
+        Jannik Sinner  (a tennis player)   vs  Sinners  (a Counter-Strike team)
+
+    `_fold_token("Sinners")` is `"sinner"`, so under `tokens` the query `sinner`
+    NAMES the esports roster and its live match is promoted over the player's.
+    Measured on production 2026-09-09 (CERT-2392): `sinner` returned
+    "Saint Sinners at Spirit Academy" and "NIP at Sinners" and no Jannik row.
+
+    Accent folding is kept because it never merges two entities — `espana` and
+    `España` are the same name typed on different keyboards. The plural does
+    merge them, so it goes.
+
+    The cost is that a singular query for a plural nickname (`yankee` against
+    "New York Yankees") no longer promotes that team's game. That is the same
+    shape as the Sinners case and cannot be told apart from it without knowing
+    which strings are people; the team's own card still answers such a query on
+    MC0, and the game still ranks exactly where it did before #4411.
+    """
+    lowered = unicodedata.normalize("NFKD", (text or "").casefold())
+    lowered = "".join(c for c in lowered if not unicodedata.combining(c))
+    return tuple(_TOKEN_RE.findall(lowered))
 
 
 def trigram_similarity(a: str, b: str) -> float:
@@ -341,6 +397,124 @@ def kind_rank(kind: str) -> int:
     return KIND_ORDER.get((kind or "").lower(), _KIND_ORDER_FALLBACK)
 
 
+def query_names_participant(query: str, participants: Iterable[str | None]) -> bool:
+    """Does `query` name the people/teams playing, rather than merely land on the row?
+
+    The test for promoting an `event` to `ENTITY_EVENT_KIND` (#4411). True when
+    every query token appears somewhere in the participants' OWN names.
+
+    Tokenised with `_name_tokens`, which is `tokens` minus the plural strip.
+    That is DELIBERATELY stricter than the class that admitted the row: MC1 asks
+    whether the query landed here, this asks whether the query named the people
+    playing, and `sinner` lands on the Counter-Strike roster "Sinners" without
+    naming Jannik. Read `_name_tokens` for the measurement (CERT-2392).
+
+    The participants are read as a UNION rather than one-at-a-time on purpose,
+    and that is what makes the rule produce Alex's ordering for BOTH halves of
+    what he said:
+
+    * `alcaraz` -> "Ben Shelton" + "Carlos Alcaraz" -> True. The player has no
+      team row, so his match IS the entity and it leads.
+    * `red sox` -> "Boston Red Sox" + "New York Yankees" -> True. Here the team
+      row also exists and wins on MC0 against its own alias, which outranks
+      every MC1 candidate whatever its kind. So the order comes out team card,
+      then its game, then props — "leads with the entity, then its games, then
+      props", exactly.
+    * `shelton alcaraz` -> True, because a matchup query names both of them.
+      One-at-a-time would have made the fixture itself lose to its own props.
+
+    What it must NOT do is fire on a query that named something else about the
+    row. `us open`, `tennis`, `nba mvp` and `british open` all land on plenty of
+    fixtures through the tournament/sport-alias recall arms, and none of them
+    appears in a participant name, so all of them return False and the ratified
+    market > event relation continues to decide those exactly as it does today.
+
+    * `sinner` -> "NIP" + "Sinners" -> False, and `sinners` -> True. The plural
+      is the entity boundary, not a spelling of the same word.
+    """
+    q_tokens = _name_tokens(query)
+    if not q_tokens:
+        return False
+    owned: set[str] = set()
+    for p in participants:
+        if p:
+            owned.update(_name_tokens(p))
+    if not owned:
+        return False
+    return all(t in owned for t in q_tokens)
+
+
+# --- the plural namesake rule (#4411, CERT-2399) ----------------------------
+#
+# `sinner` on production led with "Counter-Strike: NIP vs Sinners - Map 1
+# Winner" and "- Map 2 Winner", and Jannik's own US Open field came third. The
+# plural strip is why: `tokens("Sinners")` is `("sinner",)`, so the esports
+# roster is an MC1 name match while the tennis field — which carries "Jannik
+# Sinner" only in its OUTCOMES — is MC4. Class comes first and is inviolable, so
+# a namesake roster beat the player every time.
+#
+# The fix does NOT touch `match_class` or `rank_key`. Every tier property in
+# `test_search_match_class_properties.py` is asserted on those two, and they all
+# hold unchanged, because the rule cannot be expressed per-candidate without
+# breaking a case that matters more:
+#
+#   `yankee` against "New York Yankees" is the SAME SHAPE as `sinner` against
+#   "Sinners" — a singular query reaching a plural name through the fold — and
+#   demoting it would break "typing a team name finds the team".
+#
+# What separates them is not the candidate, it is the RESULT SET. When the user
+# types `sinner`, something in the set really is called that (the outcome
+# "Jannik Sinner"). When they type `yankee`, nothing is: every candidate says
+# "Yankees", so the fold is doing legitimate recall work and must be left alone.
+#
+# Hence two conditions, and the rule fires only when BOTH hold:
+#
+#   1. GATE, over the whole set: some candidate carries every query token
+#      UNFOLDED, as a whole token, in a name/alias/outcome it owns.
+#   2. PER-CANDIDATE: this candidate matched ONLY through the plural fold — it
+#      lands folded and does not land strictly.
+#
+# With the gate closed the penalty is 0 for every candidate and the ordering is
+# byte-for-byte what it was, which is what makes this safe to put in front of a
+# scorer this much depends on.
+
+
+def _owned_text(ev: Evidence) -> tuple[str, ...]:
+    """Every string the candidate owns — the names it answers to and the
+    outcomes it may rank on. The union `match_class` reads across MC0-MC4."""
+    return (*ev.owned_names(), *ev.outcomes)
+
+
+def _query_lands_strictly(query: str, ev: Evidence) -> bool:
+    """Every query token appears UNFOLDED as a whole token in owned text.
+
+    "Strictly" is only about the plural: `_name_tokens` still folds case and
+    accents, because neither ever merges two entities.
+    """
+    q = _name_tokens(query)
+    if not q:
+        return False
+    owned: set[str] = set()
+    for text in _owned_text(ev):
+        if text:
+            owned.update(_name_tokens(text))
+    return bool(owned) and all(t in owned for t in q)
+
+
+def _lands_only_by_plural_fold(query: str, ev: Evidence) -> bool:
+    """The plural strip is the ONLY reason this candidate matched at all."""
+    if _query_lands_strictly(query, ev):
+        return False
+    q = tokens(query)
+    if not q:
+        return False
+    owned: set[str] = set()
+    for text in _owned_text(ev):
+        if text:
+            owned.update(tokens(text))
+    return bool(owned) and all(t in owned for t in q)
+
+
 def rank_key(query: str, ev: Evidence) -> tuple | None:
     """Sort key for one candidate, ascending. None means: do not rank it.
 
@@ -429,12 +603,19 @@ def rank(query: str, candidates: list[tuple[Evidence, object]]) -> list[object]:
     Stable: candidates that tie on the full key keep their input order, so an
     upstream ordering that already means something is preserved rather than
     scrambled.
+
+    Carries the plural-namesake rule (#4411), which is a property of the SET and
+    so cannot live in `rank_key`. Read the block above `_owned_text` for why the
+    gate is what keeps `yankee` working. When the gate is closed — the ordinary
+    case — every penalty is 0 and this returns exactly what it always did.
     """
+    gate = any(_query_lands_strictly(query, ev) for ev, _ in candidates)
     keyed = []
     for i, (ev, payload) in enumerate(candidates):
         k = rank_key(query, ev)
         if k is None:
             continue
-        keyed.append((k, i, payload))
+        namesake = 1 if (gate and _lands_only_by_plural_fold(query, ev)) else 0
+        keyed.append(((namesake, *k), i, payload))
     keyed.sort(key=lambda row: (row[0], row[1]))
     return [payload for _, _, payload in keyed]

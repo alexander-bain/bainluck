@@ -94,8 +94,10 @@ from app.utils.search_fixture_dedup import (
     is_individual_sport,
 )
 from app.utils.search_match_class import (
+    ENTITY_EVENT_KIND,
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
     Evidence as _SearchEvidence,
+    query_names_participant,
 )
 from app.utils.feed_market_quality import has_no_real_price
 from app.utils.proven_duplicates import (
@@ -5944,6 +5946,12 @@ _TEAM_POOL_FETCH_LIMIT = 8
 # (LAT-P038/#1769, the futures window above).
 _EVENT_POOL_SIZE = 4
 _EVENT_POOL_FETCH_LIMIT = 8
+#: How far back #4411's "or-last" fallback will reach for a finished match when
+#: the query names someone with nothing upcoming. Wide enough to cover a normal
+#: gap between fixtures (a tennis player between tournaments, an NFL team's bye)
+#: and narrow enough that a retired player answers with nothing rather than with
+#: a match from a season nobody is asking about.
+_LAST_MATCH_LOOKBACK_DAYS = 30
 
 #: The sport keys the scorer counts as prominent (`rank_key`'s third term).
 #: Imported rather than re-listed: two copies of this set is one copy that drifts,
@@ -6275,17 +6283,19 @@ async def typeahead_search(
             futures_term_conditions.append(
                 _build_expanded_ilike(FuturesMarket.name, term, exp)
             )
-        ilike_event_filter = and_(*event_term_conditions)
+        ilike_event_names = and_(*event_term_conditions)
+        ilike_event_filter = ilike_event_names
         team_filter = and_(*team_term_conditions)
         ilike_futures_filter = and_(*futures_term_conditions)
     else:
         term, exp = ta_expanded[0]
-        ilike_event_filter = or_(
+        ilike_event_names = or_(
             _build_expanded_ilike(Event.home_team_name, term, exp),
             _build_expanded_ilike(Event.away_team_name, term, exp),
         )
+        ilike_event_filter = ilike_event_names
         if sport_alias_keys:
-            ilike_event_filter = or_(ilike_event_filter, Sport.key.in_(sport_alias_keys))
+            ilike_event_filter = or_(ilike_event_names, Sport.key.in_(sport_alias_keys))
 
         team_filter = or_(
             _build_expanded_ilike(Team.name, term, exp),
@@ -6295,13 +6305,23 @@ async def typeahead_search(
         ilike_futures_filter = _build_expanded_ilike(FuturesMarket.name, term, exp)
 
     # Combine FTS + ILIKE for events and futures
-    fts_event_f = or_(
+    fts_event_names = or_(
         _fts_filter(Event.home_team_name, ta_fts_q),
         _fts_filter(Event.away_team_name, ta_fts_q),
     )
+    fts_event_f = fts_event_names
     if sport_alias_keys:
-        fts_event_f = or_(fts_event_f, Sport.key.in_(sport_alias_keys))
+        fts_event_f = or_(fts_event_names, Sport.key.in_(sport_alias_keys))
     event_team_filter = or_(fts_event_f, ilike_event_filter)
+    # #4411's or-last arm recalls on PARTICIPANT NAMES ONLY — the sport-alias
+    # arm is deliberately left out. With it in, `us open` (an alias, naming no
+    # participant) would drag every finished match of the tournament into a
+    # second query on most keystrokes, all of it then thrown away by the
+    # promotion test. Excluding it makes the wasted work not happen rather than
+    # happen and be discarded, and it is the same predicate the admission test
+    # below applies in Python, so the two cannot disagree about what "the query
+    # named this row" means.
+    event_name_filter = or_(fts_event_names, ilike_event_names)
 
     # LAT-P140: the two halves go in as SEPARATE arms of the UNION built below,
     # not as one OR'd arm. `_futures_name_arms` carries the measurement; the short
@@ -6436,11 +6456,51 @@ async def typeahead_search(
     _ta_mark("teams_assemble")
     event_result = await db.execute(event_query)
     _ta_mark("events_query")
+    _ta_rows = event_result.scalars().all()
+
+    # #4411, the "or-LAST" half of Alex's rule ("the player's next-or-last
+    # match"). The query above is upcoming-only, so a player between fixtures
+    # contributes NO event candidate at all and the dropdown fills with his
+    # props — which is the reported bug in its worst form: `alcaraz` returned
+    # five props and no match, his most recent being `completed` hours earlier.
+    # Promoting the entity cannot help a candidate that was never built, so the
+    # ranking half of #4411 is inert without this.
+    #
+    # Deliberately a SECOND query, never a widening of the first: a row that has
+    # already started is what a reader wants LEAST while an upcoming one exists,
+    # and merging the two windows would let a finished match outrank tonight's.
+    #
+    # The trigger is the ABSENCE OF A NAMED PARTICIPANT, not the emptiness of
+    # the pool (CERT-2392). Emptiness was the wrong test and production proved
+    # it: `sinner` fills the upcoming pool with two live Counter-Strike fixtures
+    # whose roster is called "Sinners", so `if not _ta_rows` never fired and the
+    # player's own match could not be reached no matter how the pool was ranked.
+    # A pool that is full of somebody else is exactly as empty, for this
+    # purpose, as a pool with nothing in it.
+    #
+    # Only rows the query NAMES are admitted from the second query, which is
+    # what keeps this from becoming "show finished matches whenever nothing is
+    # on". `us open` names no participant, so it admits nothing and the arm is
+    # inert for every tournament, league and sport query.
+    def _ta_names_participant(ev) -> bool:
+        return query_names_participant(q, (ev.home_team_name, ev.away_team_name))
+
+    if not any(_ta_names_participant(ev) for ev in _ta_rows):
+        _ta_last = (
+            await db.execute(_last_match_query(event_name_filter, now))
+        ).scalars().all()
+        _ta_mark("last_match_query")
+        # PREPENDED, not appended. `_ta_events[:_EVENT_POOL_SIZE]` truncates the
+        # pool BEFORE anything is scored, so a Jannik match sitting behind four
+        # esports fixtures would be cut on its way to the scorer and the ship
+        # would fail in a way that looks like a ranking bug and is not one.
+        _ta_rows = [*(ev for ev in _ta_last if _ta_names_participant(ev)), *_ta_rows]
+
     event_pool = []
     # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
     # same first-round match twice, "Alcaraz at Faria 5:00 PM" beside "Carlos
     # Alcaraz at Jaime Faria 5:10 PM". Same collapse, same helper.
-    _ta_events, _ = collapse_duplicate_fixtures(event_result.scalars().all())
+    _ta_events, _ = collapse_duplicate_fixtures(_ta_rows)
     for event in _ta_events[:_EVENT_POOL_SIZE]:
         home = event.home_team
         away = event.away_team
@@ -6455,6 +6515,11 @@ async def typeahead_search(
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
             "home_logo": home.logo_url_small if home else None,
             "away_logo": away.logo_url_small if away else None,
+            # Private: scorer evidence only, popped before the response. The
+            # PARTICIPANT fields, not `text` — `text` is the assembled matchup
+            # ("X at Y") and a query matching it proves only that the words are
+            # on the row somewhere. #4411 promotes on what the row IS.
+            "_participants": [event.home_team_name, event.away_team_name],
         })
 
     # 3. Futures (sports + non-sports, deduplicated)
@@ -7110,6 +7175,11 @@ async def typeahead_search(
                         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
                         "home_logo": home.logo_url_small if home else None,
                         "away_logo": away.logo_url_small if away else None,
+                        # #4411, same evidence the primary pool carries. Withheld
+                        # here, a fuzzy-matched fixture would be the one event in
+                        # the dropdown that could never lead — the asymmetry this
+                        # file's own history calls the withheld-evidence defect.
+                        "_participants": [event.home_team_name, event.away_team_name],
                     })
                 did_you_mean = best_team
         except Exception:
@@ -7141,7 +7211,7 @@ async def typeahead_search(
 
     _ta_mark("fuzzy_and_concepts")
     _ta_candidates = [
-        (_typeahead_evidence(item), item)
+        (_typeahead_evidence(item, q), item)
         for item in (*hub_pool, *team_pool, *event_pool,
                      *event_concept_pool, *futures_pool)
     ]
@@ -7161,6 +7231,9 @@ async def typeahead_search(
         # Ranking evidence, never a payload: a 40-outcome market would other-
         # wise ship 40 strings on every keystroke.
         _s.pop("_outcome_names", None)
+        # #4411: same rule — the participants are what the row was PROMOTED on,
+        # and both names are already inside `text`.
+        _s.pop("_participants", None)
 
     # The echo is taken from the SAME `Evidence` objects `_s_rank` just consumed,
     # keyed by payload identity — never rebuilt from the suggestion. A rebuild
@@ -16689,7 +16762,49 @@ def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:
     )
 
 
-def _typeahead_evidence(item: dict) -> "_SearchEvidence":
+def _last_match_query(event_name_filter, now: datetime):
+    """The "or-LAST" arm of #4411: the most recent FINISHED match for a query.
+
+    Module-level for the reason `_typeahead_evidence` is — the pool assembly
+    runs against a live session, so an arm left inline is an arm no CI job can
+    read. `tests/test_typeahead_leads_with_the_entity_4411.py` compiles this and
+    asserts the four clauses that make it safe, because each one is exactly the
+    sort of thing a later edit loosens for a good-sounding reason.
+
+    It is a SEPARATE query from the upcoming-events pool, and it runs when that
+    pool contains no row the query NAMES — not when the pool is empty (see the
+    call site, CERT-2392). Merging the two would let a finished match outrank
+    tonight's fixture, which is the opposite of "next-or-last".
+
+    Takes the participant-name filter, NOT the sport-alias-augmented one the
+    upcoming pool uses; the call site says why.
+    """
+    return (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(
+            selectinload(Event.sport),
+            selectinload(Event.home_team),
+            selectinload(Event.away_team),
+        )
+        .where(
+            event_name_filter,
+            Event.status.in_(["completed", "closed"]),
+            # Bounded at BOTH ends (gotcha #41). Without the floor this answers
+            # `alcaraz` with a match from 2023; without the ceiling it is not a
+            # "last match" query at all, it is the upcoming pool again.
+            Event.commence_time >= now - timedelta(days=_LAST_MATCH_LOOKBACK_DAYS),
+            Event.commence_time <= now,
+            not_a_proven_duplicate(),
+        )
+        # Most recent first — "last match" means the one just played, and the
+        # ascending order the upcoming pool uses would return the OLDEST.
+        .order_by(Event.commence_time.desc())
+        .limit(_EVENT_POOL_FETCH_LIMIT)
+    )
+
+
+def _typeahead_evidence(item: dict, q: str | None = None) -> "_SearchEvidence":
     """Convert a typeahead pool item into the `Evidence` the scorer scores.
 
     Module-level, and that is the point: this was a closure inside
@@ -16699,8 +16814,22 @@ def _typeahead_evidence(item: dict) -> "_SearchEvidence":
     route tests assert on ranked output against a near-empty DB (so a candidate
     that never reached the scorer looks the same as one that lost). Two defects
     lived in that gap; `tests/test_typeahead_evidence_boundary.py` now owns it.
+
+    `q` is optional so every existing caller keeps working, but WITHOUT it an
+    event can never be promoted to `ENTITY_EVENT_KIND` — the promotion is a
+    statement about the query, so a caller that withholds the query gets the
+    pre-#4411 ordering. That is the withheld-evidence failure mode this seam
+    exists to make visible, so the boundary suite asserts both arms.
     """
     kind = item.get("type") or "market"
+    if (
+        q
+        and kind == "event"
+        and query_names_participant(q, item.get("_participants") or ())
+    ):
+        # #4411: the query named the people playing, so this row is the entity
+        # the reader asked for and not merely a row their words landed on.
+        kind = ENTITY_EVENT_KIND
     aliases: tuple[str, ...] = tuple(item.get("_aliases") or ())
     outcomes: tuple[str, ...] = ()
     if kind == "team" and item.get("abbreviation"):

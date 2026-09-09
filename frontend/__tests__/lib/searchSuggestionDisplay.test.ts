@@ -216,6 +216,41 @@ describe("suggestionSubtitle", () => {
     expect(suggestionSubtitle(suggestion({ type: "event", status: "scheduled" }), NOW)).toBeNull();
   });
 
+  // #4411: the dropdown answers a player's name with their next match, or their
+  // LAST one when nothing is upcoming. Both statuses the backend's `or-last`
+  // arm can serve are covered, because it selects on `completed` OR `closed`
+  // and only one of them being labelled is the same bug half-fixed.
+  test.each(["completed", "closed"])(
+    "a finished game (%s) says Final, not a bare date",
+    (status) => {
+      const sub = suggestionSubtitle(
+        suggestion({
+          type: "event",
+          status,
+          commence_time: "2026-08-08T17:35:00.000Z",
+        }),
+        NOW
+      );
+      expect(sub).toEqual({ kind: "event-time", text: "Final" });
+    }
+  );
+
+  test("a finished game does not fall through to the vague past-tense wording", () => {
+    // `formatEventTime` collapses EVERY past instant to "Recently". Before
+    // #4411 nothing finished could reach this branch, so that was harmless;
+    // the `or-last` arm now serves finished matches and "Recently" would be
+    // the dropdown's answer to "when was Alcaraz's last match".
+    const sub = suggestionSubtitle(
+      suggestion({
+        type: "event",
+        status: "completed",
+        commence_time: "2026-08-08T17:35:00.000Z",
+      }),
+      NOW
+    );
+    expect((sub as { text: string }).text).not.toBe("Recently");
+  });
+
   test("a priced futures row leads with the answer", () => {
     const sub = suggestionSubtitle(
       suggestion({

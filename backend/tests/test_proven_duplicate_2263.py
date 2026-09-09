@@ -479,7 +479,7 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         according to how the user navigated to it, off the same global identity
         finding.
 
-        SEVEN call sites, and the number is the assertion:
+        EIGHT call sites, and the number is the assertion:
 
           `/search`             `event_scope_conditions` — the list the two UNION
                                 recall arms, the outer entity query, the
@@ -489,9 +489,21 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
                                 `total_count` wholesale, so it needs its own
           `/typeahead`          the dropdown event pool
           `/typeahead`          the dropdown's fuzzy pool
+          `/typeahead`          `_last_match_query` — #4411's "or-last" arm, the
+                                eighth. Added 2026-09-09. It is a THIRD recall
+                                path into the same dropdown, reached only when
+                                the upcoming pool is empty, and a twin is likelier
+                                here than anywhere else on this list: it selects
+                                on finished matches, and a finished twin has had
+                                its whole lifetime to acquire a second row.
           `/search-suggestions` live close games · starting soon · recent upsets
                                 — the search box's zero state, eight chips across
                                 four sources
+
+        The count went 7 -> 8 by ADDING a surface, never by dropping the clause
+        from one. If a future change makes this fail, check which of the two it
+        was before touching the number: this assertion exists to catch the
+        deletion, and bumping it to match a deletion is how such a guard dies.
 
         All three suggestion sources carry it, not only "starting soon" — the
         one a twin reaches today. "This query cannot return a tagged row anyway"
@@ -511,8 +523,8 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         from app.routes import events
 
         source = inspect.getsource(events)
-        assert source.count("not_a_proven_duplicate()") == 7, (
-            "one of the seven search-surface call sites is gone — see CERT-439"
+        assert source.count("not_a_proven_duplicate()") == 8, (
+            "one of the eight search-surface call sites is gone — see CERT-439"
         )
 
     def test_the_behavioural_search_gate_exists_and_is_wired_into_ci(self):

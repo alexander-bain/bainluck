@@ -112,20 +112,56 @@ class TestWithheldAliasesDemoteTheRightAnswer:
         team, market = _celtics_field()
         assert rank("celtics", [(market, "market"), (team, "team")])[0] == "team"
 
-    def test_without_aliases_a_soccer_market_wins(self):
-        """The OLD harness's world. This test asserts a DEFECT on purpose.
+    def test_the_celtics_specimen_no_longer_reproduces_and_this_records_why(self):
+        """MOVED, not deleted, on this class's own instruction (#4411).
 
-        Gotcha #130 governs it: a test that asserts defective behaviour locks the
-        defect in, so read the assertion as a sentence and ask whether you would
-        sign it as a product claim. "Searching `celtics` should answer with
-        Stalybridge Celtic FC" — obviously not. It is signed here as a SPECIMEN
-        of the instrument's error, named as such, and its only job is to fail if
-        someone reintroduces alias-free construction. If the pairing below ever
-        needs "fixing", the fix belongs in the harness, not in this assertion.
+        This assertion used to read `== "market"` and asserted a DEFECT on
+        purpose: alias-free construction dropped "Boston Celtics" MC0 -> MC1, it
+        tied the soccer market and lost on KIND_ORDER, so `celtics` answered with
+        Stalybridge Celtic FC. Gotcha #130 governed it — read the assertion as a
+        sentence and ask whether you would sign it as a product claim.
+
+        #4411's plural-namesake rule now rescues this pairing, for a reason that
+        has nothing to do with aliases: the market owns "Celtic", the query is
+        "celtics", so the market lands ONLY through the plural fold while the
+        team lands strictly on its own name. The market is demoted and the team
+        wins even with its aliases withheld.
+
+        **The instrument defect is not fixed — it is masked for this one
+        pairing**, which is exactly the reading the old assertion's failure
+        message asked for. `test_without_aliases_the_right_answer_is_still_demoted`
+        carries the guard forward on a specimen with no plural boundary in it, so
+        reintroducing alias-free construction still fails something.
         """
         team, market = _celtics_field()
         stripped = dataclasses.replace(team, aliases=())
-        assert rank("celtics", [(market, "market"), (stripped, "team")])[0] == "market"
+        assert rank("celtics", [(market, "market"), (stripped, "team")])[0] == "team"
+
+    def test_without_aliases_the_right_answer_is_still_demoted(self):
+        """The alias defect itself, on a pairing #4411 cannot rescue.
+
+        Same shape as the retired `celtics` specimen and the same signed-defect
+        caveat (gotcha #130): "searching `bruins` should answer with a futures
+        market rather than the Bruins" is not a product claim, it is a SPECIMEN
+        of the instrument's error, and its only job is to fail if someone
+        reintroduces alias-free construction.
+
+        The plural fold cannot reach this one in either direction — `bruins` is a
+        whole token in both the team's name and the market's — so the pairing is
+        decided purely by whether the alias is visible: MC0 with it, MC1 without,
+        and MC1 loses to a market on KIND_ORDER.
+        """
+        team = Evidence(
+            name="Boston Bruins", aliases=("Bruins", "BOS"), kind="team",
+            sport_key="icehockey_nhl",
+        )
+        market = Evidence(
+            name="Bruins Stanley Cup Winner", kind="futures",
+            sport_key="icehockey_nhl",
+        )
+        assert rank("bruins", [(market, "market"), (team, "team")])[0] == "team"
+        stripped = dataclasses.replace(team, aliases=())
+        assert rank("bruins", [(market, "market"), (stripped, "team")])[0] == "market"
 
 
 # ---------------------------------------------------------------------------
@@ -192,18 +228,26 @@ class TestRerankingADeployedCaptureIsIdempotent:
         Legacy is allowed to differ — it cannot see aliases. What it may never do
         is present that difference as a floor, so the label is asserted with the
         divergence.
+
+        The specimen is `bruins`, not `celtics`, since #4411: the plural-namesake
+        rule rescues the celtics pairing regardless of fidelity, so it can no
+        longer show legacy diverging. See
+        `test_the_celtics_specimen_no_longer_reproduces_and_this_records_why`.
+        The divergence being demonstrated is unchanged — legacy cannot see the
+        alias, so it ranks the market first where exact fidelity ranks the team.
         """
-        team, market = _celtics_field()
         legacy = {
             "metadata": {},  # unlabelled == v1 == legacy
             "results": [{
-                "probe_key": "p-celtics",
-                "query": "celtics",
+                "probe_key": "p-bruins",
+                "query": "bruins",
                 "candidates": [
-                    {"entity_id": "team:boston-celtics", "surface": "team",
-                     "item_type": "team", "rank": 1, "display_name": team.name},
+                    {"entity_id": "team:boston-bruins", "surface": "team",
+                     "item_type": "team", "rank": 1,
+                     "display_name": "Boston Bruins"},
                     {"entity_id": "market:58904833", "surface": "market",
-                     "item_type": "futures", "rank": 2, "display_name": market.name},
+                     "item_type": "futures", "rank": 2,
+                     "display_name": "Bruins Stanley Cup Winner"},
                 ],
             }],
         }
