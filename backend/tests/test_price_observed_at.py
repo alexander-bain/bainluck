@@ -31,7 +31,11 @@ from pathlib import Path
 from sqlalchemy.dialects import postgresql
 
 from app.models import FuturesOutcome
+from decimal import Decimal
+
 from app.utils.price_change_stamp import (
+    apply_observed_price,
+    apply_unobserved_price,
     price_observed_at_insert,
     price_observed_at_value,
 )
@@ -328,3 +332,326 @@ def test_the_exemption_still_matches_exactly_one_site() -> None:
             if marker in block
         ]
         assert len(hits) == 1, f"exemption {label!r} matches {len(hits)} sites: {hits}"
+
+
+# ---------------------------------------------------------------------------
+# 4. The ORM writers — the census CERT-2302 found blind
+# ---------------------------------------------------------------------------
+#
+# Sections 2 and 3 police `set_=` clauses and `pg_insert` blocks, which is every
+# shape the first pass over this ship happened to look at. CERT-2302's finding:
+# a writer that does `outcome.current_probability = prob` is neither, so it
+# satisfies both censuses by not resembling them.
+#
+# The cost was not hypothetical. `tasks/futures.py` PASSED section 2 — it calls
+# both helpers, at its upsert — while the `if existing:` branch of the same
+# function, the path the Odds API takes for every outcome that already exists,
+# wrote a real venue price and `last_updated` and stamped neither clock. That is
+# the majority of that poll's writes. `tasks/datagolf.py` passed both sections
+# by mentioning neither helper anywhere: pure ORM in both loops, four price-
+# writing arms, no stamps.
+#
+# So this section asks the question at the level the defect lives at — a PATH,
+# not a file — and it uses the AST rather than a regex because the thing being
+# counted is an assignment to an attribute, which is a syntactic fact and not a
+# string. A `_code_only` scan cannot tell `outcome.current_probability = prob`
+# from the same characters inside an f-string or a SQL literal.
+
+import ast  # noqa: E402  (kept beside the census it serves)
+
+#: ORM price assignments that are NOT this lane's to rewire, by
+#: `file:function`, with why.
+#:
+#: `prediction_market_matching.py` belongs to lane1 under D39 — lane1b reads it
+#: and never edits it — and it is live territory: three lane1 branches and PR
+#: #2640 touch that file today. Both sites sit in
+#: `_poll_live_prediction_market_prices`, the 2-minute realtime poll, and both
+#: write a real venue price with no stamp.
+#:
+#: 🔴 THIS IS A DEFECT PARKED AT AN OWNERSHIP BOUNDARY, NOT A JUSTIFIED
+#: OMISSION. The exact two-line patch is in lane1's runner inbox
+#: (`NOTE-TO-LANE1-FROM-LANE1B-090-...`). The cost while it sits here is bounded
+#: and was measured, not assumed: these arms only UPDATE outcomes that already
+#: exist, and the legs they reach are overwhelmingly also reached by the Kalshi
+#: and Polymarket polls, which DO stamp. The population that reads stale is legs
+#: this poll reaches and the venue polls do not.
+#:
+#: Keyed by function, not by line number, so the entry survives the file moving
+#: — and an exact-set pin never carries a `file:line`, because a comment added
+#: above the site reds the guard for a reason the guard does not mean.
+ORM_PRICE_ASSIGNMENTS_NOT_OURS = {
+    (
+        "app/tasks/prediction_market_matching.py",
+        "_poll_live_prediction_market_prices",
+    ): ("lane1's file under D39; patch handed to lane1's inbox by lane1b/090"),
+}
+
+#: Assignments to a `current_probability` attribute that is not a
+#: `FuturesOutcome` column at all. `tasks/event_chart_backfill.py` defines a
+#: local row-shaped class and assigns its own field in `__init__`; there is no
+#: database column within a mile of it.
+_NON_ORM_RECEIVERS = {"self"}
+
+
+def _task_trees() -> dict[str, ast.Module]:
+    return {
+        str(p.relative_to(BACKEND)): ast.parse(p.read_text(encoding="utf-8"))
+        for p in sorted((BACKEND / "app/tasks").rglob("*.py"))
+    }
+
+
+def _enclosing_function(tree: ast.Module, line: int) -> str | None:
+    best = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.lineno <= line <= (node.end_lineno or node.lineno):
+                if best is None or node.lineno > best.lineno:
+                    best = node
+    return best.name if best else None
+
+
+def _orm_price_assignments() -> list[tuple[str, str, int]]:
+    """Every `<x>.current_probability = ...` under `app/tasks`, as
+    (file, function, line), excluding non-ORM receivers."""
+    found = []
+    for rel, tree in _task_trees().items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Attribute):
+                    continue
+                if target.attr != "current_probability":
+                    continue
+                if (
+                    isinstance(target.value, ast.Name)
+                    and target.value.id in _NON_ORM_RECEIVERS
+                ):
+                    continue
+                found.append((rel, _enclosing_function(tree, node.lineno), node.lineno))
+    return found
+
+
+def test_the_orm_census_instrument_still_finds_assignments() -> None:
+    """The parser before the measurement, as section 3 does for its own.
+
+    An AST walk that stopped matching — because `ast.Assign` became
+    `ast.AnnAssign` at a site, or the attribute was reached through a
+    subscript — would return an empty list and make every assertion below pass
+    by finding nothing. #3879 is an issue about a population that looked empty;
+    its guards do not get to fail that way.
+    """
+    assert _orm_price_assignments(), "the ORM price-assignment walk found nothing"
+
+
+def test_no_task_writes_an_orm_price_without_the_stamp_helpers() -> None:
+    """The path-level coupling. A bare assignment stamps nothing.
+
+    `apply_observed_price` / `apply_unobserved_price` assign the price
+    THEMSELVES, so a site that still assigns the attribute directly is by
+    construction a site that did not go through either — there is no way to
+    call the helper and also write this line.
+    """
+    offenders = [
+        {"file": rel, "function": fn, "line": line}
+        for rel, fn, line in _orm_price_assignments()
+        if (rel, fn) not in ORM_PRICE_ASSIGNMENTS_NOT_OURS
+    ]
+    assert offenders == [], {
+        "orm_price_writes_with_no_stamp": offenders,
+        "why": "#3879 / CERT-2302 — an ORM attribute write is invisible to the "
+        "upsert censuses above; route it through apply_observed_price (a venue "
+        "handed us this number) or apply_unobserved_price (we inferred it)",
+    }
+
+
+def test_the_ownership_exemption_still_matches_exactly_its_sites() -> None:
+    """An exemption that stops matching has silently widened.
+
+    Two directions, one dangerous. If lane1 applies the handed-over patch the
+    sites disappear and this reds — noisy, and the fix is to DELETE the entry,
+    which is the outcome being waited for. If the matcher grows a THIRD
+    unstamped price write it also reds, and that one is a real new defect.
+    """
+    actual = {(rel, fn) for rel, fn, _ in _orm_price_assignments()}
+    for key in ORM_PRICE_ASSIGNMENTS_NOT_OURS:
+        assert key in actual, (
+            f"exemption {key} matches no site — if lane1 has applied the patch, "
+            "delete the entry rather than leaving a stale excuse in place"
+        )
+    matcher_sites = [
+        (rel, fn, line)
+        for rel, fn, line in _orm_price_assignments()
+        if rel == "app/tasks/prediction_market_matching.py"
+    ]
+    assert len(matcher_sites) == 2, (
+        f"expected exactly the 2 known unstamped matcher writes, found "
+        f"{len(matcher_sites)}: {matcher_sites}. A third is a new defect, not a "
+        "number to bump."
+    )
+
+
+def _orm_created_outcomes() -> list[tuple[str, int, bool]]:
+    """Every `FuturesOutcome(...)` constructed with a real price, and whether it
+    stamps the observation."""
+    out = []
+    for rel, tree in _task_trees().items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Name) and node.func.id == "FuturesOutcome"
+            ):
+                continue
+            kwargs = {k.arg: k.value for k in node.keywords}
+            if "current_probability" not in kwargs:
+                continue
+            price = kwargs["current_probability"]
+            if isinstance(price, ast.Constant) and price.value is None:
+                continue  # an unpriced create owes nothing — refusal 1
+            out.append((rel, node.lineno, "price_observed_at" in kwargs))
+    return out
+
+
+def test_the_orm_create_census_finds_something() -> None:
+    assert _orm_created_outcomes(), "the FuturesOutcome(...) walk found nothing"
+
+
+def test_every_orm_created_priced_outcome_stamps_the_observation() -> None:
+    """The constructor is an INSERT arm and section 3's rule applies to it.
+
+    `price_observed_at_insert`'s docstring states it: wire only the update path
+    and a newly-created priced outcome reads NULL until its SECOND poll, so
+    every row the writer mints lands in the census of legs no rail reaches.
+    `pg_insert` is not the only way to insert a row, and both DataGolf loops
+    mint theirs with the ORM constructor.
+    """
+    offenders = [
+        {"file": rel, "line": line}
+        for rel, line, stamped in _orm_created_outcomes()
+        if not stamped
+    ]
+    assert offenders == [], {
+        "orm_created_priced_outcomes_without_a_stamp": offenders,
+        "why": "#3879 — an outcome CREATED with a price has been observed",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5. The ORM helpers, EXECUTED
+# ---------------------------------------------------------------------------
+#
+# Sections 1-4 are rendered SQL and static census. These run the Python, on a
+# stand-in row, because the ORM helpers are the first part of this ship whose
+# logic lives in Python rather than in an expression Postgres evaluates — the
+# `GREATEST`-vs-`max` asymmetry and the `Numeric(7,6)` rounding are both
+# Python-side here, and both are silent when wrong.
+
+
+class _Row:
+    """The three columns the helpers touch. Not a `FuturesOutcome`, because
+    instantiating a mapped class pulls in a registry this test does not need and
+    would let a default mask a stamp the helper failed to write."""
+
+    def __init__(self, current=None, changed=None, observed=None):
+        self.current_probability = current
+        self.price_changed_at = changed
+        self.price_observed_at = observed
+
+
+_T0 = dt.datetime(2026, 9, 8, 12, 0, tzinfo=dt.timezone.utc)
+_T1 = dt.datetime(2026, 9, 8, 13, 0, tzinfo=dt.timezone.utc)
+
+
+def test_apply_observed_price_writes_the_price_and_both_stamps() -> None:
+    row = _Row(current=0.40)
+    apply_observed_price(row, 0.42, observed_at=_T1)
+    assert row.current_probability == 0.42
+    assert row.price_changed_at == _T1
+    assert row.price_observed_at == _T1
+
+
+def test_apply_observed_price_stamps_freshness_even_when_the_price_did_not_move() -> (
+    None
+):
+    """The whole reason the column exists. A price read every two minutes and
+    correctly unchanged all week is FRESH and has not MOVED, and #3879 is the
+    issue about the second fact hiding the first."""
+    row = _Row(current=0.42, changed=_T0, observed=_T0)
+    apply_observed_price(row, 0.42, observed_at=_T1)
+    assert (
+        row.price_changed_at == _T0
+    ), "an unmoved price must not move the movement stamp"
+    assert row.price_observed_at == _T1, "an unmoved price WAS still observed"
+
+
+def test_apply_observed_price_compares_at_stored_precision() -> None:
+    """The precision trap, on the ORM path. `current_probability` is
+    `Numeric(7,6)`, so the stored value is what the last poll ROUNDED to; a
+    naive `!=` against the provider's full-precision float reports a movement on
+    every poll of an unmoved Polymarket midpoint."""
+    row = _Row(current=Decimal("0.051235"), changed=_T0, observed=_T0)
+    apply_observed_price(row, 0.0512345678, observed_at=_T1)
+    assert (
+        row.price_changed_at == _T0
+    ), "0.0512345678 rounds to the stored 0.051235 — that is not a movement"
+    assert row.price_observed_at == _T1
+
+
+def test_apply_observed_price_refuses_a_none_price() -> None:
+    """Refusal 1, on the ORM path. A price going away is a real change and not
+    an observation of a price."""
+    row = _Row(current=0.42, changed=_T0, observed=_T0)
+    apply_observed_price(row, None, observed_at=_T1)
+    assert row.current_probability is None
+    assert row.price_changed_at == _T1, "a price going away IS a movement"
+    assert row.price_observed_at == _T0, "nothing was observed; the stamp stands still"
+
+
+def test_apply_observed_price_takes_a_first_stamp_on_a_null_column() -> None:
+    """Refusal 3's Python trap, which is the inverse of the SQL one.
+
+    `GREATEST` in Postgres IGNORES a NULL argument, so a first-ever observation
+    on a NULL column takes the incoming value. `max(None, t)` in Python RAISES.
+    Every row in the table reads NULL here until its market is next polled, so
+    this is not an edge case — it is the first write to every row."""
+    row = _Row(current=0.42, observed=None)
+    apply_observed_price(row, 0.42, observed_at=_T1)
+    assert row.price_observed_at == _T1
+
+
+def test_apply_observed_price_never_moves_the_stamp_backwards() -> None:
+    row = _Row(current=0.42, observed=_T1)
+    apply_observed_price(row, 0.42, observed_at=_T0)
+    assert row.price_observed_at == _T1
+
+
+def test_apply_unobserved_price_moves_movement_and_never_freshness() -> None:
+    """`tasks/futures.py`'s stale zeroing. Zero is a real number that nobody
+    read: the venue stopped returning the leg and the price was inferred from
+    the silence. Stamping it would make an abandoned outcome the freshest row in
+    the table."""
+    row = _Row(current=0.42, changed=_T0, observed=_T0)
+    apply_unobserved_price(row, 0, at=_T1)
+    assert row.current_probability == 0
+    assert row.price_changed_at == _T1
+    assert row.price_observed_at == _T0
+
+
+def test_apply_unobserved_price_on_a_null_out_leaves_freshness_alone() -> None:
+    """`tasks/datagolf.py`'s stale nulling, for a player who left the field."""
+    row = _Row(current=0.08, changed=_T0, observed=_T0)
+    apply_unobserved_price(row, None, at=_T1)
+    assert row.current_probability is None
+    assert row.price_changed_at == _T1
+    assert row.price_observed_at == _T0
+
+
+def test_apply_unobserved_price_has_no_way_to_ask_for_a_freshness_stamp() -> None:
+    """The distinction is in the verb, not in an argument a caller can default
+    wrong. A future caller reaching for `observed_at=` here is telling us it
+    picked the wrong function."""
+    import inspect
+
+    params = inspect.signature(apply_unobserved_price).parameters
+    assert "observed_at" not in params
