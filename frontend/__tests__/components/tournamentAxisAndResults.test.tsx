@@ -235,7 +235,7 @@ describe("item 6 — the chart's x-axis", () => {
    * the ceiling existed.
    */
   const geo = (dates: string[]): ChartGeometry => ({
-    dates,
+    keys: dates,
     width: 320,
     height: 96,
     ceiling: 1,
@@ -273,7 +273,7 @@ describe("item 6 — the chart's x-axis", () => {
     // exists on either, and they are exactly the two labels that let a reader
     // see the hole is a fortnight rather than "some unlabelled distance".
     const ticks = axisTicks(geo(PRODUCTION_MENS_DATES));
-    const unobserved = ticks.filter((tick) => !PRODUCTION_MENS_DATES.includes(tick.date));
+    const unobserved = ticks.filter((tick) => !PRODUCTION_MENS_DATES.includes(tick.at));
     expect(unobserved.map((tick) => tick.label)).toEqual(["17 Aug", "24 Aug"]);
 
     // And the LINE still has nothing in the hole — "gaps stay gaps" is about
@@ -362,9 +362,9 @@ describe("item 6 — the chart's x-axis", () => {
       const phone = atTier(ticks, PHONE);
       // Both ends of the DRAWN axis carry a label on the narrowest screen.
       // `ticks` is oldest-first (`axisTicks` reverses on the way out).
-      expect(`${span}d oldest: ${phone[0]?.date}`).toBe(`${span}d oldest: ${ticks[0].date}`);
-      expect(`${span}d newest: ${phone[phone.length - 1]?.date}`).toBe(
-        `${span}d newest: ${ticks[ticks.length - 1].date}`
+      expect(`${span}d oldest: ${phone[0]?.at}`).toBe(`${span}d oldest: ${ticks[0].at}`);
+      expect(`${span}d newest: ${phone[phone.length - 1]?.at}`).toBe(
+        `${span}d newest: ${ticks[ticks.length - 1].at}`
       );
     }
   });
@@ -392,7 +392,7 @@ describe("item 6 — the chart's x-axis", () => {
       const dates = dailyDates("2024-03-01", span + 1);
       const ticks = axisTicks(geo(dates));
       expect(ticks[ticks.length - 1].x).toBe(320);
-      expect(ticks[ticks.length - 1].date).toBe(dates[dates.length - 1]);
+      expect(ticks[ticks.length - 1].at).toBe(dates[dates.length - 1]);
       expect(ticks[0].x).toBeGreaterThanOrEqual(0);
       expect(ticks[0].x).toBeLessThan((axisStepDays(span) * 320) / span);
     }
@@ -471,10 +471,10 @@ describe("item 6 — the chart's x-axis", () => {
     for (const span of [1, 2, 5, 12, 30, 91, 400]) {
       const dates = dailyDates("2025-02-01", span + 1);
       const ticks = axisTicks(geo(dates));
-      expect(new Set(ticks.map((t) => t.date)).size).toBe(ticks.length);
+      expect(new Set(ticks.map((t) => t.at)).size).toBe(ticks.length);
       for (const tick of ticks) {
-        expect(tick.date >= dates[0]).toBe(true);
-        expect(tick.date <= dates[dates.length - 1]).toBe(true);
+        expect(tick.at >= dates[0]).toBe(true);
+        expect(tick.at <= dates[dates.length - 1]).toBe(true);
         expect(tick.x).toBeGreaterThanOrEqual(0);
         expect(tick.x).toBeLessThanOrEqual(320);
       }
@@ -488,16 +488,16 @@ describe("item 6 — the chart's x-axis", () => {
     // x the line WOULD have at that date, whether or not a reading exists.
     const ticks = axisTicks(geometry);
     const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 86_400_000;
-    const first = day(geometry.dates[0]);
-    const last = day(geometry.dates[geometry.dates.length - 1]);
+    const first = day(geometry.keys[0]);
+    const last = day(geometry.keys[geometry.keys.length - 1]);
     for (const tick of ticks) {
-      expect(tick.x).toBeCloseTo(((day(tick.date) - first) * 320) / (last - first), 5);
+      expect(tick.x).toBeCloseTo(((day(tick.at) - first) * 320) / (last - first), 5);
     }
     // And where a reading DOES exist on a tick's date, the drawn point lands on
     // the rule: 26 Aug is both the last observation and the last tick.
     const drawn = seriesPoints(chartSeriesFor(rows, selection)[0], geometry, "ALL");
     const xs = drawn.split(" ").map((pair) => Number(pair.split(",")[0]));
-    expect(ticks[ticks.length - 1].date).toBe("2026-08-26");
+    expect(ticks[ticks.length - 1].at).toBe("2026-08-26");
     expect(xs[xs.length - 1]).toBeCloseTo(ticks[ticks.length - 1].x, 5);
   });
 

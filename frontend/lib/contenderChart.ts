@@ -25,6 +25,130 @@
 
 import type { TournamentRow, TournamentTrendPoint } from "./tournament";
 
+/**
+ * ═══ #4173: THE CHART'S DOMAIN IS INSTANTS, AND A DAY IS ONE OF THEM ═══
+ *
+ * This module used to be keyed end to end on `YYYY-MM-DD`, because the only
+ * series the server published was one blended point per day. That is what made
+ * the `1D` chip permanently dead — a one-day window over a daily series holds
+ * one point, and one point is not a line — and it is why a title race that
+ * moved 42pp in an afternoon drew as a single step. The server now publishes
+ * `trend_hourly` beside `trend`, and the chart reads the finer one.
+ *
+ * 🔵 **A `ChartPoint.at` is a TIME KEY, and it has two legal shapes**: a day
+ * (`2026-08-26`, meaning midnight UTC) or a full instant (`2026-08-26T14:00:00Z`).
+ * Everything below goes through `timeDays`, which parses both, so a board whose
+ * payload predates #4173 draws exactly what it drew before — the day path is
+ * not a fallback bolted on, it is the same path with a coarser key.
+ *
+ * Three consequences worth naming, because each is a place this could have gone
+ * wrong quietly:
+ *
+ *   - **The two series are SPLICED, not swapped.** `trend_hourly` covers 14
+ *     days and `trend` covers 30, so reading only the fine one would have cut
+ *     `ALL` from a month to a fortnight — a silent loss of history, paid for a
+ *     resolution gain. `chartPoints` takes the daily points OLDER than the fine
+ *     window and the fine points after it.
+ *   - **A timeframe over instants counts 24 hours, not `N − 1` days.** The
+ *     `(days - 1)` in `pointsInTimeframe` is a DAY-BUCKET convention: "1D" over
+ *     day keys means the last bucket. Applied to instants it would make `1D`
+ *     an empty window. See the note there.
+ *   - **The axis may not tick finer than the domain it labels.** A three-day
+ *     window of DAILY points must keep its daily ticks; the same window of
+ *     hourly points earns six-hourly ones. `axisStepDays` takes the floor as an
+ *     argument rather than guessing from the span.
+ */
+
+/**
+ * One drawn observation: a probability at a time key.
+ *
+ * `at` is either `YYYY-MM-DD` or a full ISO instant — see the block above. The
+ * field is NOT called `date` on purpose: the day parser is
+ * ``new Date(`${key}T00:00:00Z`)`` and feeding it an instant yields `Invalid
+ * Date` → `NaN` → an empty plot with nothing in the console. A second name
+ * makes that mistake a typecheck error.
+ */
+export interface ChartPoint {
+  at: string;
+  probability: number;
+}
+
+/** `2026-08-26` — a day key. Anything else is treated as a full instant. */
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Whether a time key names a whole DAY rather than a moment inside one. */
+export function isDayKey(key: string): boolean {
+  return DAY_KEY.test(key);
+}
+
+/** Epoch ms for either key shape. `null` for anything unparseable. */
+function timeMs(key: string): number | null {
+  const parsed = Date.parse(isDayKey(key) ? `${key}T00:00:00Z` : key);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Days since the epoch, FRACTIONAL — `timeMs` divided by a day.
+ *
+ * This replaces the old `dayNumber`, which rounded to whole days because the
+ * domain was whole days. A day key still lands on an exact integer (midnight
+ * UTC divides a day exactly), so every position this module computed before is
+ * bit-for-bit what it computes now; an instant lands between two integers,
+ * which is the whole point.
+ */
+function timeDays(key: string): number | null {
+  const ms = timeMs(key);
+  return ms === null ? null : ms / 86_400_000;
+}
+
+/** Does this domain carry anything finer than a day? Decides the axis floor. */
+function hasInstants(keys: string[]): boolean {
+  return keys.some((key) => !isDayKey(key));
+}
+
+/**
+ * A row's drawable history: the daily series before the fine window, then the
+ * fine series (#4173).
+ *
+ * ⚠️ **THE SPLICE IS WHY `ALL` DID NOT GET SHORTER.** `trend_hourly` is 14 days
+ * and `trend` is 30. Taking the fine series alone would have been a strict
+ * improvement in resolution and a silent 16-day loss of history on the one chip
+ * whose name promises the opposite. Taking both whole would draw the overlap
+ * twice — a daily mean vertex sitting on top of the 24 hourly readings it was
+ * computed from, pulling the line through a point nothing observed.
+ *
+ * So the cut is the fine series' FIRST DAY: daily points strictly before it,
+ * fine points from it on.
+ *
+ * 🔵 **THE SEAM COSTS PART OF ONE DAY, AND THAT IS THE CHEAPER OF THE TWO
+ * ERRORS.** The server's fine cutoff is `now − 14 days`, a mid-afternoon
+ * instant, not a midnight — so on the OLDEST day of the fine window the daily
+ * mean covers readings the fine series starts after, and dropping that daily
+ * point drops them. Every other day in the overlap is covered completely.
+ *
+ * Keeping it instead is worse, and not marginally: a daily key IS midnight, so
+ * the whole day's mean would be plotted at 00:00, before the fine readings it
+ * was computed from. That draws a vertex at a time nothing was observed and at
+ * a value nothing read — a fabricated point, on a chart whose first doctrine is
+ * that gaps stay gaps. Losing part of the seam day leaves a longer straight
+ * segment between two REAL readings, which is what this module already does
+ * everywhere else it has no data. Bounded, honest, and pinned by a guard.
+ */
+export function chartPoints(row: TournamentRow): ChartPoint[] {
+  const daily = Array.isArray(row.trend) ? row.trend : [];
+  const asPoints = (points: TournamentTrendPoint[]): ChartPoint[] =>
+    points.map((point) => ({ at: point.date, probability: point.probability }));
+
+  const fine = Array.isArray(row.trend_hourly) ? row.trend_hourly : [];
+  if (fine.length === 0) return asPoints(daily);
+
+  const cut = fine[0].at.slice(0, 10);
+  return [
+    ...asPoints(daily.filter((point) => point.date < cut)),
+    ...fine.map((point) => ({ at: point.at, probability: point.probability })),
+  ];
+}
+
 /** How many contenders the legend names and the chart draws. Kalshi's own
  *  reference shows exactly three, which settled the 3-vs-5 question. */
 export const CHART_SERIES_COUNT = 3;
@@ -173,18 +297,24 @@ export function longDateLabel(iso: string): string {
 /**
  * Points on or after a day, or every point when there is no day.
  *
- * String comparison rather than `Date.parse`, deliberately: both sides are
- * `YYYY-MM-DD`, which sorts lexicographically exactly as it sorts
- * chronologically, and parsing would reintroduce the midnight-UTC question that
- * `dayNumber` exists to keep out of the rest of this module.
+ * String comparison rather than `Date.parse`, deliberately: `YYYY-MM-DD` sorts
+ * lexicographically exactly as it sorts chronologically, and parsing would
+ * reintroduce the midnight-UTC question that `timeDays` exists to keep out of
+ * the rest of this module.
+ *
+ * It keeps working now the keys can be instants, and not by luck: an ISO
+ * instant is its own day key followed by `T…`, and `T` sorts above every digit,
+ * so `"2026-08-30T14:00:00Z" >= "2026-08-30"` and
+ * `"2026-08-29T14:00:00Z" < "2026-08-30"`. A prefix comparison against a day is
+ * exactly the "on or after that day" test this needs.
  */
 export function pointsFromDate(
-  points: TournamentTrendPoint[],
+  points: ChartPoint[],
   start: string | null
-): TournamentTrendPoint[] {
+): ChartPoint[] {
   if (!Array.isArray(points)) return [];
   if (!start) return points;
-  return points.filter((point) => typeof point.date === "string" && point.date >= start);
+  return points.filter((point) => typeof point.at === "string" && point.at >= start);
 }
 
 /**
@@ -264,7 +394,7 @@ export interface ChartSeries {
   color: string;
   probability: number | null;
   isLive: boolean;
-  points: TournamentTrendPoint[];
+  points: ChartPoint[];
 }
 
 /**
@@ -283,7 +413,7 @@ export function chartSeries(rows: TournamentRow[], limit = CHART_SERIES_COUNT): 
       color: SERIES_COLORS[index % SERIES_COLORS.length],
       probability: row.probability,
       isLive: row.probability_is_live === true,
-      points: Array.isArray(row.trend) ? row.trend : [],
+      points: chartPoints(row),
     }));
 }
 
@@ -331,7 +461,7 @@ export function chartSeriesFor(
       color: SERIES_COLORS[out.length % SERIES_COLORS.length],
       probability: row.probability,
       isLive: row.probability_is_live === true,
-      points: Array.isArray(row.trend) ? row.trend : [],
+      points: chartPoints(row),
     });
     if (out.length >= MAX_SERIES_COUNT) break;
   }
@@ -445,21 +575,43 @@ export function toggleSelection(selection: string[], entityKey: string): string[
  * data" — which the staleness banner is already saying, properly, in words.
  */
 export function pointsInTimeframe(
-  points: TournamentTrendPoint[],
+  points: ChartPoint[],
   timeframe: Timeframe
-): TournamentTrendPoint[] {
+): ChartPoint[] {
   if (!Array.isArray(points) || points.length === 0) return [];
   const days = TIMEFRAME_DAYS[timeframe];
   if (days === null) return points;
 
   const last = points[points.length - 1];
-  const end = new Date(`${last.date}T00:00:00Z`).getTime();
-  if (Number.isNaN(end)) return points;
-  const start = end - (days - 1) * 24 * 60 * 60 * 1000;
+  const end = timeMs(last.at);
+  if (end === null) return points;
+
+  /**
+   * ⚠️ **`days − 1` IS A BUCKET COUNT, NOT A DURATION, AND IT ONLY MEANS
+   * SOMETHING OVER DAY KEYS (#4173).**
+   *
+   * Over a daily series "1D" means *the last bucket*: one point, at the last
+   * observed day, and the window is `days − 1` days wide so that "1W" takes
+   * seven day-stamps rather than eight. That arithmetic is right and it stays
+   * for day keys — every existing board draws exactly what it drew before.
+   *
+   * Applied to instants it is a bug with a straight face: `days − 1` for "1D"
+   * is ZERO milliseconds, so the window would hold only readings at the very
+   * last instant and `1D` would go from permanently disabled to permanently
+   * empty. Over instants a timeframe is a DURATION — the last 24 hours — which
+   * is what a reader pressing `1D` on an hourly chart means by it.
+   *
+   * The shape of the LAST point decides, not a flag threaded through five
+   * signatures: a spliced series (daily tail, hourly head) ends on an instant
+   * and is measured as a duration, which is correct — the fine end is the end
+   * the window is anchored on.
+   */
+  const span = isDayKey(last.at) ? (days - 1) * 86_400_000 : days * 86_400_000;
+  const start = end - span;
 
   return points.filter((point) => {
-    const at = new Date(`${point.date}T00:00:00Z`).getTime();
-    return !Number.isNaN(at) && at >= start;
+    const at = timeMs(point.at);
+    return at !== null && at >= start;
   });
 }
 
@@ -476,8 +628,15 @@ export function timeframeIsDrawable(
 }
 
 export interface ChartGeometry {
-  /** Shared x-domain across all series so the lines are comparable. */
-  dates: string[];
+  /**
+   * Shared x-domain across all series so the lines are comparable.
+   *
+   * Time KEYS, sorted — day strings, instants, or (on a spliced series) a run
+   * of days followed by a run of instants. It was called `dates` while a day
+   * was the only thing it could hold; a field named `dates` full of
+   * `2026-09-09T08:00:00Z` is the kind of name the next reader pays for.
+   */
+  keys: string[];
   width: number;
   height: number;
   /**
@@ -590,11 +749,16 @@ export function chartYLabels(ceiling: number): { probability: number; label: str
 }
 
 /**
- * The shared x-domain: every date any drawn series observed, sorted.
+ * The shared x-domain: every time key any drawn series observed, sorted.
  *
  * Built as a union rather than per-series so two players' lines line up in
  * time. Giving each line its own x-scale would put Monday under Thursday and
  * make crossing lines mean nothing.
+ *
+ * A lexicographic sort is still chronological over the mixed key set, for the
+ * reason `pointsFromDate` spells out: an instant is its own day key plus `T…`,
+ * and `T` sorts above every digit, so a day sorts before every instant inside
+ * it. That is the right order — a day key means midnight.
  */
 export function chartGeometry(
   series: ChartSeries[],
@@ -602,32 +766,18 @@ export function chartGeometry(
   width: number,
   height: number
 ): ChartGeometry {
-  const dates = new Set<string>();
+  const keys = new Set<string>();
   for (const entry of series) {
     for (const point of pointsInTimeframe(entry.points, timeframe)) {
-      dates.add(point.date);
+      keys.add(point.at);
     }
   }
   return {
-    dates: Array.from(dates).sort(),
+    keys: Array.from(keys).sort(),
     width,
     height,
     ceiling: chartCeiling(series, timeframe),
   };
-}
-
-/**
- * `2026-08-12` -> whole days since the epoch, UTC. `null` for anything that is
- * not a `YYYY-MM-DD`.
- *
- * Whole days rather than milliseconds because the domain IS days — the server
- * means each outcome-day — and integer day numbers make the axis arithmetic
- * exact instead of almost-exact.
- */
-function dayNumber(iso: string): number | null {
-  const parsed = Date.parse(`${iso}T00:00:00Z`);
-  if (!Number.isFinite(parsed)) return null;
-  return Math.round(parsed / 86_400_000);
 }
 
 /**
@@ -663,15 +813,21 @@ function dayNumber(iso: string): number | null {
  *
  * So x is calendar time. A month-long window and a day-long window are now
  * different shapes rather than the same shape with different labels.
+ *
+ * #4173 made the unit FRACTIONAL days rather than whole ones, which is the
+ * same scale with a finer tick: a day key still lands on an integer, so every
+ * position drawn before this change is drawn identically after it, and an
+ * hourly reading now lands 1/24 of the way between two of them instead of
+ * being rounded onto one.
  */
-export function dateX(iso: string, geometry: ChartGeometry): number | null {
-  const dates = geometry.dates;
-  if (dates.length < 2) return null;
-  const at = dayNumber(iso);
-  const first = dayNumber(dates[0]);
-  const last = dayNumber(dates[dates.length - 1]);
+export function keyX(key: string, geometry: ChartGeometry): number | null {
+  const keys = geometry.keys;
+  if (keys.length < 2) return null;
+  const at = timeDays(key);
+  const first = timeDays(keys[0]);
+  const last = timeDays(keys[keys.length - 1]);
   if (at === null || first === null || last === null) return null;
-  // `dates` is a sorted set, so two or more entries means last > first and the
+  // `keys` is a sorted set, so two or more entries means last > first and the
   // divide-by-zero this would otherwise need a guard for cannot happen.
   if (last === first) return null;
   return ((at - first) * geometry.width) / (last - first);
@@ -692,15 +848,21 @@ export function seriesPoints(
   timeframe: Timeframe
 ): string {
   const points = pointsInTimeframe(entry.points, timeframe);
-  if (points.length < 2 || geometry.dates.length < 2) return "";
+  if (points.length < 2 || geometry.keys.length < 2) return "";
+
+  // A Set rather than `keys.includes` per point (#4173): the domain was ~30
+  // days and is now up to 336 hourly buckets, and six selected lines over a
+  // linear scan is a quarter of a million string comparisons on every render
+  // of a control the reader is clicking.
+  const domain = new Set(geometry.keys);
 
   return points
     .map((point) => {
       // Still gated on membership of the shared domain: a reading the domain
       // does not carry is a reading outside the drawn window, and placing it by
-      // date alone would draw it off the end of the plot.
-      if (!geometry.dates.includes(point.date)) return null;
-      const x = dateX(point.date, geometry);
+      // time alone would draw it off the end of the plot.
+      if (!domain.has(point.at)) return null;
+      const x = keyX(point.at, geometry);
       if (x === null) return null;
       // Clamped to the CEILING, not to 1. A reading above the top of the axis
       // would otherwise be drawn off the plot; `chartCeiling` picks a step that
@@ -731,11 +893,14 @@ export function seriesPoints(
 export type AxisTickTier = "major" | "wide" | "fine";
 
 export interface AxisTick {
-  /** ISO date, `YYYY-MM-DD` — the calendar value the tick names. */
-  date: string;
+  /**
+   * The time key the tick names — `YYYY-MM-DD` on a daily step, a full instant
+   * on a sub-day one (#4173). Same two shapes as `ChartPoint.at`.
+   */
+  at: string;
   /** Where it sits on the drawn x-axis, in viewBox units. */
   x: number;
-  /** `26 Aug` — short enough for a 320-unit axis at three ticks. */
+  /** `26 Aug`, or `5 PM` inside a day — short enough for a 320-unit axis. */
   label: string;
   /** Narrowest window this tick earns its label in — see `axisTicks`. */
   tier: AxisTickTier;
@@ -798,11 +963,20 @@ export interface AxisTick {
  * the women's board is five days, and a table keyed on `1M`/`ALL` would give
  * that five-day window a monthly step.
  *
- * `1D` is in the ladder's reach and unreachable in practice: the server's trend
- * series carries one point per DAY (`TournamentTrendPoint.date`), so a one-day
- * window holds one point, `timeframeIsDrawable` is false, and the button
- * renders disabled. An hourly axis needs an hourly series first — named here
- * so the next reader does not go looking for the bug.
+ * ⚠️ **THE PARAGRAPH THAT USED TO BE HERE WAS THE BUG REPORT (#4173).** It read:
+ * *"`1D` is in the ladder's reach and unreachable in practice: the server's
+ * trend series carries one point per DAY, so a one-day window holds one point,
+ * `timeframeIsDrawable` is false, and the button renders disabled. An hourly
+ * axis needs an hourly series first."* It does, and it has one now — see the
+ * `#4173` block at the top of this module. So the ladder grows five rungs
+ * BELOW a day (1h, 2h, 3h, 6h, 12h) and `1D` draws.
+ *
+ * The rungs are gated on the DOMAIN, not on the span, and that gate is the
+ * whole care in this change: a three-day window of DAILY points must keep its
+ * daily ticks, or a board with four readings would sprout six-hourly labels
+ * naming times nothing was read at. `axisStepDays` therefore takes the finest
+ * legal step as an argument, defaulting to a day, and `axisTicks` passes an
+ * hour only when the domain actually carries instants.
  *
  * ═══ THE THREE DENSITIES, FROM ONE SERVER RENDER ═══
  *
@@ -925,22 +1099,53 @@ const LABEL_AIR_PX = 8;
 const LABEL_PITCH_PX =
   AXIS_LABEL_MAX_PX + AXIS_LABEL_NUDGE_PX + LABEL_AIR_PX;
 
-/** Calendar steps a person can count in their head. Ascending. */
-const STEP_LADDER_DAYS = [1, 2, 7, 14, 28, 91, 182, 364];
+/** An hour, as a fraction of a day — the unit the sub-day rungs are built from. */
+export const HOUR_DAYS = 1 / 24;
+
+/**
+ * Clock steps a person can count in their head. Ascending, in DAYS.
+ *
+ * The five sub-day rungs (#4173) are the ones a clock face has: 1, 2, 3, 6 and
+ * 12 hours. Nothing between 12 hours and a day, and nothing between 2 and 7
+ * days, for one reason — a 4-hour or a 3-day step produces labels a reader
+ * cannot count in their head, which is the property the whole ladder exists for.
+ */
+const STEP_LADDER_DAYS = [
+  HOUR_DAYS,
+  2 * HOUR_DAYS,
+  3 * HOUR_DAYS,
+  6 * HOUR_DAYS,
+  12 * HOUR_DAYS,
+  1,
+  2,
+  7,
+  14,
+  28,
+  91,
+  182,
+  364,
+];
 
 /** The most intervals the finest tier will draw across the window. */
 const MAX_INTERVALS = 12;
 
 /**
  * The tick step for a window, in days — the smallest ladder rung that keeps the
- * axis under `MAX_INTERVALS` intervals.
+ * axis under `MAX_INTERVALS` intervals AND is no finer than `minStepDays`.
+ *
+ * ⚠️ **`minStepDays` DEFAULTS TO A DAY, AND THAT DEFAULT IS THE COMPATIBILITY
+ * PROMISE (#4173).** Every rung below a day is unreachable unless a caller asks
+ * for it, so `axisStepDays(3)` is `1` exactly as it was before the sub-day
+ * rungs existed. The alternative — letting the span alone choose — would have
+ * given a three-day window of four daily readings a six-hourly axis.
  *
  * Exported because it is the sentence the axis is built on, and a guard that
  * has to re-derive it from rendered tick positions is testing arithmetic it
  * just re-implemented.
  */
-export function axisStepDays(spanDays: number): number {
+export function axisStepDays(spanDays: number, minStepDays = 1): number {
   for (const step of STEP_LADDER_DAYS) {
+    if (step < minStepDays) continue;
     if (spanDays / step <= MAX_INTERVALS) return step;
   }
   return STEP_LADDER_DAYS[STEP_LADDER_DAYS.length - 1];
@@ -982,24 +1187,48 @@ function tickStrides(fractionPerStep: number): Record<AxisTickTier, number> {
   return { major, wide, fine };
 }
 
-/** `2026-08-12` from a whole-day count since the epoch. Inverse of `dayNumber`. */
-function isoFromDay(day: number): string {
-  return new Date(day * 86_400_000).toISOString().slice(0, 10);
+/**
+ * A time key from a (possibly fractional) day count since the epoch — the
+ * inverse of `timeDays`, and it emits the SHAPE the step justifies.
+ *
+ * A daily-or-coarser step names a day (`2026-08-12`), because that is what the
+ * tick means and a `T00:00:00Z` on it would only invite a reader of the DOM to
+ * think the axis knows a time it does not. A sub-day step names the instant,
+ * to the minute.
+ *
+ * ⚠️ **The rounding is to the MINUTE, not to the millisecond.** `k * step` over
+ * a `1/24` rung accumulates float error — twelve two-hour steps back from an
+ * instant is off by a few microseconds — and an unrounded key would be a string
+ * no point in the domain can ever equal, which matters because `x` and the
+ * label are derived from it and a reader comparing an endpoint dot to a tick
+ * would see them disagree by a hair.
+ */
+function keyFromDays(days: number, stepDays: number): string {
+  const ms = Math.round((days * 86_400_000) / 60_000) * 60_000;
+  const iso = new Date(ms).toISOString();
+  return stepDays >= 1 ? iso.slice(0, 10) : `${iso.slice(0, 16)}:00Z`;
 }
 
-export function axisTicks(geometry: ChartGeometry, timeframe?: Timeframe): AxisTick[] {
+export function axisTicks(
+  geometry: ChartGeometry,
+  timeframe?: Timeframe,
+  timeZone?: string
+): AxisTick[] {
   // The step comes from the DRAWN WINDOW, not from which button is pressed —
   // see the note above on `ALL` over a five-day field.
   void timeframe;
-  const dates = geometry.dates;
-  if (dates.length < 2) return [];
+  const keys = geometry.keys;
+  if (keys.length < 2) return [];
 
-  const firstDay = dayNumber(dates[0]);
-  const lastDay = dayNumber(dates[dates.length - 1]);
+  const firstDay = timeDays(keys[0]);
+  const lastDay = timeDays(keys[keys.length - 1]);
   if (firstDay === null || lastDay === null || lastDay <= firstDay) return [];
 
   const span = lastDay - firstDay;
-  const step = axisStepDays(span);
+  // The floor is the DOMAIN's own resolution, never the span's appetite — see
+  // `axisStepDays`. A day-keyed board cannot earn an hourly tick, whatever its
+  // span, because there is nothing at those positions to label.
+  const step = axisStepDays(span, hasInstants(keys) ? HOUR_DAYS : 1);
   const strides = tickStrides(step / span);
 
   const out: AxisTick[] = [];
@@ -1007,16 +1236,25 @@ export function axisTicks(geometry: ChartGeometry, timeframe?: Timeframe): AxisT
   const steps: number[] = [];
   // `k` counts steps back from the LATEST reading, so `k = 0` is the right-hand
   // edge and is visible at every width (0 is a multiple of every stride).
-  for (let k = 0; lastDay - k * step >= firstDay; k += 1) {
+  //
+  // `EPSILON_DAYS` of slack on the loop bound: over fractional rungs the
+  // accumulated float error can put the leftmost tick a nanosecond before
+  // `firstDay` and drop a tick the axis has room for. A millisecond of
+  // tolerance cannot admit a tick that is genuinely outside the window.
+  const EPSILON_DAYS = 1 / 86_400_000;
+  for (let k = 0; lastDay - k * step >= firstDay - EPSILON_DAYS; k += 1) {
     const tier =
       k % strides.major === 0 ? "major" : k % strides.wide === 0 ? "wide"
       : k % strides.fine === 0 ? "fine" : null;
     if (tier === null) continue;
-    const date = isoFromDay(lastDay - k * step);
+    const position = lastDay - k * step;
+    const at = keyFromDays(position, step);
     out.push({
-      date,
-      x: ((lastDay - k * step - firstDay) * geometry.width) / span,
-      label: shortDateLabel(date),
+      at,
+      // Clamped at 0 so the epsilon above can never place a label a hair
+      // outside the plot it belongs to.
+      x: Math.max(0, ((position - firstDay) * geometry.width) / span),
+      label: axisTickLabel(at, step, timeZone),
       tier,
     });
     steps.push(k);
@@ -1025,6 +1263,76 @@ export function axisTicks(geometry: ChartGeometry, timeframe?: Timeframe): AxisT
   pinOldestLabel(out, steps, strides.major);
 
   return out.reverse();
+}
+
+/**
+ * ═══ A SUB-DAY TICK IS LABELLED IN THE READER'S OWN CLOCK (#4173) ═══
+ *
+ * UX-P260 (#2624) settled this distinction for the whole site and it decides it
+ * here too: **a calendar date is not an instant.** A daily tick names a day, and
+ * a day is pinned to UTC so `2026-09-05` cannot slide to the 4th in Los
+ * Angeles. An hourly tick names a MOMENT, and the only honest name for a moment
+ * is the one it had where the reader is standing — a tick reading `5 PM` for a
+ * price that moved at 10 AM their time is a chart lying about when.
+ *
+ * Safe to render locally on this page specifically, by the same standing proof
+ * `futuresDetailDisplay` cites: `/tournaments/[slug]` fetches its payload in a
+ * `useEffect` behind a loading return, so no chart label is ever in the server
+ * HTML and there is no hydration boundary to mismatch across. **Guards MUST
+ * pass an explicit `timeZone`**; the app deliberately does not.
+ *
+ * MIDNIGHT NAMES ITS DAY, not `12 AM`. With a six-hourly step over three days
+ * an hours-only axis reads `12 AM · 6 AM · 12 PM · 6 PM · 12 AM …` and a reader
+ * cannot tell the Tuesday midnight from the Thursday one. Substituting the date
+ * at the day boundary is what a real time axis does, and it costs no width:
+ * `31 Aug` is the label `AXIS_LABEL_MAX_PX` was measured against, and `11 PM`
+ * is narrower than it.
+ */
+export function axisTickLabel(
+  key: string,
+  stepDays: number,
+  timeZone?: string
+): string {
+  if (stepDays >= 1 || isDayKey(key)) return shortDateLabel(key.slice(0, 10));
+
+  const ms = timeMs(key);
+  if (ms === null) return key;
+  const at = new Date(ms);
+  const zone = timeZone ? { timeZone } : {};
+
+  const hhmm = at.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    ...zone,
+  });
+  if (hhmm === "00:00" || hhmm === "24:00") {
+    // The reader's own midnight, so the DATE has to be read in their zone too —
+    // `key.slice(0, 10)` is the UTC day and would name yesterday west of
+    // Greenwich, which is the exact error UX-P260 was filed for.
+    //
+    // ⚠️ **AND IT GOES THROUGH `shortDateLabel`, WHICH OWNS THE MONTH NAMES.**
+    // The first cut of this asked `toLocaleDateString("en-GB", {month:"short"})`
+    // for the whole label and got **`9 Sept`** — a four-letter September, beside
+    // `9 Sep` on every daily tick of the same axis. Two month tables in one
+    // strip is not a rounding difference, it is the axis disagreeing with
+    // itself. `Intl` is asked only for the NUMBERS, which are locale-invariant.
+    return shortDateLabel(localDayKey(at, timeZone));
+  }
+  return at.toLocaleTimeString("en-US", { hour: "numeric", ...zone });
+}
+
+/** `2026-09-09` — the day an instant fell on, in `timeZone` or the reader's own. */
+function localDayKey(at: Date, timeZone?: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    ...(timeZone ? { timeZone } : {}),
+  }).formatToParts(at);
+  const part = (type: string) =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 /**
@@ -1119,21 +1427,53 @@ export function shortDateLabel(iso: string): string {
 export function axisWindow(
   geometry: ChartGeometry
 ): { from: string; to: string } | null {
-  const dates = geometry.dates;
-  if (dates.length < 2) return null;
+  const keys = geometry.keys;
+  if (keys.length < 2) return null;
   return {
-    from: shortDateLabel(dates[0]),
-    to: shortDateLabel(dates[dates.length - 1]),
+    from: shortDateLabel(keys[0].slice(0, 10)),
+    to: shortDateLabel(keys[keys.length - 1].slice(0, 10)),
   };
 }
 
 export function axisSpanDays(geometry: ChartGeometry): number | null {
-  const dates = geometry.dates;
-  if (dates.length < 2) return null;
-  const first = Date.parse(`${dates[0]}T00:00:00Z`);
-  const last = Date.parse(`${dates[dates.length - 1]}T00:00:00Z`);
-  if (!Number.isFinite(first) || !Number.isFinite(last)) return null;
+  const keys = geometry.keys;
+  if (keys.length < 2) return null;
+  const first = timeMs(keys[0]);
+  const last = timeMs(keys[keys.length - 1]);
+  if (first === null || last === null) return null;
   return Math.max(0, Math.round((last - first) / 86_400_000));
+}
+
+/**
+ * How long the drawn window is, written twice: `7d` for the footer and
+ * `7 days` for the screen reader — or `18h` / `18 hours` under a day (#4173).
+ *
+ * `axisSpanDays` rounds, and rounding a `1D` window of hourly readings gives
+ * **`0d shown`**, a footer contradicting the line above it. Hours are not a
+ * special case bolted on for one chip: any window narrower than a day is a
+ * window whose length a day count cannot state.
+ *
+ * Both strings come from the same arithmetic rather than the spoken one being
+ * parsed back out of the short one. Deriving a label from another label is the
+ * shape that fails both ways — it agrees with itself by construction and cannot
+ * catch the case where the short form is wrong.
+ */
+export function axisSpan(
+  geometry: ChartGeometry
+): { short: string; spoken: string } | null {
+  const keys = geometry.keys;
+  if (keys.length < 2) return null;
+  const first = timeMs(keys[0]);
+  const last = timeMs(keys[keys.length - 1]);
+  if (first === null || last === null) return null;
+
+  const ms = Math.max(0, last - first);
+  if (ms < 86_400_000) {
+    const hours = Math.max(1, Math.round(ms / 3_600_000));
+    return { short: `${hours}h`, spoken: `${hours} hour${hours === 1 ? "" : "s"}` };
+  }
+  const days = Math.round(ms / 86_400_000);
+  return { short: `${days}d`, spoken: `${days} day${days === 1 ? "" : "s"}` };
 }
 
 /** The last plotted coordinate — the reference's endpoint dot. */

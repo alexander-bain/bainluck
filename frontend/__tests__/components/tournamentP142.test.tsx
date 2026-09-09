@@ -174,12 +174,21 @@ describe("(b) the headline chart has an x-axis on the real payload", () => {
     expect(html).toContain('data-testid="chart-axis"');
     expect((html.match(/data-testid="chart-axis-tick"/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect((html.match(/data-testid="chart-axis-label"/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    // A tick is a DATE, not a decoration.
-    expect(html).toMatch(/data-testid="chart-axis-label" data-date="\d{4}-\d{2}-\d{2}"/);
+    // A tick is a TIME, not a decoration — and on THIS payload it is a whole
+    // day. #4173 let the axis carry instants when the series does; this fixture
+    // has only the daily `trend`, so a `YYYY-MM-DD` here is also the assertion
+    // that a day-keyed board did not sprout an hourly axis it has no readings
+    // for. `data-date` was renamed with the field behind it.
+    expect(html).toMatch(/data-testid="chart-axis-label" data-at="\d{4}-\d{2}-\d{2}"/);
     // And the window is named by the AXIS, not in words beside a count —
     // `Nd shown` left the page under notice 34 (#4278). The dated ticks
     // asserted above are now the only thing that states the window, which is
     // what the sentence was restating anyway.
+    //
+    // BOTH HALVES OF THIS PAIR SURVIVED #4173's REBASE, deliberately. The
+    // rename is this ship's; the deletion is #4278's; neither is a weaker
+    // version of the other and taking one side would have dropped a live
+    // assertion about a line Alex asked for by name.
     expect(html).not.toContain('data-testid="chart-span"');
   });
 });

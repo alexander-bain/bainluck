@@ -77,6 +77,36 @@ DARK_PRICE_HOURS = 48.0
 # per-request and the register pins up to ~160 outcomes.
 TREND_DAYS = 30
 
+# ── THE SECOND, FINER SERIES (ux/1144 (a), #4173) ────────────────────────────
+#
+# `trend` is one point per DAY and it always was.  On the 52px sparkline that is
+# right; on the `ContenderChart` it is the whole defect ux reported — the men's
+# leader draws 23 vertices across a month, the `1D` chip has one point and
+# cannot draw at all, and a title race that moved 42pp in an afternoon renders
+# as one step.  MEASURED on production 9 Sep: the four US Open outright markets
+# hold 32,801 snapshots over 14 days for 143 outcomes — 260 readings per
+# outcome, of which the daily mean publishes 15.  We were serving 6% of what we
+# hold.
+#
+# So a second series, at the resolution the capture rail actually runs at.  The
+# `:50` futures refresh writes both venues within the same minute (measured:
+# 5,566 of 7,150 writes at minute 50, every one of the rest inside the same
+# hour), so an HOUR bucket is a snapshot bucket — 260 readings collapse to 255
+# buckets, not to 15.  Going finer than an hour would buy nothing but rows.
+#
+# Both series are kept because they are read by two different pictures, not
+# because one is transitional: 250 vertices in a 52px sparkline is noise, and 15
+# vertices in an 817px chart is a staircase.  One rule, two resolutions.
+TREND_FINE_DAYS = 14
+
+# The hard ceiling on points in one fine series, BY CONSTRUCTION rather than by
+# a `[-N:]` slice: an hour bucket over `TREND_FINE_DAYS` cannot exceed this many
+# points however often the venues are polled, so a capture-rail change that
+# doubled the poll rate would not add a single point here.  A slice would have
+# been a bound that only looks like one — the row cap in the route is where a
+# scan is bounded, and the two are deliberately different mechanisms.
+TREND_FINE_MAX_POINTS = TREND_FINE_DAYS * 24
+
 DRAW_LABELS: dict[str, str] = {
     "mens-singles": "Men's Singles",
     "womens-singles": "Women's Singles",
@@ -156,11 +186,19 @@ def freshest_observation(
     return max(seen) if seen else None
 
 
-def _merge_daily_series(
+def _merge_bucketed_series(
     series_by_outcome: dict[int, list[tuple[str, float]]],
     contributors: list[tuple[str, int]],
+    *,
+    key: str,
 ) -> list[dict[str, Any]]:
-    """One point per DAY THAT WAS ACTUALLY OBSERVED, blended by the SAME rule.
+    """One point per BUCKET THAT WAS ACTUALLY OBSERVED, blended by the SAME rule.
+
+    ``key`` names the field the bucket travels under — ``date`` for the daily
+    series, ``at`` for the hourly one.  It is ONE function rather than two
+    because the whole doctrine below is about there being one rule; a second
+    copy for the finer bucket would be a second place for that rule to drift.
+    The two callers differ in bucket width and in nothing else.
 
     Each day is run through ``blend_with_verdict`` exactly as the headline is,
     rather than meaned.  With two equal-weight sources the two rules agree
@@ -171,23 +209,33 @@ def _merge_daily_series(
     That is #1844's class: a raw figure and a blend rendered as if comparable.
     One question, one rule, at every point in time.
 
-    Days with no reading are absent, not zero and not carried forward: a gap in
-    the line is a gap in the data, and filling it would manufacture exactly the
-    confidence this module exists to refuse.
+    Buckets with no reading are absent, not zero and not carried forward: a gap
+    in the line is a gap in the data, and filling it would manufacture exactly
+    the confidence this module exists to refuse.
+
+    A bucket in which only SOME of the row's contributors reported still
+    publishes — the same as the daily series has always done — and at hourly
+    resolution that is a measured 31 of 267 buckets on Alcaraz, worth a median
+    0.5pp step against a p95 real step of 2.0pp.  It is not filtered out,
+    because an AND here would blank the whole line the day one venue's cadence
+    shifted by a minute past the hour: a rule that can silently publish nothing
+    is worse than a rule that publishes a half-pp wobble.  The row's own
+    `sources` / `stale_sources` are where a reader learns which venues are
+    behind it; a trend point is a shape, not a verdict.
     """
-    by_day: dict[str, list[dict[str, Any]]] = {}
+    by_bucket: dict[str, list[dict[str, Any]]] = {}
     for source, outcome_id in contributors:
-        for day, value in series_by_outcome.get(outcome_id, []):
-            by_day.setdefault(day, []).append(
+        for bucket, value in series_by_outcome.get(outcome_id, []):
+            by_bucket.setdefault(bucket, []).append(
                 {"source": source, "probability": float(value)}
             )
 
     points: list[dict[str, Any]] = []
-    for day, rows in sorted(by_day.items()):
+    for bucket, rows in sorted(by_bucket.items()):
         value = blend_with_verdict(rows)[0]
         if value is None:
             continue
-        points.append({"date": day, "probability": round(value, 6)})
+        points.append({key: bucket, "probability": round(value, 6)})
     return points
 
 
@@ -208,6 +256,7 @@ def build_boards(
     *,
     prices: dict[tuple, dict[str, Any]],
     series_by_outcome: Optional[dict[int, list[tuple[str, float]]]] = None,
+    fine_series_by_outcome: Optional[dict[int, list[tuple[str, float]]]] = None,
     now: datetime,
 ) -> dict[str, Any]:
     """Assemble the full page payload.
@@ -219,6 +268,11 @@ def build_boards(
     path, so there is nothing to get wrong at request time.
     """
     series_by_outcome = series_by_outcome or {}
+    # Absent, not empty-as-a-value: a caller that loads no fine series (the
+    # `rest`-only build) serves `trend_hourly: []`, exactly as it already serves
+    # `trend: []`. Two shapes for "no points" would be one more thing a client
+    # has to branch on.
+    fine_series_by_outcome = fine_series_by_outcome or {}
     reg = TournamentRegister(register)
 
     boards: list[dict[str, Any]] = []
@@ -370,6 +424,7 @@ def build_boards(
                         "blend_rule": None,
                         "divergent": False,
                         "trend": [],
+                        "trend_hourly": [],
                         "trend_delta": None,
                         # Settled means settled: there is no live book behind a
                         # result to grade, and `unknown` draws nothing. Present
@@ -401,7 +456,16 @@ def build_boards(
                 for view in source_views
                 if view["price_state"] != "live"
             ]
-            trend = _merge_daily_series(series_by_outcome, contributors)
+            trend = _merge_bucketed_series(
+                series_by_outcome, contributors, key="date"
+            )
+            # `trend_delta` stays the DAILY series' end-to-end move and is not
+            # recomputed from the finer one. It is the number beside the
+            # sparkline it belongs to, and a delta measured over a 14-day window
+            # printed next to a 30-day line would be two spans on one row.
+            trend_hourly = _merge_bucketed_series(
+                fine_series_by_outcome, contributors, key="at"
+            )
             trend_delta = (
                 round(trend[-1]["probability"] - trend[0]["probability"], 6)
                 if len(trend) >= 2
@@ -444,6 +508,12 @@ def build_boards(
                     "blend_rule": rule,
                     "divergent": divergence is not None,
                     "trend": trend,
+                    # ux/1144 (a). Same rule, same gaps, one point per HOUR
+                    # observed — `at` is a full ISO-8601 instant, deliberately
+                    # NOT named `date`, so a client that reuses the day parser
+                    # `new Date(`${p.date}T00:00:00Z`)` fails at the type
+                    # boundary instead of quietly producing `Invalid Date`.
+                    "trend_hourly": trend_hourly,
                     "trend_delta": trend_delta,
                     # ── HOW THIN THE MARKET BEHIND THIS ROW IS (UX-P157,
                     # #2256). The AND over contributors, exactly like `age`

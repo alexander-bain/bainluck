@@ -65,7 +65,7 @@ import {
   axisTicks,
   chartGeometry,
   chartSeriesFor,
-  dateX,
+  keyX,
   defaultSelection,
   shortDateLabel,
   type ChartGeometry,
@@ -102,7 +102,7 @@ const GRID_TEMPLATE_AFTER = (columns: number) =>
 const INTERIOR_TICK_EDGE_MARGIN_BEFORE = 0.18;
 
 function axisTicksBefore(geometry: ChartGeometry): string[] {
-  const dates = geometry.dates;
+  const dates = geometry.keys;
   if (dates.length < 2) return [];
   const first = dates[0];
   const last = dates[dates.length - 1];
@@ -119,7 +119,7 @@ function axisTicksBefore(geometry: ChartGeometry): string[] {
       nearest = date;
     }
   }
-  const midX = dateX(nearest, geometry);
+  const midX = keyX(nearest, geometry);
   if (midX === null) return [first, last];
   const fraction = midX / geometry.width;
   if (
@@ -272,8 +272,8 @@ describe("UX-P147 re-mocks — items 1, 2 and 3", () => {
     const geometry = chartGeometry(chartSeriesFor(men.rows, selection), "ALL", 320, 96);
     const before = axisTicksBefore(geometry);
     expect(before.length).toBeLessThanOrEqual(3);
-    expect(before[0]).toBe(geometry.dates[0]);
-    expect(before[before.length - 1]).toBe(geometry.dates[geometry.dates.length - 1]);
+    expect(before[0]).toBe(geometry.keys[0]);
+    expect(before[before.length - 1]).toBe(geometry.keys[geometry.keys.length - 1]);
   });
 
   it("the BEFORE finished list reproduces the 101% pairs", () => {

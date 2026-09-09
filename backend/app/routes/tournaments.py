@@ -41,7 +41,7 @@ from app.utils.proven_duplicates import (
     folded_probability_sources_batch,
 )
 from app.utils.tournament_advancement import build_advancement
-from app.utils.tournament_board import TREND_DAYS, build_boards
+from app.utils.tournament_board import TREND_DAYS, TREND_FINE_DAYS, build_boards
 from app.utils.tournament_event_link import (
     resolve_espn_competition_events,
     resolve_matchup_events,
@@ -118,10 +118,30 @@ RESULTS_LAST_GOOD_PREFIX = "bainluck:tournament-results-last-good:"
 CACHE_TTL_SECONDS = 60
 CACHE_PREFIX = "bainluck:tournament:"
 
-# Bounds the per-request series scan. The register pins ~160 outcomes; at hourly
-# capture over TREND_DAYS that is well inside this, and the cap is here so a
-# capture-rail change cannot silently turn this route into a table scan.
+# Bounds the per-request DAILY series scan. The register pins ~160 outcomes and
+# the query groups by DAY, so `160 × TREND_DAYS` ≈ 4,800 rows is the shape it
+# actually returns; the cap is here so a capture-rail change cannot silently
+# turn this route into a table scan.
+#
+# (The note that used to sit here reasoned about "hourly capture over
+# TREND_DAYS" being "well inside this". That would have been 115,200 rows — the
+# arithmetic was never true of an hourly grouping, it was only ever true because
+# the grouping is daily. Corrected rather than deleted, because the same wrong
+# sentence would have made `MAX_FINE_SERIES_ROWS` below look unnecessary.)
 MAX_SERIES_ROWS = 20000
+
+# Bounds the per-request HOURLY series scan (ux/1144 (a), #4173). One hour
+# bucket per outcome over `TREND_FINE_DAYS` is 336 rows, and the register pins
+# ~160 outcomes: 53,760 is the arithmetic ceiling, so this sits above it with
+# room and BOTH loaders now report truncation rather than swallowing it.
+#
+# A silent `LIMIT` on a query ordered by `outcome_id` is not an even trim — it
+# is a cliff. The outcomes past the cap get NOTHING, so the last players in id
+# order lose their whole line while everyone above them looks perfect, which is
+# the failure that reads as "the chart is fine" right up until someone picks
+# Sinner. Measured on production 9 Sep: 31,807 hourly rows for the four US Open
+# outright markets in 113 ms, all shared-buffer hits.
+MAX_FINE_SERIES_ROWS = 60000
 
 #: Bounds one match page's sibling scan. A Polymarket tennis event carries ~12
 #: sub-markets and ~33 outcome rows; 400 is generous by an order of magnitude
@@ -622,11 +642,94 @@ async def _load_series(
         )
     ).all()
 
+    _warn_if_truncated(rows, MAX_SERIES_ROWS, "daily", len(outcome_ids))
+
     series: dict[int, list[tuple[str, float]]] = defaultdict(list)
     for row in rows:
         if row.probability is None or row.day is None:
             continue
         series[row.outcome_id].append((row.day.date().isoformat(), float(row.probability)))
+    return dict(series)
+
+
+def _warn_if_truncated(rows: list, cap: int, which: str, outcomes: int) -> None:
+    """A `LIMIT` that binds is a finding, not a shrug (gotcha #53).
+
+    Both series queries order by ``outcome_id``, so a bound cap does not thin
+    the lines evenly — it deletes the tail of the id list outright. Nothing
+    downstream can tell that apart from "those players have no history", so the
+    only place it can be caught is here, at the moment the row count equals the
+    cap.
+    """
+    if len(rows) >= cap:
+        logger.error(
+            "tournament %s series scan hit its cap: %d rows for %d outcomes — "
+            "outcomes past the cap in id order have NO trend at all",
+            which,
+            cap,
+            outcomes,
+        )
+
+
+async def _load_fine_series(
+    session: AsyncSession, outcome_ids: list[int], *, now: datetime
+) -> dict[int, list[tuple[str, float]]]:
+    """Hourly mean per outcome — the same question as ``_load_series``, at the
+    resolution the capture rail actually writes at (ux/1144 (a), #4173).
+
+    Deliberately a SECOND query rather than one query the daily series is
+    re-derived from. Deriving the daily mean from hour means is a weighted-mean
+    problem the moment one hour holds two snapshots, and getting it wrong would
+    move a number that is already live and already correct. The finer series is
+    strictly additive; the sparkline's numbers are byte-identical to what they
+    were before this ship, because the query behind them was not touched.
+
+    The bucket is an HOUR because that is what the rail produces — measured 9
+    Sep, 5,566 of 7,150 US Open outright writes land on minute 50 and every one
+    of the rest inside the same hour, so an hourly bucket loses 5 readings in
+    260 rather than the 245 the daily bucket loses.
+    """
+    if not outcome_ids:
+        return {}
+
+    cutoff = now - timedelta(days=TREND_FINE_DAYS)
+    hour = sqlfunc.date_trunc("hour", FuturesOddsSnapshot.captured_at).label("hour")
+    rows = (
+        await session.execute(
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                hour,
+                sqlfunc.avg(FuturesOddsSnapshot.probability).label("probability"),
+            )
+            .where(
+                FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+                FuturesOddsSnapshot.captured_at >= cutoff,
+                FuturesOddsSnapshot.probability.isnot(None),
+            )
+            .group_by(FuturesOddsSnapshot.outcome_id, hour)
+            .order_by(FuturesOddsSnapshot.outcome_id, hour)
+            .limit(MAX_FINE_SERIES_ROWS)
+        )
+    ).all()
+
+    _warn_if_truncated(rows, MAX_FINE_SERIES_ROWS, "hourly", len(outcome_ids))
+
+    series: dict[int, list[tuple[str, float]]] = defaultdict(list)
+    for row in rows:
+        if row.probability is None or row.hour is None:
+            continue
+        # A `Z`-suffixed instant, not a naive one: the client parses this with
+        # `new Date(...)` and a naive string is read in LOCAL time there, which
+        # would slide the whole line by the reader's own offset.
+        stamp = row.hour
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        series[row.outcome_id].append(
+            (
+                stamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00:00Z"),
+                float(row.probability),
+            )
+        )
     return dict(series)
 
 
@@ -1367,6 +1470,13 @@ async def _build_sections(
     series = (
         await _load_series(db, board_outcome_ids, now=now) if want_first else {}
     )
+    # The chart's own series (ux/1144 (a)). Gated on `want_first` for exactly
+    # the same reason as the daily one — the chart is a first-screen component
+    # and a `rest`-only build must not pay for a query it serialises nothing
+    # from.
+    fine_series = (
+        await _load_fine_series(db, board_outcome_ids, now=now) if want_first else {}
+    )
 
     # Re-key the loaded prices onto the register's identity tuple. Anything the
     # query returned that the register does not pin simply has no key here and
@@ -1441,7 +1551,11 @@ async def _build_sections(
     # over prices already loaded; the query it would have added (the trend
     # series) is the one skipped above.
     base = build_boards(
-        register, prices=by_identity, series_by_outcome=series, now=now
+        register,
+        prices=by_identity,
+        series_by_outcome=series,
+        fine_series_by_outcome=fine_series,
+        now=now,
     )
 
     fragments: dict[str, dict[str, Any]] = {}

@@ -78,6 +78,18 @@ function trend(n: number, start = 0.2) {
   }));
 }
 
+/**
+ * The same days as `ChartPoint`s (#4173).
+ *
+ * A row carries `trend` keyed `date`; the chart's own point is keyed `at`,
+ * because `at` may be an instant and the day parser would build an
+ * `Invalid Date` out of one. A day is still a legal `at`, which is what keeps
+ * every assertion below measuring what it measured before.
+ */
+function chartPointsOf(points: { date: string; probability: number }[]) {
+  return points.map(({ date, probability }) => ({ at: date, probability }));
+}
+
 function row(index: number, overrides: Partial<TournamentRow> = {}): TournamentRow {
   return {
     entity_key: `player-${index}`,
@@ -368,7 +380,7 @@ describe("contender chart", () => {
       { date: "2026-08-05", probability: 0.25 },
     ] });
     const geometry = chartGeometry(chartSeries([a, b]), "ALL", 100, 100);
-    expect(geometry.dates).toEqual(["2026-08-01", "2026-08-03", "2026-08-05"]);
+    expect(geometry.keys).toEqual(["2026-08-01", "2026-08-03", "2026-08-05"]);
     // The late starter begins part-way across, not at x=0.
     const late = seriesPoints(chartSeries([a, b])[1], geometry, "ALL");
     expect(late.startsWith("0.0,")).toBe(false);
@@ -387,8 +399,8 @@ describe("contender chart", () => {
     // weeks ago — the chart would read "no data" when the truth is "no recent
     // data", which the banner already says properly.
     const old = trend(10);
-    expect(pointsInTimeframe(old, "1W")).toHaveLength(7);
-    expect(pointsInTimeframe(old, "ALL")).toHaveLength(10);
+    expect(pointsInTimeframe(chartPointsOf(old), "1W")).toHaveLength(7);
+    expect(pointsInTimeframe(chartPointsOf(old), "ALL")).toHaveLength(10);
   });
 
   it("offers an undrawable timeframe as disabled rather than blank", () => {

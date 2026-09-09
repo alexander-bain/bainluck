@@ -281,6 +281,48 @@ class TestWhatEachHalfLOADS:
         await client.get(f"{URL}?sections=first")
         assert len(calls) == 1 and calls[0] > 0
 
+    async def test_rest_runs_no_FINE_series_query_either(
+        self, client, monkeypatch
+    ):
+        """ux/1144 (a) added a second, denser series for the contender chart —
+        which is a first-screen component, so a `rest`-only build must not pay
+        for it. This is the more expensive of the two queries (hourly buckets,
+        measured 113 ms against 31,807 rows on production), so the split leaking
+        here would cost more than the one it was written for."""
+        calls: list[int] = []
+
+        async def _load_fine_series(session, outcome_ids, *, now):
+            calls.append(len(outcome_ids))
+            return {}
+
+        monkeypatch.setattr(tournaments, "_load_fine_series", _load_fine_series)
+        await client.get(f"{URL}?sections=rest")
+        assert calls == [], f"a rest-only build ran {len(calls)} fine series queries"
+
+    async def test_first_loads_the_FINE_series_the_chart_draws(
+        self, client, monkeypatch
+    ):
+        """The control: without it, never calling the loader at all would pass
+        the test above. It also pins that the fine series is addressed to the
+        BOARD's outcomes — the same set as the daily one, not the slate's."""
+        calls: list[int] = []
+
+        async def _load_fine_series(session, outcome_ids, *, now):
+            calls.append(len(outcome_ids))
+            return {}
+
+        daily: list[int] = []
+
+        async def _load_series(session, outcome_ids, *, now):
+            daily.append(len(outcome_ids))
+            return {}
+
+        monkeypatch.setattr(tournaments, "_load_fine_series", _load_fine_series)
+        monkeypatch.setattr(tournaments, "_load_series", _load_series)
+        await client.get(f"{URL}?sections=first")
+        assert len(calls) == 1 and calls[0] > 0
+        assert calls == daily
+
     async def test_rest_does_not_resolve_the_day_cards_events(
         self, client, monkeypatch
     ):

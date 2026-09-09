@@ -47,7 +47,7 @@ import {
   axisTicks,
   chartGeometry,
   chartSeriesFor,
-  dateX,
+  keyX,
   defaultSelection,
   seriesColorByEntity,
   shortDateLabel,
@@ -95,16 +95,16 @@ function dayNumberBefore(iso: string): number {
 }
 
 function axisTicksBefore(geometry: ChartGeometry): AxisTick[] {
-  const dates = geometry.dates;
+  const dates = geometry.keys;
   if (dates.length < 2) return [];
   const first = dates[0];
   const last = dates[dates.length - 1];
-  const firstX = dateX(first, geometry);
-  const lastX = dateX(last, geometry);
+  const firstX = keyX(first, geometry);
+  const lastX = keyX(last, geometry);
   if (firstX === null || lastX === null) return [];
 
   const make = (date: string, x: number, tier: BeforeTier) =>
-    ({ date, x, label: shortDateLabel(date), tier } as unknown as AxisTick);
+    ({ at: date, x, label: shortDateLabel(date), tier } as unknown as AxisTick);
   const kept = [make(first, firstX, "end"), make(last, lastX, "end")];
   if (dates.length < 3) return kept;
 
@@ -131,7 +131,7 @@ function axisTicksBefore(geometry: ChartGeometry): AxisTick[] {
       }
     }
     if (nearest === null) continue;
-    const x = dateX(nearest, geometry);
+    const x = keyX(nearest, geometry);
     if (x === null) continue;
     const fraction = x / geometry.width;
     const clashes = kept.some((other) => {
@@ -194,7 +194,7 @@ function AxisStrip({ ticks, tiers }: { ticks: AxisTick[]; tiers: string[] }) {
       {visible.map((tick) => {
         const fraction = tick.x / WIDTH;
         return (
-          <React.Fragment key={tick.date}>
+          <React.Fragment key={tick.at}>
             <span
               className="absolute top-0 block h-2 w-px bg-surface-border"
               style={{ left: `${fraction * 100}%` }}
