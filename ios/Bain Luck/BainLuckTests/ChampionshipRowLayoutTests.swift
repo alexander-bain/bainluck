@@ -145,8 +145,16 @@ final class ChampionshipRowLayoutTests: XCTestCase {
 
         // Measured off artifacts-native-039/AFTER-mlb-15305463-s900.png: the
         // Brewers' clinched bar rendered 29.00 pt and the Reds' track ~52.4 pt.
-        XCTAssertEqual(brewersBar, 29.3, accuracy: 0.5)   // 137.3 - 8 - 100
-        XCTAssertEqual(redsBar, 53.3, accuracy: 0.5)      // 137.3 - 8 -  76
+        //
+        // 🔴 THE BREWERS NUMBER MOVED WITH #4108, AND UPWARDS. Its card contains
+        // three ordinary rows, so it now takes the same 76 pt column the Reds
+        // take instead of the 100 pt clinched one — the wide column existed only
+        // to hold a trend badge beside the word "clinched", and that badge is
+        // gone. The bar gets those 24 pt back on every card with a clinched row.
+        // A fix for a false sentence turning out to widen the picture beside it
+        // is worth writing down rather than quietly re-pinning.
+        XCTAssertEqual(brewersBar, 53.3, accuracy: 0.5)   // 137.3 - 8 - 76
+        XCTAssertEqual(redsBar, 53.3, accuracy: 0.5)      // 137.3 - 8 - 76
 
         for (name, bar) in [("Brewers", brewersBar), ("Reds", redsBar)] {
             XCTAssertGreaterThan(
@@ -192,40 +200,58 @@ final class ChampionshipRowLayoutTests: XCTestCase {
 
     // MARK: - Which badge column a card gets
 
-    func testOnlyAClinchedCardWidensItsBadgeColumn() throws {
+    /// 🔴 THIS TEST ASSERTED THE OPPOSITE UNTIL #4108, AND WAS RIGHT TO.
+    ///
+    /// A clinched row used to draw its trend badge *and* `✓ clinched`, so it was
+    /// the widest thing on the card and one of them widened the column for all
+    /// four rows. #4108 removed the trend badge from a settled row — it was
+    /// claiming a 90.9-point 24h move on a stage the same row calls decided — and
+    /// `✓ clinched` alone now measures **53.5 pt** against an ordinary row's 72+.
+    /// The clinched row became the narrow one, so the rule inverted with it.
+    func testOnlyAnAllClinchedCardTakesTheNarrowColumn() throws {
         XCTAssertEqual(
             ChampionshipRowLayout.badgeWidth(for: try redsStages()),
             ChampionshipRowLayout.valueBadgeWidth,
-            "a card of ordinary percentage rows must keep exactly the 70 pt "
-            + "column it has today")
+            "a card of ordinary percentage rows keeps the full column")
         XCTAssertEqual(
             ChampionshipRowLayout.badgeWidth(for: try brewersStages()),
-            ChampionshipRowLayout.clinchedBadgeWidth)
+            ChampionshipRowLayout.valueBadgeWidth,
+            "the Brewers card has three ordinary rows, so it keeps the full "
+            + "column even though one row is clinched")
+
+        let everyRowClinched = try [0.996, 0.9955, 0.999, 1.0].enumerated().map {
+            try stage("k\($0.offset)", "L", probability: $0.element, trend: 0.9133)
+        }
+        XCTAssertEqual(
+            ChampionshipRowLayout.badgeWidth(for: everyRowClinched),
+            ChampionshipRowLayout.allClinchedBadgeWidth,
+            "a team that clinched every stage draws no percentages and no trend "
+            + "badges, so it must not pay for a column sized to hold them")
     }
 
     /// One width for the whole card, not per row. Three bars of three different
     /// track lengths cannot be compared to each other, and comparing them is the
     /// only reason to draw three.
     ///
-    /// The Brewers card is the case: one clinched row (99.6%) and three ordinary
-    /// ones. The card takes the wide column, so all four bars stay one length.
-    func testOneClinchedRowSetsTheColumnForEveryRowOfThatCard() throws {
+    /// 🔴 THE FAILURE THIS CATCHES IS #3574 WITH THE ROLES SWAPPED. Post-#4108 it
+    /// is tempting to give any card containing a clinched row the narrow column —
+    /// the clinched row fits it. Its ordinary siblings do not, and they would
+    /// truncate. The old suite could not have caught that: it only ever compared
+    /// the clinched constant against clinched rows.
+    @MainActor
+    func testOneOrdinaryRowKeepsTheFullColumnForEveryRowOfThatCard() throws {
         let brewers = try brewersStages()
         XCTAssertEqual(brewers.filter {
             ChampionshipRowLayout.isClinched(probability: $0.probability)
         }.count, 1, "precondition: exactly one Brewers row is clinched")
 
-        XCTAssertEqual(
-            ChampionshipRowLayout.badgeWidth(for: brewers),
-            ChampionshipRowLayout.clinchedBadgeWidth,
-            "one clinched row must widen the column its three ordinary siblings "
-            + "also draw in, or the four bars get four different track lengths")
-
-        // Drop the clinched row and the same card reverts to the narrow column.
-        let ordinaryOnly = Array(brewers.dropFirst())
-        XCTAssertEqual(
-            ChampionshipRowLayout.badgeWidth(for: ordinaryOnly),
-            ChampionshipRowLayout.valueBadgeWidth)
+        let column = ChampionshipRowLayout.badgeWidth(for: brewers)
+        for row in brewers {
+            XCTAssertGreaterThanOrEqual(
+                column, naturalWidth(of: ChampionshipStageBadges(stage: row)),
+                "every row of a mixed card must fit the one column the card "
+                + "gives all of them, clinched or not")
+        }
     }
 
     // MARK: - What a row shows
@@ -251,7 +277,7 @@ final class ChampionshipRowLayoutTests: XCTestCase {
     /// `Text`s now carry `lineLimit(1)`, so the same too-narrow column truncates
     /// instead and the row's height never moves. An equal-height assertion would
     /// pass for the same reason the bug would still be there. (Found by mutation:
-    /// setting `clinchedBadgeWidth` back to 70 left a height test green.)
+    /// setting `allClinchedBadgeWidth` back to 70 left a height test green.)
     ///
     /// What is left is the honest question: does the column hold the content?
     /// So host the real badge view, ask it what width it wants, and require the
@@ -289,10 +315,21 @@ final class ChampionshipRowLayoutTests: XCTestCase {
             "the widest ordinary row (\(ordinary.describe)) wants \(ordinary.width) pt "
             + "and the column offers \(ChampionshipRowLayout.valueBadgeWidth) pt")
         XCTAssertGreaterThanOrEqual(
-            ChampionshipRowLayout.clinchedBadgeWidth, clinched.width,
+            ChampionshipRowLayout.allClinchedBadgeWidth, clinched.width,
             "the widest clinched row (\(clinched.describe)) wants \(clinched.width) pt "
-            + "and the column offers \(ChampionshipRowLayout.clinchedBadgeWidth) pt. "
+            + "and the column offers \(ChampionshipRowLayout.allClinchedBadgeWidth) pt. "
             + "Short by any amount and the row breaks its own words (#3574).")
+
+        // #4108 inverted the two: a clinched row draws no trend badge, so it is
+        // now the NARROWER of the two kinds. Pinned, because `badgeWidth(for:)`
+        // reads `allSatisfy` rather than `contains` on the strength of it — if a
+        // clinched row ever grows back past an ordinary one, that rule is wrong
+        // again and this says so before a card truncates.
+        XCTAssertLessThan(
+            clinched.width, ordinary.width,
+            "a clinched row (\(clinched.describe), \(clinched.width) pt) must be "
+            + "narrower than an ordinary one (\(ordinary.describe), \(ordinary.width) pt), "
+            + "or the all-clinched narrow column is the wrong rule")
 
         // The column must not be padded far past what it holds either — every
         // point it takes is a point off the bar (#3580).
@@ -300,22 +337,32 @@ final class ChampionshipRowLayoutTests: XCTestCase {
             ChampionshipRowLayout.valueBadgeWidth - ordinary.width, 4,
             "the ordinary column is wider than it needs to be, at the bar's expense")
         XCTAssertLessThan(
-            ChampionshipRowLayout.clinchedBadgeWidth - clinched.width, 4,
-            "the clinched column is wider than it needs to be, at the bar's expense")
+            ChampionshipRowLayout.allClinchedBadgeWidth - clinched.width, 4,
+            "the all-clinched column is wider than it needs to be, at the bar's expense")
     }
 
-    /// The precondition the whole fix rests on: the content genuinely did not fit
-    /// the 70 pt column that shipped. If it did, #3574 could not have happened
-    /// and every test above is guarding nothing.
+    /// #3574's row, re-measured after #4108 removed the thing that made it wide.
+    ///
+    /// This used to assert the opposite — that `↑91.3%  ✓ clinched` wants MORE
+    /// than the 70 pt column it was given, which is why it broke into
+    /// `clinc` / `hed`. That premise was true and is now unreachable: the trend
+    /// badge is not drawn on a clinched row at all, so the same stage measures
+    /// 53.5 pt and would have fitted the column that broke it.
+    ///
+    /// Kept rather than deleted, because #3574 was fixed by widening the column
+    /// and #4108 fixed the content instead. The row that started it is the honest
+    /// place to record that the width problem is now gone at the source.
     @MainActor
-    func testThePhotographedRowDidNotFitTheOldColumn() throws {
+    func testThePhotographedRowNowFitsEvenTheColumnThatBrokeIt() throws {
         let photographed = try stage(
             "make_playoffs", "Make Playoffs", probability: 0.996, trend: 0.9133)
-        XCTAssertGreaterThan(
-            naturalWidth(of: ChampionshipStageBadges(stage: photographed)), 70,
-            "'↑91.3%  ✓ clinched' — the Brewers row in "
-            + "AFTER-mlb-15305463-s900.png — must want more than the 70 pt it was "
-            + "given, or the `clinc` / `hed` break has some other cause")
+        let wanted = naturalWidth(of: ChampionshipStageBadges(stage: photographed))
+        XCTAssertLessThan(
+            wanted, 70,
+            "the Brewers row in AFTER-mlb-15305463-s900.png drew "
+            + "'↑91.3%  ✓ clinched' and wanted more than 70 pt. Drawing only "
+            + "'✓ clinched' it wants \(wanted) pt — if that is back over 70 the "
+            + "trend badge has returned to a settled row (#4108)")
     }
 
     /// The probability string is not what drives the column; the trend badge is.

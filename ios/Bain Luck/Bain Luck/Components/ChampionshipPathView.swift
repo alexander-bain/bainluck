@@ -275,7 +275,22 @@ struct ChampionshipStageBadges: View {
         // It is why a row's HEIGHT can no longer testify about this bug, and why
         // the test that guards it measures width instead.
         HStack(spacing: 4) {
-            if let trend = stage.trend24h,
+            // #4108 — a settled row carries no movement. This drew
+            // "↑90.9%  ✓ clinched": a 90.9 percentage-POINT 24h move claimed on a
+            // stage the same row calls decided, with the probability itself never
+            // printed (the `else` below is what would have shown it). Alex read
+            // the delta as the probability, which is the obvious reading of a
+            // lone percentage — and the true statement was the stranger of the
+            // two. `LadderCardView` has suppressed the delta on a clinched row
+            // since it shipped; this is the two components agreeing (#4002).
+            //
+            // Clinched only, because clinched is the only settled state this
+            // model has: `ChampionshipRowLayout` knows `isClinched` and nothing
+            // else, and a stage at 0.1% is a long shot rather than an
+            // elimination. `LadderCardView`'s `eliminated` arm has no counterpart
+            // here to keep in step with.
+            if !isClinched,
+               let trend = stage.trend24h,
                ChampionshipRowLayout.showsTrendBadge(trend: trend) {
                 HStack(spacing: 1) {
                     Image(systemName: trend > 0 ? "arrow.up" : "arrow.down")
