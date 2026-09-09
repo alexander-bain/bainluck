@@ -449,12 +449,40 @@ function eventIsSettled(item: FeedItem): boolean {
   return status === "completed" || status === "closed";
 }
 
-export function feedContextSnippet(item: FeedItem): string {
-  if (item.context_summary) return item.context_summary;
-  if (item.type === "futures") {
-    const data = item.data as FeedFuturesData;
-    return item.headline || item.reason || data.hook_description || "";
+/** First candidate carrying actual text, trimmed; `""` if none.
+ *
+ * #4265. `||` already treats `""` as absent, which is most of why web was the
+ * client that behaved — but it does NOT treat `"   "` as absent, and a caption
+ * of spaces reserves a line the reader sees as blank. Both clients trim before
+ * deciding; the Swift twin is `DiscoverCaption.firstMeaningful`. */
+function firstMeaningful(candidates: (string | null | undefined)[]): string {
+  for (const candidate of candidates) {
+    const trimmed = (candidate ?? "").trim();
+    if (trimmed) return trimmed;
   }
+  return "";
+}
+
+export function feedContextSnippet(item: FeedItem): string {
+  if (item.type === "futures") {
+    // #4265 — ONE chain with iOS (`DiscoverCaption.feedCaption`), graded
+    // against `fixtures/discover/caption-chain-record-2026-09-09.json`.
+    //
+    // `headline` above `reason` because on real strings `reason` restates the
+    // market name the card already prints as its heading — "Los Angeles
+    // Dodgers (31%) leads MLB World Series Winner" under a title that reads
+    // "MLB World Series Winner" — while `headline` is "Los Angeles Dodgers
+    // leads at 31%". The UX-P045 promotion below is a SETTLED-EVENT rule
+    // (`headline` is a bucket label there) and deliberately does not carry.
+    const data = item.data as FeedFuturesData;
+    return firstMeaningful([
+      item.context_summary,
+      item.headline,
+      item.reason,
+      data.hook_description,
+    ]);
+  }
+  if (item.context_summary) return item.context_summary;
   // UX-P045 — on a SETTLED event card, prefer `reason` over `headline`.
   //
   // `headline` is a BUCKET LABEL tensed for a live market; `reason` is the

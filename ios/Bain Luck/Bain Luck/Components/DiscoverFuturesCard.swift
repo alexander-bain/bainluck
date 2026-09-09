@@ -70,10 +70,15 @@ struct NativeFuturesDiscoverCard: View {
         return "\(data.name) on Bain Luck"
     }
 
+    /// #4265 — the caption chain now resolves whole in `DiscoverCaption`, at the
+    /// one call site, so the record in
+    /// `fixtures/discover/caption-chain-record-2026-09-09.json` grades the real
+    /// composition rather than a pure function nothing has to call.
+    /// `hookDescription` is still the last rung; it is applied there, not here.
+    /// Kept as a trim-and-nil so a whitespace-only caption cannot reserve a line.
     private var contextText: String? {
-        if let feedContext, !feedContext.isEmpty { return feedContext }
-        if let hook = data.hookDescription, !hook.isEmpty { return hook }
-        return nil
+        let caption = DiscoverCaption.firstMeaningful([feedContext, data.hookDescription])
+        return caption.isEmpty ? nil : caption
     }
 
     var body: some View {

@@ -1,0 +1,140 @@
+{
+  "_": [
+    "#4265 — the language-neutral record of the futures-card caption chain.",
+    "",
+    "Web resolves the caption in `frontend/components/discover/utils.ts`",
+    "(`feedContextSnippet`); iOS resolves it in",
+    "`ios/Bain Luck/Bain Luck/Utilities/DiscoverCaption.swift` (`feedCaption`).",
+    "The two can never meet inside one process, so they meet here: each side",
+    "asserts in its own runner that it reproduces every row below, and",
+    "`frontend/e2e/contract/discoverCaptionChainParity.contract.test.js` parses",
+    "the Swift table out of `DiscoverCaptionParityTests.swift` and asserts it",
+    "equals this file. Same construction as the CAL-P043 calibration record.",
+    "",
+    "ORDER (web's, adopted for both): context_summary -> headline -> reason ->",
+    "hook_description -> empty. `reason` restates the market name, which the",
+    "card already prints as its title ('Los Angeles Dodgers (31%) leads MLB",
+    "World Series Winner' under a heading that reads 'MLB World Series",
+    "Winner'); `headline` is the same fact without the repetition ('Los Angeles",
+    "Dodgers leads at 31%'). UX-P045 promoted `reason` above `headline` for",
+    "SETTLED EVENTS, where `headline` is a bucket label — that precedent does",
+    "not carry to futures and this record is futures-only.",
+    "",
+    "EMPTY IS ABSENT. The wire sends '' far more often than null: measured on",
+    "`GET /api/feed?limit=250`, 2026-09-09 ~07:20 PT, 113 futures cards carried",
+    "`context_summary` = '' on 23 and `reason` = '' on 23, while `headline` was",
+    "the one that arrived null (19). Web's `||` already treats '' as absent;",
+    "iOS's `??` did not, so an empty first rung won the whole chain and three",
+    "cards rendered with no caption at all. Every row whose name starts",
+    "'prod-' is one of those real cards."
+  ],
+  "captured_at": "2026-09-09T07:20:00-07:00",
+  "source": "GET /api/feed?limit=250 (113 futures cards)",
+  "rows": [
+    {
+      "name": "prod-stanley-cup-blank-in-app",
+      "note": "Card 'Canadian Team to Win the Stanley Cup®'. Rendered captioned on web and BLANK in the app before #4265: context_summary '' won iOS's ?? chain, contextText rejected it, and hook_description was null.",
+      "context_summary": "",
+      "headline": "Well off its opening price",
+      "reason": "",
+      "hook_description": null,
+      "expected": "Well off its opening price"
+    },
+    {
+      "name": "prod-wti-blank-in-app",
+      "note": "Card 'Will WTI Crude Oil (WTI) hit (HIGH) $100 in September?'. Same shape.",
+      "context_summary": "",
+      "headline": "Well off its opening price",
+      "reason": "",
+      "hook_description": null,
+      "expected": "Well off its opening price"
+    },
+    {
+      "name": "prod-pantoja-blank-in-app",
+      "note": "Card 'Will Alexandre Pantoja become UFC champion in 2026?'. Same shape.",
+      "context_summary": "",
+      "headline": "Off its opening price",
+      "reason": "",
+      "hook_description": null,
+      "expected": "Off its opening price"
+    },
+    {
+      "name": "prod-hasan-piker-hook-promoted",
+      "note": "Card 'Hasan Piker arrested in 2026?'. The only card in the edition where both clients showed something and they disagreed: web printed `headline`, the app printed `hook_description`, because the empty first rung silently promoted hook from fourth place to second.",
+      "context_summary": "",
+      "headline": "Well off its opening price",
+      "reason": "",
+      "hook_description": "Hasan Piker's unexpected arrest in 2026 has sent shockwaves through the online political commentary community.",
+      "expected": "Well off its opening price"
+    },
+    {
+      "name": "prod-world-series-headline-beats-reason",
+      "note": "The ordering call itself, on real strings. `reason` repeats the card's own title.",
+      "context_summary": "",
+      "headline": "Los Angeles Dodgers leads at 31%",
+      "reason": "Los Angeles Dodgers (31%) leads MLB World Series Winner",
+      "hook_description": null,
+      "expected": "Los Angeles Dodgers leads at 31%"
+    },
+    {
+      "name": "context-summary-wins-when-present",
+      "context_summary": "Traders moved 12 points on this overnight.",
+      "headline": "Los Angeles Dodgers leads at 31%",
+      "reason": "Los Angeles Dodgers (31%) leads MLB World Series Winner",
+      "hook_description": "A hook nobody should see here.",
+      "expected": "Traders moved 12 points on this overnight."
+    },
+    {
+      "name": "null-headline-falls-to-reason",
+      "note": "`headline` is the field that genuinely arrives null (19 of 113).",
+      "context_summary": "",
+      "headline": null,
+      "reason": "Marine Le Pen (36%) leads Next French Presidential Election",
+      "hook_description": "A hook nobody should see here.",
+      "expected": "Marine Le Pen (36%) leads Next French Presidential Election"
+    },
+    {
+      "name": "empty-headline-falls-to-reason",
+      "note": "The '' twin of the row above. Both must behave identically — that equivalence IS #4265.",
+      "context_summary": "",
+      "headline": "",
+      "reason": "Marine Le Pen (36%) leads Next French Presidential Election",
+      "hook_description": "A hook nobody should see here.",
+      "expected": "Marine Le Pen (36%) leads Next French Presidential Election"
+    },
+    {
+      "name": "hook-is-the-last-resort-not-the-second",
+      "context_summary": "",
+      "headline": "",
+      "reason": "",
+      "hook_description": "As the Pokémon franchise continues to surge in popularity, collectors are watching the market.",
+      "expected": "As the Pokémon franchise continues to surge in popularity, collectors are watching the market."
+    },
+    {
+      "name": "all-null-is-the-empty-state",
+      "note": "Both clients must reach the empty state, not a literal 'nil' or a crash.",
+      "context_summary": null,
+      "headline": null,
+      "reason": null,
+      "hook_description": null,
+      "expected": ""
+    },
+    {
+      "name": "all-empty-is-the-empty-state",
+      "context_summary": "",
+      "headline": "",
+      "reason": "",
+      "hook_description": "",
+      "expected": ""
+    },
+    {
+      "name": "whitespace-only-is-not-a-caption",
+      "note": "A string of spaces is an absence wearing a value. Neither client may caption a card with it.",
+      "context_summary": "   ",
+      "headline": "\n",
+      "reason": "Above 5 (48%) leads Israeli legislative election",
+      "hook_description": null,
+      "expected": "Above 5 (48%) leads Israeli legislative election"
+    }
+  ]
+}
