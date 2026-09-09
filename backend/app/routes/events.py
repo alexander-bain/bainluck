@@ -14119,6 +14119,9 @@ async def get_event_odds_history(
             extract_total_threshold,
             home_margin_from_spread,
             margin_rung_on_home_axis,
+            margin_rung_on_home_axis_for_side,
+            resolve_rung_sides_by_code,
+            rung_provider_code,
             select_projected_final,
         )
         from app.models.models import FuturesOddsSnapshot
@@ -14162,6 +14165,17 @@ async def get_event_odds_history(
             # the market's LABEL, not of any one contract.
             ask_the_outcome = scope in _PM_SCOPES_DEFERRING_TO_OUTCOMES
 
+            # Which side each of this market's two team codes is on, decided
+            # once from the whole ladder instead of once per rung (#4218).
+            # `None` means this market is not code-anchored and every rung
+            # falls back to resolving its own text, exactly as before.
+            rung_sides_by_code = resolve_rung_sides_by_code(
+                market.external_id,
+                [(o.name, o.external_id) for o in market.outcomes],
+                event.home_team_name,
+                event.away_team_name,
+            )
+
             for outcome in market.outcomes:
                 name = outcome.name or ""
                 prob = float(outcome.current_probability) if outcome.current_probability else None
@@ -14196,12 +14210,25 @@ async def get_event_odds_history(
                 # appended as a bare magnitude. A rung whose side cannot be
                 # resolved returns None and is dropped: losing a rung costs
                 # precision, guessing a side inverts the scoreline.
-                margin_rung = margin_rung_on_home_axis(
-                    name,
-                    prob,
-                    event.home_team_name,
-                    event.away_team_name,
-                )
+                # The code map, where this market has one, is authoritative in
+                # BOTH directions: it places a rung whose short form the token
+                # rule cannot read, and it refuses a market whose two ladders
+                # resolve onto the same axis (#4218).
+                if rung_sides_by_code is not None:
+                    margin_rung = margin_rung_on_home_axis_for_side(
+                        name,
+                        prob,
+                        rung_sides_by_code.get(
+                            rung_provider_code(outcome.external_id, market.external_id)
+                        ),
+                    )
+                else:
+                    margin_rung = margin_rung_on_home_axis(
+                        name,
+                        prob,
+                        event.home_team_name,
+                        event.away_team_name,
+                    )
                 if margin_rung is not None:
                     if source not in spread_contracts_by_source:
                         spread_contracts_by_source[source] = []
