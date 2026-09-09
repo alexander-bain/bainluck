@@ -118,10 +118,21 @@ function hasInstants(keys: string[]): boolean {
  * computed from, pulling the line through a point nothing observed.
  *
  * So the cut is the fine series' FIRST DAY: daily points strictly before it,
- * fine points from it on. Nothing is lost at the seam, because both series are
- * built from the same snapshots over the same table — the first fine bucket of
- * a day IS the first reading of that day, so the daily point being dropped has
- * no reading behind it that the fine points do not already carry.
+ * fine points from it on.
+ *
+ * 🔵 **THE SEAM COSTS PART OF ONE DAY, AND THAT IS THE CHEAPER OF THE TWO
+ * ERRORS.** The server's fine cutoff is `now − 14 days`, a mid-afternoon
+ * instant, not a midnight — so on the OLDEST day of the fine window the daily
+ * mean covers readings the fine series starts after, and dropping that daily
+ * point drops them. Every other day in the overlap is covered completely.
+ *
+ * Keeping it instead is worse, and not marginally: a daily key IS midnight, so
+ * the whole day's mean would be plotted at 00:00, before the fine readings it
+ * was computed from. That draws a vertex at a time nothing was observed and at
+ * a value nothing read — a fabricated point, on a chart whose first doctrine is
+ * that gaps stay gaps. Losing part of the seam day leaves a longer straight
+ * segment between two REAL readings, which is what this module already does
+ * everywhere else it has no data. Bounded, honest, and pinned by a guard.
  */
 export function chartPoints(row: TournamentRow): ChartPoint[] {
   const daily = Array.isArray(row.trend) ? row.trend : [];

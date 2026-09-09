@@ -247,6 +247,27 @@ describe("#4173 — the splice keeps the history the fine series does not cover"
     expect(keys).toContain("2026-09-05");
     expect(keys.filter((key) => !isDayKey(key))).toHaveLength(85);
   });
+
+  it("pays part of ONE seam day rather than plotting a day's mean at midnight", () => {
+    // The server's fine cutoff is `now - 14 days`, a mid-afternoon instant, so
+    // on the OLDEST day of the fine window the daily mean covers readings the
+    // fine series starts after. That day's daily point is dropped with them.
+    const seam = row({
+      trend: days("2026-09-04", 3), // 4, 5, 6 Sep as daily means
+      trend_hourly: hours("2026-09-06T15:00:00Z", 6), // the 6th, from 15:00 on
+    });
+    const keys = chartPoints(seam).map((point) => point.at);
+
+    expect(keys.slice(0, 2)).toEqual(["2026-09-04", "2026-09-05"]);
+    expect(keys[2]).toBe("2026-09-06T15:00:00Z");
+
+    // THE BAN, and it is the whole reason the cut is a DAY and not an instant:
+    // a daily key is MIDNIGHT, so keeping `2026-09-06` would plot the whole
+    // day's mean at 00:00 — nine hours before the readings it was computed
+    // from, at a value nothing observed. A fabricated vertex is worse than a
+    // longer straight segment between two real ones.
+    expect(keys).not.toContain("2026-09-06");
+  });
 });
 
 describe("#4173 — a timeframe over instants is a duration, not a bucket count", () => {
