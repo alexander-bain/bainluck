@@ -525,6 +525,98 @@ def _make_theme_bundle_item(
     }
 
 
+#: A trailing parenthetical qualifier on a market title (#4479).
+#:
+#: Polymarket disambiguates its own catalogue in parentheses — "2026 Men's US Open
+#: Winner (Tennis)" exists because it also lists a golf US Open. That suffix is
+#: bookkeeping about the VENUE's catalogue, not part of the question, and Kalshi's
+#: listing of the same question has no equivalent. It costs the pair a token on one
+#: side only, which is a pure penalty in a Jaccard.
+_TRAILING_QUALIFIER_RE = re.compile(r"\s*\(([^()]{1,24})\)\s*$")
+
+#: A leading edition year on a market title (#4479).
+_LEADING_YEAR_RE = re.compile(r"^\s*(19|20)\d{2}\s+")
+
+#: Any four-digit year anywhere in a title — used only to ask "does the OTHER side
+#: name a year at all", never to decide that two years are the same.
+_ANY_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+
+def _resolution_year(data: dict[str, Any]) -> int | None:
+    """The year a market resolves in, or None if it does not say."""
+    raw = data.get("resolution_date")
+    if not raw:
+        return None
+    match = _ANY_YEAR_RE.search(str(raw))
+    return int(match.group(0)) if match else None
+
+
+def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
+    """The title to hand the matcher, with two venue artefacts removed (#4479).
+
+    A PAIRWISE function, not a normalizer: what may be dropped from one title
+    depends on what the other title says. Both removals are conservative in the
+    direction that matters — a deduper that over-pairs DELETES a card the reader
+    wanted, so each one is gated on evidence from the other row rather than
+    applied unconditionally.
+
+    1. **A trailing parenthetical qualifier**, always. ``(Tennis)`` on Polymarket's
+       "2026 Men's US Open Winner (Tennis)" disambiguates that venue's own
+       catalogue against its golf US Open; Kalshi's listing of the identical
+       question carries nothing equivalent. Dropped on both sides so the rule is
+       symmetric.
+
+    2. **A leading edition year, but ONLY when the other title names no year at
+       all AND both rows resolve in that same year.** The year is load-bearing
+       whenever both sides carry one: "2027 FIFA Women's World Cup Champion"
+       beside "2030 FIFA World Cup Champion" is two different tournaments, and
+       the matcher's own ``left_num != right_num`` guard refuses it. That guard
+       is untouched here — this only reaches the case where one venue dates its
+       title and the other leaves the edition implicit, and the resolution dates
+       agree that they mean the same edition. Without the resolution-date check
+       an undated "Masters Winner" for next year's edition would fold onto a
+       dated one for this year's.
+
+    WHY THIS IS NOT A THRESHOLD MOVE, measured on the 23 same-bundle pairs served
+    on page one at 13:30 PT 2026-09-09:
+
+    ==========================================  =======  ===========  ==========
+    pair                                        jaccard  containment  verdict
+    ==========================================  =======  ===========  ==========
+    2026 Men's US Open Winner (Tennis)
+      vs US Open Men's Singles Winner             0.625        0.833  DUPLICATE
+    US Open Men's Singles Winner
+      vs US Open Women's Singles Winner           0.714        0.833  must refuse
+    ==========================================  =======  ===========  ==========
+
+    **The duplicate scores LOWER than the control that must never fold.** No
+    relaxation of the 0.72 / 0.85 thresholds can separate them; one that admits
+    0.625 admits 0.714 and deletes the women's draw. Only making the two titles
+    comparable BEFORE they are scored does. After this function the same three
+    pairs read 0.833 (duplicate, folds) / 0.714 (men-vs-women, unchanged and
+    refused) / 0.571 (dated men's vs women's, refused), which is separation with
+    room in it rather than a tuned threshold.
+
+    Deliberately at the bundler and not inside ``is_same_question``: that function
+    is shared with the category-page spotlight, #4446 recorded that widening it
+    "would move three category pages", and it takes two strings — it cannot see
+    the resolution dates that gate removal 2. The blast radius of this stays
+    inside the one caller that has the evidence.
+    """
+    title = str(data.get("name") or "")
+    other_title = str(other.get("name") or "")
+
+    title = _TRAILING_QUALIFIER_RE.sub("", title)
+    other_stripped = _TRAILING_QUALIFIER_RE.sub("", other_title)
+
+    if _LEADING_YEAR_RE.match(title) and not _ANY_YEAR_RE.search(other_stripped):
+        year = int(_LEADING_YEAR_RE.match(title).group(0).strip())
+        if _resolution_year(data) == year and _resolution_year(other) == year:
+            title = _LEADING_YEAR_RE.sub("", title, count=1)
+
+    return title
+
+
 def _dedupe_same_question_members(
     members: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -559,6 +651,16 @@ def _dedupe_same_question_members(
     The FIRST member of a matched pair survives: ``members`` arrives in feed
     rank order, so the survivor is the better-ranked row, which is also the one
     the bundle's own question and score were derived from.
+
+    #4479 — THE TITLES ARE COMPARED AFTER :func:`_comparison_title`, not raw. The
+    first read taken after #4446 deployed found the next instance of this class one
+    bundle over: the Grand Slam card rendered the men's US Open TWICE, Polymarket's
+    "2026 Men's US Open Winner (Tennis)" at Zverev 46% beside Kalshi's "US Open
+    Men's Singles Winner" at Zverev 30%, two rows apart under "Who wins the Slam?".
+    Two numbers for one question, sixteen points apart, both rows advertising
+    ``sources: [kalshi, polymarket]``. The raw titles are refused by the matcher and
+    correctly so — the pair scores 0.625 while the men's-vs-women's pair that must
+    NEVER fold scores 0.714, so no threshold separates them. See that function.
     """
     from app.utils.cross_source_matching import is_same_question
 
@@ -566,11 +668,13 @@ def _dedupe_same_question_members(
     folded: list[dict[str, Any]] = []
     for item in members:
         data = _futures_data(item)
-        name = str(data.get("name") or "")
         source = str(data.get("source") or "")
         duplicate = any(
             str(_futures_data(k).get("source") or "") != source
-            and is_same_question(str(_futures_data(k).get("name") or ""), name)
+            and is_same_question(
+                _comparison_title(_futures_data(k), data),
+                _comparison_title(data, _futures_data(k)),
+            )
             for k in kept
         )
         (folded if duplicate else kept).append(item)
