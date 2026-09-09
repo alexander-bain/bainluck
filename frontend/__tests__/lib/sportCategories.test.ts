@@ -22,6 +22,9 @@ import {
   getCategoryForFutures,
   getLeagueTier,
   getLeagueDisplay,
+  getSportLabel,
+  getSportGroupLabel,
+  servedSportNameIsRaw,
   getLeagueDisplayWithEmoji,
   getEmojiForLeague,
   getCategoryName,
@@ -411,16 +414,119 @@ describe('getLeagueDisplay', () => {
 
     /**
      * Anchored on the code, because the chip is inside a `useSearchParams`
-     * client page that `renderToStaticMarkup` cannot mount. `sport.name` now
-     * appears nowhere in the file, so this is unambiguous.
+     * client page that `renderToStaticMarkup` cannot mount.
+     *
+     * #4358 rewrote this: it used to pin `getLeagueDisplay(sport.key)`, which
+     * is the implementation that broke the 161 branded rows. Pinning a call
+     * shape is why the suite stayed green through a visible label change — the
+     * behaviour is now covered by the control block below, and this only keeps
+     * the raw served name from coming back.
      */
-    test('the search chip reads the label map, not the served name', () => {
+    test('the search chip does not render the served name raw', () => {
       const src = readFileSync(
         join(__dirname, '..', '..', 'app', 'search', 'page.tsx'),
         'utf8'
       );
-      expect(src).toContain('getLeagueDisplay(sport.key)'); // survival
+      expect(src).toContain('getSportLabel(sport.key, sport.name)'); // survival
       expect(src).not.toContain('{sport.name}');
+    });
+  });
+
+  /**
+   * #4358 — THE MAP IS A KEY PARSER, SO IT MUST NOT ANSWER FOR A BRANDED ROW.
+   *
+   * #4247 fixed the 15 raw rows by routing every chip through
+   * `getLeagueDisplay`. That call applies to ALL 176 rows `/api/sports` serves,
+   * and the other 161 carry brands no key-derived map reproduces, so two chips
+   * that were already right were re-cased on production: "Dutch Eredivisie"
+   * became "NETHERLANDS EREDIVISIE" and "UEFA Europa Conference League" went
+   * all-caps.
+   *
+   * The suite did not notice because every #4247 assertion above is about a
+   * bucket key. THAT is the gap this block closes: the control is a BRANDED
+   * key, and each case first proves the map would get it wrong, so a revert to
+   * `getLeagueDisplay(sport.key)` reds here instead of shipping.
+   */
+  describe('#4358 a branded row keeps the name the server gave it', () => {
+    /**
+     * Measured: `/api/sports`, production, 2026-09-09 — 176 rows, 15 whose
+     * name IS their key and 161 branded. Pairs are [key, served name]; the
+     * first two are the chips that visibly regressed on /search?q=Ajax.
+     */
+    const BRANDED_ROWS: Array<[string, string]> = [
+      ['soccer_netherlands_eredivisie', 'Dutch Eredivisie'],
+      ['soccer_uefa_europa_conference_league', 'UEFA Europa Conference League'],
+      ['soccer_germany_liga3', '3. Liga - Germany'],
+      ['aussierules_aflw', "AFL Women's"],
+      ['icehockey_ahl', 'AHL'],
+    ];
+
+    test.each(BRANDED_ROWS)('%s keeps "%s"', (key, servedName) => {
+      expect(getSportLabel(key, servedName)).toBe(servedName);
+    });
+
+    /**
+     * The control that gives the block its teeth. Without this the assertions
+     * above would also pass under the blind swap for `icehockey_ahl`, whose
+     * key happens to parse to its own brand.
+     */
+    test('the map would get these wrong, so the guard can actually fail', () => {
+      const degraded = BRANDED_ROWS.filter(
+        ([key, servedName]) => getLeagueDisplay(key) !== servedName
+      );
+      // 4 of the 5: `icehockey_ahl` parses to "AHL" either way.
+      expect(degraded.length).toBeGreaterThanOrEqual(4);
+      expect(getLeagueDisplay('soccer_netherlands_eredivisie')).toBe(
+        'NETHERLANDS EREDIVISIE'
+      );
+    });
+
+    test('a row whose name IS its key still falls back to the map', () => {
+      // Survival: the #4247 ship must keep working through the new helper.
+      expect(getSportLabel('mma_other', 'mma_other')).toBe('Other MMA');
+      expect(getSportLabel('soccer_other', 'soccer_other')).toBe('Other Soccer');
+      expect(getSportLabel('esports', 'esports')).toBe('Esports');
+    });
+
+    test('an absent or blank served name is treated as raw', () => {
+      expect(servedSportNameIsRaw('mma_other', undefined)).toBe(true);
+      expect(servedSportNameIsRaw('mma_other', '   ')).toBe(true);
+      expect(servedSportNameIsRaw('mma_other', 'MMA_OTHER')).toBe(true);
+      expect(servedSportNameIsRaw('soccer_netherlands_eredivisie', 'Dutch Eredivisie')).toBe(false);
+      expect(getSportLabel('mma_other', null)).toBe('Other MMA');
+    });
+
+    /**
+     * #4350 — the same 15 rows carry a machine-derived GROUP beside the raw
+     * name ("Mma", "Icehockey", "Americanfootball"), which the sport page
+     * printed as its subtitle. Their branded siblings carry "Ice Hockey".
+     */
+    test('a raw row gets its group from the category, not the key', () => {
+      expect(getSportGroupLabel('mma_other', 'mma_other', 'Mma')).toBe('MMA');
+      expect(getSportGroupLabel('icehockey_other', 'icehockey_other', 'Icehockey')).toBe('Hockey');
+      expect(getSportGroupLabel('americanfootball_other', 'americanfootball_other', 'Americanfootball')).toBe('Football');
+    });
+
+    test('a branded row keeps the group the server gave it', () => {
+      expect(getSportGroupLabel('icehockey_ahl', 'AHL', 'Ice Hockey')).toBe('Ice Hockey');
+      expect(getSportGroupLabel('aussierules_aflw', "AFL Women's", 'Aussie Rules')).toBe('Aussie Rules');
+      // `esports` resolves to no category, so its served group must survive.
+      expect(getSportGroupLabel('esports', 'esports', 'Esports')).toBe('Esports');
+    });
+
+    /**
+     * #4350's other half: the sport page's own heading. Source-anchored for
+     * the same reason as the chip — and asserting the BLIND swap is absent,
+     * because that is the change that would fix 15 pages and degrade 161.
+     */
+    test('the sport page heading prefers the served name', () => {
+      const src = readFileSync(
+        join(__dirname, '..', '..', 'app', 'sports', '[key]', 'page.tsx'),
+        'utf8'
+      );
+      expect(src).toContain('getSportLabel(sportKey, sport?.name)'); // survival
+      expect(src).not.toContain('getLeagueDisplay(sportKey)'); // the blind swap
+      expect(src).not.toContain('{sport?.name ||');
     });
   });
 });

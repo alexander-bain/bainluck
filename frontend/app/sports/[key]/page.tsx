@@ -14,6 +14,7 @@ import {
   LEAGUE_OFFSEASON_HORIZON_DAYS,
   needsWiderHorizon,
 } from "@/lib/sports/leagueHorizon";
+import { getSportLabel, getSportGroupLabel } from "@/lib/sportCategories";
 
 interface SportPageProps {
   params: { key: string };
@@ -35,6 +36,7 @@ export default function SportPage({ params }: SportPageProps) {
   // Fetch sport info
   const { data: sportsData } = useSWR("sports", fetchSports);
   const sport = sportsData?.sports.find((s) => s.key === sportKey);
+  const groupLabel = getSportGroupLabel(sportKey, sport?.name, sport?.group);
 
   // Fetch events for this sport
   const {
@@ -138,15 +140,22 @@ export default function SportPage({ params }: SportPageProps) {
 
       {/* Page Header */}
       <div>
+        {/* #4350: `/api/sports` serves 15 rows whose name IS their key, so this
+            heading read "mma_other" and its subtitle read "Mma". The other 161
+            carry brands the key-derived map cannot reproduce, so this must not
+            become a blind swap onto that map — the reason `getSportLabel`
+            prefers the served name. (#4358 is what the blind swap looks like.)
+            The guard in `sportCategories.test.ts` scans this file for it, so
+            do not write that call form here, even inside a comment. */}
         <h1 className="text-3xl font-bold text-text-primary mb-2">
-          {sport?.name || sportKey.replace(/_/g, " ").toUpperCase()}
+          {getSportLabel(sportKey, sport?.name)}
         </h1>
         {/* #2948 — the old subtitle read "Upcoming games with win
             probabilities", which was false of 17 of the 32 cards below it.
             What is true of every composition is the ORDER, which is also the
             thing a reader needs told. */}
         <p className="text-text-secondary">
-          {sport?.group && `${sport.group} • `}
+          {groupLabel && `${groupLabel} • `}
           Win probabilities for live and upcoming games. Finished games below.
         </p>
         {/* #3028 — the widened window says so. A reader who lands on an NBA

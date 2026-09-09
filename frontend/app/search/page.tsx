@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { markSearchDestination } from "@/lib/searchFunnel";
 import Link from "next/link";
 import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
-import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
+import { getLeagueDisplay, getEmojiForLeague, getSportLabel } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -475,8 +475,11 @@ function SearchContent() {
               <span>{getEmojiForLeague(sport.key)}</span>
               {/* #4247: 15 `sports` rows store the raw key as their name
                   ("mma_other", "esports"), so the served name reaches the chip
-                  unlabelled. The client's own map is the house style. */}
-              <span>{getLeagueDisplay(sport.key)}</span>
+                  unlabelled. #4358: routing ALL of them through the map instead
+                  re-cased the 161 that do carry a brand ("Dutch Eredivisie" ->
+                  "NETHERLANDS EREDIVISIE"). Prefer the served name; the map
+                  answers only for the rows that named themselves after a key. */}
+              <span>{getSportLabel(sport.key, sport.name)}</span>
               <span className="text-xs opacity-75">({sport.count})</span>
             </button>
           ))}
