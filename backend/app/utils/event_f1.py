@@ -59,19 +59,50 @@ def shares_gp(name: str | None, tokens: set[str]) -> bool:
     return bool(gp_tokens(name) & tokens)
 
 
+#: How long before lights-out a Grand Prix counts as under way, and how long
+#: after. The anchor is the winner market's `resolution_date`, which the census
+#: of 60 production GP-winner rows (2026-09-09) shows is the RACE START and not
+#: an end-of-day placeholder: Monza 13:00Z = 15:00 CEST lights-out, Silverstone
+#: 14:00Z = 15:00 BST, Montreal 20:00Z = 16:00 EDT, and 0 of 60 rows sat at
+#: midnight or 23:59. A race plus its podium runs ~3h, so the window either side
+#: of that anchor is a real race-day window and nothing wider.
+_F1_LIGHTS_OUT_LEAD_HOURS = 4.0
+_F1_RACE_RUN_HOURS = 3.0
+
+
 def f1_status(status: str | None, resolution_date, now) -> str:
-    """upcoming / live / settled from status + resolution proximity (race weekend)."""
+    """upcoming / live / settled for a Grand Prix, from its status + race time.
+
+    "live" is a claim the reader can check, not a proximity band. The card wears
+    the same pulsing red `● LIVE` pill the Champions League match at 67' wears
+    (`TemporalBadge`, discover/shared.tsx) and the concept's own page prints
+    `LIVE` directly above its date line — so on 2026-09-09 the Italian Grand Prix
+    page read "LIVE" over "Sep 13 – Sep 13", four days out, because the old band
+    called any race within 4 DAYS live. It also paid the +35 `_score_event_concept`
+    live bonus, the largest term in that function, which is what carried the card
+    onto page one on the strength of the thing that was false.
+
+    So the window is the race, not the week: from `_F1_LIGHTS_OUT_LEAD_HOURS`
+    before the anchor until `_F1_RACE_RUN_HOURS` after it. Race-weekend proximity
+    still ranks the card — `_score_event_concept` pays +15/+10 for a race three or
+    seven days out — it just no longer tells the reader the race is happening.
+
+    The trailing arm is the same fix seen from the other side: the old rule flipped
+    the card to "settled" the instant the anchor passed, so a race that had just
+    gone green was dropped from the feed as finished. A venue grade
+    (resolved/closed/settled/final) is still authoritative the moment it lands and
+    overrides both arms. Conservative: no time → upcoming."""
     if (status or "").lower() in ("resolved", "closed", "settled", "final"):
         return "settled"
     if resolution_date is not None:
         try:
-            if resolution_date < now:
-                return "settled"
-            days = (resolution_date - now).total_seconds() / 86400
-            if days <= 4:  # race weekend
-                return "live"
+            hours = (resolution_date - now).total_seconds() / 3600
         except TypeError:
-            pass
+            return "upcoming"
+        if hours < -_F1_RACE_RUN_HOURS:
+            return "settled"
+        if hours <= _F1_LIGHTS_OUT_LEAD_HOURS:
+            return "live"
     return "upcoming"
 
 
