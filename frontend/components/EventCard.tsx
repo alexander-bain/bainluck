@@ -618,7 +618,8 @@ export default function EventCard({
               <ProbabilityBar
                 homeProbability={homeProb}
                 homeFavorite={homeFavorite}
-                useCSSVars
+                homeColor={event.home_team_data?.primary_color ?? undefined}
+                awayColor={event.away_team_data?.primary_color ?? undefined}
                 height={isLive ? 3 : 5}
               />
             )}

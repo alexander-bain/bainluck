@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "@/components/motion";
+import { probabilityBarPair } from "@/lib/probabilityBarPair";
 
 interface ProbabilityBarProps {
   /** Home team probability 0-1 */
@@ -27,8 +28,6 @@ interface ProbabilityBarProps {
   height?: number;
   /** Animate width transitions (default true) */
   animated?: boolean;
-  /** Use CSS variable colors instead of props (default false) */
-  useCSSVars?: boolean;
   /** Additional CSS class */
   className?: string;
 }
@@ -38,6 +37,15 @@ const SIZE_TO_HEIGHT: Record<string, number> = {
   md: 6,
   lg: 8,
 };
+
+/**
+ * The two halves are deliberately not equal: the favourite is full strength and
+ * the underdog is dimmed, so the bar says who is ahead before it is read. That
+ * is the design and this ship does not change it — it makes the COLOUR decision
+ * aware of it, because a colour that survives at 1 can be invisible at 0.4.
+ */
+export const FAVORITE_OPACITY = 1;
+export const UNDERDOG_OPACITY = 0.4;
 
 /**
  * Team-colored probability bar with animated segments, inner glow, and gap.
@@ -54,7 +62,6 @@ export default function ProbabilityBar({
   height,
   size = "md",
   animated = true,
-  useCSSVars = false,
   className,
 }: ProbabilityBarProps) {
   const homeProb = homeProbability ?? 0.5;
@@ -66,13 +73,33 @@ export default function ProbabilityBar({
   const isFav = homeFavorite ?? homeWidth >= 50;
   const barHeight = height ?? SIZE_TO_HEIGHT[size] ?? 6;
 
-  // Resolve colors
-  const hColor = useCSSVars
-    ? "rgb(var(--team-home-primary))"
-    : homeColor || "rgb(var(--team-home-primary))";
-  const aColor = useCSSVars
-    ? "rgb(var(--team-away-primary))"
-    : awayColor || "rgb(var(--team-away-primary))";
+  // Which half is dimmed. Derived once and then used BOTH to decide the colours
+  // and to paint them — the two must not be computed separately, or the module
+  // below rules on a pixel this component never draws.
+  const homeOpacity = isFav ? FAVORITE_OPACITY : UNDERDOG_OPACITY;
+  const awayOpacity = isFav ? UNDERDOG_OPACITY : FAVORITE_OPACITY;
+
+  // Colours are decided as a PAIR, at the opacity each half is actually painted
+  // at (#4470b, the shared-card sibling of #2962 and #4470).
+  //
+  // What this replaces: both halves read `rgb(var(--team-*-primary))`, i.e. the
+  // raw `teams.primary_color` with no rule applied and a gray-500 token default.
+  // A CSS variable cannot be reasoned about — the component could not tell
+  // whether it was about to paint white on white, and for 22 teams carrying
+  // `#ffffff` it was. Measured on production at 390px on 2026-09-09 across six
+  // league pages: 36 of 220 segments (16.4%) composited below 1.5:1 against the
+  // card, 26 of them at exactly 1.00 — Sevilla, Valencia, Leeds, Fulham, Real
+  // Madrid, Augsburg, Eintracht Frankfurt among them. The bar did not show a
+  // faint number; it showed no number at all, on the side the card is about.
+  //
+  // Passing real colours rather than variables is what makes the rule possible,
+  // so `useCSSVars` is gone: a caller now says what the colours ARE.
+  const pair = probabilityBarPair(awayColor, homeColor, {
+    away: awayOpacity,
+    home: homeOpacity,
+  });
+  const hColor = pair.home;
+  const aColor = pair.away;
 
   // No data state
   if (homeProbability === null || homeProbability === undefined) {
@@ -106,7 +133,7 @@ export default function ProbabilityBar({
             className="rounded-full"
             style={{
               backgroundColor: hColor,
-              opacity: isFav ? 1 : 0.4,
+              opacity: homeOpacity,
               boxShadow: glowFor(hColor, isFav),
             }}
             animate={{ width: `${homeWidth}%` }}
@@ -116,7 +143,7 @@ export default function ProbabilityBar({
             className="rounded-full"
             style={{
               backgroundColor: aColor,
-              opacity: !isFav ? 1 : 0.4,
+              opacity: awayOpacity,
               boxShadow: glowFor(aColor, !isFav),
             }}
             animate={{ width: `${awayWidth}%` }}
@@ -130,7 +157,7 @@ export default function ProbabilityBar({
             style={{
               width: `${homeWidth}%`,
               backgroundColor: hColor,
-              opacity: isFav ? 1 : 0.4,
+              opacity: homeOpacity,
               boxShadow: glowFor(hColor, isFav),
             }}
           />
@@ -139,7 +166,7 @@ export default function ProbabilityBar({
             style={{
               width: `${awayWidth}%`,
               backgroundColor: aColor,
-              opacity: !isFav ? 1 : 0.4,
+              opacity: awayOpacity,
               boxShadow: glowFor(aColor, !isFav),
             }}
           />
