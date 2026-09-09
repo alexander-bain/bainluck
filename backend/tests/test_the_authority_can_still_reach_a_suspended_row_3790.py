@@ -139,8 +139,17 @@ _REPAIRED_SITES = (
     espn_sync._backfill_espn_win_probability,
 )
 
-#: The sites that must NOT be widened, and why. Spelled out so a future sweep
-#: that "fixes them all" fails here with the reason attached.
+#: The sites that must not be widened BY THIS SUITE'S SET, and why. Spelled out
+#: so a future sweep that "fixes them all" fails here with the reason attached.
+#:
+#: AMENDED #4114: `_is_bogus_future_settled` now admits `suspended`, but on its
+#: OWN constant (`espn_sync.FUTURE_SETTLED_STATUSES`) and behind its own
+#: `commence_time > now + 1h` gate — never on `AUTHORITY_BACKFILL_STATUSES`,
+#: which is what the structural check below actually forbids. The distinction is
+#: the whole point: this suite's cohort is PAST-commence rows that are owed a
+#: result, and the commence gate has always excluded every one of them. What was
+#: forbidden here was spending the BACKFILL set inside a repair, and that is
+#: still forbidden.
 _DELIBERATELY_SETTLED_ONLY = (
     espn_sync._is_bogus_future_settled,
 )
@@ -400,14 +409,55 @@ class TestTheHealthyDirectionIsUntouched:
         """
         assert "AUTHORITY_BACKFILL_STATUSES" not in _names_used(fn)
 
-    def test_the_bogus_future_settled_guard_ignores_a_suspended_row(self):
-        """The same control, run rather than inspected."""
+    def test_the_bogus_future_settled_guard_spares_this_suites_cohort(self):
+        """The same control, run rather than inspected — AMENDED by #4114.
+
+        🔴 WHAT CHANGED AND WHY, because this is another lane's guard.
+
+        This assertion used to read ``not _is_bogus_future_settled(SUSPENDED,
+        future, ...)`` — a blanket refusal keyed on the STATUS. The fear behind
+        it is real and is unchanged: the 8,279 result-less rows #3780 sweeps
+        ``closed`` → ``suspended`` must never be flipped to ``scheduled``, which
+        would clobber the very state this suite exists to make reachable.
+
+        But that cohort is protected by the COMMENCE gate, not the status gate.
+        Every one of those 8,279 rows is in the PAST (they span 2026-08-24 →
+        2026-09-03, and the suite's own header says they are weeks past the 48h
+        resume window). ``_is_bogus_future_settled`` requires ``commence_time >
+        now + 1h``, so it could never have reached a single one of them. The old
+        assertion therefore bought no protection for the rows it names — it only
+        pinned a case that is unreachable by design, and when that case DID
+        occur it was corruption: Ohio State @ Texas (416569) sat ``suspended``
+        with a 2026-09-12 kickoff four days out, on a marquee game, while ESPN
+        read STATUS_SCHEDULED for the same fixture. Nothing repaired it, because
+        this guard had been told to look away.
+
+        This suite's own general clause is the argument for the amendment: *a
+        new state is not shipped until every consumer that REPAIRS on the
+        vocabulary has been shown it too.* #3790 showed the four backfills. The
+        future-commence repair is a fifth consumer and was never shown the word.
+
+        So the control now pins the cohort instead of the status: a suspended
+        row with a PAST commence — every row this suite is about — is still
+        untouched, and that is asserted below at both the day and week scales.
+        """
         future = NOW + timedelta(days=2)
 
         assert espn_sync._is_bogus_future_settled(
             "completed", future, 0, 0, NOW
         ), "a settled row with a future kickoff is still the #190 recurrence"
 
-        assert not espn_sync._is_bogus_future_settled(
-            EVENT_SUSPENDED, future, 0, 0, NOW
-        ), "a suspended row is already un-settled; this repair must skip it"
+        # THE REAL PROTECTION: this suite's cohort is past-commence, and stays
+        # untouched. A day old, and weeks old like the #3780 sweep's rows.
+        for age in (timedelta(hours=6), timedelta(days=1), timedelta(days=21)):
+            assert not espn_sync._is_bogus_future_settled(
+                EVENT_SUSPENDED, NOW - age, 0, 0, NOW
+            ), (
+                f"a suspended row {age} in the past is one we admitted we "
+                "cannot score; the repair must leave it for the authority"
+            )
+
+        # And the corruption case #4114 exists for is now reached.
+        assert espn_sync._is_bogus_future_settled(
+            EVENT_SUSPENDED, future, None, None, NOW
+        ), "a suspended row with a future kickoff is not a game, it is a rewrite"
