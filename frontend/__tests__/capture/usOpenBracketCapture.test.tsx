@@ -190,18 +190,27 @@ describe("the bracket capture rig still renders every state", () => {
     }
   });
 
-  it("shows the sum check, with the Final column's failure visible", () => {
+  it("runs the sum check on the real capture without printing it (#4278)", () => {
     const html = renderToStaticMarkup(<PlayoffGrid grid={MENS_GRID} initialExpanded />);
-    expect(html).toContain('data-testid="grid-sum-check"');
-    expect(html).toContain('data-testid="grid-sum-row"');
+    // Notice 34: the disclosure and its per-column sentences are off the page.
+    expect(html).not.toContain('data-testid="grid-sum-check"');
+    expect(html).not.toContain("Does each column add up");
+    // The MODEL is unchanged and still discriminating — this is the assertion
+    // that fails if a copy sweep ever takes the check along with the caption.
     // Measured 2026-08-26: the men's Final column sums to 2.78 against 2
     // places. Reported as `over`, never rescaled.
     const finalCheck = MENS_GRID.columnSums.find((c) => c.key === "F");
     expect(finalCheck?.verdict).toBe("over");
-    expect(html).toContain('data-verdict="over"');
     // And QF/SF pass, so the check is discriminating rather than always red.
     expect(MENS_GRID.columnSums.find((c) => c.key === "QF")?.verdict).toBe("pass");
     expect(MENS_GRID.columnSums.find((c) => c.key === "SF")?.verdict).toBe("pass");
+    // ...and the verdict still reaches a probe through the section, on the real
+    // capture rather than a fixture: at least one column failing, not all.
+    const failing = MENS_GRID.columnSums.filter((c) => c.verdict !== "pass").length;
+    expect(failing).toBeGreaterThan(0);
+    expect(failing).toBeLessThan(MENS_GRID.columnSums.length);
+    expect(html).toContain(`data-sum-failing="${failing}"`);
+    expect(html).toContain(`data-sum-columns="${MENS_GRID.columnSums.length}"`);
   });
 
   it("the women's grid is a genuinely different field, not the men's twice", () => {

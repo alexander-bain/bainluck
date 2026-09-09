@@ -151,22 +151,36 @@ const LIVE_FINISHED = [
 ];
 
 describe("#2450 — a count on this page says which population it counts", () => {
-  it("the match list states the round's true size beside what it is showing", () => {
+  /* ═══ #4278 / notice 34 INVERTED THESE TWO ═══
+     #2450's arithmetic finding is real and its two pure functions are untouched
+     (they are asserted directly, below). What changed is that neither sentence
+     reaches the reader any more: `This round is 64 matches. Finished ones move
+     to Finished, below.` and `Includes 43 qualifying matches.` were both live
+     grey text on `/tournaments/us-open` on 2026-09-09, and both are the method
+     -note / coverage-count shapes notice 34 names. Inverted rather than deleted
+     so a restore reds, and each paired with the count it used to qualify — the
+     heading numbers are the part a reader keeps. */
+
+  it("the match list no longer explains its own grouping in prose (#4278)", () => {
     const html = renderToStaticMarkup(
       <TournamentMatches entries={matchListFromSlate(LIVE_PENDING)} initialExpanded />
     );
-    expect(html).toContain('data-testid="match-round-reconciliation"');
-    expect(html).toContain("This round is 64 matches");
-    // And the count it is explaining is still on the heading.
+    expect(html).not.toContain('data-testid="match-round-reconciliation"');
+    expect(html).not.toContain("This round is 64 matches");
+    expect(html).not.toContain("Finished ones move to Finished");
+    // And the count it used to explain is still on the heading, so this is a
+    // removal of the sentence and not of the number.
     expect(html).toContain("16 matches");
   });
 
-  it("the finished total says qualifying is inside it", () => {
+  it("the finished total carries its population as an attribute, not a line", () => {
     const html = renderToStaticMarkup(
       <TournamentResults results={resultsModel(LIVE_FINISHED)} draw="mens-singles" />
     );
-    expect(html).toContain('data-testid="results-population-note"');
-    expect(html).toContain("Includes 43 qualifying matches");
+    expect(html).not.toContain('data-testid="results-population-note"');
+    expect(html).not.toContain(">Includes 43 qualifying matches");
+    // The fact survives for probes and guards, and the total itself is intact.
+    expect(html).toContain('data-population-note="Includes 43 qualifying matches."');
     expect(html).toContain("· 84");
   });
 
@@ -207,6 +221,10 @@ describe("#2450 — a count on this page says which population it counts", () =>
       <TournamentResults results={resultsModel(mainDrawOnly)} draw="mens-singles" />
     );
     expect(html).not.toContain('data-testid="results-population-note"');
+    // #4278's positive control: the attribute is absent exactly when the note
+    // is null, so `data-population-note` asserted above is discriminating
+    // rather than always present.
+    expect(html).not.toContain("data-population-note");
   });
 
   /**

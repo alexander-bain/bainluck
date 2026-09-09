@@ -540,30 +540,32 @@ export default function ContenderChart({
 
       <div className="mt-1.5 flex items-center justify-between">
         <span className="text-[11px] text-text-muted">
-          {series.length} of {rows.length}
-          {/* How long the drawn window IS, not which button is pressed. `ALL`
-              on a field with four readings is four days, and the button cannot
-              say that. */}
-          {spanDays !== null && (
-            <span data-testid="chart-span"> · {spanDays}d shown</span>
-          )}
+          {/* NOTICE 34 (#4278). This slot used to read `3 of 36 · 10d shown` —
+              a coverage count and the span of the drawn window, side by side.
+              Notice 34's own example of the banned shape is "shown on 121 of
+              152", and Alex's words were about this page: "all the grey text is
+              madness, and shouldn't be user-facing at all". Both are gone.
+
+              Nothing is hidden by the removal. `Add players (33 more)` sits one
+              line below and already tells the reader the field is larger than
+              the three lines drawn, and the axis under the chart already prints
+              its own first and last date — the span was the axis restated in
+              words. What is left in this slot is the RESET CONTROL, which is an
+              affordance, not a sentence. */}
           {canReset && (
             // RULING 5's second gap. DataGolf's picker has a clear-all; ours
             // had no way back to the default short of removing lines one at a
             // time and re-adding the three you started with. Only offered when
             // the selection has actually moved — an affordance that does
             // nothing is worse than an absent one.
-            <>
-              {" · "}
-              <button
-                type="button"
-                onClick={onReset}
-                className="font-semibold text-text-secondary underline decoration-dotted underline-offset-2"
-                data-testid="chart-reset"
-              >
-                Reset to top 3
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={onReset}
+              className="font-semibold text-text-secondary underline decoration-dotted underline-offset-2"
+              data-testid="chart-reset"
+            >
+              Reset to top 3
+            </button>
           )}
         </span>
         {/* THE RANGE CHIPS (ux/1034 A1). The two tournament windows first and
