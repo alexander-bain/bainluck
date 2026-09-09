@@ -77,6 +77,12 @@ SOURCE_PATH = (
 )
 
 MLB = "baseball_mlb"
+#: A key mapping to a DIFFERENT StatPal sport — the #4322 bound's other side.
+NHL = "icehockey_nhl"
+#: Two of the SEVEN of our league keys that map to StatPal `soccer`. The bound
+#: must treat these as one id space, which is why it is not `== sport_id`.
+SOCCER_A = "soccer_epl"
+SOCCER_B = "soccer_italy_serie_a"
 
 #: The id production carried on two rows on 2026-09-09, and the two event ids.
 COLLIDING_FIXTURE_ID = "364906"
@@ -90,22 +96,37 @@ SIBLING_FIXTURE_ID = "364999"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class _Row:
+    """The only attribute the judgement reads."""
+
+    def __init__(self, sport_id=1, id=None):
+        self.sport_id = sport_id
+        self.id = id
+
+
+#: The sport-id set of one StatPal sport with a single league (e.g. `nfl`).
+OWN = {1}
+#: One StatPal sport carrying several of our league keys — the soccer shape.
+SOCCER = {10, 11, 12}
+
+
 class TestThePredicate:
-    """``row_for_statpal_id`` — one game, no game, or an ambiguity."""
+    """``row_for_statpal_id`` — one game, no game, an ambiguity, or a foreigner."""
 
     def test_one_row_is_the_game(self):
-        row = object()
-        assert row_for_statpal_id([row]) == (row, False)
+        row = _Row()
+        assert row_for_statpal_id([row], sport_ids=OWN) == (row, False, [])
 
     def test_no_rows_is_not_a_collision(self):
         """A past fixture we hold no row for is the ordinary case, not a finding."""
-        assert row_for_statpal_id([]) == (None, False)
+        assert row_for_statpal_id([], sport_ids=OWN) == (None, False, [])
 
     def test_two_rows_is_a_collision_and_yields_no_row(self):
         """Both halves matter: it must FLAG, and it must not pick one."""
-        first, second = object(), object()
-        row, collided = row_for_statpal_id([first, second])
+        first, second = _Row(), _Row()
+        row, collided, foreign = row_for_statpal_id([first, second], sport_ids=OWN)
         assert collided is True
+        assert foreign == []
         assert row is None, (
             "Returning either row is the `.first()` behaviour this exists to "
             "refuse — the two rows are a twin and which is the game is exactly "
@@ -113,12 +134,76 @@ class TestThePredicate:
         )
 
     def test_three_rows_is_also_a_collision(self):
-        assert row_for_statpal_id([object()] * 3) == (None, True)
+        rows = [_Row(), _Row(), _Row()]
+        assert row_for_statpal_id(rows, sport_ids=OWN) == (None, True, [])
 
     def test_it_accepts_any_sequence(self):
         """SQLAlchemy's `.scalars().all()` is not a list on every version."""
-        row = object()
-        assert row_for_statpal_id(tuple([row])) == (row, False)
+        row = _Row()
+        assert row_for_statpal_id(tuple([row]), sport_ids=OWN) == (row, False, [])
+
+    # ── #4322: the sport bound ────────────────────────────────────────────────
+
+    def test_a_foreign_row_is_not_the_game_and_is_not_a_twin(self):
+        """CERT-853's shape: one token, two of StatPal's sports.
+
+        The pre-#4322 reader would have enriched this row — another sport's
+        event — because it was the only one the unbounded query returned.
+        """
+        alien = _Row(sport_id=99, id=555)
+        row, collided, foreign = row_for_statpal_id([alien], sport_ids=OWN)
+        assert row is None, "a foreign row must never be enriched"
+        assert collided is False, (
+            "cross-sport id reuse is not a twin, and counting it as one would "
+            "corrupt the twin population #3093/#3463 read from that number"
+        )
+        assert foreign == [alien], "and it must be reported, never invisible (D55)"
+
+    def test_a_foreign_row_does_not_make_the_real_one_ambiguous(self):
+        """The case where the bound BUYS an enrichment the old reader lost.
+
+        Two rows came back, so the unbounded reader called it a collision and
+        skipped. Only one of them is in this StatPal sport, so it is the game.
+        """
+        mine, alien = _Row(sport_id=1, id=1), _Row(sport_id=99, id=555)
+        row, collided, foreign = row_for_statpal_id([mine, alien], sport_ids=OWN)
+        assert row is mine
+        assert collided is False
+        assert foreign == [alien]
+
+    def test_two_own_rows_still_collide_even_beside_a_foreigner(self):
+        """The bound narrows the population; it does not soften the refusal."""
+        a, b, alien = _Row(1, 1), _Row(1, 2), _Row(99, 555)
+        row, collided, foreign = row_for_statpal_id([a, b, alien], sport_ids=OWN)
+        assert (row, collided) == (None, True)
+        assert foreign == [alien]
+
+    def test_a_sibling_league_of_the_same_statpal_sport_is_NOT_foreign(self):
+        """The soccer shape, and the reason the bound is not `== sport_id`.
+
+        Seven of our league keys map to StatPal `soccer`. A fixture pulled during
+        one league's iteration legitimately belongs to another's event. Bounding
+        on the loop's own sport would refuse every sibling — a false miss on six
+        leagues out of seven — so this test fails on the naive fix.
+        """
+        serie_a = _Row(sport_id=12, id=7)
+        row, collided, foreign = row_for_statpal_id([serie_a], sport_ids=SOCCER)
+        assert row is serie_a
+        assert (collided, foreign) == (False, [])
+
+    def test_a_row_with_no_sport_id_is_treated_as_foreign(self):
+        """Unclassifiable is not "mine". Enriching it is the write we refuse."""
+        orphan = _Row(sport_id=None, id=3)
+        row, collided, foreign = row_for_statpal_id([orphan], sport_ids=OWN)
+        assert (row, collided) == (None, False)
+        assert foreign == [orphan]
+
+    def test_the_bound_is_mandatory_and_keyword_only(self):
+        """A bound that defaults to unbounded is the defect wearing a parameter."""
+        with pytest.raises(TypeError):
+            row_for_statpal_id([_Row()])
+        with pytest.raises(TypeError):
+            row_for_statpal_id([_Row()], OWN)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,8 +211,13 @@ class TestThePredicate:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _wire(monkeypatch, *, faithful_rollback: bool = True):
+def _wire(monkeypatch, *, faithful_rollback: bool = True, foreign_fid: str = None):
     """Two MLB rows sharing one StatPal id, plus a clean sibling row.
+
+    ``foreign_fid`` (#4322) additionally creates an **NHL** sport and one event
+    under it carrying that fixture id — StatPal's id space is per-sport, so this
+    is the CERT-853 shape: one token, two of StatPal's sports. Returned in
+    ``ids`` as ``"foreign"``.
 
     The session context mirrors ``get_task_session``: commit on a clean exit,
     **rollback** on an exception. That fidelity is the whole point — a rail that
@@ -199,6 +289,24 @@ def _wire(monkeypatch, *, faithful_rollback: bool = True):
         "sport": sport.id,
     }
 
+    if foreign_fid is not None:
+        # A DIFFERENT StatPal sport ("nhl"), reusing the same fixture token.
+        nhl_sport = Sport(key=NHL, name="NHL")
+        session.add(nhl_sport)
+        session.flush()
+        foreign = Event(
+            sport_id=nhl_sport.id,
+            home_team_name="Boston Bruins",
+            away_team_name="Montreal Canadiens",
+            commence_time=now - timedelta(hours=6),
+            status="scheduled",
+            statpal_fixture_id=foreign_fid,
+        )
+        session.add(foreign)
+        session.commit()
+        ids["foreign"] = foreign.id
+        ids["foreign_sport"] = nhl_sport.id
+
     @sa_event.listens_for(session, "loaded_as_persistent")
     def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
         for attr, value in list(instance.__dict__.items()):
@@ -246,6 +354,102 @@ class _AsyncShim:
 
     def __getattr__(self, name):
         return getattr(self._s, name)
+
+
+SOCCER_FIXTURE_ID = "9543274"
+
+
+def _wire_soccer(monkeypatch):
+    """Two of our soccer leagues, and one event under the SECOND of them.
+
+    The pass will run for `soccer_epl`; the row belongs to `soccer_italy_serie_a`.
+    Both map to StatPal `soccer`, so both are one id space (#4322).
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy import event as sa_event
+    from sqlalchemy.orm import Session
+
+    import app.tasks.base as task_base
+    from app.models.models import Base, Event, Sport, Team, TeamIdentityMapping
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            Event.__table__, Sport.__table__,
+            Team.__table__, TeamIdentityMapping.__table__,
+        ],
+    )
+    session = Session(engine, expire_on_commit=False)
+
+    now = datetime.now(timezone.utc)
+    epl = Sport(key=SOCCER_A, name="EPL")
+    serie_a = Sport(key=SOCCER_B, name="Serie A")
+    session.add_all([epl, serie_a])
+    session.flush()
+
+    row = Event(
+        sport_id=serie_a.id,
+        home_team_name="Inter Milan",
+        away_team_name="AC Milan",
+        # 90 minutes wrong — the correction the pass exists to make.
+        commence_time=now - timedelta(hours=2) - timedelta(minutes=90),
+        status="completed",
+        statpal_fixture_id=SOCCER_FIXTURE_ID,
+    )
+    session.add(row)
+    session.commit()
+    ids = {"serie_a": row.id, "epl_sport": epl.id, "serie_a_sport": serie_a.id}
+
+    @sa_event.listens_for(session, "loaded_as_persistent")
+    def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
+        for attr, value in list(instance.__dict__.items()):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
+
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return _AsyncShim(session)
+
+        async def __aexit__(self_inner, exc_type, *_):
+            if exc_type is not None:
+                session.rollback()
+                return False
+            session.commit()
+            return False
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+    monkeypatch.setattr(
+        "app.tasks.statpal_sync.get_task_session", lambda: _Ctx(), raising=False
+    )
+    return session, ids
+
+
+def _stub_soccer_service(monkeypatch, now):
+    """StatPal serves the one Serie A fixture under its `soccer` sport."""
+    import app.services.statpal_api as statpal_api
+    from app.services.statpal_api import StatPalFixture
+
+    fixture = StatPalFixture(
+        fixture_id=SOCCER_FIXTURE_ID,
+        home_team="Inter Milan",
+        away_team="AC Milan",
+        start_time=now - timedelta(hours=2),
+        status="finished",
+    )
+
+    class _Service:
+        async def get_fixtures(self, sport):
+            return [fixture]
+
+        async def get_live_scores(self, sport):
+            return []
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", lambda *a, **kw: _Service())
 
 
 def _fixtures(now):
@@ -382,6 +586,118 @@ async def test_a_clean_pass_reports_zero_not_nothing(monkeypatch):
         "different answers)."
     )
     assert result["schedule_fid_collision_skipped"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# #4322 — the sport bound, driven through the whole pass
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_another_sports_row_is_never_enriched_and_is_not_a_twin(monkeypatch):
+    """CERT-853's shape, at the call site: one token, two of StatPal's sports.
+
+    Both MLB rows give up the colliding id, so the ONLY row left carrying it
+    belongs to NHL. The pre-#4322 reader returned exactly one row and enriched
+    it — writing an MLB fixture's kickoff onto a hockey game.
+    """
+    from app.models.models import Event
+    from app.tasks.statpal_sync import _sync_statpal_schedules
+
+    now = datetime.now(timezone.utc)
+    session, ids = _wire(monkeypatch, foreign_fid=COLLIDING_FIXTURE_ID)
+    _stub_service(monkeypatch, now)
+
+    for key, new_id in (("twin_a", "364906-a"), ("twin_b", "364906-b")):
+        session.get(Event, ids[key]).statpal_fixture_id = new_id
+    session.commit()
+    before = session.get(Event, ids["foreign"]).commence_time
+
+    result = await _sync_statpal_schedules(MLB)
+
+    assert result["schedule_fid_cross_sport_skipped"] == 1, (
+        "A token shared across two of StatPal's sports must be counted as what "
+        f"it is. Got: {result}"
+    )
+    assert result["schedule_fid_collision_skipped"] == 0, (
+        "and NOT as a twin — that number is the population #3093/#3463 read, "
+        "and folding cross-sport reuse into it corrupts the count"
+    )
+
+    session.expunge_all()
+    after = session.get(Event, ids["foreign"])
+    assert after.commence_time == before, (
+        "the hockey row must be untouched — enriching it is the silent wrong "
+        "write the bound exists to refuse"
+    )
+    assert after.statpal_fixture_id == COLLIDING_FIXTURE_ID
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_row_no_longer_costs_the_real_row_its_correction(
+    monkeypatch,
+):
+    """The enrichment the bound BUYS BACK.
+
+    Two rows carry `SIBLING_FIXTURE_ID` — ours and a hockey row. Unbounded, that
+    is two candidates, so #4307's reader called it a twin and skipped, losing a
+    correction it should have made. Only one is in MLB's id space.
+    """
+    from app.models.models import Event
+    from app.tasks.statpal_sync import _sync_statpal_schedules
+
+    now = datetime.now(timezone.utc)
+    session, ids = _wire(monkeypatch, foreign_fid=SIBLING_FIXTURE_ID)
+    _stub_service(monkeypatch, now)
+
+    result = await _sync_statpal_schedules(MLB)
+
+    assert result["schedule_fid_collision_skipped"] == 1, (
+        "the real MLB twin is still refused — the bound narrows the population, "
+        "it does not soften the refusal"
+    )
+    assert result["schedule_fid_cross_sport_skipped"] == 0, (
+        "our row WAS found, so nothing was skipped for being cross-sport"
+    )
+
+    session.expunge_all()
+    sibling = session.get(Event, ids["sibling"])
+    expected = now - timedelta(hours=3) + timedelta(minutes=40)
+    assert abs((sibling.commence_time - expected).total_seconds()) < 5, (
+        "the correction must land: unbounded, this row was collateral damage "
+        f"from a hockey row sharing its token. Got {sibling.commence_time}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_sibling_soccer_league_is_the_same_id_space(monkeypatch):
+    """The naive fix's grave: bounding on the loop's own `sport_id`.
+
+    Seven of our league keys map to StatPal `soccer`. This pass runs for
+    `soccer_epl` and the row it must correct belongs to `soccer_italy_serie_a`.
+    A `== sport_id` bound calls that foreign and refuses the correction — on six
+    leagues out of seven, silently, and the counter would even look reassuring.
+    """
+    from app.models.models import Event
+    from app.tasks.statpal_sync import _sync_statpal_schedules
+
+    now = datetime.now(timezone.utc)
+    session, ids = _wire_soccer(monkeypatch)
+    _stub_soccer_service(monkeypatch, now)
+
+    result = await _sync_statpal_schedules(SOCCER_A)
+
+    assert result["schedule_fid_cross_sport_skipped"] == 0, (
+        "a sibling soccer league is the SAME StatPal sport, so it is not "
+        f"cross-sport. Got: {result}"
+    )
+    session.expunge_all()
+    row = session.get(Event, ids["serie_a"])
+    expected = now - timedelta(hours=2)
+    assert abs((row.commence_time - expected).total_seconds()) < 5, (
+        "the Serie A row's kickoff correction must land during the EPL pass — "
+        f"they share StatPal's `soccer` id space. Got {row.commence_time}."
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from itertools import zip_longest
-from typing import Optional, Sequence
+from typing import Collection, Optional, Sequence
 
 from sqlalchemy import select, update, and_, or_, func
 
@@ -50,11 +50,41 @@ def statpal_provided_an_id(value: Optional[str]) -> bool:
     return bool(str(value or "").strip())
 
 
-def row_for_statpal_id(rows: Sequence) -> tuple[Optional[object], bool]:
-    """Which of the rows carrying one StatPal id is THE game? (#4307)
+def row_for_statpal_id(
+    rows: Sequence,
+    *,
+    sport_ids: Collection[int],
+) -> tuple[Optional[object], bool, list]:
+    """Which of the rows carrying one StatPal id is THE game? (#4307, #4322)
 
-    Returns ``(row, collided)``. ``collided`` is the finding; ``row`` is ``None``
-    whenever there is not exactly one candidate.
+    Returns ``(row, collided, foreign)``. ``collided`` is the same-sport finding;
+    ``foreign`` is the cross-sport one; ``row`` is ``None`` whenever there is not
+    exactly one candidate inside ``sport_ids``.
+
+    ``sport_ids`` IS REQUIRED, AND IT IS THE SET FOR A **STATPAL** SPORT (#4322)
+    ═══════════════════════════════════════════════════════════════════════════
+    StatPal scopes its fixture ids by its own sport, so one token can name an NFL
+    fixture and an MLB one. CERT-853 measured exactly that — *"an NFL claim for
+    StatPal fixture ``280445`` returned the MLB event of the same token"* — which
+    is why ``event_registry._find_statpal_row_in_sport`` bounds the identical
+    column and why this, the last unbounded reader of it, now does too.
+
+    **Not the caller's single ``sport_id``.** ``STATPAL_SPORT_MAPPING`` is
+    many-to-one: seven of our league keys map to StatPal ``soccer``, so a fixture
+    fetched during ``soccer_epl``'s iteration legitimately belongs to an event
+    whose sport is ``soccer_italy_serie_a``. Bounding on the loop's own sport
+    would refuse those — a false miss on every soccer league but one. The bound
+    is the id space StatPal actually scopes by, which is the set of our sports
+    mapping to this StatPal sport.
+
+    Keyword-only and mandatory on purpose: a bound that defaults to "unbounded"
+    is the defect wearing a parameter, and the next caller would inherit it
+    silently.
+
+    The partition is done here rather than in SQL, matching
+    ``_find_statpal_row_in_sport``'s shape, for its reason: a ``WHERE`` clause
+    would make the foreign row *invisible*, and D55 requires a collision to raise
+    or tag and never to silently no-op. The caller warns with both id sets.
 
     Hoisted and named for the same reason ``statpal_provided_an_id`` was: the
     interesting case is a judgement, not a lookup. ``statpal_fixture_id`` is
@@ -87,10 +117,18 @@ def row_for_statpal_id(rows: Sequence) -> tuple[Optional[object], bool]:
     So a collision costs one fixture's enrichment for one pass. The raise cost
     every fixture's, every pass.
     """
-    rows = list(rows)
-    if len(rows) > 1:
-        return None, True
-    return (rows[0] if rows else None), False
+    own: list = []
+    foreign: list = []
+    for row in rows:
+        # `is None` is not folded into the membership test: a row with no
+        # sport_id at all is not "in some other sport", it is unclassifiable,
+        # and enriching it on a shared token is the write this refuses.
+        bucket = own if getattr(row, "sport_id", None) in sport_ids else foreign
+        bucket.append(row)
+
+    if len(own) > 1:
+        return None, True, foreign
+    return (own[0] if own else None), False, foreign
 
 
 async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
@@ -157,6 +195,14 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # the other side — surfaced where the pass that trips over it can be seen.
     schedule_fid_collision_skipped = 0
 
+    # #4322. The other half of the same judgement, kept as its OWN number so the
+    # twin count stays a twin count. A cross-sport hit is not a twin — it is one
+    # provider's id space reused across two of its sports — and folding it into
+    # the count above would corrupt the population #3093/#3463 read from there.
+    # Always present; 0 is a reading (gotcha #53), and today it is the expected
+    # one: zero cross-sport collisions exist in production (2026-09-09).
+    schedule_fid_cross_sport_skipped = 0
+
     # Track StatPal fixture IDs already processed in this run
     # to prevent duplicates across soccer league iterations
     # (all map to StatPal sport="soccer" but have different sport_ids)
@@ -165,6 +211,23 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     try:
         async with get_task_session() as session:
             from app.models import Event, Sport
+
+            # #4322. The id space StatPal scopes its fixture ids by is its OWN
+            # sport, and our league keys are many-to-one onto it — the seven
+            # soccer keys below all map to `soccer`. Built once, from the whole
+            # mapping rather than from `sport_keys`, because a single-sport run
+            # still has to recognise a sibling league's event as same-sport.
+            statpal_sport_ids: dict[str, set[int]] = {}
+            for _sid, _skey in (
+                await session.execute(
+                    select(Sport.id, Sport.key).where(
+                        Sport.key.in_(list(STATPAL_SPORT_MAPPING.keys()))
+                    )
+                )
+            ).all():
+                statpal_sport_ids.setdefault(
+                    STATPAL_SPORT_MAPPING[_skey], set()
+                ).add(_sid)
 
             for our_key in sport_keys:
                 statpal_sport = STATPAL_SPORT_MAPPING[our_key]
@@ -251,7 +314,45 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             # `row_for_statpal_id`). Ambiguity is now a counted
                             # refusal for one fixture instead of a lost hour.
                             candidates = fid_result.scalars().all()
-                            event, collided = row_for_statpal_id(candidates)
+                            # #4322. Bounded by the StatPal sport's id space, not
+                            # by `sport_id` — seven of our keys are `soccer`.
+                            allowed_sport_ids = statpal_sport_ids.get(
+                                statpal_sport
+                            ) or {sport_id}
+                            event, collided, foreign = row_for_statpal_id(
+                                candidates, sport_ids=allowed_sport_ids,
+                            )
+                            if foreign:
+                                # D55: tagged, never invisible. Reported whether
+                                # or not it changed the outcome, because a token
+                                # shared across two of StatPal's sports is a
+                                # finding on its own (CERT-853).
+                                logger.warning(
+                                    "StatPal schedule-enrich: fixture id %s is also "
+                                    "carried by event(s) %s in sport(s) %s, outside "
+                                    "this pass's StatPal sport %r (sport_ids %s). "
+                                    "Cross-sport id reuse, NOT a twin — refusing to "
+                                    "enrich them (#4322, CERT-853).",
+                                    fixture.fixture_id,
+                                    # Both sorts tolerate a None: a log line that
+                                    # raises inside the pass would re-create the
+                                    # very failure #4307 just retired.
+                                    sorted(
+                                        (getattr(r, "id", None) for r in foreign),
+                                        key=lambda v: (v is None, v),
+                                    ),
+                                    sorted(
+                                        {getattr(r, "sport_id", None) for r in foreign},
+                                        key=lambda v: (v is None, v),
+                                    ),
+                                    statpal_sport,
+                                    sorted(allowed_sport_ids),
+                                )
+                                if event is None and not collided:
+                                    # Every candidate was foreign, so the old
+                                    # unbounded read would have enriched another
+                                    # sport's row. Counted apart from the twins.
+                                    schedule_fid_cross_sport_skipped += 1
                             if collided:
                                 schedule_fid_collision_skipped += 1
                                 logger.warning(
@@ -625,6 +726,11 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         # #4307 — same rule: always present, and 0 is the reading that says no
         # fixture in this window is claimed by two rows.
         "schedule_fid_collision_skipped": schedule_fid_collision_skipped,
+        # #4322 — same rule, and its own key so the twin count above stays a twin
+        # count. 0 is the expected reading today: production carries zero
+        # cross-sport fixture ids (measured 2026-09-09, and the generator of the
+        # only known one — #3094's mis-stamped MLB ids — was cleared).
+        "schedule_fid_cross_sport_skipped": schedule_fid_cross_sport_skipped,
     }
 
 
