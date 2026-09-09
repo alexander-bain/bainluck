@@ -384,9 +384,16 @@ describe("UX-P145: the desktop layout exists", () => {
       // text is rather than to the page — a `max-w` on the section would cap
       // the grid too, which is the one thing on this tab that wants 1280px.
       const html = renderToStaticMarkup(<PlayoffGrid grid={loadGrid()} initialExpanded />);
-      const legend = html.match(/<p[^>]*data-testid="grid-legend"[^>]*>/);
-      expect(legend).not.toBeNull();
-      expect(legend![0]).toMatch(/max-w-\[\d+ch\]/);
+      /* #4122 removed `grid-legend` — the last prose paragraph under the grid
+         (notice 34: a coverage count, our own emptiness explained, and a method
+         note). Alex's rule was "sensible max-width for TEXT SECTIONS only", so
+         with the text gone the half that still bites is the other one: the
+         TABLE must not have acquired a measure. Every remaining <p> under this
+         component is still checked for one. */
+      expect(html).not.toContain('data-testid="grid-legend"');
+      for (const p of html.match(/<p[^>]*>/g) ?? []) {
+        expect(p).toMatch(/max-w-\[\d+ch\]/);
+      }
 
       const scroller = html.match(/<div[^>]*data-testid="grid-scroller"[^>]*>/);
       expect(scroller).not.toBeNull();

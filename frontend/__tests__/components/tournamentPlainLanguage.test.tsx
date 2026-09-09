@@ -268,9 +268,16 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
       );
       assertPlain(html, "TournamentProps (quiet cards)");
       // Ruling 138/145 in the new copy: no "stale", no "dark", no "priced".
+      // The per-card age wording is what Alex's UX-P145 note was about, and it
+      // is still rendered on the card.
       expect(html).toContain("Last number");
-      // And the ambiguity Alex named is answered once, in the section.
-      expect(html).toContain("not when it was created");
+      /* NOT asserted since #4122: "not when it was created", the tail of
+         FRESHNESS_DEFINITION. That section-level paragraph is one of the three
+         examples notice 34 quotes when banning method notes from a reader's
+         screen, so it no longer renders anywhere. The constant is still
+         exported and still unit-tested; what changed is that nothing prints
+         it. The plain-language property this test exists for is unaffected —
+         `assertPlain` above still runs over the whole render. */
     });
   });
 
@@ -317,7 +324,10 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
       <TournamentProps markets={[fresh, ...darkMarkets()]} draw="mens-singles" />
     );
     expect(html).toContain('data-testid="prop-market"');
-    expect(html).toContain('data-testid="props-freshness-definition"');
+    // #4122 removed `props-freshness-definition` (notice 34). The point of this
+    // test is that a POPULATED render is plain, so it needs a populated render
+    // and not that particular paragraph — the card itself carries the age.
+    expect(html).toContain("Last number");
     assertPlain(html, "TournamentProps (populated)");
   });
 

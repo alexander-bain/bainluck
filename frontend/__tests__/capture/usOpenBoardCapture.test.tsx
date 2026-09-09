@@ -527,7 +527,11 @@ describe("US Open board capture rig", () => {
     expect(men).toContain("Who wins a second major this year?");
     // Each with its OWN age, said in a way that answers "the age of what".
     expect(men).toContain("Last number");
-    expect(men).toContain("not when it was created");
+    /* #4122 / notice 34: the section-level FRESHNESS_DEFINITION paragraph ("…
+       not when it was created, and not when it last changed hands") is off the
+       page — it is one of the three examples the ruling quotes. The per-card
+       age above is untouched, and it is the half a reader was ever served by. */
+    expect(men).not.toContain("not when it was created");
     // And never presented as current: 856 hours is not a live number.
     expect(men).toContain('data-live="false"');
     expect(men).toContain('data-freshness="quiet"');
@@ -1034,11 +1038,14 @@ number old enough to stop being a price is removed rather than shown quietly.
     //    inverted: the artifact used to have to contain "have not seen a new
     //    number on N questions", the empty state that shipped every day.
     expect(html).not.toContain("have not seen a new number on");
-    expect(html).toContain('data-testid="props-moved-to-grid"');
+    /* #4122 / notice 34: `props-moved-to-grid` (the Bracket-tab pointer) and
+       `props-freshness-definition` are both off the page. What item 4 was
+       really about survives and is asserted: nothing is HIDDEN for age — the
+       quiet cards are rendered, each saying its own age. */
+    expect(html).not.toContain('data-testid="props-moved-to-grid"');
+    expect(html).not.toContain('data-testid="props-freshness-definition"');
     expect(html).toContain('data-testid="prop-market"');
-    // Each quiet card saying its own age, and the unit defined once per section.
     expect(html).toContain("Last number");
-    expect(html).toContain('data-testid="props-freshness-definition"');
     // Collapsed everywhere.
     expect((html.match(/data-testid="show-more"/g) ?? []).length).toBeGreaterThan(4);
     // The pre-draw bracket panel still carries both boards.

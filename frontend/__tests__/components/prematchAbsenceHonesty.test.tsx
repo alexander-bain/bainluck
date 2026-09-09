@@ -109,37 +109,48 @@ describe("ux/1034 A3 — why a finished row has no pre-match number", () => {
     });
   });
 
-  it("no longer tells the reader what a venue did or did not list", () => {
+  /* ═══ notice 34 / #4122: THE PARAGRAPH WENT; ux/1034 A3's DEFECT MUST STAY
+   * GONE ANYWAY ═══
+   *
+   * This used to assert the wording of the prematch footnote: that it led with
+   * "Shown on 53 of 111", named both absence reasons, and refused the third
+   * claim ("neither is a statement about whether a venue listed one").
+   *
+   * Alex ruled that paragraph off the page — it is where notice 34's own
+   * examples of a banned coverage count and a banned limitation were
+   * transcribed from. So the wording assertions have nothing left to bind to.
+   *
+   * THE ORIGINAL DEFECT IS STILL WORTH A GUARD, and it is the half that
+   * survives deleting the sentence: ux/1034 A3 was Alex finding us tell a
+   * reader "the rest are matches nobody ran a market on" under a fixture
+   * Polymarket had a market on. A page that says nothing cannot make that
+   * claim — but a page that says nothing is also one where a regression could
+   * quietly re-introduce prose. So the guard now asserts the silence directly,
+   * and asserts the two reasons are still COUNTED SEPARATELY, which is what
+   * made the honest wording possible in the first place. */
+  it("makes no claim to the reader about what a venue did or did not list", () => {
     const text = visibleText(render("mens-singles"));
 
-    // THE DEFECT, gone.
+    // THE ux/1034 A3 DEFECT, gone — and unable to return, because so is every
+    // sentence that could carry it.
     expect(text).not.toContain("nobody ran a market on");
-
-    // The ratio still leads, because it is true and it is the useful part.
-    expect(text).toContain("Shown on 53 of 111");
-
-    // Both reasons, in the payload's own terms.
-    expect(text).toContain("55 are fixtures we could not tie to a market of ours");
-    expect(text).toContain(
-      "3 are matches we hold but caught no price on before play started"
-    );
-
-    // And the refusal to make the third claim.
-    expect(text).toContain("neither is a statement about whether a venue listed one");
-
-    // The standing sentence survives — this is a wording repair, not a rewrite.
-    expect(text).toContain("before the match started");
-    expect(text).toContain(
-      "rather leave the space empty than fill it with a number about a different question"
-    );
+    expect(text).not.toContain("venue listed");
+    expect(text).not.toContain("Shown on");
+    expect(text).not.toContain("could not tie to a market of ours");
+    expect(text).not.toContain("rather leave the space empty");
   });
 
   /** The counts are queryable, so a future drift is a failing assertion rather
-   *  than a paragraph somebody has to re-read. */
-  it("publishes the two counts as attributes", () => {
+   *  than a paragraph somebody has to re-read — and since #4122 that is the
+   *  ONLY place they live. `data-total` was renamed `data-prematch-total` when
+   *  these moved up onto the section, which already carries `data-count`. */
+  it("publishes the counts as attributes, including both absence reasons apart", () => {
     const html = render("mens-singles");
     expect(html).toContain('data-with-prematch="53"');
-    expect(html).toContain('data-total="111"');
+    expect(html).toContain('data-prematch-total="111"');
+    // The two reasons stay distinguishable. Collapsing them into one number is
+    // precisely the over-claim ux/1034 A3 was about, so it stays a failure even
+    // though nothing prints them now.
     expect(html).toContain('data-untied="55"');
     expect(html).toContain('data-held-without-opening="3"');
   });

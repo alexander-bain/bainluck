@@ -317,8 +317,14 @@ describe("UX-P154 — the combined card, and who builds it", () => {
     expect(html).not.toContain('data-testid="props-empty"');
     expect(html).toContain("Who wins a second major this year?");
     expect(html).toContain('data-live="false"');
+    // The card's own age, which is the half about the question rather than
+    // about us, and is what this test's title promises.
     expect(html).toContain("Last number 35 days ago");
-    expect(html).toContain("not when it was created");
+    /* #4122 / notice 34: the section-level FRESHNESS_DEFINITION paragraph is
+       off the page — Alex's ruling quotes it as an example of a banned method
+       note. The chip above still labels the age inline, which is why removing
+       the paragraph does not leave "35 days ago" as a riddle. */
+    expect(html).not.toContain("not when it was created");
   });
 
   it("writes the artifact when UX_CAPTURE_DIR is set", () => {

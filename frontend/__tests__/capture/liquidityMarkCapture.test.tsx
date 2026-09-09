@@ -334,7 +334,13 @@ describe("UX-P158 — the illiquidity mark, graded on the surfaces it was built 
 
     const html = renderToStaticMarkup(<PlayoffGrid grid={grid} initialExpanded />);
     expect(html).toContain('data-testid="liquidity-mark"');
-    expect(html).toContain('data-testid="grid-liquidity-key"');
+    /* #4122 (notice 34): the `grid-liquidity-key` paragraph is gone — it
+       printed a coverage count AND the method note, the first two of the three
+       kinds Alex banned. The count it carried is now on the grid section, so
+       `data-marked` still holds and the mark itself is untouched. The reveal
+       was always on the cell's own tooltip rather than in that paragraph,
+       which is why the assertions below still stand. */
+    expect(html).not.toContain('data-testid="grid-liquidity-key"');
     expect(html).toContain(`data-marked="${marked}"`);
     // The reveal rides the cell's own tooltip, because an 8px mark in a 46px
     // value track is not a hover target anybody can find. (The apostrophe in
@@ -393,11 +399,18 @@ describe("UX-P158 — the illiquidity mark, graded on the surfaces it was built 
     );
     expect(html).toContain('data-level="barely"');
     expect(html).toContain('data-level="thin"');
-    expect(html).toContain('data-testid="props-liquidity-definition"');
-    // ONE definition for the section, not one per card.
-    expect(
-      (html.match(/data-testid="props-liquidity-definition"/g) ?? []).length
-    ).toBe(1);
+    /* #4122: "explains once" is now "explains per mark, and only on demand".
+       The section-level definition paragraph is gone (notice 34); the
+       definition rides each mark's own `title` / `aria-label`, which is where
+       the ruling sends method notes. So the marks must still be marks AND must
+       still carry their sentence — a silent glyph would be worse than the
+       paragraph was. */
+    expect(html).not.toContain('data-testid="props-liquidity-definition"');
+    const marks = html.match(/<[^>]*data-testid="liquidity-mark"[^>]*>/g) ?? [];
+    expect(marks.length).toBeGreaterThan(0);
+    for (const mark of marks) {
+      expect(mark).toMatch(/title="[^"]+"/);
+    }
   });
 
   it("writes the artifact when UX_CAPTURE_DIR is set", () => {
@@ -558,7 +571,7 @@ ${panel(
     expect(written).toContain('data-testid="liquidity-mark"');
     expect(written).toContain('data-level="barely"');
     expect(written).toContain('data-level="thin"');
-    expect(written).toContain('data-testid="grid-liquidity-key"');
+    expect(written).not.toContain('data-testid="grid-liquidity-key"');
     expect(written).toContain("much less reliable");
     expect(written).toContain("Last number: ");
     // UX-P184: Alex's copy ruling, asserted against the file he will look at.

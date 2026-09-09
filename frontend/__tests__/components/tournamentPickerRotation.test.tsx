@@ -285,15 +285,27 @@ describe("ruling 8 — an advance-to-round question is not a prop", () => {
     expect(result.dropped.advance).toBe(3);
   });
 
-  it("says where they went, rather than quietly having three fewer cards", () => {
+  it("drops the reach question from this section without narrating where it went", () => {
+    /* #4122 / notice 34. `MovedToGrid` printed "Questions about reaching a
+       round … are on the Bracket tab", or a COUNT of them when a rotation had
+       fired. The counted form is a fact about our render pipeline; the
+       uncounted form points at a top-level tab the reader can already see. Both
+       went — see the note in `TournamentProps.tsx` for the judgement call and
+       how to restore the pointer as a caption if Alex wants it.
+
+       The behaviour under test is unchanged: a reach question is not a prop, so
+       it is not in this section. That is what the assertions check now. */
     const html = renderToStaticMarkup(
       <TournamentProps
         markets={[prop("alcaraz-semifinals"), prop("sinner-competes")]}
         draw="mens-singles"
       />
     );
-    expect(html).toContain('data-testid="props-moved-to-grid"');
-    expect(html).toContain("on the Bracket tab");
+    expect(html).not.toContain('data-testid="props-moved-to-grid"');
+    expect(html).not.toContain("on the Bracket tab");
+    // The reach question is excluded; the ordinary prop is not.
+    expect(html).toContain('data-dropped-advance="1"');
+    expect(count(html, 'data-testid="prop-market"')).toBe(1);
   });
 });
 
@@ -354,8 +366,11 @@ describe("Alex's item 4 — an illiquid question is still a question", () => {
     );
     expect(html).toContain('data-freshness="quiet"');
     expect(html).toContain("Last number");
-    // And the definition, once, so "Last number" is not a second riddle.
-    expect(html).toContain('data-testid="props-freshness-definition"');
+    /* #4122 / notice 34: the section-level definition is gone. It is one of the
+       ruling's three quoted examples of a banned method note. The card still
+       says its own age, which is the part that is about the question rather
+       than about us. */
+    expect(html).not.toContain('data-testid="props-freshness-definition"');
   });
 
   it("distinguishes waiting from quiet, because 30 hours is not a month", () => {
@@ -430,8 +445,12 @@ describe("Alex's item 3 — the age says what it is the age OF", () => {
         draw="mens-singles"
       />
     );
-    expect(count(html, 'data-testid="props-freshness-definition"')).toBe(1);
-    expect(html).toContain("not when it was created");
+    // Was: "defines the unit once per section". #4122 removed the definition
+    // entirely, so the invariant that remains is that no card grows one of its
+    // own — three quiet cards, zero definitions, three ages.
+    expect(count(html, 'data-testid="props-freshness-definition"')).toBe(0);
+    expect(html).not.toContain("not when it was created");
+    expect(count(html, 'data-testid="prop-age"')).toBe(3);
   });
 
   it("says nothing about ages when every card is live", () => {
@@ -911,7 +930,10 @@ describe("an empty section says WHY — and age is no longer a way to be empty",
     // behaviour rather than staying as a line that always reads zero.
     expect(count(html, 'data-testid="prop-market"')).toBe(2);
     expect(html).not.toContain('data-testid="props-rotated-out"');
-    expect(html).toContain('data-testid="props-moved-to-grid"');
+    // #4122: the section no longer says where it went, but it is still
+    // auditable from the markup, which is what this test's title promises.
+    expect(html).not.toContain('data-testid="props-moved-to-grid"');
+    expect(html).toContain('data-dropped-advance="1"');
   });
 
   it("does not count a moved reach market as 'rotated out' — it moved", () => {
@@ -922,6 +944,8 @@ describe("an empty section says WHY — and age is no longer a way to be empty",
       />
     );
     expect(html).not.toContain('data-testid="props-rotated-out"');
-    expect(html).toContain('data-testid="props-moved-to-grid"');
+    // #4122: not narrated, still counted — and counted as MOVED, not rotated.
+    expect(html).not.toContain('data-testid="props-moved-to-grid"');
+    expect(html).toContain('data-dropped-advance="1"');
   });
 });

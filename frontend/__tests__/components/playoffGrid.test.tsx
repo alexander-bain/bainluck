@@ -196,7 +196,12 @@ describe("no cell is ever blank", () => {
     expect(html).toContain("No R16 market at kalshi, polymarket");
     // The censused absence is NOT an alarm, and the banner must not fire.
     expect(html).not.toContain('data-testid="grid-alarm-banner"');
-    expect(html).toContain('data-testid="grid-no-market"');
+    /* #4122 (notice 34): the legend that aggregated "K say NO MKT" is gone —
+       it was a coverage count plus an explanation of our own emptiness. Ruling
+       3 is untouched and is asserted above: the CELL still prints "no mkt" and
+       still carries its own sentence. The count is on the section for probes. */
+    expect(html).not.toContain('data-testid="grid-legend"');
+    expect(html).toContain('data-no-market="4"');
   });
 
   it("an alarm cell names the market that did not link", () => {

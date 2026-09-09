@@ -201,19 +201,40 @@ describe("the rendered finished list", () => {
     expect(anchor![0]).toMatch(/class="[^"]*\bcontents\b/);
   });
 
-  it("names the gap rather than leaving dead rows unexplained", () => {
+  /* ═══ notice 34 / #4122: THE GAP IS COUNTED, IT IS JUST NOT NARRATED ═══
+   *
+   * These three used to assert the sentence "1 of 3 open a match page". Alex
+   * ruled that coverage counts do not belong on a reader's screen, so the
+   * sentence is gone and the count rides the section as `data-linked` /
+   * `data-link-total`.
+   *
+   * The PROPERTY under test is unchanged and is the one #2568 cared about: the
+   * component must still know, and still expose, which rows route — so a
+   * silent regression to zero links is still a failing test. What changed is
+   * only who the answer is addressed to. Asserting the numbers rather than the
+   * prose also makes these guards immune to the next copy edit. */
+  it("counts the gap in the markup rather than narrating it to the reader", () => {
     const html = markup(BY_MATCHUP);
-    expect(html).toContain('data-testid="results-link-note"');
-    expect(html).toContain("1 of 3");
+    expect(html).toContain('data-linked="1"');
+    expect(html).toContain('data-link-total="3"');
+    // The prose is gone, and stays gone.
+    expect(html).not.toContain('data-testid="results-link-note"');
+    expect(html).not.toContain("open a match page");
   });
 
-  it("says nothing about links when it can route none of them", () => {
-    // A note reading "0 of 3 open a match page" is worse than silence: it
-    // advertises a feature the reader cannot use anywhere on the list.
-    expect(markup({})).not.toContain('data-testid="results-link-note"');
+  it("still counts when it can route none of them, and still says nothing", () => {
+    // Previously this asserted the note was suppressed at zero, because "0 of 3
+    // open a match page" advertises a feature the reader cannot use. Now
+    // nothing is ever printed, so the assertion that matters is that the zero
+    // is still VISIBLE TO A PROBE — an unrouted list must not read the same as
+    // a fully routed one in the markup.
+    const html = markup({});
+    expect(html).toContain('data-linked="0"');
+    expect(html).toContain('data-link-total="3"');
+    expect(html).not.toContain("open a match page");
   });
 
-  it("counts LINKED rows in the note, not rendered rows", () => {
+  it("counts LINKED rows, not rendered rows", () => {
     const both = Object.fromEntries(
       MATCHES.filter((m) => !m.matchup_key.startsWith("espn:")).map((m, i) => [
         m.matchup_key,
@@ -222,12 +243,15 @@ describe("the rendered finished list", () => {
     );
     const html = markup(both);
     expect(hrefs(html).filter((h) => h.startsWith("/events/"))).toHaveLength(2);
-    expect(html).toContain("2 of 3");
+    expect(html).toContain('data-linked="2"');
+    expect(html).toContain('data-link-total="3"');
   });
 
-  it("says nothing about links when every row on the list routes", () => {
-    // The note is about a GAP. With no gap it is noise, and a reader who can
-    // click everything does not need to be told how many things they can click.
+  it("reads fully-routed in the markup when every row on the list routes", () => {
+    // The old assertion was that the note fell silent with no gap to report.
+    // With no note at all, the fact worth guarding is the other direction: a
+    // fully-routed list must read as fully routed, so `data-linked` tracking
+    // the rendered count rather than the routed one would still be caught.
     const registered = MATCHES.filter((m) => !m.matchup_key.startsWith("espn:"));
     const html = renderToStaticMarkup(
       <TournamentResults
@@ -240,6 +264,8 @@ describe("the rendered finished list", () => {
       />
     );
     expect(hrefs(html).filter((h) => h.startsWith("/events/"))).toHaveLength(2);
+    expect(html).toContain('data-linked="2"');
+    expect(html).toContain('data-link-total="2"');
     expect(html).not.toContain('data-testid="results-link-note"');
   });
 

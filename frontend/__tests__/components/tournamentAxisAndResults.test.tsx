@@ -733,12 +733,19 @@ describe("item 9 — decided matches carry their score", () => {
     expect(html).toContain('data-outcome="lost"');
   });
 
-  it("says WHERE the score came from", () => {
+  /* notice 34 / #4122: the "Scores from ESPN." provenance line is off the
+     page. Where a score came from is not something a reader of a finished
+     tennis result is asking, and the sentence carried two counts with it. The
+     completion note and the unregistered-pair count it used to print are on
+     the section as `data-completion` / `data-unregistered-pairs`. */
+  it("no longer narrates where the score came from", () => {
     const html = renderToStaticMarkup(
       <TournamentResults results={results()} draw="mens-singles" />
     );
-    expect(html).toContain('data-testid="results-provenance"');
-    expect(html).toContain("Scores from ESPN");
+    expect(html).not.toContain('data-testid="results-provenance"');
+    expect(html).not.toContain("Scores from ESPN");
+    // The scores themselves are untouched — this removed a caption, not data.
+    expect(html).toContain("7-6, 6-3");
   });
 
   /* ═══ UX-P147, ALEX'S ITEM 5: THE ROW THAT SAID "no score" ═══
@@ -897,11 +904,15 @@ describe("item 9 — decided matches carry their score", () => {
     expect(html).toContain("7-6 (7-4), 3-6, 6-4");
   });
 
-  it("counts the coverage gap rather than letting a short list speak for it", () => {
+  it("counts the coverage gap in the markup, and tells the reader nothing", () => {
+    // notice 34 / #4122. The gap is still COUNTED — a component that stopped
+    // tracking it would still fail here — but 117 is a fact about our joins,
+    // not about the tennis, so it rides the section instead of the page.
     const html = renderToStaticMarkup(
       <TournamentResults results={results({ unregistered_pairs: 117 })} draw="mens-singles" />
     );
-    expect(html).toContain("117 other finished matches");
+    expect(html).toContain('data-unregistered-pairs="117"');
+    expect(html).not.toContain("117 other finished matches");
   });
 
   /* ═══ live/071: THE PHONE'S NAME COLUMN, AND THE TWO THINGS THAT ATE IT ═══
@@ -1198,8 +1209,11 @@ describe("UX-P146 — the prior beside the result", () => {
     });
     const html = renderToStaticMarkup(<TournamentResults results={mixed} draw="mens-singles" />);
     expect(html).toContain('data-with-prematch="1"');
-    expect(html).toContain('data-total="2"');
-    expect(html).toContain("1 of 2");
+    expect(html).toContain('data-prematch-total="2"');
+    // notice 34 / #4122: counted, not narrated. `data-total` was renamed
+    // `data-prematch-total` when it moved onto the section, which already
+    // carries `data-count`.
+    expect(html).not.toContain("1 of 2");
   });
 
   it("does not state a coverage ratio when every row has one", () => {
@@ -1210,9 +1224,15 @@ describe("UX-P146 — the prior beside the result", () => {
       count: 2,
     });
     const html = renderToStaticMarkup(<TournamentResults results={all} draw="mens-singles" />);
-    expect(html).toContain('data-testid="results-prematch-note"');
-    expect(html).toContain("before the match started");
-    expect(html).not.toContain("2 of 2");
+    // notice 34 / #4122: there is no note to suppress any more. What survives
+    // is the shape the old test was really protecting — a fully-covered draw
+    // and a partly-covered one must be distinguishable in the markup.
+    expect(html).not.toContain('data-testid="results-prematch-note"');
+    expect(html).not.toContain("before the match started");
+    expect(html).toContain('data-with-prematch="2"');
+    expect(html).toContain('data-prematch-total="2"');
+    // The per-row numbers, which ARE the reader's business, are still drawn.
+    expect(html).toContain('data-testid="result-prematch"');
   });
 
   it("the coverage is counted over THIS draw, not the payload's all-draws total", () => {
@@ -1228,8 +1248,8 @@ describe("UX-P146 — the prior beside the result", () => {
       with_prematch: 1,
     });
     const html = renderToStaticMarkup(<TournamentResults results={both} draw="mens-singles" />);
-    expect(html).toContain('data-total="1"');
-    expect(html).not.toContain('data-total="3"');
+    expect(html).toContain('data-prematch-total="1"');
+    expect(html).not.toContain('data-prematch-total="3"');
   });
 
   it("never rounds a real prior to 0% or 100%", () => {
