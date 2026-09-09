@@ -1,6 +1,6 @@
 "use client";
 
-import { teamShortName, teamShortNames } from "@/lib/teamShortName";
+import { teamCrestBadge, teamShortNames } from "@/lib/teamShortName";
 import { useState } from "react";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
@@ -168,12 +168,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
         {isLive && <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-red-500/90 text-white text-[10px] font-bold uppercase px-2.5 py-1 rounded-full"><span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />LIVE</div>}
 
         <div className="flex flex-col items-center gap-2">
-          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{teamShortName(data.away_team).slice(0, 3).toUpperCase()}</div>}
+          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{teamCrestBadge(data.away_team)}</div>}
           {(isLive || isDone || isSuspended) && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
         </div>
         <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
         <div className="flex flex-col items-center gap-2">
-          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{teamShortName(data.home_team).slice(0, 3).toUpperCase()}</div>}
+          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{teamCrestBadge(data.home_team)}</div>}
           {(isLive || isDone || isSuspended) && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
         </div>
       </div>

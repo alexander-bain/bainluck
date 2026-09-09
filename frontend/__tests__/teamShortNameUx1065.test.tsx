@@ -411,7 +411,15 @@ describe("UX-1065: the rendered sentence", () => {
         categoryEmoji: "*",
       }),
     );
-    expect(markup).toContain(">HAR<");
+    // #4466 moved the THREE-part side of this pair: the crest slot now takes
+    // initials when a name has 3+ parts, because the trailing token there is a
+    // fragment of a compound rather than a name ("Paris Saint Germain" was
+    // painting "GER"). "Hartlepool United FC" is three parts -> "HUF";
+    // "Altrincham FC" is two, so the last-word rule still answers it -> "ALT".
+    //
+    // UX-1065's invariant is untouched and is what the last line states: the
+    // two sides differ, and neither is the word "FC".
+    expect(markup).toContain(">HUF<");
     expect(markup).toContain(">ALT<");
     expect(markup).not.toContain(">FC<");
   });
@@ -428,7 +436,12 @@ describe("UX-1065: the rendered sentence", () => {
         categoryEmoji: "*",
       }),
     );
-    expect(markup).toContain(">LAK<");
+    // #4466: "Boston Celtics" is two parts and is UNCHANGED, which is the half
+    // of this control that was actually guarding UX-1065 — the club-type rule
+    // must not eat a nickname. "Los Angeles Lakers" is three parts and now
+    // reads "LAL" rather than "LAK"; that is the Lakers' own abbreviation and
+    // it is the deliberate, measured cost of fixing the fragment class.
+    expect(markup).toContain(">LAL<");
     expect(markup).toContain(">CEL<");
   });
 

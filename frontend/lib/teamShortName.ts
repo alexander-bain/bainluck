@@ -207,6 +207,65 @@ export function teamCrestInitials(name: string | null | undefined): string {
 }
 
 /**
+ * #4466 — the crest badge for the LARGE tile (the 64px square on the Discover
+ * duel cards). Three glyphs, as that tile has always drawn.
+ *
+ * THE DEFECT. `teamShortName(name).slice(0, 3)` painted PSG's tile **`GER`** on
+ * production page one (2026-09-09 12:40 PT), and **`SAI`** an hour later on a
+ * second LOOK — because the stored name is an INPUT and both spellings are
+ * live:
+ *
+ *     "Paris Saint Germain"  -> last word "Germain"       -> "GER"
+ *     "Paris Saint-Germain"  -> last word "Saint-Germain" -> "SAI"
+ *
+ * THE RULE, and why it is a fork rather than a replacement. The last-word rule
+ * is *right* for the American `<place> <nickname>` convention and, thanks to
+ * CLUB_TYPE_SUFFIXES above, for `<place> <club-type>` too — "Boston Celtics" is
+ * "CEL", "Ipswich Town" is "IPS", "Altrincham FC" is "ALT". Where it has no
+ * chance is a name of THREE or more parts, where the trailing token is a
+ * fragment of a compound rather than a name anybody uses. So: three or more
+ * parts (splitting on hyphens as well as spaces, which is what makes the two
+ * PSG spellings agree) takes initials; two parts keeps the shipped behaviour
+ * exactly.
+ *
+ * MEASURED, with these functions and not an approximation of them, over 1,000
+ * production fixtures from the trailing 24h where both sides are multi-word,
+ * counting fixtures whose two badges come out IDENTICAL:
+ *
+ *     teamShortName().slice(0,3)      11
+ *     teamCrestInitials (2 glyphs)    15   <- REJECTED, worse than shipping
+ *     this function                    5
+ *
+ * The middle row is why this is not simply `teamCrestInitials`, which #4466's
+ * body suggests and which is right for the 20px tile: at two glyphs the Mets
+ * and the Yankees are both "NY". (A first pass at this census approximated
+ * `teamShortName` in Python as a bare last-word rule, reported 48 vs 14, and
+ * inverted the answer — the proxy did not know about CLUB_TYPE_SUFFIXES.)
+ *
+ * ACCEPTED COST: 40% of the badges on this surface change, all of them within
+ * the 3+-part population where the old value was a fragment. Some are plainly
+ * better ("New York Mets" MET -> NYM, "Los Angeles Lakers" LAK -> LAL); some
+ * trade familiarity for consistency ("Boston Red Sox" SOX -> BRS). Two pinned
+ * controls in `teamShortNameUx1065.test.tsx` move with it and say why.
+ *
+ * A DOUBLES PAIR IS NOT TOUCHED. #3110 pinned this tile at three letters of the
+ * first surname ("SIN", "HUN") and that decision is not #4466's to reopen — a
+ * pair is not a compound name, it is two names.
+ */
+export function teamCrestBadge(name: string | null | undefined): string {
+  const full = (name ?? "").trim();
+  if (!full) return "";
+  if (isDoublesPair(full)) return teamShortName(full).slice(0, 3).toUpperCase();
+  const parts = full.split(/[\s‐-―-]+/).filter(Boolean);
+  if (parts.length < 3) return teamShortName(full).slice(0, 3).toUpperCase();
+  return parts
+    .map(word => word.charAt(0))
+    .join("")
+    .slice(0, 3)
+    .toUpperCase();
+}
+
+/**
  * One side's compact name. Prefer this only where the other side is genuinely
  * unavailable — `teamShortNames` below can additionally catch the case where
  * two teams shorten to the SAME word, which one side alone cannot see.
