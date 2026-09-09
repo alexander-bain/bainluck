@@ -4,7 +4,6 @@ import React from "react";
 
 import LiquidityMark from "../LiquidityMark";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
-import { isMarked, readLiquidity } from "@/lib/liquidity";
 import {
   answerOutcome,
   curatedProps,

@@ -7,7 +7,6 @@ import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   DRAW_LABELS,
-  completionNote,
   drawIsPriced,
   formatPrematch,
   prematchAttribution,
@@ -511,7 +510,12 @@ export default function TournamentResults({
   }
 
   const shown = expanded ? matches : matches.slice(0, COLLAPSED_LIST_COUNT);
-  const completion = completionNote(matches);
+  // `completionNote(matches)` was read here to print "1 ended in a retirement"
+  // beneath the list. #4125 item 1 removed that sentence — each row already
+  // prints `ret.` / `walkover` from `scoreLineFor`, with the full explanation on
+  // its own `title`, so the aggregate was a second copy of a per-row fact. The
+  // helper stays exported and unit-tested in `lib/tournamentResults.ts`; only
+  // this component's use of it is gone.
   /* Counted over THIS draw's rendered rows rather than read off the payload's
      `with_prematch`, which is the all-draws total. A footnote that says "12 of
      76" under a list of 24 is a footnote about a different list. */
