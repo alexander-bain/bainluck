@@ -341,7 +341,9 @@ class TestPolymarketReportsTheClose:
         event = _PolyEvent(
             "86515", [_PolyMarketRow("0xaa", closed=True)], closed=True
         )
-        out = await fpr._fetch_polymarket_prices(_FakePolyService(event), ["86515"])
+        out, _unpriced = await fpr._fetch_polymarket_prices(
+            _FakePolyService(event), ["86515"]
+        )
         assert out["86515"] is fpr.VENUE_SETTLED
 
     async def test_every_market_closed_is_the_same_answer(self):
@@ -350,7 +352,9 @@ class TestPolymarketReportsTheClose:
             [_PolyMarketRow("0xa", closed=True), _PolyMarketRow("0xb", closed=True)],
             closed=False,
         )
-        out = await fpr._fetch_polymarket_prices(_FakePolyService(event), ["9"])
+        out, _unpriced = await fpr._fetch_polymarket_prices(
+            _FakePolyService(event), ["9"]
+        )
         assert out["9"] is fpr.VENUE_SETTLED
 
     async def test_one_open_leg_keeps_the_field_live(self):
@@ -364,13 +368,17 @@ class TestPolymarketReportsTheClose:
             [_PolyMarketRow("0xa", closed=True), _PolyMarketRow("0xb", closed=False)],
             closed=False,
         )
-        out = await fpr._fetch_polymarket_prices(_FakePolyService(event), ["9"])
+        out, _unpriced = await fpr._fetch_polymarket_prices(
+            _FakePolyService(event), ["9"]
+        )
         assert out.get("9") is not fpr.VENUE_SETTLED
 
     async def test_an_event_with_no_markets_is_skipped_not_settled(self):
         """`all([])` is True. An empty parse must not read as "every leg closed"."""
         event = _PolyEvent("9", [], closed=False)
-        out = await fpr._fetch_polymarket_prices(_FakePolyService(event), ["9"])
+        out, _unpriced = await fpr._fetch_polymarket_prices(
+            _FakePolyService(event), ["9"]
+        )
         assert "9" not in out
 
 

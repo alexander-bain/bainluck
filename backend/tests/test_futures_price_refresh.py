@@ -770,7 +770,7 @@ class TestPolymarketAddressing:
         assert "for market in by_event[event_id]:" in _MODULE_SRC
 
     async def test_fetch_keys_by_event_and_emits_the_no_leg(self):
-        priced = await fpr._fetch_polymarket_prices(
+        priced, _unpriced = await fpr._fetch_polymarket_prices(
             _FakePolyService(_poly_event("910171", [_poly_market("0xabc", 0.575, 0.425)])),
             ["910171"],
         )
@@ -809,7 +809,7 @@ class TestPolymarketAddressing:
         market.best_bid = 0.11
         market.best_ask = 0.53
         market.last_trade_price = 0.53
-        priced = await fpr._fetch_polymarket_prices(
+        priced, _unpriced = await fpr._fetch_polymarket_prices(
             _FakePolyService(_poly_event("910171", [market])), ["910171"]
         )
         item = priced["910171"][0]
@@ -853,7 +853,7 @@ class TestPolymarketAddressing:
         market.best_bid = 0.11
         market.best_ask = 0.53
         market.last_trade_price = 0.53
-        priced = await fpr._fetch_polymarket_prices(
+        priced, _unpriced = await fpr._fetch_polymarket_prices(
             _FakePolyService(_poly_event("910171", [market])), ["910171"]
         )
         assert priced == {}, f"an untraded wide book published {priced}"
@@ -871,7 +871,7 @@ class TestPolymarketAddressing:
         ):
             market = _poly_market("0xabc", yes, no, volume_24h=vol)
             market.best_bid, market.best_ask, market.last_trade_price = bid, ask, last
-            priced = await fpr._fetch_polymarket_prices(
+            priced, _unpriced = await fpr._fetch_polymarket_prices(
                 _FakePolyService(_poly_event("910171", [market])), ["910171"]
             )
             item = priced["910171"][0]
@@ -1142,18 +1142,21 @@ class _RunHarness:
         )
 
         async def _priced(service, event_ids):
-            return {
-                eid: [
-                    {
-                        "external_id": "0xabc",
-                        "probability": 0.399,
-                        "yes_bid": 0.39,
-                        "yes_ask": 0.40,
-                        "last_price": 0.399,
-                    }
-                ]
-                for eid in event_ids
-            }
+            return (
+                {
+                    eid: [
+                        {
+                            "external_id": "0xabc",
+                            "probability": 0.399,
+                            "yes_bid": 0.39,
+                            "yes_ask": 0.40,
+                            "last_price": 0.399,
+                        }
+                    ]
+                    for eid in event_ids
+                },
+                {eid: [] for eid in event_ids},
+            )
 
         monkeypatch.setattr(mod, "_fetch_polymarket_prices", _priced)
         return await mod._refresh_stale_futures_prices()
