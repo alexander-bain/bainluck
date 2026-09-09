@@ -90,6 +90,7 @@ from app.utils.prop_template_family import (  # noqa: E402
 )
 from app.utils.tournament_register import (  # noqa: E402
     classify,
+    describes_our_market,
     us_open_2026_contract,
     validate_register,
 )
@@ -156,9 +157,14 @@ CURATION: dict[str, dict] = {
         # settled Polymarket field 33520 resolves her leg YES). The US Open is
         # the last major of the calendar year, and her 2026 leg is still
         # `active` — so on this market "wins a major in 2026" and "wins this
-        # tournament" are now the same event, and the hook says so rather than
-        # letting the title quietly assume it.
-        "hook": "She won here last year — and with the US Open the last major of 2026, this market is now exactly that question.",
+        # tournament" are now the same event.
+        #
+        # NOTICE 34 (#4334): the hook used to close *"…this market is now
+        # exactly that question."* That clause is about the identity of OUR
+        # market, not about Sabalenka, and it rendered as grey body prose on
+        # the card. Both surviving clauses are facts about the world, which is
+        # the only thing a hook may be.
+        "hook": "She won here last year, and the US Open is the last major of 2026.",
         "draw": "womens-singles",
         "answer": "Aryna Sabalenka",
         # ONE LEG OF A SEVENTEEN-NAME FIELD. UX-P135 declined this whole market
@@ -173,7 +179,13 @@ CURATION: dict[str, dict] = {
     "KXWTANATSTAGE-26QF": {
         "key": "usa-women-quarterfinal-count",
         "title": "Can three American women reach the quarterfinals?",
-        "hook": "One market for the whole American contingent, with a rung for one right through seven.",
+        # NO HOOK, DELIBERATELY (notice 34, #4334). It read *"One market for
+        # the whole American contingent, with a rung for one right through
+        # seven."* — "one market", "a rung": a description of how we built the
+        # card, end to end, with no fact about the tennis in it. There is no
+        # first clause to keep, so the field is absent rather than emptied, and
+        # `hook` is optional everywhere it is read (`spec.get`, `prop.get`,
+        # `{market.hook && …}`).
         "draw": "womens-singles",
         # THE RUNG IS THE CURATION. The ladder runs 1+ through 7+; `1+` at .895
         # is an announcement and `7+` at .03 is a lottery ticket. `3+` is the
@@ -193,7 +205,11 @@ CURATION: dict[str, dict] = {
         # and the title says the weaker thing rather than the title saying the
         # stronger one over the weaker one's number.
         "title": "Will an American reach the men's final?",
-        "hook": "The market asks about the American men as a group, not one at a time.",
+        # NO HOOK, DELIBERATELY (notice 34, #4334). It read *"The market asks
+        # about the American men as a group, not one at a time."* The title
+        # already asks about "an American"; the sentence only restated the
+        # market's shape in grey under the number. Same treatment as
+        # `KXWTANATSTAGE-26QF` above.
         "draw": "mens-singles",
         # `Yes` and not `1+ Americans`: the venue's own `yes_sub_title` is the
         # latter but our ingest stored the former, and the curation names the
@@ -254,12 +270,27 @@ CURATION: dict[str, dict] = {
 #: and these are INDEPENDENT binaries that can both resolve Yes: there are four
 #: majors a year and each man needs two of them, not the same two.  Their
 #: numbers do not sum to 100 and must never be normalised so they do (the same
-#: rule the cycling GC field carries).  The title is his, verbatim; the hook is
-#: what stops it being read as an exclusive race.
+#: rule the cycling GC field carries).  The title is his, verbatim.
+#:
+#: THE HOOK KEEPS "TWO SEPARATE QUESTIONS", AND THAT IS A RULING, NOT AN
+#: OVERSIGHT (#4334).  The notice-34 sweep of 2026-09-09 removed three sibling
+#: hooks that described our market's shape, and by the letter of the phrase ban
+#: this one goes too.  It does not, because **ruling 143 clause 4** decided this
+#: exact sentence on the merits: the two legs are independent binaries that do
+#: not sum to 100, Alex's own title (*who* wins) reads as a race, and the
+#: ruling's words are that the hook is therefore *"load-bearing rather than
+#: decorative"*.  Alex's own enumeration in #4125 item 1 does not list it either.
+#:
+#: A later general notice does not silently overturn an earlier specific ruling
+#: on the same sentence — so the exemption is NAMED in
+#: `tournament_register.HOOK_BANS_EXEMPT_BY_RULING`, guarded as an exact set,
+#: and put to Alex as a lettered call rather than decided by a lane.
 FAMILY_CURATION: dict[str, dict] = {
     "{} grand slam wins in 2026": {
         "key": "second-major",
         "title": "Who wins a second major this year?",
+        # EXEMPT, BY RULING 143 CLAUSE 4 — not an oversight. See
+        # `HOOK_BANS_EXEMPT_BY_RULING`.
         "hook": (
             "Both already have one in 2026. These are two separate questions — "
             "they could both do it, or neither."
@@ -623,6 +654,31 @@ def main() -> int:
         print(f"REFUSED: duplicate curation keys in {sorted(keys)}", file=sys.stderr)
         return 1
 
+    # ── A HOOK MAY DESCRIBE THE WORLD, NEVER OUR MARKET (notice 34, #4334) ───
+    #
+    # Four of the five committed hooks explained how the card was BUILT, in
+    # grey 11.5px under the number, on the page Alex read when he said "all the
+    # grey text is madness". Deleting them from the maps above is only half a
+    # fix: the next run of this script rewrites the register from those maps,
+    # so the sentences come back unless the script itself refuses them. It
+    # refuses them here, beside the duplicate-key refusal, for the same reason
+    # — a silent restoration is worse than a loud stop.
+    construction = [
+        (spec.get("key"), spec.get("hook"), phrase)
+        for spec in list(curation.values()) + list(FAMILY_CURATION.values())
+        for phrase in [describes_our_market(spec.get("hook"), key=spec.get("key"))]
+        if phrase
+    ]
+    if construction:
+        for key, hook, phrase in construction:
+            print(
+                f"REFUSED {key}: the hook describes our market, not the world — "
+                f"{phrase!r} in {hook!r}. A hook states a fact about the "
+                f"tournament, or the card carries no hook at all (notice 34).",
+                file=sys.stderr,
+            )
+        return 1
+
     by_market: dict[str, list[dict]] = {}
     for row in rows:
         by_market.setdefault(str(row["market_ext"]), []).append(row)
@@ -766,7 +822,7 @@ def main() -> int:
         props.append({
             "key": spec["key"],
             "title": spec["title"],
-            "hook": spec["hook"],
+            "hook": spec.get("hook"),
             "draw": spec["draw"],
             "source": market_rows[0]["source"],
             "market_id": market_rows[0]["market_id"],
@@ -886,7 +942,7 @@ def main() -> int:
         props.append({
             "key": key,
             "title": spec["title"],
-            "hook": spec["hook"],
+            "hook": spec.get("hook"),
             "draw": spec["draw"],
             "source": member_sources.pop(),
             "markets": [

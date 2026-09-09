@@ -210,6 +210,88 @@ NON_PLAYER_NAMES = frozenset({
     "no winner", "none of the above", "any other man", "any other woman",
 })
 
+#: ═══ A HOOK STATES A FACT ABOUT THE WORLD (standing notice 34, #4334) ═══
+#:
+#: A prop card's ``hook`` is the one line of prose the register may put under a
+#: number, and four of the five committed for the US Open described how the
+#: CARD was built rather than what happened in the tennis — *"The market asks
+#: about the American men as a group, not one at a time."*, *"One market for
+#: the whole American contingent, with a rung for one right through seven."*
+#: They rendered as grey 11.5px body text on the page Alex read at 4pm on
+#: 2026-09-08 when he said *"all the grey text is madness, and shouldn't be
+#: user-facing at all"*.
+#:
+#: 🔴 THE BAN IS ON STRUCTURE, NOT ON THE WORD "MARKET".  What a market SAYS is
+#: legitimate reader content and several surviving hooks are exactly that —
+#: *"the market still calls it close to a coin flip"*, *"Even the market cannot
+#: separate it."*  A ban keyed on "market" would delete those too.  So each
+#: phrase below names a market or a question and then describes its SHAPE: what
+#: it asks, how many of them there are, what its rungs are.  That is the line,
+#: and it is why this is a phrase list and not a word list.
+#:
+#: This is a pure predicate on purpose.  It is NOT wired into
+#: :func:`validate_register`, which the register sentinel runs against live
+#: registers — a new finding class mid-tournament is a bigger change than the
+#: defect.  It is enforced where hooks are AUTHORED
+#: (``scripts/populate_tournament_props.py`` refuses a curation carrying one)
+#: and asserted over the committed register by
+#: ``tests/test_prop_hook_describes_the_world_not_our_market_4334.py``.
+MARKET_CONSTRUCTION_PHRASES: tuple[str, ...] = (
+    "the market asks",
+    "this market asks",
+    "the market is asking",
+    "separate questions",
+    "separate markets",
+    "one market for",
+    "a single market",
+    "one question for",
+    "with a rung",
+    "a rung for",
+    "each rung",
+    "is now exactly that question",
+    "not one at a time",
+    "as a group, not",
+    "how we built",
+    "how this card",
+    "the way we ask",
+)
+
+
+#: ═══ ONE HOOK IS EXEMPT, BY A RULING, AND THE EXEMPTION IS NAMED ═══
+#:
+#: ``second-major`` carries *"These are two separate questions — they could both
+#: do it, or neither."*, which the phrase ban above catches and which is
+#: nevertheless STAYING.  **Ruling 143 clause 4** decided this exact sentence on
+#: the merits: the card's two legs are independent binaries that must never be
+#: normalised to 100, Alex's own title (*who* wins) reads as a race, and the
+#: ruling's words are that the hook is *"load-bearing rather than decorative"*.
+#: Alex's enumeration in #4125 item 1 does not list it among the strings to
+#: remove either.
+#:
+#: 🔴 A LATER GENERAL NOTICE DOES NOT SILENTLY OVERTURN AN EARLIER SPECIFIC
+#: RULING on the same sentence.  Notice 34 and ruling 143 genuinely disagree
+#: here, so this is a lettered call for Alex, not a lane's to make — and until
+#: he makes it the disagreement is written down in the code rather than
+#: resolved by whichever rule the sweeper happened to be holding.  A silent
+#: hole in the predicate would have hidden exactly that.
+HOOK_BANS_EXEMPT_BY_RULING: dict[str, str] = {
+    "second-major": "ruling 143 clause 4 — the non-exclusivity is load-bearing",
+}
+
+
+def describes_our_market(hook: str | None, *, key: str | None = None) -> str | None:
+    """Return the offending phrase when a hook describes our market's shape.
+
+    ``None`` — the safe answer — for an absent hook, for every hook that talks
+    about the world (including one reporting what a market *says*), and for a
+    prop whose ``key`` a ruling has exempted.
+    """
+    if key is not None and key in HOOK_BANS_EXEMPT_BY_RULING:
+        return None
+    lowered = (hook or "").lower()
+    return next((p for p in MARKET_CONSTRUCTION_PHRASES if p in lowered), None)
+
+
 #: Drift that means "a number would be shown that must not be" — same posture as
 #: ``grid_register.RENDER_FINDINGS``: the register may be well-formed and the
 #: release still blocked.
