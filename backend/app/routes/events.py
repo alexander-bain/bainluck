@@ -16483,6 +16483,7 @@ from app.utils.outcome_display import (  # noqa: E402
     normalize_display_probs as _normalize_search_outcome_probs,
     leader_pick_order as _leader_pick_order,
     drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
+    drop_incoherent_near_certain as _drop_incoherent_near_certain,
 )
 from app.utils.duplicate_condition_outcomes import (  # noqa: E402
     drop_duplicate_legs as _drop_duplicate_legs,
@@ -16512,6 +16513,29 @@ def _build_search_top_outcomes(
         for o in _drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
         if not _is_placeholder_outcome_name(o.name)
     ]
+    # #4253: a single-winner field cannot have five different winners. Measured
+    # live 2026-09-09, `?q=Dancing with the Stars` served market 12764689 as
+    # `Contestant 22 1.0 · Contestant 16 1.0 · Contestant 33 1.0 · Contestant 43
+    # 1.0 · Contestant 45 1.0` — the frozen legs sort above BOTH of that market's
+    # real prices, so the dropdown showed five 100%s and not one honest number.
+    #
+    # BEFORE the sort and the `[:limit]` slice, which is the whole placement
+    # argument (see the helper's docstring): on this specimen every sliced row is
+    # junk, so a post-slice drop would empty the list and NEVER-EMPTIES would hand
+    # all five straight back; and on market 113419 only one of nineteen frozen legs
+    # survives the slice, which reads as an ordinary settled market and would not
+    # trip the predicate at all.
+    #
+    # `_drop_dominant_field_outcomes` below is name-gated and cannot help here —
+    # "Goldman Sachs" and "John Ternus" are not field outcomes. The two guards are
+    # complementary, not redundant.
+    real = _drop_incoherent_near_certain(
+        real,
+        lambda o: float(o.current_probability) if o.current_probability else None,
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+        market_is_open=getattr(market, "status", None) == "open",
+        is_winner_of=lambda o: bool(o.is_winner),
+    )
     real.sort(key=lambda o: o.current_probability or 0, reverse=True)
     top = real[:limit]
     if lean:

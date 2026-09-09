@@ -831,6 +831,7 @@ async def browse_futures(
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
+        drop_incoherent_near_certain,
         is_placeholder_outcome_name,
         leader_pick_order,
     )
@@ -854,6 +855,22 @@ async def browse_futures(
             real_outcomes,
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
+        )
+        # #4253: same drop as detail and search, and browse needs it for the same
+        # reason it needs the one below — this list is about to be sliced to 3, and
+        # frozen 1.0s sort to the very top. Browse has no normalization step at all
+        # (see the placement note at the top of this block), so the raw price IS the
+        # rendered price here and there is no ordering question to settle.
+        #
+        # Applied to the ORM rows rather than the dicts below because the browse
+        # payload does not carry `is_winner`, and the crowned-leg exemption is not
+        # optional — without it this deletes the result from a settled market.
+        sorted_outcomes = drop_incoherent_near_certain(
+            sorted_outcomes,
+            lambda o: float(o.current_probability) if o.current_probability else None,
+            mutually_exclusive=getattr(market, "mutually_exclusive", True),
+            market_is_open=getattr(market, "status", None) == "open",
+            is_winner_of=lambda o: bool(o.is_winner),
         )
         display_outcomes = [
             {
@@ -4560,6 +4577,7 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         normalize_display_probs,
         leader_pick_order,
         drop_dominant_field_outcomes,
+        drop_incoherent_near_certain,
     )
 
     # Q480: one condition, one outcome. Dropped here, on the ORM rows, because the
@@ -4616,6 +4634,37 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
     # in place), so the pre-drop length is the only one that reproduces today's
     # `len(outcomes)` at this call site.
     concept_outcome_count = len(outcomes)
+
+    # #4253: a single-winner field cannot have five different winners. Measured
+    # live 2026-09-09, `/api/futures/12764689` (*Dancing with the Stars*) served
+    # `Contestant 22 1.0 · Contestant 16 1.0 · Contestant 33 1.0 · Contestant 43
+    # 1.0 · Contestant 45 1.0`, and `/api/futures/114045` led with `Goldman Sachs
+    # 1.0` above four more banks at 1.0. `drop_dominant_field_outcomes` below is
+    # name-gated and lets every one of them through — they are not field rows,
+    # they are real candidates carrying a price nobody has written since May.
+    #
+    # AFTER `concept_outcome_count`, which is the identity answer and must stay
+    # bit-identical (the comment above says why, and a display rule feeding it is
+    # exactly what that comment forbids). This drop is display-only.
+    #
+    # AFTER `normalize_display_probs`, and here that is a no-op rather than a
+    # judgement call: the predicate needs TWO legs at >= 0.95, whose raw sum is
+    # already >= 1.9 — past `_FIELD_SUM_MAX` — so #1200 has always bailed this
+    # field out to raw prices before this line is reached. The rule is inert on
+    # every field the squeeze actually normalized, which bounds its blast radius
+    # to the incoherent population it is for.
+    #
+    # Deliberately NOT re-normalizing the survivors afterwards. On 113419 (*Next
+    # CEO of Apple?*) the three legs left behind are 0.0005 each; squeezing them to
+    # sum ~100% would print three 33% contenders out of noise. We have no price for
+    # that race, and saying so is the honest answer.
+    outcomes = drop_incoherent_near_certain(
+        outcomes,
+        lambda o: o.get("probability"),
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+        market_is_open=getattr(market, "status", None) == "open",
+        is_winner_of=lambda o: bool(o.get("is_winner")),
+    )
 
     # UX-P164 (#993's own opening sentence, still true here): demotion is not
     # enough on a SHORT list. `leader_pick_order` pushes a dominant field row to
