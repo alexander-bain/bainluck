@@ -84,6 +84,13 @@ const MOVED_BEHIND_A_DISCLOSURE: ReadonlyArray<readonly [string, string]> = [
   ["the traded/untraded proxy note", "receive trading volume for most of these markets"],
   ["how to read the matched-bucket table", "Error is actual minus predicted"],
   ["why a thin category is not published", "A calibration curve is only honest with enough"],
+  // #4291 (calibration/1065) — the two cards #4118's sweep did not reach. They
+  // are the furthest down the page, which is why calibration/1063's LOOK stopped
+  // above them and why they are a second queue rather than an oversight caught
+  // in review. Both photographed bare on production at 390px before this ship.
+  ["how to read the By Category dots", "hollow dots with wide error bars"],
+  ["which categories are excluded and why", "statistical noise, not a calibration signal"],
+  ["which population the category table counts", 'data-testid="calibration-category-population-note"'],
 ] as const;
 
 describe("standing notice 34 — the method notes are not in the page body", () => {
@@ -117,6 +124,37 @@ describe("standing notice 34 — the method notes are not in the page body", () 
     for (const [start, end] of REGIONS) {
       expect(end - start).toBeLessThan(SOURCE.length / 4);
     }
+  });
+
+  // ═══ #4291 — THE TWO CARDS AT THE FOOT OF THE PAGE ═══
+  //
+  // `isInsideANote` throws on a fragment that is not in the file at all, so the
+  // three rows added above already fail the DELETE mutant as loudly as they fail
+  // the leave-it-in-the-body one: the claim "moved, not deleted" is carried by
+  // the same assertion. What it does NOT carry is the two things that make the
+  // move honest rather than a disappearance, so they are asserted here.
+
+  test("the pooled-row counts still travel as data, not as a sentence", () => {
+    // The population note is the block notice 34 objects to most (a coverage
+    // count in the page body), and the cheapest way to satisfy that objection is
+    // to drop it. These attributes are how the rails read the same numbers, and
+    // they are what makes moving it different from losing it — the same pairing
+    // the drift clause gets below.
+    expect(SOURCE).toContain("data-pooled-rows={pooledRenderedRowCount}");
+    expect(SOURCE).toContain("data-total-rows={categoryMetrics.length}");
+  });
+
+  test.each([
+    ["By Category", "One curve per category. Select a tab to change it."],
+    ["Category Breakdown", "Every published category, sorted by ECE. Lower is better."],
+  ])("%s leads with a caption, and it is NOT itself folded away", (_card, caption) => {
+    // Notice 34 allows "at most one short caption" and #4118 shipped one on
+    // every card it swept. A card whose whole subhead went behind the disclosure
+    // passes every assertion above while handing the reader a heading and a grey
+    // "How to read this" — which is not what the notice asks for. Location
+    // again, both ways: present, and outside.
+    expect(SOURCE).toContain(caption);
+    expect(isInsideANote(caption)).toBe(false);
   });
 
   // The one thing the sweep DELETED rather than moved: the currency banner's
