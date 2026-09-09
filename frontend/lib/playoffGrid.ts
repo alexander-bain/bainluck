@@ -170,9 +170,40 @@ export const GRID_SECTION_LABEL = "Chance of reaching";
  * Measured against the layout rather than chosen: `100%` in tabular figures
  * with breathing room needs 46px, and a real surname with a seed badge
  * ("Auger-Aliassime [11]") needs ~118px before it truncates.
+ *
+ * ═══ #4171: 46 WAS MEASURED FOR THE NUMBER ALONE, AND THE CELL STOPPED BEING
+ * ═══ ONLY A NUMBER.
+ *
+ * UX-P157 later put `LiquidityMark` INSIDE the value track, on the number's own
+ * line, and nobody re-took this measurement. Measured on production
+ * 2026-09-08 at 390px (`artifacts-ux-1145/grid-fit-4171.mjs`, glyph Ranges, not
+ * element boxes — a priced cell is `block w-full` so its rect IS the track and
+ * a probe that reads element boxes reports 0 overflow on every row):
+ *
+ *     "100%" ink            39px
+ *     gap-1                  4px
+ *     LiquidityMark          8px
+ *     ------------------------------
+ *     content               51px   in a 46px track
+ *
+ * A `justify-end` flex whose content overflows spills off its START, so the
+ * five extra pixels landed in the 6px column gutter to the LEFT and the number
+ * came to rest **0.7px** from the neighbouring column's number: Alcaraz's row
+ * printed `93%100%` as one run, and so did Shelton's and Tiafoe's — 3 of the 5
+ * rows on screen. Zverev's did not, because his QF cell carries no mark; that
+ * is the control, and it is why this reads as a data quirk rather than a layout
+ * bug until you measure it.
+ *
+ * 54 fits the measured 51 with 3px of slack and flips no scroll verdict: a
+ * three-column first-week grid is 326 ≤ 332 and still does not scroll, a
+ * four-column one is 386 > 332 and still does, and the men's five-column draw
+ * grows the scroll floor by 16px (436 → 452). Widening the track was chosen
+ * over shrinking the number: the number is the one thing this page exists to
+ * show, and the alternative that fits — 12px type with the gap halved — lands
+ * on exactly 46 with zero slack.
  */
 export const GRID_NAME_WIDTH_PX = 118;
-export const GRID_COLUMN_WIDTH_PX = 46;
+export const GRID_COLUMN_WIDTH_PX = 54;
 
 /**
  * The same two measurements taken again for a desktop window (UX-P145).
@@ -409,16 +440,41 @@ export function formatGridCell(cell: GridCell): string | null {
   return `${Math.round(cell.probability * 100)}%`;
 }
 
-/** The short word a non-numeric cell shows. */
+/**
+ * The short word a non-numeric cell shows, or `""` when it shows nothing.
+ *
+ * ═══ #4171 item 2 / NOTICE 34: A `no_market` CELL NOW SHOWS NOTHING ═══
+ *
+ * It said `NO MKT`. Alex, on this exact page (2026-09-08 4:00pm PT): *"If a
+ * number cannot be shown honestly, leave the space empty; do not explain the
+ * emptiness in a paragraph."* An abbreviation of our own shop talk is that
+ * paragraph compressed to six characters — the Khachanov row printed it four
+ * times across five columns, which tells a reader nothing except that we have
+ * a word for it.
+ *
+ * ⚠️ THIS OVERTURNS UX-P137's RULING 2, AND ONLY BECAUSE THE THING THAT RULING
+ * RELIED ON NOW EXISTS. Its argument was that *"'no market' is a fact about the
+ * world; a punctuation mark is a fact about the layout, and the reader could
+ * not tell them apart"* — true when the cell was silent otherwise. Since
+ * UX-P157 every cell carries `gridCellExplanation` on its own `title` and in an
+ * `sr-only` span, so the fact about the world is still there, on the cell, for
+ * anyone who asks it: *"Semi-final. Nobody is answering this question."* What
+ * came off the screen is the jargon, not the answer.
+ *
+ * ⚠️ AND IT IS NOT THE `settled` DASH. A lost `settled` cell prints `—`, which
+ * is a RESULT; reusing it here would say "this player is out" about a cell that
+ * means "nobody quoted this". Empty and `—` are different states and stay so.
+ *
+ * `""`, not a space: the caller decides how an empty cell keeps its box (see
+ * `Cell` in `PlayoffGrid.tsx`, which pads it to a line so the tooltip still has
+ * something to hover).
+ */
 export function gridCellGlyph(cell: GridCell): string {
   switch (cell.state) {
     case "settled":
       return cell.note === "won" ? "✓" : "—";
     case "no_market":
-      // NOT a dot and NOT a dash. "No market" is a fact about the world; a
-      // punctuation mark is a fact about the layout, and UX-P137's ruling 2
-      // exists because the reader could not tell them apart.
-      return "no mkt";
+      return "";
     case "unlinked":
     case "unregistered":
       return "!";
