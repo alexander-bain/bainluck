@@ -131,22 +131,47 @@ export default function BookmakerTable({
   );
 
   return (
+    // ── #4317: the fourth column has to survive a 390px phone ────────────────
+    //
+    // Every cell was `px-4`. Four columns of 32px chrome put the table's
+    // intrinsic width past the card, the container scrolled, and the column that
+    // went over the edge was `Status` — the one carrying the caveat about
+    // whether the number beside it is still being updated. The header rendered
+    // as `St` and all eleven rows read `Clo` with the time sliced to `51r`.
+    //
+    // Measured on production 2026-09-09, `/events/15307463` at 390px with the
+    // disclosure open. The container is 334px and this table's content, with all
+    // padding removed, is 253.7px — so the intrinsic width is `253.7 + 8 * pad`,
+    // which reproduces all three readings exactly:
+    //
+    //     pad 16px (`px-4`)  381.7  →  48px over  ← what shipped
+    //     pad 12px (`px-3`)  349.7  →  16px over  ← still clipped
+    //     pad  8px (`px-2`)  317.7  →   0, fits with 16px to spare
+    //
+    // Hence `px-2`, and hence not `px-3`: the budget allows at most 10px a side.
+    // Full width is restored from `sm` up, where there was never a problem.
+    //
+    // The horizontal scroll is deliberately LEFT IN PLACE. Column widths are
+    // content-driven, so two long surnames can still exceed the budget (measured:
+    // two `Khachanov`-width columns overflow by 13px even at `px-2`), and the
+    // scroll is the honest fallback for that. What it must not be is the everyday
+    // state of the table, which is what it had become.
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-mist">
-            <th className="text-left py-3 px-4 font-semibold text-slate">
+            <th className="text-left py-3 px-2 sm:px-4 font-semibold text-slate">
               Sportsbook
             </th>
-            <th className="text-center py-3 px-4 font-semibold text-slate">
+            <th className="text-center py-3 px-2 sm:px-4 font-semibold text-slate">
               <div>{shortHomeTeam}</div>
               {hasAnyProjectedScores && <div className="text-xs font-normal text-text-muted">(proj. score)</div>}
             </th>
-            <th className="text-center py-3 px-4 font-semibold text-slate">
+            <th className="text-center py-3 px-2 sm:px-4 font-semibold text-slate">
               <div>{shortAwayTeam}</div>
               {hasAnyProjectedScores && <div className="text-xs font-normal text-text-muted">(proj. score)</div>}
             </th>
-            <th className="text-right py-3 px-4 font-semibold text-slate">
+            <th className="text-right py-3 px-2 sm:px-4 font-semibold text-slate">
               Status
             </th>
           </tr>
@@ -171,13 +196,13 @@ export default function BookmakerTable({
                   isDivergent ? "bg-amber-50" : ""
                 } ${stale ? "opacity-60" : ""}`}
               >
-                <td className="py-3 px-4 font-medium text-graphite">
+                <td className="py-3 px-2 sm:px-4 font-medium text-graphite">
                   {sourceLabel(odds.bookmaker)}
                   {isDivergent && (
                     <span className="ml-2 text-xs text-amber-600">*</span>
                   )}
                 </td>
-                <td className="py-3 px-4 text-center">
+                <td className="py-3 px-2 sm:px-4 text-center">
                   <div className="font-mono tabular-nums">
                     {homeProb !== null ? `${(homeProb * 100).toFixed(1)}%` : "-"}
                   </div>
@@ -187,7 +212,7 @@ export default function BookmakerTable({
                     </div>
                   )}
                 </td>
-                <td className="py-3 px-4 text-center">
+                <td className="py-3 px-2 sm:px-4 text-center">
                   <div className="font-mono tabular-nums">
                     {awayProb !== null ? `${(awayProb * 100).toFixed(1)}%` : "-"}
                   </div>
@@ -198,7 +223,7 @@ export default function BookmakerTable({
                   )}
                 </td>
                 <td
-                  className="py-3 px-4 text-right"
+                  className="py-3 px-2 sm:px-4 text-right"
                   title={odds.captured_at ? formatAbsoluteTime(odds.captured_at) : undefined}
                 >
                   {stale ? (
@@ -221,7 +246,7 @@ export default function BookmakerTable({
         {avgHomeProb !== null && (
           <tfoot>
             <tr className="bg-slate/5 font-semibold">
-              <td className="py-3 px-4 text-graphite">
+              <td className="py-3 px-2 sm:px-4 text-graphite">
                 Average (Consensus)
                 {staleCount > 0 && (
                   <span className="ml-2 text-xs font-normal text-slate">
@@ -229,7 +254,7 @@ export default function BookmakerTable({
                   </span>
                 )}
               </td>
-              <td className="py-3 px-4 text-center">
+              <td className="py-3 px-2 sm:px-4 text-center">
                 <div className="font-mono tabular-nums text-graphite">
                   {(avgHomeProb * 100).toFixed(1)}%
                 </div>
@@ -239,7 +264,7 @@ export default function BookmakerTable({
                   </div>
                 )}
               </td>
-              <td className="py-3 px-4 text-center">
+              <td className="py-3 px-2 sm:px-4 text-center">
                 <div className="font-mono tabular-nums text-graphite">
                   {((1 - avgHomeProb) * 100).toFixed(1)}%
                 </div>
@@ -249,7 +274,7 @@ export default function BookmakerTable({
                   </div>
                 )}
               </td>
-              <td className="py-3 px-4"></td>
+              <td className="py-3 px-2 sm:px-4"></td>
             </tr>
           </tfoot>
         )}
@@ -260,7 +285,7 @@ export default function BookmakerTable({
           odds.home_probability !== null &&
           Math.abs(odds.home_probability - avgHomeProb) > 0.05
       ) && (
-        <p className="text-xs text-amber-600 mt-2 px-4">
+        <p className="text-xs text-amber-600 mt-2 px-2 sm:px-4">
           * Differs from consensus by more than 5%
         </p>
       )}
