@@ -808,10 +808,17 @@ export default function CalibrationPage() {
               and true in every branch above it (drift known or not, staged_at
               dated or "earlier"). Guarded by
               `__tests__/lib/calibrationBannerCopy.test.tsx`. */}
+          {/* #4113: "rebuilt on schedule" is the headline's currency claim
+              again, one line down, and it was asserted for free on the main
+              tier where `cache` is null. It now travels with the proof — see
+              `stalenessHeadline`. Unproven drops the clause and keeps the
+              measured half; nothing is added to replace it (standing notice
+              34: the reader gets the fact, not a paragraph about the fact). */}
           {staleness.kind === "frozen-inputs" && (
             <>
-              The curve was rebuilt on schedule, but the market data behind it was last
-              staged{" "}
+              {staleness.producerProvenCurrent
+                ? "The curve was rebuilt on schedule, but the market data behind it was last staged "
+                : "The market data behind it was last staged "}
               {staleness.stagedAt
                 ? new Date(staleness.stagedAt).toLocaleString("en-US", {
                     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",

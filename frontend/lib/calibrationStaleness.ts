@@ -116,6 +116,17 @@ export interface CalibrationStalenessNotice {
   producerStalled: boolean | null;
   /** Hourly beats that came and went without a newer artifact. `null` = unread. */
   beatsMissed: number | null;
+  /**
+   * Did the producer PROVE the served artifact is current — `stalled === false`
+   * AND `beats_missed === 0`?
+   *
+   * Derived rather than re-derived: #4046 already needed this predicate to stop
+   * a fallback serve being read as a dated copy, and #4113 needs the same one to
+   * stop a main-tier serve being read as a current copy. Two callers computing
+   * "current" from two fields is how the two halves drifted apart in the first
+   * place. Positive proof, so every unreadable case is `false`.
+   */
+  producerProvenCurrent: boolean;
 }
 
 /**
@@ -241,6 +252,7 @@ export function decideCalibrationStaleness(
     unitsBanked,
     producerStalled,
     beatsMissed,
+    producerProvenCurrent,
   };
 
   // Precedence, and it is this way round deliberately. A dated last-good is the
@@ -289,7 +301,27 @@ export function stalenessHeadline(notice: CalibrationStalenessNotice): string {
     case "frozen-inputs":
       // Fable, ruling (c): the honest copy is "curve refreshed; inputs staged
       // <staged_at>, N units drifted" — NOT "not being refreshed".
-      return "The curve is current. The data behind it is older.";
+      //
+      // #4113: and the first half of that is a CLAIM, so it needs proving. What
+      // `frozen_over_drift` establishes is that the INPUT bank is frozen. It
+      // says nothing about whether the curve sitting on top of it published
+      // this hour, and this sentence asserted that it had, for free.
+      //
+      // Measured 2026-09-09 00:37Z: the page said "The curve is current." in
+      // bold over a 76-minute-old artifact whose own payload carried
+      // `beats_missed: 1` — the refutation was in the same JSON object and the
+      // sentence did not look at it. It could not: `cache` is null on the main
+      // tier, so `producerProvenCurrent` only ever reached `isLastGood`, where
+      // it can DOWNGRADE a warning (#4046) and never withhold a reassurance.
+      // A missed beat is tier-independent and now gates both.
+      //
+      // Unproven keeps the second half — the inputs really are dated, and that
+      // is still the reader's subject — and replaces the assertion with the
+      // absence of one. Distinct from `undisclosed`, which is a different state:
+      // there we could not read the inputs at all.
+      return notice.producerProvenCurrent
+        ? "The curve is current. The data behind it is older."
+        : "We can't confirm the curve is current. The data behind it is older.";
     case "undisclosed":
       return "We can't confirm how current this is.";
   }
@@ -332,7 +364,20 @@ export function stalenessHeadline(notice: CalibrationStalenessNotice): string {
  * branch that never got it: THE BANNER MAY DESCRIBE, IT MAY NOT PREDICT.
  */
 export function stalenessScheduleClause(notice: CalibrationStalenessNotice): string | null {
-  if (notice.producerStalled === false) return "The curve rebuilds hourly.";
+  if (notice.producerStalled === false) {
+    // #4113, same class as the headline above: `stalled` is a FOUR-HOUR verdict
+    // (`stall_after_s: 14400`), so a beat can be two hours late and still
+    // publish `stalled: false`. `beats_missed` is the payload's own arithmetic
+    // on exactly the hour this sentence promises, and it was not consulted.
+    //
+    // Withheld rather than replaced. The count is `age // interval_s`, not a
+    // tally of failed runs, so it can read 1 for the minutes a healthy but slow
+    // beat spends the wrong side of an hour boundary — loud enough to describe
+    // a failure it has not measured. Saying nothing costs a reader a true
+    // sentence; saying it anyway costs them the reason they are reading a
+    // staleness banner at all.
+    return notice.beatsMissed === 0 ? "The curve rebuilds hourly." : null;
+  }
   if (notice.producerStalled !== true) return null;
   // Stalled. Report the measured count when we have one; the count is the whole
   // reason this sentence is credible, so an unread count gets the vaguer

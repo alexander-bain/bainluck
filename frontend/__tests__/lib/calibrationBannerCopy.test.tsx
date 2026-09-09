@@ -141,6 +141,17 @@ describe("the calibration staleness banner", () => {
     expect(copy).toContain("driftClause");
   });
 
+  // #4113: the frozen-inputs body repeats the headline's currency claim one
+  // line down — "The curve was rebuilt on schedule, but …" — and unlike the
+  // schedule clause it is a string literal in this region, so the ban is a
+  // source assertion here rather than an output one. Both halves are pinned:
+  // the sentence still exists (it is true and worth saying when the beat is
+  // landing), and it cannot be reached without the producer's proof.
+  it("does not claim the curve was rebuilt on schedule without the proof", () => {
+    expect(copy).toContain("rebuilt on schedule");
+    expect(copy).toMatch(/producerProvenCurrent[\s\S]{0,120}?rebuilt on schedule/);
+  });
+
   // #2649: the schedule sentence MOVED OUT of this region.
   //
   // It used to be a string literal in the JSX, so scanning `copy` covered it.

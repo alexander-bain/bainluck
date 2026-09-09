@@ -17,6 +17,7 @@ import {
   decideCalibrationStaleness,
   stalenessDriftClause,
   stalenessHeadline,
+  stalenessScheduleClause,
 } from "@/lib/calibrationStaleness";
 
 /** The measured 2026-08-19 shape: complete bank, frozen, drifting underneath. */
@@ -201,6 +202,177 @@ describe("decideCalibrationStaleness", () => {
     });
   });
 
+  /**
+   * #4113 — the mirror image of #4046, and the half nobody had looked at.
+   *
+   * #4046 was a STORAGE fact (which Redis key answered) being read as a claim
+   * about CONTENT (the numbers are old and nothing is replacing them). This is
+   * the same confusion pointed the other way: the ABSENCE of that storage fact
+   * — `cache: null`, the main tier, which production serves from essentially
+   * always — being read as the positive claim **"The curve is current."**
+   *
+   * Measured on production 2026-09-09 00:37Z, and again at 01:35Z:
+   *
+   *   availability : "stale"
+   *   cache        : null                  <- main tier
+   *   producer     : { stalled: false, beats_missed: 1, age_s: 4585 }
+   *   staged       : { measured: true, frozen_over_drift: true, ... }
+   *
+   * The 00:15Z beat was cancelled 11.3 s in and published nothing; the artifact
+   * on screen was 76 minutes old. The page said, in bold, that the curve was
+   * current — with the refutation sitting in the same JSON object it was
+   * reading, because `producerProvenCurrent` was only ever consulted through
+   * `isLastGood`, which the main tier cannot reach.
+   *
+   * The guard is the CLASS, not the string: **no sentence may assert that this
+   * curve is current unless the producer proved it, on any tier.** Both
+   * directions, because a headline that never says "current" satisfies half of
+   * that for free and tells a reader nothing.
+   */
+  describe("#4113: a missed beat refutes 'the curve is current', on any tier", () => {
+    /**
+     * The two headlines, pinned as an exact set rather than matched loosely.
+     *
+     * A substring test cannot do this job: the honest unproven sentence CONTAINS
+     * "the curve is current", because the only short way to withhold a claim in
+     * English is to negate it in front of the reader. `/the curve is current/`
+     * therefore fires on the fix as loudly as on the defect. Read the sentence,
+     * not a fragment of it (the lesson standing notice 32 had to be amended for).
+     */
+    const CURRENCY_ASSERTED = "The curve is current. The data behind it is older.";
+    const CURRENCY_WITHHELD =
+      "We can't confirm the curve is current. The data behind it is older.";
+
+    /** The 00:37Z production payload, verbatim in the fields that decide. */
+    const MAIN_TIER_BEHIND = {
+      ...FROZEN_BANK,
+      cache: null,
+      producer: { stalled: false, beats_missed: 1 },
+    };
+
+    it("still calls the state what it is — the bank IS frozen over drift", () => {
+      // The fix withholds a claim. It must not relabel the state: `kind` is
+      // what the rail reads to know WHY the server refused `fresh`, and
+      // routing this to `undisclosed` would both lose that and print "we
+      // couldn't read when the data was staged" over a payload that states it.
+      expect(decideCalibrationStaleness(MAIN_TIER_BEHIND)!.kind).toBe("frozen-inputs");
+    });
+
+    it("does not tell a reader the curve is current", () => {
+      const notice = decideCalibrationStaleness(MAIN_TIER_BEHIND)!;
+      expect(notice.producerProvenCurrent).toBe(false);
+      expect(stalenessHeadline(notice)).not.toBe(CURRENCY_ASSERTED);
+      // and it is withheld by NEGATING the claim up front, not by burying it:
+      // whatever the wording becomes, it may not OPEN by asserting currency.
+      expect(stalenessHeadline(notice)).not.toMatch(/^The curve is current/);
+      expect(stalenessHeadline(notice)).toBe(CURRENCY_WITHHELD);
+    });
+
+    it("keeps the half that is still true — the inputs are dated", () => {
+      // Withholding the claim must not cost the reader the disclosure. The
+      // bank is 20 hours old and fully drifted; that is why the banner is up.
+      expect(stalenessHeadline(decideCalibrationStaleness(MAIN_TIER_BEHIND)!)).toMatch(
+        /data behind it is older/i,
+      );
+    });
+
+    it("says it plainly when the beat IS landing", () => {
+      // The other direction, and the one that makes the assertions above
+      // non-vacuous: a headline that never claims currency passes every "does
+      // not say the false thing" test ever written.
+      const notice = decideCalibrationStaleness({
+        ...FROZEN_BANK,
+        producer: { stalled: false, beats_missed: 0 },
+      })!;
+      expect(notice.producerProvenCurrent).toBe(true);
+      expect(stalenessHeadline(notice)).toBe(CURRENCY_ASSERTED);
+    });
+
+    it("is a different sentence from `undisclosed`, not a reuse of it", () => {
+      // Ruling 025 clause 5: one rendering per state. "We could not read the
+      // inputs" and "we read them, and cannot vouch for the curve on top" are
+      // different things to tell a reader.
+      const behind = stalenessHeadline(decideCalibrationStaleness(MAIN_TIER_BEHIND)!);
+      const undisclosed = stalenessHeadline(
+        decideCalibrationStaleness({
+          availability: "stale",
+          staged: { measured: false, reason: "phase_ledger_unreadable" },
+        })!,
+      );
+      expect(behind).not.toBe(undisclosed);
+    });
+
+    it.each([
+      ["no producer block at all (an older payload)", undefined],
+      ["one missed beat — the measured 00:37Z case", { stalled: false, beats_missed: 1 }],
+      ["two missed beats — the measured 01:35Z case", { stalled: false, beats_missed: 2 }],
+      ["a declared stall with the count at zero", { stalled: true, beats_missed: 0 }],
+      ["a beat count the payload could not state", { stalled: false, beats_missed: null }],
+      ["a non-boolean `stalled`", { stalled: "false" as unknown, beats_missed: 0 }],
+      ["a non-finite beat count", { stalled: false, beats_missed: Number.NaN }],
+    ])("withholds the currency claim on %s", (_label, producer) => {
+      // Gotcha #53. The assertion is the reassuring reading, so every case we
+      // cannot read has to land on the side that claims less — including the
+      // old payload that carries no `producer` block at all.
+      const notice = decideCalibrationStaleness({
+        ...FROZEN_BANK,
+        ...(producer === undefined ? {} : { producer }),
+      })!;
+      expect(notice.producerProvenCurrent).toBe(false);
+      expect(stalenessHeadline(notice)).not.toBe(CURRENCY_ASSERTED);
+      expect(stalenessHeadline(notice)).not.toMatch(/^The curve is current/);
+    });
+
+    it("decides the same way on the durable tier — the producer, not the key", () => {
+      // Tier-independence is the whole point. On the fallback tier a missed
+      // beat already reached the reader (via `isLastGood`); the bug was that
+      // the main tier had no door for it. Both doors, one verdict.
+      const durable = decideCalibrationStaleness({
+        ...FROZEN_BANK,
+        cache: { status: "stale", reason: "main_key_absent_durable", age_s: 4585 },
+        producer: { stalled: false, beats_missed: 1 },
+      })!;
+      expect(durable.producerProvenCurrent).toBe(false);
+      expect(durable.kind).toBe("last-good");
+      expect(stalenessHeadline(durable)).not.toBe(CURRENCY_ASSERTED);
+    });
+
+    describe("the hourly promise is held to the same proof", () => {
+      function clauseFor(producer: unknown): string | null {
+        return stalenessScheduleClause(
+          decideCalibrationStaleness({
+            availability: "stale",
+            staged: { measured: false },
+            producer: producer as never,
+          })!,
+        );
+      }
+
+      it("promises the schedule when the beat is landing", () => {
+        expect(clauseFor({ stalled: false, beats_missed: 0 })).toBe("The curve rebuilds hourly.");
+      });
+
+      it("withholds it when the payload's own arithmetic says a publish was missed", () => {
+        // `stalled` is a FOUR-hour verdict (`stall_after_s: 14400`), so it
+        // reads `false` over a curve two hours late. `beats_missed` is the
+        // arithmetic on the hour this sentence is about.
+        expect(clauseFor({ stalled: false, beats_missed: 1 })).toBeNull();
+        expect(clauseFor({ stalled: false, beats_missed: 2 })).toBeNull();
+      });
+
+      it("withholds rather than escalating — the count is age, not a failure tally", () => {
+        // `beats_missed` is `age // interval_s`, so a healthy-but-slow beat
+        // reads 1 for the minutes it spends the wrong side of an hour. Silence
+        // is honest there; "a rebuild came and went without succeeding" is not.
+        expect(clauseFor({ stalled: false, beats_missed: 1 }) ?? "").not.toMatch(/succeed/i);
+      });
+
+      it("still describes a declared stall in full", () => {
+        expect(clauseFor({ stalled: true, beats_missed: 51 })).toMatch(/51 hourly rebuilds have/);
+      });
+    });
+  });
+
   describe("absence is never the reassuring reading", () => {
     it("a payload with no `availability` falls back to cache.status, not to fresh", () => {
       // An older cached artifact predates the envelope. It is not broken and it
@@ -295,6 +467,7 @@ describe("stalenessHeadline", () => {
         unitsBanked: null,
         producerStalled: null,
         beatsMissed: null,
+        producerProvenCurrent: false,
       }),
     );
     expect(new Set(lines).size).toBe(3);
