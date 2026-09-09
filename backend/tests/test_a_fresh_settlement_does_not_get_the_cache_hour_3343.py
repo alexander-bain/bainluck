@@ -45,7 +45,6 @@ import pytest
 
 from app.routes import events as events_route
 
-
 EVENT_ID = 4243343
 #: A fixed epoch so nothing here reads the clock (gotcha #44).
 NOW = 1_788_900_000.0
@@ -85,8 +84,7 @@ class TestTheConstantsStillMeanWhatTheLadderAssumes:
 
     def test_a_denied_hour_is_actually_shorter_than_the_hour(self):
         assert (
-            events_route._EVENT_DETAIL_LIVE_TTL
-            < events_route._EVENT_DETAIL_SETTLED_TTL
+            events_route._EVENT_DETAIL_LIVE_TTL < events_route._EVENT_DETAIL_SETTLED_TTL
         ), "the penalty for a fresh settlement must cost the entry something"
 
     def test_the_window_outlasts_the_cadence_that_would_correct_it(self):
@@ -119,8 +117,11 @@ class TestTheDefect:
 
     def test_a_resurrection_becomes_visible_within_the_live_cadence(self):
         """The reader-facing promise, stated as a duration rather than a flag."""
-        _plant("completed", age=events_route._EVENT_DETAIL_LIVE_TTL + 1,
-               completed_at=_iso(-(events_route._EVENT_DETAIL_LIVE_TTL + 1)))
+        _plant(
+            "completed",
+            age=events_route._EVENT_DETAIL_LIVE_TTL + 1,
+            completed_at=_iso(-(events_route._EVENT_DETAIL_LIVE_TTL + 1)),
+        )
         assert _served() is None
 
 
@@ -185,9 +186,7 @@ class TestTheWindowHelper:
     )
     def test_recency_decides(self, offset, expected):
         payload = {"completed_at": _iso(offset)}
-        assert (
-            events_route._settled_within_reversal_window(payload, NOW) is expected
-        )
+        assert events_route._settled_within_reversal_window(payload, NOW) is expected
 
     def test_the_boundary_is_closed_on_the_durable_side(self):
         exact = -float(events_route._EVENT_DETAIL_FRESHLY_SETTLED_WINDOW)
@@ -198,9 +197,7 @@ class TestTheWindowHelper:
     def test_no_usable_stamp_abstains_and_keeps_the_hour(self, missing):
         """Absence must not read as 'might be fresh' — that is the 98%."""
         assert (
-            events_route._settled_within_reversal_window(
-                {"completed_at": missing}, NOW
-            )
+            events_route._settled_within_reversal_window({"completed_at": missing}, NOW)
             is False
         )
 
@@ -222,9 +219,7 @@ class TestTheWindowHelper:
         to a silent hour."""
         aware = datetime.fromtimestamp(NOW, tz=timezone.utc) - timedelta(seconds=1)
         assert (
-            events_route._settled_within_reversal_window(
-                {"completed_at": aware}, NOW
-            )
+            events_route._settled_within_reversal_window({"completed_at": aware}, NOW)
             is True
         )
 
@@ -233,8 +228,6 @@ class TestTheWindowHelper:
             datetime.fromtimestamp(NOW, tz=timezone.utc) - timedelta(seconds=1)
         ).replace(tzinfo=None)
         assert (
-            events_route._settled_within_reversal_window(
-                {"completed_at": naive}, NOW
-            )
+            events_route._settled_within_reversal_window({"completed_at": naive}, NOW)
             is True
         )
