@@ -580,9 +580,9 @@ def test_an_empty_plan_produces_no_restore_statement():
 
 
 def test_the_repair_is_registered():
-    from app.routes.admin_repairs import _REPAIRS
+    from app.routes import admin_repairs
 
-    assert _REPAIRS["polymarket-senate-category"] == (
+    assert admin_repairs._REPAIRS["polymarket-senate-category"] == (
         "app.tasks.repair_polymarket_senate_category",
         "repair",
     )
@@ -590,9 +590,9 @@ def test_the_repair_is_registered():
 
 def test_the_dispatcher_header_names_the_repair():
     """The catalog comment has drifted behind the registry before; it says so itself."""
-    import app.routes.admin_repairs as mod
+    from app.routes import admin_repairs
 
-    assert "polymarket-senate-category" in (mod.__doc__ or ""), (
+    assert "polymarket-senate-category" in (admin_repairs.__doc__ or ""), (
         "the repair is registered but absent from the module docstring's catalog"
     )
 
