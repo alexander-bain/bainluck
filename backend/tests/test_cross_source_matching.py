@@ -15,9 +15,11 @@ from app.utils.cross_source_matching import (
     find_cross_source_markets,
     group_markets_by_group_id,
     is_resolved,
+    is_same_question,
     normalize_question,
     source,
 )
+from app.utils.cross_source_matching import _is_conservative_near_match
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -1049,3 +1051,75 @@ class TestSpotlightOnlyComparesLikeWithLike:
             market_id=2, q=paraphrase_p, src="polymarket", outcomes=[("No", 40.0)]
         )
         assert find_cross_source_markets(shared, market_row_fn=_pair_row_fn(rows)) == []
+
+
+class TestIsSameQuestion:
+    """`is_same_question` — the deduper's gate (#4446).
+
+    A matcher that over-pairs shows a spurious spread on a page a reader can
+    check. A DEDUPER that over-pairs deletes a card, and the reader never learns
+    what is missing. So the controls here are not invented near-misses: they are
+    the titles production served BESIDE the duplicate on Discover page one on
+    2026-09-09, three of which share a `canonical_market_key` with their own
+    neighbour and would have been folded by the cheap key.
+    """
+
+    def test_the_duplicate_that_motivated_it(self):
+        """Two venues, one question, two rows apart in the World Cup bundle."""
+        assert is_same_question(
+            "2027 FIFA Women's World Cup Champion",
+            "FIFA Women's World Cup 2027 Winner",
+        )
+
+    @pytest.mark.parametrize(
+        "left,right",
+        [
+            # Same canonical_market_key as each other, same bundle, different
+            # questions. The women's US Open is the card this fix must not delete.
+            ("2026 Men's US Open Winner (Tennis)", "US Open Women's Singles Winner"),
+            # Same key, one bundle apart: a different tournament AND a different year.
+            ("2027 FIFA Women's World Cup Champion", "2030 FIFA World Cup Champion"),
+            # Same key, same bundle, different ceremonies entirely.
+            ("Oscar Winner: Best Picture", "Grammy Winner: Best New Artist"),
+            # Same key, same bundle, two different races.
+            ("Texas Senate winner?", "New York Governor winner?"),
+            ("NASCAR Cup Series Champion", "NASCAR Truck Series Champion"),
+            ("NASCAR Cup Series Champion", "NASCAR O'Reilly Auto Parts Series Champion"),
+            ("Next French Presidential Election", "Brazil Presidential Election"),
+            # Same bundle, same subject, opposite questions.
+            ("Will the U.S. invade Iran before 2027?", "Will the Iranian regime fall before 2027?"),
+            ("Fed decision in Sep 2026?", "Number of rate cuts in 2026?"),
+            (
+                "When will traffic at the Strait of Hormuz return to normal?",
+                "Arizona Attorney General winner?",
+            ),
+        ],
+    )
+    def test_every_neighbour_it_was_served_beside_is_refused(self, left, right):
+        assert not is_same_question(left, right)
+
+    def test_a_short_title_still_pairs_exactly(self):
+        """The exact arm is not redundant: a two-token title is below the
+        near-match token floor, so without it two venues asking the shortest
+        possible question identically would not pair."""
+        assert is_same_question("Oscar Winner", "oscar winner!")
+        assert not _is_conservative_near_match("Oscar Winner", "oscar winner!")
+
+    def test_a_missing_title_is_never_a_match(self):
+        assert not is_same_question(None, "Oscar Winner")
+        assert not is_same_question("", "")
+
+    def test_the_fed_pair_is_a_known_miss_not_a_silent_one(self):
+        """#4446's named follow-up, pinned so it cannot regress unnoticed.
+
+        These two ARE one question ("Number of rate cuts in 2026?" on Kalshi,
+        "How many Fed rate cuts in 2026?" on Polymarket) and the matcher does not
+        pair them — no `number of`/`how many` alias. Widening it here would move
+        the politics, economics and entertainment spotlights that share this
+        function, so the miss is deliberate. If someone adds the alias, this test
+        fails and tells them the Fed bundle now dedupes too — which is the good
+        outcome, not a regression.
+        """
+        assert not is_same_question(
+            "Number of rate cuts in 2026?", "How many Fed rate cuts in 2026?"
+        )
