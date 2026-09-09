@@ -78,6 +78,15 @@ struct EventDetailView: View {
     }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
+    /// #3978 (Alex, D93 = A) — the hero restacks at the accessibility text sizes.
+    ///
+    /// Read here rather than inside `heroSection` because it decides a LAYOUT and
+    /// not a font: at `.accessibility1` and above the hero's three columns cannot
+    /// fit side by side on any phone, and the row does not merely get tight, it
+    /// overflows its parent and is CENTRED in the overflow — so the card bleeds off
+    /// both edges at once and the team names collapse to `Cle m…`.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     init(eventId: Int) {
         self.eventId = eventId
         _vm = StateObject(wrappedValue: EventDetailViewModel(eventId: eventId))
@@ -533,11 +542,33 @@ struct EventDetailView: View {
         let hasScore = EventDetailView.showsScore(
             status: event.status, away: event.awayScore, home: event.homeScore)
 
+        // #3978 (Alex, D93 = A) — ONE decision, applied to both rows of the hero.
+        //
+        // `AnyLayout` rather than an `if/else` over two copies of the body:
+        // swapping the layout keeps the children's identity, so nothing inside
+        // re-initialises when the reader changes text size, and — the reason that
+        // matters here — there is exactly one copy of the hero to maintain. Two
+        // copies is how the three-column version and its replacement drift apart.
+        // `PoliticsView:330` already carries this idiom.
+        let stacked = dynamicTypeSize.isAccessibilitySize
+        let heroLayout = stacked
+            ? AnyLayout(VStackLayout(spacing: 16))
+            : AnyLayout(HStackLayout(spacing: 0))
+        let metaLayout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+
         return VStack(spacing: 12) {
             // Top meta row: status badge + countdown + broadcast + date
-            HStack(spacing: 8) {
+            //
+            // Stacks with the rest. Left as a row it is the SECOND thing that
+            // bleeds: the `FINAL` chip was cut off the left edge while
+            // "Sep 5 at 6:40 PM" was cut off the right, in the same frame.
+            metaLayout {
                 heroStatusBadge(event)
-                Spacer()
+                // A `Spacer` pushes to both ends of a ROW; in a column it is a
+                // blank line that shoves the date away from the badge.
+                if !stacked { Spacer() }
                 if let broadcast = event.espn?.broadcast,
                    EventDetailView.showsBroadcast(
                     status: event.status, commenceTime: event.commenceTime?.asDate) {
@@ -557,8 +588,11 @@ struct EventDetailView: View {
                 }
             }
 
-            // Center: logos flanking giant probabilities
-            HStack(spacing: 0) {
+            // Center: logos flanking giant probabilities — or, at accessibility
+            // sizes, away above the percentage above home (D93 = A). The order is
+            // the row's own order read top-to-bottom, so the hero says the same
+            // sentence either way.
+            heroLayout {
                 // Away team logo + score
                 VStack(spacing: 6) {
                     TeamLogoView(
@@ -759,7 +793,16 @@ struct EventDetailView: View {
                         }
                     }
                 }
-                .fixedSize(horizontal: true, vertical: false)
+                // THE LINE THAT CAUSED #3978, and it is only wrong in one of the
+                // two arrangements. In a row, refusing to compress is right: this
+                // column holds "LSU Tigers Win" and a 36pt duel, and letting SwiftUI
+                // squeeze it produces `LSU Ti…` beside two logos with room to spare.
+                // In a COLUMN it is the whole defect — the centre column's ideal
+                // width at `.accessibility3` exceeds the phone, so a fixed size makes
+                // the hero wider than its parent, which then centres it and bleeds it
+                // off BOTH edges. Stacked, the column has the full width and needs no
+                // exemption; `horizontal: false` is a no-op, not a second behaviour.
+                .fixedSize(horizontal: !stacked, vertical: false)
 
                 // Home team logo + score
                 VStack(spacing: 6) {
