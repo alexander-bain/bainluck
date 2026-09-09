@@ -77,6 +77,44 @@ import UIKit
 /// This is why `fixedRowCost` stopped being a constant and `Columns` exists: the
 /// numeric columns are part of the cost the label clamps against, so the two
 /// have to be computed in one place or a later change fixes half of them again.
+///
+/// ---
+///
+/// #4233 — AND AT THE TOP OF THE SCALE THE ROW CANNOT BE A ROW AT ALL.
+///
+/// #4208 shipped the priority order above and photographed the result, which is
+/// how this was found: the labels truncate (`be-tri…`, `bo-va…`, `draf tki…`)
+/// while the bar sits on its 72pt floor and reads as a dash. Note what that
+/// contradicts — the paragraph above promises "a long label takes two lines; it
+/// does not truncate". **Measured, that promise is false**, and it fails earlier
+/// and harder than the report of it said.
+///
+/// Wrapped with UIKit's own line breaking at the width the clamp actually hands
+/// the column, on a 375pt phone:
+///
+///   - books list    a11y3 `draftkings` = 2 lines · a11y5 = **3**
+///   - sources list  a11y2 = 2 lines · **a11y3 `Bain Luck Model` = 3** · a11y5 = 5
+///
+/// So the issue's own title (a11y4/a11y5) understates it: the five-source table
+/// is already over its two-line contract at a11y3. A size threshold — the
+/// obvious `dynamicTypeSize >= .accessibility1` — would have been this file's
+/// original bug written a third time, correct for one text size and one screen
+/// width: on a 402pt phone the books list never exceeds two lines at ANY size,
+/// and the sources list first does at a11y4.
+///
+/// **So the trigger is measured, not declared.** The row reflows exactly when the
+/// widest label it will draw needs more than `maximumLabelLines` lines in the
+/// column the clamp gives it — which is the `lineLimit` the call site applies,
+/// now read from here so the view and the model cannot disagree about what
+/// "fits" means.
+///
+/// Reflowed, the label takes the full line and the bar and both numbers take the
+/// line under it. Measured at every shipped size on both phones, **every label
+/// this page draws then fits on ONE untruncated line** (the worst, a11y5
+/// `betanysportsbook`, is 333.3pt of a 343pt line), and the bar recovers from its
+/// 72pt floor to 115pt on the narrowest phone at the largest size. The reflow
+/// does not trade the bar for the label the way the inline clamp had to; at the
+/// point it engages, stacking is simply better for both.
 enum EventSourceLabelColumn {
 
     // MARK: - The row's fixed costs
@@ -105,6 +143,25 @@ enum EventSourceLabelColumn {
             + numericWidth * numericColumnCount
     }
 
+    /// #4233 — the same sum for a row that has reflowed.
+    ///
+    /// One gap fewer, because the label has left the line: the bar and the two
+    /// numbers are three children with two gaps between them, not four with
+    /// three. Written as its own count rather than `interColumnGapCount - 1` so
+    /// that a change to the row's children has to be made deliberately in both
+    /// places instead of arriving as an off-by-one.
+    static let stackedInterColumnGapCount: Double = 2
+
+    /// The vertical gap between the label's line and the bar's line.
+    static let stackedLineSpacing: Double = 4
+
+    /// Everything on the BAR's line that is not the bar, once the row reflows.
+    static func stackedFixedRowCost(numericWidth: Double) -> Double {
+        horizontalPadding * 2
+            + interColumnSpacing * stackedInterColumnGapCount
+            + numericWidth * numericColumnCount
+    }
+
     /// The floor under the probability bar.
     ///
     /// The bar is the row's entire point — it is the only part a reader compares
@@ -120,6 +177,16 @@ enum EventSourceLabelColumn {
     /// width and SwiftUI truncates on the fractional overflow, so a column sized
     /// to the exact measurement can still clip its own last glyph.
     static let inkSlack: Double = 1
+
+    /// #4233 — the most lines a label may take before the row must reflow.
+    ///
+    /// This is the `lineLimit` both call sites apply, moved here so there is one
+    /// number rather than two that happen to agree. The model decides the row
+    /// reflows *because* the label would exceed the limit; if the view then
+    /// applied a different limit, the model would be reasoning about a layout
+    /// that is not on screen — which is the whole class of defect this file
+    /// exists to close.
+    static let maximumLabelLines: Int = 2
 
     // MARK: - The font the label is actually drawn in
 
@@ -180,6 +247,56 @@ enum EventSourceLabelColumn {
             .size(withAttributes: [.font: labelFont(at: typeSize, weight: weight)]).width)
         #else
         return Double(string.count) * fallbackCharacterWidth
+        #endif
+    }
+
+    /// #4233 — how many lines a label needs when wrapped into `width`.
+    ///
+    /// Measured with UIKit's own line breaking rather than divided out of the
+    /// ink, because the two are not close: at a11y5 in an 87pt column `bovada`
+    /// is 135.3pt of ink — comfortably under two 87pt lines on paper — and still
+    /// breaks as `bo-` / `va…`. Greedy wrapping, hyphenation and the fact that a
+    /// break can only fall between glyphs waste far more of a narrow column than
+    /// an `ink / width` estimate predicts, and this trigger has to agree with
+    /// what the reader sees, not with an idealised packing of it.
+    ///
+    /// Rounded from the measured height, so a fractional last line counts as a
+    /// line — which is what truncation does.
+    ///
+    /// **`hyphenationFactor` IS LOAD-BEARING AND WAS FOUND BY PHOTOGRAPH.**
+    /// SwiftUI's `Text` hyphenates; `boundingRect` does not unless it is asked
+    /// to, and it breaks a too-long word by character instead. The two disagree
+    /// by a whole line exactly when it matters — measured on the real books
+    /// table at a11y3 in the 131pt column the clamp gives it,
+    /// `betanysportsbook` is 2 lines unhyphenated and 3 as SwiftUI draws it —
+    /// so the first version of this trigger read "fits" and left the row inline,
+    /// and the frame came back reading `be-` / `tanys…`. A measurement of a
+    /// layout the renderer is not performing is worse than no measurement,
+    /// because it is confident.
+    static func labelLineCount(
+        _ string: String, width: Double,
+        typeSize: DynamicTypeSize = .large, weight: Font.Weight = .medium
+    ) -> Int {
+        guard width > 0, !string.isEmpty else { return 1 }
+        #if canImport(UIKit)
+        let font = labelFont(at: typeSize, weight: weight)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.hyphenationFactor = 1
+        paragraph.lineBreakMode = .byWordWrapping
+        let bounds = (string as NSString).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font, .paragraphStyle: paragraph], context: nil)
+        guard font.lineHeight > 0 else { return 1 }
+        // `.up`, not `.rounded()`: the sentence above says a fractional last
+        // line counts as a line and nearest-rounding does not deliver that.
+        // Every measured input so far divides evenly, so the two agree today —
+        // but they disagree in the direction that leaves a row inline and
+        // truncating, which is the defect, so the tie goes to stacking.
+        return max(1, Int((Double(bounds.height) / Double(font.lineHeight)).rounded(.up)))
+        #else
+        let ink = textWidth(string, typeSize: typeSize, weight: weight)
+        return max(1, Int((ink / width).rounded(.up)))
         #endif
     }
 
@@ -285,15 +402,36 @@ enum EventSourceLabelColumn {
     /// a phone. That it stays positive at every shipped width and text size is a
     /// claim, and `testTheBarSurvivesEveryTypeSizeOnTheNarrowestPhone` is where
     /// that claim is checked.
+    /// #4233 — whether the row's four children share a line, or the label takes
+    /// one of its own.
+    enum RowLayout: Hashable {
+        /// `label | bar | away% | home%`, the shape at every size that can hold it.
+        case inline
+        /// The label on its own line, `bar | away% | home%` on the line below.
+        case stacked
+    }
+
     struct Columns: Equatable {
-        /// The label column, already clamped.
+        /// The label column.
+        ///
+        /// Clamped against the row when `layout` is `.inline`; the full width of
+        /// the label's own line when it is `.stacked`. One property rather than
+        /// two, so a call site cannot draw a stacked row and then size its label
+        /// with the inline clamp — the mistake that #4208 was.
         let label: Double
         /// Each of the two probability columns.
         let numeric: Double
+        /// Whether this list's rows draw inline or reflowed. A property of the
+        /// LIST, not of a row: rows that reflowed individually would give a table
+        /// with a ragged shape down it, so the widest label decides for all.
+        let layout: RowLayout
 
-        /// Everything in the row that is not the label or the bar.
+        /// Everything on the bar's line that is not the bar or the label.
         var fixedRowCost: Double {
-            EventSourceLabelColumn.fixedRowCost(numericWidth: numeric)
+            switch layout {
+            case .inline: return EventSourceLabelColumn.fixedRowCost(numericWidth: numeric)
+            case .stacked: return EventSourceLabelColumn.stackedFixedRowCost(numericWidth: numeric)
+            }
         }
 
         /// What the probability bar is actually left with on a row this wide.
@@ -302,8 +440,15 @@ enum EventSourceLabelColumn {
         /// arithmetic: a test that re-derives `available - fixed - label` from the
         /// same constants the clamp uses moves both sides of its comparison at
         /// once and cannot fail (native/079's surviving mutant, one file over).
+        ///
+        /// #4233 — when the row is stacked the label is not on this line, so it
+        /// is not subtracted. This is where the reflow pays: on a 375pt phone at
+        /// a11y5 the bar goes from its 72pt floor to 115pt.
         func barWidth(availableWidth: Double) -> Double {
-            availableWidth - fixedRowCost - label
+            switch layout {
+            case .inline: return availableWidth - fixedRowCost - label
+            case .stacked: return availableWidth - fixedRowCost
+            }
         }
     }
 
@@ -319,10 +464,33 @@ enum EventSourceLabelColumn {
         typeSize: DynamicTypeSize = .large, weight: Font.Weight = .medium
     ) -> Columns {
         let numeric = numericColumnWidth(for: values, typeSize: typeSize)
+        let inlineLabel = width(
+            for: labels, availableWidth: availableWidth, numericWidth: numeric,
+            typeSize: typeSize, weight: weight)
+
+        // #4233 — the reflow decision, taken here so it arrives at the call site
+        // already agreed with the widths it depends on. Asked of the INLINE
+        // column, because the question is whether the inline row still works.
+        let fits = labels.allSatisfy {
+            labelLineCount($0, width: inlineLabel, typeSize: typeSize, weight: weight)
+                <= maximumLabelLines
+        }
+        guard !fits, availableWidth > 0 else {
+            return Columns(label: inlineLabel, numeric: numeric, layout: .inline)
+        }
         return Columns(
-            label: width(
-                for: labels, availableWidth: availableWidth, numericWidth: numeric,
-                typeSize: typeSize, weight: weight),
-            numeric: numeric)
+            label: labelLineWidth(availableWidth: availableWidth),
+            numeric: numeric, layout: .stacked)
+    }
+
+    /// The width of a reflowed row's label line: everything inside the padding.
+    ///
+    /// Measured at every shipped size on both phones, every label this page draws
+    /// fits on one untruncated line of this width — the worst of them, a11y5
+    /// `betanysportsbook`, is 333.3pt of 343. The call site keeps its
+    /// `lineLimit` regardless, since a longer name than any book currently
+    /// carries should wrap rather than clip.
+    static func labelLineWidth(availableWidth: Double) -> Double {
+        max(minimumLabelWidth, availableWidth - horizontalPadding * 2)
     }
 }
