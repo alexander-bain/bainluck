@@ -61,8 +61,19 @@ class TestRuleText:
         assert "draw" in t
         assert "soccer_*" in t or "soccer" in t
         assert "never mutates" in t
-        # Rule must name BOTH excluded moneyline sources.
-        assert "odds_api_bookmaker" in t
+        # Rule must name BOTH excluded moneyline sources — the intent this
+        # assertion has always carried, now checked in the words a READER gets.
+        #
+        # It used to require the literal `odds_api_bookmaker`. #4096 took the
+        # wire keys out of this sentence for two reasons at once: standing
+        # notice 33 bans "bookmaker" in anything a reader sees, and this string
+        # is rendered verbatim on `bainluck.com/calibration`, so the keys were a
+        # database identifier printed to a casual fan (notice 34). Naming both
+        # sources is the requirement; spelling them as columns never was.
+        assert "both" in t
+        assert "events aggregate" in t
+        assert "per-sportsbook" in t
+        assert "bookmaker" not in t, "notice 33 — the reader may never see this word"
         # And clarify spreads/totals are kept.
         assert "spreads/totals" in t
 

@@ -832,7 +832,7 @@ CALIBRATION_CORRECTIONS = [
         "description": "Soccer game-odds were captured 2-way (home/away only) — "
                        "no draw column — so every soccer moneyline row summed to "
                        "~1.0 and structurally dropped the ~25% draw mass (#1011), "
-                       "in BOTH the events aggregate and the per-bookmaker curve. "
+                       "in BOTH the events aggregate and the per-sportsbook curve. "
                        "That over-predicted home/away uniformly across all ~20 "
                        "leagues (EPL 17.6pp, Switzerland 15.0pp, Turkey 7.6pp). "
                        "The draw was never stored so these rows can't be "
@@ -1092,7 +1092,7 @@ POLY_PLACEHOLDER_RULE_TEXT = (
     "genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10–0.28 vs "
     "has-bid at 0.43–0.55). Pair-symmetric: on a two-outcome market the partner of "
     "an excluded leg is excluded with it, because Polymarket writes only the Over "
-    "side from a real book and publishing the survivor alone grades half a book. "
+    "side from a real sportsbook and publishing the survivor alone grades half a pair. "
     "Read-side only; never mutates resolutions."
 )
 
@@ -1413,7 +1413,7 @@ SOCCER_2WAY_EXCLUDE_PATTERN = "soccer_%"
 
 SOCCER_2WAY_RULE_TEXT = (
     "Excludes historical soccer game-odds (moneyline) from the curve — BOTH the "
-    "events aggregate (odds_api) and the per-bookmaker (odds_api_bookmaker) sources. "
+    "events aggregate and the per-sportsbook sources. "
     "Soccer h2h is 3-way (home/draw/away) but both stored only a 2-way home/away "
     "split summing to ~1.0, dropping the ~25% draw mass and over-predicting "
     "home/away by 7-18pp uniformly across ~20 leagues (#1011). The draw was never "
@@ -2675,12 +2675,13 @@ WEATHER_WIDE_SPREAD_EXCLUDE = (
 )
 
 WEATHER_WIDE_SPREAD_RULE_TEXT = (
-    "Excludes Kalshi WEATHER outcomes whose captured price is a fabricated wide-book "
-    "midpoint: a book with yes_ask - yes_bid >= 0.50 and NO trade in any snapshot has "
-    "no real price discovery at its midpoint (#182). These rows carry a live bid so "
-    "the #940 liquidity filter keeps them — the wide spread is the discriminator. "
-    "WEATHER ONLY: #182's census showed tech's miscalibration is genuine, not "
-    "wide-book noise, so tech is left in. Read-side only; never mutates resolutions."
+    "Excludes Kalshi WEATHER outcomes whose captured price is a fabricated "
+    "wide-spread midpoint: a quote with yes_ask - yes_bid >= 0.50 and NO trade in any "
+    "snapshot has no real price discovery at its midpoint (#182). These rows carry a "
+    "live bid so the #940 liquidity filter keeps them — the wide spread is the "
+    "discriminator. WEATHER ONLY: #182's census showed tech's miscalibration is "
+    "genuine, not wide-spread noise, so tech is left in. Read-side only; never "
+    "mutates resolutions."
 )
 
 
