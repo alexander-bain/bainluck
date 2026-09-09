@@ -50,7 +50,30 @@
 import type { FeedItem } from "@/lib/types";
 
 export interface ForYouCue {
-  /** The reader-facing sentence fragment, sentence case, no trailing stop. */
+  /**
+   * What the CHIP prints — #4429. One or two words, sentence case (the chip
+   * uppercases in CSS), no article and no verb.
+   *
+   * Alex, on Discover 2026-09-09: the cue is "far too big — a small mark, not a
+   * badge". The chip was already 10px type with 6px/2px padding, so it was never
+   * the sizing: `A category you follow` is 21 characters set uppercase with
+   * letter-spacing, and it ran as a bar across the card. Shrinking the type
+   * further would have produced an unreadable long line instead of a readable
+   * one.
+   *
+   * ⚠️ It is a SECOND field and not a shortened `label` because the two have
+   * different jobs. The tooltip is built from `label`, so collapsing the label
+   * to "Following" would have made the hover read "In your feed because:
+   * following" — the fix taking the explanation away with the bar.
+   */
+  mark: string;
+  /**
+   * The reader-facing sentence fragment, sentence case, no trailing stop.
+   *
+   * Still the whole claim, and still what the chip's `title` says. The standing
+   * feed rule is that deterministic explanations are first-class; the mark is
+   * the mark, and this is what a reader who wonders gets.
+   */
   label: string;
   /** The reason token that produced it, for analytics and for a failing test. */
   reasonId: string;
@@ -69,23 +92,43 @@ export interface ForYouCue {
  * `app/utils/personalization.py`; a rename there turns it red rather than
  * quietly retiring a cue.
  */
-const UPRANK_VOCABULARY: { id: string; label: string }[] = [
-  { id: "pinned", label: "You pinned this" },
-  { id: "your_team", label: "One of your teams" },
-  { id: "your_team_futures", label: "One of your teams" },
-  { id: "roster_player", label: "A player on one of your teams" },
-  { id: "alma_mater", label: "Your alma mater" },
-  { id: "alma_mater_futures", label: "Your alma mater" },
-  { id: "local_team", label: "A team near you" },
-  { id: "rival_losing", label: "A rival is losing" },
-  { id: "rival_playing", label: "A rival of one of your teams" },
-  { id: "rival_futures", label: "A rival of one of your teams" },
-  { id: "sport_boost", label: "A sport you follow" },
-  { id: "discover_interest", label: "A category you follow" },
-  { id: "discover_feature_interest", label: "Like others you have opened" },
+/**
+ * #4429 — every entry carries BOTH forms: the `mark` the chip prints and the
+ * `label` the tooltip says. The marks are one or two words with no article and
+ * no verb, because an article is the difference between a mark and a sentence
+ * and it is never the informative word.
+ *
+ * `A category you follow` -> `Following` is the one Alex named, but it was not
+ * even the longest: `A player on one of your teams` is 29 characters and
+ * `A rival of one of your teams` is 28. Fixing the one he saw would have left
+ * the same bar on the next card.
+ *
+ * Marks may REPEAT where the distinction is one the chip cannot carry in two
+ * words (`rival_losing` and `rival_playing` are both `Rival`). Nothing is lost:
+ * precedence still picks the most specific reason, the tooltip still says which
+ * one, and `data-for-you-reason` still carries the exact token for analytics.
+ */
+const UPRANK_VOCABULARY: { id: string; mark: string; label: string }[] = [
+  { id: "pinned", mark: "Pinned", label: "You pinned this" },
+  { id: "your_team", mark: "Your team", label: "One of your teams" },
+  { id: "your_team_futures", mark: "Your team", label: "One of your teams" },
+  { id: "roster_player", mark: "Your player", label: "A player on one of your teams" },
+  { id: "alma_mater", mark: "Alma mater", label: "Your alma mater" },
+  { id: "alma_mater_futures", mark: "Alma mater", label: "Your alma mater" },
+  { id: "local_team", mark: "Nearby", label: "A team near you" },
+  { id: "rival_losing", mark: "Rival", label: "A rival is losing" },
+  { id: "rival_playing", mark: "Rival", label: "A rival of one of your teams" },
+  { id: "rival_futures", mark: "Rival", label: "A rival of one of your teams" },
+  { id: "sport_boost", mark: "Your sport", label: "A sport you follow" },
+  { id: "discover_interest", mark: "Following", label: "A category you follow" },
+  { id: "discover_feature_interest", mark: "Similar", label: "Like others you have opened" },
 ];
 
 const UPRANK_BY_ID = new Map(UPRANK_VOCABULARY.map((entry) => [entry.id, entry.label]));
+
+/** The vocabulary, exported so a guard can measure the marks rather than re-spell them. */
+export const FOR_YOU_VOCABULARY: readonly { id: string; mark: string; label: string }[] =
+  UPRANK_VOCABULARY;
 
 /** The vocabulary, exported so a guard can iterate it rather than re-spell it. */
 export const FOR_YOU_UPRANK_IDS: readonly string[] = UPRANK_VOCABULARY.map((e) => e.id);
@@ -128,7 +171,7 @@ export function forYouCue(item: Pick<FeedItem, "personalized" | "multiplier" | "
   if (typeof item.multiplier !== "number" || !(item.multiplier > 1)) return null;
 
   const reasons = item.personalization_reasons ?? [];
-  for (const { id, label } of UPRANK_VOCABULARY) {
+  for (const { id, mark, label } of UPRANK_VOCABULARY) {
     for (const raw of reasons) {
       const parsed = parsePersonalizationReason(raw);
       if (!parsed || parsed.id !== id) continue;
@@ -136,7 +179,7 @@ export function forYouCue(item: Pick<FeedItem, "personalized" | "multiplier" | "
       // name with a penalty arm. None does today; asserting it costs nothing
       // and means a future signed reason cannot invert a label.
       if (!(parsed.value > 0)) continue;
-      return { label, reasonId: id };
+      return { mark, label, reasonId: id };
     }
   }
   return null;

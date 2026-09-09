@@ -30,9 +30,30 @@ const boosted = (reasons: string[], multiplier = 1.35): Item => ({
   personalization_reasons: reasons,
 });
 
+/**
+ * The text the chip PRINTS, read out of its own element.
+ *
+ * ⚠️ NOT `html.replace(/<[^>]*>/g, "")`. That idiom is what this file used, and
+ * CodeQL's `js/incomplete-multi-character-sanitization` flags it HIGH — it is
+ * shaped exactly like a hand-rolled HTML sanitizer, and a hand-rolled sanitizer
+ * that strips `<...>` in one pass is a real vulnerability class. It is harmless
+ * on `renderToStaticMarkup` output in a test, but a rule cannot tell the two
+ * apart from the shape and should not have to. Capturing the element's own
+ * children is also the more precise assertion: it cannot pass on text that
+ * leaked in from a sibling node.
+ */
+function chipText(html: string): string {
+  const m = html.match(/<span[^>]*data-testid="for-you-cue"[^>]*>([^<]*)<\/span>/);
+  return (m?.[1] ?? "").trim();
+}
+
 describe("a boost the reader can be told about", () => {
   it("names the class, not a bare 'for you'", () => {
     expect(forYouCue(boosted(["your_team:0.35"]))).toEqual({
+      // #4429: two forms, and the pair is the point. The chip prints the mark;
+      // the sentence is what the tooltip says, so naming the class survived the
+      // shortening rather than being traded for it.
+      mark: "Your team",
       label: "One of your teams",
       reasonId: "your_team",
     });
@@ -170,25 +191,23 @@ describe("the chip renders what the decision returned", () => {
     expect(renderToStaticMarkup(<ForYouChip cue={null} />)).toBe("");
   });
 
-  it("prints the label and carries the reason for analytics", () => {
+  it("prints the MARK, titles the SENTENCE, and carries the reason for analytics", () => {
     const html = renderToStaticMarkup(
-      <ForYouChip cue={{ label: "One of your teams", reasonId: "your_team" }} />
+      <ForYouChip cue={{ mark: "Your team", label: "One of your teams", reasonId: "your_team" }} />
     );
     expect(html).toContain('data-testid="for-you-cue"');
     expect(html).toContain('data-for-you-reason="your_team"');
+    // #4429 — the visible text shrank; the explanation did not move out of reach.
+    expect(chipText(html)).toBe("Your team");
     expect(html).toContain("In your feed because: one of your teams");
-    expect(html.replace(/<[^>]*>/g, "").trim()).toBe("One of your teams");
   });
 
   it("the on-image skin is a different skin, not a different sentence", () => {
-    const plain = renderToStaticMarkup(
-      <ForYouChip cue={{ label: "Your alma mater", reasonId: "alma_mater" }} />
-    );
-    const onImage = renderToStaticMarkup(
-      <ForYouChip cue={{ label: "Your alma mater", reasonId: "alma_mater" }} tone="onImage" />
-    );
-    const text = (h: string) => h.replace(/<[^>]*>/g, "").trim();
-    expect(text(plain)).toBe(text(onImage));
+    const cue = { mark: "Alma mater", label: "Your alma mater", reasonId: "alma_mater" };
+    const plain = renderToStaticMarkup(<ForYouChip cue={cue} />);
+    const onImage = renderToStaticMarkup(<ForYouChip cue={cue} tone="onImage" />);
+    expect(chipText(plain)).toBe(chipText(onImage));
+    expect(chipText(plain)).toBe("Alma mater");
     expect(onImage).toContain("text-white/90");
     expect(plain).not.toContain("text-white/90");
   });
