@@ -243,11 +243,42 @@ class TestTheFeedServesIt:
         assert "_concept_can_render = bool(_leader) or bool(_headline_bout)" in src
 
     def test_a_settled_card_still_leads_with_its_result(self):
-        """Exclusivity is enforced where both are resolved, as `_champion` is."""
-        src = self._feed_source()
-        assert (
-            '_headline_bout = c.get("headline_bout") if not _is_whathit else None'
-            in src
+        """Exclusivity is enforced where both are resolved, as `_champion` is.
+
+        Checked on the ASSIGNMENT, not on its spelling. This was a match for one
+        literal line of source, and #3058 — which only added a second source for
+        the same value — had to edit that line and reds a guard whose property it
+        never touched. A guard that fails on reformatting teaches the next reader
+        to re-pin the string rather than to check the rule, so it is now an AST
+        read: whatever `_headline_bout` is assigned from, `_is_whathit` must gate
+        it. The behavioural proof that a WHAT-HIT card serves no bout lives in
+        `test_concept_bout_from_envelope_3058.py`.
+        """
+        import ast
+        import textwrap
+
+        from app.routes import feed
+
+        tree = ast.parse(
+            textwrap.dedent(inspect.getsource(feed._score_event_concepts))
+        )
+        assigns = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "_headline_bout"
+                for t in node.targets
+            )
+        ]
+        assert len(assigns) == 1, (
+            "expected exactly one assignment to `_headline_bout` in "
+            f"`_score_event_concepts`, found {len(assigns)} — if the value is now "
+            "built in stages, this guard must follow it rather than pass vacuously"
+        )
+        assert "_is_whathit" in ast.unparse(assigns[0].value), (
+            "`_headline_bout` is no longer gated on `_is_whathit` — a settled "
+            "card can lead with a price that is now history"
         )
 
     def test_the_lister_attaches_it(self):

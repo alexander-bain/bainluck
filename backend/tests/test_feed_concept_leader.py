@@ -130,7 +130,7 @@ class TestTheLeaderIsResolved:
                 ]
             )
         )
-        leader = await _resolve_concept_leader(None, "event:ufc:26aug20")
+        leader, _bout = await _resolve_concept_leader(None, "event:ufc:26aug20")
         assert leader is not None, "the probability is in the envelope; the feed must read it"
         assert leader["name"] == "Joshua Van"
         assert leader["probability"] == pytest.approx(0.5217)
@@ -150,7 +150,7 @@ class TestTheLeaderIsResolved:
                 ]
             )
         )
-        leader = await _resolve_concept_leader(None, "event:f1:gp")
+        leader, _bout = await _resolve_concept_leader(None, "event:f1:gp")
         assert leader["name"] == "Favourite"
         assert leader["probability"] == pytest.approx(0.65)
         assert leader["field_size"] == 3
@@ -159,7 +159,7 @@ class TestTheLeaderIsResolved:
         envelope_source(
             _envelope([{"name": "A", "probability": 0.7, "movement_24h": 0.031}])
         )
-        leader = await _resolve_concept_leader(None, "event:ufc:x")
+        leader, _bout = await _resolve_concept_leader(None, "event:ufc:x")
         assert leader["movement_24h"] == pytest.approx(0.031)
 
     async def test_movement_falls_back_to_the_other_field_name(self, envelope_source):
@@ -168,14 +168,14 @@ class TestTheLeaderIsResolved:
                 [{"name": "A", "probability": 0.7, "probability_change_24h": -0.02}]
             )
         )
-        leader = await _resolve_concept_leader(None, "event:ufc:x")
+        leader, _bout = await _resolve_concept_leader(None, "event:ufc:x")
         assert leader["movement_24h"] == pytest.approx(-0.02)
 
     async def test_absent_movement_is_none_not_zero(self, envelope_source):
         # Zero is a measured non-move; None is an absence. Rendering them the same
         # would print "▲0" for "we don't know".
         envelope_source(_envelope([{"name": "A", "probability": 0.7}]))
-        leader = await _resolve_concept_leader(None, "event:ufc:x")
+        leader, _bout = await _resolve_concept_leader(None, "event:ufc:x")
         assert leader["movement_24h"] is None
 
 
@@ -184,27 +184,27 @@ class TestItRefusesRatherThanFabricates:
 
     async def test_empty_field_yields_no_leader(self, envelope_source):
         envelope_source(_envelope([]))
-        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+        assert await _resolve_concept_leader(None, "event:ufc:x") == (None, None)
 
     async def test_competitors_without_probabilities_yield_no_leader(self, envelope_source):
         envelope_source(_envelope([{"name": "A"}, {"name": "B", "probability": None}]))
-        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+        assert await _resolve_concept_leader(None, "event:ufc:x") == (None, None)
 
     async def test_nameless_competitor_yields_no_leader(self, envelope_source):
         envelope_source(_envelope([{"name": "   ", "probability": 0.9}]))
-        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+        assert await _resolve_concept_leader(None, "event:ufc:x") == (None, None)
 
     async def test_out_of_range_probability_is_refused(self, envelope_source):
         # Gotcha #23: independent binaries can sum past 100%. A SINGLE leader over
         # 1.0 is corrupt, not merely confident, and must not reach a card.
         envelope_source(_envelope([{"name": "A", "probability": 1.4}]))
-        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+        assert await _resolve_concept_leader(None, "event:ufc:x") == (None, None)
         envelope_source(_envelope([{"name": "A", "probability": -0.1}]))
-        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+        assert await _resolve_concept_leader(None, "event:ufc:x") == (None, None)
 
     async def test_empty_envelope_yields_no_leader(self, envelope_source):
         envelope_source({})
-        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+        assert await _resolve_concept_leader(None, "event:ufc:x") == (None, None)
 
     async def test_an_adapter_explosion_never_breaks_the_feed(self, monkeypatch):
         import app.utils.event_concept as ec
@@ -229,7 +229,7 @@ class TestItRefusesRatherThanFabricates:
         monkeypatch.setattr(ec, "get_adapter", lambda d: _Boom())
         monkeypatch.setattr(ec, "parse_event_key", lambda k: ("ufc", "s"))
 
-        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+        assert await _resolve_concept_leader(None, "event:ufc:x") == (None, None)
 
 
 class TestTheLeaderNeverBuilds:
@@ -261,7 +261,7 @@ class TestTheLeaderNeverBuilds:
         adapter = envelope_source(
             _envelope([{"name": "Joshua Van", "probability": 0.52}]), cached=False
         )
-        assert await _resolve_concept_leader(None, "event:ufc:26aug20") is None
+        assert await _resolve_concept_leader(None, "event:ufc:26aug20") == (None, None)
         assert adapter.build_calls == 0, (
             "a cold concept envelope must cost the feed NOTHING — one build here "
             "is 10-14 builds per request, serially, inside a 6s client budget"
@@ -271,7 +271,7 @@ class TestTheLeaderNeverBuilds:
         adapter = envelope_source(
             _envelope([{"name": "Joshua Van", "probability": 0.5217}])
         )
-        leader = await _resolve_concept_leader(None, "event:ufc:26aug20")
+        leader, _bout = await _resolve_concept_leader(None, "event:ufc:26aug20")
         assert leader is not None and leader["name"] == "Joshua Van"
         assert adapter.build_calls == 0
 
@@ -346,7 +346,7 @@ class TestTheLeaderNeverBuilds:
         monkeypatch.setattr(rc, "bounded_redis_call", _bounded)
         monkeypatch.setattr(rc, "get_shared_async_redis", _shared)
 
-        assert await _resolve_concept_leader(None, "event:ufc:x") is None
+        assert await _resolve_concept_leader(None, "event:ufc:x") == (None, None)
 
 
 class TestSettledMeansSettled:

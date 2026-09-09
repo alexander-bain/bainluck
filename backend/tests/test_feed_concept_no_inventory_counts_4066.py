@@ -254,7 +254,9 @@ class TestTheFeedActuallyAppliesIt:
         # keeps every card past `_concept_can_render` so nothing is dropped for
         # a reason this test is not asking about.
         async def _fake_leader(_db, key):
-            return {"name": "Arlind Berisha", "probability": 0.58, "field_size": 2}
+            # (leader, bout) since #3058 — no bout, so these cards keep the exact
+            # one-line shape this test was written against.
+            return {"name": "Arlind Berisha", "probability": 0.58, "field_size": 2}, None
 
         async def _fake_champion(_db, _key):
             return None
