@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import { motion } from "@/components/motion";
-import { fetchFeed, fetchGroupedFeed } from "@/lib/api";
+import { fetchFeed, fetchGroupedFeed, fetchSportHierarchy } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GroupedFeedResponse } from "@/lib/types";
 import GroupedFeedRenderer from "@/components/GroupedFeedRenderer";
@@ -26,6 +26,12 @@ import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/disco
 import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
 import SportsFeedBootScript from "@/components/sports/SportsFeedBootScript";
 import { applyFinishedCardGuard } from "@/lib/sports/finishedCardGuard";
+import {
+  partitionFinishedGames,
+  buildFinishedSection,
+  leagueResultsLinks,
+  FINISHED_SECTION_CAP,
+} from "@/lib/sports/finishedSection";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
@@ -338,13 +344,38 @@ export default function SportsPage() {
   //   has always run. /sports never called it, which is the whole reason page
   //   one carried 20 completed games while Discover carried 0 on the same
   //   2026-09-03T03:15Z pull. See lib/sports/finishedCardGuard.ts.
+  //
+  //   live/122 (#4454) — and the settled GAMES come out BEFORE the guard runs.
+  //   The guard's 8-hour clock starts at `commence_time`, so the longer a match
+  //   lasts the LESS shelf life its result gets: Shelton–Alcaraz (4h36m, five
+  //   sets) expired 3h24m after the final point and was gone from this tab the
+  //   morning Alex went looking for it. D54 = A asks for "today's finals then
+  //   yesterday's", which an hours clock cannot render at all — by 8am every one
+  //   of last night's finals is over eight hours old. What replaces the clock,
+  //   FOR GAMES ONLY, is a calendar bound plus a declared cap; see
+  //   lib/sports/finishedSection.ts. The guard is unchanged and still runs over
+  //   everything else, so a closed/resolved futures market is still stale.
   const guardedFeed = useMemo(() => {
     if (mergedItems.length === 0) {
-      return { items: [] as FeedItem[], agedOut: [] as FeedItem[], keptToAvoidEmptyGames: false };
+      return {
+        items: [] as FeedItem[],
+        agedOut: [] as FeedItem[],
+        keptToAvoidEmptyGames: false,
+        finishedGames: [] as FeedItem[],
+      };
     }
     const renderable = mergedItems.filter((item) => feedItemHasRenderableContent(item));
-    return applyFinishedCardGuard(renderable);
+    const { finished, rest } = partitionFinishedGames(renderable);
+    return { ...applyFinishedCardGuard(rest), finishedGames: finished };
   }, [mergedItems]);
+
+  // The Finished section: today's finals first, then yesterday's, most recent
+  // first inside a day, cut to one screen. Pure and ordered here; rendered below
+  // Upcoming, because a result is not something a reader can still act on.
+  const finishedSection = useMemo(
+    () => buildFinishedSection(guardedFeed.finishedGames),
+    [guardedFeed]
+  );
 
   // =========================================================================
   // Summary stats
@@ -355,14 +386,18 @@ export default function SportsPage() {
     // badges below it count and what the grid actually renders. That is also why
     // it counts the GUARDED list: a header advertising events the freshness gate
     // has already removed is the same drift #2597 fixed, from the other end.
-    const cards = flattenFeedBundles(guardedFeed.items);
+    //
+    // live/122 — and for the same reason it counts the finals the Finished
+    // section SHOWS, not the ones it was handed: those cards are on the page, and
+    // the ones the calendar bound or the cap held back are not.
+    const cards = flattenFeedBundles([...guardedFeed.items, ...finishedSection.shown]);
     const events = cards.filter(i => i.type === "event").length;
     const futures = cards.filter(i => i.type === "futures").length;
     const live = cards.filter(i =>
       i.type === "event" && (i.data as FeedEventData).status === "live"
     ).length;
     return { events, futures, live };
-  }, [guardedFeed]);
+  }, [guardedFeed, finishedSection]);
 
   // =========================================================================
   // Group feed items into visual sections
@@ -417,6 +452,52 @@ export default function SportsPage() {
       });
     }
   }, [guardedFeed]);
+
+  // live/122 — the same identity-free needle for the finals the Finished section
+  // held back. Three reasons, not one, and the third is the one to watch: it is
+  // the size of the results backlog a reader has to leave the page to see.
+  const finishedDropSigRef = useRef("");
+  useEffect(() => {
+    const { dropped } = finishedSection;
+    if (dropped.length === 0) return;
+    const counts = new Map<string, number>();
+    for (const { reason } of dropped) {
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+    const sig = [...counts.entries()].sort().map(([k, v]) => `${k}=${v}`).join(",");
+    if (sig === finishedDropSigRef.current) return;
+    finishedDropSigRef.current = sig;
+    for (const [suppression_reason, count] of counts) {
+      trackEvent("feed_card_suppressed", {
+        card_type: "event",
+        suppression_reason,
+        count,
+        surface: "sports",
+      });
+    }
+  }, [finishedSection]);
+
+  // Where the finals the cap held back can be read in full. The register answers
+  // "which league page owns this sport key" (`SportLeague.sport_keys`), so no map
+  // is written here — UX-P062 lifted `grid_slug` out of a page-local constant for
+  // exactly this reason. Fetched ONLY when the cap actually fired (a null SWR key
+  // otherwise), so the cold /sports path is unchanged.
+  const { data: hierarchyData } = useSWR(
+    finishedSection.cappedMore ? "sport-hierarchy" : null,
+    fetchSportHierarchy
+  );
+  const finishedMoreLinks = useMemo(
+    () =>
+      finishedSection.cappedMore
+        ? leagueResultsLinks(
+            finishedSection.dropped
+              .filter((d) => d.reason === "finished_section_cap")
+              .map((d) => d.item),
+            hierarchyData?.sports
+          )
+        : [],
+    [finishedSection, hierarchyData]
+  );
 
   // #1102 information architecture: games LEAD the page. Split the game sections
   // (Live Now / Just Happened / Upcoming) from the Top Markets futures section so
@@ -624,7 +705,13 @@ export default function SportsPage() {
             {/* #217 no-games UX: games are quiet but the feed isn't empty
                 (Top Markets / props still surface). Lead with an honest,
                 helpful panel instead of a headerless list of futures. */}
-            {gameSections.length === 0 && (
+            {/* live/122 — "no games" has to mean no games INCLUDING the finals
+                below it. The #1091 reprieve inside the freshness guard used to
+                cover this case; settled games no longer pass through the guard,
+                so the slate carries the condition itself. A "games are quiet"
+                panel sitting on top of four of last night's results is the same
+                false claim from the other direction. */}
+            {gameSections.length === 0 && finishedSection.shown.length === 0 && (
               <SportsEmptySlate
                 mode="no-games"
                 hasMarketsBelow={
@@ -637,6 +724,82 @@ export default function SportsPage() {
             {/* #1102: Games LEAD — Live Now / Just Happened / Upcoming first */}
             {gameSections.map((section, sectionIndex) =>
               renderFeedSection(section, sectionIndex)
+            )}
+
+            {/* live/122 (#4454, D54 = A) — RESULTS, below the games still to come.
+                Ordered today-first then most-recent-first, so last night's late
+                marquee match is the first thing in it the morning after. */}
+            {finishedSection.shown.length > 0 && (
+              <section data-section-key="results">
+                {gameSections.length > 0 && (
+                  <div className="border-t border-surface-border/30 -mt-1 mb-5" />
+                )}
+                <motion.div
+                  className="flex items-center gap-2 mb-3"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                >
+                  <span className="text-sm">🏁</span>
+                  <h2 className="text-sm font-semibold text-text-secondary">Finished</h2>
+                  <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                    {finishedSection.shown.length}
+                  </span>
+                </motion.div>
+                <div
+                  className="grid gap-3"
+                  style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                >
+                  {finishedSection.shown.map((item, itemIndex) => {
+                    const data = item.data as FeedEventData;
+                    return (
+                      <motion.div
+                        key={`feed-event-${data.id}`}
+                        data-testid="sports-card"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          duration: 0.3,
+                          ease: "easeOut",
+                          delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+                        }}
+                      >
+                        <FeedCard
+                          item={item}
+                          onThumbsUp={handleThumbsUp}
+                          onThumbsDown={handleThumbsDown}
+                          category={getCategoryForLeague(data.sport ?? "")?.key ?? "other"}
+                        />
+                      </motion.div>
+                    );
+                  })}
+                </div>
+                {/* The cap, declared — and the declaration leads somewhere. A
+                    league the register does not know is simply not named, rather
+                    than linked to a guessed URL that goes nowhere (UX-P062 E5). */}
+                {finishedSection.cappedMore && (
+                  <p
+                    className="text-micro text-text-muted mt-3"
+                    data-testid="finished-cap-note"
+                  >
+                    Showing the {FINISHED_SECTION_CAP} most recent
+                    {finishedMoreLinks.length > 0 && (
+                      <>
+                        {" — more in "}
+                        {finishedMoreLinks.map((link, i) => (
+                          <span key={link.href}>
+                            {i > 0 && (i === finishedMoreLinks.length - 1 ? " and " : ", ")}
+                            <a href={link.href} className="text-accent-brand hover:underline">
+                              {link.label}
+                            </a>
+                          </span>
+                        ))}
+                      </>
+                    )}
+                    .
+                  </p>
+                )}
+              </section>
             )}
 
             {/* Player Props & Progressions strip — BELOW the games feed (#1102).
@@ -697,7 +860,10 @@ export default function SportsPage() {
           ) : (
             <div className="flex justify-center pt-4">
               {/* The count the reader actually saw — guarded, not loaded. */}
-              <EndOfFeedCard count={guardedFeed.items.length} onRefresh={() => refreshFeed()} />
+              <EndOfFeedCard
+                count={guardedFeed.items.length + finishedSection.shown.length}
+                onRefresh={() => refreshFeed()}
+              />
             </div>
           )}
         </>
