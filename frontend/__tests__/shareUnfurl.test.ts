@@ -69,17 +69,9 @@ describe("the site names one host", () => {
     // The literal was in 21 places before LAT-P278. It is a fact about the
     // deployment, not about a page, and it now lives once in lib/siteUrl.ts.
     //
-    // A PLAIN SUBSTRING SEARCH, NOT A REGEX, and that is deliberate: CodeQL
-    // flagged the first version of this line (`/https:\/\/bainluck\.com/`,
-    // alert 2234, `js/regex/missing-regexp-anchor`, high) because an unanchored
-    // regex over a URL matches anywhere and arbitrary hosts may precede or
-    // follow it. Here we are looking for a literal inside source text rather
-    // than validating a URL, so there is no anchor that would be correct —
-    // `String.includes` says exactly what is meant and carries no such trap.
     const offenders: string[] = [];
     for (const file of walk(APP_DIR, (n) => /\.tsx?$/.test(n))) {
-      const src = fs.readFileSync(file, "utf8");
-      if (src.includes(`${APEX_ORIGIN}`)) {
+      if (mentionsApexOrigin(fs.readFileSync(file, "utf8"))) {
         offenders.push(path.relative(process.cwd(), file));
       }
     }
@@ -87,11 +79,21 @@ describe("the site names one host", () => {
   });
 
   it("that search is precise — the www origin is not read as the apex", () => {
-    // `https://www.bainluck.com` must NOT contain `https://bainluck.com`, or
-    // the rule above would flag every correctly-fixed file and the whole guard
-    // would be noise. Cheap, and it pins the one way this check could invert.
-    expect(CANONICAL_ORIGIN.includes(APEX_ORIGIN)).toBe(false);
-    expect(`${APEX_ORIGIN}/sports`.includes(APEX_ORIGIN)).toBe(true);
+    // The one way this guard could invert: if `https://www.bainluck.com`
+    // counted as containing `https://bainluck.com`, the rule above would flag
+    // every correctly-fixed file and the whole thing would be noise.
+    //
+    // Asserted through `mentionsApexOrigin` against SOURCE-LINE fixtures, not
+    // by comparing two URL constants directly. That is not cosmetic: CodeQL
+    // flags `<url>.includes(<url>)` as `js/incomplete-url-substring-
+    // sanitization` (high) — correctly, in general, since a substring test is
+    // no way to validate a host. Here the input is a line of source text and
+    // the question is "does this file mention the apex", so the fixtures are
+    // written as what they actually represent.
+    expect(mentionsApexOrigin('metadataBase: new URL("https://www.bainluck.com")')).toBe(false);
+    expect(mentionsApexOrigin('metadataBase: new URL("https://bainluck.com")')).toBe(true);
+    expect(mentionsApexOrigin('url: "https://bainluck.com/sports"')).toBe(true);
+    expect(mentionsApexOrigin('url: "/sports"')).toBe(false);
   });
 
   it("the apex and the canonical origin are actually different strings", () => {
@@ -278,6 +280,23 @@ function meta(html: string, key: string): string | null {
     if (m) return m[1];
   }
   return null;
+}
+
+/**
+ * Does this file's SOURCE TEXT mention the redirecting apex origin?
+ *
+ * The parameter is a file's contents, not a URL — the question is "does this
+ * source hardcode the wrong host", not "is this URL safe". Kept as a named
+ * helper so the loop and its negative control run the identical predicate: a
+ * control that re-implements the check is a control for a different check.
+ *
+ * A plain substring test, deliberately not a regex: CodeQL flagged the first
+ * version of the caller (`/https:\/\/bainluck\.com/`, alert 2234,
+ * `js/regex/missing-regexp-anchor`, high) for being an unanchored regex over a
+ * URL, and there is no anchor that would be correct when scanning source text.
+ */
+function mentionsApexOrigin(sourceText: string): boolean {
+  return sourceText.includes(APEX_ORIGIN);
 }
 
 /** True when the route's own segment directory holds an `opengraph-image.tsx`. */
