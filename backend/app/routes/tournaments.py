@@ -1548,26 +1548,19 @@ async def _build_sections(
         # client assembling cells from three payload sections cannot be held to
         # that. It also puts the two evals — column sums and monotonicity — next
         # to the data they judge instead of in a component.
-        # DECIDED MATCHES, WITH THE SCORE (UX-P139, Alex's item 9). A separate
-        # section rather than a field on the slate, because a slate structurally
-        # cannot hold a finished match — see `build_results`.
-        # `prices` so a finished match can print what the market said BEFORE it
-        # (UX-P146, Alex on the UX-P145 artifact). No extra query: the matchup
-        # outcome ids are already in the one `IN (...)` above, and the number
-        # used is `opening_probability`, which is loaded on the same row.
-        #
-        # HOISTED ABOVE THE GRID (#4174), same call, same cost. The grid needs
-        # to know which of its questions the tournament has already answered —
-        # without it, the round of 16 column was still publishing a forecast two
-        # days after the round of 16 was played.
-        rest["results"] = build_results(register, results=espn, prices=prices)
         rest["grids"] = build_grids(
             register,
             boards=base.get("boards") or [],
             prices=prices,
             now=now,
+            # WHAT THE DRAW HAS ALREADY DECIDED (#4174). Read from `espn`, the
+            # raw scoreboard, NOT from `rest["results"]` below: that list drops
+            # a match unless BOTH names resolve, which is right for publishing a
+            # score and wrong for knowing that one named player is out. See
+            # `tournament_progress`, CERT-2360.
             progress=build_progress(
-                rest["results"].get("matches") or [],
+                register,
+                espn,
                 # "Round 2" is R64 in a slam and R32 in a 64-draw, so the round
                 # cannot be read without the draw's own size. The register is
                 # the authority for it, through the slate's own reader.
@@ -1578,6 +1571,14 @@ async def _build_sections(
                 },
             ),
         )
+        # DECIDED MATCHES, WITH THE SCORE (UX-P139, Alex's item 9). A separate
+        # section rather than a field on the slate, because a slate structurally
+        # cannot hold a finished match — see `build_results`.
+        # `prices` so a finished match can print what the market said BEFORE it
+        # (UX-P146, Alex on the UX-P145 artifact). No extra query: the matchup
+        # outcome ids are already in the one `IN (...)` above, and the number
+        # used is `opening_probability`, which is loaded on the same row.
+        rest["results"] = build_results(register, results=espn, prices=prices)
     # ── THE ESPN COMPETITION CHANNEL, RESOLVED ONCE FOR THE HALVES BUILT ────
     #
     # TWO SHIPS MEET HERE, and the meeting is the whole of this rebase

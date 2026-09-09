@@ -37,10 +37,14 @@ from app.utils.tournament_grid import (
     evaluate_monotonicity,
 )
 from app.utils.tournament_progress import (
+    SIDE_LOST,
+    SIDE_PLAYED,
+    SIDE_WON,
     VERDICT_OUT,
     VERDICT_REACHED,
     DrawProgress,
     build_progress,
+    progress_from_sides,
 )
 
 NOW = datetime(2026, 9, 9, 10, 0, tzinfo=timezone.utc)
@@ -48,18 +52,62 @@ DRAW = "mens-singles"
 SIZES = {DRAW: 128}
 
 
-def _match(round_name, a, b, *, winner=None, completion="final", draw=DRAW):
+def _espn(*matches, draw=DRAW):
+    """`parse_results`' own shape: {draw: {pair_key: row}}, ESPN names and all.
+
+    Deliberately NOT `build_results`' output. That is the whole of the
+    CERT-2360 repair: the strict two-name join drops a match when one side
+    does not resolve, and progress has to be read BEFORE it.
+    """
+    rows = {}
+    for i, m in enumerate(matches):
+        rows[f"pair-{i}"] = m
+    return {"draws": {draw: rows}}
+
+
+def _row(round_name, a, b, *, winner=None, completion="final"):
     return {
-        "draw": draw,
-        "round": round_name,
-        "source_round": round_name,
+        "players": [a, b],
+        "espn_round": round_name,
+        "winner_name": winner,
+        "winner_normalized": _norm(winner) if winner else None,
         "completion": completion,
-        "winner_entity_key": winner,
-        "players": [
-            {"entity_key": a, "is_winner": a == winner},
-            {"entity_key": b, "is_winner": b == winner},
-        ],
+        "score": "6-4, 6-4",
+        "espn_competition_id": None,
     }
+
+
+def _norm(name):
+    from app.services.espn_tennis import normalize_name
+
+    return normalize_name(name)
+
+
+def _reg(*display_names, draw=DRAW):
+    return {
+        "schema_version": "tournament-register/v1",
+        "tournament": "us-open",
+        "season": "2026",
+        "version": 1,
+        "generated_at": NOW.isoformat(),
+        "draw_released": True,
+        "players": [
+            {
+                "entity_key": name.lower().replace(" ", "-"),
+                "display_name": name,
+                "draw": draw,
+                "role": "contender",
+                "sources": [],
+            }
+            for name in display_names
+        ],
+        "matchups": [],
+        "reaches": [],
+    }
+
+
+def _progress(register, espn):
+    return build_progress(register, espn, draw_sizes=SIZES).get(DRAW, DrawProgress())
 
 
 # ---------------------------------------------------------------------------
@@ -68,85 +116,84 @@ def _match(round_name, a, b, *, winner=None, completion="final", draw=DRAW):
 
 class TestOnlyAMatchWeHoldSettlesACell:
     def test_a_finished_match_reaches_both_and_eliminates_the_loser(self):
-        [(_, prog)] = build_progress(
-            [_match("Round 4", "alcaraz", "rune", winner="alcaraz")],
-            draw_sizes=SIZES,
-        ).items()
-        assert prog.verdict("alcaraz", "R16") == VERDICT_REACHED
-        assert prog.verdict("rune", "R16") == VERDICT_REACHED
+        prog = _progress(
+            _reg("Carlos Alcaraz", "Holger Rune"),
+            _espn(_row("Round 4", "Carlos Alcaraz", "Holger Rune", winner="Carlos Alcaraz")),
+        )
+        assert prog.verdict("carlos-alcaraz", "R16") == VERDICT_REACHED
+        assert prog.verdict("holger-rune", "R16") == VERDICT_REACHED
         # The winner is admitted to the next round without playing it.
-        assert prog.verdict("alcaraz", "QF") == VERDICT_REACHED
-        assert prog.verdict("rune", "QF") == VERDICT_OUT
-        assert prog.eliminated == {"rune": "R16"}
+        assert prog.verdict("carlos-alcaraz", "QF") == VERDICT_REACHED
+        assert prog.verdict("holger-rune", "QF") == VERDICT_OUT
+        assert prog.eliminated == {"holger-rune": "R16"}
 
     def test_a_match_still_in_progress_eliminates_nobody(self):
         """Being in a match that has not finished is not losing it."""
-        prog = build_progress(
-            [_match("Quarterfinal", "zverev", "blockx", completion="in_progress")],
-            draw_sizes=SIZES,
-        )[DRAW]
-        assert prog.verdict("zverev", "QF") == VERDICT_REACHED
-        assert prog.verdict("blockx", "QF") == VERDICT_REACHED
-        # Neither is out, and neither has reached the semi-final.
-        assert prog.verdict("zverev", "SF") is None
-        assert prog.verdict("blockx", "SF") is None
+        prog = _progress(
+            _reg("Alexander Zverev", "Alexander Blockx"),
+            _espn(_row("Quarterfinal", "Alexander Zverev", "Alexander Blockx",
+                       completion="in_progress")),
+        )
+        assert prog.verdict("alexander-zverev", "QF") == VERDICT_REACHED
+        assert prog.verdict("alexander-blockx", "QF") == VERDICT_REACHED
+        assert prog.verdict("alexander-zverev", "SF") is None
+        assert prog.verdict("alexander-blockx", "SF") is None
         assert prog.eliminated == {}
         assert prog.decided_matches == 0
 
     def test_a_retirement_and_a_walkover_both_decide(self):
-        prog = build_progress(
-            [
-                _match("Round 3", "a", "b", winner="a", completion="retired"),
-                _match("Round 3", "c", "d", winner="c", completion="walkover"),
-            ],
-            draw_sizes=SIZES,
-        )[DRAW]
-        assert prog.eliminated == {"b": "R32", "d": "R32"}
-        assert prog.verdict("a", "R16") == VERDICT_REACHED
+        prog = _progress(
+            _reg("A One", "B Two", "C Three", "D Four"),
+            _espn(
+                _row("Round 3", "A One", "B Two", winner="A One", completion="retired"),
+                _row("Round 3", "C Three", "D Four", winner="C Three", completion="walkover"),
+            ),
+        )
+        assert prog.eliminated == {"b-two": "R32", "d-four": "R32"}
+        assert prog.verdict("a-one", "R16") == VERDICT_REACHED
 
     def test_a_player_no_result_mentions_is_never_settled(self):
         """THE UNDER-CLAIM RULE, and the reason it is not negotiable.
 
-        Our results join drops a match whose two names do not both resolve to
-        registered players — 147 of 467 scored on the specimen day — so "we
-        hold no match for this player" is a statement about US, never about the
-        draw.  Guessing them out would erase a live player from the grid, which
-        is worse than the defect being fixed.
+        A false "out" would erase a live player from the grid, which is worse
+        than the defect being fixed.
         """
-        prog = build_progress(
-            [_match("Round 4", "alcaraz", "rune", winner="alcaraz")],
-            draw_sizes=SIZES,
-        )[DRAW]
-        assert prog.verdict("sinner", "R16") is None
-        assert prog.verdict("sinner", "F") is None
-        assert prog.title_verdict("sinner") is None
+        prog = _progress(
+            _reg("Carlos Alcaraz", "Holger Rune", "Jannik Sinner"),
+            _espn(_row("Round 4", "Carlos Alcaraz", "Holger Rune", winner="Carlos Alcaraz")),
+        )
+        assert prog.verdict("jannik-sinner", "R16") is None
+        assert prog.verdict("jannik-sinner", "F") is None
+        assert prog.title_verdict("jannik-sinner") is None
 
     def test_an_eliminated_player_keeps_the_rounds_they_did_reach(self):
-        prog = build_progress(
-            [
-                _match("Round 4", "tiafoe", "korda", winner="tiafoe"),
-                _match("Quarterfinal", "tiafoe", "shelton", winner="shelton"),
-            ],
-            draw_sizes=SIZES,
-        )[DRAW]
-        assert prog.verdict("tiafoe", "R16") == VERDICT_REACHED
-        assert prog.verdict("tiafoe", "QF") == VERDICT_REACHED
-        assert prog.verdict("tiafoe", "SF") == VERDICT_OUT
+        prog = _progress(
+            _reg("Frances Tiafoe", "Sebastian Korda", "Ben Shelton"),
+            _espn(
+                _row("Round 4", "Frances Tiafoe", "Sebastian Korda", winner="Frances Tiafoe"),
+                _row("Quarterfinal", "Frances Tiafoe", "Ben Shelton", winner="Ben Shelton"),
+            ),
+        )
+        assert prog.verdict("frances-tiafoe", "R16") == VERDICT_REACHED
+        assert prog.verdict("frances-tiafoe", "QF") == VERDICT_REACHED
+        assert prog.verdict("frances-tiafoe", "SF") == VERDICT_OUT
 
     def test_the_final_crowns_a_champion_and_nothing_else_does(self):
-        prog = build_progress(
-            [_match("Final", "zverev", "shelton", winner="zverev")],
-            draw_sizes=SIZES,
-        )[DRAW]
-        assert prog.champion == "zverev"
-        assert prog.title_verdict("zverev") == VERDICT_REACHED
-        assert prog.title_verdict("shelton") == VERDICT_OUT
+        register = _reg("Alexander Zverev", "Ben Shelton", "Frances Tiafoe")
+        prog = _progress(
+            register,
+            _espn(_row("Final", "Alexander Zverev", "Ben Shelton", winner="Alexander Zverev")),
+        )
+        assert prog.champion == "alexander-zverev"
+        assert prog.title_verdict("alexander-zverev") == VERDICT_REACHED
+        assert prog.title_verdict("ben-shelton") == VERDICT_OUT
         assert prog.open_slots("title", 1) == 0
 
-        semi_only = build_progress(
-            [_match("Semifinal", "zverev", "tiafoe", winner="zverev")],
-            draw_sizes=SIZES,
-        )[DRAW]
+        semi_only = _progress(
+            register,
+            _espn(_row("Semifinal", "Alexander Zverev", "Frances Tiafoe",
+                       winner="Alexander Zverev")),
+        )
         assert semi_only.champion is None
         assert semi_only.open_slots("title", 1) == 1
 
@@ -156,26 +203,30 @@ class TestOnlyAMatchWeHoldSettlesACell:
         Filing a match under the wrong round would settle the wrong column,
         which is the wrong-question defect the register exists to refuse.
         """
-        assert build_progress([_match("Round 2", "a", "b", winner="a")], draw_sizes={}) == {}
-        assert (
-            build_progress([_match("Zeroth Round", "a", "b", winner="a")], draw_sizes=SIZES)
-            == {}
-        )
+        register = _reg("A One", "B Two")
+        espn = _espn(_row("Round 2", "A One", "B Two", winner="A One"))
+        assert build_progress(register, espn, draw_sizes={}) == {}
+        assert build_progress(
+            register, _espn(_row("Zeroth Round", "A One", "B Two", winner="A One")),
+            draw_sizes=SIZES,
+        ) == {}
         # A register-vocabulary round needs no size at all.
-        prog = build_progress([_match("R64", "a", "b", winner="a")], draw_sizes={})[DRAW]
-        assert prog.verdict("b", "R64") == VERDICT_REACHED
-        assert prog.verdict("b", "R32") == VERDICT_OUT
+        prog = build_progress(
+            register, _espn(_row("R64", "A One", "B Two", winner="A One")), draw_sizes={},
+        )[DRAW]
+        assert prog.verdict("b-two", "R64") == VERDICT_REACHED
+        assert prog.verdict("b-two", "R32") == VERDICT_OUT
 
     def test_reached_counts_are_the_whole_field_and_imply_the_earlier_rounds(self):
         """The sum check's denominator is a fact about the ROUND, not the grid."""
-        prog = build_progress(
-            [
-                _match("Round 4", "a", "b", winner="a"),
-                _match("Round 4", "c", "d", winner="c"),
-                _match("Quarterfinal", "a", "c", winner="a"),
-            ],
-            draw_sizes=SIZES,
-        )[DRAW]
+        prog = _progress(
+            _reg("A One", "B Two", "C Three", "D Four"),
+            _espn(
+                _row("Round 4", "A One", "B Two", winner="A One"),
+                _row("Round 4", "C Three", "D Four", winner="C Three"),
+                _row("Quarterfinal", "A One", "C Three", winner="A One"),
+            ),
+        )
         assert prog.reached_counts["R16"] == 4
         assert prog.reached_counts["QF"] == 2
         assert prog.reached_counts["SF"] == 1
@@ -183,6 +234,91 @@ class TestOnlyAMatchWeHoldSettlesACell:
         assert prog.reached_counts["R128"] == 4
         assert prog.open_slots("R16", 16) == 12
         assert prog.open_slots("SF", 4) == 3
+
+
+# ---------------------------------------------------------------------------
+# CERT-2360: ONE UNRESOLVABLE OPPONENT MUST NOT TAKE THE OTHER PLAYER WITH IT
+# ---------------------------------------------------------------------------
+
+class TestAHalfResolvedMatchStillSettlesTheKnownPlayer:
+    """The BLOCK this ship earned on its first presentation.
+
+    `build_results` drops a match unless BOTH sides resolve — 147 of 467 scored
+    competitions on 2026-09-09 — so a progress pass built on its output left
+    Michael Zheng, this issue's own headline case, at a stale 52% to reach a
+    final he was knocked out of in the second round. His Round 2 opponent does
+    not resolve; his own name does.
+    """
+
+    #: Zheng's real shape on the specimen day: a first-round win in the served
+    #: list, and a second-round loss to somebody we cannot name.
+    ZHENG = _espn(
+        _row("Round 1", "Michael Zheng", "Some Qualifier", winner="Michael Zheng"),
+        _row("Round 2", "Michael Zheng", "Unresolvable Opponent",
+             winner="Unresolvable Opponent"),
+    )
+
+    def test_the_known_loser_is_settled_out(self):
+        prog = _progress(_reg("Michael Zheng"), self.ZHENG)
+        assert prog.eliminated == {"michael-zheng": "R64"}
+        assert prog.verdict("michael-zheng", "R16") == VERDICT_OUT
+        assert prog.verdict("michael-zheng", "F") == VERDICT_OUT
+        assert prog.title_verdict("michael-zheng") == VERDICT_OUT
+
+    def test_the_known_winner_is_advanced(self):
+        prog = _progress(
+            _reg("Ben Shelton"),
+            _espn(_row("Quarterfinal", "Ben Shelton", "Unresolvable Opponent",
+                       winner="Ben Shelton")),
+        )
+        assert prog.verdict("ben-shelton", "SF") == VERDICT_REACHED
+        assert prog.eliminated == {}
+
+    def test_the_unresolvable_side_contributes_nothing(self):
+        """It is not settled, not counted, and not invented an entity key for."""
+        prog = _progress(_reg("Michael Zheng"), self.ZHENG)
+        assert set(prog.reached) == {"michael-zheng"}
+        assert prog.reached_counts["R64"] == 1
+        assert prog.reached_counts.get("R32") is None
+
+    def test_half_resolved_matches_are_counted_and_reported(self):
+        prog = _progress(_reg("Michael Zheng"), self.ZHENG)
+        assert prog.decided_matches == 2
+        assert prog.partial_matches == 2
+        both = _progress(
+            _reg("Michael Zheng", "Unresolvable Opponent"),
+            self.ZHENG,
+        )
+        assert both.partial_matches == 1  # only the Round 1 pair is still half
+
+    def test_a_name_that_does_not_match_the_winner_never_falsely_eliminates(self):
+        """The comparison errs safe in the one direction that matters.
+
+        A resolved side is out only when its normalized name DIFFERS from the
+        winner's, so a normalisation failure produces a MISSING elimination and
+        never a false one.
+        """
+        prog = _progress(
+            _reg("Ben Shelton"),
+            # The winner IS Shelton, spelled the way the register spells him.
+            _espn(_row("Quarterfinal", "Ben Shelton", "Someone Else", winner="Ben Shelton")),
+        )
+        assert "ben-shelton" not in prog.eliminated
+
+    def test_progress_from_sides_is_the_arithmetic_on_its_own(self):
+        """The half the reader above hands off to, driven directly."""
+        prog = progress_from_sides([
+            {"draw": DRAW, "round": "SF", "entity_key": "a", "outcome": SIDE_WON,
+             "match_key": "m1"},
+            {"draw": DRAW, "round": "SF", "entity_key": "b", "outcome": SIDE_LOST,
+             "match_key": "m1"},
+            {"draw": DRAW, "round": "QF", "entity_key": "c", "outcome": SIDE_PLAYED,
+             "match_key": "m2"},
+        ])[DRAW]
+        assert prog.verdict("a", "F") == VERDICT_REACHED
+        assert prog.verdict("b", "F") == VERDICT_OUT
+        assert prog.verdict("c", "SF") is None
+        assert prog.decided_matches == 1
 
 
 # ---------------------------------------------------------------------------
@@ -260,11 +396,18 @@ SPECIMEN_BOARD = [
 
 #: Zverev has won his quarter-final and is into the semi; Zheng lost in the
 #: second round and was still being served at 52% to reach the final.
+#:
+#: BOTH matches have an opponent the register cannot resolve, which is the
+#: production shape and the CERT-2360 case: `build_results` publishes neither
+#: of these rows, so a grid fed from its output settles nothing here.
 SPECIMEN_PROGRESS = build_progress(
-    [
-        _match("Round 2", "zheng", "opponent", winner="opponent"),
-        _match("Quarterfinal", "zverev", "someone", winner="zverev"),
-    ],
+    SPECIMEN_REGISTER,
+    _espn(
+        _row("Round 2", "Michael Zheng", "Unresolvable Opponent",
+             winner="Unresolvable Opponent"),
+        _row("Quarterfinal", "Alexander Zverev", "Another Unresolvable",
+             winner="Alexander Zverev"),
+    ),
     draw_sizes=SIZES,
 )[DRAW]
 

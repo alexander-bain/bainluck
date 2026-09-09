@@ -26,8 +26,7 @@ final he was knocked out of in the second round.  The Title column's whole
 
 ═══ WHAT THIS MODULE DOES, AND THE ONE RULE IT OBEYS ═══
 
-It turns the decided-match list the page already serves (``build_results``)
-into two facts per player:
+It turns the ESPN scoreboard the page already reads into two facts per player:
 
 * **the deepest round they are PROVEN to have reached**, and
 * **the round they are PROVEN to have lost**, if any.
@@ -35,9 +34,7 @@ into two facts per player:
 Nothing else.  There is no inference, no bracket walking, no "the tournament
 has moved on so they must be out".  A knockout draw is full of ways to be
 wrong about that — a half of the draw can run a round behind the other half,
-a walkover leaves no loser, and our own results join drops a match whose two
-names do not both resolve to registered players (measured: 147 dropped of 467
-scored).  So the rule is:
+and a walkover leaves no loser.  So the rule is:
 
     A CELL IS ONLY SETTLED BY A MATCH WE HOLD.
 
@@ -46,19 +43,43 @@ counted and reported rather than quietly corrected.  This under-claims by
 construction and that is the point: a false "out" would erase a live player
 from the grid, which is a worse failure than the one being fixed.
 
+═══ WHY IT READS THE SCOREBOARD AND NOT ``build_results`` (CERT-2360) ═══
+
+The obvious input was the decided-match list the page already serves.  It is
+the wrong one, and the first presentation of this ship shipped that mistake:
+
+``build_results`` publishes a SCORE UNDER TWO NAMES, so it drops a match unless
+BOTH sides resolve to registered players — 147 of 467 scored competitions on
+2026-09-09.  That strictness is right for a score row and wrong here, because
+one unresolvable name takes the OTHER player's result with it.  Michael Zheng,
+this issue's own headline case, appears in the served list only as a first-round
+winner: the match he lost was dropped because of his opponent's name, so a
+progress pass built on that list leaves his stale 52% Final cell exactly where
+it was.
+
+Publishing a score needs both names.  Knowing that ONE named player lost needs
+one.  So this module resolves each side **independently** against the register
+and asks the scoreboard's own ``winner_normalized`` whether that side won — a
+question that is answerable about a resolved player whether or not their
+opponent resolves.  ``build_results`` is untouched and stays strict; no partial
+row reaches the results list.
+
+The comparison errs safe in the one direction that matters.  A side is
+eliminated only when its normalized name DIFFERS from the winner's, so any
+failure to match names produces a missing elimination, never a false one.
+
 ═══ HOW A MATCH BECOMES A FACT ═══
 
-For a completed match at round ``R`` between two players, with a winner:
+For a completed match at round ``R``, for each side that resolves:
 
-* both players **reached** ``R`` — they played in it;
+* the side **reached** ``R`` — they played in it;
 * the winner **reached** the round after ``R`` (or won the title, if ``R`` is
   the final) — the draw admits them without another match being played;
-* the loser is **eliminated at** ``R``.
+* a side that is not the winner is **eliminated at** ``R``.
 
 "Reached ``R``" implies reached every earlier round, so only the deepest index
-is kept.  A match with no winner (in progress, abandoned) contributes the two
-"reached ``R``" facts and no elimination — being in a match that has not
-finished is not losing it.
+is kept.  A match with no winner (in progress, abandoned) contributes only the
+"reached ``R``" facts — being in a match that has not finished is not losing it.
 
 ``reached_counts`` is the count over the WHOLE field, not over the grid's rows:
 the sum check's denominator is a fact about the round, and a round whose
@@ -81,10 +102,15 @@ ROUND_INDEX: dict[str, int] = {name: i for i, name in enumerate(ROUNDS)}
 VERDICT_REACHED = "reached"
 VERDICT_OUT = "out"
 
-#: Completion words that mean the match is over. ESPN's vocabulary, via
-#: ``build_results`` — a retirement and a walkover both decide a match, and
-#: both eliminate the player who did not advance.
+#: Completion words that mean the match is over. ESPN's own vocabulary
+#: (``espn_tennis.completion_of``) — a retirement and a walkover both decide a
+#: match, and both eliminate the player who did not advance.
 DECIDED_COMPLETIONS = frozenset({"final", "retired", "walkover"})
+
+#: What one resolved side of one match contributes.
+SIDE_WON = "won"
+SIDE_LOST = "lost"
+SIDE_PLAYED = "played"
 
 
 @dataclass(frozen=True)
@@ -100,9 +126,15 @@ class DrawProgress:
     #: round key -> how many players in the WHOLE field are proven to have
     #: reached it. The sum check's denominator, not a grid row count.
     reached_counts: dict[str, int] = field(default_factory=dict)
-    #: How many matches contributed. Zero means this object settles nothing,
-    #: which is what a cold results cache should look like.
+    #: How many decided matches contributed at least one resolved side. Zero
+    #: means this object settles nothing, which is what a cold scoreboard
+    #: cache should look like.
     decided_matches: int = 0
+    #: Of those, how many resolved only ONE side — the matches `build_results`
+    #: drops whole and this pass keeps half of (CERT-2360). Reported because it
+    #: is the size of the repair, and because a number that climbs is a name
+    #: normalisation problem getting worse.
+    partial_matches: int = 0
 
     def verdict(self, entity_key: Any, round_key: str) -> Optional[str]:
         """``reached`` / ``out`` / ``None`` for one reach cell.
@@ -154,15 +186,18 @@ EMPTY_PROGRESS = DrawProgress()
 
 
 def build_progress(
-    matches: Iterable[dict[str, Any]],
+    register: dict[str, Any],
+    results: Optional[dict[str, Any]] = None,
     *,
     draw_sizes: Optional[dict[str, Optional[int]]] = None,
 ) -> dict[str, DrawProgress]:
-    """Decided matches -> one :class:`DrawProgress` per draw.
+    """The ESPN scoreboard -> one :class:`DrawProgress` per draw.
 
-    ``matches`` is ``build_results(...)["matches"]``: each row carries ``draw``,
-    ``round`` (ESPN's display name), ``players[].entity_key``, an optional
-    ``winner_entity_key`` and a ``completion``.
+    ``results`` is ``app.services.espn_tennis.parse_results``' output — the same
+    object ``build_results`` reads, taken BEFORE its strict two-name join (see
+    the module docstring for why that matters). ``{draw: {pair_key: row}}``,
+    each row carrying ``players`` (two ESPN display names), ``espn_round``,
+    ``winner_normalized`` and ``completion``.
 
     ``draw_sizes`` maps a draw to how many players its first round held, which
     is what makes ``"Round 2"`` mean ``R64`` in a slam and ``R32`` in a 64-draw.
@@ -170,51 +205,104 @@ def build_progress(
     the wrong round would settle the wrong column, which is the wrong-question
     defect the register exists to refuse.
     """
+    from app.services.espn_tennis import normalize_name
+    from app.utils.tournament_register import TournamentRegister
+
+    reg = TournamentRegister(register or {})
+    # (draw, normalized name) -> entity_key. The same index `build_results`
+    # builds, read one side at a time instead of two at once.
+    by_name: dict[tuple[str, str], str] = {}
+    for player in reg.players:
+        key = (str(player.get("draw") or ""), normalize_name(player.get("display_name")))
+        if player.get("entity_key"):
+            by_name.setdefault(key, str(player.get("entity_key")))
+
+    sides: list[dict[str, Any]] = []
     sizes = draw_sizes or {}
+    for draw, found_by_pair in sorted(((results or {}).get("draws") or {}).items()):
+        if not isinstance(found_by_pair, dict):
+            continue
+        for pair_key, found in sorted(found_by_pair.items()):
+            if not isinstance(found, dict):
+                continue
+            round_key = _round_key(found.get("espn_round"), draw_size=sizes.get(str(draw)))
+            if round_key is None:
+                continue
+            winner_normalized = found.get("winner_normalized") or None
+            decided = (
+                str(found.get("completion") or "").strip().lower() in DECIDED_COMPLETIONS
+                and winner_normalized is not None
+            )
+            names = [n for n in (found.get("players") or []) if n]
+            resolved = 0
+            for name in names:
+                normalized = normalize_name(name)
+                entity_key = by_name.get((str(draw), normalized))
+                if entity_key is None:
+                    # THIS SIDE ONLY. An unresolvable opponent costs us their
+                    # half of the match and nothing else — which is the whole
+                    # of the CERT-2360 repair.
+                    continue
+                resolved += 1
+                outcome = SIDE_PLAYED
+                if decided:
+                    outcome = SIDE_WON if normalized == winner_normalized else SIDE_LOST
+                sides.append({
+                    "draw": str(draw),
+                    "round": round_key,
+                    "entity_key": entity_key,
+                    "outcome": outcome,
+                    "match_key": f"{draw}:{pair_key}",
+                })
+            if decided and resolved == 1 and len(names) == 2:
+                sides[-1]["partial"] = True
+    return progress_from_sides(sides)
+
+
+def progress_from_sides(sides: Iterable[dict[str, Any]]) -> dict[str, DrawProgress]:
+    """Resolved match sides -> the proven facts, per draw.
+
+    A side is ``{draw, round, entity_key, outcome, match_key}`` where
+    ``outcome`` is ``won`` / ``lost`` / ``played``. Split out from the reader
+    above so the arithmetic — deepest round, elimination, the champion, and the
+    whole-field counts — is testable without a register or a scoreboard.
+    """
     reached: dict[str, dict[str, int]] = {}
     eliminated: dict[str, dict[str, str]] = {}
     champions: dict[str, str] = {}
-    counted: dict[str, int] = {}
+    decided_keys: dict[str, set[str]] = {}
+    partial_keys: dict[str, set[str]] = {}
 
-    for match in matches or []:
-        if not isinstance(match, dict):
+    for side in sides or []:
+        draw = str(side.get("draw") or "")
+        round_key = str(side.get("round") or "")
+        entity_key = side.get("entity_key")
+        index = ROUND_INDEX.get(round_key)
+        if not draw or index is None or not entity_key:
             continue
-        draw = str(match.get("draw") or "")
-        if not draw:
-            continue
-        round_key = _round_key(match, draw_size=sizes.get(draw))
-        if round_key is None:
-            continue
-        index = ROUND_INDEX[round_key]
-
-        players = [p for p in (match.get("players") or []) if isinstance(p, dict)]
-        keys = [str(p.get("entity_key")) for p in players if p.get("entity_key")]
-        if not keys:
-            continue
+        key = str(entity_key)
+        outcome = str(side.get("outcome") or SIDE_PLAYED)
+        match_key = str(side.get("match_key") or f"{draw}:{round_key}:{key}")
 
         draw_reached = reached.setdefault(draw, {})
-        for key in keys:
-            if index > draw_reached.get(key, -1):
-                draw_reached[key] = index
+        if index > draw_reached.get(key, -1):
+            draw_reached[key] = index
 
-        completion = str(match.get("completion") or "").strip().lower()
-        winner = match.get("winner_entity_key")
-        winner = str(winner) if winner else None
-        if completion not in DECIDED_COMPLETIONS or winner is None:
-            # In progress, or a result we cannot attribute. The two "played in
-            # this round" facts above stand; nobody is knocked out by it.
+        if outcome == SIDE_PLAYED:
+            # In progress, or a result we cannot attribute. The "played in this
+            # round" fact stands; nobody is knocked out by it.
             continue
+        decided_keys.setdefault(draw, set()).add(match_key)
+        if side.get("partial"):
+            partial_keys.setdefault(draw, set()).add(match_key)
 
-        counted[draw] = counted.get(draw, 0) + 1
-        for key in keys:
-            if key != winner:
-                eliminated.setdefault(draw, {}).setdefault(key, round_key)
-
-        if index + 1 < len(ROUNDS):
-            if index + 1 > draw_reached.get(winner, -1):
-                draw_reached[winner] = index + 1
+        if outcome == SIDE_LOST:
+            eliminated.setdefault(draw, {}).setdefault(key, round_key)
+        elif index + 1 < len(ROUNDS):
+            if index + 1 > draw_reached.get(key, -1):
+                draw_reached[key] = index + 1
         else:
-            champions[draw] = winner
+            champions[draw] = key
 
     out: dict[str, DrawProgress] = {}
     for draw in set(reached) | set(eliminated) | set(champions):
@@ -230,32 +318,30 @@ def build_progress(
             eliminated=eliminated.get(draw, {}),
             champion=champions.get(draw),
             reached_counts=counts,
-            decided_matches=counted.get(draw, 0),
+            decided_matches=len(decided_keys.get(draw, ())),
+            partial_matches=len(partial_keys.get(draw, ())),
         )
     return out
 
 
-def _round_key(match: dict[str, Any], *, draw_size: Optional[int]) -> Optional[str]:
+def _round_key(espn_round: Any, *, draw_size: Optional[int]) -> Optional[str]:
     """A match's round in the REGISTER's vocabulary, or ``None``.
 
-    ``build_results`` publishes the register's own key when it still holds the
-    matchup and ESPN's display name otherwise, so both shapes arrive here. The
-    register key is checked first because it needs no draw size and cannot be
-    ambiguous; ESPN's name goes through the draw ingest's own reader rather
-    than a second table of round names.
+    The register's own key is accepted first because it needs no draw size and
+    cannot be ambiguous; ESPN's display name goes through the draw ingest's own
+    reader rather than a second table of round names.
     """
     from app.services.espn_tennis import espn_round_key
 
-    for candidate in (match.get("round"), match.get("source_round")):
-        raw = str(candidate or "").strip()
-        if not raw:
-            continue
-        if raw in ROUND_INDEX:
-            return raw
-        if draw_size:
-            mapped = espn_round_key(raw, draw_size=draw_size)
-            if mapped in ROUND_INDEX:
-                return mapped
+    raw = str(espn_round or "").strip()
+    if not raw:
+        return None
+    if raw in ROUND_INDEX:
+        return raw
+    if draw_size:
+        mapped = espn_round_key(raw, draw_size=draw_size)
+        if mapped in ROUND_INDEX:
+            return mapped
     return None
 
 
@@ -263,8 +349,12 @@ __all__ = [
     "DECIDED_COMPLETIONS",
     "EMPTY_PROGRESS",
     "ROUND_INDEX",
+    "SIDE_LOST",
+    "SIDE_PLAYED",
+    "SIDE_WON",
     "VERDICT_OUT",
     "VERDICT_REACHED",
     "DrawProgress",
     "build_progress",
+    "progress_from_sides",
 ]
