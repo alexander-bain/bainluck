@@ -622,6 +622,149 @@ def resolve_rung_side(
     return None
 
 
+def rung_provider_code(
+    outcome_external_id: Optional[str],
+    market_external_id: Optional[str],
+) -> Optional[str]:
+    """Kalshi's own team code for one rung, or ``None`` when there isn't one.
+
+    A rung's ticker is its market's ticker plus a per-team suffix:
+    ``KXMLBSPREAD-26MAY051840ATHPHI-ATH3`` is the Athletics' 3rd rung in the
+    market ``KXMLBSPREAD-26MAY051840ATHPHI``. The code is what remains after the
+    market prefix and the trailing rung index — ``ATH``.
+
+    🔴 This is an **id**, not a name. That is the whole point: ``ATH`` needs no
+    spelling of "Athletics" to tell you that two rungs belong to the same team,
+    which is what lets `resolve_rung_sides_by_code` place a rung whose own text
+    the token rule cannot read (#4218).
+
+    Keyed on the market's own ticker rather than a general pattern, per D55:
+    the prefix must match exactly, or there is no code. A suffix that is all
+    digits is a rung index with no team in it and yields ``None`` — the code is
+    never inferred from digit count.
+    """
+    if not outcome_external_id or not market_external_id:
+        return None
+    prefix = f"{market_external_id}-"
+    if not outcome_external_id.startswith(prefix):
+        return None
+    suffix = outcome_external_id[len(prefix):]
+    code = re.sub(r"\d+$", "", suffix)
+    return code or None
+
+
+def resolve_rung_sides_by_code(
+    market_external_id: Optional[str],
+    rungs: Sequence[tuple[Optional[str], Optional[str]]],
+    home_team_name: Optional[str],
+    away_team_name: Optional[str],
+) -> Optional[dict[str, Optional[str]]]:
+    """Which side each of a spread market's two team codes is on.
+
+    ``rungs`` is ``(outcome_name, outcome_external_id)`` for every outcome in
+    one market. Returns:
+
+    * ``None`` — this market is **not** code-resolvable, and the caller must
+      keep resolving each rung on its own text (`margin_rung_on_home_axis`);
+    * a dict keyed by **both** codes — **authoritative**, refusals included. A
+      code mapped to ``None`` is refused, and the caller drops its rungs even
+      though the token rule might have had an opinion.
+
+    Two things the per-rung rule cannot do, both measured on the 5,901 linked
+    Kalshi spread markets on production 2026-09-09:
+
+    1. **A code inherits a side from its own siblings.** ``SF``'s rungs read
+       both "San Francisco" and "SF"; the first resolves and the second does
+       not, so today half a team's ladder is dropped while the other half is
+       placed. Same code, same team, one side.
+    2. **The second team is the one the first is not.** Where exactly one code
+       resolves, the other names the opposite side by elimination — 260 markets
+       / 1,241 rungs, including every ``A's`` market. Together these place
+       **3,304** rungs that are dropped today, 71% of the 4,631 dropped.
+
+    🔴 It also **refuses two markets that are served today**, and that is a fix,
+    not a cost: where both codes resolve to the *same* side, both ladders are
+    being poured onto one axis. Both live cases are mis-linked markets — a
+    Texas–Texas A&M market on a Virginia Tech–Texas A&M event (11 rungs), a
+    Michigan St.–Michigan market on a Michigan St.–Ohio St. event (29) — and a
+    ladder built from two teams that are not playing each other is the confident
+    wrong answer `margin_rung_on_home_axis` exists to avoid. The mis-link itself
+    is a matching defect and is filed, not patched here (D35).
+
+    The elimination step inherits the link: it is sound exactly when the
+    market's two ladders are the event's two teams, which is what ``event_id``
+    asserts. It does **not** guess from ticker order — ``BOUSUN`` is
+    home-then-away and ``ATHPHI`` is away-then-home, so position resolves the
+    sign backwards as often as not.
+    """
+    if not market_external_id:
+        return None
+
+    texts_by_code: dict[str, set[str]] = {}
+    for name, external_id in rungs:
+        parsed = parse_margin_rung(name or "")
+        if parsed is None:
+            continue  # not a margin rung; this map says nothing about it
+        code = rung_provider_code(external_id, market_external_id)
+        if code is None:
+            # A margin rung with no code means the market's rungs are not all
+            # id-anchored, so the partition this rule depends on is incomplete.
+            return None
+        texts_by_code.setdefault(code, set()).add(parsed[0])
+
+    if len(texts_by_code) != 2:
+        # One code is a one-sided ladder with nothing to eliminate against;
+        # three or more is not the two-team shape this reasoning describes.
+        return None
+
+    sides: dict[str, Optional[str]] = {}
+    for code, texts in texts_by_code.items():
+        named = {
+            resolve_rung_side(text, home_team_name, away_team_name) for text in texts
+        } - {None}
+        if len(named) > 1:
+            # One code naming both sides is a contradiction about the same
+            # team. Refuse the market rather than pick the majority.
+            return {code: None for code in texts_by_code}
+        sides[code] = named.pop() if named else None
+
+    first, second = sorted(sides)
+    anchored = [code for code in (first, second) if sides[code] is not None]
+    if len(anchored) == 2:
+        if sides[first] == sides[second]:
+            return {first: None, second: None}
+        return sides
+    if len(anchored) == 1:
+        known = anchored[0]
+        other = second if known == first else first
+        sides[other] = "away" if sides[known] == "home" else "home"
+        return sides
+    return {first: None, second: None}
+
+
+def margin_rung_on_home_axis_for_side(
+    text: str,
+    probability: float,
+    side: Optional[str],
+) -> Optional[dict]:
+    """`margin_rung_on_home_axis` for a side that is already known.
+
+    Split out so a side resolved from the rung's provider code
+    (`resolve_rung_sides_by_code`) is placed by exactly the same arithmetic as
+    one resolved from its text — there is one home-axis rule, not two.
+
+    ``side=None`` is a refusal and returns ``None``, so an authoritative refusal
+    from the code map drops the rung just as an unresolvable name does.
+    """
+    parsed = parse_margin_rung(text)
+    if parsed is None or side is None:
+        return None
+    threshold = parsed[1]
+    if side == "home":
+        return {"threshold": threshold, "probability": probability}
+    return {"threshold": -threshold, "probability": 1.0 - probability}
+
+
 def margin_rung_on_home_axis(
     text: str,
     probability: float,
@@ -651,13 +794,8 @@ def margin_rung_on_home_axis(
     parsed = parse_margin_rung(text)
     if parsed is None:
         return None
-    team_text, threshold = parsed
-    side = resolve_rung_side(team_text, home_team_name, away_team_name)
-    if side is None:
-        return None
-    if side == "home":
-        return {"threshold": threshold, "probability": probability}
-    return {"threshold": -threshold, "probability": 1.0 - probability}
+    side = resolve_rung_side(parsed[0], home_team_name, away_team_name)
+    return margin_rung_on_home_axis_for_side(text, probability, side)
 
 
 def extract_spread_threshold(text: str) -> Optional[float]:

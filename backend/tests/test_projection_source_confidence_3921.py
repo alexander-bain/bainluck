@@ -152,8 +152,14 @@ from tests.test_series_fold_3810 import blend_fold_row as _blend_fold_row  # noq
 from tests.test_series_fold_3810 import is_blend_fold as _is_blend_fold  # noqa: E402
 
 
-def _outcome(name, probability):
-    return SimpleNamespace(name=name, current_probability=probability)
+def _outcome(name, probability, external_id=None):
+    # `external_id` is Kalshi's per-rung ticker and is NOT optional in the
+    # model — `resolve_rung_sides_by_code` reads the team code out of it
+    # (#4218). It defaults to None here so a fixture that predates that path
+    # keeps describing a market with no code, which is a real shape.
+    return SimpleNamespace(
+        name=name, current_probability=probability, external_id=external_id
+    )
 
 
 def _market(source, outcomes, name="Dallas vs New York", external_id=None):
