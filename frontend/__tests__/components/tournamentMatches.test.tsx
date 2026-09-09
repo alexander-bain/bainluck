@@ -502,7 +502,13 @@ describe("ruling 6 — the redundancy is dead", () => {
     expect(entry.detailNote).toBeNull();
   });
 
-  it("an incoherent pair keeps its sentence, because the row has no numbers", () => {
+  it("an incoherent pair says NOTHING — #4332 retired its sentence too", () => {
+    // WAS `toContain("do not agree")`. That branch printed *"The two numbers
+    // for this match do not agree yet, so we are not showing a split"* — a
+    // sentence about our pipeline, which notice 34 bans from a page body
+    // exactly as it bans the unpriced row's paragraph. Ruling 6's own point
+    // stands: the row already shows no split, so the words added nothing a
+    // reader could not see.
     expect(
       matchDetailNote({
         coherent: false,
@@ -514,7 +520,7 @@ describe("ruling 6 — the redundancy is dead", () => {
         score: null,
         sides: [] as never,
       })
-    ).toContain("do not agree");
+    ).toBeNull();
   });
 
   it("the deleted generator is really gone, not merely unused", () => {

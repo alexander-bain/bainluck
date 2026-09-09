@@ -177,7 +177,12 @@ describe("UX-1089 — a fixture with no numbers is not a disagreement", () => {
     expect(html).toContain("Naomi Osaka");
     expect(html).toContain("Elena Rybakina");
     expect(html).not.toContain("Naomi Osaka vs Elena Rybakina");
-    expect(html).toContain("no probability against it");
+    // WAS `toContain("no probability against it")`. #4332 retired that
+    // paragraph under notice 34; the row's honest answer is what carries the
+    // claim now, and it must be present or this assertion would pass on a row
+    // that says nothing at all.
+    expect(html).not.toContain("no probability against it");
+    expect(html).toContain("No probability yet");
   });
 
   it("a real disagreement keeps its note and its collapsed card", () => {
@@ -274,7 +279,12 @@ describe("UX-1089 — the captured US Open payload", () => {
     expect(html).toContain("Elena Rybakina");
     expect(html).toContain("Coco Gauff");
     expect(html).toContain("Iva Jovic");
-    expect(countOf(html, "no probability against it")).toBe(2);
+    // WAS `countOf(..., "no probability against it") === 2`. #4332 retired the
+    // paragraph (notice 34); the COUNT is what mattered here — both unpriced
+    // fixtures answering for themselves — so it moves to the honest empty
+    // rather than being dropped.
+    expect(countOf(html, "no probability against it")).toBe(0);
+    expect(countOf(html, "No probability yet")).toBe(2);
 
     // And the six priced siblings kept their numbers — the fix must not have
     // reached them.

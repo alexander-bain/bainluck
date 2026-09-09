@@ -133,14 +133,19 @@ describe("(a) the released main draw reaches the page", () => {
       sides: [{} as never, {} as never],
     });
     // WAS `toContain("Nobody is quoting this match yet")` (#2690 retired it —
-    // the site was quoting the match on two other surfaces in the same minute).
-    // The claim UX-P142 was actually protecting is the one kept below: an
-    // unpriced row must say it is unpriced and must NOT borrow the incoherent
-    // branch's sentence. Pinning the old string instead of that property is why
-    // this test stayed green while the sentence became false.
-    expect(note).toContain("no probability against it");
-    expect(note).not.toContain("do not agree");
-    expect(note).not.toContain("Nobody is quoting");
+    // the site was quoting the match on two other surfaces in the same minute),
+    // then `toContain("no probability against it")` until #4332 retired the
+    // whole paragraph under notice 34: a row may describe the match, never our
+    // pipeline. The sentence was made more accurate twice and was still a
+    // paragraph about our coverage on a reader's screen.
+    //
+    // UX-P142's real claim survives INTACT, and it is now carried entirely by
+    // line 123 above: an unpriced fixture says it is unpriced, in two words and
+    // as an ANSWER. What must never come back is the incoherent branch's
+    // sentence borrowed onto an unpriced row — hence the third assertion.
+    expect(note).toBeNull();
+    expect(slateRowFreshnessLabel(unpriced)).not.toContain("do not agree");
+    expect(slateRowFreshnessLabel(unpriced)).not.toContain("Nobody is quoting");
   });
 
   it("REFUSES to invent a draw sheet: no fixture carries a draw slot", () => {
