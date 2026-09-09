@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 
+import { STALE_MS } from '@/components/event/FreshnessChip';
+
 /**
  * live/034 S2 — "live · Ns ago".
  *
@@ -45,6 +47,24 @@ interface LiveAgeStampProps {
 /** Past this the number is not "live" in any useful sense; say so plainly. */
 const STALE_AFTER_S = 120;
 
+/**
+ * THE BOUNDARY BELONGS TO THE FACT, NOT TO THE BADGE (#4469).
+ *
+ * `STALE_AFTER_S` is 120 because the PRICE is written every two minutes; a price
+ * older than that means the feed missed a beat. The score is written on a
+ * ten-minute beat, so 120s would call an ordinary, perfectly healthy score
+ * "stale" almost all of the time — and once lane1 tightens that cadence the
+ * score would sit right on the boundary and flicker between states.
+ *
+ * So the score gets the threshold that was already calibrated for it, rather
+ * than a third number invented here: `FreshnessChip.STALE_MS`, five minutes,
+ * whose own docblock argues it against this exact beat ("a stamp older than five
+ * minutes means we are at least halfway to the next read"). That chip sits two
+ * centimetres away on the same hero, on the same fact, and two thresholds for
+ * one fact is how a dot and its caption end up disagreeing.
+ */
+const STALE_AFTER_S_BY_FACT = { price: STALE_AFTER_S, score: STALE_MS / 1000 };
+
 function ageSeconds(updatedAt: string | null | undefined): number | null {
   if (!updatedAt) return null;
   const parsed = Date.parse(updatedAt);
@@ -69,7 +89,7 @@ export default function LiveAgeStamp({
 
   if (age === null) return null;
 
-  const stale = age > STALE_AFTER_S;
+  const stale = age > STALE_AFTER_S_BY_FACT[oldestFact ?? "price"];
   const label = age < 60 ? `${age}s ago` : `${Math.floor(age / 60)}m ago`;
 
   return (

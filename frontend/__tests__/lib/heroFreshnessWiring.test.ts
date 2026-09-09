@@ -65,4 +65,24 @@ describe("#4469 the live badge is fed the oldest fact, not the freshest price", 
     // The old unconditional sentence is false on a live tennis hero.
     expect(code).not.toMatch(/stale\s*\?\s*`Last update \$\{label\}\. Waiting for a fresh price\.`/);
   });
+
+  test("the stale BOUNDARY is keyed on the fact too, and reuses the chip's constant", () => {
+    const code = executableSource(BADGE);
+    // 120s is the price's beat. Applying it to a ten-minute-beat score calls a
+    // healthy score stale nearly always, and flickers once the beat tightens.
+    expect(code).not.toMatch(/const stale = age > STALE_AFTER_S;/);
+    expect(code).toMatch(/STALE_AFTER_S_BY_FACT\[oldestFact \?\? "price"\]/);
+    // A third invented number is the regression: it must be the chip's own.
+    expect(code).toMatch(/import \{ STALE_MS \} from/);
+    expect(code).toMatch(/score:\s*STALE_MS \/ 1000/);
+  });
+});
+
+describe("#4469 the two thresholds are the two beats, not two opinions", () => {
+  test("price keeps 120s and score takes the chip's five minutes", async () => {
+    const { STALE_MS } = await import("@/components/event/FreshnessChip");
+    expect(STALE_MS).toBe(5 * 60 * 1000);
+    const code = executableSource(BADGE);
+    expect(code).toMatch(/const STALE_AFTER_S = 120;/);
+  });
 });
