@@ -8,6 +8,7 @@ import { flattenFeedBundles } from "@/lib/feedSections";
 import { formatProbability } from "@/lib/api";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import { headlineEchoesReason } from "@/lib/headlineEcho";
 // `servedDuelPercents` for the CURRENT line (LAT-P120: prefer the server's own
 // rendered pair when it publishes one); `renderedDuelPercents` for the OPENING
 // line, where there is no served value to prefer — the three `opening_odds`
@@ -954,6 +955,13 @@ function FuturesFeedCard({
   // from the identical field rather than disagreeing by tab.
   const resolvesText = resolvesLabel(data.resolution_date);
 
+  // #4403 — the header pill renders only when it is not a restatement of the
+  // reason line beneath it. Both strings come out of the same backend branch, so
+  // on today's page the pill is always the echo; the test lives in one place so a
+  // headline that genuinely says something new keeps its badge.
+  const showHeadlinePill =
+    Boolean(item.headline) && !headlineEchoesReason(item.headline, item.reason);
+
   const { track } = useAnalyticsContext();
 
   return (
@@ -991,7 +999,16 @@ function FuturesFeedCard({
                 the personalization badge — so no VARIABLE-length text in the row is
                 unshrinkable any more, which is the property that makes the overlap
                 unreachable rather than merely unlikely at one width. */}
-            {item.headline && (
+            {/* #4403 — #4244 stopped the overlap but left the row over-subscribed:
+                the pill and the chip shared ~150px and BOTH ellipsised past meaning
+                (pill 43–56% gone, chip 41–59%; "New favorite: …" and "🥋 …", where
+                the ellipsis is wider than the text it replaced). The row cannot be
+                tuned into fitting — the pill alone wants ~257px — so something has
+                to leave, and the pill is an ECHO of the reason line one row below on
+                every one of the 23 pills measured on production /sports. Dropping a
+                duplicate sentence costs the reader nothing and returns the whole
+                left group to the chip. See lib/headlineEcho.ts. */}
+            {showHeadlinePill && (
               <span className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold min-w-0 truncate">
                 {item.headline}
               </span>
@@ -1005,10 +1022,14 @@ function FuturesFeedCard({
                 defaults to auto, so the item floors at its own min-content and pushes
                 its siblings out of the group instead. The category chip was the string
                 that landed on the date's first glyphs (14.3 shared columns on every
-                affected card, alongside the pill's 19.6–77.6). */}
+                affected card, alongside the pill's 19.6–77.6).
+                #4403 — and when a pill DOES survive the echo test, the category NAME
+                yields to it rather than both being cut: the emoji already carries the
+                category, and on /sports the league chips at the top of the page have
+                filtered by it anyway. Same priority order as #4244, one step down. */}
             <span className="text-[11px] text-text-muted tracking-wide min-w-0 truncate">
-              <span className="mr-0.5">{catEmoji}</span>
-              {catName}
+              <span className={showHeadlinePill ? undefined : "mr-0.5"}>{catEmoji}</span>
+              {showHeadlinePill ? null : catName}
             </span>
           </div>
 

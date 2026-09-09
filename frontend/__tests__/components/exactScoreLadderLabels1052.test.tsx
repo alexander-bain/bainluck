@@ -112,8 +112,13 @@ describe("UX-1052 item 2 — exact-score rungs (render path)", () => {
 
   it("leaves a real threshold ladder alone (the control)", () => {
     const html = render([THRESHOLD_ROW]);
-    expect(html).toContain("≥ 2.5goals");
-    expect(html).toContain("≥ 3.5goals");
+    // #4404 — these two literals used to read "≥ 2.5goals" / "≥ 3.5goals". The
+    // control's subject is the exact-score branch not touching a threshold
+    // ladder, so the missing separator was incidental to it and rode along as
+    // an expected value for as long as the composer emitted it. The unit is now
+    // its own word; the control is otherwise unchanged.
+    expect(html).toContain("≥ 2.5 goals");
+    expect(html).toContain("≥ 3.5 goals");
     expect(html).not.toContain("more scoreline");
   });
 });

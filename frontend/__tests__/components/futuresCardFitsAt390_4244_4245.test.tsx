@@ -196,11 +196,16 @@ function isFlexContainer(n: Node): boolean {
 
 describe("#4244 — the leader pill yields, the resolution date does not", () => {
   it("the headline pill can shrink and ellipsises instead of overprinting the date", () => {
-    const nodes = all(render(volkanovskiCard()));
+    // #4403 — the fixture's own headline ("Alexander Volkanovski leads at 48%")
+    // is an ECHO of its reason line, and an echo pill is no longer rendered at
+    // all, so it can no longer reach this assertion. The PROPERTY under test is
+    // unchanged and still matters — a pill that survives is variable-length and
+    // must yield to the date — so the specimen is swapped for a headline that
+    // says something the reason does not, rather than the assertion weakened.
+    const headline = "Volkanovski odds up 12 points today";
+    const nodes = all(render(volkanovskiCard({}, headline)));
 
-    const pill = nodes.find(
-      (n) => n.tag === "span" && n.text === "Alexander Volkanovski leads at 48%",
-    );
+    const pill = nodes.find((n) => n.tag === "span" && n.text === headline);
     expect(pill).toBeDefined();
 
     // The defect, stated as its cause: an unshrinkable variable-length item.
