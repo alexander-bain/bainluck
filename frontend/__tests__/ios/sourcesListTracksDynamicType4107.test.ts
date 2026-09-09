@@ -398,11 +398,21 @@ describe("#4208 the books column measures the rows it actually draws", () => {
     // stopped being possible rather than merely being tested for. The call must
     // still be the only way a pair is obtained, so it is pinned where it went.
     expect(namedRows).toContain("bookmakerProbabilities(bm)");
-    expect(bookmakerContent).toContain(
-      "guard let pair = row.probabilities else { return [] }",
-    );
+
+    // #4406 — and it moved once more, in the same direction, which is why the
+    // two `if`s this test used to pin are gone rather than relaxed. They were
+    // `guard let pair = row.probabilities else { return [] }` here and
+    // `if let probabilities {` in the row: the width model skipping a row, and
+    // the view skipping that same row's numbers, kept in step with each other.
+    // A row without a pair is no longer a row at all, so both skips are dead
+    // code and the pair is non-optional. THE PROPERTY IS UNCHANGED AND NOW
+    // UNCONDITIONAL: every string measured is a string drawn, because there is
+    // no row either half can decline. `everySportsbookRowCarriesANumber.test.ts`
+    // holds the type that makes it true; these two pin that this function reads
+    // the row rather than re-deriving anything.
+    expect(bookmakerContent).toContain("formatProbability(row.probabilities.away)");
     expect(bookmakerContent).toContain("probabilities: row.probabilities");
-    expect(sourceRow).toContain("if let probabilities {");
+    expect(sourceRow).not.toContain("if let probabilities {");
 
     // …and the two halves read ONE array, which is what makes the above true.
     // Two `namedBookmakerRows` calls in this function would re-open the gap with
