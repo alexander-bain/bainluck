@@ -56,6 +56,86 @@ class TestIsBogusFutureSettled:
         commence = self.NOW + timedelta(minutes=30)
         assert _is_bogus_future_settled("completed", commence, 0, 0, self.NOW) is False
 
+    # ---- #4114: `suspended` belongs to the settled set this guard repairs ----
+    #
+    # `suspended` landed in the status vocabulary (live/048) AFTER this guard was
+    # written, and the guard kept its two-value copy — the same "the enum shipped,
+    # the migration did not" failure that #4002 fixed on the iOS side. So a
+    # suspended row with a future kickoff had NO repair, and Ohio State @ Texas
+    # sat `suspended` four days before kickoff on a marquee game.
+    #
+    # Measured on production 2026-09-08 23:xx Z: exactly ONE row in the whole
+    # events table matches `status='suspended' AND commence_time > now() + 1h`
+    # (event 416569), against 11,276 suspended rows in total. The narrowness
+    # controls below are what keep the other 11,275 untouched.
+
+    def test_suspended_future_commence_null_scores_is_bogus(self):
+        """The exact production row: Ohio State @ Texas, event 416569.
+
+        `suspended`, no scores, kickoff 2026-09-12 23:30Z — four days out.
+        ESPN (the authority) read STATUS_SCHEDULED / state `pre` for the same
+        fixture at the same kickoff. Neither suspend-writer can reach this
+        state directly, so it is a commence_time REWRITE artifact: the row was
+        suspended while carrying a wrong PAST commence, and the later ESPN
+        correction moved the clock forward without re-evaluating the status.
+        """
+        commence = self.NOW + timedelta(days=4)
+        assert _is_bogus_future_settled("suspended", commence, None, None, self.NOW) is True
+
+    def test_suspended_future_commence_real_score_is_preserved(self):
+        # Same distinct class the completed/closed arm already refuses: a real
+        # result is never destroyed by a status reset.
+        commence = self.NOW + timedelta(days=4)
+        assert _is_bogus_future_settled("suspended", commence, 5, 2, self.NOW) is False
+
+    def test_suspended_past_commence_untouched(self):
+        """The legitimate `live → suspended` state — 11,275 rows on production.
+
+        That arm only ever fires on a PAST commence, and the `suspended → live`
+        arm looks BACKWARDS within SUSPENDED_RESUME_WINDOW. This repair must not
+        reach into either of them, or a genuinely-abandoned game would flip back
+        to `scheduled` every 60 seconds.
+        """
+        commence = self.NOW - timedelta(hours=6)
+        assert _is_bogus_future_settled("suspended", commence, None, None, self.NOW) is False
+
+    def test_suspended_near_now_future_within_tolerance_not_matched(self):
+        # Same 1h race tolerance the settled arm gets.
+        commence = self.NOW + timedelta(minutes=30)
+        assert _is_bogus_future_settled("suspended", commence, None, None, self.NOW) is False
+
+    def test_every_recalled_status_is_also_judged(self):
+        """The drift guard (#4114), and the reason the constant exists.
+
+        The repair has two halves: a SQL `status.in_(...)` that fetches rows and
+        a helper that decides. #4114 happened because those were two literals
+        and only one learned about `suspended` — a row the query would never
+        fetch could not be repaired no matter how right the helper was.
+
+        Asserting the helper accepts every status the recall list carries is
+        what kills the mutant where someone adds a status to one side only.
+        """
+        from app.tasks.espn_sync import FUTURE_SETTLED_STATUSES
+
+        commence = self.NOW + timedelta(days=4)
+        for status in FUTURE_SETTLED_STATUSES:
+            assert _is_bogus_future_settled(
+                status, commence, None, None, self.NOW
+            ) is True, f"{status!r} is recalled by the query but never judged"
+
+    def test_recall_list_does_not_reach_live_or_scheduled(self):
+        """Narrowness: the repair must never touch a row that is doing its job.
+
+        `live` and `scheduled` are the two statuses a future-kickoff row is
+        SUPPOSED to hold, and `voided`/`merged` are retirement rails (12 rows
+        with future commence on production 2026-09-08) that this repair has no
+        business resurrecting.
+        """
+        from app.tasks.espn_sync import FUTURE_SETTLED_STATUSES
+
+        for status in ("scheduled", "live", "voided", "merged"):
+            assert status not in FUTURE_SETTLED_STATUSES
+
 
 class TestApplyFinalPmWinProb:
     """#1000: bare-float win_probability_sources entries must not crash the

@@ -1733,6 +1733,15 @@ def _apply_final_pm_win_prob(wp_sources: dict | None, resolved_home: float) -> d
     return wp_sources
 
 
+#: The status set the future-commence repair recalls and judges. ONE spelling,
+#: because two spellings drifting is the bug that created #4114: `suspended`
+#: entered the vocabulary (live/048) after the guard below was written and only
+#: the guard's private copy was updated — the backend twin of #4002's iOS defect.
+#: The recall query and `_is_bogus_future_settled` both read THIS name; a status
+#: added here is judged, and a status not here is never touched.
+FUTURE_SETTLED_STATUSES = ("completed", "closed", "suspended")
+
+
 def _is_bogus_future_settled(status, commence_time, home_score, away_score, now) -> bool:
     """Invariant guard (gotcha #32/#46): a SETTLED event cannot start in the
     future. ``completed_at >= commence_time`` must hold; a completed/closed event
@@ -1750,8 +1759,28 @@ def _is_bogus_future_settled(status, commence_time, home_score, away_score, now)
 
     A 1h future tolerance avoids a settlement/refinement race on a just-final
     game whose commence is momentarily nudged forward a few minutes.
+
+    ``suspended`` IS IN THIS SET (#4114). It was not, for the same reason the
+    iOS half of #4002 broke: ``suspended`` was added to the status vocabulary
+    by live/048 *after* this guard was written, and every reader that spelled
+    the settled set for itself kept the two-value copy. Nothing here re-derived
+    it, so a suspended row with a future kickoff had no repair at all — Ohio
+    State @ Texas (416569) sat ``suspended`` with a 2026-09-12 kickoff, four
+    days out, because it was suspended legitimately while carrying a WRONG past
+    commence_time and the later ESPN correction moved the clock forward without
+    re-evaluating the status. Neither suspend-writer can produce this state
+    directly: ``backfill_winners.py`` requires ``commence_time < NOW() - 2
+    days`` and the ``live → suspended`` arm below requires a past commence and
+    ``status='live'``. The state is only reachable by a commence_time REWRITE,
+    which is exactly the cross-merge recurrence this guard already exists for.
+
+    ``suspended`` is non-terminal, so un-suspending is strictly safer than
+    un-settling: the ``suspended → live`` arm below already flips these rows
+    back on their own, but only within ``SUSPENDED_RESUME_WINDOW`` of a PAST
+    commence — it looks backwards and can never reach a future-kickoff row.
+    The two arms are disjoint by construction (past vs ``now + 1h``).
     """
-    if status not in ("completed", "closed"):
+    if status not in FUTURE_SETTLED_STATUSES:
         return False
     if commence_time is None or commence_time <= now + timedelta(hours=1):
         return False
@@ -2099,9 +2128,11 @@ async def _transition_event_statuses_impl() -> dict:
         # the phantom completed_at/0-0 scores so live polling re-drives it; the
         # flow-sentinel resolved_state check then reads GREEN.
         stats["unsettled_future_commence"] = 0
+        # Recall reads the SAME constant the judgment reads (#4114) — this is
+        # only the fetch; `_is_bogus_future_settled` below is the decision.
         future_settled_result = await session.execute(
             select(Event).where(
-                Event.status.in_(["completed", "closed"]),
+                Event.status.in_(FUTURE_SETTLED_STATUSES),
                 Event.commence_time > now + timedelta(hours=1),
             )
         )
