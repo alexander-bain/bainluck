@@ -9,7 +9,7 @@
       "published_curve_observations": {
         "unit": "curve_observation",
         "value": 652407,
-        "rule": "One row plotted on the published calibration curve. Futures outcomes are one contributing population; the sportsbook curves (moneyline, spreads, totals, per-bookmaker moneyline) contribute observations that are not futures outcomes."
+        "rule": "One row plotted on the published calibration curve. Futures outcomes are one contributing population; the sportsbook curves (moneyline, spreads, totals, per-sportsbook moneyline) contribute observations that are not futures outcomes."
       },
       "outcomes_with_calibration_coverage": {
         "unit": "futures_outcome",
