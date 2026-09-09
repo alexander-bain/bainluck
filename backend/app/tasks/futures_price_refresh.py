@@ -1072,6 +1072,25 @@ _KALSHI_FROZEN_CERTAIN_SQL = text(
 #: confirmation is a network round trip, so a live poll may have written a real
 #: price to the row in between. Re-asserting it makes the write a
 #: compare-and-set instead of a blind UPDATE keyed on a stale read.
+#:
+#: 🔴 SO IS THE CROWNED-SIBLING REFUSAL, AND IT IS THE CLAUSE THE FIRST VERSION
+#: FORGOT (CERT-2394). The scan's three conditions are not three tests of one
+#: row: two are about the candidate, and the third — *this market has no crowned
+#: outcome at all* — is about its SIBLINGS, which is the entire safety argument
+#: for admitting the row (it is why 18 of 41 production candidates are refused).
+#: Re-checking only the candidate's own two columns therefore left the decisive
+#: boundary racy: between the scan and this write sit up to
+#: :data:`KALSHI_DELISTED_CHECK_BUDGET` venue round trips, and
+#: `backfill_winners` runs every 6h against exactly these markets. Let it crown
+#: a SIBLING inside that window and the candidate's own columns are still
+#: 1.0/not-true, so the old statement retired it — erasing a leg in a
+#: now-graded market, the precise class the rule promises to preserve.
+#:
+#: Repeating the ``NOT EXISTS`` here closes the window to the statement's own
+#: snapshot: a crowning that committed before this UPDATE begins is visible to
+#: it, so the refusal is decided on the state at WRITE time rather than on a
+#: read that may be a minute old. The refusal is deliberately whole-market — one
+#: crowned sibling withdraws nothing anywhere in the market, matching the scan.
 _KALSHI_RETIRE_DELISTED_SQL = text(
     """
     UPDATE futures_outcomes
@@ -1081,7 +1100,30 @@ _KALSHI_RETIRE_DELISTED_SQL = text(
        AND external_id = ANY(:tickers)
        AND current_probability = 1.0
        AND is_winner IS NOT TRUE
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_outcomes crowned
+              WHERE crowned.market_id = :market_id
+                AND crowned.is_winner IS TRUE
+           )
  RETURNING id
+    """
+)
+
+#: Did a crowned outcome appear in this market between the scan and the write?
+#:
+#: Asked ONLY when the compare-and-set above retired nothing, and asked purely so
+#: the refusal is countable. Without it the race's outcome is indistinguishable
+#: from "the venue re-listed everything" — both arrive as zero rows — and a
+#: safety boundary nobody can see firing is one nobody can prove still works.
+_KALSHI_MARKET_NOW_GRADED_SQL = text(
+    """
+    SELECT EXISTS (
+             SELECT 1
+               FROM futures_outcomes crowned
+              WHERE crowned.market_id = :market_id
+                AND crowned.is_winner IS TRUE
+           )
     """
 )
 
@@ -1118,6 +1160,11 @@ async def _retire_delisted_kalshi_legs(
     (an observed 404) retires. ``True`` and ``None`` both decline — the second
     because "we could not reach the venue" must never be spent as evidence of
     absence (gotcha #53).
+
+    The write re-decides the crowned-sibling refusal for itself; those venue
+    calls ARE the race window, so the scan's verdict is carried here as a
+    candidate list and never as a permission (CERT-2394 —
+    :data:`_KALSHI_RETIRE_DELISTED_SQL`).
     """
     confirmed: list[str] = []
     for ticker in tickers:
@@ -1144,7 +1191,23 @@ async def _retire_delisted_kalshi_legs(
         _KALSHI_RETIRE_DELISTED_SQL,
         {"market_id": market_id, "tickers": confirmed},
     )
-    return len(result.fetchall())
+    retired = len(result.fetchall())
+    if not retired:
+        # Zero rows has two causes and they are not the same news. Separate them
+        # so the refusal is countable (CERT-2394) — see
+        # `_KALSHI_MARKET_NOW_GRADED_SQL`.
+        now_graded = await session.scalar(
+            _KALSHI_MARKET_NOW_GRADED_SQL, {"market_id": market_id}
+        )
+        if now_graded:
+            stats["delisted_refused_market_graded"] += 1
+            logger.info(
+                "futures_price_refresh: refused to withdraw %s delisted Kalshi "
+                "leg(s) on market %s — a sibling was crowned after the scan "
+                "(#4253/CERT-2394)",
+                len(confirmed), market_id,
+            )
+    return retired
 
 
 async def _fetch_polymarket_prices(service, event_ids: list[str]) -> tuple[dict, dict]:
@@ -1339,6 +1402,12 @@ async def _refresh_stale_futures_prices(
         "delisted_checks": 0,
         "delisted_still_listed": 0,
         "delisted_indeterminate": 0,
+        # CERT-2394. Markets where the venue confirmed the delisting but a
+        # sibling was crowned between the scan and the write, so the whole
+        # market was refused. Reported unconditionally for the same reason as
+        # the three above: a boundary that is only visible when it fires cannot
+        # be shown to be working on the passes where it doesn't.
+        "delisted_refused_market_graded": 0,
         "delisted_check_budget_hit": False,
         "errors": [],
         "by_source": {},

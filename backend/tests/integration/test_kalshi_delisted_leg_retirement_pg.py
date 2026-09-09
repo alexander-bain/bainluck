@@ -168,6 +168,7 @@ def _stats():
         "delisted_checks": 0,
         "delisted_still_listed": 0,
         "delisted_indeterminate": 0,
+        "delisted_refused_market_graded": 0,
         "delisted_check_budget_hit": False,
         "errors": [],
     }
@@ -349,6 +350,144 @@ class TestTheRefusalsThatAreTheSafetyArgument:
         kept = await _row(db, market.id, "KXIPOTEST-25SEP01")
         assert float(kept.current_probability) == pytest.approx(1.0)
         assert kept.is_winner is True
+
+
+class TestTheRaceBetweenTheScanAndTheWrite:
+    """CERT-2394. The scan's verdict is a candidate list, not a permission.
+
+    `_scan_kalshi_frozen_certain` runs ONCE for the whole batch, then each
+    candidate costs a venue round trip — up to `KALSHI_DELISTED_CHECK_BUDGET` of
+    them, spaced 0.15s — before anything is written. `backfill_winners` runs
+    against these same markets every 6h. So the window in which "this market has
+    never been graded" can stop being true is real, it is measured in minutes,
+    and it is the window the withdrawal decides inside.
+
+    These tests crown a sibling AFTER the scan and BEFORE the write, which is
+    exactly the interleaving that the first version's compare-and-set could not
+    see: it re-checked the candidate's own `current_probability`/`is_winner`,
+    both of which the crowning leaves untouched.
+    """
+
+    async def _scan_then_crown_then_retire(self, db, market, venue, crown):
+        """Scan · crown `crown` · retire. Returns (stats, retired, candidates)."""
+        from sqlalchemy import text
+
+        from app.tasks.futures_price_refresh import (
+            _retire_delisted_kalshi_legs,
+            _scan_kalshi_frozen_certain,
+        )
+
+        stats = _stats()
+        candidates = await _scan_kalshi_frozen_certain(db, [market.id])
+
+        # ── the concurrent grader commits here, mid-flight ──────────────────
+        await db.execute(
+            text(
+                "UPDATE futures_outcomes SET is_winner = TRUE "
+                " WHERE market_id = :m AND external_id = :t"
+            ),
+            {"m": market.id, "t": crown},
+        )
+        await db.commit()
+
+        retired = 0
+        if candidates.get(market.id):
+            retired = await _retire_delisted_kalshi_legs(
+                db, venue, market.id, candidates[market.id], stats
+            )
+            await db.commit()
+        return stats, retired, candidates
+
+    async def test_a_sibling_crowned_after_the_scan_refuses_the_whole_market(self, db):
+        """0 retired, 1.0 retained — the cert's named acceptance.
+
+        The scan admits the market (nothing crowned yet), the venue confirms the
+        404, and grading lands in between. The leg must survive: in a market
+        grading HAS now touched, a delisted 1.0 is the ungraded-YES class the
+        rule exists to protect, and withdrawing it destroys the last trace of a
+        result the venue has already purged.
+        """
+        market = await _seed(
+            db,
+            [
+                ("KXIPOTEST-26SEP01", 1.0, False),  # our candidate
+                ("KXIPOTEST-26OCT01", 0.42, False),  # crowned mid-flight
+            ],
+        )
+        venue = _FakeKalshi({"KXIPOTEST-26SEP01": False})
+
+        stats, retired, candidates = await self._scan_then_crown_then_retire(
+            db, market, venue, crown="KXIPOTEST-26OCT01"
+        )
+
+        assert candidates.get(market.id) == ["KXIPOTEST-26SEP01"], (
+            "precondition: the scan must admit the market BEFORE the crowning, "
+            "or this test is not exercising the race at all"
+        )
+        assert venue.asked == ["KXIPOTEST-26SEP01"], (
+            "precondition: the venue round trip is the race window"
+        )
+        assert retired == 0, "a market graded mid-flight must retire nothing"
+
+        kept = await _row(db, market.id, "KXIPOTEST-26SEP01")
+        assert float(kept.current_probability) == pytest.approx(1.0), (
+            "the candidate's price was erased in a market that is now graded — "
+            "the exact class the crowned-sibling refusal exists to preserve"
+        )
+        assert kept.current_american_odds == -10000, (
+            "the odds column must not be half-written either"
+        )
+
+    async def test_the_refusal_is_counted_so_it_can_be_seen_firing(self, db):
+        """A boundary nobody can observe is one nobody can prove still works.
+
+        Zero retired has two causes — "the venue re-listed everything" and "this
+        market got graded under us" — and they are different news. The stat is
+        the only thing that separates them in a task metrics read.
+        """
+        market = await _seed(
+            db,
+            [
+                ("KXIPOTEST-26SEP01", 1.0, False),
+                ("KXIPOTEST-26OCT01", 0.42, False),
+            ],
+        )
+        venue = _FakeKalshi({"KXIPOTEST-26SEP01": False})
+
+        stats, retired, _ = await self._scan_then_crown_then_retire(
+            db, market, venue, crown="KXIPOTEST-26OCT01"
+        )
+
+        assert retired == 0
+        assert stats["delisted_refused_market_graded"] == 1
+
+    async def test_no_crowning_still_retires_and_does_not_count_a_refusal(self, db):
+        """The control: same interleaving, nothing crowned, the ship still works.
+
+        Without this the two tests above pass just as well against a build that
+        retires NOTHING, and the repair would have bought its safety by breaking
+        the ship.
+        """
+        market = await _seed(
+            db,
+            [
+                ("KXIPOTEST-26SEP01", 1.0, False),
+                ("KXIPOTEST-26OCT01", 0.42, False),
+            ],
+        )
+        venue = _FakeKalshi({"KXIPOTEST-26SEP01": False})
+
+        # Same helper, crowning a ticker that does not exist -> a no-op UPDATE,
+        # so the interleaving is identical and only the crowning is removed.
+        stats, retired, _ = await self._scan_then_crown_then_retire(
+            db, market, venue, crown="KXIPOTEST-NO-SUCH-LEG"
+        )
+
+        assert retired == 1, "the ship must still withdraw an ungraded delisted leg"
+        assert stats["delisted_refused_market_graded"] == 0
+        withdrawn = await _row(db, market.id, "KXIPOTEST-26SEP01")
+        assert withdrawn.current_probability is None
+        assert withdrawn.current_american_odds is None
 
 
 class TestTheBudget:
