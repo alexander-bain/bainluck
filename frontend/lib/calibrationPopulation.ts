@@ -92,6 +92,60 @@ export function cohortPhrase(key: CohortKey): string {
   return COHORT_PHRASE[key];
 }
 
+/**
+ * #4339 — the accuracy page's LAST line, as plain text.
+ *
+ * ── WHAT A READER SAW ───────────────────────────────────────────────────────
+ *
+ * Two elements on one scroll carried the same noun phrase over numbers 316,972
+ * apart, with nothing between them saying they were different populations:
+ *
+ *   "What's included?" card, ~9,500px:  755,817 resolved outcomes …
+ *   page footer,            ~11,000px:  438,845 resolved outcomes · 7 sources …
+ *
+ * 755,817 is `total_outcomes` — the corpus. 438,845 is the TRADED COHORT, the
+ * default view's `cohortN`. The footer labelled a cohort subtotal with the word
+ * for the whole, and it was the page's last word, so that is the number a
+ * reader left with.
+ *
+ * ── WHY THE FOOTER'S OWN PARENTHETICAL DID NOT CATCH IT ─────────────────────
+ *
+ * It had one, and it is keyed to `priceCohort` (closing line / opening price).
+ * The split that shrinks 755,817 → 438,845 is `cohortFilter` — traded vs
+ * untraded — which the footer never mentioned. On the default view
+ * `priceCohort === "all"`, so the parenthetical is absent and the bare cohort
+ * number stands alone. A guard that only asked "is there a qualifier" would
+ * grade that as a pass, which is why the test asserts the qualifier is keyed to
+ * the cohort comparison and not to the price cohort.
+ *
+ * ── THE DISCLOSURE IS NOT NEW ───────────────────────────────────────────────
+ *
+ * The page already solves this correctly once, on the "Population:" line inside
+ * the metrics disclosure: `{cohortN} resolved outcomes{cohortN !== fullN && " of
+ * {fullN} total"}`. This is that sentence, in plain text because the footer is
+ * uniformly muted and has no tabular-nums spans to carry.
+ *
+ * `fullN` is the sum of `n` over EVERY bucket and equals the payload's
+ * `total_outcomes` — asserted on the frozen production fixture in
+ * `__tests__/lib/calibrationCohort.test.ts` and re-asserted for this ship — so
+ * the number named here as "total" is the same number the card prints. That
+ * identity is the whole fix: the two elements can no longer wear one phrase
+ * over two numbers (`app/calibration/page.tsx:263-264` — "the population this
+ * page renders and the population it publishes cannot be two different
+ * things").
+ *
+ * Extracted rather than left inline because the suite is `testEnvironment:
+ * 'node'` with no jsdom, and `page.tsx` is a 2,000-line client component behind
+ * SWR that cannot be rendered in a test. Inline, the only available guard was a
+ * substring scan of the source; as a function, the sentence a reader actually
+ * gets is asserted directly, and the source scan is left with the one job it is
+ * good at — proving the footer still calls this.
+ */
+export function footerPopulationPhrase(cohortN: number, fullN: number): string {
+  const cohort = `${cohortN.toLocaleString()} resolved outcomes`;
+  return cohortN === fullN ? cohort : `${cohort} of ${fullN.toLocaleString()} total`;
+}
+
 /** A payload category, as published, with the figure published for it. */
 export interface PublishedCategory {
   category: string;
