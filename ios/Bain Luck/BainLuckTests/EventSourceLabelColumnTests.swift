@@ -102,14 +102,38 @@ final class EventSourceLabelColumnTests: XCTestCase {
 
     // MARK: - The clamp, and what it protects
 
+    /// THE FLOOR IS PINNED TO A LITERAL, AND THAT IS DELIBERATE.
+    ///
+    /// This test used to assert `barLeft >= EventSourceLabelColumn.minimumBarWidth`
+    /// and it could never fail. `width` is clamped by `maximumLabelWidth`, which is
+    /// itself `availableWidth - fixedRowCost - minimumBarWidth`, so on the clamped
+    /// path `barLeft` EQUALS `minimumBarWidth` by construction — the mutation
+    /// moved both sides of the comparison at once. native/079's harness caught it:
+    /// `minimumBarWidth 72 -> 0` was the one mutant of fifteen that SURVIVED, and a
+    /// zero floor is precisely the regression this test is named for, because it
+    /// lets the label consume the whole row and leave the bar nothing.
+    ///
+    /// So the floor is asserted as a NUMBER. 72pt is a claim about what a reader
+    /// can see — below it a two-segment 6pt bar cannot show a split anyone can
+    /// read — and a claim about pixels cannot be checked against the variable that
+    /// is supposed to encode it. Changing the floor should mean changing this line
+    /// and saying why.
     func testTheBarKeepsItsFloorEvenAtTheLargestAccessibilitySize() {
         let width = EventSourceLabelColumn.width(
             for: ["Sportsbooks (100)"], availableWidth: narrowPhone,
             typeSize: .accessibility5)
         let barLeft = narrowPhone - EventSourceLabelColumn.fixedRowCost - width
-        XCTAssertGreaterThanOrEqual(
-            barLeft, EventSourceLabelColumn.minimumBarWidth,
-            "the label ate the probability bar")
+        XCTAssertGreaterThanOrEqual(barLeft, 72, "the label ate the probability bar")
+    }
+
+    /// And the constant itself, so the floor cannot be lowered anywhere else
+    /// either. Paired with the test above: that one proves the clamp DELIVERS 72pt
+    /// of bar on the worst real row, this one proves 72 is still what the module
+    /// promises. Both are needed — the first alone passes if the clamp is removed
+    /// and the row happens to be roomy, the second alone passes if the constant is
+    /// right but nothing reads it.
+    func testTheAdvertisedBarFloorIsStillSeventyTwoPoints() {
+        XCTAssertEqual(EventSourceLabelColumn.minimumBarWidth, 72)
     }
 
     /// The clamp has to actually engage somewhere, or the previous test passes
@@ -167,6 +191,69 @@ final class EventSourceLabelColumnTests: XCTestCase {
         let numbers: Double = 36 * 2
         XCTAssertEqual(
             EventSourceLabelColumn.fixedRowCost, padding + gaps + numbers, accuracy: 0.001)
+    }
+
+    // MARK: - The second list: individual sportsbooks
+
+    /// The books rows draw a plain `.caption` while the source rows draw
+    /// `.caption.weight(.medium)`, and the model's contract is that a label is
+    /// measured in the face it is drawn in. If `weight:` stopped being honoured
+    /// the books column would be measured as medium — wider than it needs to be,
+    /// invisibly, in the one direction a width bug never announces itself.
+    func testTheRegularFaceMeasuresNarrowerThanTheMediumOne() {
+        let label = "betanysportsbook"
+        let medium = EventSourceLabelColumn.textWidth(
+            label, typeSize: .xxxLarge, weight: .medium)
+        let regular = EventSourceLabelColumn.textWidth(
+            label, typeSize: .xxxLarge, weight: .regular)
+        XCTAssertLessThan(regular, medium)
+    }
+
+    /// AN UNMEASURED ROW IS UNCLAMPED, WHICH IS WHY THE PUBLISH SITE MATTERS.
+    ///
+    /// `maximumLabelWidth` returns `.infinity` for `availableWidth == 0` by
+    /// design, so the first layout pass sizes on ink instead of snapping wider a
+    /// frame later. The cost of that choice is that a list which NEVER receives a
+    /// measurement is not just unstyled — it has lost `minimumBarWidth` entirely.
+    ///
+    /// The books list shipped in exactly that state: the `GeometryReader` sat
+    /// behind the sources list, and the two render under independent conditions,
+    /// so an event with sportsbook odds and no aggregate sources (the disclosure
+    /// labels it "Individual Sportsbooks") measured 0 forever. This pins the
+    /// contract that made it invisible.
+    func testAnUnmeasuredRowIsUnclampedSoBothListsMustPublishAWidth() {
+        let label = "betanysportsbook"
+        let unmeasured = EventSourceLabelColumn.width(
+            for: [label], availableWidth: 0, typeSize: .accessibility5, weight: .regular)
+        let measured = EventSourceLabelColumn.width(
+            for: [label], availableWidth: narrowPhone, typeSize: .accessibility5,
+            weight: .regular)
+        // Unmeasured takes the whole of the ink; measured yields to the bar.
+        XCTAssertGreaterThan(
+            unmeasured, measured,
+            "an unmeasured row is supposed to be the UNCLAMPED one")
+        XCTAssertEqual(
+            measured, EventSourceLabelColumn.maximumLabelWidth(availableWidth: narrowPhone),
+            accuracy: 0.001, "the measured row should be sitting on the clamp here")
+        // And the thing the clamp is for: on the unmeasured row the bar is gone.
+        XCTAssertLessThan(
+            narrowPhone - EventSourceLabelColumn.fixedRowCost - unmeasured, 72)
+    }
+
+    /// The longest real bookmaker name this list draws, at the size that cut it on
+    /// a 375pt phone. #4107 shipped its first half with this row still truncating.
+    func testTheLongestBookmakerNameFitsTheColumnItIsGiven() {
+        let books = ["ballybet", "betanysportsbook", "betmgm", "betonlineag",
+                     "betparx", "betrivers", "betus", "bovada", "draftkings", "espnbet"]
+        let width = EventSourceLabelColumn.width(
+            for: books, availableWidth: narrowPhone, typeSize: .xxxLarge, weight: .regular)
+        let widest = books
+            .map { EventSourceLabelColumn.textWidth($0, typeSize: .xxxLarge, weight: .regular) }
+            .max() ?? 0
+        // Not clamped at this size, so the column holds the whole string.
+        XCTAssertGreaterThanOrEqual(width, widest)
+        XCTAssertLessThanOrEqual(
+            width, EventSourceLabelColumn.maximumLabelWidth(availableWidth: narrowPhone))
     }
 
     // MARK: -

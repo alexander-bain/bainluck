@@ -24,9 +24,18 @@ struct EventDetailView: View {
     /// (`-launch_expand_sections`), which is the only way this list can be
     /// photographed — the rig cannot tap a chevron. See `LaunchRig`.
     @State private var showSources = LaunchRig.expandsCollapsedSections()
-    /// The Sources list's own width, reported by the `GeometryReader` behind it,
-    /// so the label column can be sized against the room the row actually has
-    /// rather than a literal. `0` until the first layout pass.
+    /// The width of a row in the sources disclosure, reported by the
+    /// `GeometryReader` behind the whole panel, so both lists inside it can size
+    /// their label column against the room the row actually has rather than a
+    /// literal. `0` until the first layout pass.
+    ///
+    /// Measured on the PANEL and not on either list, because the two lists render
+    /// under independent conditions. An event with sportsbook odds and no
+    /// aggregate sources draws the books list alone — the disclosure's own toggle
+    /// says "Individual Sportsbooks" for exactly that case — and if only the
+    /// sources list published this, that event would leave it `0` forever. `0`
+    /// means "not measured yet", which `maximumLabelWidth` deliberately treats as
+    /// UNCLAMPED, so the books column would have quietly lost the bar's floor.
     @State private var sourceRowWidth: Double = 0
     @State private var refreshCountdown: Int = 0
     @State private var refreshCountdownTimer: Timer?
@@ -1061,6 +1070,22 @@ struct EventDetailView: View {
                     }
                 }
             }
+            // #4107 — measured HERE, on the panel, rather than behind either
+            // list. Both lists draw rows of this width, but they render under
+            // independent conditions, so a measurement scoped to one of them is
+            // missing on every event that draws only the other. Publishing from
+            // the panel also means the width is already known when the reader
+            // expands the disclosure, instead of the first frame being sized on
+            // unclamped ink.
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: SourceRowWidthKey.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(SourceRowWidthKey.self) { width in
+                sourceRowWidth = width
+            }
         }
     }
 
@@ -1126,15 +1151,6 @@ struct EventDetailView: View {
             }
         }
         .padding(.vertical, 8)
-        .background(
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: SourceRowWidthKey.self, value: geo.size.width)
-            }
-        )
-        .onPreferenceChange(SourceRowWidthKey.self) { width in
-            sourceRowWidth = width
-        }
     }
 
     private func legendItem(color: Color, label: String) -> some View {
@@ -1150,17 +1166,35 @@ struct EventDetailView: View {
 
     private func bookmakerContent(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
-        let bookmakers = event.bookmakerOdds ?? []
+        let bookmakers = Array((event.bookmakerOdds ?? []).prefix(10))
+        // #4107 — the SAME defect as `sourceContent` above, one function down and
+        // in the same visual list: a hardcoded label column that never tracked
+        // Dynamic Type. This one was 90pt, which is the exact literal the Sources
+        // column was raised FROM. Photographed at xxxLarge on a 375pt phone it cut
+        // `betanysportsbook` and `betonlineag` to `betanysp…` / `betonline…` while
+        // the two rows above them — already fixed — read in full, which is a worse
+        // read than the original bug: it looks deliberate.
+        //
+        // Sized off the same `sourceRowWidth`, because both lists are children of
+        // the same disclosure and therefore the same width. Measured `.regular`,
+        // which is the face THIS list draws in.
+        let labelWidth = EventSourceLabelColumn.width(
+            for: bookmakers.map { $0.bookmaker ?? "Unknown" },
+            availableWidth: sourceRowWidth,
+            typeSize: dynamicTypeSize,
+            weight: .regular)
         return VStack(spacing: 0) {
-            ForEach(bookmakers.prefix(10), id: \.bookmaker) { bm in
+            ForEach(bookmakers, id: \.bookmaker) { bm in
                 let awayProb = bm.awayProbability ?? bm.awayMoneyline.map { moneylineToProbability($0) }
                 let homeProb = bm.homeProbability ?? bm.homeMoneyline.map { moneylineToProbability($0) }
 
-                HStack(spacing: 6) {
+                HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     Text(bm.bookmaker ?? "Unknown")
                         .font(.caption)
-                        .frame(width: 90, alignment: .leading)
-                        .lineLimit(1)
+                        .frame(width: labelWidth, alignment: .leading)
+                        // Both load-bearing together (#3966), as in `sourceContent`.
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     if let awayProbability = awayProb, let homeProbability = homeProb {
                         ProbabilityBar(
@@ -1173,13 +1207,17 @@ struct EventDetailView: View {
 
                         Text(formatProbability(awayProbability))
                             .font(.caption2.monospacedDigit())
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(
+                                width: EventSourceLabelColumn.numericColumnWidth,
+                                alignment: .trailing)
                         Text(formatProbability(homeProbability))
                             .font(.caption2.monospacedDigit())
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(
+                                width: EventSourceLabelColumn.numericColumnWidth,
+                                alignment: .trailing)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
                 .padding(.vertical, 4)
             }
         }

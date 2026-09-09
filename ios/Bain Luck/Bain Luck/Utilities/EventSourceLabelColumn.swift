@@ -99,12 +99,28 @@ enum EventSourceLabelColumn {
     /// and measuring without the trait collection would resolve against the
     /// APP's text size rather than the view's — the mistake that makes a column
     /// narrower than the string inside it.
-    static func labelFont(at typeSize: DynamicTypeSize) -> UIFont {
+    ///
+    /// `weight` exists because the two lists this model now sizes draw in
+    /// DIFFERENT faces: the aggregate source rows are `.caption.weight(.medium)`
+    /// and the individual sportsbook rows below them are a plain `.caption`.
+    /// Measuring both as medium would over-reserve — safe, but it would quietly
+    /// contradict the sentence above, which is the whole contract of this file.
+    static func labelFont(
+        at typeSize: DynamicTypeSize, weight: Font.Weight = .medium
+    ) -> UIFont {
         let traits = UITraitCollection(
             preferredContentSizeCategory:
                 CalibrationSourceTableGeometry.CellFont.contentSizeCategory(typeSize))
         let base = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: traits)
-        return UIFont.systemFont(ofSize: base.pointSize, weight: .medium)
+        return UIFont.systemFont(ofSize: base.pointSize, weight: uiWeight(weight))
+    }
+
+    /// Only the two faces these rows actually use are mapped. Anything else
+    /// resolves to `.regular` rather than guessing: an unmapped weight that
+    /// silently measured as `.medium` would over-reserve invisibly, and this
+    /// module exists because an invisible width claim went wrong once already.
+    private static func uiWeight(_ weight: Font.Weight) -> UIFont.Weight {
+        weight == .medium ? .medium : .regular
     }
     #endif
 
@@ -113,10 +129,12 @@ enum EventSourceLabelColumn {
     static let fallbackCharacterWidth: Double = 6.5
 
     /// The ink a label actually occupies, measured in the font it is drawn in.
-    static func textWidth(_ string: String, typeSize: DynamicTypeSize = .large) -> Double {
+    static func textWidth(
+        _ string: String, typeSize: DynamicTypeSize = .large, weight: Font.Weight = .medium
+    ) -> Double {
         #if canImport(UIKit)
         return Double((string as NSString)
-            .size(withAttributes: [.font: labelFont(at: typeSize)]).width)
+            .size(withAttributes: [.font: labelFont(at: typeSize, weight: weight)]).width)
         #else
         return Double(string.count) * fallbackCharacterWidth
         #endif
@@ -139,9 +157,10 @@ enum EventSourceLabelColumn {
     /// The label column for THIS render: the widest label it will draw, at the
     /// view's own text size, clamped to what the row can spare.
     static func width(
-        for labels: [String], availableWidth: Double, typeSize: DynamicTypeSize = .large
+        for labels: [String], availableWidth: Double, typeSize: DynamicTypeSize = .large,
+        weight: Font.Weight = .medium
     ) -> Double {
-        let ink = labels.map { textWidth($0, typeSize: typeSize) }.max() ?? 0
+        let ink = labels.map { textWidth($0, typeSize: typeSize, weight: weight) }.max() ?? 0
         let wanted = ink.rounded(.up) + inkSlack
         return min(
             max(wanted, minimumLabelWidth),

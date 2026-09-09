@@ -99,51 +99,14 @@ describe("#4107 the Sources list label column", () => {
     expect(sourceContent).toContain("formatProbability(");
   });
 
-  it("asks the width model instead of writing a number down", () => {
-    expect(sourceContent).toContain("EventSourceLabelColumn.width(");
-    expect(sourceContent).toContain("typeSize: dynamicTypeSize");
-  });
-
   /**
-   * The literal itself, and the shape of it. `width: <digits>` catches the next
-   * hand-picked number as well as this one — the failure mode here is not "118
-   * specifically" but "someone wrote a point count in this row again".
+   * The original literal by name. The shared block below bans ANY `.frame(width:
+   * <digits>)` in either row; this one keeps 118 itself on the record, because
+   * the failure mode this issue actually had was a literal being RAISED (90 → 118)
+   * and the raise being explained in a comment, which made it look considered.
    */
-  it("has no hardcoded point width left in the row", () => {
+  it("has not gone back to the 118pt literal", () => {
     expect(sourceContent).not.toContain("width: 118");
-    expect(sourceContent).not.toMatch(/\.frame\(\s*width:\s*\d/);
-  });
-
-  /**
-   * `.minimumScaleFactor` is banned in this row, not merely absent.
-   * `CalibrationSourceTableGeometry` records it measured and REJECTED on the same
-   * row shape: SwiftUI scales sibling `Text` together, so a floor shrinks every
-   * label in the list to half-rescue one and still truncates a character later.
-   * It is the single most tempting thing to add back here.
-   */
-  it("does not reach for minimumScaleFactor as a backstop", () => {
-    expect(sourceContent).not.toContain("minimumScaleFactor");
-  });
-
-  /**
-   * Both halves of the wrap, together — #3966 found `lineLimit(2)` alone still
-   * truncates when the parent proposes one line's height.
-   */
-  it("lets a clamped label wrap rather than truncate", () => {
-    expect(sourceContent).toContain("lineLimit(2)");
-    expect(sourceContent).toContain("fixedSize(horizontal: false, vertical: true)");
-  });
-
-  /**
-   * The clamp protects the bar using `fixedRowCost`, which is a CLAIM about this
-   * row's paddings. If the view stops reading those constants from the model, the
-   * model can drift from the layout it describes — which is the original defect
-   * with extra steps.
-   */
-  it("reads the row's own constants from the model it clamps against", () => {
-    expect(sourceContent).toContain("EventSourceLabelColumn.interColumnSpacing");
-    expect(sourceContent).toContain("EventSourceLabelColumn.numericColumnWidth");
-    expect(sourceContent).toContain("EventSourceLabelColumn.horizontalPadding");
   });
 
   it("measures against the view's own text size, not the app's", () => {
@@ -152,7 +115,137 @@ describe("#4107 the Sources list label column", () => {
     // against the process's setting; that is how a column ends up narrower than
     // the string inside it.
     expect(geometry).toContain("compatibleWith: traits");
-    expect(geometry).toContain("UIFont.systemFont(ofSize: base.pointSize, weight: .medium)");
+    expect(geometry).toContain("UIFont.systemFont(ofSize: base.pointSize, weight: uiWeight(weight))");
+  });
+});
+
+/**
+ * ═══ THE SECOND LIST, WHICH THE FIRST VERSION OF THIS FILE COULD NOT SEE ═══
+ *
+ * Everything above is scoped to `sourceContent`, and every assertion in it passed
+ * while `bookmakerContent` — the individual-sportsbook rows drawn directly BELOW
+ * those, inside the same disclosure, in the same visual list — still pinned a
+ * hardcoded 90pt column with `lineLimit(1)`.
+ *
+ * Photographed at xxxLarge on a 375pt phone that shipped `Sportsbooks (19)` and
+ * `Kalshi` reading in full with `betanysp…` and `betonline…` cut off underneath
+ * them: a worse read than the original bug, because a half-fixed list looks
+ * deliberate rather than broken.
+ *
+ * A guard scoped to one of two identical call sites is a guard on one call site.
+ * So the predicate is SHARED and both slices are held to it.
+ */
+const bookmakerContent = withoutComments(
+  functionBody(eventDetail, "private func bookmakerContent(_ event: EventDetail)"),
+);
+
+describe.each([
+  ["sourceContent", sourceContent],
+  ["bookmakerContent", bookmakerContent],
+])("#4107 %s sizes its label column against ink", (name, slice) => {
+  it("sliced the right function", () => {
+    expect(slice.length).toBeGreaterThan(400);
+    expect(slice).toContain("ProbabilityBar(");
+    expect(slice).toContain("formatProbability(");
+  });
+
+  it("asks the width model instead of writing a number down", () => {
+    expect(slice).toContain("EventSourceLabelColumn.width(");
+    expect(slice).toContain("typeSize: dynamicTypeSize");
+  });
+
+  it("has no hardcoded point width left in the row", () => {
+    expect(slice).not.toMatch(/\.frame\(\s*width:\s*\d/);
+  });
+
+  it("does not reach for minimumScaleFactor as a backstop", () => {
+    expect(slice).not.toContain("minimumScaleFactor");
+  });
+
+  it("lets a clamped label wrap rather than truncate", () => {
+    expect(slice).toContain("lineLimit(2)");
+    expect(slice).toContain("fixedSize(horizontal: false, vertical: true)");
+    // The specific regression this list had: one line and no wrap.
+    expect(slice).not.toContain("lineLimit(1)");
+  });
+
+  it("reads the row's own constants from the model it clamps against", () => {
+    expect(slice).toContain("EventSourceLabelColumn.interColumnSpacing");
+    expect(slice).toContain("EventSourceLabelColumn.numericColumnWidth");
+    expect(slice).toContain("EventSourceLabelColumn.horizontalPadding");
+  });
+});
+
+/**
+ * ═══ WHERE THE WIDTH IS MEASURED, WHICH DECIDES WHETHER THE CLAMP RUNS AT ALL ═══
+ *
+ * `maximumLabelWidth` treats an unmeasured row (`availableWidth == 0`) as
+ * UNCLAMPED on purpose — the first layout pass should size on ink rather than
+ * snap wider a frame later. That makes the PUBLISH SITE load-bearing rather than
+ * incidental: a list that never receives a measurement is not merely unstyled,
+ * it has silently lost the probability bar's 72pt floor.
+ *
+ * The two lists render under INDEPENDENT conditions (`!sourceEntries.isEmpty`
+ * and `!bookmakers.isEmpty`). An event with sportsbook odds and no aggregate
+ * sources draws the books list alone — the disclosure's own toggle reads
+ * "Individual Sportsbooks" for precisely that case, and `win_prob_sources = {}`
+ * is a state this repo has photographed on real events. While the
+ * `GeometryReader` sat behind `sourceContent`, that event left `sourceRowWidth`
+ * at 0 forever and the books column was unclamped on every one of them.
+ *
+ * SwiftUI preferences travel UP, so this is not a matter of taste: an
+ * `onPreferenceChange` attached to one list's subtree cannot see the other's.
+ * The measurement belongs to the panel that holds both.
+ */
+describe("#4107 the row width is measured where BOTH lists can see it", () => {
+  const toggle = withoutComments(
+    functionBody(eventDetail, "private func sourcesToggle(_ event: EventDetail)"),
+  );
+
+  it("sliced the disclosure that renders both lists", () => {
+    expect(toggle).toContain("sourceContent(event, entries: sourceEntries)");
+    expect(toggle).toContain("bookmakerContent(event)");
+  });
+
+  it("publishes and reads the width on the shared panel", () => {
+    expect(toggle).toContain("key: SourceRowWidthKey.self");
+    expect(toggle).toContain("onPreferenceChange(SourceRowWidthKey.self)");
+  });
+
+  /**
+   * The regression itself: the measurement scoped back down to one list. Both
+   * halves asserted, because moving it into `bookmakerContent` instead would be
+   * the same bug pointed the other way.
+   */
+  it("does not scope the measurement to either list alone", () => {
+    expect(sourceContent).not.toContain("SourceRowWidthKey");
+    expect(bookmakerContent).not.toContain("SourceRowWidthKey");
+  });
+
+  /** Both lists must still be spending it. */
+  it("both lists size against the panel measurement", () => {
+    expect(sourceContent).toContain("availableWidth: sourceRowWidth");
+    expect(bookmakerContent).toContain("availableWidth: sourceRowWidth");
+  });
+});
+
+/**
+ * The two lists draw in DIFFERENT faces — medium for the aggregate sources, plain
+ * `.caption` for the individual books — and the model's contract is that a label
+ * is measured in the font it is drawn in. Measuring the books as medium would
+ * over-reserve: safe, invisible, and wrong in the direction this module exists to
+ * rule out. Asserted per-slice because it is the one thing that legitimately
+ * differs between them.
+ */
+describe("#4107 each list measures in the face it draws in", () => {
+  it("the books list asks for the regular face it renders", () => {
+    expect(bookmakerContent).toContain("weight: .regular");
+    expect(bookmakerContent).toContain(".font(.caption)");
+  });
+
+  it("the sources list stays on the medium face it renders", () => {
+    expect(sourceContent).toContain(".font(.caption.weight(.medium))");
+    expect(sourceContent).not.toContain("weight: .regular");
   });
 });
 
