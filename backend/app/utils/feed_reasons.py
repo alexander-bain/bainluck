@@ -89,11 +89,42 @@ def _weak_outcome_label(name: str | None) -> bool:
 
 
 def _short_market_name(market_name: str | None, max_len: int = 58) -> str:
+    """Shorten a market title for use as the SUBJECT of a composed sentence.
+
+    #4056 — the cut lands on a word boundary, never inside a token. It used to be
+    `name[: max_len - 3]`, a bare character count, and two of the forty cards served
+    on 2026-09-09 cut immediately after a digit:
+
+        "Canadian Team to Win the Stanley Cup® Before the 2030-3...: 42% chance"
+        "Will Utah Mammoth advance to the Second Round of the 20...: 49% chance"
+
+    The market is *Before the 2030-31 Season*. The string says **2030-3**. That is not
+    a formatting blemish — the card states a value the market does not, which is a
+    truth defect, and `humanize_binary_outcome_name` already refuses to chop rather
+    than emit a cut-down label (`_MAX_LABEL_CHARS`, #3491). This is the weaker version
+    of that same rule: shorter and vague beats shorter and false.
+
+    Cutting on whole words covers the mid-number case and the plain mid-word case with
+    one rule, so there is no separate digit predicate to keep in step with a date
+    format nobody has seen yet.
+    """
     name = (market_name or "").strip()
     name = re.sub(r"\s*\?\s*$", "", name)
     if len(name) <= max_len:
         return name
-    return name[: max_len - 3].rstrip() + "..."
+    window = name[: max_len - 3]
+    cut = window.rstrip()
+    # Back up to the last whole word, unless the very first word already overruns
+    # the window — then there is no boundary to find and a hard cut is all there is.
+    if not name[len(window) : len(window) + 1].isspace():
+        boundary = window.rfind(" ")
+        if boundary > 0:
+            cut = window[:boundary].rstrip()
+        else:
+            # A single token wider than the window. Cut it, but never leave a
+            # truncated number behind: drop the trailing partial digit run.
+            cut = re.sub(r"\d+$", "", cut).rstrip()
+    return (cut or window.rstrip()) + "..."
 
 
 # ── Yes/No outcome humanization (BR49) ──────────────────────────────
@@ -675,7 +706,30 @@ def compose_binary_card_copy(
             f"{direction} {_points(top_surprise_change)} since {since} — now {answer}",
         )
 
-    return composed(answer, answer)
+    # #4056 — nothing about the world is true of this market right now: it has not
+    # moved, it is not resolving, and it has no dated lifetime move. The rung that
+    # used to sit here was `composed(answer, answer)`, which put "42% chance" in the
+    # headline and the context, and "<title>: 42% chance" in the reason — the card's
+    # own number restated as prose, directly beneath a hero already printing it in
+    # 48pt, above a title already asking the question.
+    #
+    # Standing notice 34: a reader sees the number and at most one short caption, and
+    # "if a number cannot be shown honestly, leave the space empty". A bare "42%
+    # chance" above a 42% hero IS the empty case, wearing text.
+    #
+    # Empty is a supported state on both clients and needs no client change (measured
+    # 2026-09-09): web's `feedContextSnippet` returns "" and all three render sites in
+    # `FuturesCard.tsx` are `{contextSnippet && (…)}`; iOS's `contextText` returns nil
+    # and the row is `if let contextText { … }` inside a VStack, which emits no spacing
+    # for an absent child. The precedent is fourteen lines up — `stale_past_resolution`
+    # returns this exact value.
+    #
+    # This does NOT blank the headline outright: `routes/feed.py` composes it as
+    # `generate_futures_headline(...) or highlight_result.primary_reason`, so the card
+    # falls through to a curated signal label (`PRIMARY_REASON_LABELS`) and says
+    # nothing only when there is no signal to name either. That is the design's own
+    # honest terminal, not a new one.
+    return BinaryCardCopy("", "", "")
 
 
 def generate_event_reason(
@@ -938,13 +992,26 @@ def generate_futures_reason(
     # what the fallback below says, so it is the fallback.)
 
     # Fallback
+    #
+    # #4056 — both rungs below returned `market_name` VERBATIM. On the Alito card that
+    # made all three sentence slots the same string:
+    #
+    #     name     : 'Will Samuel Alito announce his retirement by...?'
+    #     headline : 'Will Samuel Alito announce his retirement by...'
+    #     reason   : 'Will Samuel Alito announce his retirement by...?'
+    #     ctx      : 'Will Samuel Alito announce his retirement by...'
+    #
+    # — the card printing the same chopped phrase twice with nothing between them. The
+    # `...` there is upstream, in the stored name, so trimming our own chop would not
+    # have touched it; returning the name AT ALL is the defect. Empty instead, which
+    # both clients render as absent (see the note in `compose_binary_card_copy`).
     if leader_name and leader_probability is not None:
         if _weak_outcome_label(leader_name):
-            return market_name
+            return ""
         pct = _display_pct(leader_probability, rendered_leader_percent)
         return f"{leader_name} ({pct}%) leads {market_name}"
 
-    return market_name
+    return ""
 
 
 def generate_futures_headline(
@@ -1054,7 +1121,14 @@ def generate_futures_headline(
 
     if leader_name and leader_probability is not None:
         if _weak_outcome_label(leader_name) and market_name:
-            return _short_market_name(market_name)
+            # #4056 — this rung returned the title, chopped, with nothing appended:
+            # the question echoed back as its own answer. The card already prints the
+            # title one line up, so the headline slot said nothing twice. Every OTHER
+            # `_short_market_name` call in this module uses the title as the SUBJECT
+            # of a clause that adds a fact ("… odds up 5 points", "… resolving soon");
+            # this one had no clause. Falls through to the empty terminal below, and
+            # from there to `primary_reason` in `routes/feed.py`.
+            return ""
         return f"{leader_name} leads at {_display_pct(leader_probability, rendered_leader_percent)}%"
 
     return ""

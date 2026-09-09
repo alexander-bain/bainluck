@@ -291,13 +291,19 @@ def test_futures_context_summary_does_not_repeat_leader_already_in_headline():
     assert summary == "Shohei Ohtani leads at 51%"
 
 
-def test_futures_reason_falls_back_to_market_name_without_signal_detail():
+def test_futures_reason_says_nothing_rather_than_echoing_the_market_name():
+    """#4056 — superseded `..._falls_back_to_market_name_without_signal_detail`.
+
+    The old behaviour WAS the defect: with no signal to report, the reason slot
+    returned the title verbatim, so the card printed its own question back as its
+    own answer. The honest fallback is silence (standing notice 34).
+    """
     reason = generate_futures_reason(
         market_name="Will a recession begin in 2026?",
         highlight_reasons=[],
     )
 
-    assert reason == "Will a recession begin in 2026?"
+    assert reason == ""
 
 
 def test_futures_copy_suppresses_stale_past_resolution_markets():

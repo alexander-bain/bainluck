@@ -371,9 +371,18 @@ def test_the_leads_at_templates_follow_the_contract(case):
 def test_the_percent_chance_template_follows_the_contract(case):
     """`N% chance` — the family #4146's body measured at six of twelve."""
     probability, expected = case["probability"], case["percent"]
+    # `highlight_reasons=["resolving_soon_7d"]`, not `[]`. #4056 emptied the
+    # no-signal terminal of `compose_binary_card_copy` — a card with no story now
+    # says nothing rather than restating its own hero number — so `[]` no longer
+    # produces an `N% chance` sentence for this contract to check. The row's own
+    # control at the bottom is what caught that, exactly as intended.
+    #
+    # `resolving_soon_7d` is the nearest branch that still USES the `N% chance`
+    # template ("15% chance, resolving this week"), so the rounding contract under
+    # test is unchanged and still discriminates banker's from half-up.
     copy = fr.compose_binary_card_copy(
         market_name="Will the U.S. invade Iran before 2027?",
-        highlight_reasons=[],
+        highlight_reasons=["resolving_soon_7d"],
         affirmative_probability=probability,
     )
     for slot, text in copy._asdict().items():
@@ -417,9 +426,11 @@ def test_the_sentence_follows_the_card_when_the_pair_rule_derives_the_complement
     thesis of #4146, and this is the specimen that proves the weaker reading
     ("just use half-up") insufficient rather than merely inelegant.
     """
+    # #4056 — `["resolving_soon_7d"]` not `[]`; see the note on the contract test
+    # above. The pair-rule specimen this test exists for is untouched.
     copy = fr.compose_binary_card_copy(
         market_name="Will New Jersey Devils advance to the Second Round?",
-        highlight_reasons=[],
+        highlight_reasons=["resolving_soon_7d"],
         affirmative_probability=0.495,
         rendered_affirmative_percent=49,
     )
@@ -436,11 +447,13 @@ def test_the_sentence_follows_the_card_when_the_pair_rule_derives_the_complement
         "both rounders no longer agree on 50 for the affirmative side; this "
         "specimen no longer separates 'say what the card says' from 'use half-up'"
     )
-    # And the fallback still exists for callers that have no served row yet.
+    # And the half-up fallback still exists for callers that have no served row yet.
+    # #4056 — this used to read `highlight_reasons=[]`, which now yields the empty
+    # terminal and would have made the assertion vacuous in the other direction.
     assert PERCENT_IN_TEXT.findall(
         fr.compose_binary_card_copy(
             market_name="Will the U.S. invade Iran before 2027?",
-            highlight_reasons=[],
+            highlight_reasons=["resolving_soon_7d"],
             affirmative_probability=0.145,
         ).context_summary
     ) == ["15"], "without a served percent the composer must still be half-up"
