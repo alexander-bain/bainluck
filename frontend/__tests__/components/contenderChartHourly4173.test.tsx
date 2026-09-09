@@ -385,8 +385,21 @@ describe("#4173 — a window under a day has a length a day count cannot state",
     // THE BAN: `axisSpanDays` rounds, and rounding 18 hours to days is what put
     // a footer on the page contradicting the line above it.
     expect(span?.short).not.toBe("0d");
-    expect(html([row({ trend: [], trend_hourly: hours("2026-09-09T00:00:00Z", 19) })]))
-      .toContain("18h shown");
+    // AND IT REACHES THE RENDER — through the SVG's own accessible name, which
+    // is where the span survives.
+    //
+    // This assertion used to read `.toContain("18h shown")`, against the grey
+    // `3 of 36 · 10d shown` line under the chart. #4278 deleted that line under
+    // standing notice 34 ("all the grey text is madness"), and this ship's
+    // rebase took the deletion: a correct derivation of a number nobody shows
+    // is not a reason to put the sentence back. The duration is still SAID —
+    // to a screen reader, which is the one place a span in words is not
+    // diagnostic prose — so the assertion moved to the carrier rather than
+    // being dropped, and a library-only test would have gone green the day the
+    // component stopped rendering the feature at all.
+    expect(
+      html([row({ trend: [], trend_hourly: hours("2026-09-09T00:00:00Z", 19) })])
+    ).toContain("over 18 hours");
   });
 
   it("still says `Nd shown` for a window of days", () => {
@@ -409,6 +422,14 @@ describe("#4173 — a payload without the fine series draws exactly what it drew
 
     const markup = html([DAILY_ONLY]);
     expect(markup).toContain('data-testid="chart-axis-label"');
-    expect(markup).toContain("19d shown");
+    // Same move as the span assertion above: `19d shown` left the page with
+    // #4278's grey line, and the duration is still stated to a screen reader.
+    expect(markup).toContain("over 19 days");
+    // A DAY-KEYED BOARD KEEPS ITS DAY-KEYED AXIS. This is the assertion the
+    // deleted text was standing in front of: the ticks are dates, not instants,
+    // so a payload with only `trend` did not sprout an hourly axis naming times
+    // nothing was read at.
+    expect(markup).toMatch(/data-testid="chart-axis-label" data-at="\d{4}-\d{2}-\d{2}"/);
+    expect(markup).not.toMatch(/data-testid="chart-axis-label" data-at="[^"]*T/);
   });
 });
