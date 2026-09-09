@@ -107,6 +107,7 @@ from app.utils.provider_anchor_keys import (
     odds_api_anchor_key,
     polymarket_anchor_key,
     statpal_anchor_key,
+    statpal_id_space,
     statpal_qualifier_refusal,
     statpal_sport_from_source_id,
 )
@@ -182,6 +183,16 @@ def anchor_key_for_claim(
     than guessing — which is the behaviour D55 asks for and the reason the
     parameter no longer needs to be mandatory to be safe.
 
+    ``sport_key`` is OUR ``sports.key`` and is folded to its StatPal ID SPACE
+    (:func:`statpal_id_space`) before the key is built — #4393. For every sport
+    but tennis and soccer that fold is the identity; for those two it is the
+    difference between the key the stampers write (``soccer:9541493``) and a key
+    nobody wrote (``soccer_argentina_primera_division:9541493``). Folding is not
+    a guess: it is a lookup in our own key vocabulary, which is what D55 means by
+    a namespace that is *given* rather than inferred from the id. The fold runs
+    only for a qualifier that already passes ``statpal_qualifier_refusal``; see
+    the comment at the call below for why that order is load-bearing.
+
     ``warn_unqualified=False`` turns the log below off for the two callers that
     RE-DERIVE a key from one already written (`anchor_is_current`,
     `invalidate_scalar_anchor`) rather than claiming. Those two legitimately have
@@ -229,6 +240,47 @@ def anchor_key_for_claim(
                 sport_key,
                 source_id,
             )
+        # #4393. A CLAIM carries OUR `sports.key`; an ANCHOR is keyed by the
+        # StatPal ID SPACE that key draws from, and for tennis and soccer those
+        # are not the same string. Folded here rather than at either end:
+        #
+        #   * not in `statpal_anchor_key`, which is deliberately FAITHFUL to the
+        #     qualifier it is handed — `test_link_tennis_statpal_anchors.py::
+        #     test_the_control_the_raw_sport_key_would_fragment_it` is a control
+        #     written to fail if that function ever becomes a folding
+        #     pass-through, and it is right to keep failing;
+        #   * not at the two `event_registry.py` call sites, which are lane1's
+        #     file under D50 — and fixing it here covers every future claimant
+        #     rather than the two that exist today.
+        #
+        # This function's own contract is "map a registry claim onto its
+        # NAMESPACE-QUALIFIED anchor key", so choosing the namespace is the job
+        # it is named for. Every other StatPal caller already folds explicitly
+        # (both stampers, the tennis linker, `admin_providers`); the registry
+        # was the only one that did not, and `anchor_is_current`'s comment 200
+        # lines below already states the rule it was breaking: *"the writer
+        # qualifies by `statpal_id_space()` (`tennis`), not by `sports.key`
+        # (`tennis_atp_us_open`), so re-resolving from the event would re-derive
+        # a key the writer never wrote."*
+        #
+        # AFTER the refusal ladder, never before it: `statpal_id_space` matches
+        # on a PREFIX, so `statpal_id_space("soccer:9541493")` is `"soccer"` and
+        # folding first would promote a `STATPAL_QUALIFIER_SEPARATOR` refusal
+        # into an accepted key. Only a qualifier that is already usable is
+        # folded; an unusable one is passed through untouched so
+        # `statpal_anchor_key` refuses it exactly as it always has.
+        #
+        # Free at the moment it lands, which is why it lands now: all 1,040
+        # StatPal anchors in production (2026-09-09) carry one of six
+        # qualifiers — `americanfootball_nfl` 293, `soccer` 256, `tennis` 248,
+        # `baseball_mlb` 175, `basketball_nba` 41, `icehockey_nhl` 27 — and
+        # every one is already its own id space, so the fold is the identity on
+        # every stored row and moves none of them. The four sports the schedule
+        # sync actually has beats for are all 1:1, so nothing live changes
+        # either; what changes is the FIRST soccer or tennis claim, which today
+        # would miss all 256 stamper anchors and mint a second row for each.
+        if statpal_qualifier_refusal(sport_key) is None:
+            return statpal_anchor_key(source_id, statpal_id_space(sport_key))
         return statpal_anchor_key(source_id, sport_key)
     if source == "kalshi":
         return kalshi_anchor_key(source_id)

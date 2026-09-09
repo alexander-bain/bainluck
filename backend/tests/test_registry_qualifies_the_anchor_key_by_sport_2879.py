@@ -199,6 +199,24 @@ class TestTheWriteSideStopsCollidingAcrossSports:
         This is not a near-miss that a threshold could have caught: the key was
         `None`, the channel wrote no row, and the absence looked exactly like a
         provider that had nothing to say.
+
+        ## The expected key MOVED on 2026-09-09 — #4393, and it is not a rename
+
+        This asserted `tennis_atp:2629673` from the day it was written, because
+        the registry passed `identity.sport_key` to `anchor_key_for_claim`
+        verbatim. That was the defect, not the contract: the tennis LINKER writes
+        `tennis:2629673` (it folds through `statpal_id_space`, as every other
+        StatPal writer does), so a registry-written `tennis_atp:` key was a
+        SECOND key for one StatPal match — and `tennis_atp_us_open:` would have
+        been a third. The unique index accepts all of them and the `COLLISION`
+        that is our only proof that two rows are one game never fires, on the
+        sport whose duplicate rows are split across exactly a generic and a
+        tournament key.
+
+        `anchor_key_for_claim` now folds, so this test asserts the key the
+        writers actually use. The sibling assertions in this class did not move
+        and must not: `statpal_id_space` is the identity on all four sports the
+        schedule sync has beats for.
         """
         session = _AnchorSession(sport_id=ATP_SPORT_ID)
 
@@ -212,7 +230,7 @@ class TestTheWriteSideStopsCollidingAcrossSports:
 
         assert created
         assert session.anchors == {
-            ("statpal", f"tennis_atp:{TENNIS_FIXTURE_ID}", ANCHOR_KIND_GAME): event.id
+            ("statpal", f"tennis:{TENNIS_FIXTURE_ID}", ANCHOR_KIND_GAME): event.id
         }
 
 
