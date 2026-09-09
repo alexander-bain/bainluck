@@ -158,18 +158,68 @@ class TestEveryDiscoveryMapHasAnArmThatPublishesIt:
         "DISCOVERY_PARSES_BUT_MINTS_NO_ID": cfg.DISCOVERY_PARSER_MINTS_NO_ID,
     }
 
+    #: Maps that MODIFY the reason inside an arm rather than selecting one.
+    #:
+    #: 🔴 A SECOND CATEGORY, ADDED BY #4200, AND THE REASON IS WORTH READING.
+    #: This class asserted `DISCOVERY_* dict` ⇒ "selects a code", which was true
+    #: of every map that existed. `DISCOVERY_PARSER_BLOCKED_ON` breaks it on
+    #: purpose: it names what the parser waits on for a sport ALREADY in
+    #: `DISCOVERY_NO_BEAT_AND_NO_PARSE`, and it must not select a state of its
+    #: own — a sport is not in a different discovery state because someone
+    #: recorded who has to rule first.
+    #:
+    #: Declared rather than pattern-matched, and the split is the point: adding
+    #: a real state map with no arm still reds the test below, because the fix
+    #: for that is an arm and the fix for this was a category. Renaming the map
+    #: out of the `DISCOVERY_` prefix would also have made the test pass, and
+    #: would have bought silence instead of an answer.
+    MODIFIER_MAPS = {"DISCOVERY_PARSER_BLOCKED_ON"}
+
     def test_every_discovery_map_in_the_module_is_in_the_table(self):
         """The table cannot go stale silently. Any module-level name matching
-        the discovery-map shape must be accounted for here.
+        the discovery-map shape must be accounted for here, in exactly one of
+        the two categories.
         """
         discovered = {
             name
             for name in dir(cfg)
             if name.startswith("DISCOVERY_") and isinstance(getattr(cfg, name), dict)
         }
-        assert discovered == set(self.MAP_TO_CODE), (
+        accounted = set(self.MAP_TO_CODE) | self.MODIFIER_MAPS
+        assert discovered == accounted, (
             "a discovery map was added or renamed without giving it an arm and "
-            f"a row here: {sorted(discovered ^ set(self.MAP_TO_CODE))}"
+            f"a row here: {sorted(discovered ^ accounted)}"
+        )
+
+    def test_the_two_categories_do_not_overlap(self):
+        """A map cannot both select a state and merely decorate one. If it is in
+        both, the parametrised checks below silently disagree about what it is.
+        """
+        assert not (set(self.MAP_TO_CODE) & self.MODIFIER_MAPS)
+
+    @pytest.mark.parametrize("map_name", sorted(MODIFIER_MAPS))
+    def test_a_modifier_map_alone_never_selects_a_state(self, monkeypatch, map_name):
+        """What makes it a modifier, asserted rather than asserted-by-comment.
+
+        A synthetic sport placed ONLY in a modifier map must land on the bare
+        `NO-BEAT` ending — the state it would have had anyway. The day one of
+        these grows its own arm it stops being a modifier, and this reds.
+        """
+        sport_key = "korfball_synthetic"
+        monkeypatch.setitem(cfg.SHADOW_STAMPERS, sport_key, "stamp_korfball")
+        monkeypatch.setitem(
+            getattr(cfg, map_name), sport_key, "a blocker nobody should read yet"
+        )
+
+        code, why = cfg.discovery_state(sport_key)
+
+        assert code == DISCOVERY_NO_BEAT, (
+            f"{map_name} is filed as a modifier but selected {code!r} on its "
+            "own — give it a row in MAP_TO_CODE, not in MODIFIER_MAPS"
+        )
+        assert "a blocker nobody should read yet" not in why, (
+            f"{map_name} reached a reader for a sport that is not in the arm "
+            "that owns it"
         )
 
     @pytest.mark.parametrize("map_name", sorted(MAP_TO_CODE))

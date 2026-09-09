@@ -358,6 +358,48 @@ DISCOVERY_NO_BEAT_AND_NO_PARSE: dict[str, str] = {
     ),
 }
 
+#: For a parser-blind sport, the thing the PARSER itself waits on — keyed the
+#: same way as the map above, and absent for a sport that waits on nothing.
+#:
+#: 🔴 THIS MAP EXISTS BECAUSE THE SENTENCE ABOVE IT WAS A LIE THAT PRESCRIBED
+#: HARM (#4200). `discovery_state` used to end every parser-blind reason with
+#: "both are build steps, not a wait" — a flat claim, correct for the id-less
+#: arm and false here. The comment inside `discovery_state`, the docstring of
+#: `tests/test_statpal_nfl_schedule_parses_3193.py` and #3193's own disposition
+#: ("the tennis half is NOT claimed and should not be built as a parser
+#: ticket") all record the same blocker; only the string an operator actually
+#: reads denied it.
+#:
+#: The harm is why this is a map rather than a softened adjective. Told the work
+#: is unblocked, a reader teaches the parser and schedules the beat, and the
+#: beat then creates a second copy of every US Open match HOURLY — registry
+#: Step 1 is sport-scoped (D55/#2879) and the tennis linker anchors under
+#: `tennis_atp_us_open`/`tennis_wta_us_open` while `STATPAL_SPORT_MAPPING`
+#: claims `tennis_atp`/`tennis_wta`. #4155 ("10 US Open singles matches exist
+#: twice") is that failure mode already on the site, from a smaller cause.
+#:
+#: Keyed per sport, and NOT folded into the census strings above, so that the
+#: two facts stay separately assertable: the census says the parser cannot read
+#: the payload, this says who has to rule before anyone teaches it. A sport with
+#: a measured census and no entry here still reads "build steps, not a wait",
+#: which is the honest answer for a parser nobody else's ruling governs.
+DISCOVERY_PARSER_BLOCKED_ON: dict[str, str] = {
+    "tennis_singles": (
+        "the tennis_atp vs tennis_atp_us_open key reconciliation, which is "
+        "lane1's to rule on (D39/#2693) because it is an identity question: "
+        "registry Step 1 is sport-scoped (D55/#2879), so teaching the parser "
+        "before those keys are settled would have the beat create a second "
+        "copy of every US Open match, hourly, under a non-anchoring claim"
+    ),
+    "tennis_doubles": (
+        "the tennis_wta vs tennis_wta_us_open key reconciliation, which is "
+        "lane1's to rule on (D39/#2693) because it is an identity question: "
+        "registry Step 1 is sport-scoped (D55/#2879), so teaching the parser "
+        "before those keys are settled would have the beat create a second "
+        "copy of every US Open match, hourly, under a non-anchoring claim"
+    ),
+}
+
 #: Stamped and measured daily, with no `sync_statpal_schedules` beat, and an
 #: ingest parser that READS the fixtures but mints no id for any of them.
 #:
@@ -515,6 +557,17 @@ def discovery_state(sport_key: str) -> tuple[str, str]:
     # `STATPAL_SPORT_MAPPING` claims. So the blindness is named BEFORE the beat.
     blind = DISCOVERY_NO_BEAT_AND_NO_PARSE.get(sport_key)
     if blind:
+        # The ordering is the same in both endings; what differs is whether
+        # anyone may act on it today. "not a wait" is a claim about the world
+        # and it was false for the only sports in this arm (#4200) — say who
+        # has to rule first, or say nothing about waiting at all.
+        blocked_on = DISCOVERY_PARSER_BLOCKED_ON.get(sport_key)
+        if blocked_on:
+            return DISCOVERY_NO_BEAT_AND_PARSER_BLIND, (
+                f"Neither half of discovery exists for this sport: {blind}. "
+                "Teaching the parser comes BEFORE scheduling a beat, but the "
+                f"parser itself WAITS ON {blocked_on}"
+            )
         return DISCOVERY_NO_BEAT_AND_PARSER_BLIND, (
             f"Neither half of discovery exists for this sport: {blind}. "
             "Teaching the parser comes BEFORE scheduling a beat — both are "
