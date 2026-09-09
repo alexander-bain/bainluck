@@ -249,8 +249,16 @@ async def _drive_feed(*, redis, monkeypatch, headers=None):
         built.append("futures")
         return []
 
+    # Every detached publish this request starts, KEPT so it can be awaited.
+    # Production's `schedule_background` holds its tasks in `_background_tasks`
+    # for exactly this reason; a spy that calls `ensure_future` and drops the
+    # result is the one version of it that cannot be waited on.
+    scheduled: list[asyncio.Task] = []
+
     def spy_schedule(coro):
-        return asyncio.ensure_future(coro)
+        task = asyncio.ensure_future(coro)
+        scheduled.append(task)
+        return task
 
     monkeypatch.setattr(rc, "schedule_background", spy_schedule)
 
@@ -271,10 +279,41 @@ async def _drive_feed(*, redis, monkeypatch, headers=None):
             resp = await ac.get("/api/feed", headers=headers or {})
 
     app.dependency_overrides.clear()
-    # Let the detached private-key backfill run.
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await _drain(scheduled)
     return resp, built
+
+
+async def _drain(scheduled: "list[asyncio.Task]"):
+    """AWAIT the detached private-key publish; never just yield at it.
+
+    `feed.py` republishes the private mirror through
+    `request_cache.schedule_background`, which detaches the coroutine and returns
+    immediately — so both `TestTheRepublishedMirrorInheritsTheAgeItWasBuiltFrom`
+    cases assert on a Redis write that is still in flight when the response lands.
+
+    This used to be two `await asyncio.sleep(0)` under the comment "let the
+    detached private-key backfill run". That is not a wait. A bare yield hands
+    control back once; whether the publish has FINISHED by then depends on how
+    much incidental work the caller happens to do afterwards, not on any
+    synchronisation. Measured on this file rather than assumed (integrator/264
+    flagged the smell, latency/273 priced it): with the two yields a publish
+    taking 10ms still passed, and one taking 2s failed — so the margin was real
+    but accidental, and it shrinks the moment the publish gains an await or a CI
+    box gets busy. Both cases fail outright if the publish never runs, so the
+    thing being waited on is load-bearing.
+
+    Awaiting the tasks themselves is the deterministic form of that wait. Looped,
+    because draining one publish may schedule another;
+    `return_exceptions=True` because production's contract is that a failed
+    background publish is logged and swallowed, never raised — this reproduces
+    the wait without inventing a new failure mode.
+    """
+    for _ in range(100):
+        pending = [t for t in scheduled if not t.done()]
+        if not pending:
+            return
+        await asyncio.gather(*pending, return_exceptions=True)
+    raise AssertionError("detached publishes never drained")
 
 
 def _returning_headers():
