@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 
+import { CRAWLER_DISALLOWED_PREFIXES } from "@/lib/crawlPolicy";
 import { getSiteUrl } from "@/lib/siteUrl";
 
 // LAT-P278: `www`, not the apex — the apex 301s, and a sitemap that lists the
@@ -18,7 +19,9 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/admin", "/api/", "/share/"],
+        // #4193: the same list the self-canonical guard exempts, so "not
+        // crawled" and "not required to self-canonicalise" cannot drift apart.
+        disallow: [...CRAWLER_DISALLOWED_PREFIXES],
       },
     ],
     sitemap: `${BASE}/sitemap.xml`,

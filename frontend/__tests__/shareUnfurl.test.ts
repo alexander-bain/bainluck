@@ -46,6 +46,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { CRAWLER_DISALLOWED_PREFIXES, isCrawlerDisallowed } from "@/lib/crawlPolicy";
+import { assertRoutePath, selfCanonical } from "@/lib/routeMetadata";
 import { defaultShareCard } from "@/lib/shareCard";
 import { SITE_URL, getSiteUrl } from "@/lib/siteUrl";
 
@@ -258,7 +260,159 @@ describe("every prerendered page unfurls with a picture", () => {
   });
 });
 
+/* ──────────────── a page says it is itself, not the home page ─────────── */
+
+/**
+ * Routes whose canonical is deliberately NOT their own URL, with the reason.
+ *
+ * `/golf` is a `redirect()` to `/categories/golf`. A redirect's canonical names
+ * its DESTINATION — that is what consolidating a duplicate means — so "canonical
+ * equals own route" is the wrong rule for it, and it is listed here rather than
+ * exempted, so the intended value is still pinned.
+ */
+const CANONICAL_ALIASES: Record<string, string> = {
+  "/golf": "/categories/golf",
+};
+
+describe("every prerendered page says it is itself, not the home page", () => {
+  // #4193. The root sets `canonical: "/"` and `og:url: "/"`, and Next inherits
+  // both LITERALLY. Measured on production 2026-09-09, twelve static routes and
+  // both dynamic hub families (`/categories/politics`, `/playoffs/nfl`) shipped
+  // `<link rel="canonical" href="https://www.bainluck.com">` — every one of them
+  // telling search engines to index the home page instead.
+  //
+  // This reads built HTML for the same reason the rules above do: the bug is
+  // "declared nowhere, resolved to the parent's value". Only the rendered tag
+  // is evidence.
+
+  const checked = builtPages
+    .map((f) => ({ file: f, route: routeOf(rel(f)) }))
+    .filter((p) => !isCrawlerDisallowed(p.route));
+
+  it("declares its own route as canonical", () => {
+    const offenders = checked
+      .map(({ file, route }) => ({
+        route,
+        expected: absolute(CANONICAL_ALIASES[route] ?? route),
+        actual: canonical(read(file)),
+      }))
+      .filter((r) => r.actual !== r.expected);
+    expect(offenders).toEqual([]);
+  });
+
+  it("declares its own route as og:url, so a share is not a share of the home page", () => {
+    // The same inheritance, one tag over. Worth its own rule because the two
+    // drifted apart once already: LAT-P278 gave `/sport` an `og:url` and left
+    // its canonical inheriting, so the page was right for sharing and wrong for
+    // search at the same time.
+    const offenders = checked
+      .map(({ file, route }) => ({
+        route,
+        expected: absolute(CANONICAL_ALIASES[route] ?? route),
+        actual: meta(read(file), "og:url"),
+      }))
+      .filter((r) => r.actual !== r.expected);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the sweep read the pages the fix names — not an empty list", () => {
+    // Both rules above are `.filter(...)`. An empty `checked` passes them and
+    // reports green forever, so assert the DENOMINATOR: the routes measured as
+    // broken on production are actually among the pages being read.
+    if (builtPages.length === 0) return;
+    const routes = checked.map((p) => p.route);
+    for (const required of [
+      "/",
+      "/privacy",
+      "/search",
+      "/categories",
+      "/categories/golf",
+      "/playoffs",
+      "/daily",
+      "/my-stuff",
+      "/preferences",
+      "/onboarding",
+      "/kernels-preview",
+      "/sport",
+    ]) {
+      expect(routes).toContain(required);
+    }
+    expect(checked.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it("the exemption is robots.txt's list, and it does not swallow the site", () => {
+    // The only pages allowed to skip the rule are the ones robots.txt already
+    // tells crawlers not to fetch (`lib/crawlPolicy.ts` explains why a meta tag
+    // on a Disallow-ed path is unreachable advice). Two ways that could rot:
+    // the exemption could grow to cover real content, or it could stop matching
+    // and make the rule vacuous. Pin both ends.
+    if (builtPages.length === 0) return;
+    const exempted = builtPages
+      .map((f) => routeOf(rel(f)))
+      .filter((r) => isCrawlerDisallowed(r));
+
+    expect(exempted.length).toBeGreaterThan(0); // it still matches something
+    for (const route of exempted) {
+      expect(
+        CRAWLER_DISALLOWED_PREFIXES.some((p) => route.startsWith(p))
+      ).toBe(true);
+    }
+    // No public surface hides behind it.
+    for (const publicRoute of ["/", "/about", "/sports", "/discover", "/privacy"]) {
+      expect(exempted).not.toContain(publicRoute);
+    }
+  });
+
+  it("the rule can actually fail — an inherited canonical is caught", () => {
+    // Negative control. If `canonical()` or `routeOf()` silently stopped
+    // returning what the rule compares, every page would "match" and the guard
+    // would be decoration.
+    const inherited = '<link rel="canonical" href="https://www.bainluck.com"/>';
+    expect(canonical(inherited)).toBe(absolute("/"));
+    expect(canonical(inherited)).not.toBe(absolute("/privacy"));
+
+    expect(routeOf("index.html")).toBe("/");
+    expect(routeOf("privacy.html")).toBe("/privacy");
+    expect(routeOf("categories/golf.html")).toBe("/categories/golf");
+  });
+});
+
+describe("selfCanonical() cannot be the thing that reintroduces the apex", () => {
+  it("emits a relative canonical and og:url plus the default card", () => {
+    const md = selfCanonical("/privacy");
+    expect(md.alternates?.canonical).toBe("/privacy");
+    expect(md.openGraph).toMatchObject({ url: "/privacy" });
+    // `openGraph` without `images` is the silent-grey-card bug from #4149; the
+    // helper supplies both so no caller can declare one without the other.
+    expect(md.openGraph?.images).toEqual(defaultShareCard());
+  });
+
+  it("refuses an absolute URL, including the protocol-relative spelling", () => {
+    // These throw at build time on purpose. `//bainluck.com/x` is the case that
+    // matters: it starts with "/" so a `startsWith` check would wave it through,
+    // and it is an absolute URL naming the redirecting apex.
+    expect(() => assertRoutePath("https://www.bainluck.com/privacy")).toThrow();
+    expect(() => assertRoutePath("https://bainluck.com/privacy")).toThrow();
+    expect(() => assertRoutePath("//bainluck.com/privacy")).toThrow();
+    expect(() => assertRoutePath("privacy")).toThrow();
+    // ...and accepts the shape every caller actually uses.
+    expect(() => assertRoutePath("/privacy")).not.toThrow();
+    expect(() => assertRoutePath("/categories/golf")).not.toThrow();
+  });
+});
+
 /* ────────────────────────────── helpers ────────────────────────────── */
+
+/** `index.html` -> `/`; `categories/golf.html` -> `/categories/golf`. */
+function routeOf(relativeHtmlPath: string): string {
+  const withoutExt = relativeHtmlPath.replace(/\.html$/, "");
+  return withoutExt === "index" ? "/" : `/${withoutExt}`;
+}
+
+/** The absolute URL Next renders for a root-relative route. */
+function absolute(route: string): string {
+  return route === "/" ? CANONICAL_ORIGIN : `${CANONICAL_ORIGIN}${route}`;
+}
 
 function walk(dir: string, keep: (name: string) => boolean): string[] {
   if (!fs.existsSync(dir)) return [];

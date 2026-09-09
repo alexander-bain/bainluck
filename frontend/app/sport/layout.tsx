@@ -6,6 +6,10 @@ export const metadata: Metadata = {
   title: "Sports - BainLuck",
   description:
     "Win probabilities and odds across all major sports. See betting markets translated into intuitive probabilities for golf, basketball, football, hockey, baseball, soccer, tennis, and MMA.",
+  // #4193: LAT-P278 gave this route its own `og:url` but not its own
+  // `canonical`, so it still inherited the root's `"/"` — the one page on the
+  // site that named itself correctly for sharing and incorrectly for search.
+  alternates: { canonical: "/sport" },
   openGraph: {
     title: "All Sports - BainLuck",
     description: "Win probabilities and odds across all major sports.",
