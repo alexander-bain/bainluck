@@ -65,7 +65,13 @@ describe("PropsSection rendering", () => {
       { key: 9, label: "Anytime TD", pregame_mark: null, current: 0.44, graded_result: null },
     ];
     const script = renderToStaticMarkup(<PropsSection items={pending} state="script" />);
-    expect(script).toContain("pregame mark pending");
+    // D102 / #4530: the honest placeholder used to be the chip "pregame mark
+    // pending". The honesty this test is about — never a fabricated number — is
+    // unchanged and asserted below; only the words changed, and the row now
+    // reaches the screen inside the fold. See PropsSection4530.test.tsx.
+    expect(script).not.toContain("pregame mark pending");
+    expect(script).toContain("No opening price (1)");
+    expect(script).not.toContain("44%"); // `current` is never printed as the script
     const graded = renderToStaticMarkup(<PropsSection items={pending} state="graded" />);
     // UX-P044 (#1650): this asserted "grading pending" — the SECOND of the three
     // vocabularies one settled state wore on one screen. It is now the same

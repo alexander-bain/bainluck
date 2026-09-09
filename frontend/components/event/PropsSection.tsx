@@ -208,6 +208,64 @@ function isUnchanged(item: PropMark): boolean {
   return Math.round((item.current - item.pregame_mark) * 100) === 0;
 }
 
+/**
+ * D102 / #4530 — THE SCRIPT's fold.
+ *
+ * Alex, 2026-09-09: "Untraded or vanished props go behind a collapsed toggle
+ * ('Untraded props (3)') — present, openable, taking no real estate when
+ * closed." Fable-5 ruled the option explicitly the same morning: D102 = D, a
+ * collapsed section — not a tooltip, not a deletion.
+ *
+ * WHY THE LABEL IS NOT "Untraded props". Measured on the payload before this
+ * was built (`/api/events/14780138/game-markets`, Seahawks–Patriots, 390px):
+ * 89 of 298 script rows printed the chip `pregame mark pending`, and **all 89
+ * carried a live `current` price**. Those props are traded; "Untraded" would be
+ * a false statement about every one of them. What is actually missing is the
+ * baseline: `_resolve_pregame_mark` (`routes/events.py`) prefers the pinned
+ * commence-time mark and falls back to `opening_over_probability`, so a null
+ * mark means neither a pin nor an opening price exists. "No opening price" is
+ * that state in the reader's own words. Same ruled shape, true words.
+ *
+ * WHY NOT FALL BACK TO `current` — the fix this looked like from the outside.
+ * On the 209 rows carrying both, on an event that had NOT started, the two
+ * fields differ by a median of 4pts and by up to 22.5pts (George Holani 30+:
+ * script 36.5%, current 59%). Printing the live price under a section that
+ * says "What the market expected before the event" would fabricate the script.
+ */
+const NO_OPENING_PRICE_LABEL = "No opening price";
+
+/**
+ * A row THE SCRIPT holds no number for, and can therefore say nothing about.
+ *
+ * A `pending_label` row is NOT this: it carries a deliberate, plain-English,
+ * family-level sentence ("Opens after Round 1" — L2-123 / #199) that is an
+ * answer rather than a hole, and it stays in plain sight in every state.
+ */
+function hasNoScriptNumber(item: PropMark): boolean {
+  if (item.pending_label?.trim()) return false;
+  return item.pregame_mark == null;
+}
+
+/**
+ * Partition THE SCRIPT's rows into the ones that carry a mark and the ones
+ * folded behind the disclosure. Any other state passes through untouched — only
+ * THE SCRIPT promises a pregame number, so only THE SCRIPT has this hole.
+ *
+ * One function for both render paths (grouped families and the single unnamed
+ * group the golf/combat concept pages build), so the two cannot drift into
+ * different behaviour — notice 35's one-family rule applied to a disclosure.
+ */
+function partitionScript(
+  items: PropMark[],
+  state: PropsState,
+): { listed: PropMark[]; folded: PropMark[] } {
+  if (state !== "script") return { listed: items, folded: [] };
+  return {
+    listed: items.filter((i) => !hasNoScriptNumber(i)),
+    folded: items.filter(hasNoScriptNumber),
+  };
+}
+
 /** A card mark carries a shape-appropriate visual: a field or ladder with ≥2
  *  named outcomes and no pending state. Everything else renders as a row. */
 function isCardMark(item: PropMark): boolean {
@@ -292,7 +350,22 @@ export default function PropsSection({
             ))}
           </div>
         ) : (
-          <div className="space-y-2">{rows.map(renderRow)}</div>
+          (() => {
+            // The single unnamed group (golf / combat concept pages, whose marks
+            // are keyed by a numeric market id and carry no family). Same fold,
+            // same helper — see partitionScript.
+            const { listed, folded } = partitionScript(rows, activeState);
+            return (
+              <div>
+                {listed.length > 0 && <div className="space-y-2">{listed.map(renderRow)}</div>}
+                <ScriptFold
+                  items={folded}
+                  renderRow={renderRow}
+                  className={listed.length > 0 ? "mt-1.5" : ""}
+                />
+              </div>
+            );
+          })()
         ))}
 
       {cards.length > 0 && (
@@ -329,10 +402,12 @@ function PropFamilyBlock({
   renderRow: (item: PropMark) => ReactNode;
 }) {
   // Only THE DIVERGENCE has a notion of "didn't move". THE SCRIPT and WHAT HIT
-  // list everything, grouped but uncollapsed.
+  // list everything, grouped but uncollapsed — except THE SCRIPT's own hole,
+  // the rows it has no mark for, which fold (D102 / #4530).
   const collapsible = state === "divergence";
-  const moved = collapsible ? group.items.filter((i) => !isUnchanged(i)) : group.items;
-  const unchanged = collapsible ? group.items.filter(isUnchanged) : [];
+  const { listed, folded } = partitionScript(group.items, state);
+  const moved = collapsible ? listed.filter((i) => !isUnchanged(i)) : listed;
+  const unchanged = collapsible ? listed.filter(isUnchanged) : [];
 
   return (
     <div>
@@ -350,7 +425,41 @@ function PropFamilyBlock({
           <div className="mt-1 space-y-2">{unchanged.map(renderRow)}</div>
         </details>
       )}
+      <ScriptFold
+        items={folded}
+        renderRow={renderRow}
+        className={moved.length > 0 || unchanged.length > 0 ? "mt-1.5" : ""}
+      />
     </div>
+  );
+}
+
+/**
+ * The disclosure itself (D102 / #4530): closed it costs one row of height and
+ * names its own count; open it shows every folded prop in the normal row
+ * presentation. Collapsed, never dropped (gotcha #43) — the props stay reachable.
+ *
+ * The markup is the "N unchanged" disclosure's, deliberately: this file already
+ * had one collapse pattern and notice 35 says a second problem of the same shape
+ * does not get a second component.
+ */
+function ScriptFold({
+  items,
+  renderRow,
+  className = "",
+}: {
+  items: PropMark[];
+  renderRow: (item: PropMark) => ReactNode;
+  className?: string;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <details className={className}>
+      <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
+        {NO_OPENING_PRICE_LABEL} ({items.length})
+      </summary>
+      <div className="mt-1 space-y-2">{items.map(renderRow)}</div>
+    </details>
   );
 }
 
@@ -392,8 +501,21 @@ function Pending({ note }: { note: string }) {
 
 function ScriptValue({ item }: { item: PropMark }) {
   if (item.pregame_mark == null) {
-    // #195 seam: the pregame mark isn't captured yet.
-    return <Pending note="pregame mark pending" />;
+    // #195 seam: neither a pinned commence-time mark nor an opening price.
+    //
+    // D102 / #4530: this used to print the chip `pregame mark pending` — grey
+    // monospace on 89 of 298 rows of one NFL event page. "Pregame mark" is our
+    // word for it, not a reader's, and notice 34 bans exactly that sentence on
+    // a reader's screen. The row now reaches the screen only inside the fold,
+    // whose summary states the reason ONCE for the whole group; repeating it per
+    // row is the diagnostic prose the notice is about. The value slot gets this
+    // file's existing mark for absent data — see `pct`, where "no number" and
+    // "0%" are deliberately different statements.
+    return (
+      <span className="font-mono text-sm font-semibold text-text-muted tabular-nums shrink-0">
+        —
+      </span>
+    );
   }
   return (
     <span className="font-mono text-sm font-semibold text-text-primary tabular-nums shrink-0">
