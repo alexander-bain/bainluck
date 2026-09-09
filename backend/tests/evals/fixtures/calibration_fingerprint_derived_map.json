@@ -771,7 +771,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "4cc1d3aa840a061b",
+      "definition_sha16": "a3c0f558a02c500f",
       "impact": "behavior_or_evidence",
       "name": "_build_coverage_census",
       "origin": "app.utils.calibration_coverage_bridge:build_coverage_census",

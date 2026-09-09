@@ -18,7 +18,7 @@ TWO UNITS, NEVER INTERCHANGED
 ``curve_observation``   — one row plotted on the published curve. Futures
                           outcomes are only one of its populations; the
                           sportsbook curves (Odds API moneyline, spreads,
-                          totals, per-bookmaker moneyline) contribute
+                          totals, per-sportsbook moneyline) contribute
                           observations that are not futures outcomes at all.
 
 Because the units differ, ONE subtraction can never bridge them. There are two
@@ -238,7 +238,7 @@ COVERAGE_UNIT_RULE = (
 OBSERVATION_UNIT_RULE = (
     "One row plotted on the published calibration curve. Futures outcomes are "
     "one contributing population; the sportsbook curves (moneyline, spreads, "
-    "totals, per-bookmaker moneyline) contribute observations that are not "
+    "totals, per-sportsbook moneyline) contribute observations that are not "
     "futures outcomes."
 )
 
