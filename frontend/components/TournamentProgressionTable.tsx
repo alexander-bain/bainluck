@@ -292,14 +292,20 @@ export default function TournamentProgressionTable({
 
   // A phone shows one of golf's five stage columns and clips the header of the
   // next one; the container has always scrolled, but nothing said so (#4261).
-  // The fade is drawn only while there is more table to the right.
+  // The fade is drawn only while there is more table to the right, and only
+  // over the HEADER row: measured on production, a fade down the full height
+  // washed out the last 32px of every cell — which is exactly where the bars
+  // differ, so the affordance erased the encoding it shipped beside.
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const headRef = useRef<HTMLTableSectionElement | null>(null);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const [headHeight, setHeadHeight] = useState(0);
 
   const syncScrollAffordance = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
+    setHeadHeight(headRef.current?.getBoundingClientRect().height ?? 0);
   }, []);
 
   useEffect(() => {
@@ -358,7 +364,7 @@ export default function TournamentProgressionTable({
           className="overflow-x-auto -mx-2 px-2"
         >
           <table className="w-full border-collapse text-sm min-w-[500px]">
-            <thead>
+            <thead ref={headRef}>
               <tr className="border-b border-white/10">
                 {/* Rank column */}
                 <th className="sticky left-0 z-10 bg-surface-card py-2 px-1 text-center text-text-secondary font-medium w-8">
@@ -530,12 +536,15 @@ export default function TournamentProgressionTable({
           </table>
         </div>
         {/* -right-2 lands on the scroll container's own clip edge, which that
-            container's -mx-2 puts 8px outside this wrapper. */}
-        {canScrollRight && (
+            container's -mx-2 puts 8px outside this wrapper. The height is the
+            header row's, so the cue sits on the clipped column name and never
+            over a bar. */}
+        {canScrollRight && headHeight > 0 && (
           <div
             aria-hidden="true"
             data-testid="progression-scroll-affordance"
-            className="pointer-events-none absolute inset-y-0 -right-2 w-8 bg-gradient-to-l from-surface-card to-transparent"
+            style={{ height: headHeight }}
+            className="pointer-events-none absolute top-0 -right-2 w-8 bg-gradient-to-l from-surface-card to-transparent"
           />
         )}
       </div>
