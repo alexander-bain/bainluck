@@ -288,7 +288,12 @@ enum EventSourceLabelColumn {
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: font, .paragraphStyle: paragraph], context: nil)
         guard font.lineHeight > 0 else { return 1 }
-        return max(1, Int((Double(bounds.height) / Double(font.lineHeight)).rounded()))
+        // `.up`, not `.rounded()`: the sentence above says a fractional last
+        // line counts as a line and nearest-rounding does not deliver that.
+        // Every measured input so far divides evenly, so the two agree today —
+        // but they disagree in the direction that leaves a row inline and
+        // truncating, which is the defect, so the tie goes to stacking.
+        return max(1, Int((Double(bounds.height) / Double(font.lineHeight)).rounded(.up)))
         #else
         let ink = textWidth(string, typeSize: typeSize, weight: weight)
         return max(1, Int((ink / width).rounded(.up)))

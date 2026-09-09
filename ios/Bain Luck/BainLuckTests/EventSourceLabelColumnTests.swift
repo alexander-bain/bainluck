@@ -696,6 +696,98 @@ final class EventSourceLabelColumnTests: XCTestCase {
                 + "where `betanysportsbook` truncated inline")
     }
 
+    /// THE LINE COUNT MEASURES IN THE FACE IT IS HANDED.
+    ///
+    /// Found by mutation: measuring the books list in the sources list's medium
+    /// face survived every guard above. It over-counts, so it only ever reflows
+    /// MORE — safe-looking, invisible, and the exact direction #4107's own
+    /// docstring warns about, because a row that stacks when it did not need to
+    /// costs the reader a line of height for nothing.
+    ///
+    /// Asserted as the relationship rather than two point counts: the same label
+    /// in the same column needs at least as many lines in the heavier face, and
+    /// somewhere in the sweep it needs strictly more.
+    func testTheLineCountHonoursTheWeightItIsGiven() {
+        var strictlyMore = 0
+        for label in Self.productionBooks + ["betanysportsbook", "Sportsbooks (100)"] {
+            for typeSize in Self.everyTypeSize {
+                for width in [80.0, 110.0, 131.0, 160.0] {
+                    let regular = EventSourceLabelColumn.labelLineCount(
+                        label, width: width, typeSize: typeSize, weight: .regular)
+                    let medium = EventSourceLabelColumn.labelLineCount(
+                        label, width: width, typeSize: typeSize, weight: .medium)
+                    XCTAssertLessThanOrEqual(
+                        regular, medium,
+                        "\(label) at \(typeSize) in \(width)pt needs FEWER lines in the "
+                            + "heavier face — the weight is not reaching the measurement")
+                    if regular < medium { strictlyMore += 1 }
+                }
+            }
+        }
+        XCTAssertGreaterThan(
+            strictlyMore, 0,
+            "the two faces never differ anywhere in this sweep — `weight:` is being "
+                + "ignored and the assertion above is vacuous")
+    }
+
+    /// THE STACKED LABEL LINE FITS INSIDE THE ROW IT IS DRAWN IN.
+    ///
+    /// Also found by mutation: dropping the padding from `labelLineWidth` gives
+    /// the label the row's whole width, which every "does it fit in two lines?"
+    /// guard is happy with — a wider column always fits — while the view draws it
+    /// 32pt past the padding it sits inside. A width guard that only ever checks
+    /// for TOO NARROW cannot see an overflow.
+    func testTheStackedLabelLineStaysInsideTheRowsPadding() {
+        for width in [narrowRow, wideRow, 700] {
+            XCTAssertLessThanOrEqual(
+                EventSourceLabelColumn.labelLineWidth(availableWidth: width),
+                width - EventSourceLabelColumn.horizontalPadding * 2,
+                "the stacked label line overflows the row's own padding at \(width)pt")
+        }
+    }
+
+    /// The stacked row has three children and therefore two gaps.
+    ///
+    /// Pinned to the literal for the reason the bar floor is: the internal
+    /// consistency test compares `Columns.fixedRowCost` against
+    /// `stackedFixedRowCost`, so a change to the count moves both sides at once
+    /// and that test cannot see it (native/079's surviving mutant, again).
+    func testTheStackedRowHasOneGapFewerThanTheInlineRow() {
+        XCTAssertEqual(EventSourceLabelColumn.stackedInterColumnGapCount, 2)
+        XCTAssertEqual(
+            EventSourceLabelColumn.stackedFixedRowCost(numericWidth: 40),
+            EventSourceLabelColumn.fixedRowCost(numericWidth: 40)
+                - EventSourceLabelColumn.interColumnSpacing,
+            accuracy: 0.001,
+            "the label left the line, so exactly one gap should have left with it")
+    }
+
+    /// WHY AN UNMEASURED ROW CANNOT REFLOW, stated so the guard that says so is
+    /// not resting on luck.
+    ///
+    /// `columns(...)` has an `availableWidth > 0` clause on the reflow, and
+    /// mutation shows removing it changes nothing — an EQUIVALENT mutant, which
+    /// is worth writing down rather than leaving as an unexplained survivor. The
+    /// reason: an unmeasured row is clamped by `.infinity`, so its label column
+    /// IS its ink, and a label always fits its own ink on one line. The clause is
+    /// belt and braces over that invariant, and this is the invariant.
+    func testAnUnmeasuredRowsLabelIsAlwaysOneLineWhichIsWhyItCannotReflow() {
+        for list in Self.everyList {
+            for typeSize in Self.everyTypeSize {
+                let columns = EventSourceLabelColumn.columns(
+                    labels: list.labels, values: widestValues, availableWidth: 0,
+                    typeSize: typeSize, weight: list.weight)
+                XCTAssertEqual(columns.layout, .inline)
+                for label in list.labels {
+                    XCTAssertEqual(
+                        linesDrawn(label, columns, typeSize, list.weight), 1,
+                        "\(label) needs more than one line at its own ink width — the "
+                            + "invariant behind the unmeasured-row guard has broken")
+                }
+            }
+        }
+    }
+
     /// And the advertised limit itself, so it cannot be raised somewhere else to
     /// make the sweep pass. Same shape and same reason as the bar floor's pin: a
     /// three-line label in a table of six rows is a wall of text, not a table.
