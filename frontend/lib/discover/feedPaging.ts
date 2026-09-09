@@ -176,6 +176,63 @@ export function shouldLoadNextPage(state: {
 export const PAGINATION_LOOKAHEAD = 5;
 
 /**
+ * Fold a fresh page-one payload into the one the reader is already looking at.
+ *
+ * #4430 — Alex, reading Discover on the web the morning of 2026-09-09: "cards
+ * vanished mid-read twice (crude-oil card, others)". This is the web half of
+ * #4110, which fixed the same class on iOS and never shipped here.
+ *
+ * `app/discover/page.tsx` revalidates page one every 120 s and assigned the
+ * result straight over the top — `setPage1Items(data.items ?? [])` — for the
+ * initial load AND every background tick alike. There was no reconciliation of
+ * any kind: whatever page one the server last returned simply became the
+ * rendered list. Any re-rank between two ticks (a game starting or ending, a
+ * dismissal, a personalization update) moved or removed a card out from under
+ * a reader who had not asked for anything.
+ *
+ * 🔴 THE FIX IS TO HOLD THE READER'S EDITION, NOT TO MERGE-AND-PRUNE. A card
+ * missing from a later payload has almost never gone anywhere — it has been
+ * re-ranked onto page two. Dropping it is exactly the harm reported, so a
+ * background revalidation here NEVER removes and NEVER reorders. It updates in
+ * place (so prices, scores and clocks stay live) and appends what is genuinely
+ * new.
+ *
+ * That is safe rather than merely stubborn because this is not the surface that
+ * decides what a reader sees. Every real reason to drop a card is enforced
+ * downstream, per render, in `page.tsx`'s `processedItems`: local dismissal
+ * (`dismissed`), staleness (`isStale`), and the L2-215 empty-envelope
+ * fail-closed (`feedItemHasRenderableContent`). Holding an id here cannot
+ * resurrect a card any of those three would refuse — it only stops the feed
+ * yanking one the reader is mid-sentence on.
+ *
+ * The cold load is the one case that assigns wholesale: with nothing on screen
+ * there is no edition to protect, and the served page IS the edition.
+ *
+ * Order is the reader's, not the server's: `prev` order is preserved exactly,
+ * which is what keeps a card under the eye that is reading it.
+ */
+export function reconcilePage1<T>(
+  prev: T[],
+  incoming: T[],
+  getId: (item: T) => string,
+): T[] {
+  // Cold load (or a feed that emptied and came back): nothing to protect.
+  if (prev.length === 0) return incoming;
+
+  const incomingById = new Map<string, T>();
+  for (const item of incoming) incomingById.set(getId(item), item);
+
+  // Still-served cards take the fresh copy so live data keeps moving; cards the
+  // server no longer lists on page one keep the copy the reader already has.
+  const held = prev.map((item) => incomingById.get(getId(item)) ?? item);
+
+  const heldIds = new Set(prev.map(getId));
+  const appended = incoming.filter((item) => !heldIds.has(getId(item)));
+
+  return [...held, ...appended];
+}
+
+/**
  * De-duplicate items by stable id, preserving first-seen order. Defense in depth
  * so a paging/coalesce hiccup can never render the same card twice.
  */
