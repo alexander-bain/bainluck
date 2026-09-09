@@ -15,41 +15,57 @@ import {
   leaderOutcome,
   movementArrow,
   resolutionLabel,
-  cleanName,
+  familyRowTitles,
 } from "@/components/searchFamilyDisplay";
 
 function AnswerRow({
   market,
+  title,
   prominent,
   onClick,
 }: {
   market: FuturesMarket;
+  title: { head: string; tail: string };
   prominent?: boolean;
   onClick?: () => void;
 }) {
   const ld = leaderOutcome(market);
   const arrow = ld ? movementArrow(ld.movement) : null;
   const reso = resolutionLabel(market.resolution_date);
+  const nameClass = prominent
+    ? "text-sm font-medium text-text-primary"
+    : "text-sm text-text-secondary";
   return (
     <Link
       href={`/futures/${market.id}`}
       onClick={onClick}
       className="flex items-center gap-2 px-3 py-2 hover:bg-surface-elevated transition-colors"
     >
-      <div className="flex-1 min-w-0">
-        <div
-          className={`truncate ${prominent ? "text-sm font-medium text-text-primary" : "text-sm text-text-secondary"}`}
-        >
-          {cleanName(market.name)}
-        </div>
+      {/* #4136: head truncates, tail does not. When `tail` is empty — the
+          ordinary case, a row that shares no long prefix with a sibling — this
+          is exactly the single truncating div it has always been. */}
+      <div className="flex-1 min-w-0 flex items-center">
+        <div className={`truncate ${nameClass}`}>{title.head}</div>
+        {title.tail && (
+          <div className={`flex-shrink-0 ${nameClass}`}>{title.tail}</div>
+        )}
       </div>
       {ld && ld.probability != null ? (
-        <div className="flex items-center gap-1 flex-shrink-0 text-sm">
-          <span className="text-text-primary font-medium">
-            {ld.name} {Math.round(ld.probability * 100)}%
+        /* #4136: the outcome NAME may be arbitrarily long — production served an
+           outcome called "Istanbul 3: Timofey Skatov vs Yanki Erel Set 2 O/U 9.5"
+           — and this column used to be `flex-shrink-0`, so one row like that blew
+           the name and the date clean off the card. Capped and truncatable, with
+           the percentage itself pinned: the reader may lose the outcome's name,
+           never the answer. */
+        <div className="flex items-center gap-1 min-w-0 max-w-[55%] text-sm">
+          <span className="truncate text-text-primary font-medium">{ld.name}</span>
+          <span className="flex-shrink-0 text-text-primary font-medium">
+            {Math.round(ld.probability * 100)}%
           </span>
           {arrow && (
-            <span className={arrow.up ? "text-accent-live" : "text-accent-danger"}>
+            <span
+              className={`flex-shrink-0 ${arrow.up ? "text-accent-live" : "text-accent-danger"}`}
+            >
               {arrow.up ? "↑" : "↓"}
               {arrow.points}
             </span>
@@ -72,6 +88,11 @@ export default function SearchFamilyCard({
   family: FuturesFamily;
   onRowClick?: (type: "family_headline" | "family_member", marketId: number) => void;
 }) {
+  // #4136: computed over the WHOLE card, headline included. "Do these two rows
+  // look the same?" is a property of the set, so it cannot be decided inside a
+  // row — the same market name is fine alone and unreadable beside its sibling.
+  const rows = [family.headline, ...family.members];
+  const titles = familyRowTitles(rows.map((m) => m.name));
   return (
     <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
       <div className="px-3 pt-2 text-xs font-medium text-accent-brand uppercase tracking-wide">
@@ -79,15 +100,17 @@ export default function SearchFamilyCard({
       </div>
       <AnswerRow
         market={family.headline}
+        title={titles[0]}
         prominent
         onClick={() => onRowClick?.("family_headline", family.headline.id)}
       />
       {family.members.length > 0 && (
         <div className="border-t border-surface-border divide-y divide-surface-border">
-          {family.members.map((m) => (
+          {family.members.map((m, i) => (
             <AnswerRow
               key={m.id}
               market={m}
+              title={titles[i + 1]}
               onClick={() => onRowClick?.("family_member", m.id)}
             />
           ))}
