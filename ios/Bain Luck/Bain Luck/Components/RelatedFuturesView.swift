@@ -631,28 +631,8 @@ struct RelatedFuturesView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                     .lineLimit(1)
-                HStack(spacing: 8) {
-                    ForEach(player.awards.indices, id: \.self) { ai in
-                        let award = player.awards[ai]
-                        HStack(spacing: 3) {
-                            Text(award.label)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                            Capsule()
-                                .fill(color.opacity(0.2))
-                                .frame(width: 30, height: 4)
-                                .overlay(alignment: .leading) {
-                                    Capsule().fill(color)
-                                        .frame(width: max(2, 30 * award.prob))
-                                }
-                            // `award.prob` is the nil-coerced sort/geometry key;
-                            // the TEXT reads the optional it was derived from.
-                            Text(formatProbabilityOrDash(award.future.probability))
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundStyle(color)
-                        }
-                    }
-                }
+
+                PlayerAwardsRow(awards: player.awards, color: color)
             }
             Spacer()
         }
@@ -869,6 +849,108 @@ struct RelatedFuturesView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.secondary.opacity(0.04))
         )
+    }
+}
+
+/// One player's award markets: each one's name, its bar and its number.
+///
+/// A view of its own rather than a `@ViewBuilder` method on `RelatedFuturesView`
+/// so that a test can host it and measure it — the `ChampionshipStageBadges`
+/// precedent (#3574). Nothing here can be asserted from a source scan: the whole
+/// question is what a `Text` does when the row runs out of width.
+///
+/// ## #4109 — the market names rendered one character per line
+///
+/// > Mike Trout's Season Futures render the market names one character per line
+/// > (a label column ~1 char wide) — Alex, 2026-09-08
+///
+/// This was a single `HStack` in which every sibling was fixed width except the
+/// label: a 28 pt headshot outside it, a 30 pt capsule and a monospaced
+/// percentage per award. When the awards overrun the row SwiftUI compresses the
+/// only compressible child, and **a `Text` with no `lineLimit` compresses by
+/// wrapping**. Squeezed to about one character of width, it wraps one character
+/// per line.
+///
+/// **There is no cap upstream**, which the row's own output disguises: it draws
+/// every tier-3 award a player has and most players have two. Mike Trout has
+/// FIVE on `15308048` and Garrett Crochet three, so the shredded case is
+/// reachable on today's data, not a hypothetical.
+///
+/// 🔴 **Not `fixedSize(horizontal: true, vertical: false)`.** That is the exact
+/// modifier that caused #3978's both-edges page bleed: in a row that genuinely
+/// cannot fit, refusing to compress makes one child drag the content column past
+/// the screen and centres every sibling in the overflow. `ViewThatFits` asks the
+/// same question safely — it measures the one-line arm, moves on if it does not
+/// fit, and its last arm is width-flexible, so nothing can overrun.
+struct PlayerAwardsRow: View {
+    let awards: [(label: String, prob: Double, future: RelatedFuture)]
+    var color: Color = .blue
+
+    /// The row's 9 pt type, made to follow the reader.
+    ///
+    /// `.font(.system(size: 9))` is a POINT size: at `accessibility-large` the
+    /// player's name above scales to roughly triple while the market name stays
+    /// at 9 pt, so the row ends as a huge name over a line of grey nobody can
+    /// read. That is not a wrapping defect and no `lineLimit` addresses it.
+    ///
+    /// `@ScaledMetric` rather than a text style, deliberately: `.caption2` is
+    /// 11 pt at `.large`, so swapping to it would enlarge this label on every
+    /// screen at the default size — a change nobody asked for, to fix something
+    /// that does not happen there. Seeded at 9, this is **exactly 9 at `.large`**
+    /// and grows only above it. Same mechanism as `DiscoverFuturesCard`'s hero
+    /// numeral and `HeatMapCardView`'s labels.
+    @ScaledMetric(relativeTo: .caption2) private var typeSize: CGFloat = 9
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                ForEach(awards.indices, id: \.self) { chip(awards[$0]) }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(awards.indices, id: \.self) { chip(awards[$0]) }
+            }
+        }
+    }
+
+    /// Identical in both arms, so the two arrangements cannot drift into
+    /// disagreeing about what an award is.
+    private func chip(
+        _ award: (label: String, prob: Double, future: RelatedFuture)
+    ) -> some View {
+        HStack(spacing: 3) {
+            Text(award.label)
+                .font(.system(size: typeSize))
+                .foregroundStyle(.secondary)
+                // 🔴 DELIBERATELY NO `lineLimit(1)`, AND MUTATION IS WHY.
+                //
+                // It looked like the obvious companion to the reflow, and removing
+                // it killed no test — so I measured what it actually does. At
+                // `.accessibility5` a single "AL Comeback Player of the Year" wants
+                // 534.7 pt; given the row's 259 it came out 249 × 40 — ONE line, so
+                // the market name was being cut off. This issue's acceptance is
+                // that every market name renders *readably* at accessibility sizes,
+                // and a truncated name is not the name.
+                //
+                // Wrapping is safe here in a way it was not before, and that is the
+                // whole point of the arm below: in the stacked arrangement the label
+                // has the entire row instead of competing with four other awards, so
+                // it wraps at word boundaries rather than by the character. Nor does
+                // this change which arm is chosen — a `Text`'s IDEAL width is its
+                // unwrapped width either way, and the ideal is what `ViewThatFits`
+                // measures.
+            Capsule()
+                .fill(color.opacity(0.2))
+                .frame(width: 30, height: 4)
+                .overlay(alignment: .leading) {
+                    Capsule().fill(color)
+                        .frame(width: max(2, 30 * award.prob))
+                }
+            // `award.prob` is the nil-coerced sort/geometry key;
+            // the TEXT reads the optional it was derived from.
+            Text(formatProbabilityOrDash(award.future.probability))
+                .font(.system(size: typeSize, weight: .bold, design: .monospaced))
+                .foregroundStyle(color)
+        }
     }
 }
 
