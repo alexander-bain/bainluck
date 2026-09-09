@@ -626,20 +626,24 @@ def test_tennis_is_blind_to_the_ingest_parser_on_both_of_its_real_payloads():
         )
 
 
-def test_nfl_is_refused_on_its_clock_now_that_the_discovery_refusal_is_gone():
-    """CERT-1875's refusal is retired by its own repair (#3193).
+def test_nfl_is_permitted_short_of_seven_and_never_on_the_retired_discovery_cause():
+    """Two refusals died here, one per ruling, and each must stay dead.
 
-    It used to read: *seven MEETS days would return `permitted=True` for a sport
-    whose event-creating path has never created an event*, and it refused by
-    name with the beat's failure quoted. That refusal was true for as long as
-    `get_fixtures("nfl")` parsed 0 of 17. The parser now reads all 17, so the
-    sentence would be a false statement about a live task, and a refusal nobody
-    can act on is worse than no refusal.
+    CERT-1875's refusal was retired by its own repair (#3193). It used to read:
+    *seven MEETS days would return `permitted=True` for a sport whose
+    event-creating path has never created an event*, and it refused by name with
+    the beat's failure quoted. That was true for as long as `get_fixtures("nfl")`
+    parsed 0 of 17. The parser now reads all 17, so the sentence would be a false
+    statement about a live task, and a refusal nobody can act on is worse than no
+    refusal. **That half of this test is unchanged**: whatever the answer, it may
+    never again be given for the discovery reason.
 
-    What must NOT change is the answer for NFL **today**: still no. It is now
-    refused on the clock — 1 of 7 — which is the honest reason, where "the beat
-    creates nothing" had stopped being one. A refusal that names the wrong cause
-    sends the next person to fix something that already works.
+    The clock was the honest refusal that replaced it, and **D104 = A4 retired
+    that one too** (Alex, 2026-09-09, #4417): *"We don't need 7 days of proof."*
+    Football is in `FLIP_RULED_WITHOUT_STREAK`, so a short streak now permits.
+    The assertion flips from `not permitted` to `permitted` deliberately — this
+    is the ruling landing, and rewriting the test to match it is the correct
+    move, not weakening it.
     """
     assert "americanfootball_nfl" in SHADOW_STAMPERS
     assert GOVERNING_IDENTITY_NUMBERS.get("americanfootball_nfl")
@@ -647,13 +651,13 @@ def test_nfl_is_refused_on_its_clock_now_that_the_discovery_refusal_is_gone():
     short = _run_of(REQUIRED_STREAK_DAYS - 1, GATE_MEETS)
     permitted, why = flip_permitted("americanfootball_nfl", short)
 
-    assert not permitted
+    assert permitted is True, why
     assert "no working StatPal discovery pass" not in why, (
         "the discovery refusal outlived the defect it described — #3193 taught "
         "_extract_match_items the stage nesting and the beat now creates"
     )
-    assert str(REQUIRED_STREAK_DAYS) in why, (
-        f"a refusal on the clock has to say how many days: {why!r}"
+    assert "D104" in why, (
+        f"a permission granted without seven days has to say why: {why!r}"
     )
 
 

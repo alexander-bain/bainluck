@@ -101,9 +101,25 @@ def _open_gate() -> tuple[bool, str]:
     return gate
 
 
+#: A sport the real gate still refuses, for the `_shut_gate` control.
+#:
+#: Was `NFL` with an empty ledger until D104 = A4 (2026-09-09, #4417). Football is
+#: now in `FLIP_RULED_WITHOUT_STREAK` and an empty ledger permits it, so that call
+#: stopped producing a shut gate and took five tests with it. NBA is refused on
+#: its clock and is not ruled — the same *kind* of refusal NFL used to give.
+#:
+#: Still driven through the real `flip_permitted` rather than hand-writing
+#: `(False, "...")`: a control that cannot notice the gate changing under it is
+#: not a control, which is exactly how this helper caught D104 in the first place.
+STILL_GATED = "basketball_nba"
+
+
 def _shut_gate() -> tuple[bool, str]:
-    gate = flip_permitted(NFL, [])
-    assert gate[0] is False
+    gate = flip_permitted(STILL_GATED, [])
+    assert gate[0] is False, (
+        "the control is broken: every sport now opens the real gate, so the "
+        f"paired refusal assertions below are vacuous. {gate[1]}"
+    )
     return gate
 
 
@@ -237,19 +253,43 @@ def test_the_gate_is_asked_before_the_standby_is_read():
 # ── Dark by construction, and provably not inert ────────────────────────────
 
 
-def test_no_stamped_sport_can_fail_over_today():
-    """The safety claim: the mechanism ships incapable of acting.
+def test_only_the_ruled_sports_can_fail_over_today():
+    """Was "the mechanism ships incapable of acting". D104 = A4 ended that.
 
-    Over every sport on the row an operator reads, using each sport's own real
-    gate against an empty ledger.
+    The safety claim this file shipped with — *no stamped sport can fail over* —
+    was true until Alex ruled on 2026-09-09 (#4417) that the top-tier leagues
+    need no certification days. It is now false by design for football, and
+    asserting it would be asserting the ship did not happen.
+
+    What replaces it is the sharper claim, and the one worth guarding: the set of
+    sports that can act is **exactly** `FLIP_RULED_WITHOUT_STREAK`, checked in
+    both directions over every sport on the row an operator reads. A ruling that
+    quietly opened a sixth sport, or that failed to open the one it named, both
+    fail here.
     """
+    from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK
+
+    acted = set()
     for sport_key in SHADOW_STAMPERS:
         gate = flip_permitted(sport_key, [])
         decision = would_fail_over_now(sport_key, gate)
-        assert decision.failed_over is False, (
-            f"{sport_key} would fail over today: {decision.why}"
-        )
-        assert decision.code == NOT_GATED
+        if decision.failed_over:
+            acted.add(sport_key)
+        else:
+            assert decision.code == NOT_GATED, (
+                f"{sport_key} refused for a reason other than the gate: "
+                f"{decision.code} / {decision.why}"
+            )
+
+    assert acted == set(FLIP_RULED_WITHOUT_STREAK) & set(SHADOW_STAMPERS), (
+        "the set of sports that can fail over on an empty ledger is not the set "
+        f"Alex ruled: acted={sorted(acted)}, "
+        f"ruled={sorted(FLIP_RULED_WITHOUT_STREAK)}"
+    )
+    assert acted, (
+        "no sport acted at all — D104's ship is inert, which is the failure "
+        "this test was rewritten to catch"
+    )
 
 
 def test_and_it_is_not_inert_the_same_sport_fires_on_a_genuine_seven():
@@ -609,23 +649,29 @@ async def test_an_unreadable_ledger_refuses_rather_than_permits(monkeypatch):
 async def test_today_nothing_is_dispatched_and_a_receipt_is_still_written(
     monkeypatch, dispatches
 ):
-    """Dark by construction, at the actor rather than at the function.
+    """A GATED sport records its outage and takes no action, at the actor.
 
-    The empty ledger is the real production state, so this is what the next
-    ESPN outage does today: records it, and takes no action.
+    Ran on football until D104 = A4 (2026-09-09, #4417) made football the one
+    sport this is no longer true of. The behaviour is unchanged for every sport
+    Alex has not yet ruled, and that is still worth pinning — most of the row is
+    in this state — so the specimen moves to `STILL_GATED` rather than the test
+    being deleted. Football's side of the same pass is the test below it.
+
+    The empty ledger is the real production state for a gated sport, so this is
+    what the next ESPN outage does to one today: records it, and acts on nothing.
     """
     from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
 
     _no_ledger(monkeypatch, days=[], why="no days")
     stats = {"errors": []}
     await _act_on_failovers(
-        await _decide_failovers({}, {"americanfootball_nfl"}, stats), stats
+        await _decide_failovers({}, {STILL_GATED}, stats), stats
     )
 
     assert dispatches.calls == []
     assert stats.get("failover_serving", 0) == 0
     assert stats["failover"][0]["code"] == NOT_GATED
-    assert stats["failover"][0]["sport_key"] == NFL
+    assert stats["failover"][0]["sport_key"] == STILL_GATED
 
 
 @pytest.mark.asyncio
@@ -2101,17 +2147,30 @@ async def test_no_sport_served_means_the_live_writer_is_never_called(
     """The other direction, and the one a coalesced call is easiest to break in.
 
     "Call it once per pass" must mean once per pass **that served something**.
-    A pass where the gate refuses everything — today's production state — must
-    not touch StatPal at all, and an unconditional post-loop call would look
-    correct in every test above.
+    A pass where the gate refuses every sport in it must not touch StatPal at
+    all, and an unconditional post-loop call would look correct in every test
+    above.
+
+    Football is excluded from the set here since D104 = A4 (2026-09-09, #4417):
+    it is ruled and would serve, which would make this pass a served one and the
+    test would be asserting the opposite of its own name. `THREE_DARK` minus the
+    ruled sports is derived rather than written out, so the day NBA or NHL is
+    ruled this shrinks by itself instead of silently becoming a one-sport pass.
     """
+    from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK
     from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    gated_only = THREE_DARK - set(FLIP_RULED_WITHOUT_STREAK)
+    assert gated_only, (
+        "every sport in THREE_DARK is now ruled, so there is no unserved pass "
+        "left to test — rewrite this against a sport that is still gated"
+    )
 
     calls = _three_dark_sports_wiring(monkeypatch)
     _no_ledger(monkeypatch, days=[], why="no days")  # shut the gate again
 
     stats = {"errors": []}
-    await _act_on_failovers(await _decide_failovers({}, THREE_DARK, stats), stats)
+    await _act_on_failovers(await _decide_failovers({}, gated_only, stats), stats)
 
     assert calls == [], f"a pass that served nothing still wrote: {calls}"
     assert stats.get("failover_serving", 0) == 0

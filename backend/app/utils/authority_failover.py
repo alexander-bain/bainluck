@@ -78,10 +78,14 @@ trusted enough to serve a sport during an outage is trusted enough to serve it,
 and an outage is the *worst* moment to be running on a provider that had not
 cleared the bar.
 
-`flip_permitted` refuses every sport today, so every path through :func:`decide`
-that could serve anything is unreachable in production right now. That is the
-point of building it before 2026-09-11 rather than after: the mechanism can be
-written, reviewed and proven in every state while it is incapable of acting.
+**This mechanism is live as of D104 = A4 (Alex, 2026-09-09).** It was built and
+proven in every state while `flip_permitted` still refused every sport; that
+window has closed. `americanfootball_nfl` is now permitted without a
+certification streak, so the serving paths through :func:`decide` are reachable
+in production for football and a dark-ESPN pass will call StatPal. The remaining
+sports are one release each under #2867 — read
+`config.authority_by_sport.FLIP_RULED_WITHOUT_STREAK` for the current set rather
+than trusting this paragraph, which is prose and rots.
 
 WHAT THIS IS WORTH, GIVEN THAT THE COVERAGE ALREADY EXISTS
 ══════════════════════════════════════════════════════════
@@ -425,7 +429,14 @@ STANDING_STATPAL = "STANDING-STATPAL"
 ESPN_ANSWERED = "ESPN-ANSWERED"
 
 #: ESPN is silent and this sport could not be failed over anyway, because it has
-#: not cleared D50's measured half. **Every sport, today.**
+#: not cleared D50's measured half.
+#:
+#: **No longer every sport (D104 = A4, 2026-09-09).** Football is exempt from the
+#: certification streak and reaches the serving paths below; what still lands
+#: here is a sport refused for a STRUCTURAL reason — no shadow stamper, no
+#: working discovery pass, no governing identity number (`baseball_mlb` today),
+#: a measurement population rather than a sport key — or one that simply has not
+#: been ruled yet (NBA, NHL). Read the `why`: it carries which.
 NOT_GATED = "NO-FAILOVER-NOT-GATED"
 
 #: Both providers answered and neither has a game. A quiet slate, not an outage
@@ -570,9 +581,14 @@ def decide(
     THE ORDER OF THE QUESTIONS IS LOAD-BEARING, and one of them is out of the
     order a reader expects. The gate is asked **before** the standby's reading,
     so a caller can leave `statpal` unread until it knows the answer could
-    matter. Today that means no StatPal call is ever made on ESPN's dark path,
-    because the gate refuses every sport — the cheapest refusal first, and the
-    reason this ships with no new per-pass network cost at all.
+    matter — the cheapest refusal first.
+
+    Until D104 that meant no StatPal call was ever made on ESPN's dark path,
+    because the gate refused every sport. **It no longer does.** A dark pass over
+    a gate-permitted sport now costs one StatPal schedule read and one livescore
+    read, which is the price of the ship and is paid only on a pass where ESPN
+    has already gone silent for that sport. Every other sport still refuses
+    before the network, so a quiet slate costs nothing new.
 
     Total: every combination of inputs has an answer and none of them raise.
     """

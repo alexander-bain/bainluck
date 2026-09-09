@@ -578,7 +578,18 @@ FLIP_GATE_SUMMARY = (
     f"`{GATE_NO_SCORE}` (nothing to divide by), `{GATE_TOO_FEW}` (a denominator "
     f"under {MINIMUM_SCORED_DENOMINATOR}, which is a floor and not #3071's "
     f"unruled answer) and `{GATE_PENDING}` (the sport has not been told which "
-    "number decides) all carry it unchanged."
+    "number decides) all carry it unchanged. "
+    # D104 = A4 (Alex, 2026-09-09). Appended rather than rewritten: the seven-day
+    # rule is still exactly what this endpoint measures and publishes for every
+    # sport, and it still GATES every sport that has not been ruled. What changed
+    # is that for a ruled sport it has stopped being a gate and become a monitor,
+    # and an operator reading `MEETS 5/7` on football needs to know that number
+    # is no longer what decides.
+    "D104 (2026-09-09): the top-tier leagues no longer WAIT on those seven days "
+    "— for a sport in `authority_by_sport.FLIP_RULED_WITHOUT_STREAK` (football "
+    "today) the streak is published as a MONITOR and gates nothing, and a game "
+    "StatPal lists that we lack is our fetch bug to fix (#2867) rather than a "
+    "gap in the venue. Every other sport is gated exactly as above."
 )
 
 
