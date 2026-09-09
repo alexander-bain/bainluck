@@ -2152,9 +2152,15 @@ private struct SeriesMarketsSection: View {
 
                     HStack {
                         Spacer()
-                        Text(market.source ?? "kalshi")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
+                        // #4351: was `market.source ?? "kalshi"` — a raw key, and
+                        // on the nil branch an outright misattribution: a market
+                        // whose source the payload did not state was labelled
+                        // Kalshi by name. Named or not drawn.
+                        if let mark = SourceLabels.label(for: market.source) {
+                            Text(mark)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
                 .padding(8)

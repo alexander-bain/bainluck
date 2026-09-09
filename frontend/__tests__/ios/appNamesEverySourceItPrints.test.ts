@@ -306,4 +306,152 @@ d("#4135 — the app names a source or draws none", () => {
       expect(stripComments(resolver)).toMatch(/keys\.filter\(isSportsbook\)\.count/);
     });
   });
+
+  describe("#4351 — the ban covers every spelling, not the one the tree happened to use", () => {
+    /**
+     * ═══ THIS SUITE WAS GREEN WITH `ODDS_API` ON THE FIRST DISCOVER CARD ═══
+     *
+     * `RAW_KEY_FALLBACK` above bans `source.capitalized` and nothing else, so five
+     * sites spelling the same defect `.uppercased()` or `?? "literal"` were never
+     * candidates. The scan asserted the tree was clean, and the app's default
+     * screen read `ODDS_API` — a database value with an underscore in it — on the
+     * MLB World Series card. Measured on `GET /api/feed?limit=60`, 2026-09-09:
+     * 48 of 60 cards drew one of these marks, two of them `ODDS_API`.
+     *
+     * The wiring half missed them for a second, independent reason: its `sites`
+     * list was DISCOVERED by grepping for the old `switch source`, so a surface
+     * that never had a switch could never appear in it. An allowlist built from
+     * yesterday's defect does not contain tomorrow's surface.
+     *
+     * This is #4337's shape with a different blind spot — there a strip that ate
+     * string interpolation, here an enumerated spelling. The lesson both times:
+     * a negative scan is only as wide as the ONE pattern somebody thought of, so
+     * it is pinned here beside a POSITIVE assertion that each site reaches the
+     * resolver, which does not depend on guessing the next spelling.
+     */
+
+    /** A source key shouted onto the screen: `sources.map { $0.uppercased() }`. */
+    const RAW_KEY_UPPERCASED = /\bsources?\b[^\n]*\.uppercased\(\)/;
+
+    /** A source key with a fabricated stand-in: `market.source ?? "kalshi"`. */
+    const INVENTED_SOURCE = /\bsource\s*\?\?\s*"/;
+
+    /**
+     * The two survivors, each a decision with its reason, in the KNOWN_SURVIVOR
+     * idiom above — an EXACT set, so deleting one without saying so is red.
+     *
+     * `DiscoverLabelingView` is the internal labeling surface. Its whole row is
+     * machine vocabulary on purpose (`stratum`, `archetype`, `qualityClass`,
+     * `score`), read by whoever is grading the feed, and no reader reaches it.
+     * Notice 34 is about a READER's screen; naming these keys would make the tool
+     * worse at its only job.
+     *
+     * `MyStuffView`'s `"unknown"` is not drawn at all: `srcName` is a grouping key
+     * for the dedup below it and a lookup into `sourceColors`. The badge that view
+     * actually PRINTS already asks the resolver. A scan that flagged it would be
+     * teaching the next person to route a dictionary key through a label map.
+     */
+    const INVENTED_SOURCE_SURVIVORS = [
+      'Views/DiscoverLabelingView.swift — pill(item.source ?? "unknown")',
+      'Views/MyStuffView.swift — let srcName = item.source ?? "unknown"',
+    ];
+
+    function offenders(pattern: RegExp): string[] {
+      return swiftFiles(IOS_ROOT)
+        .flatMap((path) => {
+          const rel = path.slice(IOS_ROOT.length + 1);
+          return stripComments(readFileSync(path, "utf8"))
+            .split("\n")
+            .filter((line) => pattern.test(line))
+            .map((line) => `${rel} — ${line.trim()}`);
+        })
+        .sort();
+    }
+
+    it("no view uppercases a source key onto the screen", () => {
+      expect(offenders(RAW_KEY_UPPERCASED)).toEqual([]);
+    });
+
+    it("no view invents a source name where the payload gave none", () => {
+      expect(offenders(INVENTED_SOURCE)).toEqual(INVENTED_SOURCE_SURVIVORS);
+    });
+
+    it("both new patterns would have fired before this fix, and do not fire on its explanation", () => {
+      // Verbatim from origin/master 10cbbcfd. A negative scan that matches
+      // nothing is green for the same reason a correct tree is green, so the
+      // only proof it can offer is the deleted code.
+      const deleted: Array<[RegExp, string]> = [
+        [RAW_KEY_UPPERCASED, `                        Text(sources.map { $0.uppercased() }.joined(separator: " + "))`],
+        [RAW_KEY_UPPERCASED, `                    Text((data.source ?? "market").uppercased())`],
+        [INVENTED_SOURCE, `                    Text((data.source ?? "market").uppercased())`],
+        [INVENTED_SOURCE, `                        Text(market.source ?? "kalshi")`],
+      ];
+      for (const [pattern, line] of deleted) {
+        expect([line, pattern.test(line)]).toEqual([line, true]);
+      }
+
+      // …and the fix's own prose quotes two of those lines, which is exactly how
+      // a tree scan reds on the comment explaining it (#4135 hit this; the strip
+      // is what stands between us and a suppression nobody can argue with).
+      const discover = readFileSync(join(IOS_ROOT, "Views/DiscoverView.swift"), "utf8");
+      expect(INVENTED_SOURCE.test(discover)).toBe(true);
+      expect(INVENTED_SOURCE.test(stripComments(discover))).toBe(false);
+    });
+
+    /**
+     * `Text(src.uppercased())` — the fourth deleted line — contains no token a
+     * line scan can key on. `src` was bound to `data.source` on the line ABOVE,
+     * so neither new pattern sees it and neither did the old one.
+     *
+     * That is a real hole in every scan in this file, and the answer is not a
+     * cleverer regex. Each site is pinned POSITIVELY instead: its declaration
+     * reaches the resolver AND does not re-case what comes back. A mutant has to
+     * defeat both, and re-aliasing through a local variable defeats neither.
+     */
+    function declarationBody(relPath: string, declaration: string): string {
+      const source = stripComments(readFileSync(join(IOS_ROOT, relPath), "utf8"));
+      const start = source.indexOf(declaration);
+      expect([relPath, declaration, start > -1]).toEqual([relPath, declaration, true]);
+      const after = source.indexOf("\nprivate struct ", start + declaration.length);
+      const body = source.slice(start, after > -1 ? after : source.length);
+      // A slice that collapsed to the declaration would pass every assertion below.
+      expect(body.length).toBeGreaterThan(declaration.length + 200);
+      return body;
+    }
+
+    it.each([
+      ["Components/DiscoverFuturesCard.swift", "private var sourceMark: String? {"],
+      ["Views/DiscoverView.swift", "private struct NativeIPOComparisonRow: View {"],
+      ["Views/DiscoverView.swift", "private struct NativeThresholdComparisonRow: View {"],
+    ])("%s %s names its source through the resolver and does not re-case it", (relPath, declaration) => {
+      const body = declarationBody(relPath, declaration);
+      expect(body).toContain("SourceLabels.label(for:");
+      expect(body).not.toContain(".uppercased()");
+      expect(body).not.toContain(".capitalized");
+    });
+
+    it("the two Discover files and RelatedFuturesView reach the resolver at all", () => {
+      // The coarse net under the slices: a rewrite that renames the declarations
+      // above would skip every `it.each` case via a red slice, but this one still
+      // has to hold.
+      for (const rel of [
+        "Components/DiscoverFuturesCard.swift",
+        "Views/DiscoverView.swift",
+        "Components/RelatedFuturesView.swift",
+      ]) {
+        const source = stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
+        expect([rel, source.includes("SourceLabels.label(for:")]).toEqual([rel, true]);
+      }
+    });
+
+    it("the resolver still refuses to name a key it does not know", () => {
+      // The whole fix rests on `label(for:)` returning nil rather than the key —
+      // every call site above draws nothing on nil. A `?? source` added to the
+      // resolver would repair all five screens' silence into five raw keys again,
+      // and no assertion above would move.
+      const resolver = stripComments(readFileSync(RESOLVER, "utf8"));
+      expect(resolver).toMatch(/return marketSourceNames\[source\]\s*$/m);
+      expect(resolver).not.toMatch(/marketSourceNames\[source\]\s*\?\?/);
+    });
+  });
 });
