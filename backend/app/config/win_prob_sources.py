@@ -86,6 +86,22 @@ WIN_PROB_SOURCES = {
         "attribution_url": "https://statsapi.mlb.com",
         "attribution_name": "MLB Stats API",
     },
+    # The graded outcome, written by `espn_sync` once a game is final. It is a
+    # SOURCE (weight 5.0, and the only one exempt from decay and the share cap —
+    # see `_UNCAPPED_SOURCES`), so it belongs in this registry: without an entry
+    # here the serialisers printed its own key, `final_result`, as its name on
+    # 311 events.
+    "final_result": {
+        "display_name": "Final Result",
+        "source_type": "result",
+        "sports": ["*"],
+        "color": "#0f172a",
+        "dash_pattern": None,
+        "description": "The graded outcome of a completed game, taken from the final score. Not a forecast — 1.0 if the home team won, 0.0 if it lost.",
+        "methodology": "Read from the final score once the game is marked complete. It cannot go stale and it is never capped, because live-market noise must not out-vote the actual result on a settled game.",
+        "attribution_url": "https://bainluck.com",
+        "attribution_name": "Bain Luck",
+    },
     "bainluck_aggregate": {
         "display_name": "Bain Luck",
         "source_type": "aggregate",
@@ -98,6 +114,40 @@ WIN_PROB_SOURCES = {
         "attribution_name": "Bain Luck",
     },
 }
+
+
+def is_displayable_source(source_key: object) -> bool:
+    """Is this ``win_probability_sources`` key a SOURCE, or is it metadata? (#4120)
+
+    ``Event.win_probability_sources`` is a JSONB grab-bag. Alongside the real
+    sources it carries writer metadata that shares the column purely because the
+    column was convenient: ``betting_book_count`` (an integer, on 1,348 events),
+    ``statpal_injuries`` (an ARRAY of injury dicts, on 89) and
+    ``statpal_injuries_updated`` (an ISO string). The aggregator has always known
+    the difference — ``_tier1_readings`` skips anything outside ``SOURCE_WEIGHTS``,
+    and `test_betting_consensus_book_count_1841` pins the count as metadata — but
+    the two serialisers in `routes/events.py` did not, so a reader was shown:
+
+        statpal_injuries      : [{"team": "Getafe", "player": "A. Abqar", ...}]
+        betting_book_count    : 5.0
+        statpal_injuries_updated : "2026-09-07T18:20:01.048986+00:00"
+
+    beside Kalshi and the sportsbook consensus, each labelled with its own
+    snake_case key. Measured on production event 15296356 on 2026-09-08: three of
+    the five "sources" on the page were not sources.
+
+    THIS REGISTRY IS THE ALLOWLIST, not a hand-written denylist of the keys we
+    happen to know about today. A denylist hands the claim to the first new
+    metadata key anyone adds; membership here is a positive statement that
+    something is a source a reader may be shown, and it carries the D91 name so
+    the wire never needs a client-side mapping to be readable.
+
+    `test_source_registry_is_the_display_allowlist_4120` asserts
+    ``SOURCE_WEIGHTS`` is a SUBSET of this registry, so a new weighted source
+    cannot be silently filtered out of the page by the very guard that keeps the
+    metadata off it. That subset check is what makes an allowlist safe here.
+    """
+    return isinstance(source_key, str) and source_key in WIN_PROB_SOURCES
 
 
 def get_source_meta(source_key: str) -> dict | None:

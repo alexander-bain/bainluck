@@ -15475,9 +15475,20 @@ def _format_event(
             # `statpal_injuries` live in this same JSONB as ARRAYS); stamping
             # `{"value": ..., "updated_at": ...}` would have made it fire on
             # essentially every event. Normalising fixes both.
+            #
+            # #4120: numeric is not the same test as "is a source". The filter
+            # above was written to keep the ARRAYS out, and it does — but
+            # `betting_book_count` is an integer, so it sailed through and was
+            # served here as `betting_book_count: 5.0`, inside a map iOS types as
+            # `[String: Double]` of PROBABILITIES. A count of sportsbooks
+            # decoding cleanly as a probability is worse than a decode failure,
+            # because nothing complains. Ask the registry instead.
+            from app.config.win_prob_sources import is_displayable_source
             from app.utils.aggregation import parse_source_entry as _parse_src
             _norm_sources = {}
             for _sk, _sv in _wps.items():
+                if not is_displayable_source(_sk):
+                    continue
                 _num, _ = _parse_src(_sv)
                 if _num is not None:
                     _norm_sources[_sk] = _num
@@ -15490,11 +15501,27 @@ def _format_event(
         # Also expose win_probability_sources at top level with source metadata
         if _wps:
             try:
-                from app.config.win_prob_sources import WIN_PROB_SOURCES
+                from app.config.win_prob_sources import (
+                    WIN_PROB_SOURCES,
+                    is_displayable_source,
+                )
                 from app.utils.aggregation import parse_source_entry
                 wp_sources = {}
                 for src_key, src_value in _wps.items():
-                    if src_key.startswith("_"):
+                    # #4120. The only filter here used to be a leading
+                    # underscore, so every metadata key in the column was served
+                    # as a source, labelled with its own snake_case key because
+                    # `display_name` falls back to `src_key`. Worse, when
+                    # `parse_source_entry` returns None the `value` below falls
+                    # back to the RAW entry — so `statpal_injuries` shipped the
+                    # entire injuries array as a source's probability.
+                    #
+                    # The registry is the allowlist and `final_result` was added
+                    # to it in the same commit, because it is a real source
+                    # (weight 5.0) that had no display entry and was therefore
+                    # printing its own key on 311 events. See
+                    # `is_displayable_source` for the measured specimen.
+                    if not is_displayable_source(src_key):
                         continue
                     # #1829: `value` stays a bare NUMBER on the wire. The column
                     # now holds `{"value": x, "updated_at": ...}`, and assigning
