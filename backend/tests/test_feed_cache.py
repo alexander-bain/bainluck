@@ -2,9 +2,12 @@ import pytest
 
 from app.tasks import redis_state
 from app.utils.feed_cache import (
+    FEED_EDITION_FIELD,
     FEED_RESPONSE_STALE_TTL_SECONDS,
     build_feed_cache_metadata,
+    feed_edition_token,
     invalidate_feed_response_cache,
+    render_feed_page_from_base,
 )
 
 
@@ -55,3 +58,235 @@ async def test_invalidate_feed_response_cache_deletes_fresh_and_stale_keys(
     assert result == {"status": "ok", "deleted": 2, "reason": "test"}
     assert fake.deleted == ["feed_cache:fresh", "feed_cache:fresh:stale"]
     assert fake.closed is True
+
+
+# =============================================================================
+# D1 clause (a) / #4110 — the feed's edition token.
+#
+# THE READER'S COMPLAINT THIS ANSWERS. Alex, on his phone at 3:30pm PT on
+# 2026-09-08: the Discover feed re-rendered several times while loading and a
+# card he was reading disappeared. "Unsettling."
+#
+# native/072 measured the client half and found no race — it is what a normal
+# successful load does. ``DiscoverViewModel`` assigns the whole ``items`` array
+# in three places (boot seed from last-good cache, fresh fetch, pagination
+# merge) and re-derives order via ``FeedInterleave.byCategory`` each time. The
+# cached body and the fresh body are different inputs, so they interleave to
+# different orders: the boot paint is not a prefix of the fresh paint.
+#
+# The client fix is to reconcile instead of reassign (#4110, native's). It needs
+# one thing from the server that the server did not previously say: IS THIS THE
+# SAME LIST I ALREADY PAINTED? A wholesale reorder becomes legal only when the
+# server says the ordering changed.
+#
+# WHAT IS GUARDED, IN ONE LINE: ``feed_edition_token`` changes when, and ONLY
+# when, the ordered membership of the feed changes. Both halves of that
+# biconditional are load-bearing and they fail in opposite directions, so both
+# are tested:
+#
+#   * changed when it should not (a per-request nonce, a build timestamp) => the
+#     client is told "new edition" on every 2-minute live-price poll and
+#     reshuffles under the reader's thumb — the exact bug, now with a token
+#     blessing it. This is the direction ``_page_base_built_at`` fails in, which
+#     is why it could not be reused.
+#   * stayed put when it should not => the client holds an order the server has
+#     abandoned, pinning stale cards on page one.
+#
+# The third clause is offset stability: pagination merges page 2 into the list
+# page 1 painted, so page 2 must prove it belongs to page 1's edition.
+#
+# These live in this file rather than their own because a NEW test file
+# repartitions the four CI shards, which reds whichever file then lands beside
+# the process-global rate-limit ceiling leak (#4090, not this lane's).
+# =============================================================================
+
+
+def edition_card(kind: str, ident, *, probability=0.5, score=70, reason="") -> dict:
+    """A feed item in the shape ``GET /api/feed`` serves.
+
+    ``probability``/``score``/``reason`` are the volatile fields — the ones that
+    move on the 2-minute live-price poll and on every rescore. They are
+    parameters precisely so a test can move them and assert the token does not.
+    """
+    return {
+        "type": kind,
+        "score": score,
+        "reason": reason,
+        "headline": None,
+        "data": {"id": ident, "probability": probability},
+    }
+
+
+def an_edition_feed(n: int = 6) -> list[dict]:
+    """A mixed list of the three types Discover actually interleaves."""
+    kinds = ("event", "futures", "bundle")
+    return [edition_card(kinds[i % 3], 1000 + i) for i in range(n)]
+
+
+# --- the token is a function of the ordered membership, and nothing else -------
+
+
+def test_the_same_list_yields_the_same_token_in_any_process():
+    """Reproducibility. Two dynos building the same list must agree, or a cache
+    eviction would present to the client as a brand-new edition and reshuffle."""
+    assert feed_edition_token(an_edition_feed()) == feed_edition_token(
+        an_edition_feed()
+    )
+
+
+def test_prices_moving_does_not_roll_the_edition():
+    """THE CENTRAL CLAUSE. `poll_live_prediction_markets` runs every 2 minutes and
+    rewrites the probability on most cards. If that rolled the edition, the client
+    would be authorised to reorder the page a reader is mid-scroll on, roughly 30
+    times an hour — which is the reported bug, not a fix for it."""
+    before = an_edition_feed()
+    after = [dict(c, data=dict(c["data"], probability=0.99)) for c in before]
+
+    assert [c["data"]["probability"] for c in after] != [
+        c["data"]["probability"] for c in before
+    ], "fixture must actually move the prices, or this asserts nothing"
+    assert feed_edition_token(after) == feed_edition_token(before)
+
+
+def test_rescoring_and_rewording_do_not_roll_the_edition():
+    """Same argument for the other two volatile fields. A reason string rewritten
+    by a deterministic composer, or a score nudged by personalization, is not a
+    new list."""
+    before = an_edition_feed()
+    after = [dict(c, score=1, reason="totally different sentence") for c in before]
+
+    assert feed_edition_token(after) == feed_edition_token(before)
+
+
+def test_reordering_the_same_cards_rolls_the_edition():
+    """The other direction. Same membership, different order IS a new edition —
+    the client must not keep painting an order the server abandoned."""
+    before = an_edition_feed()
+    after = list(before)
+    after[0], after[1] = after[1], after[0]
+
+    assert feed_edition_token(after) != feed_edition_token(before)
+
+
+def test_a_card_leaving_rolls_the_edition():
+    before = an_edition_feed()
+    after = before[:-1]
+
+    assert feed_edition_token(after) != feed_edition_token(before)
+
+
+def test_a_card_arriving_rolls_the_edition():
+    before = an_edition_feed()
+    after = before + [edition_card("futures", 9999)]
+
+    assert feed_edition_token(after) != feed_edition_token(before)
+
+
+def test_a_swapped_card_rolls_the_edition_even_at_the_same_length():
+    """Length alone is not identity: a card replaced in place is a new list."""
+    before = an_edition_feed()
+    after = list(before)
+    after[2] = edition_card("futures", 424242)
+
+    assert feed_edition_token(after) != feed_edition_token(before)
+
+
+def test_the_same_id_under_a_different_type_is_a_different_card():
+    """`event:1000` and `futures:1000` are two different cards that happen to share
+    an integer. Keying on the id alone would call them one."""
+    assert feed_edition_token([edition_card("event", 1000)]) != feed_edition_token(
+        [edition_card("futures", 1000)]
+    )
+
+
+# --- offset stability: native's question 3 --------------------------------------
+
+
+def test_every_page_of_one_build_carries_one_edition():
+    """Pagination merges page 2 into the list page 1 painted, so the two must
+    agree on which edition they belong to.
+
+    This exercises the real mechanism rather than asserting the intent: the token
+    is computed over the WHOLE list and stored on the base, and
+    ``render_feed_page_from_base`` — which copies every non-per-serve key — is what
+    carries it onto each page. If a future edit moved the token into the per-serve
+    pop-list, this test is what fails."""
+    items = an_edition_feed(120)
+    base = {
+        "items": items,
+        "total": len(items),
+        FEED_EDITION_FIELD: feed_edition_token(items),
+    }
+
+    page1 = render_feed_page_from_base(base, limit=50, offset=0)
+    page2 = render_feed_page_from_base(base, limit=50, offset=50)
+    page3 = render_feed_page_from_base(base, limit=50, offset=100)
+
+    assert page1[FEED_EDITION_FIELD] == page2[FEED_EDITION_FIELD]
+    assert page2[FEED_EDITION_FIELD] == page3[FEED_EDITION_FIELD]
+    # And the pages really are different windows, so the agreement above is not
+    # three reads of one identical object.
+    assert page1["items"] != page2["items"]
+
+
+def test_the_edition_is_the_whole_lists_not_the_windows():
+    """The bug this forecloses: computing the token over ``paginated``. It would
+    pass every membership test above and still give each page its own token,
+    making the pagination merge unprovable."""
+    items = an_edition_feed(120)
+    whole = feed_edition_token(items)
+
+    assert feed_edition_token(items[0:50]) != whole
+    assert feed_edition_token(items[50:100]) != whole
+
+
+# --- absence is a state, not a value --------------------------------------------
+
+
+@pytest.mark.parametrize("empty", [[], None, "not a list", {}, 0])
+def test_a_refusal_states_no_edition_rather_than_a_constant_one(empty):
+    """Every empty return in ``get_feed`` is a refusal — requires-auth,
+    leader-unavailable, input-age-ceiling — not an edition of the feed.
+
+    Hashing the empty list to a stable constant would hand all three the same
+    authoritative-looking token, and a client reconciling against it would treat
+    three different failures as one agreed ordering. ``None`` is also what an
+    older backend sends, so the client needs the absent branch anyway."""
+    assert feed_edition_token(empty) is None
+
+
+def test_an_unidentifiable_card_occupies_its_slot_rather_than_vanishing():
+    """A card we cannot identify must still register, or the token would be blind
+    to exactly the population it is meant to watch.
+
+    Skipping unidentifiable items would make a list of three of them hash
+    identically to the empty list, and would let such a card appear or disappear
+    without moving the token — the failure this whole file exists to prevent."""
+    one = feed_edition_token([edition_card("event", 1), {"type": None, "data": None}])
+    two = feed_edition_token([edition_card("event", 1)])
+    three = feed_edition_token(
+        [edition_card("event", 1), {"type": None, "data": None}, {"junk": True}]
+    )
+
+    assert one != two
+    assert three != one
+
+
+def test_the_token_is_a_short_stable_hex_string():
+    """Shape contract for the client decoding it and for the header/log reader."""
+    token = feed_edition_token(an_edition_feed())
+
+    assert isinstance(token, str)
+    assert len(token) == 16
+    assert all(ch in "0123456789abcdef" for ch in token)
+
+
+def test_computing_the_token_does_not_mutate_the_feed():
+    """It runs after the private-key scrub and immediately before the page base is
+    stored; a mutation here would be published to every reader of page 2."""
+    items = an_edition_feed()
+    snapshot = [dict(c, data=dict(c["data"])) for c in items]
+
+    feed_edition_token(items)
+
+    assert items == snapshot

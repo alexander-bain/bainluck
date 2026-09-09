@@ -156,8 +156,10 @@ from app.utils.feed_cache import (
     FEED_PREWARM_SCOPE_KEY,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
     FEED_RESPONSE_STALE_TTL_SECONDS,
+    FEED_EDITION_FIELD,
     FEED_PAGE_BASE_BUILT_AT_FIELD,
     build_feed_cache_metadata,
+    feed_edition_token,
     feed_page_base_built_at,
     feed_page_base_cache_key,
     feed_page_base_enabled,
@@ -3693,6 +3695,24 @@ async def get_feed(
             "offset": offset,
             "has_more": (offset + limit) < total,
         }
+
+        # D1 clause (a) / #4110: the edition token, over ``feed_items`` and NOT
+        # over ``paginated``.
+        #
+        # That distinction is the entire offset-stability contract. Hashing the
+        # window would give page 1 and page 2 different tokens and the client's
+        # pagination merge — which appends into the list page 1 painted — could
+        # never prove the two belong together. Hashing the whole ranked list
+        # gives every page of one build the same token, which is what native
+        # asked for (#4110 question 3).
+        #
+        # Placed after the private-key scrub above so it reads the same public
+        # card identities a client sees, and before the page base is stored, so
+        # ``render_feed_page_from_base`` carries it to every page for free (it
+        # copies every key that is not per-serve, and this is not per-serve).
+        _edition = feed_edition_token(feed_items)
+        if _edition is not None:
+            payload[FEED_EDITION_FIELD] = _edition
 
         if my_teams_only:
             payload["my_teams_only"] = True
