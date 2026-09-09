@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from app.utils.market_grouping import extract_threshold
+from app.utils.outcome_display_names import display_outcome_names
 
 _IPO_RE = re.compile(r"\b(ipo|initial public offering|market cap|valuation)\b", re.I)
 _COMMODITY_RE = re.compile(
@@ -446,7 +447,26 @@ def classify_discover_card_archetype(
     """
 
     market_name = _clean_text(name)
-    outcome_rows = outcomes or []
+    # #4151 — RESOLVED HERE, NOT AT THE CALLER, because the labels this module
+    # emits are a THIRD copy of the outcome names and the route builds them
+    # straight off the ORM row. `top_outcomes[].name` goes through the feed's
+    # humanizers; `distribution_outcomes[].label` and `threshold_points[].label`
+    # did not, so the live `Top AI model in September?` card served
+    # `claude-fable-5.1-max` in all three.
+    #
+    # 🔴 AND THE COPY THE READER READS IS ONE OF THE TWO THE HUMANIZERS MISS.
+    # Measured on production 2026-09-09: that card's `suggested_format` is
+    # `threshold_heatmap` (reasons `['threshold_values']`), so the labels it
+    # draws are `threshold_points[].label` — not the `top_outcomes` rows. A fix
+    # applied only at the feed's humanizers would have left the visible card
+    # entirely unchanged while every test that looked at `top_outcomes` passed.
+    # One call here covers both label lists and both scoring sites.
+    #
+    # (Why that card is a threshold ladder at all is a separate defect: the
+    # rungs are parsed out of MODEL VERSION NUMBERS — `claude-opus-4-6` scores a
+    # rung at 4.0 via the `\d-\d` branch of `_THRESHOLD_SHAPED_RE`. Pre-existing,
+    # unchanged by this commit, filed as #4226.)
+    outcome_rows = display_outcome_names(outcomes or [], market_name)
     count = outcome_count if outcome_count is not None else len(outcome_rows)
     threshold_points = _threshold_points(
         name=market_name,
