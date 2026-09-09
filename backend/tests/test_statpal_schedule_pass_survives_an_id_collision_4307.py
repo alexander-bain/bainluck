@@ -58,7 +58,7 @@ import pytest
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
 
-from app.tasks.statpal_sync import row_for_statpal_id
+from app.tasks.statpal_sync import _statpal_sport_key_filter, row_for_statpal_id
 
 
 # `Event` carries Postgres JSONB/ARRAY columns that sqlite cannot render as DDL.
@@ -224,6 +224,97 @@ class TestThePredicate:
             "`sport_ids` must have NO default. A bound that defaults to "
             "anything is the unbounded read wearing a parameter, and the next "
             "caller inherits the defect silently (#4322)."
+        )
+
+
+class TestWhichSportsShareTheIdSpace:
+    """`_statpal_sport_key_filter` — the bound's OTHER half, and the near miss.
+
+    `row_for_statpal_id` partitions against a set of sport ids. Everything above
+    proves it partitions correctly; nothing above proves the SET is right, and
+    the first cut of #4322 built it from `STATPAL_SPORT_MAPPING`'s seven soccer
+    keys. That is too narrow, and measurably so: the hourly soccer stamper
+    writes `statpal_fixture_id` across every `soccer%` sport — 34 of them in
+    production on 2026-09-09, one contiguous StatPal id band — so a
+    `soccer_efl_champ` row would have been classified FOREIGN and refused, a
+    false miss the unbounded reader did not have.
+    """
+
+    def _keys_selected(self, session, statpal_sport: str) -> set[str]:
+        from sqlalchemy import select
+
+        from app.models.models import Sport
+
+        return set(
+            session.execute(
+                select(Sport.key).where(_statpal_sport_key_filter(statpal_sport))
+            )
+            .scalars()
+            .all()
+        )
+
+    @pytest.fixture()
+    def session(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from app.models.models import Sport
+
+        engine = create_engine("sqlite://")
+        Sport.__table__.create(engine)
+        session = Session(engine, expire_on_commit=False)
+        for key in (
+            SOCCER_A,            # in the schedule map
+            SOCCER_B,            # in the schedule map
+            "soccer_efl_champ",  # NOT in the map — stamper-written, 17 prod rows
+            "soccer_other",      # NOT in the map
+            MLB,
+            NHL,
+            "tennis_atp_us_open",
+        ):
+            session.add(Sport(key=key, name=key))
+        session.commit()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def test_soccer_covers_the_leagues_the_schedule_map_never_names(self, session):
+        """The rail against the narrow bound. Reds on the map-only build."""
+        selected = self._keys_selected(session, "soccer")
+        assert {"soccer_efl_champ", "soccer_other"} <= selected, (
+            "StatPal scopes fixture ids by its own sport, and every `soccer%` "
+            "sport draws from that one space. Bounding on the schedule map's "
+            "seven keys calls a stamper-written sibling FOREIGN and refuses to "
+            "enrich it — worse than the unbounded reader (#4322)."
+        )
+        assert selected == {
+            SOCCER_A, SOCCER_B, "soccer_efl_champ", "soccer_other",
+        }
+
+    def test_soccer_does_not_reach_another_statpal_sport(self, session):
+        """Wider is not unbounded — the CERT-853 refusal must survive."""
+        selected = self._keys_selected(session, "soccer")
+        assert not selected & {MLB, NHL, "tennis_atp_us_open"}
+
+    def test_a_one_to_one_sport_falls_back_to_the_map(self, session):
+        """No prefix entry ⇒ the map's keys, exactly. NHL must not take MLB."""
+        assert self._keys_selected(session, "nhl") == {NHL}
+        assert self._keys_selected(session, "mlb") == {MLB}
+
+    def test_tennis_is_knowingly_still_map_bound(self, session):
+        """Pins the documented gap so it is a decision, not an oversight.
+
+        `tennis_atp_us_open` carries StatPal tennis ids in production but is not
+        in the map, so tennis has soccer's old narrowness. It is unreachable —
+        the beat has four entries (nba/nhl/mlb/nfl) — and widening it would move
+        the injury attach for no ship. If someone adds `"tennis": "tennis"` to
+        `_INJURY_EVENT_SPORT_PREFIX`, this test fails and they must say why.
+        """
+        assert self._keys_selected(session, "tennis") == set(), (
+            "Neither `tennis_atp` nor `tennis_wta` exists in this rail, so the "
+            "map-bound filter selects nothing — and `tennis_atp_us_open`, which "
+            "does exist and does carry StatPal tennis ids, is not reached."
         )
 
 

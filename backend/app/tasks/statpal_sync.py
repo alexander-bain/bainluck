@@ -213,21 +213,26 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
             from app.models import Event, Sport
 
             # #4322. The id space StatPal scopes its fixture ids by is its OWN
-            # sport, and our league keys are many-to-one onto it — the seven
-            # soccer keys below all map to `soccer`. Built once, from the whole
-            # mapping rather than from `sport_keys`, because a single-sport run
-            # still has to recognise a sibling league's event as same-sport.
+            # sport, and our league keys are many-to-one onto it. Resolved
+            # through `_statpal_sport_key_filter` — the SAME predicate the
+            # injury attach uses — so soccer's space is every `soccer%` sport
+            # the hourly stamper writes to, not just the seven the schedule map
+            # names. Built once per pass, and for EVERY StatPal sport rather
+            # than only this run's, because a single-sport run still has to
+            # recognise a sibling league's event as same-sport.
             statpal_sport_ids: dict[str, set[int]] = {}
-            for _sid, _skey in (
-                await session.execute(
-                    select(Sport.id, Sport.key).where(
-                        Sport.key.in_(list(STATPAL_SPORT_MAPPING.keys()))
+            for _statpal_sport in set(STATPAL_SPORT_MAPPING.values()):
+                statpal_sport_ids[_statpal_sport] = set(
+                    (
+                        await session.execute(
+                            select(Sport.id).where(
+                                _statpal_sport_key_filter(_statpal_sport)
+                            )
+                        )
                     )
+                    .scalars()
+                    .all()
                 )
-            ).all():
-                statpal_sport_ids.setdefault(
-                    STATPAL_SPORT_MAPPING[_skey], set()
-                ).add(_sid)
 
             for our_key in sport_keys:
                 statpal_sport = STATPAL_SPORT_MAPPING[our_key]
@@ -745,9 +750,50 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
 #: rule decides what belongs to what, not the league key.
 #:
 #: Widening `STATPAL_SPORT_MAPPING` itself would change what the schedule sync
-#: creates, which is a different ship with a different blast radius. This is
-#: local to the injury attach and says so.
+#: CREATES, which is a different ship with a different blast radius. Nothing
+#: here touches that: both readers below only decide which EXISTING rows a
+#: StatPal sport may be resolved against.
+#:
+#: #4322 — SECOND READER, SAME RULE. The schedule sync's fixture-id bound
+#: (`_statpal_sport_key_filter`) needs the identical question answered, for the
+#: identical reason, so it shares this constant instead of re-deriving it from
+#: the seven-key map. That drift is not hypothetical: the first cut of #4322 did
+#: bound on the map's seven soccer keys, and it would have called a
+#: `soccer_efl_champ` row FOREIGN — refusing an enrichment the unbounded reader
+#: got right — because the hourly soccer stamper (`stamp_v1_statpal_fixtures`,
+#: live since `dd753773`) writes `statpal_fixture_id` across every `soccer%`
+#: sport: 34 of them in production on 2026-09-09, all inside ONE StatPal id
+#: band (9.29M-9.55M). `sport_keys.STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES` cites
+#: this constant by name for the same reason; it is now the third.
 _INJURY_EVENT_SPORT_PREFIX: dict[str, str] = {"soccer": "soccer"}
+
+
+def _statpal_sport_key_filter(statpal_sport: str):
+    """Which of OUR sports share THIS StatPal sport's id space? (#4322)
+
+    A prefix where the StatPal sport has one, else the schedule map's keys —
+    the rule :data:`_INJURY_EVENT_SPORT_PREFIX` documents. Returned as a
+    SQLAlchemy predicate on ``Sport.key`` so both readers are transcriptions of
+    one rule rather than two readings of it.
+
+    Tennis is deliberately NOT prefixed here. The map names ``tennis_atp`` and
+    ``tennis_wta`` while production's rows sit on ``tennis_atp_us_open`` and
+    friends, so tennis has the same latent narrowness soccer had — but the
+    schedule sync has no tennis beat (the four beat entries are nba/nhl/mlb/nfl)
+    and the injury attach's tennis behaviour would move with it. Adding
+    ``"tennis": "tennis"`` above is the whole fix when a caller needs it; doing
+    it now would change a live path to buy nothing.
+    """
+    # Imported here, not at module scope, matching every other reader in this
+    # file: `app.models` is not import-safe from task modules at load time.
+    from app.models import Sport
+
+    prefix = _INJURY_EVENT_SPORT_PREFIX.get(statpal_sport)
+    if prefix:
+        return Sport.key.like(f"{prefix}%")
+    return Sport.key.in_(
+        [k for k, v in STATPAL_SPORT_MAPPING.items() if v == statpal_sport]
+    )
 
 
 def _interleave_sides(injuries: list) -> list:
@@ -890,14 +936,10 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
                             ),
                         )
 
-                prefix = _INJURY_EVENT_SPORT_PREFIX.get(statpal_sport)
-                if prefix:
-                    sport_filter = Sport.key.like(f"{prefix}%")
-                else:
-                    our_keys = [
-                        k for k, v in STATPAL_SPORT_MAPPING.items() if v == statpal_sport
-                    ]
-                    sport_filter = Sport.key.in_(our_keys)
+                # #4322: hoisted verbatim into `_statpal_sport_key_filter` and
+                # now shared with the schedule sync's fixture-id bound. Same
+                # predicate, same constant, no behaviour change here.
+                sport_filter = _statpal_sport_key_filter(statpal_sport)
 
                 now = datetime.now(timezone.utc)
                 window_start = now - timedelta(hours=6)
