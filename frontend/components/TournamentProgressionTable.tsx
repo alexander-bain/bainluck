@@ -6,6 +6,8 @@ import { useAnalytics } from "@/hooks/useAnalytics";
 import type { ProgressionResponse, ProgressionParticipant, ProgressionStage } from "@/lib/types";
 import type { ProgressionCellStatus } from "@/lib/gridCellState";
 import { progressionSortValue } from "@/lib/gridCellState";
+import { isPersonFieldDomain, isLikelyPersonName } from "@/lib/eventConceptDisplay";
+import { legendName } from "@/lib/contenderChart";
 import TeamNameLink from "./TeamNameLink";
 
 interface TournamentProgressionTableProps {
@@ -54,6 +56,47 @@ export function barWidth(probability: number | null, scaleMax: number): number {
   if (probability === null || probability === undefined || probability <= 0) return 0;
   const denom = Math.max(scaleMax, BAR_SCALE_FLOOR);
   return Math.min(100, (probability / denom) * 100);
+}
+
+/**
+ * Phone-width display name for a participant (#4309).
+ *
+ * The name column is capped at 104px on a phone — that cap is what makes the
+ * Make Cut bars render whole (#4261) and it is not negotiable. At 14px Inter it
+ * fits about twelve characters, so a full golfer name overflows and `truncate`
+ * eats the END of it. That is the worst possible half to lose: the live Amgen
+ * Irish Open field showed `Rasmus Hojg…` and `Nicolai Hojga…` three rows apart,
+ * two different people rendered as the same unreadable stub.
+ *
+ * In golf the SURNAME is the identity and the given name is the disambiguator,
+ * so spend the 104px on the surname and keep the given name as an initial:
+ * `R. Hojgaard` / `N. Hojgaard`. Measured against the live field, that fits 12
+ * of the 13 names that truncate today, and the 13th
+ * (`R. Neergaard-Petersen`, 151.77px) still keeps a unique readable surname
+ * prefix, which the current rendering does not.
+ *
+ * TWO GATES, both borrowed rather than invented, because this component is not
+ * golf-only and "abbreviate the first word" is actively wrong for a team:
+ *
+ *  - `isPersonFieldDomain` — the row is a person at all. Without it,
+ *    `Kansas City Chiefs` becomes `K. City Chiefs`.
+ *  - `isLikelyPersonName` — THIS row is a person, not a market outcome. The
+ *    domain gate is necessary and not sufficient (its own docstring says so):
+ *    on a person-field domain the rows can still read `Over 16.5 games`, and
+ *    `O. 16.5 games` would be gibberish. It also, usefully, leaves synthetic
+ *    fixture rows like `Golfer 1` alone — they carry a digit.
+ *
+ * Returns the name UNCHANGED whenever either gate fails or there is nothing to
+ * abbreviate, and callers rely on that: an unchanged string means render the
+ * plain single text node exactly as before.
+ */
+export function progressionDisplayName(
+  name: string,
+  sport: string | null | undefined,
+): string {
+  if (!isPersonFieldDomain(sport)) return name;
+  if (!isLikelyPersonName(name)) return name;
+  return legendName(name);
 }
 
 /**
@@ -428,7 +471,9 @@ export default function TournamentProgressionTable({
               </tr>
             </thead>
             <tbody>
-              {sortedParticipants.map((participant, idx) => (
+              {sortedParticipants.map((participant, idx) => {
+                const shortName = progressionDisplayName(participant.name, data.sport);
+                return (
                 <tr
                   key={participant.team_id ?? participant.name}
                   className="border-b border-white/5 hover:bg-white/5 transition-colors"
@@ -461,11 +506,35 @@ export default function TournamentProgressionTable({
                           {participant.seed}
                         </span>
                       )}
+                      {/* #4309 — the abbreviation is PHONE-ONLY. At `sm:` the cap
+                          is 300px and every full name fits, so there is nothing to
+                          buy by shortening it there. When the name is unchanged
+                          (a team, a market outcome, a single word) this renders the
+                          plain node it always did.
+
+                          The full name is carried in `sr-only` at BOTH widths and
+                          the two visible spans are `aria-hidden`, so a screen
+                          reader still hears "Rasmus Hojgaard" on a phone. Reading
+                          the abbreviation aloud would be a real regression:
+                          truncation today is visual only, and assistive tech reads
+                          the whole text node. */}
                       <TeamNameLink
                         name={participant.name}
                         sportKey={data.sport}
                         className="text-text-primary font-medium truncate max-w-[104px] sm:max-w-[300px] hover:underline"
-                      />
+                      >
+                        {shortName === participant.name ? undefined : (
+                          <>
+                            <span className="sm:hidden" aria-hidden="true" data-testid="progression-name-short">
+                              {shortName}
+                            </span>
+                            <span className="hidden sm:inline" aria-hidden="true">
+                              {participant.name}
+                            </span>
+                            <span className="sr-only">{participant.name}</span>
+                          </>
+                        )}
+                      </TeamNameLink>
                       {participant.record && (
                         <span className="text-[10px] text-text-secondary hidden sm:inline">
                           {participant.record}
@@ -531,7 +600,8 @@ export default function TournamentProgressionTable({
                     );
                   })}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
