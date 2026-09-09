@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// The Sources list's own width, so #4107's label column can be clamped against
+/// the room the row actually has. A preference key rather than a
+/// `UIScreen.main.bounds` read: gotcha #27 — Stage Manager can hand back a
+/// background scene, and this file's neighbours have been walked off that API
+/// deliberately.
+private struct SourceRowWidthKey: PreferenceKey {
+    static let defaultValue: Double = 0
+    static func reduce(value: inout Double, nextValue: () -> Double) {
+        value = max(value, nextValue())
+    }
+}
+
 // MARK: - View
 
 struct EventDetailView: View {
@@ -8,7 +20,14 @@ struct EventDetailView: View {
     @State private var countdownText: String?
     @State private var countdownTimer: Timer?
     @State private var selectedPlayPoint: GamePlayPoint?
-    @State private var showSources = false
+    /// Closed for every reader. Starts open only when the LOOK rig asks
+    /// (`-launch_expand_sections`), which is the only way this list can be
+    /// photographed — the rig cannot tap a chevron. See `LaunchRig`.
+    @State private var showSources = LaunchRig.expandsCollapsedSections()
+    /// The Sources list's own width, reported by the `GeometryReader` behind it,
+    /// so the label column can be sized against the room the row actually has
+    /// rather than a literal. `0` until the first layout pass.
+    @State private var sourceRowWidth: Double = 0
     @State private var refreshCountdown: Int = 0
     @State private var refreshCountdownTimer: Timer?
     private var sharedChartDomain: ClosedRange<Date>? {
@@ -1055,18 +1074,30 @@ struct EventDetailView: View {
     /// hero reads, and the same bar the book table uses.
     private func sourceContent(_ event: EventDetail, entries: [WinProbSourceCatalog.Entry]) -> some View {
         let colors = teamColors(event)
+        // #4107 — sized against the labels THIS render draws, at THIS view's text
+        // size. The old 118pt literal was correct at `.large` and nowhere else:
+        // `Sportsbooks (14)` is 99.9pt at default and 142.1pt at xxxLarge, which
+        // is where Alex's truncation actually came from. See
+        // `EventSourceLabelColumn` for the measurements and for why
+        // `.minimumScaleFactor` is gone rather than raised.
+        let labelWidth = EventSourceLabelColumn.width(
+            for: entries.map(\.label),
+            availableWidth: sourceRowWidth,
+            typeSize: dynamicTypeSize)
         return VStack(spacing: 0) {
             ForEach(entries) { entry in
                 let homeProbability = entry.homeProbability
                 let awayProbability = 1 - homeProbability
-                HStack(spacing: 6) {
-                    // Wider than the bookmaker column below it: these labels carry
-                    // a book count ("Sportsbooks (10)"), which truncates at 90.
+                HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     Text(entry.label)
                         .font(.caption.weight(.medium))
-                        .frame(width: 118, alignment: .leading)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .frame(width: labelWidth, alignment: .leading)
+                        // Both are load-bearing (#3966): `lineLimit(2)` alone
+                        // still truncates when the parent proposes one line's
+                        // height. This only engages past the clamp, at the
+                        // largest accessibility sizes.
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     ProbabilityBar(
                         awayProb: awayProbability, homeProb: homeProbability,
@@ -1076,18 +1107,34 @@ struct EventDetailView: View {
                     )
                     .frame(maxWidth: .infinity)
 
+                    // Read from the same model that sizes the label, so the two
+                    // cannot drift: the whole defect was a layout number that
+                    // stopped describing its layout.
                     Text(formatProbability(awayProbability))
                         .font(.caption2.monospacedDigit())
-                        .frame(width: 36, alignment: .trailing)
+                        .frame(
+                            width: EventSourceLabelColumn.numericColumnWidth,
+                            alignment: .trailing)
                     Text(formatProbability(homeProbability))
                         .font(.caption2.monospacedDigit())
-                        .frame(width: 36, alignment: .trailing)
+                        .frame(
+                            width: EventSourceLabelColumn.numericColumnWidth,
+                            alignment: .trailing)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
                 .padding(.vertical, 4)
             }
         }
         .padding(.vertical, 8)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: SourceRowWidthKey.self, value: geo.size.width)
+            }
+        )
+        .onPreferenceChange(SourceRowWidthKey.self) { width in
+            sourceRowWidth = width
+        }
     }
 
     private func legendItem(color: Color, label: String) -> some View {
