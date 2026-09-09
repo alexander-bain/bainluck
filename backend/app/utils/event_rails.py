@@ -228,6 +228,15 @@ def shadow_anchor_sport_ids():
     from a board nothing reads — see that function and
     :data:`~app.utils.sport_keys.STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES`.
 
+    ``.correlate(None)`` is DEFENSIVE, and measured as such rather than
+    asserted: every call site of this expression joins ``Sport`` already, and
+    SQLAlchemy was checked to emit the same ``SELECT sports.id FROM sports``
+    with and without it. It is here so the uncorrelated reading is a GUARANTEE
+    rather than a coincidence of where the expression currently gets used — if
+    auto-correlation ever did apply, the clause would silently stop asking "is
+    this row's sport dark?" and start asking "is the row the outer query already
+    joined a dark one?", which is a different question that would still compile.
+
     An UNCORRELATED subquery over ``sports``, which is a few dozen rows and is
     hoisted and hashed once per statement rather than evaluated per candidate —
     the one cost this rail could not afford, given an ORDER BY that already
@@ -241,13 +250,17 @@ def shadow_anchor_sport_ids():
     spend it — the same prefix semantics the Python predicate uses, which is
     what keeps the 2^5 × sport agreement sweep honest.
     """
-    return select(Sport.id).where(
-        or_(
-            *(
-                Sport.key.like(f"{prefix}%")
-                for prefix in STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES
+    return (
+        select(Sport.id)
+        .where(
+            or_(
+                *(
+                    Sport.key.like(f"{prefix}%")
+                    for prefix in STATPAL_SHADOW_ANCHOR_SPORT_PREFIXES
+                )
             )
         )
+        .correlate(None)
     )
 
 

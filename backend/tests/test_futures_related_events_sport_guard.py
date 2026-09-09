@@ -160,7 +160,24 @@ class _FakeSession:
         self.statements.append(statement)
         if len(self.statements) == 1:
             return _Result([self._market])
-        sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+        # 🔴 THE **WHERE CLAUSE**, NOT THE WHOLE STATEMENT. A filter lives in
+        # `WHERE`; an `ORDER BY` cannot drop a row, so reading the full compiled
+        # SQL made this fake answer questions the real database never would.
+        # #4075 put `sports.key LIKE 'soccer%'` into the rail's ORDER BY (a
+        # StatPal anchor is a shadow for a sport whose live board we do not
+        # read), and `_passes` — which treats the mere presence of `sports.key`
+        # as "a sport predicate was emitted" — then filtered on an expression
+        # that only SORTS. Both fail-open arms below served an empty strip
+        # against a route whose behaviour had not changed at all.
+        # Scoping to `whereclause` keeps every tooth the guard was built with,
+        # including the one it exists for: a route that BUILDS the predicate and
+        # forgets to pass it to `.where()` still reads as unfiltered here.
+        where = statement.whereclause
+        sql = (
+            ""
+            if where is None
+            else str(where.compile(compile_kwargs={"literal_binds": True}))
+        )
         return _Result([e for e in self._events if _passes(sql, e)])
 
 
