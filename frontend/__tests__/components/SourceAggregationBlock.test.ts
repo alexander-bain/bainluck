@@ -136,7 +136,7 @@ describe("SourceAggregationBlock", () => {
         aggregatedProbability: 45.0,
       })
     );
-    expect(html).toContain("ESPN Bet");
+    expect(html).toContain("ESPN BET"); // #4311 — one spelling on both clients
     // Stale row should have opacity-40 class
     expect(html).toContain("opacity-40");
   });
