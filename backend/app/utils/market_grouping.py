@@ -840,6 +840,7 @@ CONTAINER_FOLD_MIN_SHARED_AFFIX_CHARS = 8
 CONTAINER_FOLD_MIN_MEMBERS = 2
 
 
+
 def _shared_affixes(names: list[str]) -> tuple[str, str]:
     """The wording every one of ``names`` shares, snapped to word boundaries.
 
@@ -889,8 +890,49 @@ def extract_container_member_entities(names: list[str]) -> Optional[list[str]]:
         entity = name[len(prefix):end].strip().strip(":-–—,").strip()
         if len(entity) < 2:
             return None
+        # THE SLOT IN A FIELD TEMPLATE IS A NAME.
+        #
+        # A colon, a bracket or a "vs" in the differing span means what varies
+        # between these members is a QUESTION or a FIXTURE, not an entity — so
+        # the wording they share was another coincidence. Three more of these
+        # survived the template-length rule on production 2026-09-08:
+        #
+        #   polymarket:968290 → ["US Open WTA (Doubles)", "Set 1 Winner"]
+        #   polymarket:982930 → ["Sintra, Qualifying: Completed Match", "Sintra"]
+        #   polymarket:987752 → ["Topo (-1.5) vs Sachko", "Sachko (-1.5) vs Topo"]
+        #
+        # Digits are deliberately NOT banned here: "Schalke 04" is a real
+        # entity, and refusing it would cost a legitimate soccer field to catch
+        # cases these three characters already catch.
+        if any(t in entity for t in (":", "(", ")")) or " vs " in entity.lower():
+            return None
         entities.append(entity)
     if len(set(entities)) != len(entities):
+        return None
+
+    # THE TEMPLATE MUST BE LONGER THAN THE SLOT IT LEAVES BEHIND.
+    #
+    # The floor above measures the LENGTH of the shared run, not whether that run
+    # is a template, and those are not the same test. Found on production
+    # 2026-09-08 by running this splitter over the whole open tennis population
+    # instead of over one night's pool:
+    #
+    #   polymarket:945776, parent "US Open WTA: Marta Kostyuk vs Sloane Stephens"
+    #     "Set 2 Winner: Kostyuk vs Stephens"
+    #     "US Open WTA: Marta Kostyuk vs Sloane Stephens"
+    #
+    # Two unrelated questions whose names happen to end on the same word. The
+    # shared run is " Stephens" — 9 characters, past the floor — so the split
+    # "succeeded" and produced the row labels "Set 2 Winner: Kostyuk vs" and
+    # "US Open WTA: Marta Kostyuk vs Sloane". Having a `field` parent did not
+    # save it: a two-player MATCH is also a `field`, and its group carries that
+    # match's side-markets.
+    #
+    # "One sentence with one slot swapped" has an arithmetic consequence — the
+    # sentence is longer than the slot. That refuses both specimens (9 shared
+    # characters against a 36-character "entity") and costs the real fields
+    # nothing: the US Open family shares 62 characters around a 14-character name.
+    if len(prefix) + len(suffix) < max(len(e) for e in entities):
         return None
     return entities
 

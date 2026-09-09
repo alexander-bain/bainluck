@@ -107,6 +107,108 @@ def test_a_single_member_is_not_a_field():
     assert extract_container_member_entities(["Will Coco Gauff advance?"]) is None
 
 
+# ── the coincidence case: a shared WORD is not a shared TEMPLATE ──
+#
+# Both specimens below are real, and both have a `market_type='field'` parent, so
+# the parent gate does not stop them — a two-player MATCH is a `field` too, and
+# its group carries the match's side-markets. Found by running the splitter over
+# the whole open tennis population rather than over one night's pool; the first
+# sha of this ship (`bd0ea14f`, CERT-2322) would have rendered these.
+
+
+def test_two_questions_ending_on_the_same_surname_do_not_fold():
+    """polymarket:945776 — parent "US Open WTA: Marta Kostyuk vs Sloane Stephens".
+
+    The shared run is " Stephens": 9 characters, past
+    `CONTAINER_FOLD_MIN_SHARED_AFFIX_CHARS`. Splitting on it yields the row labels
+    "Set 2 Winner: Kostyuk vs" and "US Open WTA: Marta Kostyuk vs Sloane", which
+    is worse on a screen than the repetition this ship removes.
+    """
+    names = [
+        "Set 2 Winner: Kostyuk vs Stephens",
+        "US Open WTA: Marta Kostyuk vs Sloane Stephens",
+    ]
+    assert extract_container_member_entities(names) is None
+
+
+def test_the_same_coincidence_in_the_mens_draw_does_not_fold():
+    """polymarket:956563 — parent "US Open ATP: Daniil Medvedev vs Arthur Rinderknech"."""
+    names = [
+        "Set 3 Winner: Medvedev vs Rinderknech",
+        "US Open ATP: Daniil Medvedev vs Arthur Rinderknech",
+    ]
+    assert extract_container_member_entities(names) is None
+
+
+@pytest.mark.parametrize(
+    "group_id,names",
+    [
+        # What varies is the question, not the player.
+        (
+            "polymarket:968290",
+            [
+                "US Open WTA (Doubles): Bouzkova/Sorribes Tormo vs Danilina/Khromacheva",
+                "Set 1 Winner: Bouzkova/Sorribes Tormo vs Danilina/Khromacheva",
+            ],
+        ),
+        (
+            "polymarket:982930",
+            [
+                "Sintra, Qualifying: Completed Match: Rocha vs Faria",
+                "Sintra: Rocha vs Faria",
+            ],
+        ),
+        # Two handicap lines on one match — the differing span is a fixture.
+        (
+            "polymarket:987752",
+            [
+                "Set Handicap: Topo (-1.5) vs Sachko: M15 Sharm",
+                "Set Handicap: Sachko (-1.5) vs Topo: M15 Sharm",
+            ],
+        ),
+    ],
+)
+def test_a_differing_span_that_is_a_question_or_a_fixture_does_not_fold(
+    group_id, names
+):
+    """These three survived the template-length rule on production 2026-09-08.
+
+    Each shares a long run of wording — the players — while what actually varies
+    between the members is the QUESTION. Splitting on the shared run inverts the
+    card: the title would be one member's question and the rows would be the
+    other questions.
+    """
+    assert extract_container_member_entities(names) is None, group_id
+
+
+def test_a_digit_in_a_name_is_not_by_itself_a_refusal():
+    """Schalke 04 is an entity. The shape test bans `:`/brackets/`vs`, not digits."""
+    template = "Will {} win the Bundesliga in 2026-27?"
+    assert extract_container_member_entities(
+        [template.format("Schalke 04"), template.format("Bayern Munich")]
+    ) == ["Schalke 04", "Bayern Munich"]
+
+
+def test_the_real_fields_still_fold_under_the_template_rule():
+    """The controls. The rule must cost a genuine field nothing.
+
+    The US Open family shares 62 characters around a 14-character name; the
+    Ballon d'Or family shares 49 around 17. Both clear it with room.
+    """
+    us_open = [m["name"] for m in _us_open_final_members()]
+    assert extract_container_member_entities(us_open) is not None
+
+    ballon = "Will {} finish in the top 5 of the 2026 Ballon d'Or?"
+    assert extract_container_member_entities(
+        [ballon.format("Cristiano Ronaldo"), ballon.format("Rodri")]
+    ) == ["Cristiano Ronaldo", "Rodri"]
+
+    # The tightest real family seen: a short template around a short slot.
+    assert extract_container_member_entities(
+        ["Will Alcaraz win the title?", "Will Sinner win the title?"]
+    ) == ["Alcaraz", "Sinner"]
+
+
 # ── the fold ──
 
 
