@@ -540,6 +540,99 @@ def _sort_matched_team_rows(rows: list) -> list:
         ),
     )
 
+
+# #4489: `teams` holds one row PER COMPETITION for a club, which is by design and
+# correct. Nothing chose between them, so the answer to `ajax` was the heap order
+# — "Ajax / UEFA CHAMPS LEAGUE WOMEN" as the entity card heading a page whose own
+# facet chips read Dutch Eredivisie and Europa Conference. Every tiebreak was a
+# tie: three rows share the name, so identical FTS rank, identical name, and all
+# three are non-marquee. Same defect on typeahead, where the wrong row led at
+# rank 0.
+#
+# The classes below rank a club's COMPETITIONS, not its leagues' importance, and
+# they are used in exactly one place: choosing which of several SAME-NAME rows
+# survives the dedup. Ordering ACROSS different names is untouched, which is the
+# safety argument — the surviving row takes the first occurrence's slot, so no
+# team moves up or down the list because of this.
+#
+# National-team competitions (World Cup, Nations League and the qualifiers) are
+# deliberately class 0, not "qualification": they hold national teams, for whom
+# they ARE the season. Demoting them could only disturb the World Cup surfacing
+# rule further down, which keys on a `soccer_fifa_world_cup` row being present.
+_TEAM_COMP_LEAGUE = 0          # the club's own league (and every national team)
+_TEAM_COMP_LOWER_LEAGUE = 1    # second tier and below
+_TEAM_COMP_CONTINENTAL = 2     # UCL, Europa, Libertadores…
+_TEAM_COMP_CUP = 3             # domestic knockout cups
+_TEAM_COMP_QUALIFICATION = 4   # qualifying rounds
+_TEAM_COMP_WOMENS = 5          # only ever reached when a non-women sibling exists
+
+_LOWER_LEAGUE_SPORT_KEYS: frozenset[str] = frozenset({
+    "soccer_brazil_serie_b", "soccer_efl_champ", "soccer_england_league1",
+    "soccer_england_league2", "soccer_france_ligue_two",
+    "soccer_germany_bundesliga2", "soccer_germany_liga3",
+    "soccer_italy_serie_b", "soccer_spain_segunda_division",
+    "soccer_sweden_superettan",
+})
+_CONTINENTAL_SPORT_KEYS: frozenset[str] = frozenset({
+    "soccer_concacaf_leagues_cup", "soccer_conmebol_copa_libertadores",
+    "soccer_conmebol_copa_sudamericana", "soccer_uefa_champs_league",
+    "soccer_uefa_europa_conference_league", "soccer_uefa_europa_league",
+})
+_DOMESTIC_CUP_SPORT_KEYS: frozenset[str] = frozenset({
+    "soccer_england_efl_cup", "soccer_fa_cup", "soccer_france_coupe_de_france",
+    "soccer_germany_dfb_pokal", "soccer_italy_coppa_italia",
+    "soccer_spain_copa_del_rey",
+})
+_QUALIFICATION_SPORT_KEYS: frozenset[str] = frozenset({
+    "soccer_uefa_champs_league_qualification",
+})
+# Substrings, not a set: a new women's competition key must inherit the rule the
+# day it arrives rather than the day somebody remembers to list it. `wncaa`
+# covers the college case, where one school genuinely holds same-name rows in
+# both (`Belmont Bruins` in `basketball_ncaab` and `basketball_wncaab`).
+_WOMENS_SPORT_KEY_MARKERS: tuple[str, ...] = ("_women", "wncaa")
+
+
+def _team_competition_rank(sport_key: str | None) -> int:
+    """Rank a team row's COMPETITION for the same-name tiebreak. Pure.
+
+    Unknown keys are ``_TEAM_COMP_LEAGUE`` — the default has to be "this is the
+    entity's own competition", because that is what a single-row team is."""
+    key = (sport_key or "").lower()
+    if any(marker in key for marker in _WOMENS_SPORT_KEY_MARKERS):
+        return _TEAM_COMP_WOMENS
+    if key in _QUALIFICATION_SPORT_KEYS:
+        return _TEAM_COMP_QUALIFICATION
+    if key in _DOMESTIC_CUP_SPORT_KEYS:
+        return _TEAM_COMP_CUP
+    if key in _CONTINENTAL_SPORT_KEYS:
+        return _TEAM_COMP_CONTINENTAL
+    if key in _LOWER_LEAGUE_SPORT_KEYS:
+        return _TEAM_COMP_LOWER_LEAGUE
+    return _TEAM_COMP_LEAGUE
+
+
+def _pick_team_row_per_name(rows: list) -> list:
+    """Collapse same-name team rows to one, keeping the club's own competition.
+
+    Replaces a first-writer-wins ``seen`` set. Pure, and position-preserving: a
+    name group occupies the slot of its FIRST member, so this can only change
+    WHICH row represents a name, never where that name sits in the list. Ties
+    inside a class fall back to the incoming order, so a surface that already
+    ordered its rows keeps that order as the last word."""
+    order: list = []
+    best: dict = {}
+    for index, row in enumerate(rows):
+        name = getattr(row, "name", None)
+        candidate = (_team_competition_rank(getattr(row, "sport_key", None)), index)
+        if name not in best:
+            order.append(name)
+            best[name] = (candidate, row)
+        elif candidate < best[name][0]:
+            best[name] = (candidate, row)
+    return [best[name][1] for name in order]
+
+
 # #993 Slice C: multi-word search AND-matches every term against the market NAME,
 # but descriptive/scaffolding words aren't in market names — "fed rate DECISION"
 # (name: "Fed emergency rate cut"), "bitcoin PRICE 2026", "WHERE WILL lebron GO".
@@ -5676,16 +5769,17 @@ async def search_events(
     # boxers) — artifacts of the Odds API modelling 1v1 sports as team-vs-team;
     # users still find these athletes via event and futures results. Then apply the
     # rank-first / marquee tie-break ordering before capping at 5.
-    team_rows = _sort_matched_team_rows(_dedupe_prefix_duplicate_team_rows([
-        row for row in _team_result_rows
-        if not _is_individual_sport(row.sport_key)
-    ]))
-    teams_seen: set[str] = set()
+    # #4489: the same-name collapse picks the club's own competition instead of
+    # whichever row the heap handed over first. It runs AFTER the sort so a name
+    # group still occupies its first member's slot.
+    team_rows = _pick_team_row_per_name(_sort_matched_team_rows(
+        _dedupe_prefix_duplicate_team_rows([
+            row for row in _team_result_rows
+            if not _is_individual_sport(row.sport_key)
+        ])
+    ))
     matched_teams = []
     for row in team_rows:
-        if row.name in teams_seen:
-            continue
-        teams_seen.add(row.name)
         matched_teams.append({
             "id": row.id,
             "name": row.name,
@@ -6402,28 +6496,33 @@ async def typeahead_search(
     _ta_mark("teams_query")
     team_pool = []
     teams_seen = set()
-    for row in team_result.all():
+    # #4489: collapse same-name rows BEFORE the pool cap, choosing the club's own
+    # competition — `ajax` led the dropdown with the women's Champions League row
+    # because the fetch order decided it. The cap and the individual-sport skip
+    # keep their old meaning: the pool the scorer sees is still 3, and a name
+    # group still takes the slot its first member would have taken.
+    for row in _pick_team_row_per_name([
+        row for row in team_result.all()
         # Skip individual-sport "teams" (tennis/MMA/golf/boxing players)
-        if _is_individual_sport(row.sport_key):
-            continue
+        if not _is_individual_sport(row.sport_key)
+    ]):
         if len(team_pool) >= _TEAM_POOL_SIZE:
             # The pool the scorer sees is unchanged at 3. Only the FETCH widened,
             # so name-duplicates and individual-sport rows are absorbed before
             # they can eat a slot instead of after.
             break
-        if row.name not in teams_seen:
-            teams_seen.add(row.name)
-            team_pool.append({
-                "type": "team",
-                "text": row.name,
-                "abbreviation": row.abbreviation,
-                "logo": row.logo_url_small,
-                "team_id": row.id,
-                "team_slug": row.slug,
-                "sport_key": _normalize_team_sport_key(row.sport_key),
-                # Private: scorer evidence only, popped before the response.
-                "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
-            })
+        teams_seen.add(row.name)
+        team_pool.append({
+            "type": "team",
+            "text": row.name,
+            "abbreviation": row.abbreviation,
+            "logo": row.logo_url_small,
+            "team_id": row.id,
+            "team_slug": row.slug,
+            "sport_key": _normalize_team_sport_key(row.sport_key),
+            # Private: scorer evidence only, popped before the response.
+            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
+        })
 
     # 2. Events (live/upcoming) — with team logos
     event_query = (
