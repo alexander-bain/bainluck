@@ -287,6 +287,31 @@ final class TournamentHubPresentationTests: XCTestCase {
         XCTAssertTrue(farText.hasSuffix(startTimeFormatterTestMirror(far)))
     }
 
+    /// And the row a reader actually sees goes through it.
+    ///
+    /// The test above proves `startTimeText` is right; it does NOT prove
+    /// anything calls it. Reverting `statusText` to `startTimeFormatter` left
+    /// that test green — a guard for a function nothing reaches. This one runs
+    /// the whole reduction and reads `upcomingMatches`, which is the string the
+    /// card prints.
+    ///
+    /// The fixture's start is in 2027 so the assertion cannot depend on when
+    /// the gate runs: no clock makes that today, so the row must name a day
+    /// whatever "now" is.
+    func testTheUpcomingRowAReaderSeesNamesItsDay() throws {
+        let p = TournamentHubPresentation(
+            response: decode(Self.scheduledSlateJSON(iso: "2027-06-15T16:30:00Z")))
+        let row = try XCTUnwrap(p.upcomingMatches.first)
+        let date = try XCTUnwrap(ISO8601DateFormatter().date(from: "2027-06-15T16:30:00Z"))
+
+        XCTAssertNotEqual(
+            row.statusText, startTimeFormatterTestMirror(date),
+            "a start next June printed as a bare clock is #4134")
+        XCTAssertTrue(
+            row.statusText.hasSuffix(startTimeFormatterTestMirror(date)),
+            "naming the day must not cost the time: \(row.statusText)")
+    }
+
     /// The bare clock, formatted the way the row's time half is.
     ///
     /// Deliberately a local mirror and not a hook into the production
@@ -472,6 +497,22 @@ final class TournamentHubPresentationTests: XCTestCase {
      "results": {"matches": []}, "boards": [], "bracket": {},
      "event_links": {"by_espn": {"182735": 15300835}}, "broadcasts": []}
     """
+
+    /// One upcoming match with a real start time, for the `Next up` row (#4134).
+    private static func scheduledSlateJSON(iso: String) -> String {
+        """
+        {"slug": "us-open", "title": "US Open 2026",
+         "slate": {"matches": [{
+            "matchup_key": "espn:2", "priced": true, "live_state": "scheduled",
+            "draw_label": "Men's Singles", "round": "R64",
+            "scheduled_date": "\(iso)", "start_is_tbd": false,
+            "sides": [
+              {"entity_key": "a", "display_name": "A", "probability": 0.6},
+              {"entity_key": "b", "display_name": "B", "probability": 0.4}]}]},
+         "results": {"matches": []}, "boards": [], "bracket": {},
+         "event_links": {"by_espn": {}}, "broadcasts": []}
+        """
+    }
 
     /// One finished match, both sides priced — for the pair-rounding rule the
     /// production fixture cannot exercise.
