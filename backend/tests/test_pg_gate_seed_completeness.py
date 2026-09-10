@@ -66,6 +66,7 @@ COVERED = (
     "test_futures_outcome_grade_schema_parity_pg.py",
     "test_kalshi_cliff_bind_contract.py",
     "test_kalshi_fabricated_loss_bind_contract_pg.py",
+    "test_kalshi_settlement_recency_band_pg.py",
     "test_kalshi_sweep_settlement_bind_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",

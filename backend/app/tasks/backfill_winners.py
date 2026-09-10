@@ -40,11 +40,157 @@ from app.utils.winner_field_coherence import (
 logger = logging.getLogger(__name__)
 
 
+#: #4057: HOW MUCH OF THE KALSHI SETTLEMENT SWEEP IS RESERVED FOR WHAT JUST SETTLED.
+#:
+#: The sweep below walks `external_id ASC` from a Redis cursor, 2,000 tickers a
+#: cycle, 4 cycles a day. Measured on production 2026-09-10 11:05Z, the population
+#: matching its own predicate is **71,389 distinct event tickers** — one full wrap
+#: is ~8.9 days. A market that settles BELOW the cursor's current position is
+#: therefore not asked about at the next cycle; it waits for the wrap. That is
+#: roughly half of everything that settles.
+#:
+#: Case in point, same measurement: the 03:45Z cycle wrote `api_settlement` for
+#: tickers spanning `KXATPCHALLENGERMATCH-26SEP08CARRIT` ->
+#: `KXMLBHRR-26SEP091610WSHSD`, and `KXMLBHIT-26SEP092210CINLAD` ("Cincinnati vs
+#: Los Angeles D: Hits", 18 outcomes, 17 priced) sorts INSIDE that span but settled
+#: at 05:04Z — after the cursor had gone past. At 11:08Z Kalshi's own
+#: `GET /events/KXMLBHIT-26SEP092210CINLAD?with_nested_markets=true` returned 66
+#: markets, `status: finalized`, per-leg `result` yes/no. Six hours after the venue
+#: finalized it, the reader saw a settled market with no result — not because a
+#: grader failed, but because no grader looked.
+#:
+#: The residue has the shape the mechanism predicts: NULL-`is_winner` resolved
+#: Kalshi outcomes DECAY with age (152 on 2026-08-27, 2,184 on 08-31, 8,499 on
+#: 09-09), which is what a ~9-day wrap does and not what a broken grader does.
+#:
+#: So the cycle's ticker budget is SPLIT, and the two bands have SEPARATE budgets
+#: (gotcha #34: one counter shared between two bands lets the first starve the
+#: second). The split is bounded by the caller's `limit`, never added to it —
+#: `backfill_winners` is a task that already dies on its budget (#4740), and a
+#: reach fix that buys reach with wall-clock would just move the death.
+#: The recency signal is `COALESCE(settled_at, resolution_date)`, and the COALESCE
+#: is load-bearing in BOTH directions. `settled_at` is the observation ("status
+#: became resolved at"), `resolution_date` is only a SCHEDULE (max close_time).
+#: Measured on production 2026-09-10 11:35Z: of the 37,190 Kalshi markets observed
+#: settling in the last 3 days, **29,556 (79%) carry a resolution_date older than
+#: 3 days or none at all** — a schedule-only window would miss four settlements in
+#: five. And `settled_at` is NULL and NEVER backfilled for every row that resolved
+#: before the column shipped (earliest stamp: 2026-09-07 08:15Z), so a
+#: settled_at-only window would have been blind for its first days. The union is
+#: the reach; the cap keeps it cheap.
+_FRESH_SETTLEMENT_FLOOR_DAYS = 3
+#: Both bounds, per gotcha #41: a floor AND an ordering. The window is two-sided on
+#: purpose — `resolution_date` can be in the FUTURE on a market Kalshi has already
+#: settled (#2644's field mechanism), and newest-first ordering would let one
+#: future-dated row sit at the head of the band forever. Those fall to the tail
+#: sweep, which does not care what the date says.
+_FRESH_SETTLEMENT_MAX_TICKERS = 400
+_FRESH_SETTLEMENT_MAX_SHARE = 0.2
+
+
+def _fresh_settlement_budget(limit: int) -> tuple[int, int]:
+    """Split a cycle's ticker budget into (recency band, alphabetical tail band).
+
+    #4057. One rule in one place, so the two bands can never be re-derived apart:
+    the recency band takes at most `_FRESH_SETTLEMENT_MAX_TICKERS` and at most
+    `_FRESH_SETTLEMENT_MAX_SHARE` of the cycle, and the tail takes the REST — the
+    two always sum to exactly `limit`, so the sweep's cost per cycle is unchanged
+    by construction rather than by inspection.
+    """
+    if limit <= 1:
+        return 0, max(limit, 0)
+    fresh = min(_FRESH_SETTLEMENT_MAX_TICKERS, int(limit * _FRESH_SETTLEMENT_MAX_SHARE))
+    fresh = max(fresh, 1)
+    return fresh, limit - fresh
+
+
+async def _select_kalshi_settlement_tickers(
+    session, limit: int, cursor: str
+) -> tuple[list[str], list[str]]:
+    """Pick this cycle's Kalshi event tickers: (just-settled band, tail band).
+
+    #4057. Lives apart from `_backfill_kalshi_winners` for one reason: WHICH rows
+    a cycle asks the venue about is decided by these two WHERE clauses and by
+    nothing else, so they have to be executable by a test against a real server
+    (`tests/integration/test_kalshi_settlement_recency_band_pg.py`). A fake
+    session answering "any statement mentioning futures_markets" with a canned
+    list agrees with itself and proves none of them.
+
+    The bands are returned SEPARATELY, never pre-merged: the caller advances the
+    Redis cursor from the tail band alone.
+    """
+    fresh_limit, tail_limit = _fresh_settlement_budget(limit)
+
+    # BAND 1 — what settled since the last cycle, newest first. Bounded on BOTH
+    # sides of now (`_FRESH_SETTLEMENT_FLOOR_DAYS`) and restricted to markets
+    # carrying NO grade on ANY outcome, which is exactly what a reader sees as
+    # "settled, no result". Legs already carrying `ungradeable_result` are
+    # excluded: that is #1852's RETRACTION — the venue declared a `scalar`/empty
+    # result and we took the fabricated loss back out — so it is a decision, not
+    # a gap, and leaving it in would clog this band with markets no cycle can
+    # ever grade.
+    fresh_tickers: list[str] = []
+    if fresh_limit > 0:
+        fresh_rows = await session.execute(
+            text("""
+                SELECT fm.external_id
+                FROM futures_markets fm
+                WHERE fm.source = 'kalshi'
+                  AND fm.status = 'resolved'
+                  AND COALESCE(fm.settled_at, fm.resolution_date)
+                      >= NOW() - make_interval(days => :floor_days)
+                  AND COALESCE(fm.settled_at, fm.resolution_date) <= NOW()
+                  AND NOT EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = fm.id
+                        AND fo.is_winner IS NOT NULL
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = fm.id
+                        AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                        AND COALESCE(fo.resolution_source, '') <> 'ungradeable_result'
+                  )
+                GROUP BY fm.external_id
+                ORDER BY MAX(COALESCE(fm.settled_at, fm.resolution_date)) DESC
+                LIMIT :fresh_limit
+            """),
+            {"fresh_limit": fresh_limit, "floor_days": _FRESH_SETTLEMENT_FLOOR_DAYS},
+        )
+        fresh_tickers = [r[0] for r in fresh_rows.all()]
+
+    # BAND 2 — the alphabetical tail, unchanged in shape and with its OWN budget.
+    # It keeps the whole 71k-ticker population moving; the recency band only ever
+    # jumps the queue for what a reader is looking at right now.
+    tail_rows = await session.execute(
+        text("""
+            SELECT fm.external_id
+            FROM futures_markets fm
+            WHERE fm.source = 'kalshi'
+              AND fm.status = 'resolved'
+              AND fm.external_id > :cursor
+              AND EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+                    AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+              )
+            GROUP BY fm.external_id
+            ORDER BY fm.external_id ASC
+            LIMIT :limit
+        """),
+        {"limit": tail_limit, "cursor": cursor},
+    )
+    return fresh_tickers, [r[0] for r in tail_rows.all()]
+
+
 async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     """Fetch settled Kalshi events by ticker and set is_winner from settlement data.
 
     Uses targeted GET /events/{ticker} lookups instead of paginating all settled
     events. Much more efficient — O(markets needing backfill) not O(all settled).
+
+    #4057: two bands, two budgets — everything that settled since the last cycle
+    first (`_fresh_settlement_budget`), then the alphabetical cursor for the tail.
     """
     import asyncio
     from app.services.kalshi_api import KalshiAPIService
@@ -57,6 +203,9 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
         "not_found": 0,
         "no_result": 0,
         "api_miss": 0,
+        "fresh_selected": 0,
+        "fresh_graded": 0,
+        "tail_selected": 0,
         "errors": [],
     }
 
@@ -68,37 +217,36 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     _last_cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or "")
 
     async with get_task_session() as session:
-        needs_backfill = await session.execute(
-            text("""
-                SELECT fm.external_id
-                FROM futures_markets fm
-                WHERE fm.source = 'kalshi'
-                  AND fm.status = 'resolved'
-                  AND fm.external_id > :cursor
-                  AND EXISTS (
-                      SELECT 1 FROM futures_outcomes fo
-                      WHERE fo.market_id = fm.id
-                        AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
-                  )
-                GROUP BY fm.external_id
-                ORDER BY fm.external_id ASC
-                LIMIT :limit
-            """),
-            {"limit": limit, "cursor": _last_cursor},
+        fresh_tickers, tail_tickers = await _select_kalshi_settlement_tickers(
+            session, limit, _last_cursor
         )
-        tickers = [r[0] for r in needs_backfill.all()]
+    fresh_set = set(fresh_tickers)
 
-    if tickers:
-        _rc.setex(_cursor_key, 86400 * 14, tickers[-1])
+    # The cursor advances on the TAIL band alone. A recency ticker can sort
+    # anywhere in the alphabet, so letting one set the cursor would skip every
+    # tail ticker between here and there — the reach bug this ship exists to fix,
+    # re-introduced from the other end.
+    if tail_tickers:
+        _rc.setex(_cursor_key, 86400 * 14, tail_tickers[-1])
     elif _last_cursor:
         _rc.delete(_cursor_key)
         logger.info("Kalshi winner backfill: cursor wrapped, will restart next run")
+
+    stats["fresh_selected"] = len(fresh_tickers)
+    stats["tail_selected"] = len(tail_tickers)
+
+    tickers = fresh_tickers + [t for t in tail_tickers if t not in fresh_set]
 
     if not tickers:
         logger.info("Kalshi winner backfill: nothing to do")
         return stats
 
-    logger.info("Kalshi winner backfill: %d tickers to look up", len(tickers))
+    logger.info(
+        "Kalshi winner backfill: %d tickers to look up (%d just-settled, %d tail)",
+        len(tickers),
+        len(fresh_tickers),
+        len(tail_tickers),
+    )
 
     service = KalshiAPIService()
     try:
@@ -262,6 +410,12 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                     stats["winners_set"] += updated.rowcount
                                 else:
                                     stats["losers_set"] += updated.rowcount
+                                # #4057: the recency band's OWN receipt. The shared
+                                # winners/losers counters cannot answer "did the
+                                # thing that settled tonight get graded tonight" —
+                                # they are dominated by the 71k-ticker tail.
+                                if event_ticker in fresh_set:
+                                    stats["fresh_graded"] += updated.rowcount
                             else:
                                 stats["not_found"] += 1
                                 samples = stats.setdefault("not_found_samples", [])
@@ -294,7 +448,8 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
 
     logger.info(
         "Kalshi winner backfill: %d queried, %d found, %d api_miss, "
-        "%d winners, %d losers, %d not_found, %d errors",
+        "%d winners, %d losers, %d not_found, %d errors "
+        "(just-settled band: %d selected, %d outcomes graded)",
         stats["tickers_queried"],
         stats["events_found"],
         stats["api_miss"],
@@ -302,6 +457,8 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
         stats["losers_set"],
         stats["not_found"],
         len(stats["errors"]),
+        stats["fresh_selected"],
+        stats["fresh_graded"],
     )
     return stats
 
