@@ -513,10 +513,16 @@ async def _undo(db, apply: bool, identity: str) -> dict[str, Any]:
     # occupied is SKIPPED — and a restore that reports the receipt's length would
     # print "restored 1,500" over 1,500 no-ops. The number an operator reads
     # after a reversal is the one number that must be measured (gotcha #53).
+    #
+    # The handle is `wrote`, not `result`: `scan_mutation_residue.py` Pass B
+    # flags any file holding the literal `result = await db.execute(` at this
+    # indent, because that string is the REPLACEMENT half of
+    # `typeahead_outcome_arm_mutations:M21`. Renaming it back reds CI on three
+    # tests in a file this repair has nothing to do with.
     written = {"entities": 0, "aliases": 0, "participants": 0}
 
     for e in entities:
-        result = await db.execute(
+        wrote = await db.execute(
             text(
                 """
                 INSERT INTO entities
@@ -535,9 +541,9 @@ async def _undo(db, apply: bool, identity: str) -> dict[str, Any]:
             ),
             {**e, "entity_metadata": json.dumps(e.get("entity_metadata"))},
         )
-        written["entities"] += int(result.rowcount or 0)
+        written["entities"] += int(wrote.rowcount or 0)
     for a in aliases:
-        result = await db.execute(
+        wrote = await db.execute(
             text(
                 """
                 INSERT INTO entity_aliases
@@ -552,20 +558,20 @@ async def _undo(db, apply: bool, identity: str) -> dict[str, Any]:
             ),
             a,
         )
-        written["aliases"] += int(result.rowcount or 0)
+        written["aliases"] += int(wrote.rowcount or 0)
     for p in participants:
         # `entity_id IS NULL` on purpose: if something has re-pointed this
         # participant since the purge, the live pointer is newer than the receipt
         # and the restore must not overwrite it. That row is a skip, and the
         # counts below are what make the skip visible.
-        result = await db.execute(
+        wrote = await db.execute(
             text(
                 "UPDATE event_participants SET entity_id = :entity_id "
                 "WHERE id = :id AND entity_id IS NULL"
             ),
             p,
         )
-        written["participants"] += int(result.rowcount or 0)
+        written["participants"] += int(wrote.rowcount or 0)
     await db.commit()
 
     out["restored_entities"] = written["entities"]

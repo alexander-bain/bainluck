@@ -224,6 +224,19 @@ class TestTheEndpointCanActuallyREACHTheseArguments:
             "repair",
         )
 
+    def test_the_module_docstring_names_it_too(self):
+        """Registering without listing is a real CI red, and it is not local.
+
+        Two guards elsewhere (`test_repair_pm_never_graded`,
+        `test_repair_statpal_blank_ids`) assert the docstring catalog against
+        `_REPAIRS` — and they live in files a new repair never touches, so a
+        focused D40 run is green and CI is red. Asserting it HERE means the next
+        lane1b repair finds it in its own focused suite instead.
+        """
+        from app.routes import admin_repairs
+
+        assert "futures-person-seed-purge" in (admin_repairs.__doc__ or "")
+
     @pytest.mark.parametrize(
         "param", ["limit", "after_id", "plan_hash", "undo_identity"]
     )
