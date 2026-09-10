@@ -62,6 +62,7 @@ from app.utils.authority_failover import (
     LIVE_PATH_SILENT_ON_THE_GAME,
     NO_SCHEDULE_BOARD,
     NOT_GATED,
+    NOT_READ,
     NOTHING_TO_SERVE,
     STANDBY_CANNOT_COVER_WINDOW,
     STANDBY_DARK,
@@ -300,6 +301,37 @@ def test_the_standing_flag_travels_on_the_receipt():
 
     ordinary = decide(NFL, espn=DARK, gate=_shut_gate(), standing=ESPN).as_receipt()
     assert ordinary["standing"] is False
+
+
+@pytest.mark.parametrize("espn", [DARK, EMPTY, FIXTURES, NOT_READ, NO_SCHEDULE_BOARD])
+@pytest.mark.parametrize("schedule", [DARK, EMPTY, FIXTURES, NOT_READ, NO_SCHEDULE_BOARD])
+@pytest.mark.parametrize("live", [DARK, EMPTY, FIXTURES, NOT_READ, NO_SCHEDULE_BOARD])
+def test_nothing_changed_for_a_sport_that_has_not_flipped(espn, schedule, live):
+    """**The inertness proof, and the reason this ship is safe to land today.**
+
+    No sport is standing — `AUTHORITY_BY_SPORT` is all ESPN — so every decision
+    production makes runs the un-flipped path, and this ship must therefore
+    change nothing a user or an operator sees until somebody flips a sport.
+
+    Written as an invariant rather than as a diff against a git blob, so it
+    keeps holding: for a candidate, `is_unserved` is exactly the old
+    `code in BLANK_CODES` test, and `standing` is never set. A future refusal
+    added to the standing path that leaks into the candidate path reds here.
+
+    Proved once against master's own `decide` at build time as well — 250
+    combinations of (espn, schedule, live, gate) with `standing=espn`, 0
+    differences in code, serving, failed_over or why.
+    """
+    for gate in ((True, "seven MEETS"), (False, "not measured yet")):
+        decision = decide(
+            NFL, espn=espn, statpal=schedule, statpal_live=live,
+            gate=gate, standing=ESPN,
+        )
+        assert decision.standing is False
+        assert is_unserved(decision) == (decision.code in BLANK_CODES), (
+            "the standing path's severity rule leaked onto a candidate: "
+            f"{decision.code} now answers differently to `BLANK_CODES`"
+        )
 
 
 def test_the_switch_itself_still_did_not_move():
