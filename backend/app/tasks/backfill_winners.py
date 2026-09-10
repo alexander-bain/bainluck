@@ -25,6 +25,7 @@ from app.utils.calibration_closing_line import (
     closing_line_boundary_sql,
     closing_line_lateral_sql,
 )
+from app.utils.kalshi_empty_book import lone_ask_on_empty_book_sql
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES_SQL,
     GUESS_FAMILY_SOURCES_SQL,
@@ -181,6 +182,46 @@ async def _select_kalshi_settlement_tickers(
         {"limit": tail_limit, "cursor": cursor},
     )
     return fresh_tickers, [r[0] for r in tail_rows.all()]
+
+#: Phase 0c-repair's promotion, hoisted to module level so a test can execute
+#: THE SHIPPED STATEMENT (#4745, CAL-P1086).
+#:
+#: The claim "#4745's repair is not re-promoted six hours later" is a claim
+#: about what this SQL does to a row the repair just nulled, and a test that
+#: retyped the statement would be asserting agreement with its own copy. Phase
+#: 0c is 24 lines inside a 700-line task function, so the only way to run the
+#: real one is to name it. `test_phase_0c_does_not_re_promote_a_withdrawn_row`
+#: imports THIS constant and runs it against a real Postgres.
+#:
+#: The `NOT lone_ask_on_empty_book_sql(...)` clause is the guard shipped in
+#: `ece46743`: a lone ask on an empty Kalshi book is an offer nobody took, not a
+#: price, and the row is skipped rather than the outcome — so a leg that opened
+#: on an empty book and later traded still gets its opening from the first
+#: snapshot that WAS a real price.
+PHASE_0C_REPAIR_SQL = f"""
+    WITH first_snaps AS (
+        SELECT fo2.id AS outcome_id, snap.probability
+        FROM futures_outcomes fo2
+        JOIN futures_markets fm ON fm.id = fo2.market_id
+        CROSS JOIN LATERAL (
+            SELECT fos.probability
+            FROM futures_odds_snapshots fos
+            WHERE fos.outcome_id = fo2.id
+              AND fos.probability > 0 AND fos.probability < 1
+              AND NOT {lone_ask_on_empty_book_sql("fos")}
+            ORDER BY fos.captured_at ASC
+            LIMIT 1
+        ) snap
+        WHERE fm.status = 'resolved'
+          AND fo2.opening_probability IS NULL
+        LIMIT 100000
+    )
+    UPDATE futures_outcomes fo
+    SET opening_probability = fs.probability,
+        opening_source = 'first_snapshot'
+    FROM first_snaps fs
+    WHERE fo.id = fs.outcome_id
+"""
 
 
 async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
@@ -7426,34 +7467,21 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0c-repair: Restore opening_probability from first snapshot for
     # outcomes with null opening but real snapshot data. Uses DISTINCT ON
     # for bulk performance instead of correlated subqueries.
+    #
+    # #4745: the earliest snapshot is not automatically an honest one. A Kalshi
+    # book of bid 0.00 / ask 0.98 with no trade is an offer nobody took, not a
+    # 98% chance; the live poller has refused to WRITE those since 52eee9b6
+    # (2026-07-13) but this promotion kept copying the ones already stored into
+    # the published curve — 34,281 legs across every family, mean published
+    # 0.94, actually won ~14%. Skipping the row rather than the outcome means a
+    # leg that opened on an empty book and later traded still gets its opening
+    # from the first snapshot that was a real price.
     _mark("retro_repair_tagging")
     repair_stats = {"restored": 0, "errors": []}
     try:
         for _ in range(5):
             async with get_task_session() as session:
-                r = await session.execute(text("""
-                        WITH first_snaps AS (
-                            SELECT fo2.id AS outcome_id, snap.probability
-                            FROM futures_outcomes fo2
-                            JOIN futures_markets fm ON fm.id = fo2.market_id
-                            CROSS JOIN LATERAL (
-                                SELECT fos.probability
-                                FROM futures_odds_snapshots fos
-                                WHERE fos.outcome_id = fo2.id
-                                  AND fos.probability > 0 AND fos.probability < 1
-                                ORDER BY fos.captured_at ASC
-                                LIMIT 1
-                            ) snap
-                            WHERE fm.status = 'resolved'
-                              AND fo2.opening_probability IS NULL
-                            LIMIT 100000
-                        )
-                        UPDATE futures_outcomes fo
-                        SET opening_probability = fs.probability,
-                            opening_source = 'first_snapshot'
-                        FROM first_snaps fs
-                        WHERE fo.id = fs.outcome_id
-                    """))
+                r = await session.execute(text(PHASE_0C_REPAIR_SQL))
                 await session.commit()
                 if r.rowcount == 0:
                     break
