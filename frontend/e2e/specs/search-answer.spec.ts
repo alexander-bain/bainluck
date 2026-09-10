@@ -1,5 +1,6 @@
 import { test, expect, readContentRegionText } from "../fixtures/audit";
 import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
+import { tagged } from "../helpers/agentOrigin";
 
 /**
  * UX-P086 (#1620) — the RENDERED half of "lead with the answer" on the PHONE.
@@ -135,10 +136,16 @@ function deriveOwed(suggestions: SuggestionLike[]): {
 /** Ask production directly. The API base is the audited deployment's own. */
 async function fetchOwed(page: import("@playwright/test").Page) {
   const apiBase = process.env.AUDIT_API_BASE_URL || "https://api.bainluck.com";
-  const res = await page.request.get(
-    `${apiBase}/api/events/typeahead?q=${encodeURIComponent(QUERY)}`,
-    { timeout: 30_000 },
-  );
+  // #4763: `/typeahead` is the route where the tag has the most teeth — an
+  // untagged call casts a trending VOTE (`_record_trending`, both exits), and the
+  // warmer then spends real work on a term this oracle invented. Tagged, the
+  // backend sets `_suppress_trending_write` and the payload is unchanged, so this
+  // still grades the DOM against exactly what a person would have been served.
+  const oracleUrl = `${apiBase}/api/events/typeahead?q=${encodeURIComponent(QUERY)}`;
+  const res = await page.request.get(oracleUrl, {
+    timeout: 30_000,
+    headers: tagged(oracleUrl),
+  });
   // A 429 here is the rail's own rate-limit budget, not a product defect, and
   // it must not be reported as "the dropdown owes nothing" (gotcha #53: an
   // empty 200 and an unavailable answer are different facts).

@@ -6,6 +6,7 @@ import {
   type TournamentRoute,
 } from "../fixtures/tournamentRoutes";
 import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
+import { tagged } from "../helpers/agentOrigin";
 
 /**
  * L2-245 Item 1 — the rendered tournament/event-concept inventory.
@@ -160,7 +161,11 @@ async function isVisible(page: import("@playwright/test").Page, selector: string
 
 for (const route of TOURNAMENT_ROUTES) {
   test(`concept renders — ${route.domain} (${route.c139Case})`, async ({ page, journey }) => {
-    const path = await resolvePath((url) => page.request.get(url), route);
+    // #4763: slug discovery asks the real `/api/events/search`, twice a day per
+    // project, and those rows were landing in `search_query_logs` as anonymous
+    // demand — 51 of 51 `grand prix` rows in thirty days were this call. Tagged,
+    // the backend's `_request_is_automation` declines to log them.
+    const path = await resolvePath((url) => page.request.get(url, { headers: tagged(url) }), route);
 
     // A rotating domain with no live specimen is NOT-OBSERVABLE, not a defect —
     // but this rail treats a skipped test as `infra_error` ("silence is never a

@@ -2,6 +2,7 @@ import { test, expect, measureMainRegion } from "../fixtures/audit";
 import { classifyMainRegion } from "../helpers/contentState";
 import { RSC_PREFETCH } from "../helpers/navigationAborts";
 import { findSettledEventWithProps } from "../helpers/settledSpecimen";
+import { tagged } from "../helpers/agentOrigin";
 
 /** Backend origin, for the one journey that has to FIND its specimen. */
 const API_BASE = (process.env.AUDIT_API_BASE_URL || "https://api.bainluck.com").replace(/\/$/, "");
@@ -144,7 +145,15 @@ const NO_GRADE_ROW = "Resolved · grading unavailable";
 test("settled props are described one way, not three", async ({ page, journey }) => {
   const startedAt = Date.now();
 
-  const specimen = await findSettledEventWithProps((url) => page.request.get(url), API_BASE);
+  // #4763: attribution only — specimen discovery reads highlights and completed
+  // listings, none of which writes a search row. Tagging at the injected getter
+  // covers every URL
+  // `findSettledEventWithProps` builds, so a new listing added there is tagged
+  // without this line changing.
+  const specimen = await findSettledEventWithProps(
+    (url) => page.request.get(url, { headers: tagged(url) }),
+    API_BASE,
+  );
 
   // Navigate first, so a failed search still produces a terminal screenshot of
   // *something* rather than an empty artifact.
