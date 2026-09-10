@@ -17,6 +17,13 @@
 # 🔴 `mode=fullPage(CHART-UNSAFE)` means the page was over the grown-capture ceiling and you
 # have the old, chart-losing capture. A loud CHART-UNSAFE line names it. On such a page, judge
 # charts with SHOT_SCROLL=<offset> instead — never off the whole-page PNG.
+# EXPECT A LAZY PAGE TO GET LONGER, and that is the capture being honest. Growing the viewport
+# puts the whole document on screen, so anything that loads on intersection loads at once.
+# Measured: /sports at 390px reports docHeight=9,954 and then settles at 17,820 once it is all
+# on screen — a 26,504px PNG where the old capture gave 19,908px of the same page. The extra is
+# real content the old whole-page shot never rendered. The re-measure is bounded (two growths,
+# then the shutter), so an endless feed cannot hold the camera open. /calibration (11,668px)
+# grows with no change to the artifact at all.
 # STILL THE RULE FOR ANY EMPTY-LOOKING CHART: confirm before you file. One command —
 #   node ~/bainluck/tools/chart-in-raster-4664.mjs <url> [width]
 # exit 0 the picture holds the lines the DOM has · 3 it lost one (#4664 is back) · 4 no chart.
