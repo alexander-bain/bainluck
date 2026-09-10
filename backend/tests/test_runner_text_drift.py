@@ -321,13 +321,19 @@ def test_it_still_detects_staleness_under_gnu_stat_and_date(launcher, tmp_path):
     """
     bindir = tmp_path / "gnubin"
     bindir.mkdir()
+    # The shims answer out of python, not out of the host's own `stat`/`date`.
+    # Delegating to `/usr/bin/stat -f` made this test itself macOS-only — it then
+    # failed on Linux CI for a reason that had nothing to do with the tool.
     (bindir / "stat").write_text(
         "#!/bin/bash\n"
-        # GNU: -c FMT file works; -f is filesystem status, prints, then fails.
-        'if [ "$1" = "-c" ] && [ "$2" = "%Y" ]; then exec /usr/bin/stat -f %m "$3"; fi\n'
+        # GNU: `-c FMT file` works …
+        'if [ "$1" = "-c" ] && [ "$2" = "%Y" ]; then\n'
+        "  exec python3 -c 'import os,sys;print(int(os.path.getmtime(sys.argv[1])))' \"$3\"\n"
+        "fi\n"
+        # … and `-f` is filesystem status: it PRINTS, then fails.
         'if [ "$1" = "-f" ]; then\n'
         '  echo "  File: \\"$3\\""\n'
-        '  echo "    ID: 0 Namelen: 255 Type: apfs"\n'
+        '  echo "    ID: 0 Namelen: 255 Type: ext2/ext3"\n'
         '  echo "Block size: 4096"\n'
         "  exit 1\n"
         "fi\n"
@@ -337,8 +343,12 @@ def test_it_still_detects_staleness_under_gnu_stat_and_date(launcher, tmp_path):
         "#!/bin/bash\n"
         # GNU: no -j; -d parses a human string.
         'if [ "$1" = "-j" ]; then echo "date: invalid option -- j" >&2; exit 1; fi\n'
-        'if [ "$1" = "-d" ]; then exec /bin/date -j -f "%a %b %d %T %Y" "$2" "$3"; fi\n'
-        'exec /bin/date "$@"\n'
+        'if [ "$1" = "-d" ]; then\n'
+        "  exec python3 -c 'import sys,time;"
+        'print(int(time.mktime(time.strptime(" ".join(sys.argv[1].split()),'
+        "\"%a %b %d %H:%M:%S %Y\"))))' \"$2\"\n"
+        "fi\n"
+        "exit 1\n"
     )
     for f in ("stat", "date"):
         (bindir / f).chmod(0o755)
