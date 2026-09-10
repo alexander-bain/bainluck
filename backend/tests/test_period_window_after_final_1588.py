@@ -225,6 +225,31 @@ async def test_the_graded_window_market_survives_the_final(finished_client):
     )
 
 
+def test_a_box_score_grade_counts_as_a_grade():
+    """The second kind of grade, found by LOOKing at the finished specimen.
+
+    `/events/15308050` renders its settled player props as "1.0 — miss", graded
+    from the BOX SCORE by `_grade_settled_prop`, which supplies `hit` and can
+    leave `resolution_source` None. A carve-out testing only the venue grade
+    would suppress a window-bounded prop that is already showing its result.
+
+    Asserted against the predicate the route uses, so it fails if either half of
+    the disjunction is dropped.
+    """
+
+    def window_open(item):
+        return item.get("resolution_source") is not None or item.get("hit") is not None
+
+    assert window_open({"resolution_source": "api_settlement", "hit": None}) is True
+    assert window_open({"resolution_source": None, "hit": True}) is True
+    assert window_open({"resolution_source": None, "hit": False}) is True, (
+        "a graded MISS is still a grade — hiding it loses half the WHAT HIT surface"
+    )
+    assert window_open({"resolution_source": None, "hit": None}) is False, (
+        "ungraded and unsourced is the row this rule exists to suppress"
+    )
+
+
 @pytest.mark.asyncio
 async def test_a_full_game_market_survives_the_final(finished_client):
     """Finishing a game closes WINDOWS; it does not empty the board."""

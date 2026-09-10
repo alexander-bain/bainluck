@@ -12487,7 +12487,14 @@ async def _build_game_markets(
     _sport_hint = "baseball_mlb" if _league == "MLB" else (_league.lower() or None)
 
     def _window_open(item: dict) -> bool:
-        if item.get("resolution_source") is not None:
+        # A GRADED ROW IS A RESULT, NOT A PRICE, SO IT SURVIVES. Two independent
+        # kinds of grade reach this payload and both count, which a LOOK at the
+        # finished specimen is what caught: the settled player props on
+        # `/events/15308050` render "1.0 — miss" from `_grade_settled_prop`'s
+        # BOX SCORE (`hit`), carrying no `resolution_source` at all. Testing only
+        # the venue grade would have suppressed a window-bounded prop that was
+        # already showing the reader its result.
+        if item.get("resolution_source") is not None or item.get("hit") is not None:
             return True
         return not prop_window_closed(
             item.get("market_name"),
