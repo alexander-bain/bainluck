@@ -553,6 +553,13 @@ def _stub_soccer_service(monkeypatch, now):
         async def get_fixtures(self, sport):
             return [fixture]
 
+        async def get_fixtures_result(self, sport):
+            # #2907: the writer reads the RESULT so a dark venue is not an empty
+            # schedule. A healthy read, so nothing in this file's subject moves.
+            return statpal_api.StatPalFixtureFetch(
+                [fixture], "ok", sport, "season-schedule"
+            )
+
         async def get_live_scores(self, sport):
             return []
 
@@ -599,6 +606,12 @@ def _stub_service(monkeypatch, now):
     class _Service:
         async def get_fixtures(self, sport):
             return list(fixtures)
+
+        async def get_fixtures_result(self, sport):
+            # #2907: see the sibling double above. Healthy read.
+            return statpal_api.StatPalFixtureFetch(
+                list(fixtures), "ok", sport, "season-schedule"
+            )
 
         async def get_live_scores(self, sport):
             return []

@@ -512,6 +512,24 @@ ENFORCED_TASKS = frozenset({
     # `complete` otherwise — including when the venue serves no injury path for
     # a sport at all, which is a fact about the venue and not a failed run.
     "statpal_injuries",                # terminal + fetch_failures
+    # #2907 acceptance bullet 2 (authority/096) — the SURVIVOR of that same
+    # retirement, enrolled for the same reason one entry up and, again, in the
+    # change that gives it a terminal.
+    #
+    # `statpal_injuries` was the dead task; this is the one that still matters.
+    # `sync_statpal_schedules` IS #2867's ship — every game exists on the site
+    # before a market lists it — and on 2026-09-10 it read 15 starts / 15
+    # successes / 0 failures / `terminal: None`. With no terminal it classified
+    # as `_LEGACY`, and outside this set `verdict_for` downgrades even that to a
+    # non-authoritative `unknown`, so all three of these banked one green row:
+    # a pass that read 374 fixtures and correctly wrote 0 (NFL is already
+    # complete from ESPN/The Odds API), a pass the venue answered emptily, and a
+    # pass that could not ask at all.
+    #
+    # Its terminal is `failed` only when EVERY sport it asked about was
+    # unreadable, `partial` when some were, and `complete` otherwise — a quiet
+    # board is not an alarm, or the alarm stops being read.
+    "statpal_schedules",               # terminal + fetch_failures
     # #2927 Phase 2: the event-container assembly pass. Enrolled IN THE SAME
     # CHANGE that gives it terminals, because this file's own trap is that
     # either half alone is worthless — and here the empty case is not an edge

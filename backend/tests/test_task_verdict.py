@@ -471,6 +471,14 @@ class TestEnforcementScope:
             # otherwise, so a sport the venue serves no injury path for stays
             # green (that is a fact about StatPal) while a dead path does not.
             "statpal_injuries",
+            # #2907 bullet 2 (authority/096): the SURVIVOR of the same
+            # retirement, and the one that carries #2867's ship — every game
+            # exists before a market lists it. Measured on production
+            # 2026-09-10: 15 starts / 15 successes / 0 failures / no terminal
+            # at all, so a pass that reached the venue and correctly wrote 0
+            # and a pass that could not reach it banked one identical green
+            # row. Terminal comes from `_sync_statpal_schedules` itself.
+            "statpal_schedules",
             # #2927 Phase 2: the event-container assembly pass, enrolled at
             # BIRTH in the change that gives it terminals. Its empty case is
             # not an edge case — it is the NORMAL state for as long as the
