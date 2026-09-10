@@ -595,6 +595,67 @@ def _theme_bundle_id(story_key: str, items: list[dict[str, Any]]) -> str:
     return f"theme:{story_key}:{ids}"
 
 
+# ── A SHARED QUESTION IS A CLAIM ABOUT THE MEMBERS (#4147) ───────────────────
+#
+# `resolve_story_question` reads AUTHORED_STORY_QUESTIONS by `story_key` alone
+# and never looks at who is in the group, so an authored sentence bypasses the
+# guard the derived path already carries ("No shared phrase means no question
+# means no bundle"). Served on production 2026-09-10 20:36Z:
+#
+#     Who wins the World Cup?
+#       · 2027 FIFA Women's World Cup Champion   soccer:FIFA_WC:championship:2027
+#       · 2030 FIFA World Cup Champion           soccer:FIFA_WC:championship:2030
+#
+# Two tournaments three years apart under one question in the singular. A reader
+# who restates the header — the D1 bar — is handed Spain at 20% and France at
+# 12% and cannot tell which one answers it. Neither does.
+#
+# THE AXIS IS SEASON, NOT COHORT, AND THAT IS A MEASUREMENT RATHER THAN A TASTE.
+# The obvious key ("men's and women's are different cohorts") was checked against
+# all nine theme bundles served at that timestamp and is WRONG: it would also
+# split `story:grand_slam_tennis`, whose members are the US Open men's and
+# women's singles — `tennis::championship:2026` for both, the same tournament in
+# the same season, and a group a reader wants kept. Season splits the World Cup
+# and touches nothing else: 1 of the 9 changes, and it is the defect.
+#
+# AN UNKNOWN SEASON NEVER SPLITS. Four of those nine (ai, macro_rates,
+# middle_east_conflict, russia_ukraine) carry members with no canonical key at
+# all, so reading "unknown" as disagreement would dissolve four honest bundles on
+# missing data — the fix would cost more than the bug. Only two members that both
+# STATE a season, and state different ones, are evidence the question is false.
+#
+# Season comes from the canonical key and not from `resolution_date`: the 2030
+# World Cup resolves 2031-01-15, so the date's year is not the season.
+
+#: `futures_categorization.compute_canonical_market_key` builds exactly
+#: ``{sport}:{league}:{category}:{season}`` — always four parts, any of which may
+#: be empty. Read positionally, so a malformed key degrades to "season unknown"
+#: rather than raising inside the feed (gotcha #42).
+_CANONICAL_KEY_PARTS = 4
+_CANONICAL_KEY_SEASON_INDEX = 3
+
+
+def _member_season(item: dict[str, Any]) -> str | None:
+    """The season a member states, or ``None`` when it does not state one."""
+    key = _futures_data(item).get("canonical_market_key")
+    if not isinstance(key, str):
+        return None
+    parts = key.split(":")
+    if len(parts) != _CANONICAL_KEY_PARTS:
+        return None
+    return parts[_CANONICAL_KEY_SEASON_INDEX].strip() or None
+
+
+def _members_span_multiple_seasons(items: list[dict[str, Any]]) -> bool:
+    """Whether two members state seasons that disagree.
+
+    False when every member is silent about its season, and false when only one
+    of them speaks — see the block above for why silence is not disagreement.
+    """
+    seasons = {season for season in map(_member_season, items) if season}
+    return len(seasons) > 1
+
+
 def _make_theme_bundle_item(
     story_key: str, items: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -604,6 +665,15 @@ def _make_theme_bundle_item(
     a group that cannot say what its members have in common is not a story, and
     its members are better off competing for their own slots — which is exactly
     where they were before this bundler ran.
+
+    #4147 adds a second way to have no statable question: the family HAS an
+    authored sentence, but its members span more than one season, so the
+    sentence is false of the set. The outcome is deliberately the same
+    `None` — clause (c) already says what to do with a group that cannot
+    honestly say what its members have in common, and re-wording the header
+    ("World Cup markets") would keep a card whose two rows answer two different
+    questions. Splitting hands the reader "2030 FIFA World Cup Champion —
+    France 12%", which is true.
     """
     # Members ranked by feed score (most feed-worthy leads the mini-ranked-peek);
     # the bundle competes for ONE slot scored by its best member.
@@ -615,6 +685,22 @@ def _make_theme_bundle_item(
     member_names = [str(_futures_data(item).get("name") or "") for item in ranked]
     question, question_source = resolve_story_question(story_key, member_names)
     if not question:
+        return None
+    if _members_span_multiple_seasons(ranked):
+        # Logged rather than silent: a family folding away is invisible on the
+        # page (its members simply compete on their own), so ops needs the
+        # reason or the next reader has to re-derive it from an absence.
+        logger.info(
+            "discover_bundle: refused a shared question across seasons",
+            extra={
+                "story_key": story_key,
+                "question_source": question_source,
+                "member_ids": member_ids,
+                "seasons": sorted(
+                    {s for s in map(_member_season, ranked) if s}
+                ),
+            },
+        )
         return None
     return {
         "type": "bundle",
