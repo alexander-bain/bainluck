@@ -219,9 +219,55 @@ class TestFixturePinWindow:
             entries=self.ENTRIES,
         )
 
+    def test_pinned_at_the_reported_49_minutes_before_kickoff(self):
+        """CERT-2432's required repair, and #4541's own headline specimen.
+
+        The issue was filed on the opener buried at **23:31Z, 49 minutes before
+        the 00:20Z kickoff** — which is 29 minutes before the kickoff's UTC
+        midnight. The first version of this window opened at the `start` day's
+        00:00 UTC, so it missed the exact measurement the issue exists for. A US
+        primetime game belongs to the next UTC day, so a midnight-anchored lead
+        opens LATE, not early.
+
+        Both ends of the window are now anchored on the kickoff and no calendar
+        midnight appears in the maths.
+        """
+        assert self._pinned(datetime(2026, 9, 9, 23, 31, tzinfo=timezone.utc)) is True
+
     def test_pinned_before_kickoff_same_utc_day(self):
         # The tab must lead with it BEFORE it starts, not only once it is live.
         assert self._pinned(datetime(2026, 9, 10, 0, 5, tzinfo=timezone.utc)) is True
+
+    def test_lead_boundary_is_half_open(self):
+        assert self._pinned(self.KICKOFF - timedelta(hours=6)) is True
+        assert self._pinned(self.KICKOFF - timedelta(hours=6, minutes=1)) is False
+
+    def test_the_window_does_not_key_on_the_calendar_day_at_either_end(self):
+        """The general form of the CERT-2432 defect, stated once.
+
+        A game kicking off just after midnight UTC and one kicking off just
+        before it are the same game to a reader, and the pin must treat their
+        T-49min identically. Under a day-anchored lead the first is unpinned and
+        the second is pinned — the boundary would be an artefact of the clock,
+        not of the fixture.
+        """
+        just_after_midnight = datetime(2026, 9, 10, 0, 20, tzinfo=timezone.utc)
+        entries_before = [dict(self.ENTRIES[0], start="2026-09-09", end="2026-09-09")]
+        just_before_midnight = datetime(2026, 9, 9, 23, 40, tzinfo=timezone.utc)
+
+        after = fixture_marquee_pinned(
+            "americanfootball_nfl",
+            just_after_midnight,
+            just_after_midnight - timedelta(minutes=49),
+            entries=self.ENTRIES,
+        )
+        before = fixture_marquee_pinned(
+            "americanfootball_nfl",
+            just_before_midnight,
+            just_before_midnight - timedelta(minutes=49),
+            entries=entries_before,
+        )
+        assert after is before is True
 
     def test_pinned_while_live(self):
         assert self._pinned(self.KICKOFF + timedelta(minutes=7)) is True
@@ -237,8 +283,16 @@ class TestFixturePinWindow:
         assert self._pinned(self.KICKOFF + timedelta(hours=6)) is False
         assert self._pinned(self.KICKOFF + timedelta(hours=5, minutes=59)) is True
 
-    def test_not_pinned_before_the_window_opens(self):
-        assert self._pinned(datetime(2026, 9, 9, 23, 0, tzinfo=timezone.utc)) is False
+    def test_not_pinned_the_afternoon_before(self):
+        """The window still has a floor — it just is not midnight.
+
+        This case used to read 23:00Z, chosen because it was before the kickoff
+        day's UTC midnight. That made it a test OF the midnight anchor rather
+        than of the floor, and CERT-2432 showed the anchor was the bug: 23:00Z is
+        inside T-6h and is now correctly pinned. Re-pointed at a time that is
+        genuinely outside the lead so the assertion means what its name says.
+        """
+        assert self._pinned(datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)) is False
 
     def test_next_days_game_in_the_same_league_is_not_pinned(self):
         # THE TRAP THIS EXISTS FOR: a sport_key match is not a fixture match. The

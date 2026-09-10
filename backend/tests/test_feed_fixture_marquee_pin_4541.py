@@ -53,7 +53,12 @@ from app.utils.tonights_games import MARQUEE_PIN_KEY, compose_lead
 # Kickoff 00:20 UTC on 2026-09-10 — Wednesday EVENING in America. The calendar
 # entry is dated by the UTC day, which is the trap the entry's own note calls out.
 KICKOFF = datetime(2026, 9, 10, 0, 20, tzinfo=timezone.utc)
-NOW = KICKOFF + timedelta(minutes=7)  # the moment the defect was measured
+NOW = KICKOFF + timedelta(minutes=7)  # the moment the LIVE defect was measured
+
+# #4541's headline measurement: the opener at rank 43 / score 58, forty-nine
+# minutes before kickoff — and 29 minutes BEFORE the kickoff's UTC midnight,
+# which is the boundary the window's first version keyed on (CERT-2432).
+PREGAME_SPECIMEN = KICKOFF - timedelta(minutes=49)
 
 FIXTURE_ENTRIES = [
     {
@@ -164,6 +169,34 @@ class TestScoreEventsStampsThePin:
     async def test_the_opener_is_stamped(self):
         items = await _run([_opener()])
         assert len(items) == 1
+        assert items[0][MARQUEE_PIN_KEY] is True
+
+    @pytest.mark.asyncio
+    async def test_stamped_at_the_reported_49_minutes_before_kickoff(self):
+        """CERT-2432, through the real `_score_events` rather than the primitive.
+
+        #4541's headline measurement is PRE-GAME — the opener at rank 43 with
+        score 58, forty-nine minutes before kickoff — and that is the case the
+        pin most has to serve, because a scheduled game has no in-game drama by
+        definition and is structurally capped. 23:31Z is also 29 minutes BEFORE
+        the kickoff's UTC midnight, which is what the first version of the window
+        keyed on and why it missed.
+        """
+        pregame = _game(
+            1,
+            sport_key="americanfootball_nfl",
+            sport_name="NFL",
+            commence=KICKOFF,
+            home_prob=0.61,
+        )
+        pregame.status = "scheduled"
+        pregame.period = None
+        pregame.game_clock = None
+        pregame.home_score = None
+        pregame.away_score = None
+
+        items = await _run([pregame], now=PREGAME_SPECIMEN)
+        assert len(items) == 1, "the scheduled game must be served, not filtered"
         assert items[0][MARQUEE_PIN_KEY] is True
 
     @pytest.mark.asyncio
