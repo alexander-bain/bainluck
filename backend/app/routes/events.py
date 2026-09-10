@@ -96,8 +96,10 @@ from app.utils.search_fixture_dedup import (
 )
 from app.utils.search_match_class import (
     ENTITY_EVENT_KIND,
+    ENTITY_TEAM_KIND,
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
     Evidence as _SearchEvidence,
+    query_is_entity_name,
     query_names_participant,
 )
 from app.utils.feed_market_quality import has_no_real_price
@@ -17133,9 +17135,19 @@ def _typeahead_evidence(item: dict, q: str | None = None) -> "_SearchEvidence":
     event can never be promoted to `ENTITY_EVENT_KIND` — the promotion is a
     statement about the query, so a caller that withholds the query gets the
     pre-#4411 ordering. That is the withheld-evidence failure mode this seam
-    exists to make visible, so the boundary suite asserts both arms.
+    exists to make visible, so the boundary suite asserts both arms. #4551's
+    team promotion is withheld by the same arm, for the same reason.
     """
     kind = item.get("type") or "market"
+    # Aliases are assembled BEFORE the kind is decided, because #4551's
+    # promotion reads them: "Yankees" is an `alternate_names` entry, not the
+    # display name, so a team whose aliases arrive after the decision can never
+    # be promoted on the one string a reader actually types. That ordering is
+    # the whole of LAT-P050 arriving in a third place, and
+    # `test_typeahead_evidence_boundary.py` owns the seam.
+    aliases: tuple[str, ...] = tuple(item.get("_aliases") or ())
+    if kind == "team" and item.get("abbreviation"):
+        aliases = (*aliases, item["abbreviation"])
     if (
         q
         and kind == "event"
@@ -17144,10 +17156,16 @@ def _typeahead_evidence(item: dict, q: str | None = None) -> "_SearchEvidence":
         # #4411: the query named the people playing, so this row is the entity
         # the reader asked for and not merely a row their words landed on.
         kind = ENTITY_EVENT_KIND
-    aliases: tuple[str, ...] = tuple(item.get("_aliases") or ())
+    elif (
+        q
+        and kind == "team"
+        and query_is_entity_name(q, (item.get("text") or "", *aliases))
+    ):
+        # #4551/D107: the query IS this team's name, so the card is the entity
+        # the reader asked for. Scoped to equality against a WHOLE owned name —
+        # `new` and `york` must keep answering with the market (ruling 041).
+        kind = ENTITY_TEAM_KIND
     outcomes: tuple[str, ...] = ()
-    if kind == "team" and item.get("abbreviation"):
-        aliases = (*aliases, item["abbreviation"])
     if kind == "futures":
         # The full owned set when the route supplied it, falling back to the
         # display rows so this stays correct for any caller that has not been

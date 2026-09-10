@@ -111,25 +111,56 @@ def test_every_keystroke_from_yan_to_yankees_leads_with_the_team():
         assert out[0] == "team|New York Yankees", f"{q!r} -> {out[:3]}"
 
 
-def test_the_singular_yankee_is_NOT_fixed_by_this_ship_and_that_is_pinned():
-    """#4551, and it is asserted rather than omitted ON PURPOSE.
+def test_the_singular_yankee_is_out_of_MC1Bs_REACH_and_4551_owns_it():
+    """#4551 / D107. SPECIMEN REPLACED 2026-09-09; read this before editing it.
 
-    Writing the sweep above as `yan…yankees` inclusive was the first draft and
-    it failed on exactly one keystroke, which is how #4551 was found. Deleting
-    that member would have hidden a live production defect inside a green
-    guard; pinning the CURRENT behaviour means the day #4551 is fixed, this
-    test goes red and names the issue that authorises the change.
+    THE ORIGINAL, AND WHY IT HAD TO GO. This test was written as "the singular
+    yankee is NOT fixed by this ship and that is pinned", and it ranked the same
+    hand-built `Evidence` list as its siblings to assert that a prop led. Its
+    docstring promised "the day #4551 is fixed, this test goes red and names the
+    issue that authorises the change". IT DID NOT. #4551 shipped and every
+    assertion here stayed green, because the fix is a ROUTE-LEVEL promotion —
+    `_typeahead_evidence` now hands the scorer `entity_team` — and a list of
+    hand-built `Evidence` never passes through the route. The guard did not
+    fail; it stopped measuring, which is worse, because a green test asserting a
+    production screen that no longer exists reads as coverage.
 
-    `yankee` never reaches MC1B because it never reaches MC2: `_fold_token`
-    strips the plural, so `yankee` is a whole token of "New York Yankees" and
-    the team is an honest MC1 — as is every market carrying the same token.
-    The class ties and ruling 041's team floor decides. That is the ratified
-    relation working as written, not this ship failing.
+    THE FORBIDDEN REPAIR, both directions. Do NOT flip the last assertion to
+    expect the team: this file ranks the scorer in isolation and the scorer is
+    byte-identical for `yankee` before and after #4551, so that expectation
+    would be a lie about what the scorer does. And do NOT delete the test: the
+    tie it pins is the reason #4519 could not reach this keystroke, and it is
+    the precondition D107 ruled on. Replace the CLAIM, not the numbers.
+
+    WHAT IT PINS NOW. `yankee` never reaches MC1B because it never reaches MC2:
+    `_fold_token` strips the plural, so `yankee` is a whole token of "New York
+    Yankees" and the team is an honest MC1 — as is every market carrying the
+    same token. The classes TIE, and with the scorer alone that tie is broken by
+    ruling 041's team floor. All of that is still true and none of it moved.
+    What moved is upstream of here: the route tells the scorer this row is the
+    entity, and `tests/test_typeahead_the_team_name_leads_4551.py` owns that
+    seam and ranks through it.
     """
     assert match_class("yankee", _YANKEES) == MC1_ALL_TOKENS
     assert match_class("yankee", _INNING_PROPS[0]) == MC1_ALL_TOKENS
+    assert match_class("yankee", _YANKEES) != MC1B_OWN_NAME_PREFIX
+    # The tie, and the floor breaking it. `kind="team"` here is the UNPROMOTED
+    # row on purpose — this is the scorer's own answer, not the dropdown's.
     out = _ranked("yankee", [*_INNING_PROPS, *_FIXTURES, _YANKEES])
     assert out[0].startswith("futures|"), out[:2]
+    # And the one line that keeps this honest: the same keystroke through the
+    # real route seam leads with the card. If this ever fails, the ship regressed
+    # and the three assertions above would have gone on passing forever.
+    from app.routes.events import _typeahead_evidence
+    from app.utils.search_match_class import ENTITY_TEAM_KIND
+
+    promoted = _typeahead_evidence(
+        {"type": "team", "text": "New York Yankees",
+         "abbreviation": "NYY", "sport_key": "baseball_mlb",
+         "_aliases": ["New York", "Yankees"]},
+        "yankee",
+    )
+    assert promoted.kind == ENTITY_TEAM_KIND
 
 
 def test_lak_leads_with_the_lakers_not_a_mayoral_election():
