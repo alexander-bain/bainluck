@@ -846,6 +846,38 @@ def compute_futures_highlight(
             # (resolution_proximity signal). The flag is kept for display/tags; the
             # additive +8/+4 is removed to drop the double-count. #141/Item 2.
             flags.is_resolving_soon = True
+            # #4695 — THE REASON CODE IS THE DISPLAY INPUT, AND IT WAS DROPPED WITH
+            # THE SCORE IT WAS SITTING NEXT TO.
+            #
+            # #141/Item 2 (812ca09a) set out to delete a double-counted +8/+4, and
+            # the comment three lines up is its own statement of the policy: "the
+            # flag is kept for display/tags; the ADDITIVE +8/+4 is removed". Its
+            # sibling in the same hunk, `multi_source` fifteen lines below, executed
+            # exactly that — "Flag + reason retained for display; additive score
+            # removed". This branch did not: the `<= 7` arm was collapsed away
+            # whole, and `result.reasons.append("resolving_soon_30d")` went out with
+            # the `result.score +=` beside it.
+            #
+            # These two codes are not bookkeeping. They are read at TEN sites across
+            # the four copy generators in `feed_reasons.py` — the reason line, the
+            # headline, the binary card's three strings, the context summary — and
+            # they are rungs 5 and 6 of `PRIMARY_REASON_LABELS` above, whose own
+            # docstring calls every string in it "a string a reader can end up
+            # looking at". Nothing in the backend has emitted either code since
+            # 812ca09a, so all ten consumers are unreachable and no Discover card
+            # can say "resolving this week" however close its resolution is.
+            #
+            # Measured on production `bbf068c2`, `GET /api/feed?limit=100`: 34 of
+            # the 100 served cards resolve inside 30 days (6 inside 7). Three of
+            # them are cards with no text of ANY kind — `Will Russia target Kyiv by
+            # September 17, 2026?` at score 65 resolves in 7 days and says nothing.
+            #
+            # Restored WITHOUT the score, which is the half #141 was right about:
+            # `result.score` is untouched here, so ordering is unchanged and the
+            # double-count stays dead. This is a copy fix, not a ranking change.
+            result.reasons.append(
+                "resolving_soon_7d" if days_until <= 7 else "resolving_soon_30d"
+            )
 
     # === Cross-source scoring ===
     if source_count >= 2:

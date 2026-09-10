@@ -251,6 +251,11 @@ class TestItRefusesToEmptyTheSurface:
             "demoted": 0,
             "unreplaced": 0,
             "clean_replacements_available": len(items) - WINDOW,
+            # Zero, not absent: this corpus is reduced to the audit oracle's
+            # fields and carries no text doors at all, so `is_wholly_silent_card`
+            # declines to judge it (#4695). If that guard ever broke, all 49
+            # cards would read as silent and this stays the test that says so.
+            "silent_in_window": 0,
         }
 
     def test_an_empty_feed_does_not_raise(self):

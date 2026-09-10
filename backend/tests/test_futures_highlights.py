@@ -244,24 +244,47 @@ class TestComputeFuturesHighlight:
         result = compute_futures_highlight(outcomes=outcomes)
         assert result.flags.has_rank_shakeup is True
 
+    # #4695 — THESE TWO PINNED THE ACCIDENT, NOT THE INTENT.
+    #
+    # As written for #141/Item 2 they asserted `"resolving_soon_*" not in
+    # result.reasons`, and their comment described the reason AND the score as
+    # deliberately removed. Only the score was: #141's own source comment says
+    # "the flag is kept for display/tags; the ADDITIVE +8/+4 is removed", and its
+    # sibling `test_multi_source_flag_no_additive_double_count` below is that
+    # policy written as a test — flag set, REASON PRESENT, score unchanged.
+    #
+    # The reason codes are the display input for ten sites in `feed_reasons.py`
+    # and two rungs of `PRIMARY_REASON_LABELS`, so pinning them absent kept every
+    # "resolving this week" sentence unreachable and made the silence look
+    # intended. Rewritten to the sibling's shape, which keeps the real invariant
+    # (no additive score) with a stronger assertion than the original had.
     def test_resolving_soon_7d(self):
-        """Markets resolving within 7 days set the flag (scored via the blend)."""
+        """Within 7 days: flag, display reason, and NO additive score."""
         now = datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc)
-        resolution = now + timedelta(days=5)
-        result = compute_futures_highlight(resolution_date=resolution, now=now)
+        result = compute_futures_highlight(
+            resolution_date=now + timedelta(days=5), now=now
+        )
+        far = compute_futures_highlight(
+            resolution_date=now + timedelta(days=200), now=now
+        )
         assert result.flags.is_resolving_soon is True
-        # #141/Item 2: resolution-proximity's SINGLE HOME is the interestingness
-        # blend now, so the additive "resolving_soon_*" reason/score are gone.
-        assert "resolving_soon_7d" not in result.reasons
+        assert "resolving_soon_7d" in result.reasons
         assert "resolving_soon_30d" not in result.reasons
+        assert result.score == far.score  # no additive difference
 
     def test_resolving_soon_30d(self):
-        """Markets resolving within 30 days set the flag (scored via the blend)."""
+        """Within 30 days: flag, display reason, and NO additive score."""
         now = datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc)
-        resolution = now + timedelta(days=20)
-        result = compute_futures_highlight(resolution_date=resolution, now=now)
+        result = compute_futures_highlight(
+            resolution_date=now + timedelta(days=20), now=now
+        )
+        far = compute_futures_highlight(
+            resolution_date=now + timedelta(days=200), now=now
+        )
         assert result.flags.is_resolving_soon is True
-        assert "resolving_soon_30d" not in result.reasons
+        assert "resolving_soon_30d" in result.reasons
+        assert "resolving_soon_7d" not in result.reasons
+        assert result.score == far.score  # no additive difference
 
     def test_micro_bet_penalty_retained(self):
         """Daily-resolving micro-bets keep the distinct suppression penalty."""

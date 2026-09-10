@@ -2044,6 +2044,88 @@ def is_first_page_quality_offender(item: dict) -> bool:
     return item.get("_quality_class") in ("low_quality", "suppress")
 
 
+#: Every place a DISCOVER card can print a sentence — and nowhere else.
+#:
+#: THE LIST IS THE RENDERER'S, NOT A GUESS AT IT. `feedContextSnippet` in
+#: `frontend/components/discover/utils.ts` is the caption chain every Discover
+#: futures card goes through, and its futures branch is exactly:
+#:
+#:     firstMeaningful([item.context_summary, item.headline, item.reason,
+#:                      data.hook_description])
+#:
+#: Four doors. `DiscoverCard.tsx` -> `discover/FuturesCard.tsx` reads no other
+#: text field, and iOS shares the chain (`DiscoverCaption.feedCaption`, #4265).
+#:
+#: WHY `card_sum_reason` IS NOT HERE (CERT-2473's BLOCK, and it was right).
+#: It IS rendered as a sentence by `frontend/lib/cardSum.ts` — but only through
+#: `FeedCard.tsx`, which serves `/sports`, `/my-stuff` and `/categories/[slug]`.
+#: **Discover does not use that component.** Counting it as speech spared
+#: `Russia x Ukraine ceasefire agreement by...?` at slot 9, whose
+#: headline/reason/context/hook are all empty and whose only text is the machine
+#: key `independent_prices` — a card that is silent to the reader on the page
+#: this floor governs. A door that opens on another surface is not a door here.
+#:
+#: So the rule this list encodes: **speech is what THIS surface renders.** If a
+#: fifth field ever reaches the Discover caption chain, it belongs here; a field
+#: that only some other surface prints never does.
+_CARD_TEXT_DOORS_TOP = ("headline", "reason", "context_summary")
+_CARD_TEXT_DOORS_DATA = ("hook_description",)
+
+
+def is_wholly_silent_card(item: dict) -> bool:
+    """Does this card print no sentence at all? (#4695, repair of CERT-2470.)
+
+    A hero percentage, a bar, a question — and nothing that says why any of it
+    is on the screen. Distinct from `is_first_page_quality_offender`, which is
+    about a card that should not LEAD; this is a card that does not SPEAK.
+
+    **FUTURES CARDS ONLY, and that is not a convenience — the door list IS the
+    futures branch of `feedContextSnippet` and means nothing off it.** A futures
+    card with no caption really is wordless: a percentage, a question, and
+    nothing else. Every other card type carries its own visible substance that
+    no caption field holds. A game card renders two team names, two scores and
+    two logos ("Seattle Seahawks 13, New England Patriots 10"); a concept card
+    renders the matchup ("Van vs Pantoja"); a bundle renders its member rows,
+    each with its own headline. None of them is silent to a reader for want of
+    a caption sentence, and judging them by the futures chain is a category
+    error.
+
+    It is also a direct collision. #4681 and notice 27 say a finished marquee
+    final REACHES page one; a settled game card frequently carries no caption
+    (its story is the score), so an unscoped predicate demotes exactly the card
+    another shipped ruling requires. `test_finished_marquee_on_discover_4681`
+    caught this on the rebase — it passed on master and failed here — and it is
+    the same lesson as gotcha #43: scope by card type, and assert both
+    directions.
+
+    **Absence of capture is not silence.** The check is skipped entirely unless
+    the item carries at least one text-door KEY. The #1958 corpus fixture is
+    reduced to the fields the audit's oracle reads and carries none of them, so
+    a predicate that tested values alone would call all 49 of its cards silent
+    and hand the floor a page with nothing clean to swap in. A served card
+    always carries the keys — with ``None`` or ``""`` in them when it has
+    nothing to say — so the real population is unaffected by the guard.
+    """
+    if item.get("type") != "futures":
+        return False
+
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    has_a_door = any(door in item for door in _CARD_TEXT_DOORS_TOP) or any(
+        door in data for door in _CARD_TEXT_DOORS_DATA
+    )
+    if not has_a_door:
+        return False
+
+    spoken = [item.get(door) for door in _CARD_TEXT_DOORS_TOP]
+    spoken += [data.get(door) for door in _CARD_TEXT_DOORS_DATA]
+    return not any(str(text or "").strip() for text in spoken)
+
+
+def _offends_the_first_page(item: dict) -> bool:
+    """The union the floor screens on: should not lead, OR does not speak."""
+    return is_first_page_quality_offender(item) or is_wholly_silent_card(item)
+
+
 def enforce_first_page_quality_floor(
     items: list[dict],
     *,
@@ -2063,6 +2145,19 @@ def enforce_first_page_quality_floor(
 
     So the control is stated in the target's own terms: **zero offenders in the
     first-page window.**
+
+    **Two classes of offender, one mechanism** (#4695, the repair the CERT-2470
+    BLOCK named). A ladder is a card that should not LEAD. A wholly silent card
+    — no headline, no reason, no context, no hook, no sum note — is a card that
+    does not SPEAK: a hero percentage and a question, and nothing saying why
+    any of it is on the screen. #4695 restored the resolving-soon sentence for
+    the cards that had one to say, which fixed three; the nine that remain have
+    nothing true left to print, and manufacturing copy for them is closed off
+    by #4056 and #4094. A card with nothing to say yields its slot instead —
+    the same swap, on the same evidence, through the same loud shortfall.
+
+    Screening happens here rather than in the copy generators deliberately
+    (#4080): the generators must not be the thing that decides slots.
 
     **It demotes; it never drops.** Ruling (d) is explicit that named Alex
     exclusions remain the ONLY hard-drops — those are the ``suppress`` arms, each
@@ -2096,10 +2191,10 @@ def enforce_first_page_quality_floor(
     window = items[:window_size]
     tail = items[window_size:]
     offender_positions = [
-        idx for idx, item in enumerate(window) if is_first_page_quality_offender(item)
+        idx for idx, item in enumerate(window) if _offends_the_first_page(item)
     ]
     clean_tail_positions = [
-        idx for idx, item in enumerate(tail) if not is_first_page_quality_offender(item)
+        idx for idx, item in enumerate(tail) if not _offends_the_first_page(item)
     ]
 
     meta = {
@@ -2107,6 +2202,10 @@ def enforce_first_page_quality_floor(
         "demoted": 0,
         "unreplaced": 0,
         "clean_replacements_available": len(clean_tail_positions),
+        # Reported separately so the two classes never hide each other: a page
+        # that swapped three ladders reads the same in `demoted` as one that
+        # swapped three silent cards, and they are different stories.
+        "silent_in_window": sum(1 for item in window if is_wholly_silent_card(item)),
     }
     if not offender_positions:
         return items, meta
