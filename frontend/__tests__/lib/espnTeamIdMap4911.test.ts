@@ -138,4 +138,23 @@ describe("#4911 ESPN crest id map", () => {
       expect(espnTeamLogoByName(name)).not.toBeNull();
     }
   });
+
+  it("resolves an accented club name to the same crest as its ASCII spelling", () => {
+    // The other half of #4911, and the one that hits first: our NHL rows spell it
+    // "Montréal Canadiens" (33 events, production 2026-09-10) while the map is keyed in
+    // ASCII, so the lookup returned null and the club drew NO crest — on the opener,
+    // Montréal @ Toronto, 2026-09-19. Only one name in the four mapped leagues is
+    // non-ASCII today, so this is a guard against the class, not a patch for the row.
+    const accented = espnTeamLogoByName("Montréal Canadiens");
+    expect(accented).not.toBeNull();
+    expect(accented).toBe(espnTeamLogoByName("Montreal Canadiens"));
+    expect(accented).toContain("/teamlogos/nhl/500/10.png");
+  });
+
+  it("still returns null for a name that is genuinely absent", () => {
+    // Folding widens the lookup; it must not turn it into a fuzzy matcher.
+    for (const name of ["", "Not A Team", "Montreal", "Toronto"]) {
+      expect(espnTeamLogoByName(name)).toBeNull();
+    }
+  });
 });

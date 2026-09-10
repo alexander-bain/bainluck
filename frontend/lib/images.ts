@@ -240,12 +240,33 @@ export const ESPN_TEAM_IDS: Record<string, { id: string; sport: string }> = {
 };
 
 /**
+ * Fold a team name to its lookup key: lowercase, trimmed, and stripped of diacritics.
+ *
+ * #4911 — the accent half. Our own rows carry "Montréal Canadiens" (33 events,
+ * production 2026-09-10) while the map is keyed in ASCII, so the lookup returned null
+ * and the club rendered NO crest at all — on the NHL opener, Montréal @ Toronto,
+ * 2026-09-19. Folding here rather than adding an accented key fixes the whole class
+ * instead of the one row we happened to notice.
+ */
+function teamNameKey(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // combining diacritical marks, split out by NFD
+    .toLowerCase()
+    .trim();
+}
+
+/** Diacritic-folded index, built once. Map keys are ASCII, so this is a widening only. */
+const ESPN_TEAM_IDS_BY_KEY: Record<string, { id: string; sport: string }> = Object.fromEntries(
+  Object.entries(ESPN_TEAM_IDS).map(([k, v]) => [teamNameKey(k), v]),
+);
+
+/**
  * Get an ESPN team logo URL by team name (no API call needed).
  * Returns null if team is not in the lookup table.
  */
 export function espnTeamLogoByName(teamName: string, sportKey?: string | null): string | null {
-  const key = teamName.toLowerCase().trim();
-  const entry = ESPN_TEAM_IDS[key];
+  const entry = ESPN_TEAM_IDS_BY_KEY[teamNameKey(teamName)];
   if (!entry) return null;
   return espnTeamLogoUrl(entry.id, entry.sport, 500);
 }
