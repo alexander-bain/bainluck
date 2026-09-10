@@ -842,6 +842,34 @@ function StatGauge({
 }
 
 // ─── STAT PROPS: Player stat cards with gauges (live/scheduled) or settled results (completed) ───
+/**
+ * The "Game props" eyebrow names the SECTION, not either side of it.
+ *
+ * #3417: this used to live inside `StatPropsSection`, which the rail renders
+ * once per side — so every event carrying props on BOTH sides printed the whole
+ * heading stack twice, with nothing between the two copies to tell a reader
+ * which player each belonged to. Tennis makes it unmissable because the only
+ * distinguishing mark is the two-letter initial inside the tiles
+ * (`/events/15309061`, men's SF, 2026-09-10: two `GAME PROPS`, two
+ * `EXACT MATCH SCORE (3)`, two `OTHER (1)`), but it fires on any sport whose two
+ * sides both have props. Same grammar error as #4460 — a heading that names a
+ * GROUP, emitted by the thing being grouped.
+ *
+ * Kept as a function rather than inlined at the new call site so the guard test
+ * can pin all three strings without mounting the rail: the string IS the
+ * behaviour, and the live/finished variants are the ones a render test at one
+ * clock would silently miss.
+ */
+export function gamePropsHeading(opts: {
+  isFinished?: boolean;
+  isLive?: boolean;
+  hasBoxScore?: boolean;
+}): string {
+  if (opts.isFinished && opts.hasBoxScore) return "Game props — results";
+  if (opts.isLive && opts.hasBoxScore) return "Game props — live";
+  return "Game props";
+}
+
 function StatPropsSection({
   futures,
   teamColor,
@@ -930,13 +958,6 @@ function StatPropsSection({
 
   return (
     <div>
-      <div className="flex items-center gap-1.5 mb-2">
-        <span className="text-[10px]">📊</span>
-        <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-          {isFinished && boxScore ? "Game props — results" : isLive && boxScore ? "Game props — live" : "Game props"}
-        </span>
-      </div>
-
       <div className="space-y-4">
         {visibleGroups.map(({ category, config, rows }) => (
           <div key={category}>
@@ -2461,6 +2482,15 @@ export default function RelatedFutures({
               render around two sections that both return null. */}
           {(visibleHomeStatProps.length > 0 || visibleAwayStatProps.length > 0) && (
             <div className="space-y-4 mb-3">
+              {/* #3417: ONE eyebrow for the pair. It sits on the same gate as the
+                  wrapper, which is the #3775 gate — computed from the DRAWING
+                  rows — so it still cannot head an empty section. */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px]">📊</span>
+                <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
+                  {gamePropsHeading({ isFinished, isLive, hasBoxScore: !!boxScore })}
+                </span>
+              </div>
               {visibleHomeStatProps.length > 0 && (
                 <StatPropsSection
                   futures={homeCats.statProps}
