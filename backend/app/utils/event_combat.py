@@ -412,6 +412,60 @@ def combat_status(latest_commence, now) -> str:
     return "upcoming"
 
 
+def bout_order_key(ev):
+    """Total order over one card's bouts: `(commence_time, id)`.
+
+    `commence_time` ALONE is not a total order over a fight card, and on most
+    cards it is not an order at all. Measured on production 2026-09-10 over every
+    combat card in `_list_event_bouts`' window, **7 of 18 cards carry two or more
+    bouts at their latest commence**, and on `event:ufc:26sep10` the tie is total:
+    all ten fights are stamped `2026-09-10 00:00:00+00`. A sort on the tied key is
+    stable with respect to its INPUT, and the input is a query with no tiebreak —
+    so `bouts[-1]` was whichever row Postgres happened to return last.
+
+    See :func:`main_bout_of` for what that cost a reader.
+    """
+    return (ev.commence_time, ev.id)
+
+
+def main_bout_of(bouts):
+    """The card's MAIN EVENT — one determination, for every consumer (#4555).
+
+    The latest bout by commence caps the night; among bouts that SHARE that
+    commence, the first one we ever saw. `None` for an empty list.
+
+    **Why this function exists rather than `bouts[-1]`.** Three consumers derived
+    the main event independently — `list_card_concepts` for the card's NAME,
+    `_build_events_envelope` for its `primary`, and the feed's cached envelope for
+    the hero — and all three spelled it `bouts[-1]` over a commence-only sort. On
+    a totally tied card that is an undefined row, so the three disagreed with each
+    other and with themselves between requests. `event:ufc:26sep10` served three
+    different names in one evening — "Renato Moicano vs Brian Ortega" (21:57Z),
+    "Mauricio Ruffy vs Arman Tsarukyan" (00:15Z), "Alonzo Menifield vs Iwo
+    Baraniewski" (00:26Z) — while its hero showed a fourth pair. Ten fights, one
+    card, and the reader could not refresh twice and read the same headline.
+
+    **Why the FIRST row of a tie and not the last.** A main event is announced and
+    priced weeks before its undercard, and the rows say so: Sep 10's three oldest
+    were created Aug 6 (Pantoja/Van, Tuivasa/Despaigne, Ruffy/Tsarukyan) and the
+    remaining seven arrived in a single Sep 1 batch. Oldest-first names that card
+    "Alexandre Pantoja vs Joshua Van" — the flyweight title fight, and the pair
+    the envelope's own hero was already carrying. Newest-first would name it after
+    the last prelim ingested.
+
+    **What this does NOT claim.** The pick is stable and self-consistent, not
+    authoritative: creation order is a proxy, and on a card whose bouts were all
+    ingested in one batch it decides nothing in particular. A real card-name
+    source has to come from the venue, which is #4485 and an ingest ship. The
+    property shipped here is that the card stops contradicting itself.
+    """
+    bouts = list(bouts)
+    if not bouts:
+        return None
+    latest = max(b.commence_time for b in bouts)
+    return min((b for b in bouts if b.commence_time == latest), key=lambda b: b.id)
+
+
 def fight_child_settled(lead_prob: float | None, card_settled: bool) -> bool:
     """Is this fight/prop child settled? (#1803, second reachable instance.)
 
@@ -519,10 +573,12 @@ async def _list_event_bouts(
             continue
         bouts.setdefault(token, []).append(ev)
 
-    # Sort each card's bouts ascending by commence — the main event (latest) caps
-    # the night. Self-contained (not reliant on the query's ORDER BY).
+    # Sort each card's bouts ascending by commence, id — a TOTAL order, so the
+    # fight list is the same list on every request even when a whole card shares
+    # one placeholder commence (`bout_order_key`). Self-contained (not reliant on
+    # the query's ORDER BY, which has no tiebreak either).
     for group in bouts.values():
-        group.sort(key=lambda e: e.commence_time)
+        group.sort(key=bout_order_key)
     return bouts
 
 
@@ -613,7 +669,7 @@ async def list_card_concepts(
         for token, group in event_bouts.items():
             folded_bouts.setdefault(_survivor.get(token, token), []).extend(group)
         for group in folded_bouts.values():
-            group.sort(key=lambda e: e.commence_time)
+            group.sort(key=bout_order_key)
         event_bouts = folded_bouts
 
     concepts: list[dict] = []
@@ -628,6 +684,8 @@ async def list_card_concepts(
         # Authoritative schedule: prefer the events-table fight time; fall back to
         # the Kalshi main-event commence only when no scheduled bout exists.
         if bouts:
+            # Tie-invariant: every bout in a tied max group carries the same
+            # commence, so this is the latest time whichever row sorts last.
             latest = bouts[-1].commence_time  # _list_event_bouts sorts ascending
         elif kalshi and kalshi["fights"]:
             kalshi["fights"].sort(key=_ct)
@@ -651,7 +709,10 @@ async def list_card_concepts(
             fight_count = len(kalshi["fights"])
             name = label or main["name"]
         else:
-            main_bout = bouts[-1]
+            # ONE main-event determination, shared with `_build_events_envelope`
+            # so the card's NAME and its hero cannot name different fights
+            # (#4555). Never `bouts[-1]` — see `main_bout_of`.
+            main_bout = main_bout_of(bouts)
             headline = f"{main_bout.home_team_name} vs {main_bout.away_team_name}"
             label, is_major = card_label(cfg, headline, ())
             main_id = None
@@ -864,7 +925,7 @@ class CombatEventAdapter:
 
         bouts = sorted(
             (b for t in card_tokens for b in bouts_by_token.get(t, [])),
-            key=lambda e: e.commence_time,
+            key=bout_order_key,
         )
 
         if not fights:
@@ -1033,7 +1094,9 @@ class CombatEventAdapter:
         there is no futures market to chart — so `evolution_market_id` is None and
         the frontend renders the two-sided split bar without a history timeline.
 
-        `bouts` are Event ORM rows for this card (sorted ascending by commence),
+        `bouts` are Event ORM rows for this card (sorted ascending by
+        `bout_order_key`, a TOTAL order — a commence-only sort leaves the list,
+        and the main event picked out of it, undefined on a tied card),
         home/away_team_name = the two fighters. `market_id` on children carries the
         Event PK purely as a stable render key — NOT a FuturesMarket id."""
         from app.utils.aggregation import compute_aggregate_probability
@@ -1059,7 +1122,10 @@ class CombatEventAdapter:
                 reverse=True,
             )
 
-        main_bout = bouts[-1]  # latest commence caps the night
+        # The SAME determination `list_card_concepts` names the card after, so the
+        # envelope's `primary` and the card's title cannot be two different fights
+        # (#4555). Never `bouts[-1]` — see `main_bout_of`.
+        main_bout = main_bout_of(bouts)
         latest_commence = main_bout.commence_time
 
         def _child(ev):
