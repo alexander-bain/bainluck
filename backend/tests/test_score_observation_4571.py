@@ -326,6 +326,76 @@ def test_the_clears_drop_the_stamp_with_the_score():
     )
 
 
+# ────────── the payload wiring, proved on the real formatter's output ──────────
+#
+# CERT-2444's follow-up on #4582 asked for exactly this distinction: an AST guard
+# proving "both operations occur" is weaker than reading the value the formatter
+# actually returns. These call `_format_event` and assert on its dict.
+
+
+def _formattable_event(**kw):
+    """The minimum `_format_event` needs. It degrades on missing optional
+    attributes (logging a warning), which is why a namespace suffices."""
+    base = dict(
+        id=1,
+        home_team_name="Home",
+        away_team_name="Away",
+        commence_time=NOW - timedelta(hours=1),
+        completed_at=None,
+        status="live",
+        home_score=3,
+        away_score=1,
+        score_source=None,
+        score_observed_at=None,
+        sport=SimpleNamespace(key="baseball_mlb", name="MLB"),
+        box_score_data=None,
+        win_probability_sources={},
+        external_id="x",
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def test_format_event_serves_the_stamp_it_holds():
+    from app.routes.events import _format_event
+
+    out = _format_event(
+        _formattable_event(score_source="statpal", score_observed_at=NOW)
+    )
+    assert out["score_source"] == "statpal"
+    assert out["score_observed_at"] == NOW.isoformat()
+
+
+def test_format_event_omits_the_stamp_on_an_unread_row():
+    """Present-only on the real formatter, not just in the helper — two null
+    keys on every row of a 500-row single-sport list are bytes that can never
+    carry an answer."""
+    from app.routes.events import _format_event
+
+    out = _format_event(_formattable_event())
+    assert "score_source" not in out
+    assert "score_observed_at" not in out
+
+
+def test_format_event_still_serves_the_score_itself():
+    """The stamp is ADDITIVE (#4571 scope item 2): no existing key changes
+    shape, name or meaning, so no client is forced to cut over."""
+    from app.routes.events import _format_event
+
+    without = _format_event(_formattable_event())
+    with_stamp = _format_event(
+        _formattable_event(score_source="espn", score_observed_at=NOW)
+    )
+
+    assert with_stamp["home_score"] == without["home_score"] == 3
+    assert with_stamp["away_score"] == without["away_score"] == 1
+    assert set(without).issubset(set(with_stamp))
+    assert set(with_stamp) - set(without) == {
+        "score_source",
+        "score_observed_at",
+    }
+
+
 def test_helper_stays_dependency_free():
     """Imported by two task modules and a helper; it must never be the reason
     one of them acquires a cycle (same discipline as sport_keys, gotcha #3)."""
