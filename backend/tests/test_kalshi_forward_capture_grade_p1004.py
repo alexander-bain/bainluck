@@ -1,7 +1,9 @@
 """CAL-P1004 (#1852 FORWARD half): the poll stops declaring losses the venue never did.
 
 CAL-P053 shipped the three-state read (``gradeable_winner``) in August and
-``backfill_winners`` adopted it. ``app/tasks/kalshi.py`` did not — FIVE UPDATE
+``backfill_winners`` adopted it — **at two of its three grading sites; see #4604
+below, and note that this sentence is why nobody looked.** ``app/tasks/kalshi.py``
+did not adopt it at all — FIVE UPDATE
 statements there kept their own ``is_winner = (result == "yes")``, and Kalshi
 returns the empty STRING for a market it has not called. So the backward repair
 spent three weeks draining a population the live poll was refilling every two
@@ -29,6 +31,16 @@ tested as such. But the defect was never a wrong judgment — the right judgment
 already existed and shipped; the defect was a *write site that did not call it*,
 and a third such site added tomorrow would pass every behavioural test in this
 file. ``TestNoTwoStateGradeSurvivesInTheTask`` is the guard for the class.
+
+#4604 — WHY THE SCAN IS NOW TWO FILES WIDE. The class did survive, in
+``_backfill_kalshi_winners_targeted``, carrying BOTH halves of the bulk bug
+(``result_val == "yes"`` and the ``is None`` skip) for the month this guard was
+green. It survived precisely because the scan was scoped to ``kalshi.py``, on the
+strength of the sentence at the top of this docstring — the guard's premise and
+its blind spot were the same sentence. A source-text guard inherits the file list
+it is given, so the file list is the guard; :data:`GRADING_SOURCES` now names
+every module that turns a Kalshi ``result`` into an ``is_winner``, and adding a
+module there is part of adding a grader.
 """
 
 from __future__ import annotations
@@ -44,7 +56,27 @@ from app.utils.kalshi_market_status import (
     gradeable_winner,
 )
 
-TASK_SOURCE = Path(__file__).resolve().parents[1] / "app" / "tasks" / "kalshi.py"
+_TASKS = Path(__file__).resolve().parents[1] / "app" / "tasks"
+TASK_SOURCE = _TASKS / "kalshi.py"
+
+#: #4604. The second file that grades from Kalshi's ``result``, and the one this
+#: module's own docstring calls already-clean ("``backfill_winners`` adopted
+#: it"). It had adopted it at two of its THREE grading sites:
+#: ``_backfill_kalshi_winners_targeted`` still read ``result_val == "yes"`` with
+#: an ``is None`` skip, i.e. both halves of the bulk bug, writing
+#: ``api_settlement`` — and the scan below could not see it, because the scan
+#: was one file wide and this is the other file.
+#:
+#: A guard whose stated premise is the thing it ought to be checking cannot
+#: fail. So the premise is now checked.
+BACKFILL_SOURCE = _TASKS / "backfill_winners.py"
+
+#: Every module that turns a Kalshi ``result`` into ``is_winner``. Adding a
+#: third belongs here in the same commit that adds it.
+GRADING_SOURCES = [
+    pytest.param(TASK_SOURCE, id="tasks/kalshi.py"),
+    pytest.param(BACKFILL_SOURCE, id="tasks/backfill_winners.py"),
+]
 
 #: The two venue states the 2026-09-04 probe actually returned for legs we had
 #: already graded as losses. Neither may produce a write.
@@ -139,9 +171,9 @@ class TestNoTwoStateGradeSurvivesInTheTask:
     """
 
     @staticmethod
-    def _code_lines() -> list[str]:
+    def _code_lines(source: Path = TASK_SOURCE) -> list[str]:
         out = []
-        for line in TASK_SOURCE.read_text().splitlines():
+        for line in source.read_text().splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
@@ -157,10 +189,11 @@ class TestNoTwoStateGradeSurvivesInTheTask:
     #: NAME SHAPE, not one spelling of it.
     TWO_STATE_RE = re.compile(r"result\w*\s*==\s*[\"']yes[\"']", re.IGNORECASE)
 
-    def test_no_two_state_grade_remains_anywhere_in_the_file(self):
+    @pytest.mark.parametrize("source", GRADING_SOURCES)
+    def test_no_two_state_grade_remains_anywhere_in_the_file(self, source):
         offenders = [
             line.strip()
-            for line in self._code_lines()
+            for line in self._code_lines(source)
             if self.TWO_STATE_RE.search(line)
         ]
         assert offenders == [], (
@@ -170,13 +203,14 @@ class TestNoTwoStateGradeSurvivesInTheTask:
             + repr(offenders)
         )
 
-    def test_the_ungraded_state_is_never_partitioned_into_losers(self):
+    @pytest.mark.parametrize("source", GRADING_SOURCES)
+    def test_the_ungraded_state_is_never_partitioned_into_losers(self, source):
         """``if result is None: continue`` was the other half of the bulk bug.
 
         Skipping only ``None`` leaves ``""`` and ``"scalar"`` in the else-branch.
         The surviving guard must test the three-state judgment, not the raw field.
         """
-        code = "\n".join(self._code_lines())
+        code = "\n".join(self._code_lines(source))
         offenders = re.findall(r"if\s+not\s+\w+\s+or\s+result\w*\s+is\s+None", code)
         assert offenders == [], (
             "an ungraded venue result is being partitioned rather than skipped: "
@@ -196,6 +230,21 @@ class TestNoTwoStateGradeSurvivesInTheTask:
         code = "\n".join(self._code_lines())
         assert code.count("graded_columns(") == 2, code.count("graded_columns(")
         assert code.count("gradeable_winner(") == 2, code.count("gradeable_winner(")
+
+    def test_all_three_backfill_graders_defer_too(self):
+        """#4604. The count is THREE, and it was two for a month.
+
+        ``backfill_winners`` has three places that turn a Kalshi ``result`` into
+        ``is_winner``: the nested-event walk, the settled-markets pager, and
+        ``_backfill_kalshi_winners_targeted``. The first two adopted the shared
+        judgment with CAL-P053; the third kept the two-state read, and the
+        docstring at the top of THIS file recorded the whole file as converted.
+
+        Pinned as a number for the same reason the sibling above is: a fourth
+        grader cannot be added without someone reading this test.
+        """
+        code = "\n".join(self._code_lines(BACKFILL_SOURCE))
+        assert code.count("gradeable_winner(") == 3, code.count("gradeable_winner(")
 
     def test_the_helper_is_imported_not_reimplemented(self):
         code = TASK_SOURCE.read_text()
