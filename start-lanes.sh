@@ -129,6 +129,20 @@ launch () {
   osascript -e "tell application \"Terminal\" to do script \"$1\"" >/dev/null
 }
 
+# Same, but names the window. Only the supervisor uses it: a lane window is
+# identified by the work streaming through it, whereas the supervisor prints
+# almost nothing and is otherwise an unlabelled window Alex would have to guess
+# at before closing.
+launch_titled () {
+  if [ "$DRYRUN" -eq 1 ]; then echo "[dry-run] would open Terminal window \"$2\": $1"; return 0; fi
+  osascript >/dev/null <<OSA
+tell application "Terminal"
+  set w to do script "$1"
+  set custom title of w to "$2"
+end tell
+OSA
+}
+
 # ONE WINDOW PER LANE, 2026-09-03 (Alex). The previous line here was
 # `launch "$R $HOME/bainluck integrator lane1"` — one runner serving two inboxes
 # from the master tree, because lane1 used to work in ~/bainluck too. lane1 has
@@ -173,8 +187,35 @@ else
   echo "  The recurring M-R set will only run when someone drives it by hand."
 fi
 
-echo "$((N + LANE4_GRADERS + BUS)) Terminal windows opened — $N lanes, $LANE4_GRADERS cert graders and $BUS measurement bus, streaming live."
-echo "Also run the supervisor once, in its own window, so a lane that dies comes back:"
-echo "  caffeinate -i ~/bainluck/lanes-supervisor.sh"
+# THE SUPERVISOR, 2026-09-10 (Fable-5, at Alex's ask). This script used to end by
+# PRINTING the supervisor command for Alex to run by hand in a second window —
+# a step he had to remember after every reboot, and the one step whose omission
+# is silent: without it, the first lane that dies simply stays dead, and the
+# lanes that are still up make the fleet look healthy.
+#
+# `-is`, not `-dimsu`: prevent idle sleep and system sleep for as long as the
+# supervisor runs, but let the DISPLAY sleep. Alex had been running a separate
+# `caffeinate -dimsu` window alongside; nothing about supervising lanes needs
+# the screen awake.
+#
+# Idempotent by `pgrep`, because the common case is re-running this script to
+# bring back one lane, not a cold boot — and a second supervisor would double
+# every relaunch it decides to make.
+SUP=0
+SUP_PATH="${SUPERVISOR:-$HOME/bainluck/lanes-supervisor.sh}"
+if pgrep -f "lanes-supervisor.sh" >/dev/null 2>&1; then
+  echo "supervisor: already running"
+elif [ ! -f "$SUP_PATH" ]; then
+  # Tolerated, not fatal, exactly like the measurement bus above: an older
+  # checkout should still bring up every lane.
+  echo "supervisor: SKIPPED — no script at $SUP_PATH."
+  echo "  A lane that dies will stay dead until someone notices."
+else
+  launch_titled "caffeinate -is $SUP_PATH" "supervisor"
+  echo "supervisor: started"
+  SUP=1
+fi
+
+echo "$((N + LANE4_GRADERS + BUS + SUP)) Terminal windows opened — $N lanes, $LANE4_GRADERS cert graders, $BUS measurement bus and $SUP supervisor, streaming live."
 echo "If a lane is already running in another window, close the duplicate:"
 echo "the runners take queues atomically, so duplicates waste nothing but a window."
