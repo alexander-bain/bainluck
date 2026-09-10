@@ -184,6 +184,157 @@ class TestPersonFoldIn:
         assert inspect.iscoroutinefunction(er.seed_persons_from_futures_fields)
 
 
+class _RecordingSession:
+    """Minimal stand-in for the AsyncSession ``_upsert_person`` touches.
+
+    Only ``add`` and ``flush`` are exercised before the guard's decision point,
+    so a real DB is not needed to prove the CALL SITE refuses (the fix has to be
+    observable at the wiring, not only in the predicate).
+    """
+
+    def __init__(self):
+        self.added = []
+
+    def add(self, obj):
+        obj.id = 1
+        self.added.append(obj)
+
+    async def flush(self):
+        return None
+
+
+class TestPersonNamePlausibility:
+    """#4458 ship 4 — a market leg must never be folded in as a ``person``.
+
+    Measured on production 2026-09-10: 4,913 of 7,471 (65.8 %) persons produced
+    by ``seed_persons_from_futures_fields`` are not people. 1,450 of them share
+    the single derived alias ``strokes`` and 1,124 share ``round``, so a
+    name-keyed lookup equates entities that are not the same subject.
+    """
+
+    # (name, why) — every string is a REAL production canonical_name.
+    LADDERS = [
+        ("1+ strokes", "margin bucket"),
+        ("Exactly 5 strokes", "margin bucket"),
+        ("R1: Justin Rose under 73.5 strokes", "round/score ladder"),
+        ("Above 13500", "numeric bucket"),
+        ("No. 23 Heart of Racing Team", "a team, not a person"),
+        ("2027 Ryder Cup", "a competition"),
+        ("Racing 92", "a club"),
+    ]
+    MATCHUPS = [
+        ("Jon Rahm beats McIlroy and Spieth", "three players in one row"),
+        ("Marek Fleming beats Robert MacIntyre in the 3rd Round", "two players"),
+        ("Rory McIlroy beats Scottie Scheffler in the full tournament", "two"),
+    ]
+    REAL_PEOPLE = [
+        "Christiaan Maas", "Stacy Lewis", "Patrick Rodgers", "Sam Mayer",
+        "Herman Wibe Sekne", "You Min Hwang", "Viktor Hovland",
+        # Colliding surnames are REAL competitors and must still seed — the
+        # same-name problem is solved at read time, never by refusing to seed.
+        "Michael Kim", "Danny Lee",
+    ]
+
+    @pytest.mark.parametrize("name,why", LADDERS + MATCHUPS)
+    def test_market_legs_are_not_plausible_people(self, name, why):
+        from app.services.entity_registry import is_plausible_person_name
+
+        assert not is_plausible_person_name(name), f"{name!r} accepted ({why})"
+
+    @pytest.mark.parametrize("name", REAL_PEOPLE)
+    def test_real_competitors_still_pass(self, name):
+        from app.services.entity_registry import is_plausible_person_name
+
+        assert is_plausible_person_name(name), name
+
+    @pytest.mark.parametrize("name,why", LADDERS + MATCHUPS)
+    @pytest.mark.asyncio
+    async def test_upsert_person_creates_nothing_for_a_market_leg(self, name, why):
+        """THE WIRING: the guard has to be reached by the seed's own call path."""
+        from app.services import entity_registry as er
+
+        session = _RecordingSession()
+        created, aliases = await er._upsert_person(
+            session, name=name, sport_id=None, sport_key="golf",
+            existing_refs=set(), source="seed_persons_futures",
+        )
+        assert (created, aliases) == (0, 0), f"{name!r} seeded ({why})"
+        assert session.added == [], f"{name!r} created an Entity row"
+
+    @pytest.mark.asyncio
+    async def test_upsert_person_still_seeds_a_real_competitor(self, monkeypatch):
+        """The negative control: the guard must not swallow the happy path."""
+        from app.services import entity_registry as er
+
+        minted = []
+
+        async def fake_add_alias(session, entity_id, alias, alias_type, **kw):
+            minted.append((alias, alias_type))
+            return True
+
+        monkeypatch.setattr(er, "add_alias", fake_add_alias)
+        session = _RecordingSession()
+        created, aliases = await er._upsert_person(
+            session, name="Christiaan Maas", sport_id=None, sport_key="golf",
+            existing_refs=set(), source="seed_persons_futures",
+        )
+        assert created == 1 and aliases == 2
+        assert len(session.added) == 1
+        assert ("Christiaan Maas", er.ALIAS_CANONICAL) in minted
+        assert ("maas", er.ALIAS_COMMON_NAME) in minted
+
+    @pytest.mark.asyncio
+    async def test_single_character_surname_alias_is_not_minted(self, monkeypatch):
+        """"Cut Line: Even par (E)" keys to the surname "e", which as an alias
+        would equate every row ending in that token. The canonical alias may
+        still be written; the one-letter derived key may not."""
+        from app.services import entity_registry as er
+
+        minted = []
+
+        async def fake_add_alias(session, entity_id, alias, alias_type, **kw):
+            minted.append((alias, alias_type))
+            return True
+
+        monkeypatch.setattr(er, "add_alias", fake_add_alias)
+        session = _RecordingSession()
+        await er._upsert_person(
+            session, name="Cut Line: Even par (E)", sport_id=None,
+            sport_key="golf", existing_refs=set(), source="seed_persons_futures",
+        )
+        assert ("e", er.ALIAS_COMMON_NAME) not in minted
+        assert not any(a == "e" for a, _ in minted)
+
+    @pytest.mark.asyncio
+    async def test_placeholder_surname_alias_is_not_minted(self, monkeypatch):
+        """A derived surname that is itself a field placeholder must not become
+        an alias — it would equate every competitor whose leg ends in that word.
+
+        CONSTRUCTED specimen, not an observed one: as of 2026-09-10 no production
+        person entity keys to a ``_NON_PERSON_FIELD_NAMES`` token, because the
+        digit rule already removes the O/U ladders ("under 73.5 strokes") that
+        would produce one. This is the guard for the number-less shape, and
+        without it the clause is untested (it survived mutation M5).
+        """
+        from app.services import entity_registry as er
+
+        minted = []
+
+        async def fake_add_alias(session, entity_id, alias, alias_type, **kw):
+            minted.append((alias, alias_type))
+            return True
+
+        monkeypatch.setattr(er, "add_alias", fake_add_alias)
+        session = _RecordingSession()
+        created, _ = await er._upsert_person(
+            session, name="Rickie Fowler Over", sport_id=None, sport_key="golf",
+            existing_refs=set(), source="seed_persons_futures",
+        )
+        assert created == 1                                   # still a seedable row
+        assert ("Rickie Fowler Over", er.ALIAS_CANONICAL) in minted
+        assert ("over", er.ALIAS_COMMON_NAME) not in minted
+
+
 class TestCanonicalizeEntities:
     """#175 Item 1 — same-family duplicate merge (the fix the census enables).
 

@@ -384,6 +384,50 @@ _NON_PERSON_FIELD_NAMES = frozenset({
     "tie", "over", "under", "any other", "no other", "another player",
 })
 
+# Connectives that put MORE THAN ONE competitor in a single outcome name. A leg
+# like "Jon Rahm beats McIlroy and Spieth" is a market leg, not a person, and
+# folding it in mints ``person`` aliases ("spieth") that point at a composite
+# subject — the equivalence failure #4458 is about.
+_MULTI_COMPETITOR_MARKERS = (" beats ", " vs ", " vs. ", " defeats ")
+
+
+def is_plausible_person_name(name: str) -> bool:
+    """True when ``name`` could be ONE competitor; False for a market leg.
+
+    ``seed_persons_from_futures_fields`` reads its names from the same
+    ``futures_outcomes.name`` column the real entrants come from, on the premise
+    that golf and motorsport fields are "unambiguously people". Measured on
+    production 2026-09-10, that premise is false for **4,913 of 7,471** (65.8 %)
+    of the persons that seed produced. Three shapes account for it:
+
+    * **margin / round ladders** — "1+ strokes", "Exactly 5 strokes",
+      "R1: Justin Rose under 73.5 strokes", "Above 13500". Every one carries a
+      digit, and :func:`player_key` takes the LAST token, so 1,450 of them
+      collapse onto the single alias ``strokes`` and 1,124 onto ``round``.
+    * **head-to-head legs** — "Jon Rahm beats McIlroy and Spieth" (3,114 rows),
+      one ``person`` row naming two or three distinct players.
+    * **scoring placeholders** — "Cut Line: Even par (E)", whose surname alias is
+      the single letter ``e``.
+
+    THE DIGIT RULE IS SAFE, MEASURED, NOT ASSUMED. The control population is the
+    7,209 persons seeded from EVENTS, where a name is a real competitor: exactly
+    **5** carry a digit, and all five are themselves pollution ("2027 Ryder Cup",
+    "Racing 92", "Nanterre 92", "Manny Pacquiao 2", "Feb 26"). So the rule has no
+    known false positive — it removes only rows that should never have existed.
+
+    Deliberately NOT rejected: a legitimately colliding surname. "Michael Kim"
+    and "Danny Lee" are real people whose keys collide with 70 and 39 others;
+    that is the genuine same-name problem and it is resolved by narrowing and
+    honest refusal at READ time, never by refusing to seed a real competitor.
+    """
+    norm = normalize_alias(name)
+    if not norm or norm in _NON_PERSON_FIELD_NAMES or len(norm) < 3:
+        return False
+    if any(ch.isdigit() for ch in norm):
+        return False
+    padded = f" {norm} "
+    return not any(m in padded for m in _MULTI_COMPETITOR_MARKERS)
+
 
 def _is_person_sport_key(key: Optional[str]) -> bool:
     k = (key or "").lower()
@@ -419,7 +463,7 @@ async def _upsert_person(
     canonical alias so a full-name match always outranks a bare-surname collision.
     """
     norm = normalize_alias(name)
-    if not norm or norm in _NON_PERSON_FIELD_NAMES or len(norm) < 3:
+    if not is_plausible_person_name(name):
         return (0, 0)
     ref = _person_ref(sport_key, norm)
     if ref in existing_refs:
@@ -443,9 +487,20 @@ async def _upsert_person(
         session, entity.id, name, ALIAS_CANONICAL, source=source, confidence=1.0
     ):
         aliases += 1
+    # The surname is DERIVED (last token), so the guards on the full name do not
+    # cover it: "Cut Line: Even par (E)" carries no digit yet keys to "e". A
+    # one-character or placeholder key is not a surname, and as an alias it would
+    # equate every row that happens to end in that token.
     surname = player_key(name)
-    if surname and surname != norm and await add_alias(
-        session, entity.id, surname, ALIAS_COMMON_NAME, source=source, confidence=0.6
+    if (
+        surname
+        and surname != norm
+        and len(surname) >= 2
+        and surname not in _NON_PERSON_FIELD_NAMES
+        and await add_alias(
+            session, entity.id, surname, ALIAS_COMMON_NAME,
+            source=source, confidence=0.6,
+        )
     ):
         aliases += 1
     return (1, aliases)
