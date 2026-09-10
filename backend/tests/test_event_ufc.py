@@ -44,7 +44,16 @@ class TestUfcStatus:
         assert ufc_status(NOW + timedelta(hours=48), NOW) == "upcoming"
 
     def test_live_during_fight_night(self):
-        assert ufc_status(NOW + timedelta(hours=2), NOW) == "live"
+        """#4505: this asserted the defect its own name denies — a main event two
+        hours AWAY is not fight night, and the card wore the pulsing red pill for
+        the eight hours before its last bout. Flipped, not exempted. Fight night is
+        now the card's own first bout onward, and the alias must forward it."""
+        assert ufc_status(NOW + timedelta(hours=2), NOW) == "upcoming"
+        assert (
+            ufc_status(NOW + timedelta(hours=2), NOW, NOW - timedelta(minutes=30))
+            == "live"
+        )
+        assert ufc_status(NOW, NOW) == "live"
 
     def test_settled_after_card(self):
         assert ufc_status(NOW - timedelta(hours=10), NOW) == "settled"

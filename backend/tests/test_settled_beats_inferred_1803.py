@@ -89,7 +89,15 @@ class TestCombatStatusIsTheAuthorityFeeding_It:
         from app.utils import event_combat
 
         src = inspect.getsource(event_combat.CombatEventAdapter)
-        assert 'card_settled = combat_status(authoritative_commence, now) == "settled"' in src
+        # #4505 added the card's own first bout as a third argument to every
+        # `combat_status` call. The authority this test guards is unchanged — the
+        # child's settledness still comes from the SAME call that decides the
+        # banner — so the scan follows the call, it does not exempt it.
+        assert "card_settled = (" in src
+        assert (
+            'combat_status(authoritative_commence, now, first_commence) == "settled"'
+            in src
+        )
         assert "fight_child_settled(lead_prob, card_settled)" in src
 
     def test_combat_status_still_classifies_the_specimen_as_settled(self):
