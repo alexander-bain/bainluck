@@ -310,8 +310,8 @@ _ELIGIBLE_BY_ID = f"""
 #: `_BAK_PRUNE` needs to avoid deleting an earlier page's backup.
 _BAK_COPY = f"""
     INSERT INTO {BAK_TABLE} (outcome_id, market_id, is_winner, backed_up_at)
-    SELECT fo.id, fo.market_id, fo.is_winner, NOW()
-    {_ELIGIBLE_BY_ID}
+    SELECT s.outcome_id, s.market_id, s.before_is_winner, NOW()
+    FROM ({_BOUND_SQL}) s
     ON CONFLICT (outcome_id) DO NOTHING
     RETURNING outcome_id
 """
@@ -343,21 +343,11 @@ _LOCK_SQL = """
 #: unbacked row has nothing to join to and cannot be reached — and re-testing the
 #: market gate in its own snapshot, which the lock above has just made current.
 _APPLY_SQL = f"""
+    WITH scope AS ({_BOUND_SQL})
     UPDATE futures_outcomes fo
     SET is_winner = NULL
-    FROM {BAK_TABLE} b
-    WHERE b.outcome_id = fo.id
-      AND fo.id = ANY(:page_ids)
-      AND EXISTS (
-          SELECT 1
-          FROM futures_markets fm
-          WHERE fm.id = fo.market_id
-            AND fm.source = 'polymarket'
-            AND fm.status = 'resolved'
-      )
-      AND fo.is_winner = false
-      AND fo.resolution_source IS NULL
-      AND {_MARKET_HAS_NO_GRADE}
+    FROM scope s
+    WHERE fo.id = s.outcome_id
     RETURNING fo.id
 """
 
@@ -523,7 +513,7 @@ async def repair(
     inserted = {
         row[0]
         for row in (
-            await session.execute(_ids(_BAK_COPY, "page_ids"), id_params)
+            await session.execute(text(_BAK_COPY), params)
         ).all()
     }
 
@@ -558,7 +548,7 @@ async def repair(
     changed_ids = [
         row[0]
         for row in (
-            await session.execute(_ids(_APPLY_SQL, "page_ids"), id_params)
+            await session.execute(text(_APPLY_SQL), params)
         ).all()
     ]
     changed = len(changed_ids)
