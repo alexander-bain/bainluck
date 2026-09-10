@@ -432,7 +432,7 @@ describe("#3968 — the extraction cannot rot", () => {
       /from '\.\/shot-click-contract\.mjs'/,
       "shop-shot.mjs no longer imports the contract module",
     );
-    for (const fn of ["readStep(", "parseClickSteps(", "parseScroll(", "clearStaleArtifact("]) {
+    for (const fn of ["readStep(", "parseClickSteps(", "parseScroll(", "clearStaleArtifact(", "chooseCapture("]) {
       assert.ok(src.includes(fn), `shop-shot.mjs never calls ${fn}`);
     }
     assert.ok(
@@ -459,6 +459,130 @@ describe("#3968 — the extraction cannot rot", () => {
       !/process\.(env|argv)/.test(src),
       "the contract module reads process state; it must be a pure function of " +
         "its arguments so the caller's environment cannot change its answers",
+    );
+  });
+});
+
+/**
+ * #4664 — the whole-page capture has to photograph the page we measured.
+ *
+ * `page.screenshot({ fullPage: true })` on Chromium goes through CDP
+ * `captureBeyondViewport`, which re-renders the document off-screen. That
+ * re-render remounts every chart and restarts Recharts' entry animation, and
+ * the shutter lands at t≈0 — so the plot rasterises EMPTY while a complete,
+ * correct line sits in the DOM. Under standing notice 4 that PNG is the PROOF a
+ * rendered-surface change is done, which makes it the same class of bug as
+ * #3932: the rail hands out a plausible artifact that is wrong, and it is the
+ * FALSE-PASS direction that is dangerous — a capture that can lose a line it
+ * should draw can also pass a chart that is genuinely broken.
+ *
+ * Measured on `/events/15309061` at 390px, three captures in ONE page context,
+ * counting the Kalshi curve's pixels: viewport 2870, `fullPage: true` **0**,
+ * viewport grown to the document height 2870.
+ *
+ * The reason this went a round of diagnosis before landing is worth keeping:
+ * the animation is invisible in `d`. Recharts animates a line in by growing
+ * `stroke-dasharray`, so `d` is byte-identical from t=0 to settled, and a
+ * refutation built on re-reading `d` across a resize reads as clean. Read
+ * straight after the fullPage capture the computed dasharray was
+ * `6.53776px, 570.452px` against a settled design dash of `8px, 4px, …`.
+ */
+describe("#4664 — a whole-page capture must contain the chart", () => {
+  test("an ordinary page is photographed by GROWING the viewport, not fullPage", () => {
+    assert.deepEqual(evalInModule("m.chooseCapture({docHeight: 3382, viewportHeight: 844})"), {
+      mode: "grow",
+      height: 3382,
+    });
+  });
+
+  test("a document SHORTER than the viewport stays at the viewport height", () => {
+    // Growing to a height below the viewport would photograph less page than
+    // today does, turning a rendering bug into a truncation bug.
+    assert.deepEqual(evalInModule("m.chooseCapture({docHeight: 400, viewportHeight: 844})"), {
+      mode: "grow",
+      height: 844,
+    });
+  });
+
+  test("a fractional document height is rounded UP, never down", () => {
+    // A viewport one pixel short of the document is a whole-page shot missing
+    // its last row, which is the truncation the case above exists to avoid.
+    assert.deepEqual(evalInModule("m.chooseCapture({docHeight: 2350.4, viewportHeight: 844})"), {
+      mode: "grow",
+      height: 2351,
+    });
+  });
+
+  test("over the limit it falls back — and SAYS the chart may be a lie", () => {
+    // The fallback is the #4664-affected path. Taking it silently would leave
+    // a lane holding exactly the artifact this whole guard exists to distrust,
+    // with nothing on screen to say so.
+    const over = evalInModule(
+      `m.chooseCapture({docHeight: m.GROWN_CAPTURE_MAX_DOC_HEIGHT + 1, viewportHeight: 844})`,
+    );
+    assert.equal(over.mode, "beyondViewport");
+    assert.match(over.warning, /4664/, "the fallback warning does not name the issue");
+    assert.match(
+      over.warning,
+      /SHOT_SCROLL/,
+      "the fallback warning does not tell the caller what to do instead",
+    );
+  });
+
+  test("the limit is a boundary, and the safe side of it is inclusive", () => {
+    assert.equal(
+      evalInModule("m.chooseCapture({docHeight: m.GROWN_CAPTURE_MAX_DOC_HEIGHT, viewportHeight: 844}).mode"),
+      "grow",
+    );
+    // Measured: /politics at 390px is 16,333px and its grown capture succeeds,
+    // so the ceiling must sit above the real charted surfaces, not under them.
+    assert.ok(
+      evalInModule("m.GROWN_CAPTURE_MAX_DOC_HEIGHT") > 16333,
+      "the grown-capture ceiling is below a page we have measured growing fine; " +
+        "real surfaces would take the #4664-affected fallback for no reason",
+    );
+  });
+
+  test("an unmeasurable document falls back LOUDLY rather than guessing a height", () => {
+    // Guessing here silently truncates the page — a worse artifact than the bug.
+    for (const bad of ["undefined", "0", "-1", "NaN", '"3382"']) {
+      const got = evalInModule(`m.chooseCapture({docHeight: ${bad}, viewportHeight: 844})`);
+      assert.equal(got.mode, "beyondViewport", `docHeight ${bad} was treated as measurable`);
+      assert.match(got.warning, /4664/);
+    }
+  });
+
+  test("shop-shot takes the grown shot for real — not fullPage unconditionally", () => {
+    // The property, not the phrasing: the rail must ASK the guarded decision and
+    // must be able to take a non-fullPage whole-page shot. Pinning the exact
+    // screenshot call as source text would fail an honest refactor, and — the
+    // trap that cost ux/1172 a CI round trip on #4660 — a source scan that
+    // hard-codes an implementation string cannot tell a repair from a rewrite.
+    const src = codeOnly(fs.readFileSync(SHOP_SHOT, "utf8"));
+    assert.ok(
+      src.includes("chooseCapture("),
+      "shop-shot.mjs never asks chooseCapture(), so the whole-page shot is " +
+        "unguarded and #4664 is back",
+    );
+    assert.ok(
+      /setViewportSize\(/.test(src),
+      "shop-shot.mjs never grows the viewport, so its whole-page shot can only " +
+        "be the captureBeyondViewport one that loses the chart",
+    );
+    // PRESENCE IS NOT REACH, and this line is here because the assertion above
+    // was not enough. Mutating the rail's decision to a hard-coded
+    // `const plan = { mode: "beyondViewport" }` — which puts every whole-page
+    // shot back on the chart-losing capture — left this suite GREEN, because
+    // `chooseCapture(` still appeared at the SECOND call site, inside the branch
+    // the mutation had just made unreachable.
+    //
+    // `shop-shot.mjs` cannot be executed here (it launches Chromium at import),
+    // so the reachable property is this one: the rail never FABRICATES a capture
+    // plan. Every `mode` it acts on has to come out of the guarded module.
+    assert.ok(
+      !/\bmode\s*:\s*['"]/.test(src),
+      "shop-shot.mjs writes its own capture-plan literal instead of using the " +
+        "one chooseCapture() returned — the guarded decision is being bypassed",
     );
   });
 });

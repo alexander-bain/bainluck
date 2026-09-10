@@ -4,7 +4,33 @@
 # Lanes: run this, then Read the PNG (Claude reads images natively) and JUDGE it like Alex would:
 # empty charts, flat lines, missing players/images, stale copy, broken layout.
 #
-# SHOT_SCROLL — shoot ONE VIEWPORT instead of the whole page. Unset = fullPage, unchanged.
+# 2026-09-10 (#4664): THE WHOLE-PAGE SHOT NO LONGER LOSES THE CHART.
+# The default used to be `page.screenshot({ fullPage: true })`, which Chromium serves through
+# captureBeyondViewport — it re-renders the document off-screen, remounts every chart, and
+# restarts Recharts' entry animation, so the shutter caught the line at t≈0 and the plot came
+# out EMPTY. Measured on /events/15309061 at 390px, three captures in one page context:
+# viewport 2870 stroke px, fullPage 0, viewport grown to the document height 2870. The line was
+# in the DOM, complete and correct, for all three. It also stamped the fixed bottom nav across
+# mid-page content and then left it off the real page bottom.
+# Now: a whole-page shot GROWS the viewport to the document height and takes an ordinary
+# viewport shot. stderr says which you got — `mode=wholePage@grown<N>` is the good one.
+# 🔴 `mode=fullPage(CHART-UNSAFE)` means the page was over the grown-capture ceiling and you
+# have the old, chart-losing capture. A loud CHART-UNSAFE line names it. On such a page, judge
+# charts with SHOT_SCROLL=<offset> instead — never off the whole-page PNG.
+# EXPECT A LAZY PAGE TO GET LONGER, and that is the capture being honest. Growing the viewport
+# puts the whole document on screen, so anything that loads on intersection loads at once.
+# Measured: /sports at 390px reports docHeight=9,954 and then settles at 17,820 once it is all
+# on screen — a 26,504px PNG where the old capture gave 19,908px of the same page. The extra is
+# real content the old whole-page shot never rendered. The re-measure is bounded (two growths,
+# then the shutter), so an endless feed cannot hold the camera open. /calibration (11,668px)
+# grows with no change to the artifact at all.
+# STILL THE RULE FOR ANY EMPTY-LOOKING CHART: confirm before you file. One command —
+#   node ~/bainluck/tools/chart-in-raster-4664.mjs <url> [width]
+# exit 0 the picture holds the lines the DOM has · 3 it lost one (#4664 is back) · 4 no chart.
+# It hides the line layer and diffs, so it is blind to colour and alpha; a colour count is not
+# good enough (nine lines stroked `rgba(0,0,0,0.15)` read as "missing" to the first cut).
+#
+# SHOT_SCROLL — shoot ONE VIEWPORT instead of the whole page. Unset = the whole page (above).
 #   SHOT_SCROLL=top          the first screen
 #   SHOT_SCROLL=22411        the viewport at that pixel offset
 # Use it on any long page. `/hub/tennis` at 390px is 44,729px tall, and its fullPage PNG

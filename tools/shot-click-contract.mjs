@@ -123,6 +123,106 @@ export function parseScroll(raw) {
 }
 
 /**
+ * The tallest document we will photograph by GROWING the viewport (CSS px).
+ *
+ * This is a READABILITY line, not a technical limit, and the difference is
+ * measured: `/politics` at 390px is 16,333px tall and the grown capture of it
+ * succeeded in 3.0s, writing a valid 780x32,666 PNG. So the ceiling is not
+ * "where Chromium gives up" — it is where a whole-page shot stops being a LOOK
+ * at all, because ~50 phone screens downscaled into a bounded view is the
+ * unreadable 30px strip `SHOT_SCROLL` exists to avoid. 20,000px clears every
+ * charted surface measured so far with room to spare; the pages above it are
+ * the hub monsters (`/hub/tennis` is 44,729px), which nobody should be
+ * photographing whole regardless.
+ */
+export const GROWN_CAPTURE_MAX_DOC_HEIGHT = 20000;
+
+/**
+ * Decide HOW to photograph a whole document: grow the viewport to fit it, or
+ * fall back to Chromium's capture-beyond-viewport.
+ *
+ * ## Why this decision exists at all (#4664)
+ *
+ * `page.screenshot({ fullPage: true })` does not photograph the page you
+ * measured. On Chromium it goes through CDP `captureBeyondViewport`, which
+ * re-renders the document into an off-screen surface — and that re-render
+ * REMOUNTS every chart, restarting Recharts' 1500ms entry animation from a
+ * zero-length line. The shutter lands at t≈0, so the plot rasterises EMPTY.
+ *
+ * Measured on `/events/15309061` at 390px, three captures in ONE page context,
+ * counting the Kalshi curve's stroke pixels (`rgb(34,197,94)`):
+ *
+ * | capture                                        | stroke px |
+ * |------------------------------------------------|-----------|
+ * | viewport, chart scrolled into view              | 2870      |
+ * | `screenshot({ fullPage: true })`                | **0**     |
+ * | viewport grown to the document height           | 2870      |
+ *
+ * The line is in the DOM, complete and correct, at the moment of all three.
+ * The tell is `stroke-dasharray`, not `d`: Recharts animates a line in by
+ * growing the dash, so `d` is byte-identical the whole way. Read immediately
+ * after the fullPage capture the computed dasharray was `6.53776px, 570.452px`
+ * — 6.5px of a 577px line drawn — against the settled design dash
+ * (`8px, 4px, …`). Forcing `stroke-dasharray: none` and re-taking the SAME
+ * fullPage capture put 4444 stroke px in the raster. That is the mechanism,
+ * measured in both directions.
+ *
+ * This is why ux/1170's refutation on #4664 reads as it does: it re-read `d`
+ * across a resize, found it byte-identical, and concluded the animation was not
+ * the cause. `d` is the one attribute that never moves.
+ *
+ * ## The chart is not the only thing it gets wrong
+ *
+ * On the same page the fullPage capture also stamped the FIXED bottom nav
+ * across real content at page y≈787 (the first viewport's bottom edge) and then
+ * omitted it from the actual page bottom. The grown capture places it once, at
+ * the bottom, where a reader has it. Every pixel the two captures disagree on
+ * is a pixel the grown one gets right.
+ *
+ * ## What growing costs
+ *
+ * The viewport becomes as tall as the document, so `100vh`/`min-h-screen`
+ * boxes grow with it and anything lazy-loading on intersection loads at once.
+ * On a long page `min-h-screen` is a floor the content already clears, so it is
+ * inert; the case it could move is a page only slightly taller than one screen
+ * that centres its content. A short document (`docHeight <= viewportHeight`)
+ * is therefore left at the viewport height — identical to today.
+ *
+ * @param {{docHeight?: number, viewportHeight?: number, max?: number}} input
+ * @returns {{mode: 'grow', height: number}|{mode: 'beyondViewport', warning: string}}
+ */
+export function chooseCapture({
+  docHeight,
+  viewportHeight,
+  max = GROWN_CAPTURE_MAX_DOC_HEIGHT,
+} = {}) {
+  const vh = Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0;
+  // An unmeasurable document is the one case where we cannot say how tall to
+  // grow, so it keeps the old path — loudly. Guessing a height here would
+  // silently truncate the page, which is worse than the bug being fixed.
+  if (!Number.isFinite(docHeight) || docHeight <= 0) {
+    return {
+      mode: "beyondViewport",
+      warning:
+        "CHART-UNSAFE document height unreadable, falling back to fullPage: any chart " +
+        "in this PNG may rasterise EMPTY while its line is present in the DOM (#4664). " +
+        "Confirm with SHOT_SCROLL=<offset>.",
+    };
+  }
+  if (docHeight > max) {
+    return {
+      mode: "beyondViewport",
+      warning:
+        `CHART-UNSAFE document is ${Math.round(docHeight)}px, over the ${max}px grown-capture ` +
+        "limit, so this is a fullPage shot: any chart in it may rasterise EMPTY while its " +
+        "line is present in the DOM (#4664). A PNG this tall is unreadable anyway — " +
+        "use SHOT_SCROLL=<offset> for a screen you can actually judge.",
+    };
+  }
+  return { mode: "grow", height: Math.max(Math.ceil(docHeight), vh) };
+}
+
+/**
  * Where to leave the pointer before the shutter opens.
  *
  * Playwright's pointer starts at (0,0) and STAYS wherever a click left it, so
