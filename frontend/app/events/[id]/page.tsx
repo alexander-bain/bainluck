@@ -546,8 +546,12 @@ export default function EventPage({ params }: EventPageProps) {
       historyData?.scoring_plays,
       realStartTime,
       historyData?.period_markers,
+      // #4888: ESPN's box-score fallback serves bare digits ("3"), which the
+      // chart drew as an unlabelled dashed rule. The sport is what turns that
+      // into "Q3" — see BARE_PERIOD_UNIT in lib/periodMarkers.ts.
+      event?.sport,
     );
-  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, realStartTime, historyData?.period_markers]);
+  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, realStartTime, historyData?.period_markers, event?.sport]);
 
   // Shared chart domain (see eventKeyStats.ts)
   const sharedChartDomain = useMemo(
