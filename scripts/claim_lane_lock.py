@@ -99,6 +99,14 @@ FREE_STATES = {"RELEASED", "FREE"}
 #: a takeover), which is the direction 008 exists to protect.
 DEFAULT_ACTIVITY_INTERVAL_S = 1800
 
+#: How far after `claimed_epoch_s` the lock's own mtime may still be THE CLAIM
+#: WRITE (#4104). The claim records the epoch, then writes — so mtime lands a few
+#: milliseconds later, and a filesystem with 1s mtime granularity may even round
+#: it below. Five seconds covers both without coming close to a real second write
+#: (a lane appending a note does so minutes later, and a release inside five
+#: seconds lands in FREE_STATES and never reaches this test).
+CLAIM_ECHO_TOLERANCE_S = 5
+
 ACQUIRED, REFUSED, MALFORMED, NOT_SERIALIZED, NO_IDENTITY = 0, 1, 2, 3, 4
 
 
@@ -175,6 +183,61 @@ def _declared_interval_s(text: str) -> int:
     """
     m = re.search(r"(?m)^heartbeat_interval_s:\s*(\d+)", text)
     return int(m.group(1)) if m else DEFAULT_ACTIVITY_INTERVAL_S
+
+
+def _claimed_epoch_s(text: str) -> Optional[int]:
+    """The epoch this lock was CLAIMED at, if the claim recorded one (#4104).
+
+    Deliberately a machine integer and NOT the human `status:`/`claimed_at:`
+    stamp beside it. That stamp is minute-resolution (`%Y-%m-%dT%H:%M %Z`), so a
+    claim at 14:53:59 reads as `14:53` and its own write looks 59s "later" than
+    itself; and it ends in a NAMED zone abbreviation, which `strptime` will not
+    reliably turn back into an instant — worse here than elsewhere, because
+    standing notice 24 records that machines in this fleet disagree about what
+    their local zone prints. An integer has neither problem.
+    """
+    m = re.search(r"(?m)^claimed_epoch_s:\s*(\d+)", text)
+    return int(m.group(1)) if m else None
+
+
+def _activity_is_claim_echo(lock_path: str, text: str, activity_src: str) -> bool:
+    """Is the "activity" reading just the claim write itself? (#4104)
+
+    A lock with no heartbeat writer has an mtime frozen at the moment it was
+    claimed — nothing re-stamps `LANE-integrator.lock`. So for the first
+    `interval` seconds the freshness signal is not evidence of a live writer at
+    all: it is an ECHO of the claim. The amendment's veto then reduces to "any
+    lane abandoned within 30 minutes of claiming is unclaimable by the only
+    sanctioned tool", which is exactly the claim → merge → push → exit window a
+    desk session occupies. Twice recorded, ~35 minutes of frozen desk the second
+    time.
+
+    This tells that case apart from the amendment's CHARTER case (a lock whose
+    mtime was fresh *because the lane kept writing to it*) by comparing mtime to
+    the epoch the claim recorded:
+
+    * mtime after the claim epoch ⇒ something wrote AFTER claiming ⇒ genuine
+      activity ⇒ the veto stands.
+    * mtime at (or before) the claim epoch ⇒ no activity signal exists ⇒ echo.
+
+    Two deliberate narrowings, both fail-closed:
+
+    * Only the LOCK's own mtime can be an echo. If the newest signal is the
+      heartbeat sidecar, that is an independent writer and its freshness is real.
+    * A lock with no `claimed_epoch_s` — every lock claimed before this shipped —
+      returns False, i.e. today's behaviour exactly. This can only ever make a
+      lock MORE claimable than it is now, never less.
+    """
+    if activity_src != "lock mtime":
+        return False
+    claimed = _claimed_epoch_s(text)
+    if claimed is None:
+        return False
+    try:
+        mtime = os.stat(lock_path).st_mtime
+    except OSError:
+        return False
+    return mtime <= claimed + CLAIM_ECHO_TOLERANCE_S
 
 
 def _comm(pid: int) -> str:
@@ -424,6 +487,7 @@ def _verdict(
     activity_age_s: Optional[float] = None,
     activity_src: str = "none",
     interval_s: int = DEFAULT_ACTIVITY_INTERVAL_S,
+    activity_is_claim_echo: bool = False,
 ) -> tuple[str, bool]:
     """Return ``(human verdict, claimable)``.
 
@@ -468,7 +532,17 @@ def _verdict(
         # (a fresh reading blocks a takeover); it can never grant one, because a
         # live pid has already returned HELD above. Both drift directions
         # therefore fail closed.
-        if activity_age_s is not None and activity_age_s < interval_s:
+        #
+        # #4104: unless that "fresh activity" is the claim write itself. A lock
+        # nothing re-stamps has an mtime frozen at its own claim, so the reading
+        # is an echo, not a writer — see `_activity_is_claim_echo`. An echo is
+        # NO SIGNAL, so the veto has nothing to stand on and we fall through to
+        # ruling 008's pid test, which is 008's whole test.
+        if (
+            activity_age_s is not None
+            and activity_age_s < interval_s
+            and not activity_is_claim_echo
+        ):
             if takeover_ok:
                 return (
                     f"🔴 MALFORMED-INVESTIGATE OVERRIDDEN — dead pid {owner} but "
@@ -487,11 +561,20 @@ def _verdict(
                 "malformed lock reads as HELD.",
                 False,
             )
-        aged = (
-            f"{activity_src} {activity_age_s:.0f}s old, past this lock's {interval_s}s interval"
-            if activity_age_s is not None
-            else "no activity signal available"
-        )
+        if activity_age_s is None:
+            aged = "no activity signal available"
+        elif activity_is_claim_echo:
+            # Say WHY a reading that looks fresh was not treated as one, or the
+            # next reader sees "FREE" beside a 79s-old mtime and distrusts both.
+            aged = (
+                f"{activity_src} is {activity_age_s:.0f}s old but IS this lock's own claim "
+                "write (no writer has touched it since), so it is no activity signal at all"
+            )
+        else:
+            aged = (
+                f"{activity_src} {activity_age_s:.0f}s old, past this lock's "
+                f"{interval_s}s interval"
+            )
         return f"FREE (owner pid {owner} is dead; {aged} — takeover, record it)", True
     return f"UNKNOWN status {status!r} — treat as HELD and stop", False
 
@@ -533,6 +616,7 @@ def cmd_check(args) -> int:
     verdict, claimable = _verdict(
         status, owner, owner_identity, me,
         activity_age_s=age, activity_src=src, interval_s=interval,
+        activity_is_claim_echo=_activity_is_claim_echo(args.lock, text, src),
     )
     print(
         f"status={status} owner_identity={owner_identity} owner_pid={owner} "
@@ -566,6 +650,9 @@ def cmd_claim(args) -> int:
             takeover_ok=getattr(args, "takeover", False),
             activity_age_s=age, activity_src=src,
             interval_s=_declared_interval_s(text),
+            # `text` is the PRE-write content, so this judges the PREVIOUS
+            # owner's claim — which is the claim whose echo we are discounting.
+            activity_is_claim_echo=_activity_is_claim_echo(args.lock, text, src),
         )
         if not claimable:
             print(
@@ -631,6 +718,30 @@ def cmd_claim(args) -> int:
         # Absent fields are NOT invented. A lock that never carried `nonce` is a
         # different shape, not a broken one, and silently growing fields under a
         # lane is how a "repair" becomes an edit to someone else's file.
+
+        # --- `claimed_epoch_s` IS written even when absent, and that is the one
+        # deliberate exception to the line above (#4104). The fields in the
+        # re-stamp loop describe an OWNER, so inheriting one from a lock that
+        # never had it would invent a fact about a person. This one describes
+        # THIS WRITE, which is a fact the primitive is about to create and then
+        # has to be able to read back: without it, `_activity_is_claim_echo`
+        # cannot tell the lock's own claim write from a live lane's, and the
+        # defect survives its own fix on every lock that predates it. Written
+        # unconditionally for the same reason `owner_identity` is.
+        #
+        # Captured here rather than beside `stamp` so it is as close to the write
+        # as possible; `int()` truncates DOWNWARD, which biases mtime to land
+        # after it, the direction the tolerance is sized for.
+        claimed_epoch = int(time.time())
+        if re.search(r"(?m)^claimed_epoch_s:", new):
+            new = re.sub(
+                r"(?m)^claimed_epoch_s:.*$", f"claimed_epoch_s: {claimed_epoch}", new, count=1
+            )
+        else:
+            anchor = re.search(r"(?m)^owner_identity:.*$", new) or re.search(
+                r"(?m)^status:.*$", new
+            )
+            new = new[: anchor.end()] + f"\nclaimed_epoch_s: {claimed_epoch}" + new[anchor.end():]
 
         line = (
             f"- {stamp} — **HELD** by {args.queue}, identity {me}, "

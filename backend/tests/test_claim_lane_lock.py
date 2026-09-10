@@ -621,3 +621,156 @@ def test_check_and_claim_never_disagree(tmp_path):
     for status, pid, ident, expected_claimable in cases:
         _verdict, claimable = mod._verdict(status, pid, ident, ME)
         assert claimable is expected_claimable, (status, pid, ident, _verdict)
+
+
+# --------------------------------------------------------------------------
+# #4104 — the "activity" signal that is the claim write itself.
+#
+# The amendment above requires a dead pid AND a quiet lane, and measures quiet
+# from mtime. But `LANE-integrator.lock` has no heartbeat writer, so its mtime is
+# frozen at the moment it was claimed: for the first `interval` seconds the
+# freshness reading is an ECHO of the claim, not evidence of a writer. The rule
+# therefore reduced to "any lane abandoned within 30 minutes of claiming is
+# unclaimable by the only sanctioned tool" — precisely the claim → merge → push →
+# exit window a desk session occupies. Recorded twice; the second time the desk
+# sat frozen ~35 minutes with nine lanes' merge offers behind it.
+#
+# These tests pin the discrimination in BOTH directions, because the amendment's
+# charter case (a lock kept fresh BY ITS OWN LANE writing to it) must survive.
+# --------------------------------------------------------------------------
+
+
+def _echo_lock(tmp_path: Path, age_s: float = 5, claimed_offset_s: float = 0, **kw) -> Path:
+    """A lock whose mtime IS its own claim write, aged `age_s`.
+
+    `claimed_offset_s` moves the recorded claim epoch EARLIER than the mtime,
+    which is how a lock that was genuinely written to after claiming is built.
+    """
+    claimed = int(time.time() - age_s - claimed_offset_s)
+    return _lock(
+        tmp_path, "HELD", 999999, identity=OTHER, age_s=age_s,
+        extra=f"claimed_epoch_s: {claimed}\n", **kw,
+    )
+
+
+def test_a_lane_abandoned_INSIDE_its_interval_is_a_takeover_not_MALFORMED(tmp_path):
+    """The #4104 charter case: claim → die, with no writer in between.
+
+    The lock is 5 seconds old and its owner is dead. Today that reads
+    MALFORMED-INVESTIGATE ("find the live owner and have it re-stamp") and there
+    is no live owner to find. The 5 seconds are the claim write's own echo.
+    """
+    lock = _echo_lock(tmp_path, age_s=5)
+    result = _claim(lock)
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+    assert "TAKEOVER" in lock.read_text()
+
+
+def test_the_echo_verdict_SAYS_why_a_fresh_looking_reading_was_discounted(tmp_path):
+    """A verdict of FREE beside a 5s-old mtime has to explain itself.
+
+    Otherwise the next reader distrusts the tool exactly when it has become
+    correct, which is how lanes went back to hand-rolling the first time.
+    """
+    result = _run("check", str(_echo_lock(tmp_path, age_s=5)), "--identity", ME)
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+    assert "own claim write" in result.stdout, result.stdout
+
+
+def test_a_lock_WRITTEN_TO_after_its_claim_still_vetoes(tmp_path):
+    """The amendment's charter case, which must survive this fix.
+
+    `LANE-lane1.lock` named a dead pid while lane1 was alive and landing commits.
+    There the mtime was fresh BECAUSE the lane kept writing to the lock — mtime
+    moved past the claim epoch — so the veto still stands and must.
+    """
+    lock = _echo_lock(tmp_path, age_s=5, claimed_offset_s=600)
+    result = _claim(lock)
+    assert result.returncode == MALFORMED, result.stdout + result.stderr
+    assert "MALFORMED-INVESTIGATE" in result.stderr
+
+
+def test_a_lock_with_no_claim_epoch_behaves_exactly_as_it_does_today(tmp_path):
+    """Backwards compatibility, stated as a test rather than hoped for.
+
+    Every lock claimed before this shipped lacks the field. Absent ⇒ no echo can
+    be proven ⇒ today's verdict. The change can only ever make a lock MORE
+    claimable than it is now, never less.
+    """
+    lock = _lock(tmp_path, "HELD", 999999, identity=OTHER, age_s=5)
+    assert "claimed_epoch_s" not in lock.read_text()
+    assert _claim(lock).returncode == MALFORMED
+
+
+def test_a_fresh_sidecar_heartbeat_vetoes_even_when_the_lock_mtime_is_an_echo(tmp_path):
+    """Only the LOCK's own mtime can be an echo.
+
+    A heartbeat sidecar is an independent writer, so its freshness is real
+    activity no matter what the lock's own mtime says. Without this narrowing the
+    fix would silently disarm the sidecar, which is the one signal in the system
+    that a lane is working without touching its lock.
+    """
+    lock = _echo_lock(tmp_path, age_s=5)
+    hb = tmp_path / "HEARTBEAT-TEST"
+    hb.write_text("phase: mid-gate\n")
+    _age(hb, 1)
+    result = _claim(lock)
+    assert result.returncode == MALFORMED, result.stdout + result.stderr
+    assert "heartbeat mtime" in result.stderr
+
+
+def test_the_echo_test_never_parses_the_HUMAN_stamp(tmp_path):
+    """Traps 1 and 2, pinned so nobody "simplifies" back to the stamp beside it.
+
+    The human stamp is minute-resolution (`%Y-%m-%dT%H:%M %Z`), so a claim at
+    14:53:59 carries `14:53` and its own write looks 59s later than itself — a
+    1-second tolerance against it would reinstate the bug on roughly one claim in
+    sixty. It also ends in a NAMED zone abbreviation that `strptime` cannot
+    reliably turn back into an instant, and standing notice 24 records that
+    machines in this fleet disagree about what their local zone prints.
+
+    So: a lock whose human stamps are absurd, in a zone this machine is not in,
+    must still be read correctly off the machine field.
+    """
+    lock = _echo_lock(tmp_path, age_s=5)
+    lock.write_text(
+        lock.read_text().replace(
+            "status: HELD", "status: HELD   # 2001-01-01T00:00 IST — ancient."
+        ) + "claimed_at: 2001-01-01T00:00 IST\n"
+    )
+    _age(lock, 5)
+    result = _claim(lock)
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+
+
+def test_a_claim_records_the_epoch_so_the_NEXT_reader_can_tell_the_echo(tmp_path):
+    """The write half. Without it the fix cannot work on any lock but its own.
+
+    This field is the one deliberate exception to "a claim does not invent
+    fields": the re-stamp fields describe an OWNER, this one describes THIS
+    WRITE, and the primitive has to read it back.
+    """
+    lock = _lock(tmp_path, "RELEASED", 1)
+    assert _claim(lock).returncode == ACQUIRED
+    mod = _module()
+    recorded = mod._claimed_epoch_s(lock.read_text())
+    assert recorded is not None, "claim did not record a machine-readable epoch"
+    # It must describe the write that just happened — within the tolerance the
+    # echo test itself uses, or the echo test cannot recognise its own claim.
+    assert abs(os.stat(lock).st_mtime - recorded) <= mod.CLAIM_ECHO_TOLERANCE_S
+
+
+def test_the_recorded_epoch_survives_a_takeover_naming_the_NEW_claim(tmp_path):
+    """A takeover re-stamps it, like every other field describing the holder.
+
+    Left at the previous owner's value, the successor's own claim would read as
+    "written to 30 minutes after claiming" and the veto would fire on a lock that
+    is doing exactly what it should.
+    """
+    lock = _echo_lock(tmp_path, age_s=5)
+    mod = _module()
+    before = mod._claimed_epoch_s(lock.read_text())
+    assert _claim(lock).returncode == ACQUIRED
+    after = mod._claimed_epoch_s(lock.read_text())
+    assert after is not None and after > before
+    assert lock.read_text().count("claimed_epoch_s:") == 1, "the field was duplicated"
