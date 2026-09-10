@@ -106,8 +106,59 @@ come to different verdicts about the same condition id; the only thing that
 changes is WHEN a child is reached, which for a round-by-round ladder is weeks
 before its parent event closes.
 
+═══ #4827: THE CONDITION ID IS ON THE LEG, AND THAT IS WHERE THE POPULATION WAS ═══
+
+Until 2026-09-10 the pool above carried one more clause — ``fm.external_id LIKE
+'0x%'`` — and the test beside it said why: "an event-keyed row addressed this way
+is a request that cannot return." That is true of the MARKET's external_id and
+only of it. For a Gamma event written as a parent ladder the market row is keyed
+by the EVENT id (``31552``, ``106232``) while every one of its legs carries the
+bare condition id one level down, in ``futures_outcomes.external_id`` — the same
+column ``_write_refreshed_prices``'s ``by_condition`` lookup (#3868) already
+keys on. So the clause did not exclude the unaddressable; it excluded rows whose
+address was in the next table.
+
+Measured on production 2026-09-10 17:2xZ, over ``LIVE_MARKET_SQL`` ×
+``source='polymarket'``, split by which rail could address each row:
+
+    condition-keyed (this rail, before)   8,951 mkts   18,028 legs   13.5% >24h
+    high-value only (`futures_price_refresh`) 1,257    13,001 legs   51.0% >24h
+    NO TARGETED ARM AT ALL                7,608 mkts   35,244 legs   73.1% >24h
+                                                        10,201 legs  >30 DAYS
+
+The rail's own cohort is healthy at 13.5%; the hole was everything else. All
+35,244 of those legs — 35,244 of 35,244, no NULLs and no non-``0x`` values —
+already carry a condition id. Venue-side, 2026-09-10 17:1xZ: ``Epstein storage
+units raided in 2026?`` read 0.095 at Gamma (``updatedAt`` 16:58Z, open and
+active) while we served 0.260 stamped 2026-07-21, and ``Maranhão Governor
+Election Winner`` (tier 1, resolving 2026-10-05) was serving June prices with
+seven legs still at the 0.500 placeholder.
+
+So the pool now admits any live Polymarket market that has at least one ungraded
+leg carrying a condition id, and the ids it REQUESTS come from the market's own
+external_id when that is a condition and from its legs otherwise. Nothing sends
+an event id to ``/markets?condition_ids=…``; the old test's claim is preserved
+exactly, and the population it was fencing off is now addressed the way it was
+always addressable.
+
+🔴 THE BUDGET IS NOW IN CONDITION IDS, NOT MARKETS, AND THAT IS FORCED — see
+:data:`CONDITION_BUDGET`. A market cost one id when every row in the pool was a
+bare condition. A ladder costs one per leg, and the pool's ladders average 5.5.
+A market budget alone would have let one run ask for 6,600 ids on a wall sized
+for 452.
+
+TWO COUNTERS CHANGE SCALE UNDER #4827 AND NEITHER IS AN ALARM. ``markets_returned``
+now counts Gamma child markets rather than roughly one per due row, and
+``not_returned`` rises because a ladder legitimately carries legs the venue has
+delisted — ``Maranhão Governor Election Winner`` still holds seven rows named
+"Candidate G/H/I/J" at the 0.500 placeholder that Gamma no longer lists at all.
+Neither feeds a terminal (``snapshots_written`` and the census do). Retiring a
+delisted Polymarket leg is a real defect and a separate one: Kalshi has that arm
+in ``futures_price_refresh``, Polymarket has none, and #4827 names it as out of
+scope rather than leaving it to be rediscovered.
+
 WHAT THIS DOES NOT TOUCH: the discovery scan, the closed-event sync, identity,
-``status``, and any market that is not Polymarket-condition-keyed. It never
+``status``, and any market with no condition-keyed leg to address. It never
 creates a market and never creates an outcome.
 """
 
@@ -159,7 +210,43 @@ SERVED_STALE_HOURS = 12
 #: requests an hour against the ~1,000/hr ceiling — the same order as the
 #: register rail's ~66. What bounds it is the write loop, which issues a handful
 #: of indexed statements per market; see ``_TIME_BUDGET_S``.
+#:
+#: #4827 AMENDMENT: this is no longer the binding cap and is kept as the second
+#: one. Since the pool admits ladders addressed by their legs, a market is worth
+#: between one and ~130 condition ids, so the cap that has to be true of a run is
+#: :data:`CONDITION_BUDGET`. Both are enforced; whichever binds first stops the
+#: admission loop, and both are reported.
 MARKET_BUDGET = 1_200
+
+#: Condition ids requested per run — THE cap, sized against this rail's own
+#: measured throughput rather than against the population it would like to cover.
+#:
+#: MEASURED, production ``task-metrics`` 2026-09-10 16:09Z: the run before this
+#: change requested **452 conditions**, wrote **1,311 outcomes + 1,311 snapshots**
+#: and took **73.1 s** of the 200 s wall. That is ~0.162 s per condition end to
+#: end, so 1,000 ids is ~162 s — inside the wall with margin, and the margin is
+#: the point: :data:`_TIME_BUDGET_S` exhausting is reported as PARTIAL, so a
+#: budget sized at the wall would put this rail permanently amber and the amber
+#: would mean nothing.
+#:
+#: WHAT IT BUYS, STATED RATHER THAN IMPLIED. The addressable population measured
+#: 2026-09-10 17:2xZ is ~8,950 market-keyed ids + ~45,400 leg ids ≈ **54,400**.
+#: At 1,000 an hour that is a **~55-hour full rotation**, and the priority class
+#: (tier 1-2 or resolving inside :data:`IMMINENT_DAYS`, ~37,400 ids) leads it.
+#: That does NOT meet #3879's 24-hour acceptance across the whole widened
+#: population and it is not claimed to: before this change 7,608 of those markets
+#: had no rail at all and 10,201 of their legs had not been read in 30 days. The
+#: two things that would shorten the rotation — a faster beat than hourly, and a
+#: write path that does better than ~18 rows/s — are #4827's named follow-ups and
+#: neither is done here.
+#:
+#: 🔴 THE FIRST ~2 DAYS ARE A DRAIN, NOT THE STEADY STATE, and the ordering makes
+#: that deliberate: stalest-first inside the priority class means a 90-day-old
+#: tier-1 election price is taken before a 25-hour-old one. So the market-keyed
+#: cohort's own >24h share will RISE while the months-stale backlog clears. That
+#: is the correct trade and it is visible in ``stale_markets`` without anyone
+#: having to be told.
+CONDITION_BUDGET = 1_000
 
 #: A market resolving inside this window is priority whatever its tier — an
 #: imminent question is the one a reader is most likely to be looking at, and
@@ -223,6 +310,29 @@ def _attempt_key(market_id: int) -> str:
 #: a market is not selected on the staleness of a leg the writer would decline.
 #: A market with no ungraded legs left produces a NULL ``stalest`` and is
 #: excluded by the comparison — there is nothing here to write.
+#: #4827: ADDRESSABILITY IS A PROPERTY OF THE LEGS, so it is tested on the legs.
+#: ``fm.external_id LIKE '0x%'`` used to be the pool's fence and it fenced out
+#: 7,608 live markets whose every leg carried a condition id. The fence is now
+#: "has at least one ungraded leg we can name to Gamma", which is what the old
+#: clause was trying to say. It is an EXISTS rather than a join so the pool stays
+#: one row per market, and it rides ``ix_futures_outcomes_market_id``.
+#:
+#: The ids to REQUEST come out of the same LATERAL that decides staleness, in one
+#: pass over the market's legs: the market's own external_id when that is a bare
+#: condition (byte-identical to the old behaviour for every row the rail already
+#: swept), and otherwise the DISTINCT bare condition ids of its ungraded legs.
+#: ``regexp_replace`` strips the ``_yes``/``_no`` suffix the sub-market ingest
+#: writes — measured 2026-09-10, 45,435 of 46,175 event-keyed legs carry the bare
+#: id and 735 carry a suffixed one, and both name the same book.
+_ADDRESSABLE_LEG_SQL = """
+           EXISTS (
+                SELECT 1 FROM futures_outcomes fo_a
+                 WHERE fo_a.market_id = fm.id
+                   AND fo_a.is_winner IS NOT TRUE
+                   AND fo_a.external_id LIKE '0x%'
+              )
+"""
+
 _CANDIDATE_SQL = f"""
     WITH pool AS MATERIALIZED (
         SELECT fm.id,
@@ -236,22 +346,29 @@ _CANDIDATE_SQL = f"""
                ) AS priority
           FROM futures_markets fm
          WHERE fm.source = 'polymarket'
-           AND fm.external_id LIKE '0x%'
+           AND {_ADDRESSABLE_LEG_SQL.strip()}
            AND {LIVE_MARKET_SQL}
     )
     SELECT p.id,
-           p.external_id,
+           s.request_ids,
            p.priority,
            COUNT(*) OVER () AS stale_markets,
            (SELECT COUNT(*) FROM pool) AS served_markets
       FROM pool p
       JOIN LATERAL (
-            SELECT MIN(COALESCE(fo.last_updated, TIMESTAMP WITH TIME ZONE 'epoch')) AS stalest
+            SELECT MIN(COALESCE(fo.last_updated, TIMESTAMP WITH TIME ZONE 'epoch')) AS stalest,
+                   CASE
+                     WHEN p.external_id LIKE '0x%' THEN ARRAY[p.external_id]
+                     ELSE ARRAY_AGG(
+                            DISTINCT regexp_replace(fo.external_id, '_(yes|no)$', '')
+                          ) FILTER (WHERE fo.external_id LIKE '0x%')
+                   END AS request_ids
               FROM futures_outcomes fo
              WHERE fo.market_id = p.id
                AND fo.is_winner IS NOT TRUE
            ) s ON TRUE
      WHERE s.stalest < NOW() - make_interval(hours => :stale_hours)
+       AND COALESCE(ARRAY_LENGTH(s.request_ids, 1), 0) > 0
      ORDER BY p.priority DESC, s.stalest ASC
      LIMIT :limit
 """
@@ -301,14 +418,53 @@ def _mark_attempted(market_ids: list[int]) -> None:
         pass
 
 
+def _pack_batches(
+    due: list[tuple[int, list[str]]],
+) -> list[list[tuple[int, list[str]]]]:
+    """Group markets into Gamma requests of at most :data:`BATCH_SIZE` ids.
+
+    #4827. Before the widening every market was one id, so ``BATCH_SIZE`` markets
+    per request and ``BATCH_SIZE`` ids per request were the same statement and
+    slicing ``due`` did both. A ladder is 5 to 130 ids, so they part company and
+    the one that matters is the ID count — ``BATCH_SIZE`` is a property of the
+    URL (a query string with hundreds of repeated parameters is a 414 in
+    waiting), not of our bookkeeping.
+
+    🔴 A MARKET IS NEVER SPLIT ACROSS TWO BATCHES, which is the module docstring's
+    unit-of-work rule reaching the packer: the wall check happens BETWEEN batches,
+    so a ladder split across the boundary is precisely the half-refreshed row this
+    rail exists to prevent. A market whose own id list is wider than
+    ``BATCH_SIZE`` therefore gets a batch to itself and
+    ``get_markets_by_conditions`` chunks it internally — the whole market still
+    reaches the writer in one call, which is what the rule is about.
+    """
+    batches: list[list[tuple[int, list[str]]]] = []
+    current: list[tuple[int, list[str]]] = []
+    current_ids = 0
+    for mid, cids in due:
+        if current and current_ids + len(cids) > BATCH_SIZE:
+            batches.append(current)
+            current = []
+            current_ids = 0
+        current.append((mid, cids))
+        current_ids += len(cids)
+    if current:
+        batches.append(current)
+    return batches
+
+
 async def _select_stale_conditions(
     *, stale_hours: int, limit: int
-) -> tuple[list[tuple[int, str]], int, int]:
-    """``([(market_id, condition_id), …], stale_markets, served_markets)``.
+) -> tuple[list[tuple[int, list[str]]], int, int]:
+    """``([(market_id, [condition_id, …]), …], stale_markets, served_markets)``.
 
     Ordered priority-first and then stalest-first, which is the whole starvation
     argument: within a class the row that has waited longest is always next, so
     no member of a class can be passed over twice for the same reason.
+
+    #4827: the second element is a LIST because a ladder is addressed by its
+    legs. It holds exactly one id for every row this rail swept before the
+    change, so the ordering argument above is unchanged.
     """
     from sqlalchemy import text
 
@@ -328,7 +484,11 @@ async def _select_stale_conditions(
         # is otherwise doing no work at all.
         return [], 0, await _served_market_count()
     return (
-        [(r[0], r[1]) for r in rows],
+        # `list(r[1] or ())` — asyncpg hands an ARRAY back as a list already, but
+        # the copy is what stops a driver-owned buffer travelling into the batch
+        # packer, and `or ()` keeps a NULL out of it rather than letting a None
+        # reach `len()` three frames later.
+        [(r[0], list(r[1] or ())) for r in rows],
         int(rows[0][3]),
         int(rows[0][4]),
     )
@@ -343,7 +503,7 @@ _SERVED_COUNT_SQL = f"""
     SELECT COUNT(*)
       FROM futures_markets fm
      WHERE fm.source = 'polymarket'
-       AND fm.external_id LIKE '0x%'
+       AND {_ADDRESSABLE_LEG_SQL.strip()}
        AND {LIVE_MARKET_SQL}
 """
 
@@ -368,7 +528,10 @@ async def _served_market_count() -> int:
 
 
 async def _refresh_stale_polymarket_conditions(
-    *, budget: int = MARKET_BUDGET, stale_hours: int = SERVED_STALE_HOURS
+    *,
+    budget: int = MARKET_BUDGET,
+    condition_budget: int = CONDITION_BUDGET,
+    stale_hours: int = SERVED_STALE_HOURS,
 ) -> dict[str, Any]:
     """Re-price the served Polymarket markets the three existing rails miss."""
     from app.services.polymarket_api import PolymarketAPIService
@@ -383,6 +546,11 @@ async def _refresh_stale_polymarket_conditions(
         # What this run actually did with that population.
         "candidates": 0,
         "skipped_recent_attempt": 0,
+        # #4827: `conditions_requested` counts CONDITION IDS and `markets_due`
+        # counts markets. Before the widening they were the same number and only
+        # the first was reported; a ladder makes them differ by ~5.5x, and the
+        # cap that has to be read against the wall is the id one.
+        "markets_due": 0,
         "conditions_requested": 0,
         "batches": 0,
         "markets_returned": 0,
@@ -429,14 +597,33 @@ async def _refresh_stale_polymarket_conditions(
 
     skips = _load_attempt_skips([mid for mid, _ in candidates])
     stats["skipped_recent_attempt"] = len(skips)
-    eligible = [(mid, cid) for mid, cid in candidates if mid not in skips]
-    due = eligible[: max(budget, 0)]
+    eligible = [(mid, cids) for mid, cids in candidates if mid not in skips]
+
+    # #4827: ADMISSION IS WHOLE MARKETS UNDER TWO CAPS. The market cap is the old
+    # one; the id cap is the one sized against the wall. A market is admitted
+    # only if it fits entirely — the unit-of-work rule in the module docstring is
+    # a correctness bound (a half-refreshed ladder is worse than a stale one), so
+    # a market is never split across the budget line. The FIRST market is always
+    # admitted whatever its size, because a ladder wider than the whole id budget
+    # would otherwise be permanently unreachable while sitting at the head of a
+    # stalest-first ordering — the fixed point the attempt markers exist to break.
+    due: list[tuple[int, list[str]]] = []
+    ids_taken = 0
+    id_cap = max(condition_budget, 0)
+    for mid, cids in eligible:
+        if len(due) >= max(budget, 0) or id_cap <= 0:
+            break
+        if due and ids_taken + len(cids) > id_cap:
+            break
+        due.append((mid, cids))
+        ids_taken += len(cids)
     # Reported rather than merely enforced: a budget that binds every run is the
     # signal that the population has outgrown it, and it is invisible from
     # `conditions_requested` alone, which reads the same at 900-of-900 and
     # 900-of-90,000.
     stats["budget_exhausted"] = len(eligible) > len(due)
-    stats["conditions_requested"] = len(due)
+    stats["markets_due"] = len(due)
+    stats["conditions_requested"] = ids_taken
     if not due:
         # THE TWO EMPTY-`due` STATES ARE NOT THE SAME STATE, and this file has
         # already argued that once (`nothing_stale` vs here). A caller that
@@ -453,15 +640,14 @@ async def _refresh_stale_polymarket_conditions(
     started = time.monotonic()
     fetch_failures = 0
 
-    for start in range(0, len(due), BATCH_SIZE):
+    for batch in _pack_batches(due):
         if time.monotonic() - started > _TIME_BUDGET_S:
             # Between batches, never inside one: a run that stopped mid-market
             # would leave exactly the half-refreshed ladder this rail exists to
             # prevent.
             stats["wall_exhausted"] = True
             break
-        batch = due[start : start + BATCH_SIZE]
-        conditions = [cid for _, cid in batch]
+        conditions = [cid for _, cids in batch for cid in cids]
         stats["batches"] += 1
         # Marked BEFORE the fetch, and that ordering is the starvation fix
         # rather than a detail: every early exit below — a refused fetch, a

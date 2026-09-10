@@ -137,7 +137,7 @@ class TestThisRailCannotAchieveNothingQuietly:
         a rail whose whole budget is being eaten by markets it cannot write."""
         _arm(
             monkeypatch,
-            candidates=[(1, "0xaaa"), (2, "0xbbb")],
+            candidates=[(1, ["0xaaa"]), (2, ["0xbbb"])],
             stale=2,
             served=10,
             skips={1, 2},
@@ -156,7 +156,7 @@ class TestThisRailCannotAchieveNothingQuietly:
         refreshed nothing BY INSTRUCTION, the one above could not."""
         _arm(
             monkeypatch,
-            candidates=[(1, "0xaaa"), (2, "0xbbb")],
+            candidates=[(1, ["0xaaa"]), (2, ["0xbbb"])],
             stale=2,
             served=10,
         )
@@ -172,7 +172,7 @@ class TestThisRailCannotAchieveNothingQuietly:
     ):
         _arm(
             monkeypatch,
-            candidates=[(1, "0xaaa")],
+            candidates=[(1, ["0xaaa"])],
             stale=1,
             served=10,
             service=_Service(raises=RuntimeError("gamma 429")),
@@ -192,7 +192,7 @@ class TestThisRailCannotAchieveNothingQuietly:
 
         _arm(
             monkeypatch,
-            candidates=[(1, "0xaaa")],
+            candidates=[(1, ["0xaaa"])],
             stale=1,
             served=10,
             service=_Service(markets=[_Market("0xaaa")]),
@@ -208,7 +208,7 @@ class TestThisRailCannotAchieveNothingQuietly:
     async def test_a_run_that_wrote_prices_is_the_only_green(self, monkeypatch):
         _arm(
             monkeypatch,
-            candidates=[(1, "0xaaa")],
+            candidates=[(1, ["0xaaa"])],
             stale=1,
             served=10,
             service=_Service(markets=[_Market("0xaaa")]),
@@ -227,7 +227,7 @@ class TestOneBadBatchCannotWipeTheRun:
     nothing else."""
 
     async def test_a_failed_fetch_leaves_the_other_batch_written(self, monkeypatch):
-        conditions = [(i, f"0x{i:03x}") for i in range(rail.BATCH_SIZE + 1)]
+        conditions = [(i, [f"0x{i:03x}"]) for i in range(rail.BATCH_SIZE + 1)]
         service = _Service(
             per_call=[RuntimeError("gamma 502"), [_Market("0xfff")]]
         )
@@ -260,7 +260,7 @@ class TestOneBadBatchCannotWipeTheRun:
                 raise RuntimeError("deadlock detected")
             await _writes(markets, stats, now=now)
 
-        conditions = [(i, f"0x{i:03x}") for i in range(rail.BATCH_SIZE + 1)]
+        conditions = [(i, [f"0x{i:03x}"]) for i in range(rail.BATCH_SIZE + 1)]
         _arm(
             monkeypatch,
             candidates=conditions,
@@ -287,7 +287,7 @@ class TestTheOrderingCannotStarveItsOwnTail:
         marked: list[int] = []
         _arm(
             monkeypatch,
-            candidates=[(7, "0xaaa")],
+            candidates=[(7, ["0xaaa"])],
             stale=1,
             served=10,
             service=_Service(raises=RuntimeError("gamma 429")),
@@ -303,7 +303,7 @@ class TestTheOrderingCannotStarveItsOwnTail:
         marked: list[int] = []
         _arm(
             monkeypatch,
-            candidates=[(7, "0xaaa"), (8, "0xbbb")],
+            candidates=[(7, ["0xaaa"]), (8, ["0xbbb"])],
             stale=2,
             served=10,
             service=_Service(markets=[_Market("0xaaa")]),
@@ -364,7 +364,7 @@ class TestTheUnitOfWorkIsTheWholeMarket:
 
         _arm(
             monkeypatch,
-            candidates=[(1, "0xaaa"), (2, "0xbbb")],
+            candidates=[(1, ["0xaaa"]), (2, ["0xbbb"])],
             stale=2,
             served=10,
             service=_Service(markets=[_Market("0xaaa"), _Market("0xbbb")]),
@@ -379,7 +379,7 @@ class TestTheUnitOfWorkIsTheWholeMarket:
     ):
         """A run that stopped mid-market would leave exactly the half-refreshed
         ladder this rail exists to prevent."""
-        conditions = [(i, f"0x{i:03x}") for i in range(rail.BATCH_SIZE * 3)]
+        conditions = [(i, [f"0x{i:03x}"]) for i in range(rail.BATCH_SIZE * 3)]
         clock = {"t": 0.0}
         monkeypatch.setattr(
             rail.time, "monotonic", lambda: clock.__setitem__("t", clock["t"] + 100.0) or clock["t"]
@@ -437,6 +437,23 @@ class TestTheOrderingIsAcceptanceOneMadeMechanical:
         however the ordering was written."""
         assert rail.MARKET_BUDGET * rail.SERVED_STALE_HOURS >= 13_746
 
+    def test_the_id_budget_is_sized_under_the_wall_and_not_at_it(self):
+        """#4827: the cap that has to be true of a run is the CONDITION-ID one,
+        and it is sized against measured throughput, not against the population.
+
+        Production `task-metrics` 2026-09-10 16:09Z: 452 conditions, 1,311
+        outcomes + 1,311 snapshots, 73.1 s. That is ~0.162 s per condition, so
+        the id budget times that rate has to leave real room under
+        `_TIME_BUDGET_S` — a budget sized AT the wall would make
+        `wall_exhausted` the normal terminal, and `wall_exhausted` is reported as
+        PARTIAL. An alarm that fires every run is not an alarm."""
+        measured_seconds_per_condition = 73.1 / 452
+        projected = rail.CONDITION_BUDGET * measured_seconds_per_condition
+        assert projected < rail._TIME_BUDGET_S
+        # Not merely under it: under it with a fifth of the wall to spare, so a
+        # slow Gamma hour does not flip the terminal.
+        assert projected < rail._TIME_BUDGET_S * 0.85
+
 
 class TestTheFetchCanSeeAResult:
     """#3868, inherited deliberately. `/markets?condition_ids=…` applies a
@@ -449,7 +466,7 @@ class TestTheFetchCanSeeAResult:
         service = _Service(markets=[_Market("0xaaa")])
         _arm(
             monkeypatch,
-            candidates=[(1, "0xaaa")],
+            candidates=[(1, ["0xaaa"])],
             stale=1,
             served=10,
             service=service,
@@ -471,7 +488,7 @@ class TestTheCensusTravelsWithEveryRun:
     ):
         _arm(
             monkeypatch,
-            candidates=[(1, "0xaaa")],
+            candidates=[(1, ["0xaaa"])],
             stale=6_470,
             served=22_034,
             service=_Service(markets=[_Market("0xaaa")]),
@@ -505,7 +522,7 @@ class TestTheCensusTravelsWithEveryRun:
         """A steady-state rotation over 22,034 markets has the budget binding on
         every run, forever. Reporting THAT as PARTIAL would be an alarm that can
         never clear; the census is what carries the growth signal instead."""
-        conditions = [(i, f"0x{i:03x}") for i in range(5)]
+        conditions = [(i, [f"0x{i:03x}"]) for i in range(5)]
         _arm(
             monkeypatch,
             candidates=conditions,
@@ -546,7 +563,12 @@ class TestTheEighthPriceAskerAsksTheSharedQuestion:
             return " ".join(s.split()).lower()
 
         assert _norm(futures_liveness.LIVE_MARKET_SQL) in _norm(rail._SERVED_COUNT_SQL)
-        assert "fm.external_id LIKE '0x%'" in rail._SERVED_COUNT_SQL
+        # #4827: and the ADDRESSABILITY half is shared the same way, from one
+        # constant. A census counting a population the selector cannot address —
+        # or refusing one it can — is the same defect this class is about, just
+        # pointed the other way.
+        assert _norm(rail._ADDRESSABLE_LEG_SQL) in _norm(rail._SERVED_COUNT_SQL)
+        assert _norm(rail._ADDRESSABLE_LEG_SQL) in _norm(rail._CANDIDATE_SQL)
 
     def test_it_filters_before_the_venue_fetch(self):
         """A retired market must also stop costing a Gamma request."""
@@ -557,13 +579,172 @@ class TestTheEighthPriceAskerAsksTheSharedQuestion:
             "get_markets_by_conditions("
         )
 
-    def test_the_population_is_the_condition_keyed_one(self):
-        """Bare `0x…` rows only: those are the ids
-        `/markets?condition_ids=…` resolves. An event-keyed row addressed this
-        way is a request that cannot return."""
+    def test_the_population_is_the_condition_addressable_one(self):
+        """#4827 amends the claim this test used to make, and keeps its point.
+
+        The old fence was `fm.external_id LIKE '0x%'` on the MARKET row, and its
+        reason — "an event-keyed row addressed this way is a request that cannot
+        return" — is still true and still honoured: no event id is ever sent to
+        `/markets?condition_ids=…`. What was wrong was treating the market row as
+        the only place a condition id can live. The fence is now the legs, which
+        is where 7,608 live markets kept theirs."""
         sql = " ".join(rail._CANDIDATE_SQL.split())
         assert "fm.source = 'polymarket'" in sql
-        assert "fm.external_id LIKE '0x%'" in sql
+        assert "fo_a.external_id LIKE '0x%'" in sql
+        # And the request ids come from a condition-shaped source on both arms —
+        # the market's own id when it is one, the legs' otherwise.
+        assert "WHEN p.external_id LIKE '0x%' THEN ARRAY[p.external_id]" in sql
+        assert "regexp_replace(fo.external_id, '_(yes|no)$', '')" in sql
+
+
+class TestALadderIsAddressedByItsLegs:
+    """#4827. The pool's old fence read `fm.external_id LIKE '0x%'` on the MARKET
+    row, and 7,608 live markets kept their condition ids one level down, on the
+    legs — 35,244 of them, 35,244 of 35,244, 10,201 unread for 30 days. Nothing
+    addressed those rows at all: not this rail, not `futures_price_refresh`'s
+    volume arm, not the register. This class guards the two things that had to
+    become true for a ladder to travel: the ids are a LIST, and the budget that
+    binds a run counts IDS.
+    """
+
+    def test_a_market_is_never_split_across_two_gamma_requests(self):
+        """The unit of work is the whole market and the wall check runs BETWEEN
+        batches, so a ladder split across the boundary is exactly the
+        half-refreshed row this rail exists to prevent. Slicing `due` by market
+        count — what the code did when every market was one id — splits it."""
+        due = [(1, [f"0xa{i}" for i in range(30)]), (2, [f"0xb{i}" for i in range(30)])]
+        batches = rail._pack_batches(due)
+
+        # Two batches, one market each — never 30 ids of market 1 plus 10 of
+        # market 2 in the first request and market 2's remaining 20 in a second.
+        assert [[mid for mid, _ in b] for b in batches] == [[1], [2]]
+        # And every id travels exactly once, with its own market.
+        assert [cid for b in batches for _, cids in b for cid in cids] == [
+            cid for _, cids in due for cid in cids
+        ]
+
+    def test_small_markets_share_a_request_up_to_the_url_bound(self):
+        """`BATCH_SIZE` is a property of the URL, not of our bookkeeping: a query
+        string with hundreds of repeated parameters is a 414 in waiting."""
+        due = [(i, [f"0x{i:03x}"]) for i in range(rail.BATCH_SIZE + 1)]
+        batches = rail._pack_batches(due)
+
+        assert len(batches) == 2
+        assert sum(len(cids) for _, cids in batches[0]) == rail.BATCH_SIZE
+        assert sum(len(cids) for _, cids in batches[1]) == 1
+
+    def test_a_ladder_wider_than_the_url_bound_still_gets_a_request(self):
+        """It goes alone and `get_markets_by_conditions` chunks it internally —
+        the whole market still reaches the writer in one call. Dropping it would
+        make the widest ladders (128 legs on the 2028 presidential field)
+        permanently unreachable while sitting at the head of the ordering."""
+        wide = [(1, [f"0x{i:03x}" for i in range(rail.BATCH_SIZE * 2)])]
+        batches = rail._pack_batches(wide)
+
+        assert len(batches) == 1
+        assert len(batches[0][0][1]) == rail.BATCH_SIZE * 2
+
+    async def test_every_id_the_selector_produced_is_asked_for(self, monkeypatch):
+        """No event id is ever sent — the selector decides the ids and the loop
+        forwards exactly those. That is the old test's claim, kept."""
+        service = _Service(markets=[_Market("0xaaa")])
+        _arm(
+            monkeypatch,
+            candidates=[(1, ["0xaaa", "0xbbb"]), (2, ["0xccc"])],
+            stale=2,
+            served=10,
+            service=service,
+            writer=_writes,
+        )
+        await rail._refresh_stale_polymarket_conditions()
+
+        assert [cid for call in service.calls for cid in call] == [
+            "0xaaa",
+            "0xbbb",
+            "0xccc",
+        ]
+
+    async def test_the_budget_that_binds_counts_ids_not_markets(self, monkeypatch):
+        """A market cost one id when every pool row was a bare condition. A
+        ladder costs one per leg and the pool's ladders average 6.5, so a market
+        cap alone would let one run ask for thousands of ids on a wall measured
+        at 452."""
+        _arm(
+            monkeypatch,
+            candidates=[(i, [f"0x{i}{j}" for j in range(10)]) for i in range(9)],
+            stale=9,
+            served=100,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions(
+            budget=1_000, condition_budget=25
+        )
+
+        # Whole markets only: two fit under 25 ids, the third would take it to 30.
+        assert stats["markets_due"] == 2
+        assert stats["conditions_requested"] == 20
+        assert stats["budget_exhausted"] is True
+
+    async def test_the_market_cap_still_binds_when_it_is_the_smaller_one(
+        self, monkeypatch
+    ):
+        """Both caps are enforced. Keeping the market cap is what stops a run of
+        one-id markets from issuing 1,000 write loops on a wall sized for 452."""
+        _arm(
+            monkeypatch,
+            candidates=[(i, [f"0x{i:03x}"]) for i in range(50)],
+            stale=50,
+            served=100,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions(
+            budget=3, condition_budget=1_000
+        )
+
+        assert stats["markets_due"] == 3
+        assert stats["conditions_requested"] == 3
+
+    async def test_a_ladder_wider_than_the_whole_id_budget_is_still_admitted(
+        self, monkeypatch
+    ):
+        """Otherwise it is a fixed point: permanently unreachable AND permanently
+        at the head of a stalest-first ordering, which is the starvation shape the
+        attempt markers exist to break."""
+        _arm(
+            monkeypatch,
+            candidates=[(1, [f"0x{i:03x}" for i in range(200)])],
+            stale=1,
+            served=10,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions(condition_budget=5)
+
+        assert stats["markets_due"] == 1
+        assert stats["conditions_requested"] == 200
+
+    async def test_a_zero_id_budget_refreshes_nothing_and_says_which_cap_did_it(
+        self, monkeypatch
+    ):
+        """The always-admit-the-first rule must not swallow an explicit
+        instruction to do nothing — `no_budget` and `all_recently_attempted` are
+        different states and this file has already argued that once."""
+        _arm(
+            monkeypatch,
+            candidates=[(1, ["0xaaa"])],
+            stale=1,
+            served=10,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions(condition_budget=0)
+
+        assert stats["markets_due"] == 0
+        assert stats["terminal"] == "no_work"
+        assert stats["reason"] == "no_budget"
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
 
 
 def test_the_module_never_creates_a_market_or_an_outcome():
