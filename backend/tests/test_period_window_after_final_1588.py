@@ -72,6 +72,33 @@ GRADED = "Over 4.5 runs in the first 5 innings"
 # A full-game market, ungraded — not window-bounded, must always survive.
 FULL_GAME = "Tampa Bay wins by over 1.5 runs"
 
+# ── The two shapes CERT-2486 measured walking through the first cut ──────────
+#
+# Neither is identifiable from `market_name`, which is all the filter used to
+# read. Both are ungraded and both were still quoting after full time.
+#
+# Kalshi: the title is generic and the TICKER is the only thing that says
+# "first inning" (`KXMLBRFI` — see `_TICKER_WINDOWS`).
+TICKER_ONLY = "Yes"
+TICKER_ONLY_MARKET = "Rays at Braves"
+# Polymarket: the title is a generic matchup and the window is named ONLY in
+# the outcome.
+OUTCOME_ONLY = "1st 5 Innings Spread -1.5"
+OUTCOME_ONLY_MARKET = "Tampa Bay Rays vs. Atlanta Braves"
+
+
+def _kalshi_rfi_ticker(game_date) -> str:
+    """A real-shaped `KXMLBRFI` ticker for the specimen's own game date.
+
+    The date is derived rather than hard-coded because `filter_foreign_game_markets`
+    drops a Kalshi market whose ticker encodes a DIFFERENT date than the event
+    (defense against foreign-prop mislinks). A fixed date would make this row
+    vanish before the window filter ever saw it — and the test would then pass
+    for the wrong reason, proving nothing about the ticker path.
+    """
+    month = game_date.strftime("%b").upper()
+    return f"KXMLBRFI-{game_date.strftime('%y')}{month}{game_date.strftime('%d')}ATLTB-T0.5"
+
 
 def _rays_at_braves(status: str, period: str | None):
     """The production specimen, in the requested game state."""
@@ -109,6 +136,19 @@ def _rays_at_braves(status: str, period: str | None):
     full_game.status = "open"
     full_game.event_id = EVENT_ID
 
+    ticker_only = _make_futures_market(
+        id=904, name=TICKER_ONLY_MARKET, source="kalshi"
+    )
+    ticker_only.status = "open"
+    ticker_only.event_id = EVENT_ID
+    ticker_only.external_id = _kalshi_rfi_ticker(event.commence_time.date())
+
+    outcome_only = _make_futures_market(
+        id=905, name=OUTCOME_ONLY_MARKET, source="polymarket"
+    )
+    outcome_only.status = "open"
+    outcome_only.event_id = EVENT_ID
+
     outcomes = [
         _make_outcome(id=9101, market_id=901, name=LEAKED, probability=0.99),
         _make_outcome(
@@ -120,8 +160,10 @@ def _rays_at_braves(status: str, period: str | None):
             resolution_source="api_settlement",
         ),
         _make_outcome(id=9301, market_id=903, name=FULL_GAME, probability=0.99),
+        _make_outcome(id=9401, market_id=904, name=TICKER_ONLY, probability=0.62),
+        _make_outcome(id=9501, market_id=905, name=OUTCOME_ONLY, probability=0.94),
     ]
-    return event, [leaked, graded, full_game], outcomes
+    return event, [leaked, graded, full_game, ticker_only, outcome_only], outcomes
 
 
 async def _client_for(status: str, period: str | None):
@@ -150,6 +192,24 @@ async def _client_for(status: str, period: str | None):
 async def finished_client():
     """Full time. `period` is None because production stores NULL there."""
     app, cache = await _client_for("completed", None)
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            yield ac
+    cache.clear()
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def live_first_inning_client():
+    """The same game in the 1st — every window in this file is still open.
+
+    The state that separates "identified the window" from "suppressed the row":
+    a first-INNING market is legitimately gone by the 3rd, so the 3rd cannot be
+    the open-window control for it.
+    """
+    app, cache = await _client_for("live", "Top 1")
     with patch("app.main.init_db", new_callable=AsyncMock):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -222,6 +282,102 @@ async def test_the_graded_window_market_survives_the_final(finished_client):
     assert GRADED in names, (
         "the graded first-5 market was suppressed along with the ungraded one — "
         f"that hides the WHAT HIT surface. Served: {names}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ticker_or_outcome_named_window_is_hidden_after_final(finished_client):
+    """CERT-2486's repair: the two shapes whose TITLE names no window.
+
+    Both were served, ungraded, after full time by the first cut of this rule,
+    because the filter passed `market_name` and a literal `None` ticker:
+
+        Kalshi      'Rays at Braves' / 'Yes'      window is in the TICKER
+        Polymarket  'Rays vs. Braves' / '1st 5 Innings Spread -1.5'
+                                                  window is in the OUTCOME
+
+    A fix that reads only the market name leaves both of these quoting, so this
+    fails on the exact defect and not on the class in general.
+    """
+    payload = (await finished_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+    names = _names(payload)
+    assert TICKER_ONLY not in names, (
+        "a KXMLBRFI first-inning market is still quoting after the final — its "
+        f"title names no window, so only the ticker can identify it. Served: {names}"
+    )
+    assert OUTCOME_ONLY not in names, (
+        "a first-5-innings row is still quoting after the final — its title is a "
+        f"generic matchup, so only the outcome name identifies it. Served: {names}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_ticker_and_outcome_windows_are_open_in_the_first(
+    live_first_inning_client,
+):
+    """The open-window control, and the half that makes the rule a rule.
+
+    Same two rows, same two identification paths, in the 1st inning — nothing
+    has closed. Without this, a filter that suppressed every ticker- or
+    outcome-identified row unconditionally would pass the test above.
+    """
+    payload = (
+        await live_first_inning_client.get(f"/api/events/{EVENT_ID}/game-markets")
+    ).json()
+    names = _names(payload)
+    assert TICKER_ONLY in names, (
+        f"the first-inning market was suppressed in the 1st inning. Served: {names}"
+    )
+    assert OUTCOME_ONLY in names, (
+        f"the first-5 market was suppressed in the 1st inning. Served: {names}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_ticker_window_closes_in_the_third_while_the_first_five_quotes(
+    live_third_inning_client,
+):
+    """The differential: the two windows are read, not lumped together.
+
+    In the top of the 3rd the RFI market's window is genuinely over and the
+    first-five market's is not, and the ONLY thing that can tell them apart is
+    that each row's own window was resolved — one from a ticker, one from an
+    outcome name. A fix that identified rows but assigned them all one window
+    would fail here while passing every other test in this file.
+    """
+    payload = (
+        await live_third_inning_client.get(f"/api/events/{EVENT_ID}/game-markets")
+    ).json()
+    names = _names(payload)
+    assert TICKER_ONLY not in names, (
+        "a KXMLBRFI first-inning market is still quoting in the 3rd inning — "
+        f"its window closed two innings ago. Served: {names}"
+    )
+    assert OUTCOME_ONLY in names, (
+        "the first FIVE innings are still being played and that market must "
+        f"quote. Served: {names}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_graded_and_full_game_controls_survive_the_new_reads(
+    finished_client,
+):
+    """The over-suppression control, re-asserted against the WIDER read.
+
+    Reading the outcome name as well as the title is the direction that can
+    newly suppress things it should not: a full-game market's outcomes are still
+    outcomes. Both carve-outs have to hold with all three identification paths
+    live, not just with the title path they were written against.
+    """
+    payload = (await finished_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+    names = _names(payload)
+    assert GRADED in names, (
+        f"a graded window market was suppressed — WHAT HIT is lost. Served: {names}"
+    )
+    assert FULL_GAME in names, (
+        "a FULL-GAME market was suppressed after the final; nothing about it is "
+        f"window-bounded. Served: {names}"
     )
 
 

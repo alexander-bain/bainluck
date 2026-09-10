@@ -250,6 +250,91 @@ class TestTheMeasuredVocabulary:
     def test_the_finished_game_closes_the_newly_recognised_windows(self, name, sport):
         assert prop_window_closed(name, None, sport, None, "completed", finished=True) is True
 
+    @pytest.mark.parametrize(
+        "name,closes_after",
+        [
+            ("1st 5 Innings O/U 6.5", 5),
+            ("1st 5 Innings Spread -1.5", 5),
+            ("1st 3 Innings Total", 3),
+            ("1st 7 Innings Winner", 7),
+        ],
+    )
+    def test_the_numeral_spelling_of_the_first_n_innings(self, name, closes_after):
+        """`1st 5` is the same window as `First 5`, and it is Polymarket's.
+
+        Only "first" was accepted, while the first-INNING pattern took both
+        spellings. Censused on production 2026-09-10 over outcome names:
+        `%first 5%` 28,512, `%1st 5%` 2,224, `%1st 3%` 4 — so this is a real
+        population, and every sampled row is Polymarket.
+        """
+        assert prop_window(name, None, MLB) == ("inning", closes_after)
+
+    def test_1st_5_innings_is_not_read_as_the_first_inning(self):
+        """The ordering that makes the numeral form safe to add.
+
+        `_NTH_INNING_RE` would read the leading "1st" and close the market after
+        inning 1 — four innings early, suppressing a market that is still live.
+        The explicit first-five pattern runs first, exactly as it does for
+        "First 5 Innings".
+        """
+        assert prop_window("1st 5 Innings Spread -1.5", None, MLB) == ("inning", 5)
+        assert (
+            prop_window_closed("1st 5 Innings Spread -1.5", None, MLB, "Top 3", "live")
+            is False
+        ), "the first five innings are still being played"
+
+    def test_the_outcome_name_identifies_the_window_when_the_title_does_not(self):
+        """CERT-2486's Polymarket shape: a generic matchup title.
+
+        The window appears ONLY in the outcome, so a rule reading the title
+        alone leaves the row quoting after the final.
+        """
+        title = "Tampa Bay Rays vs. Atlanta Braves"
+        assert prop_window(title, None, MLB) is None, "the title names no window"
+        assert prop_window(title, None, MLB, "1st 5 Innings Spread -1.5") == ("inning", 5)
+        assert (
+            prop_window_closed(
+                title, None, MLB, None, "completed", finished=True,
+                outcome="1st 5 Innings Spread -1.5",
+            )
+            is True
+        )
+
+    def test_the_ticker_identifies_the_window_when_the_title_does_not(self):
+        """CERT-2486's Kalshi shape: the `KXMLBRFI` prefix is the only signal."""
+        assert prop_window("Rays at Braves", None, MLB) is None
+        assert prop_window("Rays at Braves", "KXMLBRFI-26SEP09ATLTB-T0.5", MLB) == (
+            "inning",
+            1,
+        )
+
+    def test_a_fulltime_title_vetoes_its_own_outcomes(self):
+        """The over-suppression trap that reading outcomes opens up.
+
+        "1st Half / Fulltime Result" (76 rows) runs to the whistle, and its
+        OUTCOMES name a half. Reading outcome text per-string would classify it
+        as a first-half window and suppress a full-game market at halftime — the
+        exact regression the veto exists to prevent. The title's veto therefore
+        applies to the whole row, before any outcome is read.
+        """
+        assert prop_window("1st Half / Fulltime Result", None, None, "1st Half: Home") is None
+        assert (
+            prop_window_closed(
+                "1st Half / Fulltime Result", None, None, None, "completed",
+                finished=True, outcome="1st Half: Home",
+            )
+            is False
+        )
+
+    def test_an_outcome_naming_fulltime_is_not_a_window_either(self):
+        assert prop_window("Rays at Braves", None, MLB, "1st Half / Fulltime Result") is None
+
+    def test_the_outcome_is_only_consulted_when_the_title_says_nothing(self):
+        """The title wins where it speaks, so an outcome cannot widen a window."""
+        assert prop_window(
+            "Tampa Bay vs Atlanta: 7th Inning Winner", None, MLB, "1st 5 Innings"
+        ) == ("inning", 7)
+
     def test_a_bare_first_five_needs_the_sport_and_that_is_deliberate(self):
         # "First 5 Spread" with no sport key and no "innings" in the title could
         # belong to anything, so it stays visible. The call site supplies

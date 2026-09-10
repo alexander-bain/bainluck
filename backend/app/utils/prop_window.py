@@ -180,9 +180,23 @@ _BASEBALL_WINDOWS: list[tuple[re.Pattern[str], int]] = [
     # the bare form is the one the reported specimen wore. Only reached when the
     # title or the sport key already says baseball, so "First 5" cannot pull in
     # a clock sport's market.
-    (re.compile(r"\bfirst\s+(?:five|5)(?:\s+innings?)?\b|\bf5\b", re.IGNORECASE), 5),
-    (re.compile(r"\bfirst\s+(?:three|3)(?:\s+innings?)?\b|\bf3\b", re.IGNORECASE), 3),
-    (re.compile(r"\bfirst\s+(?:seven|7)(?:\s+innings?)?\b|\bf7\b", re.IGNORECASE), 7),
+    #
+    # `1st 5` IS THE SAME WINDOW SPELLED THE OTHER WAY, AND IT IS POLYMARKET'S
+    # (CERT-2486). Only "first" was accepted here, while the first-INNING
+    # pattern above took both spellings — so the numeral form was invisible.
+    # Censused on production 2026-09-10, outcome names:
+    #
+    #     '%first 5%'  28,512      '%1st 5%'  2,224      '%1st 3%'  4
+    #
+    # and every sampled `1st 5` row is Polymarket wearing a generic matchup
+    # title — 'Chicago White Sox vs. New York Yankees' / '1st 5 Innings Spread
+    # -1.5' — so the outcome name is the only place the window appears at all.
+    # Matched ahead of `_NTH_INNING_RE` for the same reason "First 5 Innings"
+    # is: otherwise "1st 5 Innings" reads as the 1st inning and closes a market
+    # four innings early.
+    (re.compile(r"\b(?:first|1st)\s+(?:five|5)(?:\s+innings?)?\b|\bf5\b", re.IGNORECASE), 5),
+    (re.compile(r"\b(?:first|1st)\s+(?:three|3)(?:\s+innings?)?\b|\bf3\b", re.IGNORECASE), 3),
+    (re.compile(r"\b(?:first|1st)\s+(?:seven|7)(?:\s+innings?)?\b|\bf7\b", re.IGNORECASE), 7),
 ]
 
 # A single inning: "2nd Inning Winner", "7th Inning Total". 918 "First 3
@@ -213,31 +227,14 @@ _TICKER_WINDOWS: list[tuple[re.Pattern[str], str, int]] = [
 ]
 
 
-def prop_window(
-    name: str | None,
-    ticker: str | None = None,
-    sport: str | None = None,
-) -> tuple[str, int] | None:
-    """``(unit, closes_after)`` for a window-bounded prop, else ``None``.
+def _window_from_text(text: str, sport: str | None) -> tuple[str, int] | None:
+    """The title-reading half of :func:`prop_window`, on one string.
 
-    ``unit`` is ``"inning"``, ``"half"`` or ``"quarter"``. ``None`` means this is
-    not a window-bounded prop — a full-game total, a moneyline, a season future —
-    and it must never be suppressed by this rule.
+    Split out so the market name and the OUTCOME name can be read by exactly the
+    same rules (#1588 / CERT-2486) — a second copy of this ladder is how the two
+    would drift apart.
     """
-    text = (name or "").strip()
-    tick = (ticker or "").strip()
-
-    # Ticker first: it is structured, and Kalshi titles frequently omit the
-    # window that the ticker encodes (gotcha #16 — prefer ticker-derived facts).
-    for pattern, unit, closes_after in _TICKER_WINDOWS:
-        if tick and pattern.search(tick):
-            return (unit, closes_after)
-
     if not text:
-        return None
-
-    # A period-and-fulltime combined market runs to the final whistle.
-    if _SPANS_FULL_GAME_RE.search(text):
         return None
 
     is_baseball = bool(sport and "baseball" in sport.lower())
@@ -261,6 +258,65 @@ def prop_window(
     return None
 
 
+def prop_window(
+    name: str | None,
+    ticker: str | None = None,
+    sport: str | None = None,
+    outcome: str | None = None,
+) -> tuple[str, int] | None:
+    """``(unit, closes_after)`` for a window-bounded prop, else ``None``.
+
+    ``unit`` is ``"inning"``, ``"half"`` or ``"quarter"``. ``None`` means this is
+    not a window-bounded prop — a full-game total, a moneyline, a season future —
+    and it must never be suppressed by this rule.
+
+    THREE PLACES NAME THE WINDOW, AND ONLY ONE OF THEM IS THE TITLE (CERT-2486)
+    --------------------------------------------------------------------------
+    The first cut of the caller passed the market name and a literal ``None``
+    ticker, and two provider shapes measured on production walked straight
+    through it:
+
+        Kalshi      a generic title whose ``KXMLBRFI…`` TICKER is the only thing
+                    that says "first inning"
+        Polymarket  a generic matchup title where ``1st 5 Innings Spread -1.5``
+                    appears ONLY in the outcome name
+
+    So all three are read, in order of how structured they are: ticker, then
+    title, then outcome.
+
+    ``outcome`` IS SCOPED BY THE TITLE, WHICH IS WHY THE VETO MOVED UP. A row is
+    one outcome of one market, so its own name identifies its own window — but
+    only when the market it belongs to is window-bounded at all. If the TITLE
+    spans the full game, nothing under it is window-bounded, whatever a
+    particular outcome happens to be called; ``1st Half / Fulltime Result`` (76
+    rows, the whole population of that shape) has outcomes that name a half and
+    runs to the final whistle regardless. The veto therefore returns ``None`` for
+    the market before the outcome is ever read.
+    """
+    text = (name or "").strip()
+    tick = (ticker or "").strip()
+
+    # Ticker first: it is structured, and Kalshi titles frequently omit the
+    # window that the ticker encodes (gotcha #16 — prefer ticker-derived facts).
+    for pattern, unit, closes_after in _TICKER_WINDOWS:
+        if tick and pattern.search(tick):
+            return (unit, closes_after)
+
+    # A period-and-fulltime combined market runs to the final whistle — and so
+    # does every outcome under it, so this is checked before either is read.
+    if text and _SPANS_FULL_GAME_RE.search(text):
+        return None
+
+    window = _window_from_text(text, sport)
+    if window is not None:
+        return window
+
+    otext = (outcome or "").strip()
+    if not otext or _SPANS_FULL_GAME_RE.search(otext):
+        return None
+    return _window_from_text(otext, sport)
+
+
 def prop_window_closed(
     name: str | None,
     ticker: str | None,
@@ -268,6 +324,7 @@ def prop_window_closed(
     period: str | None,
     status: str | None,
     finished: bool = False,
+    outcome: str | None = None,
 ) -> bool:
     """True only when the prop's window is PROVABLY over.
 
@@ -308,12 +365,12 @@ def prop_window_closed(
     never enter.
     """
     if finished:
-        return prop_window(name, ticker, sport) is not None
+        return prop_window(name, ticker, sport, outcome) is not None
 
     if (status or "").strip().lower() != "live":
         return False
 
-    window = prop_window(name, ticker, sport)
+    window = prop_window(name, ticker, sport, outcome)
     if window is None:
         return False
 

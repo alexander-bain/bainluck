@@ -12486,6 +12486,21 @@ async def _build_game_markets(
     _period_now = event.__dict__.get("period")
     _sport_hint = "baseball_mlb" if _league == "MLB" else (_league.lower() or None)
 
+    # WHAT IDENTIFIES THE WINDOW HAS TO REACH THIS FILTER (CERT-2486). The first
+    # cut passed `market_name` and a literal `None` ticker, and two provider
+    # shapes walked through it: a Kalshi row whose generic title says nothing but
+    # whose `KXMLBRFI…` TICKER encodes the first inning, and a Polymarket row
+    # whose generic matchup title puts `1st 5 Innings Spread -1.5` only in the
+    # OUTCOME name. `prop_window` accepted a ticker all along; nothing supplied
+    # one.
+    #
+    # The ticker is resolved through `_market_id`, which every item in all six
+    # buckets already carries, rather than by adding `_external_id` to the nine
+    # dict literals that build them — one map, and the payload's shape does not
+    # change. Built from the plain list, before any commit boundary, so no ORM
+    # attribute is read lazily here (gotcha #6).
+    _ticker_by_market_id = {m.id: m.external_id for m in markets}
+
     def _window_open(item: dict) -> bool:
         # A GRADED ROW IS A RESULT, NOT A PRICE, SO IT SURVIVES. Two independent
         # kinds of grade reach this payload and both count, which a LOOK at the
@@ -12498,11 +12513,12 @@ async def _build_game_markets(
             return True
         return not prop_window_closed(
             item.get("market_name"),
-            None,
+            _ticker_by_market_id.get(item.get("_market_id")),
             _sport_hint,
             _period_now,
             event.status,
             finished=event_is_finished,
+            outcome=item.get("outcome_name"),
         )
 
     game_totals = [m for m in game_totals if _window_open(m)]
