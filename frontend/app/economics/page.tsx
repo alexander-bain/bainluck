@@ -221,7 +221,15 @@ export default function EconomicsPage() {
               count={t.fed.count}
             />
             <div className="grid md:grid-cols-[1.6fr_1fr] gap-3.5">
-              <Card>
+              {/* min-w-0: this card is a GRID ITEM, and a grid item's default
+                  `min-width: auto` floors its track at the min-content of its
+                  whole subtree — here, FedHeatmap's `minWidth: 500` heatmap. So
+                  the track grew to 500px on a phone and took the document with
+                  it (#4651: /economics measured 558px wide at a 390px viewport).
+                  FedHeatmap's own `overflow-x-auto` scroller cannot save itself
+                  — min-width:0 on the scroller measured no change at all. The
+                  shrink has to be permitted on the ITEM or it never happens. */}
+              <Card className="min-w-0">
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <h3 className="text-xl font-semibold text-text-primary">2026 rate path</h3>
