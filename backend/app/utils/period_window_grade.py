@@ -33,7 +33,22 @@ reader a row they cannot see today anyway; wrongly publishing one prints a false
 result next to a game they just watched, which is the bug this whole arc exists
 to remove. The asymmetry is the guardrail (gotcha #43).
 
-Four refusals are deliberate and are the ones worth knowing about:
+A PUSH IS A VERDICT, NOT A REFUSAL (#4771)
+------------------------------------------
+It was a refusal, and the reason was honest: ``_build_props_script`` spoke two
+words, and an exact-integer total rendered as "miss" is a false statement about
+a question the reader did not lose. The builder now speaks the third word — the
+renderer always did (``PropsSection``'s ``GradedValue`` has a muted ``push``
+branch, and ``propResultLabel`` spells it) — so the row that used to disappear
+says ``7 runs — push``.
+
+The shape is ADDITIVE and the reason is that ``hit`` has other producers: the
+box-score path in ``_grade_settled_prop`` returns a plain bool and stays one. A
+push returns ``hit: None`` **and** ``push: True``, so a caller that has never
+heard of a push sees "no verdict" — the old behaviour — rather than a silent
+False that would read as a loss. Only a caller that asks for `push` gets one.
+
+Three refusals are deliberate and are the ones worth knowing about:
 
 * **Anything but innings.** ``prop_window`` also classifies ``half`` and
   ``quarter`` windows, and the period array is indexed in the SPORT's own unit —
@@ -43,11 +58,6 @@ Four refusals are deliberate and are the ones worth knowing about:
   soccer half is the obvious follow-up and needs a per-sport unit map.
 * **A short window on a short line score.** A game called after four innings has
   no first-five result. The window must be fully covered by BOTH arrays.
-* **A push.** ``_build_props_script`` speaks two words, hit and miss, and a push
-  rendered as "miss" is a false verdict. An exact-integer total or an exactly
-  covered spread is refused, not rounded. (PropsSection itself already renders a
-  ``push``; teaching the builder that third word is a follow-up, not a thing to
-  smuggle in here.)
 * **An ambiguous side.** "New York" against a Yankees/Mets line matches both, so
   it matches neither. See :func:`_resolve_side`.
 """
@@ -175,6 +185,12 @@ def grade_period_window(
 ):
     """``{"actual": str, "hit": bool}`` for one window-bounded outcome, or ``None``.
 
+    A PUSH returns ``{"actual": str, "hit": None, "push": True}`` (#4771). ``hit``
+    is None rather than False so that a reader who does not know about ``push``
+    sees no verdict — which is what this function used to return for a push —
+    instead of a loss the market did not hand out. ``push`` is absent, never
+    False, on every other row: one key, one meaning.
+
     ``unit`` / ``first_period`` / ``last_period`` come straight from
     :func:`app.utils.prop_window.prop_window_span` so the window this grades is,
     by construction, the same window that suppression proved was over — one
@@ -224,7 +240,9 @@ def grade_period_window(
     if over_under:
         line = float(over_under.group(2))
         if combined == line:
-            return None  # a push; see the module docstring
+            # "Over 7 runs in the first 5 innings" with exactly 7 scored (#4771).
+            # Neither side won it, so neither word is true of it.
+            return {"actual": _plural_runs(combined), "hit": None, "push": True}
         is_over = over_under.group(1).lower() == "over"
         hit = (combined > line) if is_over else (combined < line)
         return {"actual": _plural_runs(combined), "hit": hit}
@@ -259,7 +277,9 @@ def grade_period_window(
         mine, theirs = (home_runs, away_runs) if side == "home" else (away_runs, home_runs)
         margin = (mine - theirs) + line
         if margin == 0:
-            return None  # a push; see the module docstring
+            # An exactly covered spread — "Tampa Bay -5 first 5 innings" on a
+            # five-run window (#4771). The stake comes back; it is not a loss.
+            return {"actual": f"{mine}–{theirs}", "hit": None, "push": True}
         return {"actual": f"{mine}–{theirs}", "hit": margin > 0}
 
     return None

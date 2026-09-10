@@ -198,14 +198,44 @@ class TestTheRefusalsAreTheProduct:
         assert _grade("Over 4.5 runs in the first 5 innings", home=[0, None, 0, 1, 0]) is None
         assert _grade("Over 4.5 runs in the first 5 innings", away=[0, "3", 0, 3, 0]) is None
 
-    def test_a_push_is_refused_rather_than_rounded_into_a_miss(self):
-        # `_build_props_script` speaks two words. A push rendered as "miss" is a
-        # false verdict, so an exact line is left ungraded until that builder
-        # learns the third word.
-        assert _grade("Over 7 runs in the first 5 innings") is None
-        assert _grade("Under 7 runs in the first 5 innings") is None
-        # A spread that lands exactly on the margin is the same refusal.
-        assert _grade("Tampa Bay -5 first 5 innings") is None
+    def test_a_push_is_a_verdict_and_not_a_miss(self):
+        # #4771: this WAS a refusal, and the reason was sound — the builder
+        # spoke two words and a push rendered as "miss" is a false statement
+        # about a question nobody lost. The builder now speaks the third word,
+        # so the exact line gets called instead of vanishing.
+        #
+        # Seven runs in the first five, against a line of exactly 7.
+        assert _grade("Over 7 runs in the first 5 innings") == {
+            "actual": "7 runs", "hit": None, "push": True,
+        }
+        assert _grade("Under 7 runs in the first 5 innings") == {
+            "actual": "7 runs", "hit": None, "push": True,
+        }
+        # A spread that lands exactly on the margin: Tampa Bay by five, -5.
+        assert _grade("Tampa Bay -5 first 5 innings") == {
+            "actual": "6–1", "hit": None, "push": True,
+        }
+
+    def test_hit_is_none_on_a_push_so_an_unaware_caller_sees_no_verdict(self):
+        # The shape is additive on purpose. `hit` has another producer — the
+        # box-score path in `_grade_settled_prop` returns a plain bool — and a
+        # push must degrade to "no verdict" for anyone who has not heard of it,
+        # never to a `False` that reads as a loss.
+        push = _grade("Over 7 runs in the first 5 innings")
+        assert push["hit"] is None, push
+        assert push["push"] is True
+
+    def test_push_is_absent_and_never_false_on_an_ordinary_verdict(self):
+        # One key, one meaning: `.get("push")` is the whole test everywhere.
+        for outcome in (
+            "Over 6.5 runs in the first 5 innings",
+            "Tampa Bay -1.5 first 5 innings",
+            "Tampa Bay wins first 5 innings",
+            "Tie 1st inning",
+        ):
+            verdict = _grade(outcome, last=1 if "1st" in outcome else 5)
+            assert "push" not in verdict, (outcome, verdict)
+            assert verdict["hit"] in (True, False), (outcome, verdict)
 
     def test_a_side_that_names_both_clubs_names_neither(self):
         # "New York" on a Yankees/Mets matchup. Picking one would print a
