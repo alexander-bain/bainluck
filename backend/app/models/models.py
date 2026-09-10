@@ -974,6 +974,37 @@ class FuturesOutcome(Base):
         DateTime(timezone=True)
     )
 
+    # #3879. The FRESHNESS clock: when a writer last held a REAL price for this
+    # outcome, obtained from the venue. The third question the two columns above
+    # cannot answer, and it needs its own column for the same reason #2024
+    # refused to narrow `last_updated` — two readings of one column is the
+    # disease.
+    #
+    #   last_updated      a writer wrote this row (incl. `backfill_winners`
+    #                     grading it, so a leg unpriced since August reads fresh
+    #                     the moment a settlement sweep touches it)
+    #   price_changed_at  the stored number became a different number (so a
+    #                     price read every 2 min and correctly unchanged all
+    #                     week reads a week old)
+    #   price_observed_at we looked, there WAS a price, and this is when
+    #
+    # Maintained by `app/utils/price_change_stamp.py`, which owns the one
+    # expression and its three refusals: no price is not an observation; the
+    # stamp is the instant OBSERVED, not the instant WRITTEN; it never moves
+    # backwards.
+    #
+    # 🔴 NULLABLE, NEVER BACKFILLED, AND THE REFUSAL IS THE INSTRUMENT (gotcha
+    # #53). It populates forward from the price writers, so after one full poll
+    # cycle a leg still reading NULL is a leg no price rail reaches — #3879's
+    # finding, stated by the data rather than inferred from it. Read NULL as
+    # "not observed since the column shipped", never as fresh and never as
+    # stale-forever. See the migration `price_observed_at.py` for why the
+    # obvious `MAX(captured_at)` backfill is refused (202M-row table, and it
+    # would paper over the very population being measured).
+    price_observed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+
     __table_args__ = (
         UniqueConstraint("market_id", "external_id", name="uq_outcome_market_external"),
     )

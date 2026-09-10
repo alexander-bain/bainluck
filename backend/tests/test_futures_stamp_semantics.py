@@ -479,6 +479,33 @@ def test_futures_outcome_timestamp_columns() -> None:
     So it flips rather than being deleted. The claim it now pins is the one that
     replaced it: `price_changed_at` exists, and `last_updated` is still there
     beside it, unnarrowed, because `routes/playoffs.py` gates the grid on it.
+
+    ── IT RED A SECOND TIME, FOR `price_observed_at` (#3879) ─────────────────
+
+    AUDIT RE-RUN RATHER THAN THE SET BUMPED, which is what this file asks for by
+    name. The question a third clock raises is whether it makes #2024's REFUSED
+    option 1 — narrow `last_updated` to stamp only on change — safe at last, and
+    the answer is **not yet, and this test is where that is recorded**:
+
+    * The refusal exists because two readings live on one column: POLLER ALIVE
+      (`routes/playoffs.py`, drops a stale outcome from the grid) and PRICE
+      FRESH (`routes/admin_judgments.py`, a price-age floor).
+      `price_observed_at` is a home for the SECOND reading — it is what PRICE
+      FRESH always meant — so the conflict becomes resolvable for the first
+      time.
+    * It is not resolved, because no consumer has moved. Both readings in
+      `READ_SIDE_CONSUMERS` still gate on `last_updated`, and
+      `routes/tournaments._price_observed_at` still maxes the two OLD clocks at
+      serve time. Narrowing today would break the grid exactly as before.
+    * And it could not be resolved today even if a consumer wanted to: the new
+      column is NULL on every row written before it shipped, so a consumer
+      switching to it would read the whole back-population as "never observed".
+      It has to earn coverage from the polls first.
+
+    So: the set gains a member, the conclusion does not change, and the path by
+    which it COULD change is written down. When every PRICE FRESH consumer reads
+    `price_observed_at`, re-run this audit — `last_updated` may finally be
+    narrowable to the one reading it can honestly serve.
     """
     from app.models.models import FuturesOutcome
 
@@ -491,14 +518,16 @@ def test_futures_outcome_timestamp_columns() -> None:
         "opening_captured_at",
         "last_updated",
         "price_changed_at",
+        "price_observed_at",
     }, f"FuturesOutcome's timestamp columns changed. found={sorted(timestamps)}"
 
-    # NULLABLE, and it must stay so. The column is populated forward by the
+    # NULLABLE, and they must stay so. Both columns are populated forward by the
     # polls; a NOT NULL with a server_default would stamp every historical row
     # with the deploy time — a fabricated answer to "when did this price last
-    # move", which is gotcha #53 written into a schema.
-    assert FuturesOutcome.__table__.c.price_changed_at.nullable is True
-    assert FuturesOutcome.__table__.c.price_changed_at.server_default is None
+    # move" / "when was it last seen", which is gotcha #53 written into a schema.
+    for col in ("price_changed_at", "price_observed_at"):
+        assert FuturesOutcome.__table__.c[col].nullable is True, col
+        assert FuturesOutcome.__table__.c[col].server_default is None, col
 
 
 #: Every price-writing site that must maintain `price_changed_at`, MEASURED.

@@ -33,6 +33,17 @@ price is killed and its stamp refreshed, the delta is retired too.**
 matches nothing is the standard way this class of test goes vacuous — it keeps
 passing while the code it describes is deleted underneath it — so "I found no
 death-event block" is a FAILURE here, never a pass.
+
+## Two shapes, because #3879 changed how a price is written
+
+A death event used to be spelled `outcome.current_probability = None`. Since
+#3879 (CERT-2302) these sites call `apply_unobserved_price(outcome, None,
+at=now)` instead — the helper assigns the price itself, so the assignment this
+scan was built to find is no longer there to find. That change tripped the
+vacuity guard above rather than passing quietly, which is the guard working;
+the fix was to teach the scan the second shape, NOT to relax the count. A
+matcher that only knew the old spelling would go on reporting a healthy
+`futures.py` forever.
 """
 
 from __future__ import annotations
@@ -64,6 +75,18 @@ def _is_dead_price(node: ast.AST) -> bool:
     return False
 
 
+#: The `price_change_stamp` helpers that ASSIGN the price on an ORM path, so a
+#: call to one is a price write even though no assignment is visible (#3879,
+#: CERT-2302). They take the row as their first positional argument and the new
+#: price as their second.
+#:
+#: Both are listed, not just the "unobserved" one. Which helper a site calls
+#: says whether a VENUE was read, and that is orthogonal to whether the price is
+#: dead — a kill routed through the wrong helper is still a kill, and this guard
+#: has to see it to say the delta was retired.
+PRICE_WRITING_HELPERS = {"apply_observed_price", "apply_unobserved_price"}
+
+
 def _attr_target(stmt: ast.stmt) -> tuple[str, str] | None:
     """('outcome', 'current_probability') for `outcome.current_probability = x`."""
     if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
@@ -72,6 +95,29 @@ def _attr_target(stmt: ast.stmt) -> tuple[str, str] | None:
     if not isinstance(target, ast.Attribute) or not isinstance(target.value, ast.Name):
         return None
     return target.value.id, target.attr
+
+
+def _helper_kill(stmt: ast.stmt) -> str | None:
+    """`apply_unobserved_price(stale, None, at=now)` → 'stale'.
+
+    #3879 moved these sites from a bare assignment to a helper call, because a
+    stamp-only helper is correct only until somebody reorders two adjacent
+    lines. That is the right shape for the writer and it is invisible to
+    `_attr_target`, which is why this guard grew a second matcher rather than a
+    bumped count: the death event still happens, it is just now spelled as a
+    call, and a guard that stopped seeing it would keep passing while CERT-627
+    regressed underneath it.
+    """
+    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+        return None
+    call = stmt.value
+    if not isinstance(call.func, ast.Name) or call.func.id not in PRICE_WRITING_HELPERS:
+        return None
+    if len(call.args) < 2 or not isinstance(call.args[0], ast.Name):
+        return None
+    if not _is_dead_price(call.args[1]):
+        return None
+    return call.args[0].id
 
 
 def _death_event_blocks(tree: ast.AST) -> list[tuple[int, str, set[str]]]:
@@ -88,6 +134,13 @@ def _death_event_blocks(tree: ast.AST) -> list[tuple[int, str, set[str]]]:
             by_var: dict[str, set[str]] = {}
             killed: dict[str, int] = {}
             for stmt in block:
+                killer = _helper_kill(stmt)
+                if killer is not None:
+                    # The helper assigns the price itself, so this statement IS
+                    # the price write even though nothing is assigned here.
+                    by_var.setdefault(killer, set()).update(PRICE_FIELDS)
+                    killed[killer] = stmt.lineno
+                    continue
                 hit = _attr_target(stmt)
                 if hit is None:
                     continue
@@ -112,7 +165,9 @@ def test_a_killed_outcome_loses_its_movement_delta(path: Path, expected: int) ->
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:  # pragma: no cover — a parse failure is a failure
-        raise AssertionError(f"{path.name} does not parse, so this gate did not run: {exc}")
+        raise AssertionError(
+            f"{path.name} does not parse, so this gate did not run: {exc}"
+        )
 
     blocks = _death_event_blocks(tree)
 
@@ -172,14 +227,58 @@ def test_the_scan_can_tell_a_fixed_site_from_a_broken_one() -> None:
     fixed_blocks = _death_event_blocks(fixed)
 
     assert len(broken_blocks) == 1, "the detector missed an unfixed death event"
-    assert DELTA_FIELD not in broken_blocks[0][2], (
-        "the detector reports the delta retired on a block that does not retire it"
-    )
+    assert (
+        DELTA_FIELD not in broken_blocks[0][2]
+    ), "the detector reports the delta retired on a block that does not retire it"
     assert len(fixed_blocks) == 1
-    assert DELTA_FIELD in fixed_blocks[0][2], (
-        "the detector cannot see the fix, so the real test passes for the wrong reason"
-    )
+    assert (
+        DELTA_FIELD in fixed_blocks[0][2]
+    ), "the detector cannot see the fix, so the real test passes for the wrong reason"
     assert _death_event_blocks(unrelated) == [], (
         "a LIVE price write (0.42) was read as a death event — this scan would "
         "demand the delta be cleared on every ordinary poll"
+    )
+
+
+def test_the_scan_sees_a_kill_spelled_as_a_helper_call() -> None:
+    """The second shape, on synthetic source, so this matcher is covered even if
+    every real call site is rewritten again.
+
+    `_helper_kill` is the reason the CERT-627 contract survived #3879. If it
+    silently stopped matching, the parametrised tests above would fail loudly on
+    the vacuity guard — but only for as long as these are the ONLY writers. A
+    future file with one helper-call kill and one assignment kill would satisfy
+    vacuity on the assignment alone and let the call-shaped one through
+    unchecked, which is the failure this test exists to make impossible.
+    """
+    broken = ast.parse(
+        "for k, stale in items:\n"
+        "    if cond:\n"
+        "        apply_unobserved_price(stale, None, at=now)\n"
+        "        stale.last_updated = now\n"
+    )
+    fixed = ast.parse(
+        "for k, stale in items:\n"
+        "    if cond:\n"
+        "        apply_unobserved_price(stale, None, at=now)\n"
+        "        stale.last_updated = now\n"
+        "        stale.probability_change_24h = None\n"
+    )
+    live = ast.parse(
+        "for k, o in items:\n"
+        "    apply_observed_price(o, prob, observed_at=now)\n"
+        "    o.last_updated = now\n"
+    )
+
+    broken_blocks = _death_event_blocks(broken)
+    assert len(broken_blocks) == 1, "a helper-call kill was not seen as a kill"
+    assert DELTA_FIELD not in broken_blocks[0][2]
+
+    fixed_blocks = _death_event_blocks(fixed)
+    assert len(fixed_blocks) == 1
+    assert DELTA_FIELD in fixed_blocks[0][2]
+
+    assert _death_event_blocks(live) == [], (
+        "a LIVE price written through the helper is not a death event; counting "
+        "it would demand a retired delta from a row that is perfectly alive"
     )

@@ -10,7 +10,13 @@ from sqlalchemy import func
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.market_settlement import settled_values
-from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.price_change_stamp import (  # #2024, #3879
+    apply_observed_price,
+    apply_unobserved_price,
+    price_changed_at_value,
+    price_observed_at_insert,
+    price_observed_at_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -300,8 +306,14 @@ async def _poll_futures_odds():
                             old_rank = existing.rank
                             rank_change = old_rank - rank if old_rank else None
 
-                            # Update existing outcome
-                            existing.current_probability = prob
+                            # Update existing outcome. The price and both stamps
+                            # go through the shared helper (#3879, CERT-2302):
+                            # this branch is the Odds API's EXISTING-row path
+                            # and it used to write a real venue price and
+                            # `last_updated` while stamping neither clock — the
+                            # upsert twenty lines below was wired, which is why
+                            # the file-level census read this file as covered.
+                            apply_observed_price(existing, prob, observed_at=now)
                             existing.current_american_odds = american
                             existing.probability_change_24h = prob_change
                             existing.rank = rank
@@ -327,6 +339,7 @@ async def _poll_futures_odds():
                                 opening_american_odds=american,
                                 opening_captured_at=now,
                                 rank=rank,
+                                price_observed_at=price_observed_at_insert(prob),  # #3879
                             ).on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
                                 set_={
@@ -338,6 +351,9 @@ async def _poll_futures_odds():
                                         FuturesOutcome.current_probability,
                                         FuturesOutcome.price_changed_at,
                                         prob,
+                                    ),
+                                    "price_observed_at": price_observed_at_value(  # #3879
+                                        FuturesOutcome.price_observed_at, prob
                                     ),
                                 }
                             ).returning(FuturesOutcome.id)
@@ -369,7 +385,12 @@ async def _poll_futures_odds():
                                 and existing.last_updated < yesterday
                                 and existing.current_probability
                                 and float(existing.current_probability) > 0):
-                            existing.current_probability = 0
+                            # NOT an observation: the venue stopped returning
+                            # this leg and the zero is inferred from that
+                            # silence (#3879). Zero is a real number, so the
+                            # helper's None-check could not classify it — the
+                            # verb has to.
+                            apply_unobserved_price(existing, 0, at=now)
                             existing.last_updated = now
                             # Retire the movement delta in the same breath as
                             # the zeroing (CERT-627). This line refreshes

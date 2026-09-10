@@ -82,13 +82,45 @@ class TestFlushStampsBothPriceColumns:
             flush = _flush_function(module, consumer)
             assert _calls_named(flush, "price_changed_at_value"), consumer
 
-    def test_price_changed_at_uses_the_shared_helper_not_a_copy(self):
+    def test_every_ws_flush_maintains_price_observed_at(self):
+        """#3879: and the FRESHNESS stamp, which a socket is best placed to owe.
+
+        A socket is the freshest writer on the board and before #3879 it could
+        not say so — the question "when was this price last seen" was answered
+        by clocks it does not move. Same shape as the `last_updated` finding
+        above, one column later.
+        """
+        for module, consumer in CONSUMERS:
+            flush = _flush_function(module, consumer)
+            assert _calls_named(flush, "price_observed_at_value"), consumer
+
+    def test_the_stamps_use_the_shared_helpers_not_a_copy(self):
         """A drifted change-detection predicate does not throw, it just stops
         stamping — so there is exactly one implementation and both sockets use
-        it."""
+        it.
+
+        Asserted against the IMPORT GRAPH rather than against one spelling of
+        the import line. The substring form of this test red on #3879 for a
+        change that satisfied it completely: the import gained a second name and
+        wrapped in parentheses, so `from … import price_changed_at_value` was no
+        longer a literal substring while the helper was imported from exactly
+        where it always had been. A guard on formatting fires on the wrong
+        events and, worse, would pass a `price_changed_at_value` imported from a
+        forked copy of the module under the original spelling.
+        """
         for module, _consumer in CONSUMERS:
-            src = inspect.getsource(module)
-            assert "from app.utils.price_change_stamp import price_changed_at_value" in src
+            tree = ast.parse(inspect.getsource(module))
+            imported = {
+                alias.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+                and node.module == "app.utils.price_change_stamp"
+                for alias in node.names
+            }
+            assert {"price_changed_at_value", "price_observed_at_value"} <= imported, (
+                f"{module.__name__} does not import both stamp helpers from the "
+                f"one module that owns them; imported={sorted(imported)}"
+            )
 
 
 class TestFlushReachesTheBlend:

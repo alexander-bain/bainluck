@@ -41,7 +41,11 @@ from app.utils.event_completion import (  # noqa: E402  # #3544
     DERIVED_COMMENCE_SOURCES,
     KALSHI_OCCURRENCE_COMMENCE_SOURCE,
 )
-from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.price_change_stamp import (  # #2024, #3879
+    price_changed_at_value,
+    price_observed_at_insert,
+    price_observed_at_value,
+)
 from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
 # #2927: imports nothing but stdlib (same rule as sport_keys.py), so it is safe
 # at module scope — the alarm below needs it outside the task body.
@@ -1447,6 +1451,21 @@ async def _poll_kalshi_markets():
                                     FuturesOutcome.price_changed_at,
                                     None,
                                 ),
+                                # #3879. NO `price_observed_at` HERE, AND THAT
+                                # IS THE POINT — the one site in the tree that
+                                # carries the movement stamp without the
+                                # freshness one. The venue answered, so this
+                                # write is real, but it answered with NO PRICE:
+                                # stamping it as an observation would let a leg
+                                # that has been unpriced for a month report
+                                # itself freshly observed, which is the metric
+                                # lying in the direction that flatters us.
+                                # `price_observed_at_value(..., None)` would
+                                # refuse it anyway; the refusal is stated here
+                                # rather than delegated so that the census in
+                                # `tests/test_price_observed_at.py` can name
+                                # this site as its single allowed exception
+                                # instead of treating it as an oversight.
                             )
                         )
 
@@ -1521,6 +1540,12 @@ async def _poll_kalshi_markets():
                                 FuturesOutcome.price_changed_at,
                                 prob,
                             ),
+                            # #3879. And the freshness stamp: this poll HELD a
+                            # real price, which is neither of the two facts
+                            # above.
+                            "price_observed_at": price_observed_at_value(
+                                FuturesOutcome.price_observed_at, prob
+                            ),
                         }
                         update_set.update(graded_cols)
                         # Backfill opening_probability if it was NULL (market had
@@ -1568,6 +1593,11 @@ async def _poll_kalshi_markets():
                                 resolution_source=graded_cols.get(
                                     "resolution_source"
                                 ),
+                                # #3879, and the same CAL-P1004R lesson one
+                                # column over: the conflict arm alone would
+                                # leave every leg this poll CREATES reading
+                                # "never observed" until its second pass.
+                                price_observed_at=price_observed_at_insert(prob),
                             )
                             .on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
@@ -3305,6 +3335,13 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                                     current_yes_bid=venue_market.yes_bid,
                                     current_yes_ask=venue_market.yes_ask,
                                     rank=rank_base + offset,
+                                    # #3879, the INSERT arm of the same re-price
+                                    # whose conflict arm is wired above. `prob`
+                                    # may be None here — this path deliberately
+                                    # creates unpriced legs too — and the helper
+                                    # returns None for those, so an unpriced
+                                    # creation still claims no observation.
+                                    price_observed_at=price_observed_at_insert(prob),
                                     # Explicit, and load-bearing: the column is
                                     # `boolean NULL DEFAULT false`, so an INSERT
                                     # that omits it stores an affirmative graded
@@ -3395,6 +3432,11 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                                         FuturesOutcome.current_probability,
                                         FuturesOutcome.price_changed_at,
                                         prob,
+                                    ),
+                                    # #3879: and this says we HELD a price.
+                                    # Same third fact, same one expression.
+                                    price_observed_at=price_observed_at_value(
+                                        FuturesOutcome.price_observed_at, prob
                                     ),
                                 )
                             )

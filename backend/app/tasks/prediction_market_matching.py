@@ -54,6 +54,7 @@ from app.utils.live_blend import (
 )
 from app.utils import match_receipts as _receipts
 from app.utils import matcher_pass_runs as _pass_runs
+from app.utils.price_change_stamp import apply_observed_price
 from app.utils.match_receipts import (
     CandidateTrace,
     MatchReceipt,
@@ -5409,8 +5410,13 @@ async def _poll_live_prediction_market_prices():
                                     stats["kalshi_outcome_unmatched"] += 1
                                     continue
 
-                            # Update outcome probability
-                            outcome.current_probability = prob
+                            # Update outcome probability. The helper assigns it
+                            # and carries both stamps, because this poll is the
+                            # only writer some legs get: `price_observed_at`
+                            # always (the venue handed us this number), and
+                            # `price_changed_at` only when the stored value
+                            # actually moves.
+                            apply_observed_price(outcome, prob, observed_at=now)
                             outcome.current_yes_bid = yes_bid
                             outcome.current_yes_ask = yes_ask
                             american = probability_to_american(prob) if 0 < prob < 1 else None
@@ -5542,8 +5548,10 @@ async def _poll_live_prediction_market_prices():
                             if prob <= 0 or prob >= 1:
                                 continue
 
-                            # Update outcome probability
-                            outcome.current_probability = prob
+                            # Update outcome probability. Same two stamps as the
+                            # Kalshi arm above — see there for why the helper
+                            # owns the assignment.
+                            apply_observed_price(outcome, prob, observed_at=now)
                             american = probability_to_american(prob) if 0 < prob < 1 else None
                             outcome.current_american_odds = american
 

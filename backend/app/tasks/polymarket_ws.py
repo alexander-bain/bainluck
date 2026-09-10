@@ -116,7 +116,10 @@ async def _run_polymarket_ws_consumer():
         topup_clob_tokens, topup_outcome_clob_tokens,
     )
     from app.tasks.ws_liveness import report as _report_liveness
-    from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.price_change_stamp import (
+        price_changed_at_value,
+        price_observed_at_value,
+    )
 
     # Q504-b: see the Kalshi arm — reported before the slate work, so a stall in
     # the token top-up or the slate query is visible as an AGE rather than as a
@@ -422,6 +425,13 @@ async def _run_polymarket_ws_consumer():
                                 FuturesOutcome.current_probability,
                                 FuturesOutcome.price_changed_at,
                                 prob,
+                            ),
+                            # #3879. A socket is the FRESHEST writer on the
+                            # board, and before this it could not say so: the
+                            # freshness question was answered by clocks it does
+                            # not move. Same lesson as Q460 one column later.
+                            price_observed_at=price_observed_at_value(
+                                FuturesOutcome.price_observed_at, prob
                             ),
                         )
                     )

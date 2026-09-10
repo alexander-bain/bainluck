@@ -24,6 +24,11 @@ from sqlalchemy import func as sa_func, select, and_, or_, update
 from app.tasks.base import get_task_session
 from app.utils.market_settlement import settled_values
 
+from app.utils.price_change_stamp import (  # #3879
+    apply_observed_price,
+    apply_unobserved_price,
+)
+
 logger = logging.getLogger(__name__)
 
 # Market types we create per tournament
@@ -323,12 +328,24 @@ async def _poll_datagolf_markets() -> dict:
                                     name=player.player_name,
                                     current_probability=prob,
                                     opening_probability=prob,
+                                    # The CREATE arm is not optional (#3879):
+                                    # wire only the update and a leg reads NULL
+                                    # until its second poll, so every row this
+                                    # loop mints would land in the census of
+                                    # legs "no price rail reaches". `prob` is
+                                    # non-None — the loop `continue`s above
+                                    # when it is not.
+                                    price_observed_at=now,
                                 )
                                 session.add(outcome)
                                 await session.flush()
                             else:
                                 outcome.name = player.player_name
-                                outcome.current_probability = prob
+                                # #3879 / CERT-2302. Both DataGolf loops are
+                                # pure-ORM, so they called neither stamp helper
+                                # and were invisible to a census that scans
+                                # `pg_insert` blocks and helper mentions.
+                                apply_observed_price(outcome, prob, observed_at=now)
                                 outcome.last_updated = now
 
                             stats["outcomes_upserted"] += 1
@@ -370,7 +387,10 @@ async def _poll_datagolf_markets() -> dict:
                         )
                         stale_nulled = 0
                         for stale in stale_result.scalars().all():
-                            stale.current_probability = None
+                            # Inferred from the player leaving the field,
+                            # not read from a venue: movement stamp, no
+                            # observation stamp (#3879 refusal 1).
+                            apply_unobserved_price(stale, None, at=now)
                             stale.last_updated = now
                             # Same reason as tasks/futures.py' stale zeroing
                             # (CERT-627): the line above refreshes the stamp the
@@ -694,11 +714,20 @@ async def _poll_datagolf_live() -> dict:
                                     name=player.player_name,
                                     current_probability=prob,
                                     opening_probability=prob,
+                                    # The CREATE arm is not optional (#3879):
+                                    # wire only the update and a leg reads NULL
+                                    # until its second poll, so every row this
+                                    # loop mints would land in the census of
+                                    # legs "no price rail reaches". `prob` is
+                                    # non-None — the loop `continue`s above
+                                    # when it is not.
+                                    price_observed_at=now,
                                 )
                                 session.add(outcome)
                                 await session.flush()
                             else:
-                                outcome.current_probability = prob
+                                # #3879 / CERT-2302, as in the loop above.
+                                apply_observed_price(outcome, prob, observed_at=now)
                                 outcome.last_updated = now
 
                             # Write-time dedup
@@ -747,7 +776,10 @@ async def _poll_datagolf_live() -> dict:
                         )
                         stale_nulled = 0
                         for stale in stale_result.scalars().all():
-                            stale.current_probability = None
+                            # Inferred from the player leaving the field,
+                            # not read from a venue: movement stamp, no
+                            # observation stamp (#3879 refusal 1).
+                            apply_unobserved_price(stale, None, at=now)
                             stale.last_updated = now
                             # Same reason as tasks/futures.py' stale zeroing
                             # (CERT-627): the line above refreshes the stamp the
