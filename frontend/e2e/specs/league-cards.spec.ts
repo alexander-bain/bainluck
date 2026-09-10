@@ -1,6 +1,7 @@
 import { test, expect, readContentRegionText } from "../fixtures/audit";
 import { RSC_PREFETCH_ABORT } from "../helpers/navigationAborts";
 import { leagueOwed } from "../helpers/leagueCardOracle";
+import { tagged } from "../helpers/agentOrigin";
 
 /**
  * UX-P083 (#1860) — the RENDERED half of ruling 047 on the league page.
@@ -96,7 +97,11 @@ const API_BASE = (process.env.AUDIT_API_BASE_URL || "https://api.bainluck.com").
  * `> 0`, so a dead API skips the retrofit assertions instead of passing them.
  */
 async function leaguePayload(): Promise<{ binaries: number; ladders: number; games: number }> {
-  const res = await fetch(`${API_BASE}/api/leagues/${LEAGUE_KEY}`);
+  // #4763: attribution only on this route — `/api/leagues` writes no search row —
+  // but it goes through the carrier anyway. The rule the guard enforces stays the
+  // simple one (every own-host call is tagged) rather than a judgment per site.
+  const leagueUrl = `${API_BASE}/api/leagues/${LEAGUE_KEY}`;
+  const res = await fetch(leagueUrl, { headers: tagged(leagueUrl) });
   if (!res.ok) return { binaries: -1, ladders: -1, games: -1 };
   return leagueOwed(await res.json());
 }
