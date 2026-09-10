@@ -480,6 +480,17 @@ async def _undo(db, apply: bool, identity: str) -> dict[str, Any]:
     # `entity:<id>` reference point at the OLD id, so a restore that let the
     # sequence mint new ones would put the rows back where nothing looks. Every
     # id is below the sequence's current value, so no bump is owed.
+    #
+    # MEASURED against production DDL 2026-09-09, because an explicit-id INSERT
+    # is refused outright by an identity column and this is the one path nobody
+    # exercises until they need it: `information_schema.columns` reports
+    # `is_identity='NO'` with `nextval('entities_id_seq')` for `entities.id` and
+    # `nextval('entity_aliases_id_seq')` for `entity_aliases.id` — plain
+    # serials, so supplying the id is allowed. Both tables' NOT NULL columns are
+    # named in the INSERTs above (`kind`, `canonical_name`; `entity_id`,
+    # `alias`, `alias_norm`, `alias_type`). `updated_at` is deliberately left to
+    # its `now()` default: the row IS being written now, and forging the old
+    # stamp would claim an observation that did not happen.
     for e in entities:
         await db.execute(
             text(
