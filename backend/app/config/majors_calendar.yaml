@@ -114,11 +114,11 @@ majors:
 
   - name: "NFL Kickoff Game 2026 (Patriots at Seahawks)"
     slug: nfl-kickoff-2026
-    competition: nfl
+    competition: nfl-kickoff-game
     concept_key: null
     fixture:
       sport_key: americanfootball_nfl
-    domain: americanfootball
+    domain: nfl
     start: 2026-09-10
     end: 2026-09-10
     archetype: team_match
@@ -440,6 +440,13 @@ competitions:
     domain: nfl
     archetype: single_event
     aliases: ["superbowl"]
+    standing_concept_key: null
+
+  - slug: nfl-kickoff-game
+    name: "NFL Kickoff Game"
+    domain: nfl
+    archetype: team_match
+    aliases: ["nfl-opener", "season-opener", "kickoff-game"]
     standing_concept_key: null
 
   - slug: march-madness
