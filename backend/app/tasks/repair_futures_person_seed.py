@@ -343,6 +343,7 @@ async def repair(
         "would_delete": len(derived["ids"]),
         "kept_as_people": derived["kept"],
         "scan_exhausted": derived["scan_exhausted"],
+        "after_id": cursor,
         "next_after_id": derived["next_after_id"],
         "plan_hash": derived["plan_hash"],
         "alias_collapse_top": derived["alias_collapse"],
@@ -350,9 +351,25 @@ async def repair(
     }
 
     if not apply:
-        census["apply_hint"] = (
-            "re-invoke with ?apply=true&plan_hash=" + derived["plan_hash"]
-        )
+        # THE HINT CARRIES THE CURSOR IT WAS DERIVED AT (CERT-2448 follow-up
+        # `4578-PAGED-APPLY-HINT-CARRIES-CURSOR`). Without `after_id` the apply
+        # re-derives from the top of the table, gets a different id set, and
+        # refuses PLAN_STALE — fail-closed, so nothing is deleted, but the
+        # operator is handed a command that cannot work on any page but the
+        # first and no reason why. `limit` rides along for the same reason: the
+        # plan is a function of BOTH bounds, so a hint that drops one describes
+        # a different page.
+        params = f"?apply=true&plan_hash={derived['plan_hash']}"
+        if cursor:
+            params += f"&after_id={cursor}"
+        if scan_limit != APPLY_CAP:
+            params += f"&limit={scan_limit}"
+        census["apply_hint"] = "re-invoke with " + params
+        if not derived["scan_exhausted"]:
+            census["next_page_hint"] = (
+                f"?after_id={derived['next_after_id']}"
+                + (f"&limit={scan_limit}" if scan_limit != APPLY_CAP else "")
+            )
         return census
 
     # An apply acts on the plan an operator READ. Re-deriving and acting on

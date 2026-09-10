@@ -443,6 +443,64 @@ class TestTheApplyActuallyRuns:
         assert session.commits == 0
         assert staged["payloads"] == []
 
+    async def test_the_apply_hint_reproduces_the_page_it_was_printed_for(
+        self, staged
+    ):
+        """CERT-2448 follow-up `4578-PAGED-APPLY-HINT-CARRIES-CURSOR`.
+
+        A hint carrying only the plan hash re-derives from the top of the table
+        on page two, gets a different id set, and refuses PLAN_STALE. Fail-closed
+        — nothing is deleted — but the operator is handed a command that cannot
+        work and no reason why. The hint is asserted by RUNNING it.
+        """
+        cohort = [_entity(i, "%d+ strokes" % i) for i in range(1, 7)]
+        session = _ApplySession(cohort)
+        page2 = await rp.repair(session, limit=3, after_id=3)
+
+        assert page2["after_id"] == 3
+        assert page2["apply_hint"] == (
+            "re-invoke with ?apply=true&plan_hash=%s&after_id=3&limit=3"
+            % page2["plan_hash"]
+        )
+
+        # The hint's own arguments, handed back verbatim.
+        out = await rp.repair(
+            session, apply=True, plan_hash=page2["plan_hash"], after_id=3, limit=3
+        )
+        assert out.get("refused") is None
+        assert sorted(session.params["delete"]["ids"]) == [4, 5, 6]
+
+    async def test_dropping_the_cursor_is_what_the_hint_prevents(self, staged):
+        """The control for the test above: same plan, no `after_id`."""
+        cohort = [_entity(i, "%d+ strokes" % i) for i in range(1, 7)]
+        session = _ApplySession(cohort)
+        page2 = await rp.repair(session, limit=3, after_id=3)
+
+        out = await rp.repair(session, apply=True, plan_hash=page2["plan_hash"])
+
+        assert out["refused"] == "PLAN_STALE"
+        assert "delete" not in session.calls
+
+    async def test_page_one_of_a_short_cohort_offers_no_next_page(self, staged):
+        session = _ApplySession(COHORT)
+        census = await rp.repair(session)
+
+        assert census["scan_exhausted"] is True
+        assert "next_page_hint" not in census
+        assert census["apply_hint"] == (
+            "re-invoke with ?apply=true&plan_hash=" + census["plan_hash"]
+        )
+
+    async def test_an_unexhausted_scan_hands_back_the_cursor_to_resume_on(
+        self, staged
+    ):
+        cohort = [_entity(i, "%d+ strokes" % i) for i in range(1, 7)]
+        session = _ApplySession(cohort)
+        census = await rp.repair(session, limit=3)
+
+        assert census["scan_exhausted"] is False
+        assert census["next_page_hint"] == "?after_id=3&limit=3"
+
     async def test_it_deletes_the_refused_ids_and_only_those(self, staged):
         session = _ApplySession(COHORT)
         plan = await _plan(session)
