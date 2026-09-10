@@ -444,6 +444,33 @@ def test_the_carrier_is_reached_by_the_search_touching_probes():
     assert untagged == [], f"search/typeahead probes still voting untagged: {untagged}"
 
 
+def test_every_carrier_import_sits_below_its_sys_path_bootstrap():
+    """`app` is only importable after the path insert — and order is the bug.
+
+    This is the failure the AST rule above cannot see: a script can be perfectly
+    tagged and still raise ImportError the next time it is run, because the
+    import was placed above the line that makes `app` reachable. Nothing catches
+    it until someone runs the script for real, which for probe tooling can be
+    weeks.
+
+    Checked statically here. latency/305 also executed all 93 edited prologues
+    in a subprocess from a hostile cwd (`/tmp`) — 0 failures — but 93
+    subprocesses is not a thing to spend CI time on every run.
+    """
+    offenders = []
+    for path in ALL_SCRIPTS:
+        src = path.read_text()
+        if "from app.utils.agent_origin import" not in src:
+            continue
+        import_at = src.index("from app.utils.agent_origin import")
+        inserts = [m.end() for m in re.finditer(r"^\s*\w*sys\.path\.insert", src, re.M)]
+        if not inserts:
+            offenders.append(f"{path.name}: imports the carrier with no sys.path insert")
+        elif not any(i < import_at for i in inserts):
+            offenders.append(f"{path.name}: carrier imported ABOVE every sys.path insert")
+    assert offenders == [], "\n  ".join(offenders)
+
+
 def test_no_script_hand_spells_the_header():
     """One definition, once — the drift `agent_origin`'s docstring exists for.
 
