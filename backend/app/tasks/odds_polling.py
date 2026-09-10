@@ -17,6 +17,10 @@ from app.utils.event_completion import venue_live_write_is_a_resurrection
 from app.utils.game_pairing import IdCurrency, external_id_currency
 from app.utils.odds_math import moneyline_to_probability, project_scores
 from app.utils.polling_config import compute_effective_interval
+from app.utils.score_observation import (
+    SCORE_SOURCE_ODDS,
+    score_observation_values,
+)
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
     LIVE_POLL_INTERVAL,
@@ -1865,6 +1869,35 @@ async def _poll_all_odds():
                                 update_values["home_score"] = home_score
                             if away_score is not None:
                                 update_values["away_score"] = away_score
+
+                            # #4571 — THIS WRITER STATED A SCORE, SO IT SIGNS IT.
+                            #
+                            # Merged into the SAME `update_values` as the score
+                            # itself, so the stamp and the number it describes
+                            # land in one UPDATE. Two statements would leave a
+                            # window where the row holds an Odds API score under
+                            # ESPN's attribution.
+                            #
+                            # OUTSIDE any `!=` comparison, exactly as the ESPN and
+                            # StatPal sites are: the question is "who read this
+                            # score, and when", not "when did it last change".
+                            # The row that needs the answer most is the 0-0 opener
+                            # a writer confirms every pass and changes never — and
+                            # note the score-snapshot block below deliberately
+                            # DOES gate on change, because a write log and an
+                            # observation stamp are different records.
+                            #
+                            # `now` is the pass clock (one value for the whole
+                            # poll), never a per-row `now()`: a slow pass would
+                            # otherwise stamp its last event fresher than its
+                            # first when both came off one provider payload.
+                            if home_score is not None or away_score is not None:
+                                update_values.update(
+                                    score_observation_values(
+                                        source=SCORE_SOURCE_ODDS,
+                                        observed_at=now,
+                                    )
+                                )
 
                             # Record score snapshot if scores changed
                             if home_score is not None and away_score is not None:
