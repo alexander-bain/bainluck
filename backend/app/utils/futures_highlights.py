@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 from typing import NamedTuple, Optional
 
+from app.utils.outcome_display import drop_incoherent_ladder_outcomes
+
 # Market tier weights (lower tier number = more important)
 MARKET_TIER_WEIGHTS = {
     1: 15,  # Championship
@@ -572,6 +574,30 @@ def compute_futures_highlight(
     result = FuturesHighlightResult()
     flags = result.flags
     outcomes = outcomes or []
+
+    # #4610 — A PRICE THAT CANNOT BE TRUE IS NOT EVIDENCE. On a cumulative ladder
+    # every rung is a strict subset of every looser rung, so a rung priced above
+    # one of them is arithmetic that does not close. Such a rung is dropped here,
+    # before ANY of the four things this function reads an outcome list for: the
+    # biggest 24h mover, the leader change, the top-5 rank shakeup and the
+    # surprise-vs-opening. Measured on production 2026-09-09, the Discover card
+    # "Netflix App Downloads in September" served `P(Above 67) = 94%` over
+    # `P(Above 58) = 88%`, and that ONE rung earned all four reasons
+    # (`major_movement_24h` +0.48, `leader_change` rank +4, `rank_shakeup`,
+    # `major_surprise` +0.49), which composed the card's headline and caption
+    # ("New favorite: Above 67 (94%)") and carried its raw score to 101 — page
+    # one, position 20 of 100. The reader was handed a reason to care today that
+    # was manufactured by the defect.
+    #
+    # `routes/feed.py` filters its own outcome list upstream so the leader pick
+    # and the card's copy agree with this; the guard is repeated here because
+    # this function is also the digest's and the admin trace's scorer, and a rule
+    # that lands in one component is not landed (#4605).
+    outcomes = drop_incoherent_ladder_outcomes(
+        outcomes,
+        lambda o: o.get("name"),
+        lambda o: o.get("probability"),
+    )
 
     # Horizon, normalised ONCE. Two scoring terms need it and they sit on opposite
     # sides of this function (the postseason-story boost below, the resolution

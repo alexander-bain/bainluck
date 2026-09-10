@@ -12,6 +12,10 @@ import re
 from typing import Any
 
 from app.utils.market_grouping import extract_threshold
+from app.utils.outcome_display import (
+    LADDER_MIN_DRAWN_RUNGS,
+    incoherent_ladder_indexes,
+)
 from app.utils.outcome_display_names import display_outcome_names
 
 _IPO_RE = re.compile(r"\b(ipo|initial public offering|market cap|valuation)\b", re.I)
@@ -326,7 +330,18 @@ def _threshold_points(
     name: str,
     outcomes: list[dict[str, Any]],
     outcome_count: int | None,
+    ladder_already_refused: bool = False,
 ) -> list[dict[str, Any]]:
+    # CERT-2451 — the caller may have made this decision already. A serializer
+    # that filtered the incoherent rungs out of its own outcome list hands us a
+    # ladder that is coherent BY CONSTRUCTION, so the guard below cannot see
+    # that it is standing on one rung of a collapsed one. When the caller says
+    # it collapsed, the treatment is refused here exactly as if we had found it
+    # ourselves — including the market-name fallback, which is skipped because
+    # this returns before it (falling back would resurrect the treatment the
+    # serializer just refused, the UX-P008 clause 2 failure).
+    if ladder_already_refused:
+        return []
     # UX-1052 item 4 -- a date question is a ladder whose axis is time. Tried
     # FIRST, and returned whole: a set of date buckets must never be half-read
     # as magnitudes ("Before 2027" scoring a rung at 2027 beside a month that
@@ -363,9 +378,40 @@ def _threshold_points(
     # Monotonic display: a ladder read top-to-bottom must not double back.
     points.sort(key=lambda p: float(p["value"]))
 
+    # #4610 — and neither must its PRICES. On a cumulative ladder ("Above 52",
+    # "Above 58", "Above 67") each rung is a strict subset of every looser rung,
+    # so a rung priced above one of them is not a bar the reader can be asked to
+    # read: the two bars cannot both be true. Runs on the ladder as parsed, not
+    # on the [:12] slice the caller returns, because the rung that breaks the
+    # ordering is frequently outside the first twelve (production 2026-09-09,
+    # "USDINR price on Sep 11": "Above 94.609" at 65% over a 62% floor, rung 21
+    # of 30). Callers that own an outcome list filter it upstream as well; this
+    # is the display primitive's own guard, for the admin/debug and native
+    # callers that do not.
+    rejected_incoherent = False
+    incoherent = incoherent_ladder_indexes(
+        points,
+        lambda p: p.get("label"),
+        lambda p: p.get("probability"),
+    )
+    if incoherent:
+        survivors = [p for n, p in enumerate(points) if n not in incoherent]
+        if len(survivors) >= 2:
+            points = survivors
+        else:
+            # A ladder filtered down to ONE rung must not be handed on as a
+            # ladder. The classifier below will still call it `threshold_heatmap`
+            # when the market carries a group or canonical key, the frontend
+            # needs >= 2 rows to draw a heatmap, finds one, and falls through
+            # PAST the distribution branch to the plain leader card — the whole
+            # field disappears. That is the UX-P008 failure documented below,
+            # reached from a new direction, so it gets the same answer the scale
+            # guard gives: refuse the treatment outright.
+            points = []
+            rejected_incoherent = True
+
     # Mixed scales mean the labels were never one ladder — drop the threshold
     # treatment entirely rather than render self-contradicting bars.
-    rejected_incoherent = False
     if not _ladder_is_scale_coherent(points):
         points = []
         rejected_incoherent = True
@@ -486,6 +532,7 @@ def classify_discover_card_archetype(
     discover_llm: dict[str, Any] | None = None,
     resolved: bool = False,
     status: str | None = None,
+    ladder_treatment_refused: bool = False,
 ) -> dict[str, Any]:
     """Return frontend/admin rendering metadata for a Discover futures market.
 
@@ -519,6 +566,10 @@ def classify_discover_card_archetype(
         name=market_name,
         outcomes=outcome_rows,
         outcome_count=count,
+        # CERT-2451: a caller that filtered the ladder itself is the only one
+        # who can still see whether it collapsed. `outcomes` here is what
+        # SURVIVED that filter.
+        ladder_already_refused=ladder_treatment_refused,
     )
     distribution_outcomes = _distribution_outcomes(outcome_rows)
     comparison_theme = _comparison_theme(market_name, category)
@@ -537,6 +588,22 @@ def classify_discover_card_archetype(
     ):
         suggested_format = "threshold_heatmap"
         reasons.append("threshold_values")
+    elif ladder_treatment_refused and len(distribution_outcomes) >= LADDER_MIN_DRAWN_RUNGS:
+        # CERT-2456 — REFUSING THE TREATMENT IS NOT THE SAME AS SERVING THE FIELD.
+        # Skipping the heatmap above only says what this card is NOT. On the
+        # grader's specimen (`Above 10` .20 / `Above 20` .90 / `Above 30` .95)
+        # nothing is dropped, so `count` is 3 — one short of the `>= 4` branch
+        # below — and the cascade fell to `binary_probability`, whose hero prints
+        # the leader ALONE. Same field hidden, different fallback hiding it.
+        #
+        # A refused ladder is precisely the market whose outcomes ARE the answer:
+        # we are declining to say which rung is wrong, so the reader gets all of
+        # them and can see the contradiction that we could not attribute. The
+        # `>= 4` bar below is about when a field becomes more interesting than a
+        # leader; it has nothing to say about a ladder we have just refused to
+        # rank, so it does not get to gate it.
+        suggested_format = "outcome_distribution"
+        reasons.append("refused_ladder_field")
     elif count >= 4:
         suggested_format = "outcome_distribution"
         reasons.append("multi_outcome_distribution")
@@ -567,6 +634,15 @@ def classify_discover_card_archetype(
         "bundle_candidate": bundle_candidate,
         "comparison_theme": comparison_theme,
         "threshold_points": threshold_points[:12],
+        # CERT-2456 — TRAVELS TO THE RENDERER, because the renderer is where the
+        # refusal is finally honoured or lost. `FuturesCard.tsx` draws the
+        # distribution only at four rows; a refused three-rung ladder classified
+        # `outcome_distribution` and then dropped by that gate lands on the plain
+        # leader hero, which is the same hidden field one component further on.
+        # Gating the widened leaf on THIS rather than lowering the bar for every
+        # `outcome_distribution` card keeps the change to the population the
+        # BLOCK is about.
+        "ladder_treatment_refused": ladder_treatment_refused,
         "distribution_outcomes": distribution_outcomes,
         "remaining_outcome_count": max(0, count - len(distribution_outcomes)),
         "qa_signals": qa_signals,

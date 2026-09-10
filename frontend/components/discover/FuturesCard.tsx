@@ -311,7 +311,24 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // tsc baseline), so without this annotation these rows arrive as `any` and
   // leaderFirstSlice's generic widens them to its own constraint.
   const distributionRows: DistributionRow[] = data.discover_card?.distribution_outcomes ?? [];
-  if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= 4) {
+  // CERT-2456 — a ladder whose rungs contradict each other is served as a
+  // distribution BECAUSE the backend refused to say which rung is wrong (#4610).
+  // Such a card has three rows, not four, and the `>= 4` bar was written for a
+  // different question: when a field is more interesting than a leader. Applied
+  // to a refused ladder it deletes the field a second time, one component after
+  // the refusal — the reader gets the plain leader hero and never learns there
+  // were other rungs. Widened HERE ONLY for the refused ladder, so no card that
+  // renders correctly today changes shape.
+  //
+  // Read through a narrow local cast, the same way `utils.ts` reads this object:
+  // `discover_card` is not on `FeedFuturesData` yet (each bare access is one
+  // baselined `tsc` error), so a sixth bare access would trip the fail-on-new
+  // ratchet on a line that is not the ship.
+  const ladderTreatmentRefused =
+    (data as { discover_card?: { ladder_treatment_refused?: boolean } }).discover_card
+      ?.ladder_treatment_refused === true;
+  const distributionMinRows = ladderTreatmentRefused ? 2 : 4;
+  if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= distributionMinRows) {
     // #1526: sort BEFORE slicing. `slice(0, 4)` on an array that is not
     // leader-first drops the leader — the Fed September card showed four
     // also-rans totalling 47% while the 56% "No change" row never rendered.

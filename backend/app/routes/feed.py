@@ -209,6 +209,8 @@ from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.outcome_display import (
     display_rank_order,
     drop_dominant_field_outcomes,
+    drop_incoherent_ladder_outcomes,
+    ladder_treatment_collapsed,
 )
 from app.utils.personalization import (
     PersonalizationContext,
@@ -7558,6 +7560,29 @@ async def _score_sports_mode_futures(
             lambda o: o.name,
             lambda o: float(o.current_probability) if o.current_probability else None,
         )
+        # #4610: and neither may a rung whose price contradicts its own ladder.
+        # Same insertion point and the same reason as the two filters above —
+        # everything downstream (the top-10 scoring slice, the leader pick, the
+        # display-scale divisor, the card's outcome list and its threshold rungs)
+        # reads this list, and on production 2026-09-09 the one impossible rung
+        # on "Netflix App Downloads in September" (`P(Above 67) = 94%` over
+        # `P(Above 58) = 88%`) was the card's leader, its top mover, its top
+        # surprise and its rank shakeup all at once.
+        # CERT-2451: ask BEFORE the drop whether the drop leaves a ladder at
+        # all. Afterwards nobody can tell — the survivors are coherent by
+        # construction — and the classifier would re-emit `threshold_heatmap`
+        # for one rung, which the frontend cannot draw and answers by hiding the
+        # whole field.
+        ladder_refused = ladder_treatment_collapsed(
+            sorted_outcomes,
+            lambda o: o.name,
+            lambda o: float(o.current_probability) if o.current_probability else None,
+        )
+        sorted_outcomes = drop_incoherent_ladder_outcomes(
+            sorted_outcomes,
+            lambda o: o.name,
+            lambda o: float(o.current_probability) if o.current_probability else None,
+        )
         outcomes_data = []
         leader_name = None
         leader_prob = None
@@ -7983,6 +8008,7 @@ async def _score_sports_mode_futures(
             group_type=market.group_type,
             canonical_market_key=market.canonical_market_key,
             status=market.status,
+            ladder_treatment_refused=ladder_refused,
         )
 
         futures_data = {
@@ -8946,6 +8972,26 @@ async def _score_futures(
                 ),
             )
 
+            # #4610: nor a rung that contradicts its own ladder. Both serializers
+            # print the same card, so this lands in both — a rule that lands in
+            # one component is not landed.
+            # CERT-2451: the same question, asked before the same drop, for the
+            # same reason — see the sports-mode serializer above.
+            ladder_refused = ladder_treatment_collapsed(
+                sorted_outcomes,
+                lambda o: o.name,
+                lambda o: (
+                    float(o.current_probability) if o.current_probability else None
+                ),
+            )
+            sorted_outcomes = drop_incoherent_ladder_outcomes(
+                sorted_outcomes,
+                lambda o: o.name,
+                lambda o: (
+                    float(o.current_probability) if o.current_probability else None
+                ),
+            )
+
             for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
                 prob = float(o.current_probability) if o.current_probability else None
                 change = (
@@ -9592,6 +9638,7 @@ async def _score_futures(
                 discover_llm=discover_llm_metadata,
                 resolved=is_effectively_resolved,
                 status=market.status,
+                ladder_treatment_refused=ladder_refused,
             )
 
             futures_data = {
