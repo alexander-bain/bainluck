@@ -1436,6 +1436,43 @@ jobs:
             exit 1
           fi
 
+      - name: "#4745 empty-book openings actually leave the published curve (real Postgres)"
+        # CERT-2508 BLOCKed the guard that shipped in `ece46743`: it only reaches
+        # rows where `opening_probability IS NULL`, so the ~16,960 legs the
+        # accuracy page already publishes at a mean 0.904 — and which came true
+        # 13.1% of the time — stay on the page. *Mitch Marner: 3+ points* stored
+        # a Kalshi book of bid 0.00 / ask 0.98 with no trade and we published
+        # 0.98. Nobody would pay a cent; somebody left an offer at 98c.
+        #
+        # Real Postgres because the claim is "LEAVES THE CURVE", and the curve
+        # price is `COALESCE(calibration_probability, opening_probability)` —
+        # a property of two stored columns that only a server can hold. Three
+        # more parts are server-side too: the bound turns on two correlated
+        # laterals; the write re-derives it inside the UPDATE and reads
+        # `fo.opening_probability`'s PRE-update value to decide whether the
+        # calibration price was a copy of it; and both safety clauses are
+        # `Numeric(7,6)` equalities, which a float round-trip can flip.
+        #
+        # Two arms carry the argument. `test_nulling_only_the_opening_cannot
+        # _pass_this` runs the repair a reviewer reaches for first and requires
+        # 0.98 to STILL be published, so green means the two-column write was
+        # proved necessary rather than merely unopposed (gotcha #144). And
+        # `test_phase_0c_does_not_re_promote_a_withdrawn_row` executes the
+        # SHIPPED Phase 0c statement right after the repair — with its own
+        # positive control, because a Phase 0c that did nothing at all would
+        # pass the withdrawn-row assertion perfectly.
+        #
+        # Same skip-detection as every gate in this job: adding the file is not
+        # adding the gate.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_kalshi_empty_book_openings_1086_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/emptybook4745.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/emptybook4745.txt; then
+            echo "::error::#4745 empty-book withdrawal gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#938 golf round markets stop publishing a stamp as a price (real Postgres)"
         # `KXDPWORLDTOURR1LEAD-HEIO26` publishes twenty-three golfers at 0.990
         # while Kalshi's own last quote before that round reads 0.070 / 0.350 /

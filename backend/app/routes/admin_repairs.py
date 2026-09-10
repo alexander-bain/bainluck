@@ -29,7 +29,9 @@ transactional session and RETURNS its own before/after census in the response bo
              | polymarket-senate-category | kalshi-nhl-prop-category
              | polymarket-leg-label-census | polymarket-leg-label
              | authority-id-collisions | weather-shelf-disease
-             | futures-person-seed-purge | golf-round-closing-line }
+             | futures-person-seed-purge | golf-round-closing-line
+             | kalshi-empty-book-openings
+             | kalshi-empty-book-openings-restore }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -60,7 +62,11 @@ transactional session and RETURNS its own before/after census in the response bo
      is what caught it. The comment above is not decoration and the guard is not
      either. Re-synced again 2026-09-10, CAL-P1081, adding
      golf-round-closing-line in the commit that registered it — this time
-     before CI had to say so.)
+     before CI had to say so. Re-synced again 2026-09-10, CAL-P1086, adding the
+     two kalshi-empty-book-openings entries in the commit that registered them;
+     the restore is its own NAME rather than an `undo_identity` parameter
+     because its backup is a table, not a dated receipt, so one call puts the
+     whole population back however many pages wrote it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -753,6 +759,50 @@ _REPAIRS = {
     "golf-round-closing-line": (
         "app.tasks.repair_golf_round_closing_line",
         "repair",
+    ),
+    # #4745 (CAL-P1086, #997): the accuracy page publishes ~16,960 Kalshi legs
+    # at a mean 0.904 that came true 13.1% of the time, because Phase 0c-repair
+    # promoted an opening off a book of bid 0.00 / ask 0.98 with no trade —
+    # an offer nobody took. `ece46743` put the shipped write guard on the
+    # promotion; CERT-2508 BLOCKed it because the already-promoted rows are
+    # non-null and a guard keyed on `IS NULL` cannot reach them. This is the
+    # reach.
+    #
+    # 🔴 IT IS MOSTLY A WITHDRAWAL, NOT A REPRICING, and the directive that
+    # staged it said the opposite. Measured 1-in-20 on production: of the 848
+    # sampled legs whose CURVE PRICE is the discredited number, 778 have no
+    # honest snapshot anywhere in their history and are removed (~15,560), 70
+    # get a real price (~1,400). The "half and half" split in the filing is the
+    # whole cohort, whose correctable half is almost entirely rows carrying an
+    # independent `calibration_probability` — repaired here too, but invisible
+    # to a reader, because the curve price is COALESCE(cal, opening).
+    #
+    # PROVENANCE IS THE SAFETY GATE: a row is in scope only when its stored
+    # opening EQUALS the discredited snapshot's probability, so the only number
+    # this rail overwrites is one it can prove came from that book. Never
+    # `is_winner` or `resolution_source` (gotcha #21), never `last_updated`
+    # (#2024), and no price threshold of its own — a guard fails the build if
+    # one appears.
+    #
+    # ORDERING IS LOAD-BEARING: it must not run before `ece46743` is live, or
+    # Phase 0c re-promotes every nulled row inside one 6-hour cycle. With the
+    # guard live the result is a FIXED POINT of Phase 0c, which is why this is a
+    # one-off rail and not a re-deriving phase (261,976 rows carry
+    # `opening_source='first_snapshot'`; re-deriving them every cycle does not
+    # fit an 840s budget that CAL-P1080 measured exhausting at 757.8s).
+    #
+    # D51: backup into `bak_4745_empty_book_openings` in the SAME transaction as
+    # the write, refused unless the copy covers every planned id; undo is one
+    # call to the `-restore` name below. Keyset-paged on `fo.id` — read
+    # `scan_exhausted`, never a remaining count. ATTENDED-OPTIONAL and
+    # TERMINATING: never wire either name to a beat.
+    "kalshi-empty-book-openings": (
+        "app.tasks.repair_kalshi_empty_book_openings",
+        "repair",
+    ),
+    "kalshi-empty-book-openings-restore": (
+        "app.tasks.repair_kalshi_empty_book_openings",
+        "restore",
     ),
 }
 

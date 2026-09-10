@@ -183,6 +183,46 @@ async def _select_kalshi_settlement_tickers(
     )
     return fresh_tickers, [r[0] for r in tail_rows.all()]
 
+#: Phase 0c-repair's promotion, hoisted to module level so a test can execute
+#: THE SHIPPED STATEMENT (#4745, CAL-P1086).
+#:
+#: The claim "#4745's repair is not re-promoted six hours later" is a claim
+#: about what this SQL does to a row the repair just nulled, and a test that
+#: retyped the statement would be asserting agreement with its own copy. Phase
+#: 0c is 24 lines inside a 700-line task function, so the only way to run the
+#: real one is to name it. `test_phase_0c_does_not_re_promote_a_withdrawn_row`
+#: imports THIS constant and runs it against a real Postgres.
+#:
+#: The `NOT lone_ask_on_empty_book_sql(...)` clause is the guard shipped in
+#: `ece46743`: a lone ask on an empty Kalshi book is an offer nobody took, not a
+#: price, and the row is skipped rather than the outcome — so a leg that opened
+#: on an empty book and later traded still gets its opening from the first
+#: snapshot that WAS a real price.
+PHASE_0C_REPAIR_SQL = f"""
+    WITH first_snaps AS (
+        SELECT fo2.id AS outcome_id, snap.probability
+        FROM futures_outcomes fo2
+        JOIN futures_markets fm ON fm.id = fo2.market_id
+        CROSS JOIN LATERAL (
+            SELECT fos.probability
+            FROM futures_odds_snapshots fos
+            WHERE fos.outcome_id = fo2.id
+              AND fos.probability > 0 AND fos.probability < 1
+              AND NOT {lone_ask_on_empty_book_sql("fos")}
+            ORDER BY fos.captured_at ASC
+            LIMIT 1
+        ) snap
+        WHERE fm.status = 'resolved'
+          AND fo2.opening_probability IS NULL
+        LIMIT 100000
+    )
+    UPDATE futures_outcomes fo
+    SET opening_probability = fs.probability,
+        opening_source = 'first_snapshot'
+    FROM first_snaps fs
+    WHERE fo.id = fs.outcome_id
+"""
+
 
 async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     """Fetch settled Kalshi events by ticker and set is_winner from settlement data.
@@ -7441,30 +7481,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     try:
         for _ in range(5):
             async with get_task_session() as session:
-                r = await session.execute(text(f"""
-                        WITH first_snaps AS (
-                            SELECT fo2.id AS outcome_id, snap.probability
-                            FROM futures_outcomes fo2
-                            JOIN futures_markets fm ON fm.id = fo2.market_id
-                            CROSS JOIN LATERAL (
-                                SELECT fos.probability
-                                FROM futures_odds_snapshots fos
-                                WHERE fos.outcome_id = fo2.id
-                                  AND fos.probability > 0 AND fos.probability < 1
-                                  AND NOT {lone_ask_on_empty_book_sql("fos")}
-                                ORDER BY fos.captured_at ASC
-                                LIMIT 1
-                            ) snap
-                            WHERE fm.status = 'resolved'
-                              AND fo2.opening_probability IS NULL
-                            LIMIT 100000
-                        )
-                        UPDATE futures_outcomes fo
-                        SET opening_probability = fs.probability,
-                            opening_source = 'first_snapshot'
-                        FROM first_snaps fs
-                        WHERE fo.id = fs.outcome_id
-                    """))
+                r = await session.execute(text(PHASE_0C_REPAIR_SQL))
                 await session.commit()
                 if r.rowcount == 0:
                     break
