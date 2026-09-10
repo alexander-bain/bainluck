@@ -1203,7 +1203,7 @@ def generate_futures_headline(
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name) and market_name:
                 return f"{_short_market_name(market_name)} resolves this month"
-            return f"{leader_name} leads; resolves this month"
+            return f"{leader_name} {_verb}; resolves this month"
         return "Resolving this month"
 
     # Lifetime move — same demotion and same dating rule as

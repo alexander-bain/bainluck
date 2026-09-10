@@ -101,12 +101,21 @@ def test_unknown_team_ness_keeps_todays_wording():
 
 #: Every highlight-reason set that reaches a `leads` template, so the guard is
 #: over the CLASS of leader copy rather than over one branch.
+#: THESE MUST BE THE KEYS PRODUCTION EMITS. CERT-2482 blocked the first
+#: presentation because this list said `resolving_soon` / `resolves_this_month`
+#: — neither of which exists. Both fell through to the default branch, so the
+#: "class guard" drove the two resolution templates ZERO times and missed a
+#: hard-coded "leads" in the 30-day headline. A guard whose fixtures do not
+#: match the production vocabulary is not a smaller guard, it is no guard: it
+#: passes green while measuring nothing.
+#:
+#: Pinned against the source below so this cannot rot again.
 LEADER_REASON_SETS = [
     [],
     ["multi_source"],
     ["leader_change"],
-    ["resolving_soon"],
-    ["resolves_this_month"],
+    ["resolving_soon_7d"],
+    ["resolving_soon_30d"],
 ]
 
 
@@ -140,16 +149,23 @@ def _rendered(reasons, name, is_team):
 def test_every_leads_template_agrees(reasons):
     """A plural team never gets "leads"; a person never gets "lead"."""
     for text in _rendered(reasons, "Los Angeles Dodgers", True):
-        assert " leads " not in f" {text} ", f"plural team took a singular verb: {text!r}"
+        assert not _has_word(text, "leads"), f"plural team took a singular verb: {text!r}"
     for text in _rendered(reasons, "Layne Riggs", False):
-        assert not _has_bare_lead(text), f"person took a plural verb: {text!r}"
+        assert not _has_word(text, "lead"), f"person took a plural verb: {text!r}"
 
 
-def _has_bare_lead(text: str) -> bool:
-    """`lead` as a whole word — "leads" and "leader" must not match."""
+def _has_word(text: str, word: str) -> bool:
+    """Whole-word match.
+
+    It was `" leads " not in f" {text} "`, which is the SECOND way CERT-2482
+    found this guard hollow: the 30-day headline ends the clause with a
+    semicolon — "Los Angeles Dodgers leads; resolves this month" — and a
+    space-delimited probe sails straight past it. Word boundaries, both
+    directions, so punctuation cannot hide a defect again.
+    """
     import re
 
-    return bool(re.search(r"\blead\b", text or ""))
+    return bool(re.search(rf"\b{re.escape(word)}\b", text or ""))
 
 
 def test_the_reported_page_one_lines_are_repaired():
@@ -253,3 +269,46 @@ def test_every_generator_accepts_the_signal():
         params = inspect.signature(fn).parameters
         assert "leader_is_team" in params, fn.__name__
         assert params["leader_is_team"].default is False, fn.__name__
+
+
+def test_the_reason_keys_this_file_drives_are_the_ones_production_emits():
+    """CERT-2482's root cause, guarded.
+
+    Reads the resolution keys straight out of `feed_reasons.py` and asserts the
+    fixture list contains them. A typo'd or renamed key now fails here instead
+    of silently making every parametrised case exercise the default branch.
+    """
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "utils" / "feed_reasons.py"
+    ).read_text()
+    emitted = set(re.findall(r'"(resolving_soon_\d+d)" in reasons', source))
+    assert emitted, "no resolution keys found — did the branch names change?"
+    driven = {key for reasons in LEADER_REASON_SETS for key in reasons}
+    assert emitted <= driven, (
+        f"resolution branches never exercised by the class guard: "
+        f"{sorted(emitted - driven)}"
+    )
+
+
+def test_the_thirty_day_headline_agrees():
+    """The exact sentence CERT-2482 named: it returned "Dodgers leads; ...".""" 
+    assert generate_futures_headline(
+        highlight_reasons=["resolving_soon_30d"],
+        leader_name="Los Angeles Dodgers",
+        leader_probability=0.30,
+        rendered_leader_percent=30,
+        leader_is_team=True,
+        market_name="MLB World Series Winner",
+    ) == "Los Angeles Dodgers lead; resolves this month"
+
+    assert generate_futures_headline(
+        highlight_reasons=["resolving_soon_30d"],
+        leader_name="Layne Riggs",
+        leader_probability=0.29,
+        rendered_leader_percent=29,
+        leader_is_team=False,
+        market_name="NASCAR Truck Series Champion",
+    ) == "Layne Riggs leads; resolves this month"
