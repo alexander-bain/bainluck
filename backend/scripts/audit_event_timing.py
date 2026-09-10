@@ -620,7 +620,7 @@ def print_summary(all_metrics: list[TimingMetrics], findings: list[AuditFinding]
     print()
 
     # By sport table
-    print(f"{'Sport':<28s} {'Events':>6s} {'ESPN%':>6s} {'Start\u00b1':>7s} {'End\u00b1':>7s} {'MaxGap':>7s} {'Markers':>8s} {'Dur\u00d7':>6s}")
+    print(f"{'Sport':<28s} {'Events':>6s} {'ESPN%':>6s} {'Start±':>7s} {'End±':>7s} {'MaxGap':>7s} {'Markers':>8s} {'Dur×':>6s}")
     print("\u2500" * 72)
     for sport, stats in by_sport.items():
         short = sport[:27]
@@ -631,7 +631,7 @@ def print_summary(all_metrics: list[TimingMetrics], findings: list[AuditFinding]
     print()
 
     # By coverage table
-    print(f"{'Coverage':<24s} {'Events':>6s} {'Start\u00b1':>7s} {'End\u00b1':>7s} {'MaxGap':>7s} {'Markers':>8s}")
+    print(f"{'Coverage':<24s} {'Events':>6s} {'Start±':>7s} {'End±':>7s} {'MaxGap':>7s} {'Markers':>8s}")
     print("\u2500" * 56)
     for label, stats in by_coverage.items():
         print(f"{label:<24s} {stats['count']:>6d} "

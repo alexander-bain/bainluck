@@ -443,6 +443,18 @@ def test_the_carrier_is_reached_by_the_search_touching_probes():
     ]
     assert untagged == [], f"search/typeahead probes still voting untagged: {untagged}"
 
+    # PER SITE, not per file. `test_search_origin_channel_p118` asks whether a
+    # script DECLARES itself machine traffic, which is a whole-file question: a
+    # script could satisfy it with a `tagged()` call on its db-query while still
+    # firing an untagged search URL from a different line. Closed here, where
+    # the offender list is already computed site by site.
+    leaky = [site for p in search_probes for site in _untagged_sites(p)]
+    assert leaky == [], (
+        "a search/typeahead probe declares itself machine traffic but still has "
+        "an untagged call site — the file passes the class guard while the "
+        "request votes:\n  " + "\n  ".join(leaky)
+    )
+
 
 def test_every_carrier_import_sits_below_its_sys_path_bootstrap():
     """`app` is only importable after the path insert — and order is the bug.

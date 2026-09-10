@@ -31,8 +31,13 @@ def test_build_next_commands_includes_review_and_upload(tmp_path):
 
 
 def test_download_capture_urls_writes_response_content(tmp_path, monkeypatch):
-    def fake_get(url, timeout, follow_redirects):
+    def fake_get(url, timeout, follow_redirects, headers=None):
         assert follow_redirects is True
+        # #4642 routes every outbound call through `agent_origin.tagged()`. This
+        # URL is a THIRD PARTY, so the correct answer is that it adds nothing —
+        # an internal header naming our lanes has no business on someone else's
+        # wire. Asserted here rather than merely tolerated in the signature.
+        assert not headers, f"our origin header leaked to a third party: {headers}"
         return httpx.Response(
             200,
             content=b"handle,caption\nkalshi,Will Fed cut rates?\n",
@@ -52,8 +57,9 @@ def test_download_capture_urls_writes_response_content(tmp_path, monkeypatch):
 
 
 def test_download_capture_urls_uses_json_suffix_from_content_type(tmp_path, monkeypatch):
-    def fake_get(url, timeout, follow_redirects):
+    def fake_get(url, timeout, follow_redirects, headers=None):
         assert follow_redirects is True
+        assert not headers, f"our origin header leaked to a third party: {headers}"
         return httpx.Response(
             200,
             content=b"[]",
