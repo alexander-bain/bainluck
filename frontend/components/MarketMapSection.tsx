@@ -6,7 +6,7 @@ import type { MarketMapMarker, MarketMapLadderRow } from "./MarketMap";
 import type { GameMarketsResponse } from "@/lib/api";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import {
-  parseSpreadOutcome,
+  parseSpreadRungs,
   isFullGameSpread,
   isGameTotal,
   buildDensityFromSpreads,
@@ -277,9 +277,14 @@ export default function MarketMapSection({
     );
     if (fullGameSpreads.length === 0) return null;
 
-    const parsedRaw = fullGameSpreads
-      .map((s) => parseSpreadOutcome(s.outcome_name, s.probability ?? 0, s.source, homeTeam, awayTeam))
-      .filter((p): p is NonNullable<typeof p> => p != null);
+    /* #4598: A RUNG BELONGS TO THE RAIL'S OWN UNIT, OR IT IS NOT ON THIS RAIL.
+       This map is measured in `vocab.unit`; a venue quotes a tennis match in
+       BOTH games and sets, and both parse to the same `(side, threshold)` key.
+       On the US Open men's semi-final that collision withheld the real game
+       rung as a disagreement and left a SET rung to draw the projection —
+       `TIA by 1.5+` over a hero reading Tiafoe 27%. A rung that states no unit
+       is kept, which is every points sport; see `spreadRungMatchesRail`. */
+    const parsedRaw = parseSpreadRungs(fullGameSpreads, homeTeam, awayTeam, vocab.unit);
 
     // One rung per (side, threshold). Duplicates arrive when several games'
     // markets are linked to one event; see collapseDuplicateRungs.
@@ -689,9 +694,9 @@ export default function MarketMapSection({
       const spreads = halfGroups[half];
       if (!spreads || spreads.length === 0) continue;
 
-      const rawParsedAll = spreads
-        .map((s) => parseSpreadOutcome(s.outcome_name, s.probability ?? 0, s.source, homeTeam, awayTeam))
-        .filter((p): p is NonNullable<typeof p> => p != null);
+      // #4598: the same seam as the full-game rail above, deliberately the same
+      // CALL and not the same rule written twice — see `parseSpreadRungs`.
+      const rawParsedAll = parseSpreadRungs(spreads, homeTeam, awayTeam, vocab.unit);
       // Collapse before the monotonicity pass: equal duplicates satisfy
       // `prob <= lastProb` trivially, so that guard cannot remove them.
       const rawParsed = collapseDuplicateRungs(
