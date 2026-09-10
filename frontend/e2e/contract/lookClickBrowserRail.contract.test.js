@@ -302,11 +302,28 @@ describe("#4032 — the browser-backed LOOK guard is actually wired up", () => {
   });
 
   describe("the exit-code vocabulary is single-sourced", () => {
-    it("shop-shot.mjs binds its final exit to EXIT_CAMERA, not a literal", () => {
+    it("shop-shot.mjs binds every exit to a constant, not a literal", () => {
       // Item 5. Two of the three codes came from the shared module and the
       // third was typed here; that is how a vocabulary drifts apart.
+      //
+      // AMENDED #4903: the tail is no longer one ternary. A shot can now succeed
+      // mechanically and still come back with no images in it, which is neither a
+      // broken camera nor a bad selector, so it exits 5. The property this test
+      // holds was never the exact expression — it is that NO exit value in this
+      // file is a bare number. Widened to say that outright, so the next code
+      // added to the vocabulary is covered without another amendment.
       const src = read(SHOP_SHOT);
-      assert.match(src, /process\.exit\(ok \? 0 : EXIT_CAMERA\)/, "the camera exit must use the constant");
+      assert.match(src, /process\.exit\(EXIT_CAMERA\)/, "the camera exit must use the constant");
+      assert.match(
+        src,
+        /process\.exit\(blackout \? EXIT_IMAGE_BLACKOUT : 0\)/,
+        "the image-blackout exit must use the constant — a PNG with no images in it must " +
+          "not be able to exit 0 (#4903)"
+      );
+      assert.ok(
+        !/process\.exit\(\s*[1-9][0-9]*\s*\)/.test(src),
+        "a numeric exit literal is back — renumbering the constant would silently desynchronise it"
+      );
       assert.ok(
         !/process\.exit\(ok \? 0 : 1\)/.test(src),
         "the literal camera exit is back — renumbering EXIT_CAMERA would silently desynchronise it"

@@ -208,9 +208,18 @@ describe("shop-shot.mjs carries the tag (notice 39 rung 1, look.sh's whole fleet
   // shop-shot.mjs devotes ~20 lines of comment to why it sends one and why it does not
   // touch the User-Agent. A guard blinded by its target's own prose is not a guard, so
   // comments are stripped before anything is asserted.
+  //
+  // 🔴 The block-comment strip is LINE-ANCHORED (#4903). Unanchored, a `/*` inside a
+  // string literal — `page.route('**` + `/*', …)` is the ordinary way to spell "every
+  // request" — opens a comment the stripper then closes at the next `*` + `/`, deleting
+  // everything between. Measured: it silently removed a line reading
+  // `const forbidden = extraHTTPHeaders;`. That direction matters here more than in most
+  // suites, because half the assertions below are `doesNotMatch`: over-deletion turns
+  // them GREEN on a file that contains exactly what they forbid. Every real block comment
+  // in `tools/` opens its own line; a string literal never does.
   const code = fs
     .readFileSync(SHOP_SHOT, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, "")
     .split("\n")
     .map((l) => l.replace(/(^|\s)\/\/.*$/, "$1"))
     .join("\n");
@@ -220,8 +229,39 @@ describe("shop-shot.mjs carries the tag (notice 39 rung 1, look.sh's whole fleet
     assert.ok(!code.includes("nine lanes plus the bus"), "comment stripping regressed");
   });
 
-  test("sends x-bainluck-origin as a real request header", () => {
-    assert.match(code, /extraHTTPHeaders\s*:\s*\{\s*['"]x-bainluck-origin['"]\s*:/);
+  // AMENDED 2026-09-10 (#4903), and the amendment is the point of the test now.
+  //
+  // This used to require the header on a CONTEXT-WIDE `extraHTTPHeaders`, which is how
+  // rung 1 shipped. Playwright puts those on every request the context makes — including
+  // the `<img>` loads Chromium issues in no-cors mode, which it then fails outright. So
+  // from 2026-09-09 17:56 PT every LOOK in the fleet photographed a page with no crests,
+  // no faces and no market art, and this guard held that shape in place. Measured A/B on
+  // /sports/baseball_mlb at 390px, everything else identical: with the context-wide
+  // header, 215/215 `img` at naturalWidth 0 and 28 x net::ERR_FAILED; with the header
+  // scoped to our origins, 28 x 200 and 213/215 with pixels.
+  //
+  // The INTENT is unchanged and is what these two assertions keep: the tag must be a real
+  // request header attached by the rig, never prose and never a cosmetic. What changed is
+  // the carrier — and the third assertion is the one that stops the old carrier coming
+  // back, because it is the construct that broke.
+  test("sends x-bainluck-origin as a real request header, on our origins only", () => {
+    assert.match(code, /['"]x-bainluck-origin['"]\s*:\s*AGENT/, "the tag is not attached to anything");
+    assert.match(
+      code,
+      /route\.continue\(\s*\{\s*\n?\s*headers\s*:/,
+      "the tag must ride a routed request's headers — that is what makes it a REAL header",
+    );
+    assert.match(
+      code,
+      /agentHeaderApplies\(/,
+      "the rig must ask the guarded predicate which requests are ours before tagging them",
+    );
+    assert.doesNotMatch(
+      code,
+      /extraHTTPHeaders/,
+      "the context-wide header is back: Playwright puts it on every request including " +
+        "no-cors <img> loads, so every LOOK in the fleet becomes a page with no images (#4903)",
+    );
   });
 
   // Inverted 2026-09-09 (#4606, #4608). This used to REQUIRE a `bl_agent` cookie for
