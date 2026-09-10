@@ -4,6 +4,7 @@ import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AnalyticsProvider, ConsentBanner, TelemetryGate } from "@/components/Analytics";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
 import UserMenu from "@/components/UserMenu";
@@ -147,25 +148,36 @@ export default function RootLayout({
         <Suspense fallback={null}>
           <NavigationProgress />
         </Suspense>
-        {/* Every CONSENT-GATED telemetry provider (GA/gtag.js, Vercel
-            Analytics, Web Vitals) mounts ONLY through the consent gate — see
+        {/* Every CONSENT-GATED telemetry provider (GA/gtag.js, Web Vitals)
+            mounts ONLY through the consent gate — see
             components/Analytics/TelemetryGate.tsx. */}
         <TelemetryGate />
-        {/* Speed Insights is mounted OUTSIDE the gate, and that is the ruling
-            (LAT-P197, Alex D30 / 2026-09-01), not an oversight.
+        {/* The two COOKIELESS Vercel providers are mounted OUTSIDE the gate,
+            and that is the ruling (Alex D30 / 2026-09-01 for Speed Insights,
+            D96 / 2026-09-08 for Analytics), not an oversight.
 
-            It is strictly-necessary performance telemetry: no cookie, no
-            storage read, no identifier — it reports how fast this page
-            rendered for the visitor whose page it was. Behind the gate it only
-            ever measured visitors who had already answered the banner, which
-            is the slowest-page population least likely to be represented: the
-            number we tune the site on was sampled on consent, not on traffic.
+            Neither sets a cookie, reads storage, or carries a cross-site
+            identifier. Behind the gate each one measured only visitors who had
+            already answered the banner — which is precisely the population a
+            traffic number is not about. Speed Insights was sampled on consent
+            rather than on traffic; Vercel Analytics was worse, because "how
+            many strangers came" is a question whose whole subject is people
+            who have not yet interacted with us at all. `decideTelemetry`
+            treats "no choice made yet" as a denial, correctly for the
+            identified rails, so a first visit produced zero beacons BY
+            CONSTRUCTION and the dashboard could never see a stranger.
 
             Consequence, stated plainly because it is a real one: a visitor who
-            declines still sends speed beacons. `/privacy` and the banner both
-            say so — the C90 P1 lesson runs in both directions, and copy that
-            claims a decline stops everything would now be the false half. */}
+            declines is still counted, and still sends speed beacons. `/privacy`,
+            the banner and the preferences pane all say so in those words — the
+            C90 P1 lesson (#1453) runs in both directions, and copy that claims
+            a decline stops everything would now be the false half.
+
+            What is NOT out here: the GA4 rail. It loads gtag.js, sets cookies
+            and carries an identifier, so it stays gated and the banner's
+            promise about it stays true. */}
         <SpeedInsights />
+        <Analytics />
         <SWRProvider>
         <AnalyticsProvider>
           <AuthProvider>

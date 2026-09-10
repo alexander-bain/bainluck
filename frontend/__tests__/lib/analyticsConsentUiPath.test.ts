@@ -219,12 +219,14 @@ describe('the Preferences status sentence cannot overclaim', () => {
   });
 
   it('a durable denial may say OFF flatly', () => {
-    expect(telemetryStatusText('none', durable)).toBe('Analytics is OFF. Neither of those loads.');
+    expect(telemetryStatusText('none', durable)).toBe(
+      'Analytics is OFF. Google Analytics does not load.',
+    );
   });
 
   it('a NON-durable denial must not say a bare "OFF"', () => {
     const text = telemetryStatusText('none', fragile);
-    expect(text).not.toBe('Analytics is OFF. Neither of those loads.');
+    expect(text).not.toBe('Analytics is OFF. Google Analytics does not load.');
     expect(text).toContain('would not save');
     expect(text).toContain('reload');
   });
@@ -249,22 +251,28 @@ describe('the Preferences status sentence cannot overclaim', () => {
   });
 
   /**
-   * LAT-P197 (Alex D30). The status sentence enumerates what this switch
-   * governs, and Speed Insights is no longer one of those things — it runs on
-   * a declined visit. Naming it in a sentence whose subject is "Analytics is
-   * ON/OFF" would tell a reader their choice controls it, which is the C90 P1
-   * defect pointed the other way: copy overstating the reach of the choice.
-   * The honest disclosure lives in its own paragraph in the component, not in
-   * this sentence.
+   * LAT-P197 (Alex D30), extended by D96 (#4830). The status sentence
+   * enumerates what this switch governs, and NEITHER Vercel provider is one of
+   * those things any more — both run on a declined visit. Naming either in a
+   * sentence whose subject is "Analytics is ON/OFF" would tell a reader their
+   * choice controls it, which is the C90 P1 defect pointed the other way: copy
+   * overstating the reach of the choice. The honest disclosure lives in its own
+   * paragraph in the component, not in this sentence.
+   *
+   * Note the control moved with the rule. It used to be `'Vercel Analytics'` —
+   * the very string this test now forbids — so a control is not a fixed piece
+   * of text, it is whatever the sentence still legitimately says.
    */
-  it('the ON/OFF sentence never names Speed Insights — this switch does not govern it', () => {
+  it('the ON/OFF sentence names neither cookieless Vercel provider — this switch governs neither', () => {
     for (const level of [null, 'none', 'analytics', 'all'] as ConsentLevel[]) {
       for (const opts of [durable, fragile]) {
-        expect(telemetryStatusText(level, opts).toLowerCase()).not.toContain('speed insights');
+        const text = telemetryStatusText(level, opts).toLowerCase();
+        expect(text).not.toContain('speed insights');
+        expect(text).not.toContain('vercel');
       }
     }
-    // Control: the sentence DOES still enumerate the providers it governs, so
-    // the assertion above is not passing on an empty string.
-    expect(telemetryStatusText('analytics', durable)).toContain('Vercel Analytics');
+    // Control: the sentence DOES still enumerate the provider it governs, so
+    // the assertions above are not passing on an empty string.
+    expect(telemetryStatusText('analytics', durable)).toContain('Google Analytics');
   });
 });

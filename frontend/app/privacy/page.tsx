@@ -96,9 +96,10 @@ export default function PrivacyPage() {
             </p>
             <p className="mt-2 text-sm text-text-secondary leading-relaxed">
               Everything described in this section is covered by your analytics
-              choice — decline it and none of it loads. Page-speed timings are
-              the one exception, because they identify nobody; see Vercel Speed
-              Insights in the third-party list below.
+              choice — decline it and none of it loads. Two measurements are the
+              exception, because they identify nobody: page-speed timings and an
+              anonymous count of visits. See Vercel Speed Insights and Vercel Web
+              Analytics in the third-party list below.
             </p>
           </div>
 
@@ -292,9 +293,16 @@ export default function PrivacyPage() {
                 would only know how fast the site is for people who opted in.
               </li>
               <li>
-                <strong>Vercel Analytics</strong> — receives anonymous page and
-                visitor counts. This one <em>is</em> covered by the analytics
-                choice: decline and it never loads.
+                <strong>Vercel Web Analytics</strong> — receives anonymous page
+                and visitor counts (page path, referrer, country, device type).
+                It sets no cookie, reads nothing from your browser and carries
+                no cross-site identifier, so it cannot follow you here from
+                anywhere else or recognise you on your next visit. Because it
+                identifies nobody, it runs on every visit and is <em>not</em>
+                covered by the analytics choice — a declined visit is still
+                counted. Without that, the only visitors we could count would
+                be the ones who had already said yes to a banner, which is not
+                a measure of how many people found the site.
               </li>
               <li>
                 <strong>Heroku</strong> (Salesforce) — hosts the API server and

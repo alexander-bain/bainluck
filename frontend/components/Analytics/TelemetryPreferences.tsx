@@ -50,9 +50,9 @@ export function telemetryStatusText(
       : 'Analytics is OFF for this page, but your browser would not save the choice — it may load again when you reload. Private browsing or blocked site storage is the usual cause.';
   }
   if (isOn) {
-    return 'Analytics is ON. Google Analytics and Vercel Analytics load on this site.';
+    return 'Analytics is ON. Google Analytics loads on this site.';
   }
-  if (consent === 'none') return 'Analytics is OFF. Neither of those loads.';
+  if (consent === 'none') return 'Analytics is OFF. Google Analytics does not load.';
   return "You haven't chosen yet, so nothing loads. Analytics is off until you turn it on.";
 }
 
@@ -110,11 +110,13 @@ export function TelemetryPreferences() {
       </p>
 
       <p className="mt-2 text-xs text-text-muted leading-relaxed">
-        One thing this switch does not turn off: Vercel Speed Insights, which
-        reports how fast a page rendered. It sets no cookie, reads nothing from
-        your browser and carries no identifier, so it runs on every visit —
-        including this one if analytics is off. It is how we know the site is
-        slow for real visitors rather than only for the ones who opted in.
+        Two things this switch does not turn off, both from Vercel: Speed
+        Insights, which reports how fast a page rendered, and Web Analytics,
+        which counts visits. Neither sets a cookie, reads anything from your
+        browser or carries an identifier, so both run on every visit —
+        including this one if analytics is off. They are how we know the site
+        is slow, or that anyone came at all, for real visitors rather than only
+        for the ones who opted in.
       </p>
 
       <div className="mt-4 flex flex-row gap-2 sm:gap-3">

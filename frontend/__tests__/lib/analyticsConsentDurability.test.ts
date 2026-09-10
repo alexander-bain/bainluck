@@ -197,7 +197,6 @@ describe('durable consent: only claim saved after exact readback', () => {
     expect(h.core.isConsentGranted()).toBe(false);
     expect(h.consent.getTelemetryDecision()).toEqual({
       googleAnalytics: false,
-      vercelAnalytics: false,
       webVitals: false,
     });
   });

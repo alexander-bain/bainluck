@@ -15,17 +15,32 @@
  * rendered, so it cannot load its script or send a beacon — enforcement is by
  * absence, not by an internal opt-out flag we would have to trust.
  *
- * WHAT IS NOT HERE, AND WHY (LAT-P197, Alex ruling D30). Vercel Speed Insights
- * is NOT gated and is deliberately absent from this file. It sets no cookie,
- * reads no storage and carries no identifier — it reports how fast the page
- * rendered — so it is strictly-necessary performance telemetry that needs no
- * consent, and gating it produced a speed measurement describing only the
- * subset of visitors who had already answered a banner. It mounts
- * unconditionally in `app/layout.tsx`. Adding it back to this component would
- * silently re-narrow that measurement, so a guard test
- * (`__tests__/lib/speedInsightsPreConsent.test.ts`) reds if this file's CODE
- * names it — comments, like this one, are stripped before that check, or the
- * guard would only be asserting that nobody explained themselves.
+ * WHAT IS NOT HERE, AND WHY. Both of Vercel's COOKIELESS providers are absent
+ * from this file deliberately, under two rulings a week apart, and each one
+ * has a source-shaped guard test that reds if this file's CODE names it
+ * (comments, like this one, are stripped before those checks, or the guards
+ * would only be asserting that nobody explained themselves).
+ *
+ *  1. **Vercel Speed Insights** (LAT-P197, Alex ruling D30, 2026-09-01). It
+ *     sets no cookie, reads no storage and carries no identifier — it reports
+ *     how fast the page rendered — so it is strictly-necessary performance
+ *     telemetry that needs no consent, and gating it produced a speed
+ *     measurement describing only the subset of visitors who had already
+ *     answered a banner. Guard: `__tests__/lib/speedInsightsPreConsent.test.ts`.
+ *
+ *  2. **Vercel Web Analytics** (`@vercel/analytics`, Alex ruling D96,
+ *     2026-09-08, shipped by latency/313 for #4830). Same class, and the
+ *     mis-gating cost more. It is cookieless — no cookie, no storage read, no
+ *     cross-site identifier — and the number it produces is "how many people
+ *     came", which is a question about STRANGERS. `decideTelemetry` treats a
+ *     visitor who has made no choice yet as a denial, which is right for the
+ *     identified rails and fatal here: a first visit emitted nothing at all,
+ *     so the one population the count exists to see could never appear in it.
+ *     Guard: `__tests__/lib/vercelAnalyticsPreConsent.test.ts`.
+ *
+ * The GA4 rail is the counter-example that keeps this from being a slope. It
+ * loads gtag.js, sets cookies and carries an identifier, so it stays here, and
+ * the banner's promise about it stays true.
  *
  * `useSyncExternalStore` is deliberate: the decision lives in a framework-free
  * store so it can be unit-tested without a DOM, and the server snapshot is
@@ -34,7 +49,6 @@
  */
 
 import { useSyncExternalStore, useEffect } from 'react';
-import { Analytics } from '@vercel/analytics/next';
 import {
   initTelemetryConsent,
   getTelemetryDecision,
@@ -66,7 +80,6 @@ export function TelemetryGate() {
           inline init inside GoogleAnalytics still sets `denied` defaults before
           anything else runs, preserving the Consent Mode ordering contract. */}
       {decision.googleAnalytics && <GoogleAnalytics />}
-      {decision.vercelAnalytics && <Analytics />}
       {decision.webVitals && <WebVitalsReporter />}
       {/* The felt number (latency/121). Gated with Web Vitals because it is the
           same class of thing — a page-performance metric carrying no identifier —
