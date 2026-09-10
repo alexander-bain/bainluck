@@ -403,3 +403,235 @@ def test_a_bad_argument_exits_2_not_1():
 
     p = _run("--pattern")
     assert p.returncode == 2, f"exit {p.returncode}: {p.stdout}{p.stderr}"
+
+
+# ---------------------------------------------------------------------------
+# #4820: mtime moved, but did the TEXT move?
+#
+# The tool's original question was "was this file written after the process
+# began?". In the shared tree that is almost always yes and almost always
+# meaningless: any checkout rewrites every launcher with identical bytes. On
+# 2026-09-10 16:52Z it reported 10 of 10 lane runners STALE, all ten
+# byte-identical to master, last real content change 7h40m before they started.
+#
+# These arms exist in matched pairs on purpose. A fix that only proves the quiet
+# case is indistinguishable from a blanket suppressor, and a suppressor here
+# would recreate the exact false CURRENT the whole file was written to prevent.
+# ---------------------------------------------------------------------------
+
+
+def _git(repo, *args, when=None, author_when=None):
+    """Run git in `repo` with a fixed identity, optionally at a fixed date.
+
+    `when` pins both dates. `author_when` then overrides the AUTHOR date alone,
+    which is how a rebase or cherry-pick actually looks: old author date, new
+    committer date.
+
+    The date is pinned rather than left to the clock because the discriminator
+    compares a commit time against a process start time. Committing "now" and
+    starting the process immediately after lands both in the same second perhaps
+    one run in ten, and `cts < start` is deliberately false on a tie — so an
+    unpinned commit would make these arms flake toward STALE.
+    """
+    env = dict(os.environ)
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "drift-test", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+            "GIT_COMMITTER_NAME": "drift-test", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        }
+    )
+    if when is not None:
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = f"{int(when)} +0000"
+    if author_when is not None:
+        env["GIT_AUTHOR_DATE"] = f"{int(author_when)} +0000"
+    p = subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, env=env
+    )
+    assert p.returncode == 0, f"git {' '.join(args)}: {p.stdout}{p.stderr}"
+    return p.stdout
+
+
+def _repo(tmp_path):
+    _git(tmp_path, "init", "-q")
+    return tmp_path
+
+
+def _commit_launcher(repo, name, body, when):
+    """Commit `body` at `name` with a pinned date, and return the path."""
+    script = repo / name
+    script.write_text(body)
+    script.chmod(0o755)
+    _git(repo, "add", name)
+    _git(repo, "commit", "-q", "-m", f"add {name}", when=when)
+    return script
+
+
+def test_a_touched_launcher_with_unmoved_content_is_not_a_finding(launcher, tmp_path):
+    """The 10-of-10 false positive from #4820, reproduced and fixed.
+
+    Committed before the process started, byte-identical on disk, mtime bumped
+    afterwards by a checkout. A restart provably changes nothing, so this must
+    not be a finding and must not gate the bus's hourly line.
+    """
+    repo = _repo(tmp_path)
+    name = f"touched-runner-{os.getpid()}.sh"
+    _commit_launcher(repo, name, LOOP, when=time.time() - 7200)
+
+    # The fixture rewrites the same bytes and starts it — exactly what a checkout
+    # does: content identical, mtime new.
+    script, proc, _ = launcher(name=name)
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
+
+    p = _run_seeing(script.name, proc)
+
+    assert "TOUCHED" in p.stdout, p.stdout
+    assert "STALE" not in p.stdout, p.stdout
+    assert "0 stale, 0 unknown, 1 touched" in p.stdout, p.stdout
+    # The whole point: a provable no-op must not exit 1, or the bus prints a
+    # restart demand every hour and people stop reading the true positives.
+    assert p.returncode == 0, f"exit {p.returncode}: {p.stdout}{p.stderr}"
+
+
+def test_content_committed_after_the_start_is_still_stale(launcher, tmp_path):
+    """THE RED ARM. Real drift inside a git repo must still report STALE.
+
+    Without this, the arm above is satisfied just as well by deleting the
+    staleness check outright.
+    """
+    repo = _repo(tmp_path)
+    name = f"moved-runner-{os.getpid()}.sh"
+    _commit_launcher(repo, name, LOOP, when=time.time() - 7200)
+    script, proc, _ = launcher(name=name)
+
+    # Replaced by RENAME, not rewritten in place — the running bash is still
+    # holding this file open and an in-place truncate would kill the subject.
+    new = script.with_suffix(".new")
+    new.write_text(LOOP + "# text this running process cannot possibly hold\n")
+    new.chmod(0o755)
+    os.replace(new, script)
+    _git(repo, "add", name)
+    _git(repo, "commit", "-q", "-m", "move the text")  # committed NOW, after start
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
+
+    p = _run_seeing(script.name, proc)
+
+    assert "STALE" in p.stdout, p.stdout
+    assert "TOUCHED" not in p.stdout, p.stdout
+    assert p.returncode == 1, f"exit {p.returncode}: {p.stdout}{p.stderr}"
+
+
+def test_an_uncommitted_edit_is_still_stale(launcher, tmp_path):
+    """A dirty launcher has content that moved with no commit to date it.
+
+    The commit date alone would say "older than the process" and excuse it.
+    """
+    repo = _repo(tmp_path)
+    name = f"dirty-runner-{os.getpid()}.sh"
+    _commit_launcher(repo, name, LOOP, when=time.time() - 7200)
+    script, proc, _ = launcher(name=name)
+
+    new = script.with_suffix(".new")
+    new.write_text(LOOP + "# uncommitted local edit\n")
+    new.chmod(0o755)
+    os.replace(new, script)  # NOT committed
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
+
+    p = _run_seeing(script.name, proc)
+
+    assert "STALE" in p.stdout, p.stdout
+    assert "TOUCHED" not in p.stdout, p.stdout
+    assert p.returncode == 1, f"exit {p.returncode}: {p.stdout}{p.stderr}"
+
+
+def test_a_checkout_behind_the_ref_is_still_stale(launcher, tmp_path):
+    """Content older than the process is NOT enough when disk disagrees with the ref.
+
+    This is #4685's failure: the process is current with its checkout, and the
+    checkout is the thing that is wrong. Excusing it would report "no restart
+    needed" about a launcher running text master has never seen.
+    """
+    repo = _repo(tmp_path)
+    name = f"behind-runner-{os.getpid()}.sh"
+
+    # An older commit holding DIFFERENT text becomes the ref, so disk != ref while
+    # everything on disk is clean and committed well before the process starts.
+    _commit_launcher(repo, name, LOOP + "# the text the ref holds\n", when=time.time() - 9000)
+    ref_commit = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "update-ref", "refs/remotes/origin/master", ref_commit)
+    _commit_launcher(repo, name, LOOP, when=time.time() - 7200)
+
+    script, proc, _ = launcher(name=name)
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
+
+    p = _run_seeing(script.name, proc)
+
+    assert "STALE" in p.stdout, p.stdout
+    assert "TOUCHED" not in p.stdout, p.stdout
+    assert "CHECKOUT is behind" in p.stdout, p.stdout
+    assert p.returncode == 1, f"exit {p.returncode}: {p.stdout}{p.stderr}"
+
+
+def test_a_launcher_outside_any_repo_is_still_stale(launcher, tmp_path):
+    """No repo means the content question cannot be asked, so the bias stays.
+
+    tmp_path is deliberately NOT git-initialised here.
+    """
+    script, proc, _ = launcher()
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
+
+    p = _run_seeing(script.name, proc)
+
+    assert "STALE" in p.stdout, p.stdout
+    assert "TOUCHED" not in p.stdout, p.stdout
+    assert p.returncode == 1, f"exit {p.returncode}: {p.stdout}{p.stderr}"
+
+
+def test_the_quiet_form_hides_touched_and_stays_silent(launcher, tmp_path):
+    """The bus prints `--quiet` output hourly; a no-op must produce no line at all."""
+    repo = _repo(tmp_path)
+    name = f"quiet-runner-{os.getpid()}.sh"
+    _commit_launcher(repo, name, LOOP, when=time.time() - 7200)
+    script, proc, _ = launcher(name=name)
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
+
+    _run_seeing(script.name, proc)  # establish the tool can see it
+    p = _run("--quiet", "--pattern", script.name)
+
+    assert "TOUCHED" not in p.stdout, p.stdout
+    assert "STALE" not in p.stdout, p.stdout
+    assert p.returncode == 0, f"exit {p.returncode}: {p.stdout}{p.stderr}"
+
+
+def test_a_rebased_commit_is_dated_by_when_it_landed_not_when_it_was_written(
+    launcher, tmp_path
+):
+    """The discriminator must read the COMMITTER date, not the author date.
+
+    A rebase or cherry-pick — routine here, ten lanes rebase onto master all day
+    — keeps the author date of the original write while the bytes land in this
+    checkout seconds ago. Dating the content by `%at` would call text that
+    arrived AFTER the process started "older than the process" and report a
+    no-op: a false CURRENT, the one direction this whole file exists to prevent.
+
+    Without this arm, swapping `%ct` for `%at` passes the entire suite.
+    """
+    repo = _repo(tmp_path)
+    name = f"rebased-runner-{os.getpid()}.sh"
+    _commit_launcher(repo, name, LOOP, when=time.time() - 7200)
+    script, proc, _ = launcher(name=name)
+
+    new = script.with_suffix(".new")
+    new.write_text(LOOP + "# landed by a rebase after this process started\n")
+    new.chmod(0o755)
+    os.replace(new, script)
+    _git(repo, "add", name)
+    # Author date two and a half hours old; committer date left to now, i.e.
+    # after the process started. This is what `git rebase` produces.
+    _git(repo, "commit", "-q", "-m", "rebased", author_when=time.time() - 9000)
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
+
+    p = _run_seeing(script.name, proc)
+
+    assert "STALE" in p.stdout, p.stdout
+    assert "TOUCHED" not in p.stdout, p.stdout
+    assert p.returncode == 1, f"exit {p.returncode}: {p.stdout}{p.stderr}"
