@@ -45,9 +45,15 @@ const SHOP_SHOT = path.join(REPO_ROOT, "tools", "shop-shot.mjs");
  * WOULD have executed. Exercises the real script, not a reimplementation of it.
  */
 function argv(snippet, { shell = "bash", env = {} } = {}) {
-  const res = spawnSync(shell, ["-c", `. "${HELPER}"\n${snippet}`], {
+  // The helper's path travels in the ENVIRONMENT and is expanded by the shell, rather
+  // than being interpolated into the command string. Interpolating it is what the
+  // obvious version does, and CodeQL is right to call it "Shell command built from
+  // environment values": `__dirname` is an absolute path nobody here controls, so a
+  // checkout under a directory containing a quote or `$(…)` would break the sourcing
+  // line or execute part of it. Caught on `7b602ed8` by the notice-32 check-run read.
+  const res = spawnSync(shell, ["-c", `. "$BL_HELPER"\n${snippet}`], {
     encoding: "utf8",
-    env: { ...process.env, BL_AGENT: "", BL_CURL_PRINT: "1", ...env },
+    env: { ...process.env, BL_HELPER: HELPER, BL_AGENT: "", BL_CURL_PRINT: "1", ...env },
   });
   assert.equal(res.status, 0, `helper exited ${res.status}: ${res.stderr}`);
   return {
