@@ -1679,6 +1679,51 @@ def sweep_kalshi_resolution_window(self, limit: int = 500, concurrency: int = 6)
     )
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=240,
+    time_limit=300,
+    name="app.tasks.settle_kalshi_recent_finals",
+)
+def settle_kalshi_recent_finals(self, limit: int = 200, concurrency: int = 6):
+    """#4655: reach a FINISHED GAME's Kalshi tickers in minutes, not fortnights.
+
+    Kalshi settled the NFL opener's 842 markets at 2026-09-10 03:28:38Z, two
+    minutes after our own event went `completed`. Two hours later all 61 of our
+    rows still read `status='open'`, so the page kept a live-looking price on a
+    game that was over. Repo-wide that moment: 1,181 Kalshi rows held `open`
+    past a passed `commence_time` over six hours.
+
+    The two existing arms cannot fix that, and not for want of tuning. Both are
+    POPULATION sweeps: `backfill_kalshi_settled` runs 4x daily and was
+    hard-killed on its 05:00Z run, and `sweep_kalshi_resolution_window` walks
+    12,244 eligible rows at 500 a night — ordered `updated_at ASC`, which puts a
+    just-finished game LAST, because it was polled until minutes ago and so
+    carries the newest stamp in the population. This arm is keyed on the EVENT
+    instead, so its bound is the beat period rather than the cycle length.
+
+    ON `realtime`, NOT `background`, and that is load-bearing. `background` runs
+    `--concurrency=2` against 57 beats, and with `task_acks_late=False` a message
+    reserved by a worker is acked before it executes — so a release cycles the
+    dyno and the message is destroyed leaving no trace at all, not a success, not
+    a failure, not even a start marker. That is the shape
+    `sweep_kalshi_resolution_window` is currently in: registered, firing as
+    recently as 2026-09-05, and holding NO task-metrics key in the 48h TTL
+    window despite two scheduled firings, across a night with a release every
+    ~18 minutes. A 30-minute bar cannot be met on a queue with that failure mode.
+
+    Bounded by construction: one batch of `limit` legs, freshest-final first,
+    over a six-hour window (measured 2026-09-10: 29 events / 603 open legs).
+    Writes NO grade — never `is_winner`, never a price (CAL-P061 / #1852,
+    inherited unchanged from the shared `UPDATE_SQL`).
+    """
+    from app.tasks.kalshi_resolution_sweep import run_recent_finals
+    return _tracked_run(
+        "kalshi_recent_finals",
+        run_recent_finals(limit=limit, concurrency=concurrency),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=420, time_limit=480, name="app.tasks.backfill_settled_gap_creation")
 def backfill_settled_gap_creation(self, limit: int = 1500):
     """#138/#995: create Kalshi markets that opened+settled during the 2026-06-09→
@@ -6104,6 +6149,28 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=20, hour=4),
         "kwargs": {"limit": 500},
         "options": {"queue": "background"},
+    },
+    # #4655: the EVENT-DRIVEN arm beside the population sweep above. Every 10
+    # minutes, so a game that finishes is reached inside the 30-minute bar
+    # (Kalshi settled the opener two minutes after our own final; the sweep
+    # above would have reached those 61 legs in ~24 nights, and its `updated_at
+    # ASC` ordering puts a fresh final last, so no batch size fixes it).
+    #
+    # ON `realtime`. `background` is `--concurrency=2` against 57 beats and
+    # `task_acks_late=False`, so a reserved message is acked before it runs and
+    # a release destroys it silently — which is the state the sweep above is in
+    # (no task-metrics key inside the 48h TTL despite two scheduled firings).
+    # `expires` is one period: a run that could not be delivered inside its own
+    # 10 minutes must be DROPPED rather than lapped, because the next fire
+    # selects the same freshest-final head anyway and two of these racing on one
+    # batch is pure duplicate venue cost (#1609's rule, and the reason it is set
+    # explicitly here rather than left to `_EXPIRING_WARMER_BEATS`, which is
+    # scoped to the typeahead warmers).
+    "settle-kalshi-recent-finals": {
+        "task": "app.tasks.settle_kalshi_recent_finals",
+        "schedule": crontab(minute="*/10"),
+        "kwargs": {"limit": 200},
+        "options": {"queue": "realtime", "expires": 600},
     },
     "backfill-kalshi-trade-history": {
         "task": "app.tasks.backfill_kalshi_trades",

@@ -370,6 +370,10 @@ class TestBeatScheduleCompleteness:
         # CAL-P998 / D47 (#2771): the resolution-window sweep stops being
         # attended. Daily 04:20 UTC, one bounded batch of 500.
         "sweep-kalshi-resolution-window",
+        # #4655: the event-driven arm beside that sweep. Every 10 min on
+        # `realtime`, keyed on `events.completed_at` rather than on a population
+        # page, so a finished game's legs are reached inside 30 minutes.
+        "settle-kalshi-recent-finals",
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",
         "backfill-polymarket-matchups",

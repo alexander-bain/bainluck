@@ -449,6 +449,17 @@ class TestEnforcementScope:
             # has already finalized (gotcha #33), so an inert beat breaks
             # nothing visible and just lets dead prices keep rendering as live.
             "kalshi_resolution_window",
+            # #4655: the EVENT-DRIVEN arm of that same repair, enrolled at birth
+            # beside its population sibling. It needs enrolment more, not less:
+            # its ordinary healthy return is ZERO WRITES, because most ten-minute
+            # windows contain no game that just finished — so unenrolled, "no
+            # game finished" and "every leg of the game that just finished
+            # errored at the venue" are the same returning invocation, and the
+            # surface meant to prove a finished game gets reached inside 30
+            # minutes would read GREEN through an outage. Its terminal also
+            # grades on `venue_settled` rather than `writes_applied`, because an
+            # unsettled leg still produces a date write and the row stays `open`.
+            "kalshi_recent_finals",
             # #2907 (authority/049): the StatPal injury sync, enrolled in the
             # change that gives it a terminal AND the change that makes it
             # capable of producing a row at all. It is the longest-running
