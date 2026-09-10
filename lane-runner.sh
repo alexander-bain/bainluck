@@ -89,9 +89,31 @@ LOGDIR="$HANDOFF/runner-logs"
 BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"
 BL_CARRIER_REF="${BL_CARRIER_REF:-origin/master}"
 BL_CARRIER_ROOT="${BL_CARRIER_ROOT:-$HOME/.cache/bainluck-lane-carrier}"
-# ONE LANE FIRST (notice 39 guard 3). Widen by adding names, or BL_TAG_LANES=all,
-# once a tagged lane's rows are proven server-side — the same way rung 1 went out.
-BL_TAG_LANES="${BL_TAG_LANES:-latency}"
+# FLEET-WIDE (notice 39 guard 3, widened 2026-09-10 by latency/312 on the proof
+# that guard asks for). One lane went first; the server-side read it was waiting
+# on is now paid, THROUGH THE REAL CARRIER rather than a hand-sourced shadow —
+# the distinction that matters, because every earlier read of this mechanism was
+# taken in a shell someone had set up by hand, and so could not have caught
+# #4777 (merged, executing on zero lanes). Measured on production at 16:34Z,
+# same endpoint, same token prefix, same three seconds, after the 09:30:33
+# restart that first loaded the carrier:
+#
+#     tagged  (bare `curl`, shadow loaded via ZDOTDIR)   4 requests -> 0 rows
+#     control (`command curl`, bypasses the shadow)      4 requests -> 4 rows
+#
+# The control is what makes the zero readable: it proves the rig reached
+# `search_query_logs`, so arm A's zero is suppression and not a blind zero
+# (gotcha #53).
+#
+# Narrow again by naming lanes (`BL_TAG_LANES="latency ux"`); the env var still
+# wins over this default, so the revert is one word.
+#
+# 🔴 CHANGING THIS LINE DOES NOTHING TO A RUNNING FLEET. Bash parses the whole
+# session loop once, at process start, so the ten live runners keep the value
+# they read when they launched. This default takes effect at the NEXT restart
+# and not before — which is #4777 itself, and precisely why that issue needed
+# Alex and could not be closed by a merge.
+BL_TAG_LANES="${BL_TAG_LANES:-all}"
 
 # Echo the ZDOTDIR to export, or echo nothing and return non-zero. Nothing means
 # NO TAG, which is notice 39 guard 1: an incomplete carrier must degrade to

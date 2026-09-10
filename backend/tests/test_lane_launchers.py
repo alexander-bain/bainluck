@@ -1496,6 +1496,47 @@ def test_the_runner_gates_the_tag_on_the_lane_name():
         assert p.returncode == want, f"BL_TAG_LANES={lanes} lane={lane}: {p.returncode} {p.stderr}"
 
 
+def test_every_lane_in_lanes_conf_is_tagged_by_default():
+    """Notice 39 rung 2, widened: with nothing set, EVERY lane names itself.
+
+    The default moved from `latency` to `all` on 2026-09-10 once the one-lane
+    server-side read was paid through the real carrier (4 tagged -> 0 rows, 4
+    untagged controls -> 4 rows, production 16:34Z).
+
+    COMPUTED FROM `lanes.conf`, NOT ENUMERATED HERE, and that is the point: a
+    lane added tomorrow inherits the rule without anyone remembering this test
+    exists. Enumerating the ten names would pass forever while lane eleven went
+    out untagged — the exact shape of the defect rung 2 was written to fix.
+
+    Asserted against an UNSET `BL_TAG_LANES`, so it reads the shipped default
+    rather than a value the test supplied to itself. The sibling test above
+    still covers explicit narrowing.
+    """
+    conf = (REPO / "lanes.conf").read_text()
+    m = re.search(r'^LANES_ALL="([^"]+)"', conf, re.M)
+    assert m, "lanes.conf no longer declares LANES_ALL as a double-quoted literal"
+    lanes = m.group(1).split()
+    # Denominator guard: an empty or truncated list makes every case below
+    # vacuously true (the blind-zero class, gotcha #53).
+    assert len(lanes) >= 8, f"lanes.conf lists only {len(lanes)}: {lanes}"
+
+    block = _tag_block()
+    env = {k: v for k, v in os.environ.items() if k != "BL_TAG_LANES"}
+    untagged = []
+    for lane in lanes:
+        p = subprocess.run(
+            ["bash", "-c", f'set -u\n{block}\nbl_tag_lane {lane!r}'],
+            capture_output=True, text=True, cwd=str(REPO), timeout=30, env=env,
+        )
+        if p.returncode != 0:
+            untagged.append(f"{lane} (rc={p.returncode}) {p.stderr.strip()}")
+    assert untagged == [], (
+        "a lane runs untagged under the shipped default, so its production reads "
+        "land in search_query_logs indistinguishable from a person's (notice 39):"
+        "\n  " + "\n  ".join(untagged)
+    )
+
+
 def test_the_runner_refuses_to_point_zdotdir_at_a_checkout_without_the_chain(tmp_path):
     """Notice 39 guard 1, in its dangerous direction.
 
