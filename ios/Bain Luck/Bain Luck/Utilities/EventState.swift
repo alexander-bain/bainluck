@@ -132,6 +132,37 @@ enum EventState {
         return "\(suspendedLabel) · last score \(away)-\(home)"
     }
 
+    /// What the player-props card calls the number on each rung.
+    ///
+    /// #4018 / D120 — THE PROPS CARD IS THE THIRD CARD, AND IT WAS LEFT OUT ON
+    /// PURPOSE UNTIL ALEX RULED. The other two cards printed a number the APP
+    /// computes and labels as a forecast of the final, which is mechanically
+    /// wrong once no final can arrive, so `canStillBeGraded` suppressed them.
+    /// This card prints the MARKET's price for a prop — a real quote — so there
+    /// is nothing false about the number and suppressing it would throw away the
+    /// record. Only the CAPTION is wrong: "chance of hitting" is present tense
+    /// over a game that stopped. Alex ruled option C (Thu 2026-09-10, via
+    /// Fable-5): keep the numbers, change three words.
+    ///
+    /// It reads ``isSuspendedAndStarted`` and NOT ``isSuspended``, for #4021's
+    /// reason: event 416569 sat at `status='suspended'` four days before kick-off,
+    /// and captioning a fixture nobody has played "last quoted chance" is the same
+    /// false settled claim one size smaller.
+    ///
+    /// 🔴 DELIBERATELY NOT TENSED FOR A FINISHED GAME. "chance of hitting" is
+    /// present tense over a completed game too, but that is a different wording
+    /// call and Alex has not made it: on a final this card draws the actual value
+    /// and a ✓/– beside every rung, so the caption reads as the historical quote
+    /// it is. Widening the predicate to `!canStillBeGraded` would change every
+    /// settled props card in the app on a ruling that covered abandoned ones.
+    static func propsChanceCaption(
+        _ status: String?, commenceTime: Date?, now: Date = Date()
+    ) -> String {
+        isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
+            ? "last quoted chance"
+            : "chance of hitting"
+    }
+
     /// Which grid section a status belongs to.
     ///
     /// `suspended` returns `.live` — not because the match is being played, but

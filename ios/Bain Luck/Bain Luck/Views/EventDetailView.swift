@@ -365,6 +365,7 @@ struct EventDetailView: View {
                             homeColor: teamColors(event).home,
                             awayColor: teamColors(event).away,
                             eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate,
                             boxScore: vm.relatedFutures?.boxScore
                         )
                     }
