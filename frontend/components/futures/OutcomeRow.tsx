@@ -5,6 +5,7 @@ import { formatProbability } from "@/lib/api";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import EntityImage from "@/components/EntityImage";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
+import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
 
 /**
  * Does this row's "Last move" cell print a MOVE, or the muted dash?
@@ -26,6 +27,45 @@ export function outcomeRowPrintsMove(
   // UX-P275: the gate asks whether a move PRINTS, not whether the wire fraction is
   // nonzero — anything that rounds to zero is no move.
   return change !== null && change !== undefined && isRenderedMove(change);
+}
+
+/**
+ * Does this table's rows draw an entity picture beside the outcome name?
+ *
+ * #4483. `EntityImage type="wikipedia"` falls back to the name's INITIALS when it
+ * has no picture, which is right for a person or a party and nonsense for a
+ * threshold: `Above 50`, `Above 51`, `Above 52` and `Above 53` all initialise to
+ * an identical grey **`A5`**, so four different answers wore one label on
+ * `/futures/31835562` ("How many Senators will vote to confirm Todd Blanche").
+ * `futuresLadder.ts` already names the same defect on the ladder path — "avatar
+ * circles reading 'BA', 'BJ', 'BO', 'B2'" for a date market.
+ *
+ * A `quantity` market's outcomes are thresholds, dates or bins. They are not
+ * entities, they have no picture, and there is nothing for initials to abbreviate.
+ * `market_type` is the field that already knows this (#194), so the answer is read
+ * from the shape rather than re-derived from the outcome text — re-deriving shape
+ * from names is the very defect `futuresLadder`'s queue closed.
+ *
+ * Deliberately NOT extended to the other shapes. `duel`, `field`, `participation`
+ * and `container_member` all have genuine entity outcomes (candidates, teams,
+ * nominees) and their pictures are the point. `claim` would qualify on principle —
+ * "Yes"/"No" are not entities either — but a census of the eight non-sports
+ * categories returns **no `claim` rows at all**, so that arm would be unreachable
+ * and unprovable; `unshaped` keeps today's behaviour because unknown is not the
+ * same as "known to be a threshold".
+ *
+ * Shape is resolved by the CALLER, once, over the whole outcome set — the same
+ * division as `showLastMove` below, and for the same reason: `resolveShape()` owns
+ * the `market_type`-then-fallback preference order (`lib/types.ts`: "callers must
+ * not re-derive shape themselves") and its fallback needs every outcome name, which
+ * a single row does not have.
+ */
+export function outcomeRowShowsEntityImage(
+  marketCategory: string | null | undefined,
+  shape: MarketShape | null,
+): boolean {
+  if (!isNonSportsCategory(marketCategory ?? null)) return false;
+  return shape !== SHAPE_QUANTITY;
 }
 
 /**
@@ -73,6 +113,7 @@ export default function OutcomeRow({
   rendered,
   renderedOpening,
   showLastMove,
+  showEntityImage,
 }: {
   outcome: FuturesOutcome;
   rank: number;
@@ -94,13 +135,21 @@ export default function OutcomeRow({
    *  caller can make, and a default would silently restore the 80px column on the
    *  next surface that renders this row. */
   showLastMove: boolean;
+  /** #4483: does this table draw entity pictures at all? REQUIRED, no default, for
+   *  the same reason as `showLastMove` — it is resolved from the market's SHAPE
+   *  over the whole outcome set, so only the caller can decide it, and a default
+   *  would silently restore the `A5` chip on the next surface that renders a
+   *  threshold ladder through this row. Compute it with
+   *  `outcomeRowShowsEntityImage`. */
+  showEntityImage: boolean;
 }) {
   const change = outcome.probability_change_24h;
   const rankChange = outcome.rank_change_24h;
   const printsMove = outcomeRowPrintsMove(outcome, isResolved);
 
-  // Entity image detection
-  const isNonSports = isNonSportsCategory(marketCategory ?? null);
+  // Entity image detection. #4483: the non-sports test alone was the bug — it
+  // asks "could this name have a Wikipedia picture?" and a threshold answers yes.
+  // The caller's shape-aware `showEntityImage` is the gate now.
   const isIntl = isInternationalSport(marketCategory ?? null);
   const outcomeFlag = isIntl ? flagUrl(outcome.name) : null;
 
@@ -183,7 +232,7 @@ export default function OutcomeRow({
             loading="lazy"
             className="rounded-sm flex-shrink-0"
           />
-        ) : isNonSports ? (
+        ) : showEntityImage ? (
           <EntityImage type="wikipedia" name={outcome.name} size={24} />
         ) : null}
         <div className="min-w-0">
