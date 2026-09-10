@@ -136,6 +136,104 @@ class TestDoesNotWedgeTheBus:
         assert "## MY PRESENTATION\nline two\n" in q.read_text()
 
 
+class TestRefusesAMalformedCall:
+    """A call that cannot possibly produce a valid block must cost no id.
+
+    CERT-2494 (lane1b/122, 2026-09-10 ~03:55PT) is the case: the script was
+    invoked with FLAGS — `--lane x --subject y --sha z` — and since it takes
+    POSITIONAL arguments every field shifted by one. The block landed with
+    `queue_id: --lane`, `issue: <a sha>`, `pr: --sha`, `sha: <the subject
+    slug>`, and an EMPTY body, because with no stdin redirect the body read
+    blocked *inside the lock* until the caller killed it. The trap released the
+    lock, the append had already happened, and a grader had to void the id by
+    hand.
+
+    Both refusals run BEFORE the id scan and BEFORE the lock, so the property
+    asserted here is not just the exit code — it is that the queue is byte-for-
+    byte unchanged.
+    """
+
+    def _stage_raw(self, queue, argv, body="body\n", stdin_is_tty=False):
+        q, log = queue
+        env = {
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": str(q.parent),
+            "CERT_QUEUE": str(q),
+            "CERT_LOG": str(log),
+        }
+        kwargs = {"capture_output": True, "text": True, "env": env}
+        if not stdin_is_tty:
+            kwargs["input"] = body
+        return subprocess.run(["bash", str(SCRIPT)] + argv, **kwargs)
+
+    def test_a_flag_shaped_first_argument_is_refused(self, queue):
+        r = self._stage_raw(
+            queue,
+            ["--lane", "lane1b/122", "--subject", "SUBJ", "--sha", FRESH_SHA,
+             "--pr", "https://example.invalid/pr", "--issue", "#1"],
+        )
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "REFUSING" in r.stderr
+        assert "POSITIONAL" in r.stderr, "the refusal must say what the call should look like"
+        assert "usage:" in r.stderr
+
+    def test_the_flag_refusal_appends_nothing_and_burns_no_id(self, queue):
+        q, _ = queue
+        before = q.read_text()
+        # The FULL flag-shaped call, with a body on stdin — i.e. the shape that
+        # actually reached the append and spent CERT-2494. A two-argument call
+        # would die on `set -u` instead and prove nothing about the guard.
+        self._stage_raw(
+            queue,
+            ["--lane", "lane1b/122", "--subject", "SUBJ", "--sha", FRESH_SHA,
+             "--pr", "https://example.invalid/pr", "--issue", "#1"],
+        )
+        assert q.read_text() == before
+        assert "CERT-102" not in q.read_text()
+
+    def test_a_body_read_from_a_terminal_is_refused(self, queue):
+        """The half of the failure that hangs rather than writes nonsense.
+
+        `subprocess` with no `input=` and no `stdin=` inherits pytest's stdin,
+        which is not a TTY, so the guard is exercised through a pseudo-terminal
+        — the only way to make `[ -t 0 ]` true from a test.
+        """
+        import pty
+
+        primary, secondary = pty.openpty()
+        try:
+            q, log = queue
+            r = subprocess.run(
+                ["bash", str(SCRIPT), "SUBJ", "lane1b", "lane1b/br", FRESH_SHA,
+                 "https://example.invalid/pr", "#1"],
+                stdin=secondary, capture_output=True, text=True, timeout=20,
+                env={
+                    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                    "HOME": str(q.parent),
+                    "CERT_QUEUE": str(q),
+                    "CERT_LOG": str(log),
+                },
+            )
+        finally:
+            os.close(primary)
+            os.close(secondary)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "STDIN" in r.stderr
+        assert FRESH_SHA not in q.read_text()
+
+    def test_a_positional_call_with_a_piped_body_is_still_staged(self, queue):
+        """The negative control: the guards refuse only what they name."""
+        q, _ = queue
+        r = self._stage_raw(
+            queue,
+            ["SUBJ", "lane1b", "lane1b/br", FRESH_SHA,
+             "https://example.invalid/pr", "#1"],
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "CERT-102"
+        assert FRESH_SHA in q.read_text()
+
+
 def _race_queue(tmp_path, name="CERT-QUEUE.md"):
     """A queue wide enough to have a real critical section."""
     q = tmp_path / name

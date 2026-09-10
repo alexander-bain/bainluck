@@ -2,6 +2,37 @@
 # stage-cert.sh — append a correctly-formed cert block with an atomic, verified-unused id.
 # usage: stage-cert.sh <SUBJECT-SLUG> <lane> <branch> <sha> <pr-url> <issue> [<repairs CERT-N>] < body.md
 set -u
+USAGE="usage: stage-cert.sh <SUBJECT-SLUG> <lane> <branch> <sha> <pr-url> <issue> [<repairs CERT-N>] < body.md"
+
+# CALLING CONVENTION GUARDS — before the id scan, before the lock, so a refusal
+# has mutated nothing (Fable-5 note 0415PT, from lane1b/122 burning CERT-2494).
+#
+# This script takes POSITIONAL arguments and reads the body from STDIN. Called
+# the way most CLIs are — `--lane x --subject y --sha z` — every field shifts by
+# one and the block is written with FLAG NAMES in its metadata: CERT-2494 was
+# staged with `lane: lane1b/122`, `issue: <a sha>`, `pr: --sha`, `sha: <the
+# subject slug>`. And with no stdin redirect the body read BLOCKS, *inside the
+# lock*, so the caller kills it — the trap releases the lock, the append has
+# already happened, and a cert id is spent on an empty block a grader then has
+# to reconstruct or void.
+#
+# Both refusals are cheap and total: no correct caller passes a leading `-` as a
+# subject slug, and no correct caller runs this with a terminal on stdin.
+case "${1:-}" in
+    -*)
+        echo "REFUSING: stage-cert.sh takes POSITIONAL arguments, not flags — '$1' looks like a flag." >&2
+        echo "         Every field would shift by one and the id would be spent on a malformed block." >&2
+        echo "$USAGE" >&2
+        exit 2
+        ;;
+esac
+if [ -t 0 ]; then
+    echo "REFUSING: the cert body is read from STDIN and stdin is a terminal." >&2
+    echo "         Without a redirect this blocks inside the queue lock and burns an id." >&2
+    echo "$USAGE" >&2
+    exit 2
+fi
+
 # Overridable so the guards below are testable against a fixture queue; every lane
 # and every runner uses the defaults and is unaffected.
 Q="${CERT_QUEUE:-$HOME/bainluck/.claude/handoff/CERT-QUEUE.md}"
