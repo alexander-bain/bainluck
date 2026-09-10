@@ -69,8 +69,10 @@ from app.models.models import (
 from app.services import get_db, get_db_rw
 from app.utils.live_first_page import hoist_live_events_into_first_page
 from app.utils.sports_first_page_rails import (
+    FINISHED_STATUSES,
     cap_futures_on_games_led_first_page,
     cap_repeated_finished_rails,
+    client_deletes_finished_card,
     swap_client_deleted_finished_off_first_page,
 )
 from app.utils.tonights_games import MARQUEE_PIN_KEY, compose_lead
@@ -1232,9 +1234,116 @@ def _rank_key(item: dict) -> tuple:
 # `tests/test_feed_marquee_pin.py` against `compose_lead`.
 
 
-def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:
+#: How many just-finished marquee games Discover may carry at once (#4681).
+#:
+#: NOT ZERO, which is what the noise filter's unconditional ``completed`` drop
+#: meant: the NFL season opener went final at 03:26Z on 2026-09-10 and was
+#: absent from Discover entirely — 217 candidates reached the scorer and ONE
+#: event survived to the page, a live MLS fixture. Standing notice 27 says the
+#: finished marquee event of the night stays page-one material for hours.
+#:
+#: AND NOT UNBOUNDED, which is the failure on the other side. Measured on the
+#: same feed read, admitting every recent tier-1 final would have offered ten
+#: cards (see ``_recent_marquee_final_ids``) — Discover would become the
+#: scoreboard the blanket rule was written to keep it from being. Two is "the
+#: finished game(s) that mattered last night", which is what a reader opening
+#: Discover in the morning is owed, and no more.
+_DISCOVER_RECENT_FINAL_SLOTS = 2
+
+
+def _discover_event_is_marquee(item: dict) -> bool:
+    """Tier 1 — the marquee line, and deliberately tighter than tier<=2.
+
+    ``_discover_event_has_major_league_context`` admits tier 2, and that is
+    right for the demotion arms it serves. It is wrong here. Measured on
+    ``GET /api/feed?mode=sports&limit=250`` at 2026-09-10 06:3xZ, a tier<=2
+    finished arm offered ten cards of which NINE were MLS — the reader would
+    have met a Major League Soccer results page where a reader was promised the
+    night's marquee final, and several of those MLS rows outscored the NFL one.
+    Standing notice 27 names the marquee classes and MLS is not among them.
+    """
+    data = item.get("data") or {}
+    return "tier:1" in (data.get("event_tags") or [])
+
+
+def _recent_marquee_final_ids(
+    feed_items: list[dict], now: datetime | None = None
+) -> set[int]:
+    """Event ids of the finished marquee games Discover keeps this request.
+
+    Computed ONCE and handed to both passes that would otherwise delete these
+    cards — the demotion (which caps them to 35, below every futures card) and
+    the noise filter (which drops them outright). Two consumers, one set: the
+    alternative is two predicates that agree today, which is the drift this file
+    keeps paying for.
+
+    Three conditions, and each is doing work no other one does:
+
+    * **Finished and marquee** — the arm exists for the marquee final, not for
+      finished games as a class. See :func:`_discover_event_is_marquee`.
+    * **Still inside the client's own freshness window** — reusing
+      ``client_deletes_finished_card`` rather than inventing an age. #3836's
+      lesson is that the browser deletes a completed card more than
+      ``COMPLETED_EVENT_MAX_AGE_HOURS`` past its ``commence_time``, so a slot
+      spent past that bound is a slot the reader never sees. Borrowing the
+      mirror (CI-guarded against the frontend constant) means this arm cannot
+      drift from what the client will actually render.
+    * **Has team media** — the same condition the live and suspended arms below
+      apply, for the same reason: a crest-less card is not a game a reader
+      recognises. NOT relied on to bound the population, though. Measured
+      2026-09-10: all 15 completed MLB rows carry ``home_team_data = None``
+      (Astros @ Phillies with no crest), so today this condition alone would
+      hide a full MLB slate — an accident of a media gap, not a policy, and it
+      would stop bounding anything the day that gap is fixed. The cap is what
+      bounds the population; this only keeps an unrenderable card out.
+
+    Ranked by EI, which is the excitement reading a settled game HAS (#4504
+    documents that EI is written for exactly these statuses and no other), and
+    tie-broken by event id so a tie cannot reorder between two requests.
+    """
+    eligible: list[tuple[float, int]] = []
     for item in feed_items:
         if item.get("type") != "event":
+            continue
+        data = item.get("data") or {}
+        if (data.get("status") or "").strip().lower() not in FINISHED_STATUSES:
+            continue
+        if not _discover_event_is_marquee(item):
+            continue
+        if not (data.get("home_team_data") or data.get("away_team_data")):
+            continue
+        if client_deletes_finished_card(item, now=now):
+            continue
+        event_id = data.get("id")
+        if event_id is None:
+            continue
+        eligible.append((_discover_event_ei_score(item), int(event_id)))
+
+    eligible.sort(key=lambda pair: (-pair[0], pair[1]))
+    return {event_id for _, event_id in eligible[:_DISCOVER_RECENT_FINAL_SLOTS]}
+
+
+def _item_is_kept_final(item: dict, kept_final_ids: set[int]) -> bool:
+    if not kept_final_ids or item.get("type") != "event":
+        return False
+    return (item.get("data") or {}).get("id") in kept_final_ids
+
+
+def _demote_non_exceptional_discover_events(
+    feed_items: list[dict], kept_final_ids: set[int] | None = None
+) -> None:
+    kept = kept_final_ids or set()
+    for item in feed_items:
+        if item.get("type") != "event":
+            continue
+        # #4681 — a kept marquee final is exceptional BY SELECTION, so it is not
+        # re-judged here. It would fail: `_is_discover_event_demotion_exception`
+        # reads EI, and the specimen (NFL opener, 13-10) carries EI 64 against a
+        # bar of 85 — a defensive 13-10 season opener is not a wild game, it is a
+        # big one, and this predicate measures the first. Capping it to 35 would
+        # leave it below every futures card on the page, so surviving the noise
+        # filter alone would have bought the card nothing.
+        if _item_is_kept_final(item, kept):
             continue
         if not _is_discover_event_demotion_exception(item):
             item["score"] = min(item["score"], 35)
@@ -1244,13 +1353,24 @@ def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:
                 item["_rank_score"] = min(item["_rank_score"], 35.0)
 
 
-def _filter_discover_event_noise(feed_items: list[dict]) -> list[dict]:
+def _filter_discover_event_noise(
+    feed_items: list[dict], kept_final_ids: set[int] | None = None
+) -> list[dict]:
     """Remove routine game cards from Discover mode after demotion.
 
     Discover is not the sports scoreboard. Completed games, obscure no-logo
     live games, and ordinary low-score events should stay on Sports/My Stuff,
     not take slots from prediction-market stories.
+
+    #4681 — WITH ONE EXCEPTION, BECAUSE "NOT THE SCOREBOARD" IS NOT "NEVER A
+    RESULT". The completed arm below was unconditional, so it could not tell
+    last night's Super Bowl from a Tuesday Superettan fixture and answered both
+    the same way. Measured 2026-09-10 06:26Z, three hours after the NFL season
+    opener went final: 217 event candidates reached the scorer and ONE reached
+    the page. The finished games Discover keeps are chosen up front by
+    :func:`_recent_marquee_final_ids` and passed in.
     """
+    kept = kept_final_ids or set()
     filtered: list[dict] = []
     for item in feed_items:
         if item.get("type") != "event":
@@ -1260,6 +1380,8 @@ def _filter_discover_event_noise(feed_items: list[dict]) -> list[dict]:
         data = item.get("data") or {}
         status = (data.get("status") or "").lower()
         if status in {"completed", "closed"}:
+            if _item_is_kept_final(item, kept):
+                filtered.append(item)
             continue
 
         has_team_media = bool(data.get("home_team_data") or data.get("away_team_data"))
@@ -1350,6 +1472,7 @@ def apply_discover_display_chain(
     cold_start: bool | None = None,
     reviewed_keys: set | None = None,
     timing_cb=None,
+    now: datetime | None = None,
 ) -> tuple[list[dict], dict]:
     """Everything ``get_feed`` does to an already-scored pool BEFORE paginating.
 
@@ -1419,6 +1542,12 @@ def apply_discover_display_chain(
             ``test_discover_display_chain_shared.py`` —
             ``test_timing_callback_fires_for_every_recorded_stage`` is what
             catches a new stage added here and nowhere else.
+        now: the request clock, read only by ``_recent_marquee_final_ids``
+            (#4681) to ask whether a finished card is still inside the window
+            the web client will render it in. ``None`` means "use the real
+            clock", which is what production does; a test passes it so the
+            marquee-final arm has a fixed anchor instead of branching on the
+            wall clock (gotcha #44).
 
     Returns:
         ``(items, meta)``. ``meta['reviewed_filtered_count']`` is ``None`` when
@@ -1450,8 +1579,12 @@ def apply_discover_display_chain(
     # invade Taiwan?" for a Discover audience. Only truly exceptional
     # events (strong EI or top-tier exception keywords) keep their score.
     if event_pct is not None and event_pct < 0.3:
-        _demote_non_exceptional_discover_events(items)
-        items = _filter_discover_event_noise(items)
+        # #4681 — chosen BEFORE either pass and handed to both. The demotion
+        # would cap these to 35 and the noise filter would delete them, and a
+        # card that survives only one of the two is still not on the page.
+        kept_final_ids = _recent_marquee_final_ids(items, now)
+        _demote_non_exceptional_discover_events(items, kept_final_ids)
+        items = _filter_discover_event_noise(items, kept_final_ids)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         items.sort(key=_rank_key, reverse=True)
         items = balance_discover_event_category_mix(items)
@@ -3624,6 +3757,7 @@ async def get_feed(
             sports_mode=_is_sports_mode,
             reviewed_keys=reviewed_keys,
             timing_cb=_chain_timing,
+            now=now,
         )
 
         if exclude_reviewed:
@@ -5655,7 +5789,14 @@ async def _discover_rank_phase_trace(
 
     post_event_demote_rank = post_initial_sort_rank
     if event_pct is not None and event_pct < 0.3:
-        _demote_non_exceptional_discover_events(feed_items)
+        # #4681 — the probe reports a rank a market holds AFTER the demotion, so
+        # it has to demote the same set the served chain demotes. This trace is
+        # already a documented subset (no noise filter), but a subset that
+        # demotes a card the page keeps would misreport the rank of every
+        # futures market sitting beside it.
+        _demote_non_exceptional_discover_events(
+            feed_items, _recent_marquee_final_ids(feed_items, now)
+        )
         feed_items.sort(
             key=_rank_key, reverse=True
         )
@@ -5709,6 +5850,7 @@ async def _discover_rank_phase_trace(
         event_pct=event_pct,
         include_events=include_events,
         my_teams_only=False,
+        now=now,
     )
     assembled_rank = _rank_futures_market(served_items, market_id)
     returned_rank = _rank_futures_market(served_items[:limit], market_id)
