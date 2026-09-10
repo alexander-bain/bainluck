@@ -179,7 +179,9 @@ bl_tag_lane() {
 # bundle and is stamped beside it, leaving one `[ -f ]` in steady state. The
 # stamp is per-bundle and not per-lane on purpose — the shadow interpolates
 # `$BL_AGENT`, so the MECHANISM is lane-independent and only the header's value
-# differs.
+# differs. What the stamp may answer is bounded by that: it speaks for the
+# BUNDLE's wiring and for nothing else, so every live control is diagnosed ahead
+# of it (CERT-2542, at the `BL_CURL_NO_SHADOW` arm below).
 #
 # Advisory, like every other check here: it prints and returns 0. A lane must
 # never fail to start because its reads would be untagged.
@@ -189,6 +191,34 @@ bl_tag_state() {
 
   if ! bl_tag_lane "$bl_l"; then
     echo "[runner:$bl_l] TAG OFF (by config) — '$bl_l' is not in BL_TAG_LANES='$BL_TAG_LANES'; this lane's production reads are untagged (#4689)"
+    return 0
+  fi
+  # CERT-2542. A LIVE control, asked every session and answered BEFORE the stamp
+  # is consulted. The two questions have different lifetimes and only one of them
+  # is cacheable:
+  #
+  #   "does THIS BUNDLE's wiring add the header?"   pure function of bundle
+  #                                                 content -> stamp, per
+  #                                                 content-addressed path
+  #   "is that wiring switched on in THIS process?" pure function of the
+  #                                                 environment -> ask it live
+  #
+  # `BL_CURL_NO_SHADOW=1` is the shadow's documented opt-out: it defines `bl_curl`
+  # and installs no `curl` wrapper, so the same bundle with the same healthy stamp
+  # runs entirely untagged. Letting the stamp answer the second question printed
+  # "TAG ON — reads carry x-bainluck-origin" into the log of a lane whose every
+  # read was plain curl — a false ON in the one ship that exists to end exactly
+  # that silence. Live controls are a variable test; never cache one.
+  #
+  # OFF, not BROKEN: an operator asked for this, the same as a lane being off the
+  # allowlist. Calling a deliberate choice a defect is the mistake the no-zsh arm
+  # below exists to avoid (gotcha #53). Ordered with the allowlist arm for the
+  # same reason — ask whether we are meant to be tagging at all before asking
+  # whether the machinery works — which also keeps the probe from firing (and
+  # reaching the network, since an unwrapped `curl` ignores BL_CURL_PRINT) in a
+  # session that opted out.
+  if [ -n "${BL_CURL_NO_SHADOW:-}" ]; then
+    echo "[runner:$bl_l] TAG OFF (by config) — BL_CURL_NO_SHADOW='${BL_CURL_NO_SHADOW:-}' is set, so no curl wrapper is installed and a plain 'curl' is unwrapped; this lane's production reads are untagged (#4689)"
     return 0
   fi
   if [ -z "$bl_zd" ]; then

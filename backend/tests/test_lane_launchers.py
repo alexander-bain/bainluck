@@ -1832,6 +1832,72 @@ def test_the_end_to_end_probe_is_cached_per_bundle_but_never_caches_a_failure(tm
     )
 
 
+@needs_zsh
+def test_cached_tag_state_reports_off_when_shadow_is_disabled(tmp_path):
+    """CERT-2542: a cached probe may not answer a question the cache cannot see.
+
+    The stamp above is keyed on the carrier bundle's CONTENT, which is sound for
+    the question it was built to answer — "does this bundle's wiring add the
+    header?". `BL_CURL_NO_SHADOW=1` is the shadow's documented opt-out and is not
+    a property of the bundle at all: same files, same content hash, same healthy
+    stamp, and no `curl` wrapper installed in any shell. So the warm path printed
+    "TAG ON — reads carry x-bainluck-origin" into the session log of a lane whose
+    every read was plain curl.
+
+    A false ON is the worst possible failure for THIS ship specifically. #4689
+    exists because "deliberately off" and "broken" shared one silence; a state
+    line that can confidently report a state the session is not in replaces that
+    silence with something worse than silence.
+
+    OFF and not BROKEN, because an operator asked for it — the same shape as a
+    lane being off the allowlist, and the same reason the no-zsh arm reports
+    UNVERIFIED rather than manufacturing a defect (gotcha #53).
+    """
+    good = _carrier_bundle(tmp_path / "good")
+    stamp = tmp_path / "good" / ".verified-tag"
+
+    # Warm the cache exactly as a healthy session does. The bug needs the stamp
+    # in place; probing cold happens to be honest already.
+    assert "TAG ON" in _tag_state("latency", good, "all")
+    assert stamp.exists(), "the stamp never warmed, so this test proves nothing"
+
+    # GROUND TRUTH, measured in the same child shell the lane's reads run in, so
+    # this cannot pass by merely agreeing with whatever the line says. Positive
+    # control first: without the opt-out the wrapper really is installed here,
+    # otherwise the negative below would hold for an unrelated reason.
+    rc, on = _lane_shell('echo "curl -> $(type curl)"', {"ZDOTDIR": str(good)})
+    assert rc == 0 and "shell function" in on, (
+        f"no wrapper even without the opt-out; the control is broken:\n{on}"
+    )
+    rc, off = _lane_shell(
+        'echo "curl -> $(type curl)"',
+        {"ZDOTDIR": str(good), "BL_CURL_NO_SHADOW": "1"},
+    )
+    assert rc == 0, off
+    assert "shell function" not in off, (
+        f"BL_CURL_NO_SHADOW no longer disables the wrapper, so this guard is "
+        f"asserting against a control that has moved:\n{off}"
+    )
+
+    # The line must match that reality, from the WARM path.
+    line = _tag_state("latency", good, "all", {"BL_CURL_NO_SHADOW": "1"})
+    assert stamp.exists(), (
+        "the cache was discarded rather than out-ranked — #4714 caps this budget, "
+        "so the opt-out must be diagnosed without re-probing every session"
+    )
+    assert "TAG ON" not in line, (
+        f"false ON: the session's reads are plain curl and the log says they "
+        f"carry the tag: {line!r}"
+    )
+    assert "TAG OFF" in line and "by config" in line, (
+        f"a deliberate opt-out reported as a defect: {line!r}"
+    )
+    assert "BL_CURL_NO_SHADOW" in line, (
+        f"the OFF line does not name the control that turned tagging off, so the "
+        f"reader cannot tell it from a stale allowlist: {line!r}"
+    )
+
+
 def test_the_session_launch_reports_the_tag_state_into_the_session_log():
     """Where the line goes is half the ship.
 
