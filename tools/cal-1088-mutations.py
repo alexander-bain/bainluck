@@ -28,6 +28,45 @@ MUTANTS = [
     ("drop the keyset bound",
      "      AND fo.id > :after_id\n", "",
      "test_the_bound_is_keyset_paged_in_a_stable_order"),
+
+    # --- CERT-2524: the page is frozen and the write is backed ---------------
+    # Each of these five IS the blocked behaviour, put back one property at a
+    # time. A guard that stays green here is a guard that would have passed the
+    # original apply, which is the thing that got blocked.
+    ("let the write re-derive its own scope instead of the frozen page",
+     "      AND fo.id = ANY(:page_ids)\n      AND EXISTS (",
+     "      AND EXISTS (",
+     "test_only_the_plan_read_is_limited_and_keyset_paged"),
+    ("write without joining the durable backup",
+     "    FROM {BAK_TABLE} b\n    WHERE b.outcome_id = fo.id\n"
+     "      AND fo.id = ANY(:page_ids)\n",
+     "    WHERE fo.id = ANY(:page_ids)\n",
+     "test_the_write_can_only_reach_a_row_the_backup_already_holds"),
+    ("trust the plan's market gate instead of re-testing it at write time",
+     "      AND {_MARKET_HAS_NO_GRADE}\n    RETURNING fo.id",
+     "    RETURNING fo.id",
+     "test_the_write_re_tests_the_market_gate_it_was_planned_under"),
+    ("lock only the page's own legs, leaving a split market's sibling free",
+     "    WHERE fo.market_id = ANY(:market_ids)\n",
+     "    WHERE fo.id = ANY(:page_ids)\n",
+     "test_the_lock_covers_every_leg_of_the_market_not_just_the_page"),
+    ("let a late undo overwrite a verdict written since the withdrawal",
+     "      AND fo.resolution_source IS NULL\n"
+     "      AND fo.is_winner IS DISTINCT FROM b.is_winner",
+     "      AND fo.is_winner IS DISTINCT FROM b.is_winner",
+     "test_the_undo_will_not_overwrite_a_verdict_somebody_else_wrote"),
+]
+
+#: Mutants whose only witness is a real server, listed so the gap is a NAMED
+#: one rather than a silence. `initdb` cannot run on this machine at all — the
+#: SysV interlock segment is refused (`shmget ... Operation not permitted`)
+#: even with `shared_memory_type=mmap` and even outside the agent sandbox — so
+#: these are proven by the CI `search-recall` job, not here.
+PG_ONLY = [
+    ("keep the backup row for a leg the write conceded to a grader",
+     "stale_backup = sorted(inserted - set(changed_ids))", "stale_backup = []",
+     "test_apply_cannot_withdraw_or_unback_a_page_when_a_grader_commits_"
+     "between_backup_and_update"),
 ]
 
 shutil.copy(RAIL, BAK)
