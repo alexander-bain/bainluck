@@ -1133,6 +1133,14 @@ private struct WinTotalsPairView: View {
 
     private func statColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
         let shortName = TeamShortName.short(teamName)
+        // The badge glyphs come from `abbreviation`, never from `short`'s first
+        // three characters. `short` returns the FULL name for a designator-ending
+        // club, so `prefix(3)` puts the designator straight back on the badge when
+        // it sits at the front: "FC Schalke 04" → "FC " (trailing space), "AD Ceuta
+        // FC" → "AD ", "1. FC Heidenheim 1846" → "1. ". `abbreviation` returns
+        // SCH / CEU / HEI (#4757). Line 2159 of this same file already routes
+        // through it; this call site was the one that re-derived the glyphs.
+        let badge = TeamShortName.abbreviation(teamName)
         // Dedup by cleanLabel — keep highest probability per label
         var seenLabels: Set<String> = []
         let sorted = futures
@@ -1149,7 +1157,7 @@ private struct WinTotalsPairView: View {
                     .fill(color)
                     .frame(width: 14, height: 14)
                     .overlay(
-                        Text(shortName.prefix(3).uppercased())
+                        Text(badge)
                             .font(.system(size: 5, weight: .heavy))
                             .foregroundStyle(.white)
                     )
