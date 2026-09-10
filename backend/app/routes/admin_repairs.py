@@ -29,7 +29,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | polymarket-senate-category | kalshi-nhl-prop-category
              | polymarket-leg-label-census | polymarket-leg-label
              | authority-id-collisions | weather-shelf-disease
-             | futures-person-seed-purge }
+             | futures-person-seed-purge | golf-round-closing-line }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -58,7 +58,9 @@ transactional session and RETURNS its own before/after census in the response bo
      which is the whole point: the focused D40 gates for #4578 were green and
      the two registry guards live in files that change was nowhere near, so CI
      is what caught it. The comment above is not decoration and the guard is not
-     either.)
+     either. Re-synced again 2026-09-10, CAL-P1081, adding
+     golf-round-closing-line in the commit that registered it — this time
+     before CI had to say so.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -717,6 +719,39 @@ _REPAIRS = {
     # this to a beat — it is a drain with an end state.
     "futures-person-seed-purge": (
         "app.tasks.repair_futures_person_seed",
+        "repair",
+    ),
+    # CAL-P1081 (#938 bug (a), #997): the 286 round-scoped Kalshi golf markets
+    # publish their OPENING stamp as a closing line. `KXDPWORLDTOURR1LEAD-HEIO26`
+    # prices twenty-three golfers at 0.990 while the venue's own last quote
+    # before the round reads 0.070 / 0.350 / 0.380 — the real numbers were in
+    # `futures_odds_snapshots` the whole time. Measured 2026-09-10: 2,035
+    # outcomes in that state, 1,937 of them inside the published curve, and the
+    # `…LEAD` arm's win rate is ~1% at EVERY price decile from 0.03 to 0.95.
+    #
+    # 🔴 IT INVENTS NO PRICE RULE. `backfill_winners` Part A2 already owns this
+    # exact correction (reset where cal = opening and the pre-commence snapshot
+    # differs; refill from that snapshot); both halves are budget-gated and the
+    # pipeline has been stopping early for weeks (CAL-P1080 measured
+    # `partial_budget_guard`, `stopped_before: bookmaker_closing`, 757.8s of an
+    # 840s limit). These are not rows A2 judges differently — they are rows it
+    # never reached. A guard fails the build if this rail grows a threshold of
+    # its own, and a second guard parses the SET clause per assignment.
+    # ONE COLUMN: `calibration_probability`. Never `is_winner`,
+    # `opening_probability` or `resolution_source` (gotcha #21), and never
+    # `last_updated` — the poller's touch-stamp is read elsewhere as liveness
+    # (#2024). The closing selector is strictly BEFORE commence_time (ruling
+    # 103). Tournament-scoped golf is OUT by an ANCHORED ticker pattern: it
+    # measures 2.12/2.42 ECE against these arms' 14.86/8.58, and #938's title
+    # wrongly groups the two.
+    # D51: every planned row carries its `before` on the dry run as well as the
+    # apply, and `restore_sql` is ONE statement — exact because a planned row is
+    # by definition one where cal = opening, so restoring from the opening
+    # column restores each row's own value. Takes no bounds.
+    # ATTENDED-OPTIONAL, and TERMINATING: never wire this to a beat. The durable
+    # fix is Part A2 finishing; this drains the backlog it left.
+    "golf-round-closing-line": (
+        "app.tasks.repair_golf_round_closing_line",
         "repair",
     ),
 }

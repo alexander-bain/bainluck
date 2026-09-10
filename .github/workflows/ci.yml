@@ -1411,6 +1411,46 @@ jobs:
             exit 1
           fi
 
+      - name: "#938 golf round markets stop publishing a stamp as a price (real Postgres)"
+        # `KXDPWORLDTOURR1LEAD-HEIO26` publishes twenty-three golfers at 0.990
+        # while Kalshi's own last quote before that round reads 0.070 / 0.350 /
+        # 0.380. The real numbers were in `futures_odds_snapshots` the whole
+        # time; the published 0.99 is the market's OPENING stamp, carried
+        # forward because `backfill_winners` Part A2 — which already owns this
+        # correction — is budget-gated and has been stopping early for weeks.
+        #
+        # Real Postgres because every load-bearing part is server-side. The
+        # candidate predicate turns on a correlated `LEFT JOIN LATERAL` ordered
+        # `captured_at DESC LIMIT 1`; the write re-derives that same lateral
+        # INSIDE the UPDATE rather than trusting the plan's ids; and
+        # `Numeric(7,6)` equality (`calibration_probability =
+        # opening_probability`) is a column comparison, not a Python one — a
+        # float round-trip makes 0.99 == 0.99 true in Python and can make it
+        # false in the column, which is the entire candidate test.
+        #
+        # Two-armed like its neighbours. The controls carry the safety argument:
+        # a quote captured AFTER the round begins must be refused (ruling 103),
+        # a row Part A2 already repriced must not be examined at all, and the
+        # tournament-scoped market — 2.12/2.42 ECE against these arms' 14.86/8.58
+        # — must be out of the bound. AND
+        # `test_nulling_the_stamp_cannot_pass_this` executes the repair a
+        # reviewer reaches for first (`SET calibration_probability = NULL`, "let
+        # the curve fall back") and requires the published price to stay at 0.99,
+        # because the curve price is a COALESCE, not an exclusion (gotcha #144).
+        # Green therefore means writing the real closing line was proved
+        # NECESSARY, not that nothing objected.
+        #
+        # Same skip-detection as every gate in this job: adding the file is not
+        # adding the gate.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_golf_round_closing_line_1081_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/golf938.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/golf938.txt; then
+            echo "::error::#938 golf round closing-line gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4444 the census caps do not move the numbers (real Postgres)"
         # The two `precompute_backfill_progress` tiles ran an uncapped
         # per-outcome `COUNT(*)` over `futures_odds_snapshots` and became the two
