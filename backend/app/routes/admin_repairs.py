@@ -690,6 +690,29 @@ _REPAIRS = {
         "app.tasks.repair_polymarket_leg_label",
         "repair",
     ),
+    # #4578 (lane1b/116): the BACKWARD half of #4458. Deletes the market legs
+    # `seed_persons_from_futures_fields` minted as `kind='person'` — margin
+    # ladders ("1+ strokes"), head-to-head legs ("Jon Rahm beats McIlroy and
+    # Spieth"), scoring placeholders — 4,913 of 7,471 measured 2026-09-10. The
+    # reader harm is alias collapse: 1,450 share the derived alias `strokes`
+    # and 1,124 share `round`, and `resolve_alias` picks one arbitrarily.
+    # Membership is decided by the SHIPPED `is_plausible_person_name`, imported
+    # from `entity_registry`, never by SQL restating its rules — the filing's
+    # SQL proxy says 65.8% and the predicate says 67.2%, and a repair that
+    # deletes a different set than the guard refuses is one nobody can restore
+    # confidently. Two-call: ?apply=false returns a census and a plan_hash;
+    # ?apply=true&plan_hash= consumes THAT plan and refuses a stale one.
+    # D51: the undo receipt carries every deleted `entities` row, every
+    # `entity_aliases` row CASCADE would take, and every `event_participants`
+    # .entity_id cleared — staged in the SAME transaction as the delete.
+    # Restore with `?undo_identity=<id>&apply=true`; every apply prints the
+    # command. Capped at 1,500 rows per call and keyset-paged on entities.id —
+    # read `scan_exhausted`, not a remaining count. ATTENDED ONLY: never wire
+    # this to a beat — it is a drain with an end state.
+    "futures-person-seed-purge": (
+        "app.tasks.repair_futures_person_seed",
+        "repair",
+    ),
 }
 
 
