@@ -2121,15 +2121,150 @@ def is_wholly_silent_card(item: dict) -> bool:
     return not any(str(text or "").strip() for text in spoken)
 
 
-def _offends_the_first_page(item: dict) -> bool:
-    """The union the floor screens on: should not lead, OR does not speak."""
-    return is_first_page_quality_offender(item) or is_wholly_silent_card(item)
+#: Clause (d)'s window (#4080) — TEN served slots, not the twenty the ladder
+#: and silence classes screen on, and the difference is the whole decision.
+#: Measured over the live pool on 2026-09-10:
+#:
+#:     window 10 -> 6 offenders, 47 replacements, page one 40% futures
+#:     window 20 -> 13 offenders, 38 replacements, page one 75% futures
+#:
+#: At twenty the swap drags the futures tail forward and page one becomes a
+#: futures monoculture — exactly what the why-now oracle was written to prevent,
+#: arriving through the WINDOW instead of through the oracle (gotcha #43, and
+#: #1091's emptied Sports tab). The number is load-bearing, so
+#: `test_the_why_now_window_is_ten_4080` fails if it silently widens.
+FIRST_PAGE_WHY_NOW_WINDOW = 10
+
+#: The card types clause (d) governs — and why every other type is exempt.
+#:
+#: SCOPED BY CARD TYPE, for the reason #4695 was blocked for missing (CERT-2481,
+#: and gotcha #43): a page-one rule that does not state its scope collides with
+#: another ship. A futures card and a bundle carry their reason for being here
+#: in their COPY. The three things `NOT_A_WHY_NOW_MARKERS` refuses — "leads at",
+#: "related markets", "across 2 sources" — are all futures copy, and stripped of
+#: a caption such a card is a percentage and a question.
+#:
+#: Every other type carries substance no caption holds, and demoting it over a
+#: missing phrase is a category error that fights a live ruling: a game card's
+#: story is its score, and #4681 and notice 27 REQUIRE a finished marquee final
+#: to reach page one; a concept card renders the matchup; a tournament card its
+#: field.
+#:
+#: Measured, not assumed (2026-09-10 09:55Z, live page one): every card lacking
+#: a why-now in the first ten was `futures` (3) or `bundle` (3), while every
+#: concept and tournament card passed on "live" / "this week". So the scope
+#: forfeits no offender and protects the ruling — both directions asserted in
+#: `test_clause_d_why_now_floor_4080.py`.
+_WHY_NOW_FLOOR_TYPES = frozenset({"futures", "bundle"})
+
+#: The keys `_card_why_now` reads on the card itself. Used only for the
+#: absence-of-capture guard below, never to re-derive the verdict.
+_WHY_NOW_DOORS = ("headline", "context_summary", "reason")
+
+
+def _is_reasonless(item: dict) -> bool:
+    """Judgeable, and naming nothing that happened — WITHOUT the type scope.
+
+    The type-agnostic core of clause (d). It exists because the scope means two
+    different things on the two sides of a swap, and conflating them turned
+    Discover into the scoreboard once already
+    (`test_page_one_is_still_mostly_not_games` caught it):
+
+      * deciding whether a card in the window is an OFFENDER is scoped by type,
+        so a game card is never punished for a caption it was never going to
+        have (#4681, notice 27);
+      * deciding whether a card may be PROMOTED into a slot that was freed for
+        naming no reason is not, because a card exempt from the test is not
+        thereby a good answer to it. Filling the vacancy with another reasonless
+        card is a swap that reports itself as a fix and changes nothing.
+
+    Absence of capture still means "not judged" on both sides — see
+    `lacks_a_why_now`.
+    """
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    has_a_door = any(door in item for door in _WHY_NOW_DOORS) or bool(data.get("items"))
+    if not has_a_door:
+        return False
+
+    # Deferred import: `feed_quality_debug` imports THIS module at module scope,
+    # so importing it at the top here would close the cycle (gotcha #3's
+    # neighbourhood). The call is a `sys.modules` lookup per card.
+    from app.utils.feed_quality_debug import _card_why_now
+
+    return _card_why_now(item) is None
+
+
+def lacks_a_why_now(item: dict) -> bool:
+    """Does this card fail to name something that HAPPENED? (#4080 clause (d).)
+
+    The third and widest class the floor screens on. `is_wholly_silent_card`
+    catches a card that says NOTHING; this catches one that speaks and still
+    does not say why it is on the page this morning — "Los Angeles Dodgers leads
+    at 29%" is a standing fact that reads the same today as it did last Tuesday.
+
+    **The oracle is imported, never re-implemented.** `_card_why_now` is the
+    metric (`why_now_coverage`, D1 #4066), and the control and the metric sharing
+    one function is what makes them unable to drift — the third handshake failure
+    in a week came from two halves agreeing on a vocabulary with nothing testing
+    the join. `test_the_floor_and_the_metric_share_one_oracle_4080` asserts the
+    identity, so a local copy cannot be introduced later.
+
+    **Absence of capture is not absence of a reason** — the same trap
+    `is_wholly_silent_card` documents. A reduced fixture that carries none of the
+    oracle's keys would score `None` from it and be read as reasonless, which
+    would make every card in the #1958 corpus an offender and hand the floor a
+    page with nothing clean to swap in. A served card always carries the keys,
+    with `None` in them when it has nothing to say, so the real population is
+    unaffected by the guard.
+    """
+    if item.get("type") not in _WHY_NOW_FLOOR_TYPES:
+        return False
+    return _is_reasonless(item)
+
+
+def _is_clean_replacement_for(
+    candidate: dict, *, position: int, why_now_window: int
+) -> bool:
+    """May this tail card be swapped INTO first-page slot ``position``?
+
+    Deliberately not the negation of `_offends_the_first_page`. The two bars
+    differ on exactly one point — the why-now test is type-scoped when judging a
+    card that is already on the page, and type-agnostic when choosing one to
+    promote onto it. `_is_reasonless` says why.
+    """
+    if is_first_page_quality_offender(candidate) or is_wholly_silent_card(candidate):
+        return False
+    if position < why_now_window and _is_reasonless(candidate):
+        return False
+    return True
+
+
+def _offends_the_first_page(
+    item: dict,
+    *,
+    position: int | None = None,
+    why_now_window: int = FIRST_PAGE_WHY_NOW_WINDOW,
+) -> bool:
+    """The union the floor screens on: should not lead, does not speak, or —
+    inside the first `why_now_window` slots — does not say why it is here today.
+
+    `position` is the FIRST-PAGE slot the card is being judged for, not the slot
+    it currently occupies: a tail card is screened at the slot it would be
+    swapped INTO. `None` means "judge the position-independent classes only",
+    which is what a caller asking "is this card a ladder?" wants.
+    """
+    if is_first_page_quality_offender(item) or is_wholly_silent_card(item):
+        return True
+    if position is not None and position < why_now_window:
+        return lacks_a_why_now(item)
+    return False
 
 
 def enforce_first_page_quality_floor(
     items: list[dict],
     *,
     first_page_size: int = 20,
+    why_now_window: int = FIRST_PAGE_WHY_NOW_WINDOW,
 ) -> tuple[list[dict], dict]:
     """The ladder admission arm — #1958, Fable ruling (d) 2026-08-18.
 
@@ -2156,8 +2291,19 @@ def enforce_first_page_quality_floor(
     by #4056 and #4094. A card with nothing to say yields its slot instead —
     the same swap, on the same evidence, through the same loud shortfall.
 
+    **The third class is clause (d) itself** (#4080). A card can speak and still
+    not say why it is here THIS MORNING: "Los Angeles Dodgers leads at 29%" is a
+    standing fact, true last Tuesday and true next month. So inside the first
+    ``why_now_window`` slots a futures card or bundle that names nothing which
+    HAPPENED yields its slot too — see `lacks_a_why_now` for the card-type scope
+    and `FIRST_PAGE_WHY_NOW_WINDOW` for why the window is ten and not twenty.
+    This class is the only position-dependent one: it governs the first ten
+    slots, while the ladder and silence classes govern the whole first page.
+
     Screening happens here rather than in the copy generators deliberately
-    (#4080): the generators must not be the thing that decides slots.
+    (#4080): the generators must not be the thing that decides slots. A card with
+    nothing true to say loses the slot; it never gets copy manufactured for it
+    (#4056, #4094).
 
     **It demotes; it never drops.** Ruling (d) is explicit that named Alex
     exclusions remain the ONLY hard-drops — those are the ``suppress`` arms, each
@@ -2177,7 +2323,8 @@ def enforce_first_page_quality_floor(
 
     Returns:
         ``(items, meta)`` where meta carries ``offenders_in_window``,
-        ``demoted``, ``unreplaced`` and ``clean_replacements_available``.
+        ``demoted``, ``unreplaced``, ``clean_replacements_available``,
+        ``silent_in_window``, ``no_why_now_in_window`` and ``why_now_window``.
     """
     window_size = min(first_page_size, len(items))
     if window_size <= 0:
@@ -2186,42 +2333,82 @@ def enforce_first_page_quality_floor(
             "demoted": 0,
             "unreplaced": 0,
             "clean_replacements_available": 0,
+            "silent_in_window": 0,
+            "no_why_now_in_window": 0,
+            "why_now_window": 0,
         }
+
+    # The why-now window can never exceed the page it governs: at `limit=5` the
+    # first page IS five cards, and a ten-slot clause would screen slots that do
+    # not exist.
+    effective_why_now_window = min(why_now_window, window_size)
 
     window = items[:window_size]
     tail = items[window_size:]
     offender_positions = [
-        idx for idx, item in enumerate(window) if _offends_the_first_page(item)
-    ]
-    clean_tail_positions = [
-        idx for idx, item in enumerate(tail) if not _offends_the_first_page(item)
+        idx
+        for idx, item in enumerate(window)
+        if _offends_the_first_page(
+            item, position=idx, why_now_window=effective_why_now_window
+        )
     ]
 
     meta = {
         "offenders_in_window": len(offender_positions),
         "demoted": 0,
         "unreplaced": 0,
-        "clean_replacements_available": len(clean_tail_positions),
-        # Reported separately so the two classes never hide each other: a page
+        # Supply is counted at the STRICTEST slot (position 0), because that is
+        # the bar a page-one replacement has to clear. Counting it loosely would
+        # report replacements that the pairing below then refuses.
+        "clean_replacements_available": sum(
+            1
+            for cand in tail
+            if _is_clean_replacement_for(
+                cand, position=0, why_now_window=effective_why_now_window
+            )
+        ),
+        # Reported separately so the three classes never hide each other: a page
         # that swapped three ladders reads the same in `demoted` as one that
         # swapped three silent cards, and they are different stories.
         "silent_in_window": sum(1 for item in window if is_wholly_silent_card(item)),
+        "no_why_now_in_window": sum(
+            1 for item in window[:effective_why_now_window] if lacks_a_why_now(item)
+        ),
+        "why_now_window": effective_why_now_window,
     }
     if not offender_positions:
         return items, meta
 
-    # Pair each offender with the highest-placed clean card beyond the window.
-    # The tail is already in served order, so "first available" IS "best".
-    swaps = min(len(offender_positions), len(clean_tail_positions))
-    meta["demoted"] = swaps
-    meta["unreplaced"] = len(offender_positions) - swaps
-
     new_window = list(window)
     new_tail = list(tail)
-    for pair in range(swaps):
-        w_idx = offender_positions[pair]
-        t_idx = clean_tail_positions[pair]
-        new_window[w_idx], new_tail[t_idx] = new_tail[t_idx], new_window[w_idx]
+    used: set[int] = set()
+
+    # Pair each offender with the highest-placed card that is clean AT THE SLOT
+    # IT WOULD FILL. The bar is position-dependent — a card with no why-now is a
+    # legal replacement at slot 14 and not at slot 3 — so the candidate list
+    # cannot be computed once up front. The tail is already in served order, so
+    # "first available" IS "best".
+    for w_idx in offender_positions:
+        pick = None
+        for t_idx, candidate in enumerate(new_tail):
+            if t_idx in used:
+                continue
+            if not _is_clean_replacement_for(
+                candidate, position=w_idx, why_now_window=effective_why_now_window
+            ):
+                continue
+            pick = t_idx
+            break
+        if pick is None:
+            # No clean card left for this slot. The offender STAYS (gotcha #53 —
+            # a short page is a worse failure than a boring one) and `unreplaced`
+            # says so.
+            continue
+        used.add(pick)
+        new_window[w_idx], new_tail[pick] = new_tail[pick], new_window[w_idx]
+
+    meta["demoted"] = len(used)
+    meta["unreplaced"] = len(offender_positions) - len(used)
 
     return new_window + new_tail, meta
 

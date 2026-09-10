@@ -240,15 +240,27 @@ class TestTheSilentCardYieldsItsSlot:
         assert {id(i): i["score"] for i in out} == before
 
     def test_the_hook_only_control_keeps_its_slot(self):
-        """A card speaking through ONE real Discover door is not demoted.
+        """A card speaking through ONE real Discover door is not SILENT.
 
         This is the direction that fails if the door list shrinks too far — the
         opposite error from CERT-2473's, and just as bad: demoting a card the
         reader can actually read.
+
+        Clause (d) is switched off here (`why_now_window=0`) on purpose. #4080
+        added a third, independent reason to yield a slot — a card can speak and
+        still name nothing that HAPPENED — and a hook is editorial framing
+        ("Can the Dodgers repeat?"), which is a "what". Letting that class run
+        inside this test would make it pass or fail for a reason that is not its
+        subject; the hook-only card's treatment under clause (d) is pinned in
+        `test_clause_d_why_now_floor_4080.py` instead. What this test still
+        guards, and all it guards, is that the SILENCE predicate reads all four
+        Discover doors.
         """
         items = [HOOK_ONLY] + [_speaking(f"c-{n}") for n in range(12)]
 
-        out, meta = enforce_first_page_quality_floor(items, first_page_size=10)
+        out, meta = enforce_first_page_quality_floor(
+            items, first_page_size=10, why_now_window=0
+        )
 
         assert meta["silent_in_window"] == 0
         assert meta["demoted"] == 0
