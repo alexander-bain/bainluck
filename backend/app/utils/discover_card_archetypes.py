@@ -327,7 +327,18 @@ def _threshold_points(
     name: str,
     outcomes: list[dict[str, Any]],
     outcome_count: int | None,
+    ladder_already_refused: bool = False,
 ) -> list[dict[str, Any]]:
+    # CERT-2451 — the caller may have made this decision already. A serializer
+    # that filtered the incoherent rungs out of its own outcome list hands us a
+    # ladder that is coherent BY CONSTRUCTION, so the guard below cannot see
+    # that it is standing on one rung of a collapsed one. When the caller says
+    # it collapsed, the treatment is refused here exactly as if we had found it
+    # ourselves — including the market-name fallback, which is skipped because
+    # this returns before it (falling back would resurrect the treatment the
+    # serializer just refused, the UX-P008 clause 2 failure).
+    if ladder_already_refused:
+        return []
     # UX-1052 item 4 -- a date question is a ladder whose axis is time. Tried
     # FIRST, and returned whole: a set of date buckets must never be half-read
     # as magnitudes ("Before 2027" scoring a rung at 2027 beside a month that
@@ -518,6 +529,7 @@ def classify_discover_card_archetype(
     discover_llm: dict[str, Any] | None = None,
     resolved: bool = False,
     status: str | None = None,
+    ladder_treatment_refused: bool = False,
 ) -> dict[str, Any]:
     """Return frontend/admin rendering metadata for a Discover futures market.
 
@@ -551,6 +563,10 @@ def classify_discover_card_archetype(
         name=market_name,
         outcomes=outcome_rows,
         outcome_count=count,
+        # CERT-2451: a caller that filtered the ladder itself is the only one
+        # who can still see whether it collapsed. `outcomes` here is what
+        # SURVIVED that filter.
+        ladder_already_refused=ladder_treatment_refused,
     )
     distribution_outcomes = _distribution_outcomes(outcome_rows)
     comparison_theme = _comparison_theme(market_name, category)

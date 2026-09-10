@@ -383,27 +383,21 @@ _LADDER_MONOTONE_TOLERANCE = 0.02
 _LADDER_MIN_PRICED_RUNGS = 3
 
 
-def incoherent_ladder_indexes(
+def incoherent_ladder_verdict(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],
     prob_of: Callable[[_T], float | None],
-) -> set[int]:
-    """Positions in ``items`` whose price contradicts their own cumulative ladder.
+) -> tuple[set[int], int]:
+    """``(positions to drop, how many priced rungs the ladder had)``.
 
-    Returns an EMPTY set unless
-    :func:`app.utils.ladder_monotonicity.cumulative_outcome_ladder` says the
-    outcomes are one nested ladder, so a band set, a mixed set, a two-tail set
-    and a set with no comparator legs all come back untouched.
+    The second half is the part a caller that filters UPSTREAM cannot recover
+    afterwards, and CERT-2451 is the cost of not returning it: once the drop has
+    happened the survivors are coherent by construction, so nothing downstream
+    can tell a two-rung ladder from the one rung left of a six-rung one. See
+    :func:`ladder_treatment_collapsed`.
 
-    Which rungs are named is not "everything that dips": the answer is the
-    complement of the LONGEST run that IS coherent. Take a ladder priced 93.5% /
-    73% / 37% / 2% / 24% / 8.5% / 3.5% up its rungs. A scan that flags every rung
-    sitting above its predecessors' floor blames the last three — three prices
-    that agree with each other and with everything below them — and leaves the
-    one broken rung (the 2%) standing as the ladder's own definition of the
-    truth. Keeping the longest coherent run names the 2%, and on the two
-    production cards this was written for it names "Above 67" (Netflix) and
-    "Above 94.609" (USDINR): the rungs those cards were headlined by.
+    Everything else about the verdict is documented on
+    :func:`incoherent_ladder_indexes`, which is this function's first half.
     """
     # The rows handed to the law are throwaway dicts carrying the caller's
     # POSITION, not its label: a leg is identified by where it sits in `items`,
@@ -412,7 +406,7 @@ def incoherent_ladder_indexes(
         [{"name": name_of(item) or "", "index": index} for index, item in enumerate(items)]
     )
     if ladder is None:
-        return set()
+        return set(), 0
     legs, direction = ladder
 
     ordered: list[tuple[float, float, int]] = []
@@ -425,7 +419,7 @@ def incoherent_ladder_indexes(
     ordered.sort(key=lambda rung: rung[0])
 
     if len(ordered) < _LADDER_MIN_PRICED_RUNGS:
-        return set()
+        return set(), len(ordered)
 
     # Longest coherent run, O(n^2) over a list a market's outcome count bounds.
     # `bound` is the run's running EXTREME rather than its previous element:
@@ -464,7 +458,68 @@ def incoherent_ladder_indexes(
         coherent.add(ordered[cursor][2])
         cursor = previous[cursor]
 
-    return {index for _, _, index in ordered if index not in coherent}
+    return (
+        {index for _, _, index in ordered if index not in coherent},
+        len(ordered),
+    )
+
+
+def incoherent_ladder_indexes(
+    items: Sequence[_T],
+    name_of: Callable[[_T], str | None],
+    prob_of: Callable[[_T], float | None],
+) -> set[int]:
+    """Positions in ``items`` whose price contradicts their own cumulative ladder.
+
+    Returns an EMPTY set unless
+    :func:`app.utils.ladder_monotonicity.cumulative_outcome_ladder` says the
+    outcomes are one nested ladder, so a band set, a mixed set, a two-tail set
+    and a set with no comparator legs all come back untouched.
+
+    Which rungs are named is not "everything that dips": the answer is the
+    complement of the LONGEST run that IS coherent. Take a ladder priced 93.5% /
+    73% / 37% / 2% / 24% / 8.5% / 3.5% up its rungs. A scan that flags every rung
+    sitting above its predecessors' floor blames the last three — three prices
+    that agree with each other and with everything below them — and leaves the
+    one broken rung (the 2%) standing as the ladder's own definition of the
+    truth. Keeping the longest coherent run names the 2%, and on the two
+    production cards this was written for it names "Above 67" (Netflix) and
+    "Above 94.609" (USDINR): the rungs those cards were headlined by.
+    """
+    return incoherent_ladder_verdict(items, name_of, prob_of)[0]
+
+
+# How many rungs the reader's ladder needs to BE a ladder. Not a display taste:
+# `FuturesCard.tsx` draws the heatmap only on `heatmapRows.length >= 2` and falls
+# through past the distribution branch to a plain leader card below it, so a
+# one-rung "ladder" is not a smaller ladder — it is a card with its field
+# deleted (the UX-P008 failure).
+_LADDER_MIN_DRAWN_RUNGS = 2
+
+
+def ladder_treatment_collapsed(
+    items: Sequence[_T],
+    name_of: Callable[[_T], str | None],
+    prob_of: Callable[[_T], float | None],
+) -> bool:
+    """True when dropping the incoherent rungs leaves too few to draw a ladder.
+
+    CERT-2451. :func:`drop_incoherent_ladder_outcomes` deliberately never
+    empties, so a serializer that filters and hands the survivors on presents
+    the classifier with a coherent ladder of one rung — indistinguishable from a
+    market that only ever had one. The classifier then re-emits
+    ``threshold_heatmap`` (a group or canonical key is enough), the frontend
+    needs two rows, finds one, and the whole field disappears.
+
+    So the caller that owns the drop asks this question BEFORE it drops, and
+    carries the answer to the classifier. Measured on the grader's specimen —
+    ``Above 10`` .20 / ``Above 20`` .90 / ``Above 30`` .95 — the coherent run is
+    ``Above 10`` alone, and this returns True.
+    """
+    incoherent, priced_rungs = incoherent_ladder_verdict(items, name_of, prob_of)
+    if not incoherent:
+        return False
+    return priced_rungs - len(incoherent) < _LADDER_MIN_DRAWN_RUNGS
 
 
 def drop_incoherent_ladder_outcomes(
@@ -485,9 +540,24 @@ def drop_incoherent_ladder_outcomes(
 
     NEVER EMPTIES, matching :func:`drop_dominant_field_outcomes`: an
     honest-empty decision belongs to the surface, not to a filter.
+
+    AND NEVER ATTRIBUTES WHAT IT CANNOT ATTRIBUTE (CERT-2451). If removing the
+    incoherent rungs would leave fewer than two, every priced rung contradicts
+    every other one and "which rung is the wrong one" has no answer — the
+    surviving rung is whichever the longest-run tie-break happened to reach.
+    That is the same argument ``_LADDER_MIN_PRICED_RUNGS`` already makes for a
+    two-rung reversal, one step further out, so it gets the same answer: drop
+    NOTHING and let the caller refuse the ladder TREATMENT via
+    :func:`ladder_treatment_collapsed`. The field the reader was going to be
+    shown survives; only the bars, which are where the contradiction is legible,
+    do not. Measured 2026-09-09 on `GET /api/feed?limit=250`: of the 11 served
+    cumulative ladders, 2 lose a rung and **0** collapse — this is a defensive
+    path, not a population.
     """
-    incoherent = incoherent_ladder_indexes(items, name_of, prob_of)
+    incoherent, priced_rungs = incoherent_ladder_verdict(items, name_of, prob_of)
     if not incoherent:
+        return list(items)
+    if priced_rungs - len(incoherent) < _LADDER_MIN_DRAWN_RUNGS:
         return list(items)
     kept = [item for index, item in enumerate(items) if index not in incoherent]
     return kept if kept else list(items)
