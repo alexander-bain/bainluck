@@ -567,11 +567,19 @@ class TestTheTerminalIsActuallyRead:
     def test_statpal_standings_is_enrolled(self):
         assert "statpal_standings" in ENFORCED_TASKS
 
-    def test_the_old_summary_would_not_have_been_authoritative(self):
-        """The production shape before this change, graded.
+    def test_the_old_summary_is_still_not_authoritative_after_enrollment(self):
+        """The production shape before this change, graded — and the deploy-day
+        question it answers.
 
-        `total_teams_updated: 62` with NFL and MLB at zero — and `verdict_for`
+        `total_teams_updated: 62` with NFL and MLB at zero, and `verdict_for`
         could say nothing about it, which is why it ran for months.
+
+        The part worth pinning is that ENROLLING the task does not change that.
+        A summary with no terminal fields classifies non-authoritative UNKNOWN
+        *inside* `ENFORCED_TASKS` too, so between this deploying and the first
+        08:00Z run — when the cached summary is still the old shape — no surface
+        turns a new red. Only the reason string moves, from
+        `not_enforced(unknown:no_terminal_fields)` to `no_terminal_fields`.
         """
         old = {
             "total_teams_updated": 62,
@@ -586,7 +594,10 @@ class TestTheTerminalIsActuallyRead:
                  "teams_updated": 32},
             ],
         }
-        assert verdict_for("statpal_standings", old).verdict in NOT_GREEN
+        verdict = verdict_for("statpal_standings", old)
+        assert verdict.verdict in NOT_GREEN
+        assert verdict.reason == "no_terminal_fields"
+        assert verdict.authoritative is False
 
     def test_the_same_pass_under_the_new_contract_is_amber(self):
         """The same day's work, now gradeable: two sports read, two empty."""
