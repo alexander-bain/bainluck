@@ -53,6 +53,11 @@ PUSH_SPREAD = "Tampa Bay -5 first 5 innings"           # exactly a five-run marg
 # "Yes" on a market whose line is nowhere on the row. It must keep rendering NO
 # verdict — not a push — or the third word has swallowed the ungraded population.
 UNGRADABLE = "Yes"
+# A PRICED player prop that nothing grades — the #1650 population. It reaches
+# `props_script` for certain (it is an ordinary player prop), carries
+# `hit is None` and no `actual`, and must render no verdict at all.
+UNGRADED_PLAYER_PROP = "Over 1.5"
+UNGRADED_PROP_MARKET = "Ronald Acuna Jr. Hits"
 
 
 def _rays_at_braves_finished():
@@ -84,7 +89,8 @@ def _rays_at_braves_finished():
     lone_yes = _make_futures_market(
         id=913, name="Tampa Bay vs Atlanta: 1st Inning Total", source="kalshi"
     )
-    for m in (total, spread, lone_yes):
+    ungraded = _make_futures_market(id=914, name=UNGRADED_PROP_MARKET, source="kalshi")
+    for m in (total, spread, lone_yes, ungraded):
         m.status = "open"
         m.event_id = EVENT_ID
 
@@ -93,8 +99,9 @@ def _rays_at_braves_finished():
         _make_outcome(id=9602, market_id=911, name=HIT_TOTAL, probability=0.50),
         _make_outcome(id=9603, market_id=912, name=PUSH_SPREAD, probability=0.50),
         _make_outcome(id=9604, market_id=913, name=UNGRADABLE, probability=0.50),
+        _make_outcome(id=9605, market_id=914, name=UNGRADED_PLAYER_PROP, probability=0.50),
     ]
-    return event, [total, spread, lone_yes], outcomes
+    return event, [total, spread, lone_yes, ungraded], outcomes
 
 
 @pytest.fixture
@@ -204,9 +211,49 @@ async def test_an_ungraded_row_is_not_a_push(finished_client):
     "push", every ungraded prop on the page has just been declared a tie.
     """
     payload = (await finished_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
-    row = _script(payload).get(UNGRADABLE)
+    script = _script(payload)
+    row = script.get(UNGRADABLE)
 
-    if row is not None:
-        assert row["graded_result"] != "push", row
-        assert row["graded_result"] is None, row
-        assert row["graded_label"] is None, row
+    # NOT `if row is not None` — a vacuous pass here is exactly how this test
+    # would stop testing anything. The refusal path may legitimately drop the
+    # row from the payload entirely, so the ASSERTION is "absent, or present
+    # with no verdict", and the case that must never happen is named.
+    assert row is None or row["graded_result"] is None, row
+
+    # And the non-vacuous half: a PRICED, ungraded player prop that certainly
+    # does reach `props_script` — the #1650 population, `hit is None` and no
+    # `actual` — still renders nothing rather than a tie.
+    ungraded_priced = script.get(UNGRADED_PLAYER_PROP)
+    assert ungraded_priced is not None, (
+        f"the fixture's ungraded player prop did not reach props_script; "
+        f"served: {sorted(script)}"
+    )
+    assert ungraded_priced["graded_result"] is None, ungraded_priced
+    assert ungraded_priced["graded_label"] is None, ungraded_priced
+
+
+def test_the_builder_needs_the_key_and_not_merely_a_missing_bool():
+    """The mutation guard: `hit is None and actual is not None` is NOT a push.
+
+    Read `_build_props_script` directly, because the route cannot currently
+    produce this row — both of today's graders set `actual` and `hit` together.
+    That is precisely why the guard is needed: the moment a third producer sets
+    an `actual` without a bool (the #4770 routing ship is the live candidate),
+    an inferring builder would print "push" on it, and no route-level test on
+    this page would notice.
+    """
+    from app.routes.events import _build_props_script
+
+    rows = _build_props_script(
+        [
+            {"market_name": "M", "outcome_name": "no verdict, but an actual",
+             "actual": "3 pts", "hit": None},
+            {"market_name": "M", "outcome_name": "a real push",
+             "actual": "7 runs", "hit": None, "push": True},
+        ],
+        True,
+    )
+    assert rows[0]["graded_result"] is None, rows[0]
+    assert rows[0]["graded_label"] is None, rows[0]
+    assert rows[1]["graded_result"] == "push", rows[1]
+    assert rows[1]["graded_label"] == "7 runs — push", rows[1]
