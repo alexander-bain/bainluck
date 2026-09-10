@@ -13029,9 +13029,34 @@ async def _build_game_markets(
         # because they are not player props and must not reach the price
         # buckets — the whole point is that their number stays gone and only
         # their result arrives.
+        # A VERDICT OR ABSENT, NEVER BLANK (CERT-2535, repairing #4845).
+        #
+        # `_build_props_script` composes a verdict only when the event is
+        # FINISHED — every other row it emits carries a price instead. These rows
+        # deliberately carry no price, so mid-game they arrive with
+        # `pregame_mark`, `current`, `graded_result` and `graded_label` all null:
+        # a row whose every field is empty, which the frontend renders as a
+        # pending/em-dash line. Measured on a live sixth-inning reproduction, all
+        # four first-five spread rows came out that way.
+        #
+        # That is #1588's own argument turned on this ship: against a blank row an
+        # ABSENT row is strictly better, and a row with nothing in it is worse
+        # than the suppression it replaced. So the graded block is appended only
+        # when the page is one that can print a verdict.
+        #
+        # THE GATE IS TEMPORARY BY DESIGN and it is not a scope cut of #4845. It
+        # covers rows #1735 has been appending since it shipped, not just the
+        # deep-OTM rungs #4845 recovers — the reproduction blanks both. #1735's M2
+        # (grade a closed window in real time, "LIVE NOW → STILL TO COME → DONE")
+        # is what lifts it, and lifting it means teaching `_build_props_script` to
+        # grade mid-game, not deleting this line.
         "props_script": _build_props_script(
-            player_props + _grade_closed_windows(
-                _window_closed_items, event, _ticker_by_market_id
+            player_props + (
+                _grade_closed_windows(
+                    _window_closed_items, event, _ticker_by_market_id
+                )
+                if event_is_finished
+                else []
             ),
             event_is_finished,
         ),

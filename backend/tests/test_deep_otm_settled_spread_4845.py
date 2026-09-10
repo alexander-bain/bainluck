@@ -245,6 +245,39 @@ async def test_a_full_game_rung_at_the_same_price_stays_dropped(finished_client)
 
 
 @pytest.mark.asyncio
+async def test_live_closed_window_is_verdict_or_absent_never_blank(live_client):
+    """CERT-2535's repair, and the test it named.
+
+    Mid-game the sixth inning is in progress, so the first five ARE over and
+    `_window_is_closed` admits every first-five rung. But `_build_props_script`
+    composes a verdict only when the event is FINISHED, and these rows carry no
+    price by design — so each one arrived with `pregame_mark`, `current`,
+    `graded_result` and `graded_label` ALL null. The frontend renders that as a
+    pending/em-dash line: a row that says nothing at all.
+
+    Measured on this fixture before the repair: **four** such rows, and two of
+    them (`Tampa Bay -1.5` / `-2.5`) are rows #1735 has been appending since it
+    shipped — not #4845's recovered rungs. So the gate is not a scope cut of
+    #4845; it repairs a live-page defect that predates it.
+
+    The rule this pins is #1588's own, applied to its successor: a verdict, or
+    nothing. Never a blank.
+    """
+    payload = (await live_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+
+    blank = [
+        r for r in (payload.get("props_script") or [])
+        if r.get("graded_result") is None
+        and r.get("graded_label") is None
+        and r.get("pregame_mark") is None
+        and r.get("current") is None
+    ]
+    assert blank == [], (
+        f"{len(blank)} row(s) reach a live page with nothing in any field: {blank}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_live_game_keeps_the_floor_exactly_as_it_was(live_client):
     """#921 is unchanged in every state but settled.
 
@@ -259,6 +292,16 @@ async def test_a_live_game_keeps_the_floor_exactly_as_it_was(live_client):
     assert DROPPED_1 not in served
     assert DROPPED_2 not in served
     assert FULL_GAME_DROPPED not in served
-    # The above-floor rungs are the population the section is for, and they are
-    # untouched.
-    assert FAVOURED_1 in served or FAVOURED_1 in _script(payload)
+    # The above-floor FULL-GAME rung is the population the floor exists to
+    # protect, and it is untouched — so this test is about the dropped rungs and
+    # not about an empty payload.
+    assert "Tampa Bay -1.5" in served
+
+    # The above-floor FIRST-FIVE rungs are absent mid-game too, and that is
+    # #1588 working, not this change: the sixth inning is in progress, so their
+    # window is provably over and the suppression filter takes them out of
+    # `spreads`. They come back as verdicts the moment the game is final —
+    # `test_the_dropped_half_of_the_question_comes_back_as_a_verdict` is that
+    # arm. What must never happen is the third state, a row present with nothing
+    # in it; that is the test above.
+    assert FAVOURED_1 not in served
