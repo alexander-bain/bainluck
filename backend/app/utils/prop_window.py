@@ -47,6 +47,7 @@ __all__ = [
     "parse_period_number",
     "prop_window",
     "prop_window_closed",
+    "prop_window_span",
 ]
 
 
@@ -227,12 +228,21 @@ _TICKER_WINDOWS: list[tuple[re.Pattern[str], str, int]] = [
 ]
 
 
-def _window_from_text(text: str, sport: str | None) -> tuple[str, int] | None:
-    """The title-reading half of :func:`prop_window`, on one string.
+def _span_from_text(text: str, sport: str | None) -> tuple[str, int, int] | None:
+    """The title-reading half of :func:`prop_window_span`, on one string.
 
     Split out so the market name and the OUTCOME name can be read by exactly the
     same rules (#1588 / CERT-2486) — a second copy of this ladder is how the two
     would drift apart.
+
+    ** RETURNS THE WHOLE SPAN, NOT JUST ITS END (#1735). ** For suppression only
+    the last period matters, and both "First 5 Innings" and "5th Inning" close
+    after the fifth — so the original signature collapsed them and was right to.
+    A GRADER cannot: "First 5 Innings" is innings 1–5 and "9th Inning Winner" is
+    the ninth alone, and reading the second as innings 1–9 would grade a
+    single-inning question off the whole game's line score. That is the same
+    class of mistake ``parse_period_scale`` exists to prevent, one axis over, so
+    the START is carried here rather than re-derived by whoever needs it.
     """
     if not text:
         return None
@@ -242,18 +252,22 @@ def _window_from_text(text: str, sport: str | None) -> tuple[str, int] | None:
     if is_baseball or re.search(r"\binnings?\b|\bnrfi\b|\byrfi\b|\bf5\b", text, re.IGNORECASE):
         for pattern, closes_after in _BASEBALL_WINDOWS:
             if pattern.search(text):
-                return ("inning", closes_after)
+                # Every entry in `_BASEBALL_WINDOWS` is a LEADING window
+                # ("first N", NRFI/YRFI, F5) — it opens with the game.
+                return ("inning", 1, closes_after)
         # A single named inning, after the explicit windows so "First 5 Innings"
         # is not read as the 5th inning alone.
         nth = _NTH_INNING_RE.search(text)
         if nth:
             inning = int(nth.group(1))
             if 1 <= inning <= 30:
-                return ("inning", inning)
+                return ("inning", inning, inning)
 
     for pattern, unit, closes_after in _CLOCK_WINDOWS:
         if pattern.search(text):
-            return (unit, closes_after)
+            # A named half/quarter is that period alone: "2nd Quarter Total"
+            # asks about Q2, not about Q1+Q2.
+            return (unit, closes_after, closes_after)
 
     return None
 
@@ -293,28 +307,52 @@ def prop_window(
     runs to the final whistle regardless. The veto therefore returns ``None`` for
     the market before the outcome is ever read.
     """
+    span = prop_window_span(name, ticker, sport, outcome)
+    return None if span is None else (span[0], span[2])
+
+
+def prop_window_span(
+    name: str | None,
+    ticker: str | None = None,
+    sport: str | None = None,
+    outcome: str | None = None,
+) -> tuple[str, int, int] | None:
+    """``(unit, first_period, last_period)`` for a window-bounded prop, else ``None``.
+
+    :func:`prop_window` is this, with the start dropped — the cascade lives here
+    so there is exactly ONE ladder deciding what a window is. Both ends are
+    inclusive and 1-based: ``("inning", 1, 5)`` is the first five innings,
+    ``("inning", 9, 9)`` is the ninth alone.
+
+    Added for #1735, which grades a closed window off the line score and
+    therefore needs to know where the window STARTS. See :func:`_span_from_text`
+    for why collapsing the two was correct for suppression and is not correct
+    for grading.
+    """
     text = (name or "").strip()
     tick = (ticker or "").strip()
 
     # Ticker first: it is structured, and Kalshi titles frequently omit the
     # window that the ticker encodes (gotcha #16 — prefer ticker-derived facts).
+    # Both entries are leading windows: `KXMLBRFI` is the first inning and
+    # `KXMLBF5` the first five.
     for pattern, unit, closes_after in _TICKER_WINDOWS:
         if tick and pattern.search(tick):
-            return (unit, closes_after)
+            return (unit, 1, closes_after)
 
     # A period-and-fulltime combined market runs to the final whistle — and so
     # does every outcome under it, so this is checked before either is read.
     if text and _SPANS_FULL_GAME_RE.search(text):
         return None
 
-    window = _window_from_text(text, sport)
-    if window is not None:
-        return window
+    span = _span_from_text(text, sport)
+    if span is not None:
+        return span
 
     otext = (outcome or "").strip()
     if not otext or _SPANS_FULL_GAME_RE.search(otext):
         return None
-    return _window_from_text(otext, sport)
+    return _span_from_text(otext, sport)
 
 
 def prop_window_closed(
