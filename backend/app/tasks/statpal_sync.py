@@ -283,6 +283,23 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                 sport_row = sport_result.first()
                 if not sport_row:
                     details.append({"sport": our_key, "status": "sport_not_found"})
+                    # #4710. The OTHER way a mapped sport goes unasked, and the
+                    # one the #2907 repair missed: this branch `continue`s above
+                    # the fetch, so before this append the summary named only
+                    # `no_day_token` sports and left a `sport_not_found` sport to
+                    # be inferred by subtracting `sports_asked` from the key
+                    # count — an attribution the reader cannot actually make.
+                    # The terminal was already right (this arm never reaches
+                    # `sports_asked += 1`), but "correct terminal, unattributed
+                    # summary" is the shape gotcha #53 exists to stop, and the
+                    # two reasons want opposite responses: a missing `sports`
+                    # row is a gap we can close by minting one, `no_day_token`
+                    # is a permanent property of StatPal's product.
+                    sports_unasked.append({
+                        "sport": our_key,
+                        "statpal_sport": statpal_sport,
+                        "reason": "sport_not_found",
+                    })
                     continue
 
                 sport_id = sport_row.id
@@ -816,7 +833,10 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     #
     #   `sport_not_found`  the key resolves to no `sports` row, so the loop drops
     #                      it before the fetch. `golf_pga` was the production
-    #                      specimen until #4691 retired the key.
+    #                      specimen until #4691 retired the key. Counted here
+    #                      only since #4710 — this comment described BOTH arms
+    #                      from the day it was written, but the `continue` above
+    #                      the fetch appended nothing, so the summary named one.
     #   `no_day_token`     the sport IS rowed and IS mapped, but its schedule is
     #                      served one calendar board at a time and cannot be
     #                      reached through this method at all. NINE of the
@@ -833,6 +853,15 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # sports it names, and it did not. `partial` is already this task's word for
     # "something real happened and something is missing", and an operator who
     # sees it can read `sports_unasked` for which sports and why.
+    #
+    # #4710 moves ONE terminal, deliberately, and only on the all-sports form:
+    # a pass that asked somebody AND dropped a `sport_not_found` sport used to
+    # read `complete` and now reads `partial`, because the rule two paragraphs
+    # up always said it should and the missing append was why it didn't. No
+    # BEAT terminal moves: all four beats pass a single explicit `sport_key`
+    # (`sync-statpal-schedules-{nba,nhl,mlb,nfl}`), as does the #4434 in-line
+    # failover, so `sports_asked` is 0 or 1 there and a one-sport pass that
+    # cannot find its row reads `no_work` before and after.
     #
     # `no_work` is authoritative UNKNOWN in `task_verdict` — not a failure,
     # because nothing upstream is broken, and emphatically not a success.
