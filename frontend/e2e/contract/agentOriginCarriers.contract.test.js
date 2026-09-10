@@ -194,8 +194,16 @@ describe("shop-shot.mjs carries the tag (notice 39 rung 1, look.sh's whole fleet
     assert.match(code, /extraHTTPHeaders\s*:\s*\{\s*['"]x-bainluck-origin['"]\s*:/);
   });
 
-  test("sets the bl_agent cookie rung 3's analytics drop keys on", () => {
-    assert.match(code, /name\s*:\s*['"]bl_agent['"]/);
+  // Inverted 2026-09-09 (#4606, #4608). This used to REQUIRE a `bl_agent` cookie for
+  // rung 3's analytics drop. Rung 3 is withdrawn on measurement — every client rail was
+  // already agent-free (three by the consent gate, Speed Insights by its own vendor-side
+  // `navigator.webdriver || UA.includes("Headless")` bail-out), so the cookie never had a
+  // reader in any tree. It is now a drift guard in the opposite direction: re-adding the
+  // cookie would be inert code that also re-opens #4608. The comment above this block
+  // names the measurement; comments are stripped from `code`, so this cannot self-satisfy.
+  test("does NOT set a bl_agent cookie — rung 3 is withdrawn, nothing reads it", () => {
+    assert.doesNotMatch(code, /name\s*:\s*['"]bl_agent['"]/);
+    assert.doesNotMatch(code, /addCookies/);
   });
 
   test("BL_AGENT is the escape hatch, and shooting as a person stays possible", () => {
