@@ -180,7 +180,12 @@ class TestOneDeterminationUnderEveryInputOrder:
             assert len(concepts) == 1, [c["key"] for c in concepts]
             names.add(concepts[0]["name"])
         assert len(names) == 1, f"one card, {len(names)} names: {sorted(names)}"
-        assert "Pantoja" in names.pop()
+        # `next(iter(...))`, not `names.pop()`: an assert is stripped under
+        # `python -O`, so a mutation inside one is a statement that silently
+        # stops happening (`py/side-effect-in-assert`, and CodeQL caught it on
+        # this file's first push).
+        the_name = next(iter(names))
+        assert "Pantoja" in the_name, the_name
 
 
 class TestTheTitleAndTheHeroAreTheSameFight:
