@@ -21,12 +21,14 @@ that moving a template behind a helper cannot blind it.
 """
 
 import itertools
+from datetime import datetime, timezone
 
 import pytest
 
 from app.utils.feed_quality_debug import WHY_NOW_MARKERS
 from app.utils.feed_reasons import (
     DIAGNOSTIC_PHRASES,
+    claims_undated_baseline,
     contains_diagnostic_phrase,
     generate_futures_context_summary,
     generate_futures_headline,
@@ -275,3 +277,117 @@ def test_the_served_headline_is_clean_however_it_is_composed():
         assert not contains_diagnostic_phrase(
             one_signal_headline
         ), f"{signal} composed to {one_signal_headline!r}"
+
+
+# ── The same reach, the predicate it was missing (discover/030, D1 clause a) ──
+#
+# Everything above asks ONE question of the served string: does it talk about our
+# pipeline? "Well off its opening price" does not — it talks about the market —
+# so it passed every test in this file while being served as the only prose on 6
+# of 7 cards carrying it (production, 2026-09-09, `GET /api/feed` limit=100: 11
+# occurrences over 100 cards, incl. 2 bundle-member rows).
+#
+# Clause a bans a second thing: measuring against a baseline without dating it.
+# That ban is conditional — the same sentence with "since Mar 4" in it is the
+# copy we WANT — so it cannot be spelled as more entries in DIAGNOSTIC_PHRASES.
+# The tests below reuse this file's reach (every signal, every composition) with
+# `claims_undated_baseline` as the question.
+
+
+def test_no_signal_serves_an_undated_baseline_claim():
+    """Each scoring signal's last-resort label, and each generator's output."""
+    offenders = []
+    for signal in ALL_HIGHLIGHT_REASONS:
+        label = dict(FUTURES_PRIMARY_REASON_LABELS).get(signal)
+        if claims_undated_baseline(label):
+            offenders.append(f"{signal} -> primary_reason: {label!r}")
+        for producer, served in _every_generator_output(
+            [signal],
+            source_count=1,
+            leader_name="Luiz Inácio Lula da Silva",
+            leader_probability=0.52,
+        ):
+            if claims_undated_baseline(served):
+                offenders.append(f"{signal} -> {producer}: {served!r}")
+    assert (
+        not offenders
+    ), "served copy cites a baseline it will not date:\n" + "\n".join(offenders)
+
+
+def test_the_surprise_card_composes_to_nothing_rather_than_to_the_undated_claim():
+    """The production shape: a lifetime move whose opening has no date.
+
+    `_biggest_move_from_opening` returns `opened_at=None` for every market today
+    (`opening_captured_at` is not in the outcome projection — CERT-622), so the
+    dated sentence cannot fire. The card must then say NOTHING, not fall through
+    to a label that makes the claim anyway.
+    """
+    highlight = compute_futures_highlight(
+        market_tier=1,
+        sport_category="hockey",
+        market_name="Canadian Team to Win the Stanley Cup Before the 2030-31 Season",
+        outcomes=[
+            {
+                "name": "Yes",
+                "probability": 0.415,
+                "probability_change_24h": None,
+                "rank": 1,
+                "rank_change_24h": 0,
+                "opening_probability": 0.70,
+            }
+        ],
+    )
+    # The SIGNAL is untouched — this is a copy fix, not a ranking change.
+    assert "major_surprise" in highlight.reasons
+    assert highlight.primary_reason is None
+
+    served = (
+        generate_futures_headline(
+            highlight.reasons,
+            top_surprise_name="Yes",
+            top_surprise_change=-0.285,
+            top_surprise_opened_at=None,  # the state of every market today
+            now=datetime(2026, 9, 9, 21, 0, tzinfo=timezone.utc),
+        )
+        or highlight.primary_reason
+        or ""
+    )
+    assert served == "", f"the card still says {served!r} over an undated opening"
+
+    # And WITH a date the sentence is restored in full, so this is a gate on the
+    # missing baseline, not a deletion of the signal's voice.
+    dated = generate_futures_headline(
+        highlight.reasons,
+        top_surprise_name="Yes",
+        top_surprise_change=-0.285,
+        top_surprise_opened_at=datetime(2026, 3, 4, tzinfo=timezone.utc),
+        now=datetime(2026, 9, 9, 21, 0, tzinfo=timezone.utc),
+    )
+    assert "since Mar 4" in dated
+    assert not claims_undated_baseline(dated)
+
+
+def test_the_undated_baseline_detector_catches_what_it_is_for():
+    """A predicate that matches nothing bans nothing (a guard that lies).
+
+    Pinned against the exact strings production served on 2026-09-09 and against
+    the dated sentences that must keep passing.
+    """
+    assert claims_undated_baseline("Well off its opening price")
+    assert claims_undated_baseline("Off its opening price")
+    assert claims_undated_baseline("0 (0 bps) · Well off its opening price")
+    assert claims_undated_baseline(
+        "China x Philippines military clash moved up 37.5 points from opening"
+    )
+    # The dated forms — the copy this clause exists to produce.
+    assert not claims_undated_baseline("OpenAI release up 27.0 points since Mar 4")
+    assert not claims_undated_baseline(
+        "Down 28.5 points since Mar 4, 2025 — now 42% chance"
+    )
+    assert not claims_undated_baseline(
+        "Brazil Presidential Election has shifted since Sep 1"
+    )
+    # And it does not fire on copy that names no baseline at all.
+    assert not claims_undated_baseline("New favorite")
+    assert not claims_undated_baseline("Renan Santos down 28.5 points today")
+    assert not claims_undated_baseline(None)
