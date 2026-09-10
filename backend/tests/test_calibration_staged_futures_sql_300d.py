@@ -399,14 +399,24 @@ class TestCoverageCensusRidesTheStagedPath:
         assert "coverage_universe" not in _main_futures_sql(frozen=True)
 
     def test_staged_scope_now_builds_with_the_census_on(self, census_on):
-        from app.tasks.precompute_calibration import _coverage_universe_cte
+        from app.tasks.precompute_calibration import (
+            _coverage_universe_cte,
+            _roster_pushdown_predicates,
+        )
 
         sql = _main_futures_sql(frozen=True)
         # Chunk-scoped: it reaches the roster-scoped market_info, not the whole
         # futures_markets table. This is the difference the refusal existed for.
         # Compared on the whole CTE — the join line alone also appears in the
         # population chain, so a substring check on it would be vacuous.
-        assert _coverage_universe_cte(chunk_scoped=True) in sql
+        #
+        # D119 / CAL-P1090: the universe now also carries the roster conjunct on
+        # that join, so the expected text is built with the same predicate the
+        # frozen path derives rather than with the default empty one.
+        _vm, mi = _roster_pushdown_predicates(
+            frozen_vm_roster=True, market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA
+        )
+        assert _coverage_universe_cte(chunk_scoped=True, roster_predicate=mi) in sql
         assert _coverage_universe_cte(chunk_scoped=False) not in sql
 
     def test_the_narrowed_guard_still_refuses_an_unscoped_universe(self, census_on, monkeypatch):
@@ -414,7 +424,9 @@ class TestCoverageCensusRidesTheStagedPath:
 
         monkeypatch.setattr(
             "app.tasks.precompute_calibration._coverage_universe_cte",
-            lambda *, chunk_scoped: _coverage_universe_cte(chunk_scoped=False),
+            lambda *, chunk_scoped, roster_predicate="": _coverage_universe_cte(
+                chunk_scoped=False
+            ),
         )
         with pytest.raises(ValueError, match="not chunk-scoped"):
             _main_futures_sql(frozen=True)

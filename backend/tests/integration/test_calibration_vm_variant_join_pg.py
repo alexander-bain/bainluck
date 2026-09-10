@@ -1024,3 +1024,171 @@ async def test_truth_eligibility_is_what_excludes_the_ungraded_member():
         )
 
     await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# D119 / CAL-P1090 — the roster pushdown changes the PLAN and not the ROWS.
+#
+# The change adds `AND fo.market_id = ANY(:vm_roster_market_ids)` to every CTE
+# that scans `futures_outcomes` under a frozen roster. The argument that it is
+# redundant is a three-step inference about INNER joins, and
+# `tests/test_calibration_unit_scan_redundancy_p039.py` guards each step
+# structurally. But "the row set is unchanged" is a claim about OUTPUT, so it is
+# asserted on output, here, against a real Postgres — the difference between
+# proving the join implies the conjunct and proving the two statements return
+# the same rows.
+#
+# WHY IT LIVES IN THIS FILE rather than its own. A new `integration/*_pg.py`
+# needs BOTH a `COVERED` entry in `tests/test_pg_gate_seed_completeness.py` AND
+# its own step in the `search-recall` job; miss either and the job goes green
+# without ever running it. This module is already wired both ways and already
+# seeds a population that reaches `deduped`, so the arm rides it.
+#
+# 🔴 THE FALSIFIER IS THE POINT. A pushdown that is NOT redundant would silently
+# drop rows, and every count downstream would still reconcile. So the arms below
+# assert equality of the published SET and of its MULTIPLICITY, and they assert
+# the frozen statement publishes something at all first — an empty-vs-empty
+# comparison is the way this gate would most naturally pass while proving
+# nothing (a differential rig that renders nothing on every arm reads as a clean
+# diff).
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: The conjunct as the producer renders it, indentation and all. Removing this
+#: exact string is what builds the un-pushed arm.
+D119_CONJUNCT = (
+    "\n                  AND fo.market_id "
+    "= ANY(CAST(:vm_roster_market_ids AS bigint[]))"
+)
+
+
+def _without_pushdown(ctes: str) -> str:
+    """The frozen chain with every D119 conjunct removed, by surgery on the real string.
+
+    Not a second call with the pushdown disabled: the gate must compare the
+    statement production actually issues against that same statement minus the
+    conjuncts, or it is comparing two things a config flag chose rather than the
+    one edit under test.
+    """
+    assert D119_CONJUNCT in ctes, (
+        "PREMISE GONE: the D119 roster conjunct is not in the frozen SQL in the "
+        "shape this gate removes. Do not delete this gate — re-aim it, or the "
+        "comparison silently becomes statement-against-itself and passes "
+        "vacuously."
+    )
+    return ctes.replace(D119_CONJUNCT, "")
+
+
+async def _frozen_rows(session, ctes, ids, roster_ids):
+    """Published `(outcome_id, category)` under a FROZEN roster, multiplicity kept."""
+    from sqlalchemy import text
+
+    return [
+        (r.outcome_id, r.category)
+        for r in (
+            await session.execute(
+                text(
+                    "WITH "
+                    + ctes
+                    + " SELECT outcome_id, category FROM deduped "
+                    "WHERE outcome_id = ANY(:ids) ORDER BY outcome_id, category"
+                ),
+                {
+                    "ids": ids,
+                    "vm_roster_market_ids": roster_ids,
+                    # One virtual market per event, exactly as `_run_staged_futures`
+                    # builds the three parallel arrays from its assignment map.
+                    "vm_roster_vm_ids": [f"e:{EVENT_ID}" for _ in roster_ids],
+                    "vm_roster_is_grouped": [True for _ in roster_ids],
+                },
+            )
+        ).all()
+    ]
+
+
+async def test_the_roster_pushdown_changes_the_plan_and_not_the_rows():
+    """D119's acceptance: byte-identical output, with and without the conjuncts."""
+    from app.tasks.precompute_calibration import (
+        _calibration_population_ctes,
+        VM_ROSTER_MARKET_INFO_EXTRA,
+    )
+
+    async def body(session):
+        ctes = _calibration_population_ctes(
+            frozen_vm_roster=True, market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA
+        )
+
+        pushed = await _frozen_rows(session, ctes, ALL_IDS, ALL_IDS)
+        # The gate's own liveness check, FIRST. Two empty lists are equal, and a
+        # roster that selected nothing would make every assertion below true
+        # while testing nothing at all.
+        assert pushed, (
+            "the frozen chunk published NOTHING for the seeded roster, so the "
+            "comparison below would be empty-against-empty. The fixture no "
+            "longer reaches `deduped` under a frozen roster — fix the fixture, "
+            "do not delete the assertion."
+        )
+
+        unpushed = await _frozen_rows(
+            session, _without_pushdown(ctes), ALL_IDS, ALL_IDS
+        )
+        assert pushed == unpushed, (
+            "THE PUSHDOWN CHANGED THE PUBLISHED ROWS. It is supposed to be a "
+            "planner hint spelled as a predicate — redundant given "
+            "market_info's roster restriction and virtual_market's INNER join "
+            "onto the roster. If these differ, one of those premises is false "
+            "and the conjunct is FILTERING the population.\n"
+            f"  with pushdown:    {pushed!r}\n"
+            f"  without pushdown: {unpushed!r}"
+        )
+        # And the frozen scope agrees with the global one about this seed, which
+        # is what says the roster machinery itself did not quietly drop a row.
+        globally = await _rows(session, _calibration_population_ctes(), ALL_IDS)
+        assert sorted(pushed) == sorted(globally), (
+            "the frozen chunk and the global build disagree on the same seed, "
+            "independently of the pushdown — the roster scope is losing rows.\n"
+            f"  frozen: {pushed!r}\n  global: {globally!r}"
+        )
+
+    await _with_seeded_db(body)
+
+
+async def test_the_roster_scope_is_live_so_the_equality_arm_is_not_vacuous():
+    """The equality arm's positive control: this roster really does select.
+
+    Deliberately NOT named as a red test for the conjunct, because it is not
+    one. Both arms above run with `market_info` roster-scoped, so narrowing the
+    roster narrows the output through `market_info` whether or not the conjunct
+    exists — that is exactly why the conjunct is redundant. What this proves is
+    the weaker and still necessary thing: the roster bind reaches the statement
+    and changes what it publishes, so `pushed == unpushed` above is an equality
+    between two live result sets rather than between two empty ones.
+
+    The conjunct's own red test is the mutation battery over
+    `tests/test_calibration_unit_scan_redundancy_p039.py` (8/8 killed), which
+    can run without a Postgres; this file supplies the output-equality half.
+    """
+    from app.tasks.precompute_calibration import (
+        _calibration_population_ctes,
+        VM_ROSTER_MARKET_INFO_EXTRA,
+    )
+
+    async def body(session):
+        ctes = _calibration_population_ctes(
+            frozen_vm_roster=True, market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA
+        )
+        half = sorted(CRICKET_LEGS)
+
+        full = await _frozen_rows(session, ctes, ALL_IDS, ALL_IDS)
+        partial = await _frozen_rows(session, ctes, ALL_IDS, half)
+        assert full, "fixture publishes nothing under a full roster"
+        assert len(partial) < len(full), (
+            "narrowing the roster did not narrow the published set, so the "
+            "roster predicate is inert and the equality arm above is vacuous. "
+            f"full={full!r} partial={partial!r}"
+        )
+        assert {oid for oid, _ in partial} <= set(half), (
+            "the narrowed roster published an outcome outside it — the chunk "
+            f"scope is not actually scoping. got={partial!r} roster={half!r}"
+        )
+
+    await _with_seeded_db(body)

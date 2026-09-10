@@ -2895,6 +2895,60 @@ VM_ROSTER_MARKET_INFO_EXTRA = (
 )
 
 
+def _squash_sql(sql: str) -> str:
+    """Collapse whitespace so a SQL fragment can be recognised inside another.
+
+    D119 / CAL-P1090: the roster pushdown onto the ``market_info``-joined CTEs is
+    sound only when ``market_info``'s WHERE actually carries
+    :data:`VM_ROSTER_MARKET_INFO_EXTRA`, and callers assemble ``market_info_extra``
+    as free text. Comparing squashed forms means a caller who re-indents or
+    line-wraps the same restriction still gets the pushdown, while a caller who
+    passes a DIFFERENT restriction does not — which is the property that keeps the
+    conjunct redundant instead of filtering.
+    """
+    return " ".join(sql.split())
+
+
+def _roster_pushdown_predicates(
+    *, frozen_vm_roster: bool, market_info_extra: str
+) -> tuple[str, str]:
+    """The D119 roster conjunct, in its two soundness scopes.
+
+    Returns ``(vm_roster_predicate, mi_roster_predicate)`` — the same conjunct
+    text under two DIFFERENT gates, because the two families of scan site are
+    sound for two different reasons. See the block comment in
+    :func:`_calibration_population_ctes` for the full argument; in short:
+
+    * sites joining ``virtual_market`` are covered by that CTE's INNER join onto
+      ``frozen_vm_roster``, which holds whenever ``frozen_vm_roster`` is set;
+    * sites joining ``market_info`` DIRECTLY are covered only when
+      ``market_info``'s own WHERE carries :data:`VM_ROSTER_MARKET_INFO_EXTRA`,
+      which is the caller's argument and NOT implied by the flag.
+
+    ONE definition, called from both :func:`_calibration_population_ctes` and
+    :func:`_main_futures_sql`, so the population chain and the coverage census
+    cannot disagree about when the pushdown is legal.
+
+    .. warning::
+       This function SHAPES THE POPULATION SQL, so it is hashed explicitly by
+       :func:`_population_predicate_fingerprint` and :func:`_main_input_fingerprint`.
+       ``inspect.getsource`` covers a function and never its callees — the hole
+       those two docstrings keep re-teaching — so a new SQL-shaping helper must be
+       added to both root lists or an edit here would change which rows a chunk
+       reads while leaving a carried cursor resumable.
+    """
+    conjunct = (
+        f"\n                  AND fo.market_id "
+        f"= ANY(CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]))"
+    )
+    if not frozen_vm_roster:
+        return "", ""
+    market_info_is_roster_scoped = _squash_sql(
+        VM_ROSTER_MARKET_INFO_EXTRA
+    ) in _squash_sql(market_info_extra)
+    return conjunct, (conjunct if market_info_is_roster_scoped else "")
+
+
 def _virtual_market_ctes(frozen_vm_roster: bool) -> str:
     """``group_sizes`` / ``event_sizes`` / ``virtual_market``, in one of two forms.
 
@@ -3125,12 +3179,46 @@ def _calibration_population_ctes(
     # tidy: there is no roster array bound there, and adding one would filter the
     # whole population down to a chunk — silently, with every downstream row count
     # still looking self-consistent. Pinned by `TestPredicateMustNotLeakIntoGlobal`.
-    vm_stats_roster_predicate = (
-        f"\n                  AND fo.market_id "
-        f"= ANY(CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]))"
-        if frozen_vm_roster
-        else ""
+    #
+    # D119 (Alex, 2026-09-10) — CAL-P1090 extends the same conjunct from
+    # ``vm_stats`` to EVERY CTE that scans ``futures_outcomes``, because the
+    # measured position is that the fix above bought throughput and the
+    # remaining sites still each pay the full scan: a unit costs 724–857 s of
+    # which ``read:futures_unit`` is ~626 s, and the fixed prefix (~814 s) is
+    # paid B=128 times per generation — ~95% of the cost of a build. "Each
+    # piece scans its own slot" is D119's whole content.
+    #
+    # TWO gates, not one, and the difference is the soundness argument:
+    #
+    #   * ``vm_roster_predicate`` — for the sites that join ``virtual_market``.
+    #     ``virtual_market`` INNER-joins ``frozen_vm_roster`` on ``market_id``
+    #     in BOTH the scoped and unscoped variants (asserted by
+    #     ``test_market_info_extra_scopes_only_when_asked``), so the conjunct is
+    #     implied by the join and ``frozen_vm_roster`` alone is enough.
+    #
+    #   * ``mi_roster_predicate`` — for the sites that join ``market_info``
+    #     DIRECTLY. These are sound only because ``market_info``'s WHERE
+    #     carries the roster restriction, and that is the CALLER's argument
+    #     (``market_info_extra``), not a property of ``frozen_vm_roster``.
+    #     ``_calibration_population_ctes(frozen_vm_roster=True)`` with no
+    #     ``market_info_extra`` is a real, reachable call (the guard suite makes
+    #     it), and there ``market_info`` is the WHOLE resolved population — so
+    #     the conjunct would stop being a no-op and start being a silent
+    #     population filter, with every downstream row count still
+    #     self-consistent. That is the exact failure class CAL-P039's guard
+    #     exists to prevent, so the predicate is gated on the restriction being
+    #     PRESENT rather than on the flag that usually implies it.
+    #
+    # Deliberately gated rather than raising on the unsound combination: the
+    # unscoped-frozen variant is a legitimate thing to render (the guard suite
+    # renders it precisely to prove market_info scoping is caller-controlled),
+    # and refusing it would make an existing invariant untestable.
+    vm_roster_predicate, mi_roster_predicate = _roster_pushdown_predicates(
+        frozen_vm_roster=frozen_vm_roster, market_info_extra=market_info_extra
     )
+    # Kept as the historical name for the one site CAL-P039/P040 measured, so
+    # that measurement stays greppable from the code it describes.
+    vm_stats_roster_predicate = vm_roster_predicate
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
@@ -3189,7 +3277,7 @@ def _calibration_population_ctes(
                     -- which is what the design's fold measured.
                     {player_props_pair_shape_columns('fo')}
                 FROM futures_outcomes fo
-                JOIN market_info mi ON mi.market_id = fo.market_id
+                JOIN market_info mi ON mi.market_id = fo.market_id{mi_roster_predicate}
                 GROUP BY fo.market_id, mi.category, mi.market_type
             ),
             -- L2-79 Item 1: malformed 2-outcome mex binaries (winner count != 1).
@@ -3280,7 +3368,7 @@ def _calibration_population_ctes(
                 SELECT fo.market_id,
                     SUM({curve_price}) AS cp_sum
                 FROM futures_outcomes fo
-                JOIN market_info mi ON mi.market_id = fo.market_id
+                JOIN market_info mi ON mi.market_id = fo.market_id{mi_roster_predicate}
                 {curve_price_join}
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
@@ -3423,7 +3511,7 @@ def _calibration_population_ctes(
             golf_placeholder_markets AS (
                 SELECT fo.market_id
                 FROM futures_outcomes fo
-                JOIN market_info mi ON mi.market_id = fo.market_id
+                JOIN market_info mi ON mi.market_id = fo.market_id{mi_roster_predicate}
                 WHERE mi.category = 'golf'
                   AND mi.mutually_exclusive = true
                   AND mi.event_id IS NULL
@@ -3485,7 +3573,7 @@ def _calibration_population_ctes(
                 SELECT fo.market_id,
                     COUNT(*) AS terminal_eligible_n
                 FROM futures_outcomes fo
-                JOIN market_info mi ON mi.market_id = fo.market_id
+                JOIN market_info mi ON mi.market_id = fo.market_id{mi_roster_predicate}
                 JOIN market_result_shape mrs ON mrs.market_id = fo.market_id
                 -- Queue 299 rung 4: PROVED exclusivity only. The persisted shape
                 -- classifier must positively assert an exhaustive single-winner
@@ -3524,7 +3612,7 @@ def _calibration_population_ctes(
                     COUNT(*) AS present_eligible_n
                 FROM futures_outcomes fo
                 JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
-                JOIN market_info mi ON mi.market_id = fo.market_id
+                JOIN market_info mi ON mi.market_id = fo.market_id{mi_roster_predicate}
                 {curve_price_join}
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
@@ -3848,7 +3936,7 @@ def _calibration_population_ctes(
                         ORDER BY {rn_order}
                     ) AS rn_distance_rank
                 FROM futures_outcomes fo
-                JOIN virtual_market vm ON vm.market_id = fo.market_id
+                JOIN virtual_market vm ON vm.market_id = fo.market_id{vm_roster_predicate}
                 -- D5 / ruling 125 (the sign reversed) — #1978, CAL-P150.
                 -- ``vm_stats`` GROUPs BY FIVE columns; this join carried TWO.
                 -- A virtual market whose members disagree on ``category``,
@@ -4254,7 +4342,7 @@ def _coverage_bridge_column(rung: str) -> str:
     return f"cb_{rung}"
 
 
-def _coverage_universe_cte(*, chunk_scoped: bool) -> str:
+def _coverage_universe_cte(*, chunk_scoped: bool, roster_predicate: str = "") -> str:
     """The COVERAGE population — one definition, in one of two scopes.
 
     **Global** (``chunk_scoped=False``): every resolved futures outcome carrying
@@ -4278,14 +4366,14 @@ def _coverage_universe_cte(*, chunk_scoped: bool) -> str:
     to keep honest than two ladders that agree today.
     """
     if chunk_scoped:
-        return """
+        return f"""
             coverage_universe AS (
                 SELECT fo.id AS outcome_id,
                     fo.market_id AS market_id,
                     fo.resolution_source AS resolution_source,
                     (fo.calibration_probability IS NOT NULL) AS has_terminal_cal_price
                 FROM futures_outcomes fo
-                JOIN market_info mi ON mi.market_id = fo.market_id
+                JOIN market_info mi ON mi.market_id = fo.market_id{roster_predicate}
                 WHERE fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
             )"""
@@ -4339,7 +4427,7 @@ def _coverage_global_rung_sql() -> str:
     )
 
 
-def _coverage_bridge_ctes(*, frozen: bool = False) -> str:
+def _coverage_bridge_ctes(*, frozen: bool = False, roster_predicate: str = "") -> str:
     """The census CTEs, appended to the canonical population chain.
 
     Deliberately built ON TOP of ``market_info`` / ``normalized`` / ``deduped``
@@ -4379,7 +4467,9 @@ def _coverage_bridge_ctes(*, frozen: bool = False) -> str:
     )
     return (
         ","
-        + _coverage_universe_cte(chunk_scoped=frozen)
+        + _coverage_universe_cte(
+            chunk_scoped=frozen, roster_predicate=roster_predicate if frozen else ""
+        )
         + f""",
             -- FIRST MATCH WINS. The order is the contract's rung order; changing
             -- it moves outcomes between rungs and is a contract change.
@@ -4430,8 +4520,28 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
     # the universe MUST be chunk-scoped. The blanket refusal cannot stay — since
     # CAL-P016 the staged path is the only one that can finish, so "census XOR
     # publish" had quietly become "never census".
+    # D119 / CAL-P1090: the census' universe joins ``market_info`` DIRECTLY, so
+    # its conjunct is redundant only while market_info actually carries the
+    # roster restriction. Derived from the same expression the population is
+    # given below, through the same gate, so the two cannot disagree about when
+    # the pushdown is legal.
+    #
+    # The ternary is restated below rather than hoisted into a local ON PURPOSE.
+    # ``scripts/evals/calibration_fingerprint_derived_map`` classifies an input
+    # as SQL-shaping by finding its NAME inside an f-string or a string
+    # concatenation within a hashed root (CAL-P032 widened it past f-strings for
+    # exactly this constant). Binding it to a local first hides it from that
+    # detector: ``uncovered_sql_shaping`` drops 22 -> 21 with no hole closed, and
+    # ``test_concatenated_sql_values_are_classified_as_sql_shaping`` loses its
+    # only specimen. A tidier local buys a quieter number and a blinder map.
+    _vm_pred, mi_roster_predicate = _roster_pushdown_predicates(
+        frozen_vm_roster=frozen,
+        market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA if frozen else "",
+    )
     if frozen and COVERAGE_CENSUS_ENABLED:
-        universe = _coverage_universe_cte(chunk_scoped=True)
+        universe = _coverage_universe_cte(
+            chunk_scoped=True, roster_predicate=mi_roster_predicate
+        )
         if "JOIN market_info" not in universe:
             raise ValueError(
                 "coverage census is not chunk-scoped: enabling it under the "
@@ -4565,7 +4675,9 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(DISTINCT vm_id) AS published_questions
                 FROM deduped
             )"""
-            + _coverage_bridge_ctes(frozen=frozen)
+            + _coverage_bridge_ctes(
+                frozen=frozen, roster_predicate=mi_roster_predicate
+            )
             + """,
             bucketed AS (
                 SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
@@ -6948,8 +7060,17 @@ def population_predicate_fingerprint() -> str:
     try:
         import inspect
 
-        source = inspect.getsource(_calibration_population_ctes) + inspect.getsource(
-            _virtual_market_ctes
+        source = (
+            inspect.getsource(_calibration_population_ctes)
+            + inspect.getsource(_virtual_market_ctes)
+            # D119 / CAL-P1090: the roster pushdown's GATE lives in its own
+            # helper so the population chain and the census cannot disagree
+            # about when it is legal. `inspect.getsource` covers a function and
+            # never its callees, so it is listed explicitly — an edit that
+            # widened the gate (e.g. dropping the market_info-scoped check)
+            # would otherwise change which rows a chunk reads while leaving
+            # this digest identical.
+            + inspect.getsource(_roster_pushdown_predicates)
         )
     except Exception:  # noqa: BLE001 — no source => never claim a match
         # A digest nothing can equal (``_same_predicate`` requires equality), so
@@ -7013,6 +7134,11 @@ def _main_input_fingerprint() -> str:
             + inspect.getsource(_calibration_population_ctes)
             + inspect.getsource(_virtual_market_ctes)
             + inspect.getsource(_main_futures_sql)
+            # D119 / CAL-P1090 — the seventh instance of the hole this docstring
+            # keeps describing, closed on the deploy that opens it. The roster
+            # pushdown gate is a SQL-shaping helper CALLED by two of the roots
+            # above, and a function's source never covers its callees.
+            + inspect.getsource(_roster_pushdown_predicates)
         )
     except Exception:  # noqa: BLE001 — no source (frozen/optimized) => never carry
         source = f"unavailable:{time.time()}"

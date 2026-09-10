@@ -246,3 +246,276 @@ class TestSeqScanIsStillWorthFixing:
         )
         text = probe.read_text()
         assert "vm_stats" in text and "row_identity" in text
+
+
+# ---------------------------------------------------------------------------
+# D119 / CAL-P1090 — the pushdown, extended from one site to every site.
+#
+# CAL-P039 above measured ONE CTE and left the rest paying the same full scan.
+# D119 (Alex, 2026-09-10) unlocks the frozen file for exactly one change: "each
+# piece scans its own slot". The guard below is deliberately an ENUMERATION over
+# the rendered SQL rather than a list of known CTEs, because the failure this
+# lane keeps re-living is not a wrong predicate — it is a NEW scan site arriving
+# unscoped and nobody noticing until a generation takes three days again.
+#
+# TWO FAMILIES, TWO SOUNDNESS ARGUMENTS. This is the part a reader must not
+# collapse into one rule:
+#
+#   * a CTE that joins ``virtual_market`` is covered by that CTE's INNER join
+#     onto ``frozen_vm_roster``, which holds in BOTH frozen variants; and
+#   * a CTE that joins ``market_info`` DIRECTLY is covered only while
+#     ``market_info``'s own WHERE carries the roster restriction — which is the
+#     CALLER's argument, not a property of ``frozen_vm_roster``.
+#
+# Render the second family's conjunct without the first family's precondition
+# and the "redundant" predicate silently becomes a population FILTER, with every
+# downstream row count still self-consistent. That is the whole reason the two
+# gates are separate, and it is what ``test_market_info_joined_scans_*`` pins.
+# ---------------------------------------------------------------------------
+
+#: The conjunct, squashed, exactly as the enumeration expects to find it.
+ROSTER_CONJUNCT = f"AND fo.market_id = ANY(CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]))"
+
+#: Scan sites whose soundness comes from ``virtual_market``'s INNER join onto the
+#: roster, so they carry the conjunct in BOTH frozen variants.
+VM_JOINED_SCANS = {"vm_stats", "ranked_outcomes"}
+
+#: Scan sites that join ``market_info`` directly, so they carry the conjunct ONLY
+#: when ``market_info`` is itself roster-scoped.
+MI_JOINED_SCANS = {
+    "market_result_shape",
+    "bundle_price_sum",
+    "golf_placeholder_markets",
+    "mex_field_candidates",
+    "mex_field_divisor",
+}
+
+
+def _strip_comments(sql: str) -> str:
+    # Parens inside ``--`` comments would desynchronise the depth counter below,
+    # and several comments in this chain quote SQL fragments verbatim.
+    return re.sub(r"--[^\n]*", " ", sql)
+
+
+def _iter_ctes(sql: str):
+    """Yield ``(name, body)`` for every CTE, by paren matching, not by regex.
+
+    Written as a parser rather than a split on ``), name AS (`` so that a nested
+    subquery, a window function or a reformat cannot silently drop a CTE from the
+    enumeration — a dropped CTE would make this guard pass by not looking.
+    """
+    text = _strip_comments(sql)
+    for m in re.finditer(r"(\w+) AS (?:MATERIALIZED )?\(", text):
+        depth = 0
+        i = m.end() - 1
+        while i < len(text):
+            if text[i] == "(":
+                depth += 1
+            elif text[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        yield m.group(1), re.sub(r"\s+", " ", text[m.end() : i])
+
+
+def _outcomes_scans(sql: str) -> dict[str, bool]:
+    """CTE name -> does it carry the roster conjunct, for every CTE scanning ``fo``.
+
+    Matches the DECLARATION ``futures_outcomes fo`` with a word boundary, which
+    is what excludes the two correlated subqueries in the player-props pair
+    columns (aliases ``fo8`` / ``fo9``). Those are keyed to the outer row
+    (``fo8.market_id = fo.market_id``), so they are already index-driven and a
+    roster conjunct on them would restrict nothing the correlation has not
+    already pinned.
+    """
+    return {
+        name: ROSTER_CONJUNCT in body
+        for name, body in _iter_ctes(sql)
+        if re.search(r"futures_outcomes\s+fo\b", body)
+    }
+
+
+class TestEveryUnitScansItsOwnSlot:
+    """D119: the pushdown reaches every scan site, in the right scope."""
+
+    def test_the_enumeration_finds_every_known_scan_site(self) -> None:
+        found = set(
+            _outcomes_scans(
+                _calibration_population_ctes(
+                    frozen_vm_roster=True,
+                    market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA,
+                )
+            )
+        )
+        expected = VM_JOINED_SCANS | MI_JOINED_SCANS
+        assert found == expected, (
+            "the set of CTEs scanning futures_outcomes changed.\n"
+            f"  new/unscoped: {sorted(found - expected)}\n"
+            f"  gone:         {sorted(expected - found)}\n"
+            "A NEW scan site is the thing this guard exists to catch: it will "
+            "pay a full 3.3M-row scan per unit (~626 s of a ~630 s unit read, "
+            "measured CAL-P1090) unless it carries the roster conjunct. Add it "
+            "to VM_JOINED_SCANS if it joins virtual_market, or to "
+            "MI_JOINED_SCANS if it joins market_info directly — and read the "
+            "two-families comment above before choosing, because the gates are "
+            "NOT interchangeable."
+        )
+
+    def test_all_scans_are_scoped_when_frozen_and_market_info_is_scoped(self) -> None:
+        """The production frozen shape: every site scans its own slot."""
+        scans = _outcomes_scans(
+            _calibration_population_ctes(
+                frozen_vm_roster=True, market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA
+            )
+        )
+        unscoped = sorted(name for name, has in scans.items() if not has)
+        assert not unscoped, (
+            f"these CTEs still scan the whole of futures_outcomes: {unscoped}. "
+            "Each one costs a full 3.3M-row seq scan per unit, paid B times per "
+            "generation — which is what D119 was granted to remove."
+        )
+
+    def test_virtual_market_joined_scans_are_scoped_in_both_frozen_variants(
+        self,
+    ) -> None:
+        """Family 1: sound on ``frozen_vm_roster`` alone."""
+        scans = _outcomes_scans(_calibration_population_ctes(frozen_vm_roster=True))
+        for name in VM_JOINED_SCANS:
+            assert scans.get(name) is True, (
+                f"{name} joins virtual_market, whose INNER join onto "
+                "frozen_vm_roster holds whether or not market_info is scoped, so "
+                "it should carry the conjunct in BOTH frozen variants. Losing it "
+                "here means the pushdown was re-gated on the wrong precondition."
+            )
+
+    def test_market_info_joined_scans_are_not_scoped_when_market_info_is_not(
+        self,
+    ) -> None:
+        """Family 2, and the reason the two gates are separate.
+
+        ``frozen_vm_roster=True`` with no ``market_info_extra`` leaves
+        ``market_info`` holding the WHOLE resolved population. A conjunct on
+        these sites would then not be redundant — it would silently cut the
+        population to the roster while every downstream count still reconciled.
+        """
+        scans = _outcomes_scans(_calibration_population_ctes(frozen_vm_roster=True))
+        leaked = sorted(name for name in MI_JOINED_SCANS if scans.get(name))
+        assert not leaked, (
+            f"{leaked} carry the roster conjunct while market_info is NOT "
+            "roster-scoped. The conjunct stops being a planner hint and becomes "
+            "a population filter: these CTEs would silently drop every outcome "
+            "outside the roster, and no row count downstream would look wrong. "
+            "Re-gate on the market_info restriction being PRESENT, not on the "
+            "frozen_vm_roster flag."
+        )
+
+    def test_no_scan_is_roster_scoped_on_the_global_path(self) -> None:
+        scans = _outcomes_scans(_calibration_population_ctes())
+        leaked = sorted(name for name, has in scans.items() if has)
+        assert not leaked, (
+            f"{leaked} reference the roster array on the GLOBAL path, where no "
+            "roster is bound. The statement would fail to execute at best, and "
+            "filter the whole population to a chunk at worst."
+        )
+
+    def test_the_enumeration_is_sensitive_to_a_dropped_conjunct(self) -> None:
+        """The guard's own red test: remove one conjunct, the check must notice.
+
+        An enumeration that silently matched nothing would pass every assertion
+        above while proving nothing — the failure mode a green suite hides best.
+        """
+        sql = _calibration_population_ctes(
+            frozen_vm_roster=True, market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA
+        )
+        raw_conjunct = (
+            f"\n                  AND fo.market_id "
+            f"= ANY(CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]))"
+        )
+        total = sql.count(raw_conjunct)
+        assert total == len(VM_JOINED_SCANS | MI_JOINED_SCANS), (
+            f"expected one conjunct per scan site, found {total}"
+        )
+        for nth in range(total):
+            head, sep, tail = _nth_split(sql, raw_conjunct, nth)
+            mutated = head + sep.replace(raw_conjunct, "") + tail
+            scans = _outcomes_scans(mutated)
+            assert sorted(n for n, has in scans.items() if not has), (
+                f"dropping conjunct #{nth} left every CTE looking scoped — the "
+                "enumeration is not actually reading the SQL it claims to read"
+            )
+
+
+def _nth_split(sql: str, needle: str, nth: int) -> tuple[str, str, str]:
+    idx = -1
+    for _ in range(nth + 1):
+        idx = sql.index(needle, idx + 1)
+    return sql[:idx], needle, sql[idx + len(needle) :]
+
+
+class TestRosterGateIsHashedIntoTheCursorFingerprint:
+    """A SQL-shaping helper that is not hashed is a resumable half-old payload."""
+
+    def test_the_gate_helper_is_a_root_of_both_fingerprints(self) -> None:
+        import inspect
+
+        from app.tasks import precompute_calibration as pc
+
+        for fn in (pc.population_predicate_fingerprint, pc._main_input_fingerprint):
+            source = inspect.getsource(fn)
+            assert "_roster_pushdown_predicates" in source, (
+                f"{fn.__name__} does not hash _roster_pushdown_predicates. "
+                "inspect.getsource covers a function and never its callees, so "
+                "widening the pushdown gate would change which rows a chunk "
+                "reads while leaving a carried cursor resumable — units built "
+                "from two different populations merged into one payload."
+            )
+
+    def test_changing_the_gate_moves_the_digest(self, monkeypatch) -> None:
+        from app.tasks import precompute_calibration as pc
+
+        before = pc._main_input_fingerprint()
+
+        def _widened(*, frozen_vm_roster: bool, market_info_extra: str):
+            return ("", "")
+
+        monkeypatch.setattr(pc, "_roster_pushdown_predicates", _widened)
+        assert pc._main_input_fingerprint() != before, (
+            "the digest did not move when the pushdown gate changed — the "
+            "fingerprint is not actually reading this helper's source"
+        )
+
+
+class TestCoverageUniverseSharesTheSameGate:
+    """The census' universe joins market_info too, so it takes the same rule."""
+
+    def test_chunk_scoped_universe_carries_a_supplied_predicate(self) -> None:
+        from app.tasks.precompute_calibration import _coverage_universe_cte
+
+        scoped = _squash(
+            _coverage_universe_cte(chunk_scoped=True, roster_predicate="\n  AND x")
+        )
+        assert "JOIN market_info mi ON mi.market_id = fo.market_id AND x" in scoped
+
+    def test_global_universe_never_takes_one(self) -> None:
+        from app.tasks.precompute_calibration import _coverage_universe_cte
+
+        glob = _squash(
+            _coverage_universe_cte(chunk_scoped=False, roster_predicate="\n  AND x")
+        )
+        assert "AND x" not in glob, (
+            "the global coverage universe joins futures_markets over the WHOLE "
+            "resolved population; a roster predicate there is a real filter"
+        )
+
+    def test_the_chunk_scope_guard_still_sees_its_market_info_join(self) -> None:
+        """``_main_futures_sql`` refuses the census unless it finds this string."""
+        from app.tasks.precompute_calibration import _coverage_universe_cte
+
+        universe = _coverage_universe_cte(
+            chunk_scoped=True, roster_predicate="\n                  AND whatever"
+        )
+        assert "JOIN market_info" in universe, (
+            "the pushdown broke the substring _main_futures_sql greps for before "
+            "enabling the census; it would refuse to build with the census on"
+        )
