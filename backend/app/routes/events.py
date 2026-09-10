@@ -11577,6 +11577,9 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
 
     Suppressed rows stay suppressed in their own buckets either way — this adds
     to WHAT HIT, and takes nothing back out of the filter above.
+
+    Rows come back in WINDOW order, not market-table order (#4844): see the sort
+    at the end of the function.
     """
     box = getattr(event, "box_score_data", None)
     if not isinstance(box, dict):
@@ -11591,7 +11594,8 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
     home_name = event.__dict__.get("home_team_name")
     away_name = event.__dict__.get("away_team_name")
 
-    graded: list[dict] = []
+    # Each entry is `(sort_key, row)`; the key is dropped on the way out (#4844).
+    graded: list[tuple[tuple, dict]] = []
     # ONE VERDICT PER QUESTION, AND THE DEDUPE HAS TO LIVE HERE (CERT-2505).
     #
     # `closed_items` is fed by two paths that never meet: the step 9 carve-out
@@ -11666,19 +11670,45 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
             if verdict is None:
                 continue
             _seen_questions.add(question_key)
-            graded.append({
-                "market_name": market_name,
-                "outcome_name": outcome_name,
-                "actual": verdict["actual"],
-                "hit": verdict["hit"],
-            })
+            graded.append((
+                (unit, first_period, last_period, market_name or ""),
+                {
+                    "market_name": market_name,
+                    "outcome_name": outcome_name,
+                    "actual": verdict["actual"],
+                    "hit": verdict["hit"],
+                },
+            ))
         except Exception:
             logger.exception(
                 "Closed-window grade failed for event %s market %s",
                 getattr(event, "id", None),
                 item.get("market_name"),
             )
-    return graded
+    # THE INNINGS READ 1 → 9 (#4844).
+    #
+    # `closed_items` arrives in market-table order from two paths that never
+    # meet, so the finished specimen served `5th → 4th → 2nd → 1st → 7th → 3rd
+    # → 9th → 8th → 6th` with the Winner and Total groups interleaved. Every
+    # verdict was right and the block was not legible: "settled means settled"
+    # says a finished game shows the completed journey, and a game's innings
+    # have one order.
+    #
+    # The key is the SPAN, which the classifier has already returned, and not
+    # anything re-derived from the name — the two would drift the moment either
+    # pattern list changed. Start first, then length, so the ninth follows the
+    # eighth and the cumulative windows ("First 3/5/7 Innings", all starting at
+    # 1) sit together rather than scattering through the per-inning rows. The
+    # market name is the last term, which is what keeps a group's outcomes
+    # adjacent; `unit` leads it so a page carrying two window units — none does
+    # today, because the grader refuses every unit but innings — would block
+    # rather than shuffle them together.
+    #
+    # The sort is stable, so within one market the outcomes keep the order the
+    # venue listed them in. Nothing else about the row changes, and the player
+    # props this block is appended to are untouched.
+    graded.sort(key=lambda pair: pair[0])
+    return [row for _, row in graded]
 
 
 def _estimate_game_pace(
