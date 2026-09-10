@@ -39,6 +39,10 @@ from __future__ import annotations
 
 import pytest
 
+# `smc` for the one test that must MUTATE a knob; the names below for reading.
+# One import statement per module — mixing `import x` with `from x import y` is
+# a CodeQL notice, and the sibling property suite already uses this exact shape.
+from app.utils import search_match_class as smc
 from app.utils.search_match_class import (
     MC0_EXACT,
     MC1_ALL_TOKENS,
@@ -234,8 +238,6 @@ def test_the_class_can_only_promote_never_demote():
     rather than argued: with the class disabled every specimen scores at least
     as badly as with it enabled, and never better.
     """
-    import app.utils.search_match_class as smc
-
     specimens = [
         Evidence(name="Yankees"),
         Evidence(name="New York Yankees", aliases=("Yankees",)),
