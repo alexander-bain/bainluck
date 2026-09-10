@@ -205,6 +205,45 @@ class TestTheSeedMarkerIsMatchedExactly:
         assert "LIKE" not in sql
 
 
+class TestTheEndpointCanActuallyREACHTheseArguments:
+    """The dispatcher forwards a query param ONLY if the repair declares it.
+
+    `admin_repairs.run_repair` filters its kwargs by `inspect.signature`, which
+    is the right shape and also a silent one: rename `undo_identity` here, or
+    drop it from the dispatcher's tuple, and the restore stops being reachable
+    from the endpoint at all — no error, no 404, just an apply that re-derives
+    and purges again. D51's permission to run this unattended is the restore, so
+    the restore being reachable is not a detail.
+    """
+
+    def test_the_catalog_names_this_repair(self):
+        from app.routes.admin_repairs import _REPAIRS
+
+        assert _REPAIRS["futures-person-seed-purge"] == (
+            "app.tasks.repair_futures_person_seed",
+            "repair",
+        )
+
+    @pytest.mark.parametrize(
+        "param", ["limit", "after_id", "plan_hash", "undo_identity"]
+    )
+    def test_both_ends_agree_on_the_argument(self, param):
+        import inspect
+        from pathlib import Path as _Path
+
+        assert param in inspect.signature(rp.repair).parameters
+        route = (
+            _Path(__file__).resolve().parents[1]
+            / "app" / "routes" / "admin_repairs.py"
+        ).read_text()
+        forwarded = route.split("accepted = inspect.signature(fn).parameters")[1]
+        forwarded = forwarded.split("if v is not None")[0]
+        assert f'("{param}"' in forwarded, (
+            f"the dispatcher does not forward {param}, so the endpoint cannot "
+            "reach it"
+        )
+
+
 class TestItIsAttendedAndCapped:
     def test_it_is_not_wired_to_a_beat(self):
         from app.tasks import celery_app
