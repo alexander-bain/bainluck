@@ -43,10 +43,7 @@ import pytest
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
 
-from app.services.statpal_api import (
-    LIVESCORES_INGESTION_DARK_SPORTS,
-    StatPalAPIService,
-)
+import app.services.statpal_api as statpal_api
 from app.utils.task_verdict import ENFORCED_TASKS, FAILED, UNKNOWN, verdict_for
 
 
@@ -65,7 +62,7 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 
 @pytest.fixture
 def service():
-    return StatPalAPIService(api_key="test-key-not-a-real-key")
+    return statpal_api.StatPalAPIService(api_key="test-key-not-a-real-key")
 
 
 def _resp(status, url, *, json_body=None, text=None):
@@ -271,7 +268,7 @@ class TestSoccerStillAsksOnlyTomorrowAndTheDayAfter:
         comment's "we'll fetch today's live scores instead" was never true. If
         this constant ever loses soccer, the comment's claim becomes reachable
         and this guard should be re-read rather than deleted."""
-        assert "soccer" in LIVESCORES_INGESTION_DARK_SPORTS
+        assert "soccer" in statpal_api.LIVESCORES_INGESTION_DARK_SPORTS
 
 
 # =============================================================================
@@ -398,8 +395,6 @@ def _wire_one_sport(monkeypatch, sport_key="americanfootball_nfl"):
 
 def _stub_venue(monkeypatch, reason):
     """A StatPal whose schedule read lands on `reason` for every sport."""
-    import app.services.statpal_api as statpal_api
-
     class _Service:
         async def get_fixtures_result(self, sport, *a, **k):
             return statpal_api.StatPalFixtureFetch(
@@ -491,8 +486,6 @@ class TestTheRealPassEmitsTheTerminal:
     ):
         """No API key: a deliberate no-op. `skipped` is authoritative `unknown`
         — it must not read as a completed pass, and must not read as failure."""
-        import app.services.statpal_api as statpal_api
-
         from app.tasks.statpal_sync import _sync_statpal_schedules
 
         monkeypatch.setattr(statpal_api, "is_available", lambda: False)
@@ -506,8 +499,6 @@ class TestTheRealPassEmitsTheTerminal:
     @pytest.mark.asyncio
     async def test_an_unmapped_sport_key_is_skipped_not_complete(self, monkeypatch):
         from app.tasks.statpal_sync import _sync_statpal_schedules
-
-        import app.services.statpal_api as statpal_api
 
         monkeypatch.setattr(statpal_api, "is_available", lambda: True)
         result = await _sync_statpal_schedules("quidditch_premier")
