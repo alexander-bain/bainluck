@@ -27,6 +27,12 @@ import os
 import subprocess
 import sys
 
+# notice 39 / #4706: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+
+from app.utils.agent_origin import curl_args  # noqa: E402
+
 
 def _api() -> str:
     api = os.getenv("BAINLUCK_API")
@@ -41,8 +47,9 @@ def _dbq(sql: str, limit: int = 500):
     api = _api()
     token = os.getenv("ADMIN_TOKEN", "")
     body = json.dumps({"sql": sql, "limit": limit})
+    url = f"{api}/api/admin/db-query"
     cmd = [
-        "curl", "-s", "-X", "POST", f"{api}/api/admin/db-query",
+        "curl", *curl_args(url), "-s", "-X", "POST", url,
         "-H", f"Authorization: Bearer {token}",
         "-H", "Content-Type: application/json",
         "-d", body,
