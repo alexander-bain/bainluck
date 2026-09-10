@@ -98,6 +98,8 @@ __all__ = [
     "CLIENT_COMPLETED_MAX_AGE_HOURS",
     "FINISHED_RAIL_FIRST_PAGE_CAP",
     "FINISHED_STATUSES",
+    "FUTURES_FIRST_PAGE_CAP",
+    "cap_futures_on_games_led_first_page",
     "client_deletes_finished_card",
     "finished_rail_key",
     "cap_repeated_finished_rails",
@@ -129,6 +131,12 @@ FINISHED_STATUSES = ("completed", "closed")
 #: "WHY THREE" — this is ``_DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS["sports_story"]``
 #: by descent, not an independent guess.
 FINISHED_RAIL_FIRST_PAGE_CAP = 3
+
+#: At most this many ``futures`` cards may occupy the Sports first page (#4497).
+#: See ``cap_futures_on_games_led_first_page``'s "WHY TWO" — unlike the rail cap
+#: above this does NOT descend from an existing constant, and the docstring says
+#: so rather than borrowing authority it does not have.
+FUTURES_FIRST_PAGE_CAP = 2
 
 
 def finished_rail_key(item: dict) -> str | None:
@@ -519,4 +527,184 @@ def swap_client_deleted_finished_off_first_page(
         return new_window + new_tail, meta
     except Exception:  # pragma: no cover - defensive, mirrors live_first_page
         logger.exception("Sports first-page client-deletion swap failed; page unchanged")
+        return items, empty_meta
+
+
+def cap_futures_on_games_led_first_page(
+    items: list[dict],
+    *,
+    first_page_size: int = 20,
+    max_futures: int = FUTURES_FIRST_PAGE_CAP,
+    max_per_rail: int = FINISHED_RAIL_FIRST_PAGE_CAP,
+    now: datetime | None = None,
+) -> tuple[list[dict], dict]:
+    """Trade surplus futures cards on the Sports first page for games.
+
+    THE FINDING (#4497), measured on production 2026-09-09 23:34Z
+    -------------------------------------------------------------
+    ``GET /api/feed?mode=sports&limit=60`` served **four futures in the first
+    twenty slots** — "Los Angeles Rams leads at 14%" (Super Bowl winner) at 4,
+    "Justin Gaethje leads at 84%" at 7, "Alexander Volkanovski leads at 49%" at
+    10 and "New favorite: USA (65%)" at 13. Three of them are in the top ten.
+
+    Those slots are not recovered. ``FEED_PAGE_LIMIT`` is 20 and
+    ``nextFeedRequest`` marches ``0 -> 20 -> 40`` with no overlap, so page two
+    does not backfill them — the same budget arithmetic #3836 is built on. The
+    client files futures under "Top Markets", so they do not visibly displace a
+    game *section*; the cost is that the games-led surface spent a fifth of its
+    one-and-only first page asking who will hold a title belt on 31 December.
+
+    AND IT IS NOT A THIN SLATE. The same pull held 21 event cards in the tail
+    against 18 futures, so the ranker had games to give.
+
+    WHY A CAP AND NOT A REORDER
+    ----------------------------
+    The obvious fix is to push futures down, and it does not work — it was
+    tried against this exact payload before this pass was written. A reorder is
+    length-preserving *within the same membership*, so every futures card it
+    demotes still sits inside the 20-slot budget; the reader gets the same four
+    futures in a different order and not one extra game. Only a swap across the
+    window boundary converts a futures slot into a game slot.
+
+    The same measurement ruled out the other obvious fix, which is worth
+    recording because it looks more correct than it is:
+    ``compose_lead(items, include_tonights_games=discover_mode)`` switches the
+    tonight's-games lead pass OFF in Sports mode, which reads like a plain bug
+    on the one surface whose job is "what's on tonight". Turning it on yields
+    three routine MLS overtimes in slots 1-3, one of them scoring 65 and
+    outranking four score-98 games, because ``_lead_sort_key`` puts every live
+    row in tier 0 ahead of every upcoming row and ``MAX_LEAD`` is 3. It also
+    frees no budget, for the reason above. That flag is not this defect's fix.
+
+    WHY TWO
+    -------
+    Unlike ``FINISHED_RAIL_FIRST_PAGE_CAP``, this number does not descend from
+    an existing constant, and pretending otherwise would be worse than saying
+    so: it is an opinion about a games-led page, stated once, here. Two futures
+    on twenty slots still carries the season-long stories onto page one — the
+    Super Bowl field and the title-belt question both survive on the measured
+    payload — while leaving eighteen slots to answer the question the reader
+    opened the Sports tab to ask. It is a keyword argument so a later
+    measurement can move it without editing this reasoning.
+
+    WHAT IT MUST NOT DO
+    -------------------
+    1. **Recreate the defects the siblings above just fixed.** A replacement is
+       refused when the client deletes it (``client_deletes_finished_card``,
+       #3836) or when it is a finished card on a rail already at
+       ``max_per_rail`` (``finished_rail_key``, #3511/#3805). Rails are counted
+       against the window as it survives this pass — every card here stays
+       except the futures being traded out, and a futures card occupies no rail.
+    2. **Displace a game.** Only ``type == "futures"`` cards are ever moved, and
+       only ever outward. Live, scheduled and finished games are neither counted
+       nor touched, so this cannot cost the surface a game the way #1091 did —
+       the swap's direction guarantees the window ends with strictly more game
+       cards than it started with, which is the opposite of the failure mode.
+    3. **Shorten the page.** Swap, never drop. Length is preserved, no score is
+       touched, and the input is returned unchanged on any error (gotcha
+       #42/#43).
+
+    ORDER: AFTER THE TWO SIBLINGS, BEFORE THE LIVE HOIST
+    -----------------------------------------------------
+    After, so a futures slot this frees is offered to a tail card those passes
+    have already vetted rather than competing with them for the same trade.
+    Before the hoist, for the reason the whole chain observes: that pass is
+    Alex's P1 acceptance criterion and keeps the last word on first-page
+    membership. ``test_sports_first_page_rails_wiring_3511`` asserts the
+    position rather than trusting this paragraph.
+
+    Returns ``(items, meta)``. ``meta`` reports an unmet cap loudly (gotcha #53)
+    so a page that kept a surplus futures card because the tail had no game to
+    trade does not read the same as a page that was never over cap.
+    """
+    empty_meta = {
+        "over_cap_before": 0,
+        "replacements_available": 0,
+        "swapped": 0,
+        "over_cap_after": 0,
+        "unswapped": 0,
+        "cap": max_futures,
+    }
+    try:
+        now = now or datetime.now(timezone.utc)
+        window_size = min(first_page_size, len(items))
+        if window_size <= 0 or max_futures < 0:
+            return items, empty_meta
+
+        window = items[:window_size]
+        tail = items[window_size:]
+
+        # Walked in served order, so the futures cards KEPT are the best-ranked
+        # of their cohort and the surplus is always the weakest N.
+        seen = 0
+        over_cap: list[int] = []
+        for i, it in enumerate(window):
+            if not isinstance(it, dict) or it.get("type") != "futures":
+                continue
+            seen += 1
+            if seen > max_futures:
+                over_cap.append(i)
+
+        meta = dict(empty_meta)
+        meta["over_cap_before"] = len(over_cap)
+        meta["over_cap_after"] = len(over_cap)
+        meta["unswapped"] = len(over_cap)
+        if not over_cap:
+            return items, meta
+
+        # Every window card except the departing futures stays, and a futures
+        # card sits on no rail, so the surviving rail counts are simply the
+        # window's own. (Contrast the sibling above, where the doomed cards ARE
+        # rail-holders and their rails have to be written off as freed.)
+        kept_counts: dict[str, int] = {}
+        for it in window:
+            rail = finished_rail_key(it)
+            if rail is not None:
+                kept_counts[rail] = kept_counts.get(rail, 0) + 1
+
+        replacements: list[int] = []
+        for t_idx, it in enumerate(tail):
+            if len(replacements) >= len(over_cap):
+                break
+            # A replacement must be a GAME — `type == "event"` — and not merely
+            # "not a futures card". Admitting anything non-futures satisfies the
+            # cap while buying the reader nothing: on the measured payload the
+            # best two non-futures tail cards were one game and one `concept`,
+            # so the looser test swapped a futures card for a concept card and
+            # the games-led page ended with the same fifteen games it started
+            # with. The cap is not the point; the game is.
+            if not isinstance(it, dict) or it.get("type") != "event":
+                continue
+            if client_deletes_finished_card(it, now=now):
+                continue
+            rail = finished_rail_key(it)
+            if rail is not None:
+                if kept_counts.get(rail, 0) >= max_per_rail:
+                    continue
+                kept_counts[rail] = kept_counts.get(rail, 0) + 1
+            replacements.append(t_idx)
+
+        meta["replacements_available"] = len(replacements)
+        swaps = min(len(over_cap), len(replacements))
+        if swaps <= 0:
+            return items, meta
+
+        new_window = list(window)
+        new_tail = list(tail)
+        # Front-to-front, index-for-index, as both siblings pair their lists and
+        # for the same reason: the earliest surplus slot takes the best-ranked
+        # replacement so the page keeps descending rank. Pairing the weakest slot
+        # with the best card is the CERT-2190 inversion, recorded in the cap's
+        # own comment; repeating it here would reintroduce it on a third pass.
+        for pair in range(swaps):
+            w_idx = over_cap[pair]
+            t_idx = replacements[pair]
+            new_window[w_idx], new_tail[t_idx] = new_tail[t_idx], new_window[w_idx]
+
+        meta["swapped"] = swaps
+        meta["over_cap_after"] = len(over_cap) - swaps
+        meta["unswapped"] = len(over_cap) - swaps
+        return new_window + new_tail, meta
+    except Exception:  # pragma: no cover - defensive, mirrors live_first_page
+        logger.exception("Sports first-page futures cap failed; page unchanged")
         return items, empty_meta

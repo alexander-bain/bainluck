@@ -245,6 +245,14 @@ class TestChainContract:
             # BEFORE the hoist, so the live pass still has the last word.
             # Its tick is outside its gate, per the convention above.
             "client_deletion_swap",
+            # #4497: the games-led futures cap is the third pass in this block
+            # and its position is a contract for the same two reasons. AFTER the
+            # two above, so a futures slot it frees is offered to a tail card
+            # they have already vetted for staleness and rail repetition rather
+            # than competing with them for the same trade. BEFORE the hoist, so
+            # the live pass keeps the last word on first-page membership. Its
+            # tick is outside its gate, per the convention above.
+            "futures_first_page_cap",
             "live_first_page",
         ], (
             "get_feed's per-stage timings are built from these callbacks; "

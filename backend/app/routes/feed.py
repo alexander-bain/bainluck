@@ -69,6 +69,7 @@ from app.models.models import (
 from app.services import get_db, get_db_rw
 from app.utils.live_first_page import hoist_live_events_into_first_page
 from app.utils.sports_first_page_rails import (
+    cap_futures_on_games_led_first_page,
     cap_repeated_finished_rails,
     swap_client_deleted_finished_off_first_page,
 )
@@ -1670,6 +1671,49 @@ def apply_discover_display_chain(
             )
     _tick("client_deletion_swap")
 
+    # === THE GAMES-LED PAGE STOPS SPENDING A FIFTH OF ITSELF ON FUTURES (#4497) ===
+    #
+    # Measured 2026-09-09 23:34Z: `?mode=sports&limit=60` put four futures in
+    # the first twenty slots — Super Bowl winner at 4, two title-belt questions
+    # at 7 and 10, Women's FIBA at 13 — three of them in the top ten. The 20-slot
+    # budget has no overlap (`nextFeedRequest` marches 0 -> 20 -> 40), so those
+    # slots are never given back, and the tail held 21 event cards: not a thin
+    # slate, just a page that never counted its own futures.
+    #
+    # A REORDER CANNOT FIX THIS and the module docstring records the replay that
+    # proves it: demoting futures within the window leaves the same four inside
+    # the same budget. Only a swap across the window boundary buys a game. The
+    # same replay rules out flipping `include_tonights_games` on for Sports mode
+    # — it leads with three routine MLS overtimes, one scoring 65 above four
+    # score-98 games, and frees no budget either.
+    #
+    # Gated exactly as the two passes above are, and for the same CERT-2190
+    # reason: `mode` and `my_teams_only` are independent parameters and
+    # `not discover_mode` is TRUE for My Stuff, whose contract is to show
+    # everything matching and skip this work entirely.
+    #
+    # BEFORE the hoist, like everything else in this chain — that pass is Alex's
+    # P1 criterion and keeps the last word on first-page membership.
+    futures_cap_meta = None
+    if sports_mode and not my_teams_only:
+        items, futures_cap_meta = cap_futures_on_games_led_first_page(
+            items, first_page_size=min(20, limit)
+        )
+        if futures_cap_meta["unswapped"]:
+            # Not a silent cap (gotcha #53). A page that kept a surplus futures
+            # card because the tail had no game to trade is a fact about the
+            # slate, and it must not read the same as a page under its cap.
+            logger.warning(
+                "Sports first-page futures cap: %d surplus futures card(s) kept "
+                "on page one — no admissible game beyond the window (%d swapped, "
+                "%d replacements available, cap %d)",
+                futures_cap_meta["unswapped"],
+                futures_cap_meta["swapped"],
+                futures_cap_meta["replacements_available"],
+                futures_cap_meta["cap"],
+            )
+    _tick("futures_first_page_cap")
+
     # === LIVE COMPLETENESS ON THE GAMES-LED SURFACES (#2709, Alex P1) ===
     #
     # The `include_tonights_games=discover_mode` gate above is correct and stays:
@@ -1716,6 +1760,7 @@ def apply_discover_display_chain(
         "first_page_quality_floor": first_page_floor_meta,
         "finished_rail_cap": finished_rail_cap_meta,
         "client_deletion_swap": client_deletion_swap_meta,
+        "futures_first_page_cap": futures_cap_meta,
         "live_first_page": live_first_page_meta,
     }
 

@@ -1,0 +1,547 @@
+{
+ "captured_at": "2026-09-09T23:34:13Z",
+ "request": "GET /api/feed?mode=sports&limit=60",
+ "note": "Production served pool for #4497. Trimmed to the fields the first-page passes read (type, score, headline, data.status, data.commence_time); no other field is consulted by cap_futures_on_games_led_first_page.",
+ "items": [
+  {
+   "type": "concept",
+   "score": 80,
+   "headline": "Live",
+   "data": {
+    "status": "live",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 98,
+   "headline": "Recent upset",
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-09T19:45:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 98,
+   "headline": "Upset brewing",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T23:15:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 95,
+   "headline": "Los Angeles Rams leads at 14%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 98,
+   "headline": "Overtime",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T23:30:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 98,
+   "headline": "Upset brewing",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T22:40:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 88,
+   "headline": "Justin Gaethje leads at 84%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 98,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-09T23:40:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 89,
+   "headline": "Recent upset",
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-09T19:05:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 88,
+   "headline": "Alexander Volkanovski leads at 49%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 97,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:00:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 93,
+   "headline": "Upset brewing",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T22:45:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 95,
+   "headline": "New favorite: USA (65%)",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 93,
+   "headline": "Upset brewing",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T22:35:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 93,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-09T23:40:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 89,
+   "headline": "Overtime",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T23:30:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 86,
+   "headline": "Upset brewing",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T22:40:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 71,
+   "headline": "Live",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T23:05:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 68,
+   "headline": "Live",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T22:00:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 65,
+   "headline": "Overtime",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T23:30:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 88,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:00:00+00:00"
+   }
+  },
+  {
+   "type": "concept",
+   "score": 88,
+   "headline": "Live",
+   "data": {
+    "status": "live",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "futures",
+   "score": 88,
+   "headline": "Alexandre Pantoja leads at 46%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 75,
+   "headline": "Playoff game",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:30:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 85,
+   "headline": "Alexander Zverev leads at 46%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 74,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:30:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 74,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:30:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 85,
+   "headline": "Petr Yan up 3.0 points today",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 74,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:00:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 93,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-09T23:40:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 85,
+   "headline": "Sean Strickland leads at 58%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 69,
+   "headline": null,
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-09T18:16:20+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 91,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:00:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 84,
+   "headline": "Los Angeles Dodgers leads at 32%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 68,
+   "headline": null,
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-09T20:10:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 88,
+   "headline": "Aryna Sabalenka leads at 30%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "futures",
+   "score": 80,
+   "headline": "Islam Makhachev leads at 86%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 63,
+   "headline": "Close matchup",
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:00:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 62,
+   "headline": "Overtime",
+   "data": {
+    "status": "live",
+    "commence_time": "2026-09-09T23:30:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 80,
+   "headline": "Spain leads at 20%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 60,
+   "headline": null,
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T02:10:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 60,
+   "headline": null,
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-09T20:10:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 58,
+   "headline": null,
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:20:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 44,
+   "headline": "Recent upset",
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-09T03:00:23+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 75,
+   "headline": "France leads at 12%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 44,
+   "headline": null,
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-09T01:40:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 47,
+   "headline": null,
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-09T23:45:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 74,
+   "headline": "New favorite: Ohio St. (33%)",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 44,
+   "headline": null,
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-08T23:40:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 42,
+   "headline": null,
+   "data": {
+    "status": "scheduled",
+    "commence_time": "2026-09-10T00:30:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 74,
+   "headline": "New favorite: North Dakota St. (27%)",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "event",
+   "score": 41,
+   "headline": "Recent upset",
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-08T23:40:00+00:00"
+   }
+  },
+  {
+   "type": "event",
+   "score": 41,
+   "headline": null,
+   "data": {
+    "status": "completed",
+    "commence_time": "2026-09-09T19:00:00+00:00"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 70,
+   "headline": "New favorite: Vancouver (19%)",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "futures",
+   "score": 62,
+   "headline": "Sean Strickland leads at 55%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "futures",
+   "score": 62,
+   "headline": "Barcelona leads at 18%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "futures",
+   "score": 59,
+   "headline": "Will Venable leads at 63%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "futures",
+   "score": 59,
+   "headline": "James Madison leads at 21%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "futures",
+   "score": 59,
+   "headline": "Tristan Wirfs leads at 13%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  },
+  {
+   "type": "futures",
+   "score": 59,
+   "headline": "Boise St. leads at 47%",
+   "data": {
+    "status": "open",
+    "commence_time": null
+   }
+  }
+ ]
+}
