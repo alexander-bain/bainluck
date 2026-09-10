@@ -27,6 +27,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import app.services.database as app_database
+import app.tasks.base as task_base
 import app.tasks.kalshi_resolution_sweep as sweep
 
 
@@ -102,8 +104,7 @@ class TestTheDefaultIsTheTaskScopedMaker:
     """The fix itself."""
 
     def test_the_default_is_get_task_session(self):
-        from app.tasks.base import get_task_session
-        assert sweep.default_session_maker() is get_task_session
+        assert sweep.default_session_maker() is task_base.get_task_session
 
     def test_the_default_is_not_the_apps_global_session_maker(self):
         """The regression, stated as its own assertion.
@@ -112,8 +113,7 @@ class TestTheDefaultIsTheTaskScopedMaker:
         to an engine whose pool outlives the loop, which is the one property
         this caller cannot tolerate.
         """
-        from app.services.database import async_session_maker
-        assert sweep.default_session_maker() is not async_session_maker
+        assert sweep.default_session_maker() is not app_database.async_session_maker
 
     def test_the_module_holds_no_executable_reference_to_the_global_maker(self):
         """Only the docstring may still name it.
@@ -144,7 +144,7 @@ class TestNeitherEntryPointReachesForTheGlobal:
                           return_value=_recording_maker(log)), \
                 patch("app.services.database.async_session_maker", boom):
             report = await sweep.run_recent_finals(
-                limit=5, apply=False, client_factory=lambda: MagicMock(), now=NOW,
+                limit=5, apply=False, client_factory=MagicMock, now=NOW,
             )
         assert report["selection"] == "recent_finals"
         assert ("built", id(asyncio.get_running_loop())) in log
@@ -161,7 +161,7 @@ class TestNeitherEntryPointReachesForTheGlobal:
                 patch.object(sweep, "_write_cursor", return_value=True), \
                 patch("app.services.database.async_session_maker", boom):
             await sweep.run_sweep(
-                limit=5, apply=False, client_factory=lambda: MagicMock(),
+                limit=5, apply=False, client_factory=MagicMock,
             )
         assert log, "run_sweep never built a session at all"
         boom.assert_not_called()
@@ -183,9 +183,6 @@ class TestTwoSuccessiveLoopsIsTheFailureShape:
         Here the real default chooses, and the app's global maker is a landmine
         that fails the test if the choice goes back to what it was.
         """
-        import app.services.database as db
-        import app.tasks.base as base
-
         log = []
         engines = []
 
@@ -202,13 +199,13 @@ class TestTwoSuccessiveLoopsIsTheFailureShape:
             )
 
         def run_once():
-            with patch.object(base, "_get_task_engine", _fake_engine), \
-                    patch.object(base, "async_sessionmaker",
+            with patch.object(task_base, "_get_task_engine", _fake_engine), \
+                    patch.object(task_base, "async_sessionmaker",
                                  return_value=lambda: _session_cm(log)), \
-                    patch.object(db, "async_session_maker", _global_maker):
+                    patch.object(app_database, "async_session_maker", _global_maker):
                 return asyncio.run(sweep.run_recent_finals(
                     limit=5, apply=False,
-                    client_factory=lambda: MagicMock(), now=NOW,
+                    client_factory=MagicMock, now=NOW,
                 ))
 
         run_once()
@@ -233,8 +230,6 @@ class TestTwoSuccessiveLoopsIsTheFailureShape:
         Nothing survives the `async with`, so nothing can be carried into the
         next loop. Asserted on the real helper, not on a copy of its shape.
         """
-        import app.tasks.base as base
-
         engines = []
 
         def _fake_engine(**kwargs):
@@ -250,10 +245,10 @@ class TestTwoSuccessiveLoopsIsTheFailureShape:
         session_cm.__aexit__ = _AsyncReturn(False)
 
         async def _use():
-            with patch.object(base, "_get_task_engine", _fake_engine), \
-                    patch.object(base, "async_sessionmaker",
+            with patch.object(task_base, "_get_task_engine", _fake_engine), \
+                    patch.object(task_base, "async_sessionmaker",
                                  return_value=lambda: session_cm):
-                async with base.get_task_session():
+                async with task_base.get_task_session():
                     pass
 
         asyncio.run(_use())
