@@ -1359,9 +1359,44 @@ def find_moneyline_outcome(
         if _is_prop_or_spread_outcome(outcome.name):
             continue
 
-        if _fuzzy_team_match(outcome.name, event_home_team):
+        # AN OUTCOME THAT MATCHES BOTH TEAMS NAMES NEITHER SIDE (#4629).
+        #
+        # `_fuzzy_team_match` is a containment test, so Polymarket's
+        # full-matchup outcome name — `"Tai Tuivasa vs. Robelis Despaigne"` —
+        # matches the home team, the away team, and the `elif` below never
+        # runs. It was landing in `home_outcomes` and returning with
+        # `yes_is_home=True`, i.e. the FIRST-NAMED participant's price read as
+        # the home team's. The full-matchup fallback further down is written
+        # for exactly this shape and orients it from the matchup parse
+        # correctly; it was simply unreachable, because this loop claimed the
+        # outcome and the `if home_outcomes:` return fired first.
+        #
+        # MEASURED, production 2026-09-10 03:45Z, UFC 331. Polymarket publishes
+        # each fight twice — an `unshaped` row with the full-matchup outcome
+        # and a `container_member` row with `Yes`/`No` — under one market name.
+        # The `Yes`/`No` row oriented correctly, this one inverted, and
+        # `compute_source_home_probability` devigs a two-market group by
+        # AVERAGING them. The mean of `p` and `1 - p` is exactly 0.5, so events
+        # 15190802 (book 0.17/0.83) and 15190830 (book 0.75/0.26) both stored
+        # `polymarket: 0.5` and the card printed "Coin flip · Virtually even"
+        # beside its own `Opened 84/16` chip. A confident 50% out of this path
+        # is the arithmetic signature of an inverted pair, never of an even
+        # market.
+        #
+        # Skipping is the honest failure and not a lost reading: the fallback
+        # below resolves the full-matchup shape, and anything it cannot resolve
+        # returns None, which is this function's documented contract ("Returns
+        # None — never a guess"). A name that genuinely reaches both teams —
+        # two same-city clubs sharing a token — is a name this classifier
+        # cannot orient either, and a coin flip derived from it would be the
+        # same lie with a different cause.
+        matches_home = _fuzzy_team_match(outcome.name, event_home_team)
+        matches_away = _fuzzy_team_match(outcome.name, event_away_team)
+        if matches_home and matches_away:
+            continue
+        if matches_home:
             home_outcomes.append(outcome)
-        elif _fuzzy_team_match(outcome.name, event_away_team):
+        elif matches_away:
             away_outcomes.append(outcome)
 
     # Determine yes_is_home from matchup
