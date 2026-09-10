@@ -429,9 +429,28 @@ FUTURES_WEIGHTS = {
 #: is None and the card says nothing rather than saying this:
 #:
 #: * D1 clause a (#4066): the two `*_surprise` codes measure against OPENING, an
-#:   instant this list cannot name, so they sit below every code anchored to a
-#:   time and their copy no longer claims a baseline. The dated sentence is
+#:   instant this list cannot name, so THEY ARE NOT IN IT. The dated sentence is
 #:   composed in `feed_reasons`, where `opening_captured_at` is in hand.
+#:
+#:   🔴 THEY WERE, AND DEMOTING THEM TO THE BOTTOM WAS NOT ENOUGH. The first cut
+#:   of this rule left them here as ("major_surprise", "Well off its opening
+#:   price") / ("moderate_surprise", "Off its opening price") on the reasoning
+#:   that ranking them last meant "their copy no longer claims a baseline". It
+#:   does: "its opening price" IS the baseline, named and undated, and clause a
+#:   says that sentence "is never the headline reason". Ordering only decides
+#:   WHICH label speaks when several could — it cannot stop the last one speaking
+#:   when it is the only one left, which is precisely the state a card with no
+#:   live signal is in. Measured on production 2026-09-09, `GET /api/feed`
+#:   limit=100: eleven occurrences over 100 served cards — 7 top-level headlines,
+#:   2 bundle-member headlines, 2 context summaries — and on 6 of the 7 cards it
+#:   was the ONLY prose. The reader's copy, photographed at 390px: a 42% market
+#:   captioned "Well off its opening price" under "Resolves Jun 29, 2030".
+#:
+#:   `_biggest_move_from_opening` in `routes/feed.py` already refuses to publish
+#:   the undated sentence, and says so at length. That refusal reached ONE of the
+#:   two doors: `routes/feed.py` composes the served headline as
+#:   `generate_futures_headline(...) or highlight_result.primary_reason`, and the
+#:   `or` is the other door. A rule that lands in one component is not landed.
 #: * #4133/#4160: `source_divergence`, `rank_shakeup` and `multi_source` carried
 #:   "Sources disagree", "Rankings shakeup" and "Multi-source". They are scoring
 #:   signals with no honest reader-facing label, and removing their branches from
@@ -446,8 +465,9 @@ PRIMARY_REASON_LABELS: list[tuple[str, str]] = [
     ("moderate_movement_24h", "Odds moving"),
     ("resolving_soon_7d", "Resolving soon"),
     ("resolving_soon_30d", "Resolving this month"),
-    ("major_surprise", "Well off its opening price"),
-    ("moderate_surprise", "Off its opening price"),
+    # (No `major_surprise` / `moderate_surprise` rungs — see the second bullet
+    # above. Both remain SCORING signals, worth 10 and 5; this is a copy fix, not
+    # a ranking change, and a card still ranks on the move it no longer misnames.)
 ]
 
 # Thresholds

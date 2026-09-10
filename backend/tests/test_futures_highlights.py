@@ -606,10 +606,15 @@ class TestDeterministicFuturesHeadlines:
         )
 
         assert "major_surprise" in result.reasons
-        # D1 clause a (#4066): the last-resort label no longer asserts a
-        # baseline it cannot name. The dated sentence is composed in
-        # `feed_reasons`, where the baseline's date is (or is not) in hand.
-        assert result.primary_reason == "Well off its opening price"
+        # D1 clause a (#4066): the last-resort label no longer asserts a baseline
+        # it cannot name — so there is no last-resort label at all, and the card
+        # says nothing rather than "Well off its opening price". Demoting that
+        # string to the bottom of PRIMARY_REASON_LABELS (what this assertion
+        # pinned until 2026-09-09) left it on 7 of 100 served cards, because
+        # ordering cannot stop the last label speaking when it is the only one.
+        # The dated sentence is composed below, in `feed_reasons`, where the
+        # baseline's date is (or is not) in hand.
+        assert result.primary_reason is None
 
         opened_at = datetime(2026, 3, 4, 12, 0, tzinfo=timezone.utc)
         now = datetime(2026, 9, 8, 21, 7, tzinfo=timezone.utc)

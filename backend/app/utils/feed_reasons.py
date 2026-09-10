@@ -53,6 +53,43 @@ def contains_diagnostic_phrase(text: str | None) -> bool:
     return bool(DIAGNOSTIC_PHRASE_RE.search(lowered))
 
 
+#: Words that measure a price against a BASELINE. Naming one is allowed; naming
+#: one without saying when it was taken is not (D1 clause a, #4066).
+BASELINE_PHRASES: tuple[str, ...] = ("opening", "from open", "since open")
+
+#: The only dated baseline this codebase composes: `format_baseline_date` renders
+#: "Mar 4" / "Mar 4, 2025", always behind the word "since".
+_DATED_BASELINE_RE = re.compile(
+    r"\bsince\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}\b",
+    re.IGNORECASE,
+)
+
+
+def claims_undated_baseline(text: str | None) -> bool:
+    """True when a served string measures against a baseline it will not date.
+
+    D1 clause a (#4066): a move "from opening" is context and always carries its
+    date; it is never the headline reason. An undated one is not a fact about
+    this morning — the opening it cites may be a year old, and on the market that
+    prompted this it was, with the card resolving in 2030.
+
+    This is a SEPARATE predicate from `contains_diagnostic_phrase`, not a few
+    more entries in `DIAGNOSTIC_PHRASES`, because the two ban different things
+    and one of them is conditional. "Sources disagree" is never sayable; "up 27.0
+    points since Mar 4" is sayable and good, and differs from the banned string
+    only by carrying the date. A ban list of fixed substrings cannot express
+    "unless you also say when", which is why the #4160 guard — which imports the
+    fallback label table and drives the composed `headline or primary_reason`
+    expression, so it looked at "Well off its opening price" on every run —
+    passed it every time. The guard's REACH was right and its PREDICATE was
+    short.
+    """
+    lowered = (text or "").lower()
+    if not any(phrase in lowered for phrase in BASELINE_PHRASES):
+        return False
+    return not _DATED_BASELINE_RE.search(lowered)
+
+
 def _side_label(name: str) -> str:
     """Make binary Yes/No outcome labels read naturally in movement text."""
     if name.strip().lower() in {"yes", "no"}:
