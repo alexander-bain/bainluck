@@ -1640,6 +1640,45 @@ jobs:
       - name: Contract fixtures (no dependencies, no browser, no network)
         run: npm run contract
 
+  release-required:
+    # #4456 — does this master push actually need a HEROKU release?
+    #
+    # Every master merge used to cycle the dynos, and a dyno cycle kills whatever
+    # the workers are mid-way through: the matcher, and the calibration rebuild
+    # that takes ~2h and has been killed repeatedly at ~110/128 by a release
+    # landing under it. A frontend-only merge has nothing for Heroku to serve
+    # differently, so it should cost the backend nothing.
+    #
+    # THIS JOB FAILS TOWARD RELEASING. Every uncertain branch below emits
+    # `required=true`. A missed release is a silent production/master skew that
+    # nobody notices for hours; a redundant release costs one dyno cycle. Those
+    # are not symmetric, so the tie goes to releasing.
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      required: ${{ steps.decide.outputs.required }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need the previous commit to diff against; a shallow clone cannot.
+          fetch-depth: 0
+
+      - name: Decide whether Heroku must release
+        id: decide
+        run: |
+          set -uo pipefail
+          # The decision lives in a script so a guard test can execute it.
+          # `|| echo true` is the last fail-safe: if the script itself cannot run,
+          # we release.
+          REQUIRED="$(bash .github/scripts/heroku-release-required.sh \
+                        '${{ github.event.before }}' '${{ github.sha }}' || echo true)"
+          case "$REQUIRED" in
+            true|false) ;;
+            *) echo "unparseable decision '$REQUIRED' — defaulting to release"; REQUIRED=true ;;
+          esac
+          echo "required=$REQUIRED" >> "$GITHUB_OUTPUT"
+          echo "release required: $REQUIRED"
+
   deploy:
     # search-recall added for #1494: the recall gate is deploy-blocking, so the
     # reverted search speed-up cannot re-land without it going green.
@@ -1650,8 +1689,17 @@ jobs:
     # a shard from the deploy gate.
     # shard-completeness is required too — without it a partition that skips
     # files could deploy on a green built from a smaller suite.
-    needs: [backend-tests, shard-completeness, search-recall, frontend-build, e2e-contract]
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    # release-required (#4456) is a GATE, not a test: it decides whether this
+    # push needs a Heroku dyno cycle at all. It shares `deploy`'s exact `if`, so
+    # the two are never inconsistently skipped, and it fails toward `true`.
+    needs: [backend-tests, shard-completeness, search-recall, frontend-build, e2e-contract, release-required]
+    # KEEP THIS CONDITION ON ONE LINE. ciTriggerCoverage's "an any-base PR cannot
+    # release" assertion matches `if:.*github.event_name == 'push'` with a
+    # single-line regex; folding this into a `>-` block scalar hides the
+    # event_name/ref guards from it and the suite goes red. That test is the only
+    # thing standing between a pull_request run and a Heroku release, so it must
+    # stay able to SEE the guard, not merely have the guard be present.
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.release-required.outputs.required != 'false'
     runs-on: ubuntu-latest
     concurrency:
       group: heroku-deploy
