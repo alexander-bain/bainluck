@@ -23,8 +23,10 @@ import pytest
 
 from app.utils.score_observation import (
     SCORE_OBSERVATION_SOURCES,
+    SCORE_SOURCE_ODDS,
     clear_score_observation,
     score_observation_fields,
+    score_observation_values,
     stamp_score_observation,
 )
 
@@ -225,7 +227,15 @@ def _calls_in(tree):
         if isinstance(node, ast.Call):
             fn = node.func
             name = getattr(fn, "id", None) or getattr(fn, "attr", None)
-            if name in ("stamp_score_observation", "clear_score_observation"):
+            if name in (
+                "stamp_score_observation",
+                "clear_score_observation",
+                # The Core-UPDATE spelling. `_poll_all_odds` writes scores
+                # through `Event.__table__.update()`, so it cannot assign an ORM
+                # attribute (gotcha #5) — it merges columns instead. Same rule,
+                # different verb, and it must be held to both guards below.
+                "score_observation_values",
+            ):
                 yield node
 
 
@@ -237,6 +247,10 @@ SITES = [
     "app/tasks/statpal_sync.py",
     "app/tasks/espn_sync.py",
     "app/utils/espn_helpers.py",
+    # CERT-2460: missed by the first cut of #4571 because the issue's scope line
+    # named "MLB Stats API" (which writes no score at all) and not this — an
+    # active production writer, every ~5.5 min.
+    "app/tasks/odds_polling.py",
 ]
 
 
@@ -412,3 +426,207 @@ def test_helper_stays_dependency_free():
                 f"score_observation imports {node.module} — keep it "
                 "dependency-free"
             )
+
+
+# ══ CERT-2460 REPAIR — 4571-ODDS-API-SCORE-WRITER-STAMPS-THE-READ ════════════
+#
+# The first cut of #4571 stamped ESPN and StatPal and MISSED
+# `odds_polling._poll_all_odds`, which fetches The Odds API scores and writes
+# `events.home_score`/`away_score` through a Core UPDATE every ~5.5 minutes.
+#
+# An unstamped writer is worse than an unstamped column. The row keeps whichever
+# stamp a DIFFERENT source last left, so the payload serves an Odds API score
+# under ESPN's name with a fresh-looking age — the precise lie the field exists
+# to remove. #4576's attribution query would then name the wrong writer, which
+# is the question this ship exists to answer.
+#
+# The site writes columns, not attributes, so the controls below exercise
+# `score_observation_values` — the helper the site actually calls — and the AST
+# guards pin that the site calls it, atomically, ungated by change. That is the
+# same division this file already uses, and the same one
+# `test_live_cadence_lat_p159` uses for this function: "the helper
+# `_poll_all_odds` calls, never a local copy of its rule."
+
+ODDS_SITE = "app/tasks/odds_polling.py"
+
+
+# ── executable: the UNCHANGED 0-0 control ────────────────────────────────────
+
+
+def test_core_values_stamp_a_score_that_did_not_change():
+    """The 0-0 opener a writer confirms every pass and changes never.
+
+    `score_observation_values` takes NO previous score — it cannot be made
+    change-sensitive without adding a parameter, which is the strongest form
+    this control can take.
+    """
+    assert score_observation_values(
+        source=SCORE_SOURCE_ODDS, observed_at=NOW
+    ) == {
+        "score_source": "odds_api",
+        "score_observed_at": NOW,
+    }
+
+
+@pytest.mark.parametrize("home,away", [(0, 0), (3, 1), (0, 7)])
+def test_the_stamp_does_not_depend_on_the_score_at_all(home, away):
+    """Whatever the numbers, an observation is an observation."""
+    assert score_observation_values(
+        source=SCORE_SOURCE_ODDS, observed_at=NOW
+    ) == {
+        "score_source": "odds_api",
+        "score_observed_at": NOW,
+    }
+
+
+# ── executable: the NO-SCORE / no-clock controls ─────────────────────────────
+
+
+def test_core_values_without_a_clock_stamp_nothing():
+    """No clock, no stamp — an absent stamp reads as 'unknown age', which is
+    honest. A wrong one is not."""
+    assert score_observation_values(
+        source=SCORE_SOURCE_ODDS, observed_at=None
+    ) == {}
+
+
+@pytest.mark.parametrize("bad", ["odds", "oddsapi", "OddsAPI", "", "espn2"])
+def test_core_values_refuse_a_source_outside_the_registry(bad):
+    with pytest.raises(ValueError):
+        score_observation_values(source=bad, observed_at=NOW)
+
+
+def test_odds_api_is_in_the_registry_and_fits_the_column():
+    assert "odds_api" in SCORE_OBSERVATION_SOURCES
+    assert len("odds_api") <= 20
+
+
+def test_both_paths_share_one_registry():
+    """The ORM stamp and the Core stamp must never disagree about who exists —
+    a drift shows up as a silently unstamped writer, i.e. CERT-2460 again."""
+    ev = SimpleNamespace(score_source=None, score_observed_at=None)
+    for source in sorted(SCORE_OBSERVATION_SOURCES):
+        assert stamp_score_observation(ev, source=source, observed_at=NOW) is True
+        assert score_observation_values(source=source, observed_at=NOW)
+
+    for bad in ("nope", "mlb"):
+        with pytest.raises(ValueError):
+            stamp_score_observation(ev, source=bad, observed_at=NOW)
+        with pytest.raises(ValueError):
+            score_observation_values(source=bad, observed_at=NOW)
+
+
+# ── the wiring at the odds site ──────────────────────────────────────────────
+
+
+def _odds_stamp_calls():
+    return list(_calls_in(_module_tree(ODDS_SITE)))
+
+
+def test_the_odds_writer_stamps_at_all():
+    """The CERT-2460 defect itself: this returned [] before the repair."""
+    assert _odds_stamp_calls(), (
+        "odds_polling writes events.home_score but never stamps an observation "
+        "(#4571 / CERT-2460)"
+    )
+
+
+def test_the_odds_stamp_is_merged_into_the_same_update_values():
+    """ATOMICITY. The stamp must ride the SAME `update_values` dict as the score.
+
+    Two separate writes would leave a window in which the row holds an Odds API
+    score under the previous writer's attribution — a narrower version of the
+    bug being fixed, and a much harder one to see.
+    """
+    tree = _module_tree(ODDS_SITE)
+    merged = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        # `update_values.update(score_observation_values(...))`
+        if getattr(fn, "attr", None) != "update":
+            continue
+        if getattr(getattr(fn, "value", None), "id", None) != "update_values":
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Call) and getattr(
+                arg.func, "id", None
+            ) == "score_observation_values":
+                merged = True
+
+    assert merged, (
+        "the odds stamp is not merged into `update_values` — it must land in "
+        "the same UPDATE as the score it describes"
+    )
+
+
+def test_the_odds_stamp_passes_the_pass_clock_not_a_fresh_now():
+    """One clock per poll, never `now()` per row.
+
+    A slow pass would otherwise stamp its last event fresher than its first when
+    both came off a single provider payload — the stamp would then encode our
+    loop's progress rather than the provider's reading.
+    """
+    for call in _odds_stamp_calls():
+        kwargs = {k.arg: k.value for k in call.keywords}
+        assert "observed_at" in kwargs, "the site must name its clock"
+        observed = kwargs["observed_at"]
+        assert isinstance(observed, ast.Name), (
+            "observed_at must be the pass clock bound above the loop, not an "
+            f"expression like now() — got {ast.dump(observed)}"
+        )
+        assert observed.id == "now"
+
+
+def test_the_odds_stamp_is_gated_on_a_score_being_present():
+    """The NO-SCORE control, at the site.
+
+    A provider record with no `scores` array must not stamp: we did not read a
+    score, so there is nothing to date. The guard is the `is not None` pair, and
+    it must be an `or` — a partial read is still a read.
+    """
+    tree = _module_tree(ODDS_SITE)
+    guarded = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        if not list(_calls_in(ast.Module(body=node.body, type_ignores=[]))):
+            continue
+        test_src = ast.dump(node.test)
+        if "home_score" in test_src and "away_score" in test_src:
+            assert "BoolOp" in test_src and "Or" in test_src, (
+                "the score-presence guard must be an `or` — a record carrying "
+                "only one side was still a read"
+            )
+            assert "NotEq" not in test_src, (
+                "the odds stamp is gated on the score having CHANGED; it must "
+                "be gated only on a score having been READ"
+            )
+            guarded = True
+
+    assert guarded, "the odds stamp is not gated on a score being present"
+
+
+def test_a_refused_id_never_reaches_the_stamp():
+    """The REFUSED-ID control.
+
+    #1981's guard `continue`s on a STALE/UNVERIFIABLE/UNBOUND external_id before
+    any `update_values` is built. A stamp written on that path would date a
+    score we deliberately refused to write — attribution for a number that is
+    not there.
+    """
+    src = (BACKEND / ODDS_SITE).read_text().splitlines()
+
+    continue_line = next(
+        i for i, line in enumerate(src)
+        if line.strip() == "continue"
+        and any("IdCurrency.CURRENT" in src[j] for j in range(max(0, i - 30), i))
+    )
+    stamp_line = min(
+        call.lineno for call in _odds_stamp_calls()
+    )
+    assert continue_line < stamp_line, (
+        "the stale-id refusal must short-circuit BEFORE the stamp; a refused "
+        "write that still stamps dates a score it did not make"
+    )
