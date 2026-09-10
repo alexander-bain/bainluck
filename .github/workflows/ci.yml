@@ -567,6 +567,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#4057 Kalshi settlement recency band (real Postgres)"
+        # WHICH settled Kalshi markets a cycle asks the venue about is decided by
+        # two WHERE clauses and nothing else. The old selection was an
+        # alphabetical cursor over a population measured at 71,389 tickers — a
+        # ~8.9-day wrap — so a market that settled below the cursor showed no
+        # result for days while Kalshi had it finalized.
+        #
+        # Real Postgres because a fake session agrees with itself: it answers any
+        # statement mentioning `futures_markets` with a canned list, so the
+        # recency floor, the two-sided window, the blank test and the
+        # `ungradeable_result` exclusion can each be deleted with every unit test
+        # still green. The file's mutated arms execute the deleted shapes here.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_settlement_recency_band_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/settlement_recency_band.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/settlement_recency_band.txt; then
+            echo "::error::#4057 settlement recency band gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening
