@@ -954,18 +954,33 @@ export default function MarketMapSection({
       {/* Left column: Margin maps grouped */}
       {hasMargin && (
         <div className="rounded-2xl border border-surface-border bg-surface-card/50 p-2 space-y-2">
-          <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
-            {/* #2442, CERT-642's second finding. "Total maps" is the betting
-                noun for an over/under and it survived the first sweep because
-                the guard's fixture supplied no totals, so this column never
-                rendered. Both headings now come from the sport's declared
-                vocabulary, like the titles inside them.
+          {/* The eyebrow names a column that GROUPS several cards, so it earns
+              its space only when there is more than one to group. With a single
+              card it printed that card's own title verbatim, immediately above
+              it: a reader on the US Open SF page saw "GAME MARGIN MAP" in small
+              grey caps and then "Game margin map" in the card beneath, and the
+              same again for "GAMES MAP". Tennis has no halves, so the column can
+              never hold more than one card and the duplicate was guaranteed on
+              every tennis match page.
 
-                #2441 adds the empty-unit arm: an UNDECLARED sport has no unit
-                to build a heading from, and interpolating one produces " maps".
-                So it falls back to the plain noun rather than to a guess. */}
-            {mapColumnHeading(vocab.unit ? vocab.marginTitle : "Margin map", marginCardCount)}
-          </div>
+              D102 allows small grey type "where it makes sense and offers the
+              reader value" — a label that repeats the heading 20px below it
+              offers none.
+
+              #2442, CERT-642's second finding. "Total maps" is the betting noun
+              for an over/under and it survived the first sweep because the
+              guard's fixture supplied no totals, so this column never rendered.
+              Both headings come from the sport's declared vocabulary, like the
+              titles inside them.
+
+              #2441 adds the empty-unit arm: an UNDECLARED sport has no unit to
+              build a heading from, and interpolating one produces " maps". So it
+              falls back to the plain noun rather than to a guess. */}
+          {marginCardCount > 1 && (
+            <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
+              {mapColumnHeading(vocab.unit ? vocab.marginTitle : "Margin map", marginCardCount)}
+            </div>
+          )}
           {marginData && (
             <MarketMap variant="margin" {...marginData} status={status} />
           )}
@@ -978,9 +993,12 @@ export default function MarketMapSection({
       {/* Right column: Total maps grouped */}
       {hasTotal && (
         <div className="rounded-2xl border border-surface-border bg-surface-card/50 p-2 space-y-2">
-          <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
-            {mapColumnHeading(vocab.unit ? vocab.totalTitle : "Scoring map", totalCardCount)}
-          </div>
+          {/* Same rule as the margin column above. */}
+          {totalCardCount > 1 && (
+            <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
+              {mapColumnHeading(vocab.unit ? vocab.totalTitle : "Scoring map", totalCardCount)}
+            </div>
+          )}
           {totalData && (
             <MarketMap variant="total" {...totalData} status={status} />
           )}
