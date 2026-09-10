@@ -24,6 +24,7 @@ from app.utils import search_match_class as smc
 from app.utils.search_match_class import (
     MC0_EXACT,
     MC1_ALL_TOKENS,
+    MC1B_OWN_NAME_PREFIX,
     MC2_LAST_TOKEN_PREFIX,
     MC3_PARTIAL_TOKENS,
     MC4_OUTCOME_ONLY,
@@ -38,6 +39,7 @@ from app.utils.search_match_class import (
 ALL_CLASSES = [
     MC0_EXACT,
     MC1_ALL_TOKENS,
+    MC1B_OWN_NAME_PREFIX,
     MC2_LAST_TOKEN_PREFIX,
     MC3_PARTIAL_TOKENS,
     MC4_OUTCOME_ONLY,
@@ -48,10 +50,20 @@ QUERY = "super bowl"
 
 #: One specimen per class, all against the SAME query, so any pair can be
 #: compared directly. Verified by `test_p0_the_specimen_table_is_honest`.
-SPECIMENS: dict[int, Evidence] = {
+#:
+#: 🔴 THE MC2 SPECIMEN MOVED WHEN #4519 LANDED, and the move is the whole point
+#: of P0 rather than a cost of it. "Super Bowling Night" scored MC2 for four
+#: cycles; the day MC1B existed it became an MC1B — the query IS a live prefix
+#: of that whole name — and P0 said so in the same second, naming the class it
+#: had drifted into. The specimen it was replaced with keeps MC2 isolated by
+#: putting the matched token in the MIDDLE of the name, which is exactly the
+#: distinction MC1B draws, so the two specimens now differ on precisely one
+#: thing. Never repair a P0 failure by editing the expected class.
+SPECIMENS: dict[float, Evidence] = {
     MC0_EXACT: Evidence(name="Super Bowl", kind="market"),
     MC1_ALL_TOKENS: Evidence(name="Super Bowl LXI Winner", kind="market"),
-    MC2_LAST_TOKEN_PREFIX: Evidence(name="Super Bowling Night", kind="market"),
+    MC1B_OWN_NAME_PREFIX: Evidence(name="Super Bowling Night", kind="market"),
+    MC2_LAST_TOKEN_PREFIX: Evidence(name="Night of Super Bowling", kind="market"),
     MC3_PARTIAL_TOKENS: Evidence(name="Bowl Game Champion", kind="market"),
     MC4_OUTCOME_ONLY: Evidence(
         name="Big Game Winner", outcomes=("Super Bowl",), kind="market"
@@ -320,11 +332,19 @@ def test_p10b_mc2_is_a_PREFIX_match_not_a_containment_match():
     quietly promote interior fragments into a class above MC3, which is the
     fragment family this ruling exists to demote.
     """
-    ev = Evidence(name="Super Bowling Night", kind="market")
+    # The token being prefixed sits in the MIDDLE of the name, so MC1B (#4519)
+    # cannot claim this row and MC2 is isolated. `Super Bowling Night` was the
+    # specimen here until #4519 and is now the MC1B one — see the SPECIMENS
+    # table's note; the property below is unchanged, only the specimen that
+    # isolates it.
+    ev = Evidence(name="Night of Super Bowling", kind="market")
     # "bowl" IS a prefix of "bowling": MC2.
     assert match_class("super bowl", ev) == MC2_LAST_TOKEN_PREFIX
     # "owl" is INSIDE "bowling" but does not start it: MC2 must not apply.
     assert match_class("super owl", ev) == MC3_PARTIAL_TOKENS
+    # And the mutation this test was written for stays caught on the new
+    # specimen: swap `startswith` for `in` in the MC2 arm and the line above
+    # returns MC2 instead of MC3.
 
 
 def test_p11_folding_is_confined_to_mc1_and_below():
