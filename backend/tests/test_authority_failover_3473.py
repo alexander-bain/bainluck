@@ -269,7 +269,19 @@ def test_every_outcome_under_an_open_gate(
 
 def test_a_flipped_sport_is_standing_not_failed_over(still_gated):
     """`STANDING_STATPAL` is a flip, not an outage override, and counting it as
-    a failover would report a sport as degraded for as long as it was flipped."""
+    a failover would report a sport as degraded for as long as it was flipped.
+
+    **AMENDED BY #4434.** This test used to pass an UNREAD standby and assert
+    `serving == statpal` on all three ESPN readings. That was the defect, not
+    the contract: a flipped sport was claiming to serve on the strength of a
+    question nobody had asked, and the actor then wrote nothing. The standby is
+    now healthy in every call below, and the refusal side — what a flipped sport
+    does when its standby CANNOT cover — is
+    `test_standing_statpal_is_a_serving_state_4434.py`.
+
+    What survives unchanged is the half this test was written for: standing is
+    not a failover.
+    """
     decision = decide(NFL, espn=FIXTURES, gate=_shut_gate(still_gated), standing=STATPAL)
     assert decision.code == STANDING_STATPAL
     assert decision.serving == STATPAL
@@ -277,10 +289,17 @@ def test_a_flipped_sport_is_standing_not_failed_over(still_gated):
     assert decision.code not in FAILOVER_CODES
 
     # It outranks ESPN's reading: a flipped sport does not revert because ESPN
-    # happened to answer this pass.
+    # happened to answer this pass — PROVIDED its standby can actually cover it.
     for reading in (DARK, EMPTY, FIXTURES):
         assert (
-            decide(NFL, espn=reading, gate=_shut_gate(still_gated), standing=STATPAL).serving
+            decide(
+                NFL,
+                espn=reading,
+                statpal=FIXTURES,
+                statpal_live=FIXTURES,
+                gate=_shut_gate(still_gated),
+                standing=STATPAL,
+            ).serving
             == STATPAL
         )
 
@@ -1879,7 +1898,22 @@ def test_the_note_says_what_a_flip_does_NOT_do(monkeypatch, still_gated):
 
     # And the decision's own reason carries the same caveat, so a reader of the
     # receipt is not left with a `serving: statpal` they will over-read.
-    standing = decide(NFL, espn=DARK, gate=_shut_gate(still_gated), standing=STATPAL)
+    #
+    # #4434: the standby has to be HEALTHY to reach the state that claims to be
+    # serving, which is the only state whose reason needs the caveat. A refusal
+    # says `serving: espn` and there is nothing to over-read.
+    standing = decide(
+        NFL,
+        espn=DARK,
+        statpal=FIXTURES,
+        statpal_live=FIXTURES,
+        gate=_shut_gate(still_gated),
+        standing=STATPAL,
+    )
+    assert standing.serving == STATPAL, (
+        "the premise moved: this assertion is only meaningful over a decision "
+        f"that claims StatPal is serving. Got {standing.code}"
+    )
     assert "NOTE THE LIMIT" in standing.why
 
 

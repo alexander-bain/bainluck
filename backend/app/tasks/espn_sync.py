@@ -356,6 +356,14 @@ async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
     `livescores`, via `_statpal_standby_reading`. Every other silent sport still
     costs exactly one durable ledger read and no network call, because it refuses
     at the gate first.
+
+    **A STANDING sport reaches the network whatever the gate says (#4434),** and
+    that is the point: `flip_permitted` asks "may this sport flip?", a sport that
+    already has is not asking, and the standby questions are what it does need
+    answered. `decide` skips the gate for it and returns `STANDBY_NOT_READ`, so
+    the re-read below fires for it exactly as it does for a dark candidate. No
+    sport is standing today — `AUTHORITY_BY_SPORT` is all ESPN — so this costs
+    nothing until the first flip, which is the flip #4434 exists to make safe.
     """
     from app.config.authority_by_sport import flip_permitted
     from app.services.authority_ledger import read_ledger_days
@@ -432,17 +440,30 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
     ESPN outage must degrade to "nobody served this sport", recorded, and must
     never take down the ESPN pass that is still working for every other sport.
 
-    THE REFUSALS ARE THE OTHER HALF, and they are not consolation.
-    `BLANK_CODES` — ESPN silent AND the standby FAILED when asked — is the state
-    where nothing can say what is happening in a game that is on. Logged at
-    ERROR and counted apart, because every other refusal is a fact about the day
-    and this one is a fault.
+    **AND IT SERVES A FLIPPED SPORT THE SAME WAY (#4434).** A sport whose
+    `AUTHORITY_BY_SPORT` entry is already StatPal reaches `STANDING_STATPAL`
+    only after answering every standby question a failover candidate answers,
+    and is then served by these same two writers — counted as
+    `standing_serving`, never as `failover_serving`, because it is not in an
+    outage and reporting it as one would show a permanent degradation for as
+    long as it stayed flipped. Before #4434 that code was in neither set the
+    loop branches on: it fell through to the `else` and logged an INFO over a
+    pass that wrote no fixtures, no score and no clock.
 
-    "Failed when asked" is the whole of it, and it is narrower than "could not
-    cover": `STANDBY_CANNOT_COVER_WINDOW` is a sport StatPal publishes no board
-    for (soccer and tennis, permanently — #4320), which is a boundary of its
-    product rather than an event on this pass. It is benign, it is not in
-    `BLANK_CODES`, and it logs at INFO with the rest.
+    THE REFUSALS ARE THE OTHER HALF, and they are not consolation. `is_unserved`
+    — ESPN silent AND the standby FAILED when asked — is the state where nothing
+    can say what is happening in a game that is on. Logged at ERROR and counted
+    apart, because every other refusal is a fact about the day and this one is a
+    fault.
+
+    **The question is asked of the DECISION, not of its code**, because one
+    refusal means different things on the two paths.
+    `STANDBY_CANNOT_COVER_WINDOW` is a sport StatPal publishes no board for
+    (soccer and tennis, permanently — #4320). For a failover CANDIDATE that is a
+    boundary of StatPal's product rather than an event on this pass: benign, not
+    in `BLANK_CODES`, logged at INFO with the rest. For a sport already FLIPPED
+    to StatPal it is the source of record failing to cover its own sport, which
+    is a blank. Same code, opposite severity — see `is_unserved`.
 
     **The receipts.** Every decision that is not the ordinary `ESPN_ANSWERED` is
     published on the task summary, served or not — an outage the site rode out
@@ -451,7 +472,11 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
     are both recoverable by differencing consecutive passes and no stored flag
     can be stranded by a lost write.
     """
-    from app.utils.authority_failover import BLANK_CODES, FAILOVER_CODES
+    from app.utils.authority_failover import (
+        FAILOVER_CODES,
+        STANDING_STATPAL,
+        is_unserved,
+    )
 
     receipts = []
     served: list[str] = []
@@ -467,7 +492,25 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
             )
             served.append(sport_key)
             await _serve_schedule_from_statpal(sport_key, stats)
-        elif decision.code in BLANK_CODES:
+        elif decision.code == STANDING_STATPAL:
+            # #4434. A FLIPPED sport, whose standby has just answered every
+            # question a failover candidate's does. It is served by the same two
+            # writers and counted APART: this is not an outage, it is the normal
+            # state of a sport whose source of record is StatPal, and folding it
+            # into `failover_serving` would report a permanent degradation for
+            # as long as it stayed flipped.
+            #
+            # Before #4434 this branch did not exist: `STANDING_STATPAL` was in
+            # neither set, fell to the `else`, and logged an INFO over a pass
+            # that wrote no fixtures, no score and no clock.
+            stats["standing_serving"] = stats.get("standing_serving", 0) + 1
+            logger.info(
+                "AUTHORITY STANDING for %s (%s): %s",
+                sport_key, decision.code, decision.why,
+            )
+            served.append(sport_key)
+            await _serve_schedule_from_statpal(sport_key, stats)
+        elif is_unserved(decision):
             stats["failover_uncovered"] = stats.get("failover_uncovered", 0) + 1
             logger.error(
                 "AUTHORITY UNCOVERED for %s (%s): %s",

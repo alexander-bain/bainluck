@@ -541,6 +541,16 @@ class FailoverDecision:
     serving: str
     failed_over: bool
     why: str
+    #: Is StatPal this sport's SOURCE OF RECORD (`AUTHORITY_BY_SPORT`), as
+    #: opposed to a standby being borrowed for one pass? Distinct from
+    #: `failed_over`, and the two are never both true: a flipped sport is not in
+    #: an outage, and an outage override is not a flip.
+    #:
+    #: Carried on the decision rather than re-derived by each consumer because
+    #: it changes what several refusals MEAN (see :func:`is_unserved`), and a
+    #: caller re-deciding that from the code alone is the drift this type exists
+    #: to prevent.
+    standing: bool = False
 
     def as_receipt(self) -> dict[str, Any]:
         """The receipt shape a task summary carries.
@@ -554,8 +564,32 @@ class FailoverDecision:
             "code": self.code,
             "serving": self.serving,
             "failed_over": self.failed_over,
+            "standing": self.standing,
             "why": self.why,
         }
+
+
+def is_unserved(decision: "FailoverDecision") -> bool:
+    """Is this a pass on which NOBODY can say what is happening in this sport?
+
+    The actor's alarm question, asked of the decision rather than of its code,
+    because one refusal means different things on the two paths.
+
+    :data:`BLANK_CODES` covers it for a failover candidate. The divergence is
+    :data:`STANDBY_CANNOT_COVER_WINDOW` — StatPal publishes no board for the
+    window. For a CANDIDATE that is benign and deliberately not a blank: it is a
+    boundary of StatPal's product (soccer and tennis, permanently, #4320), a
+    fact about our build state rather than an event on this pass, and alarming
+    on it would page somebody every pass forever.
+
+    For a sport that has already been FLIPPED to StatPal it is the opposite: the
+    source of record cannot cover its own sport, ESPN is silent, and nothing is
+    going to write a score. Same code, opposite severity — which is precisely
+    why this cannot be a `code in SOME_SET` test at the call site.
+    """
+    if decision.code in BLANK_CODES:
+        return True
+    return decision.standing and decision.code == STANDBY_CANNOT_COVER_WINDOW
 
 
 def decide(
@@ -583,6 +617,28 @@ def decide(
     ornament: a sport whose source of record is already StatPal does not need,
     and must not be reported as being in, a failover.
 
+    **WHAT STANDING DOES AND DOES NOT SKIP (#4434).** It skips the GATE, because
+    `flip_permitted` asks "may this sport flip?" and a sport that already has is
+    not asking. It skips NOTHING ELSE. Every standby question below — was it
+    read, does it cover the window, is it dark, is its live half dark or silent
+    — is asked of a standing sport in the same order and with the same answers.
+
+    That is the repair. Until #4434 `standing == STATPAL` was the FIRST question
+    and returned immediately, so a flipped sport reported `serving: statpal`
+    without the standby having been read at all; the actor, finding the code in
+    neither `FAILOVER_CODES` nor `BLANK_CODES`, then wrote nothing and counted
+    nothing. Measured: `failover_serving: 0 | failover_uncovered: 0` over a pass
+    with no fixtures, no score and no clock. The early return was correct while
+    the switch was DARK, where a flip could only ever be a label, and stopped
+    being correct the moment D104 made a flip real.
+
+    The one state it still answers early is `espn == FIXTURES`: the ESPN loops
+    select on what ESPN returned rather than on this switch, so on a pass ESPN
+    answers, a standing sport is processed by them exactly as before. Changing
+    THAT is the inversion — reading StatPal first and backing it with ESPN — and
+    is a separate build. The `why` says so in capitals so the receipt cannot be
+    over-read.
+
     THE ORDER OF THE QUESTIONS IS LOAD-BEARING, and one of them is out of the
     order a reader expects. The gate is asked **before** the standby's reading,
     so a caller can leave `statpal` unread until it knows the answer could
@@ -598,13 +654,15 @@ def decide(
     Total: every combination of inputs has an answer and none of them raise.
     """
     standing_authority = authority_for(sport_key) if standing is None else standing
+    is_standing = standing_authority == STATPAL
 
-    if standing_authority == STATPAL:
+    if espn == FIXTURES and is_standing:
         return FailoverDecision(
             sport_key=sport_key,
             code=STANDING_STATPAL,
             serving=STATPAL,
             failed_over=False,
+            standing=True,
             why=(
                 f"{sport_key} has already flipped: StatPal is its source of "
                 "record standing, not as an outage override, so this pass's "
@@ -628,20 +686,48 @@ def decide(
             why=f"ESPN answered with fixtures for {sport_key}",
         )
 
-    permitted, gate_why = gate
-    if not permitted:
-        return FailoverDecision(
-            sport_key=sport_key,
-            code=NOT_GATED,
-            serving=ESPN,
-            failed_over=False,
-            why=(
-                f"ESPN is {espn} for {sport_key} and it cannot be failed over, "
-                f"because it has not cleared D50's measured half: {gate_why}. "
-                "An outage is the worst moment to start trusting a provider "
-                "that had not earned it"
-            ),
+    # THE GATE IS ASKED ONLY OF A CANDIDATE. `flip_permitted` answers "may this
+    # sport flip?", and a standing sport already has — so asking it here would
+    # let a shut gate refuse a sport that is not requesting permission for
+    # anything. The standby questions below are asked of BOTH paths, which is
+    # the whole of #4434: the flip changed who is asked to serve, and left the
+    # "can they?" questions behind.
+    gate_why = ""
+    if not is_standing:
+        permitted, gate_why = gate
+        if not permitted:
+            return FailoverDecision(
+                sport_key=sport_key,
+                code=NOT_GATED,
+                serving=ESPN,
+                failed_over=False,
+                why=(
+                    f"ESPN is {espn} for {sport_key} and it cannot be failed "
+                    f"over, because it has not cleared D50's measured half: "
+                    f"{gate_why}. An outage is the worst moment to start "
+                    "trusting a provider that had not earned it"
+                ),
+            )
+
+    # The two halves of every refusal below that differ between the paths. For a
+    # CANDIDATE the sentence is about permission; for a STANDING sport there is
+    # no permission left to discuss, and the consequence of the refusal is not
+    # "keep using ESPN" — ESPN is the one that went quiet.
+    if is_standing:
+        lede = (
+            f"ESPN is {espn} for {sport_key} and StatPal is ALREADY its source "
+            "of record, so this is not a question of permission to fail over"
         )
+        coda = (
+            " AND THIS SPORT HAS NOWHERE ELSE TO GO — StatPal is its source of "
+            "record, so refusing here is not a decision to keep using ESPN. It "
+            "is nobody being able to say what is happening in this sport"
+        )
+    else:
+        lede = (
+            f"ESPN is {espn} for {sport_key} and the gate permits a failover"
+        )
+        coda = ""
 
     if NOT_READ in (statpal, statpal_live):
         return FailoverDecision(
@@ -649,9 +735,9 @@ def decide(
             code=STANDBY_NOT_READ,
             serving=ESPN,
             failed_over=False,
+            standing=is_standing,
             why=(
-                f"ESPN is {espn} for {sport_key} and the gate permits a "
-                "failover, but the caller did not read the standby "
+                f"{lede}, but the caller did not read the standby "
                 f"(schedule={statpal}, live={statpal_live}). This is a caller "
                 "bug, not a fact about either provider — nothing failed over "
                 "and nothing may be concluded about StatPal's coverage. BOTH "
@@ -666,15 +752,15 @@ def decide(
             code=STANDBY_CANNOT_COVER_WINDOW,
             serving=ESPN,
             failed_over=False,
+            standing=is_standing,
             why=(
-                f"ESPN is {espn} for {sport_key} and the gate permits a "
-                "failover, but StatPal publishes no schedule board that covers "
+                f"{lede}, but StatPal publishes no schedule board that covers "
                 "the window this comparison is made over. Its schedule is one "
                 "calendar board at a time and there is no board for today, so "
                 "the question cannot be put — this is a boundary of StatPal's "
                 "product, NOT an outage and NOT a claim that it has no games. "
                 "Serving this sport from the standby needs a second source for "
-                "today's fixture list, not a retry"
+                "today's fixture list, not a retry" + coda
             ),
         )
 
@@ -684,10 +770,11 @@ def decide(
             code=STANDBY_DARK,
             serving=ESPN,
             failed_over=False,
+            standing=is_standing,
             why=(
                 f"ESPN is {espn} for {sport_key} and StatPal did not answer "
                 "either. Failing over to a source we could not read trades a "
-                "known silence for an unknown one"
+                "known silence for an unknown one" + coda
             ),
         )
 
@@ -698,6 +785,7 @@ def decide(
                 code=BOTH_QUIET,
                 serving=ESPN,
                 failed_over=False,
+                standing=is_standing,
                 why=(
                     f"both sources answered for {sport_key} and neither has a "
                     "fixture. This is a quiet slate, not an outage, and it is "
@@ -710,6 +798,7 @@ def decide(
             code=NOTHING_TO_SERVE,
             serving=ESPN,
             failed_over=False,
+            standing=is_standing,
             why=(
                 f"ESPN did not answer for {sport_key} — a real, unexplained "
                 "silence — but StatPal has no fixtures for it either, so there "
@@ -727,6 +816,7 @@ def decide(
             code=LIVE_PATH_SILENT_ON_THE_GAME,
             serving=ESPN,
             failed_over=False,
+            standing=is_standing,
             why=(
                 f"ESPN is {espn} for {sport_key}, StatPal's schedule says a "
                 "game is under way, and StatPal's own live board is not "
@@ -734,7 +824,7 @@ def decide(
                 "other, so it cannot serve this sport however healthy either "
                 "endpoint looks on its own — and the writer, which keys live "
                 "rows to events by the same team pair, would skip it and write "
-                "nothing"
+                "nothing" + coda
             ),
         )
 
@@ -749,6 +839,7 @@ def decide(
             code=LIVE_PATH_DARK,
             serving=ESPN,
             failed_over=False,
+            standing=is_standing,
             why=(
                 f"ESPN is {espn} for {sport_key} AND StatPal's live path is "
                 "dark. StatPal has fixtures in the window, so it can say the "
@@ -757,6 +848,32 @@ def decide(
                 "would freeze behind a row claiming to be served. BOTH "
                 "providers are now silent about live state for a sport that "
                 "has a game on: this is the blank, not a failover away from it"
+                + coda
+            ),
+        )
+
+    # BOTH halves of the standby answered and both carry the window. Only here
+    # may a standing sport be reported as served — every question above is one
+    # the flip used to skip.
+    if is_standing:
+        return FailoverDecision(
+            sport_key=sport_key,
+            code=STANDING_STATPAL,
+            serving=STATPAL,
+            failed_over=False,
+            standing=True,
+            why=(
+                f"{sport_key} has already flipped: StatPal is its source of "
+                "record standing, not as an outage override, so ESPN being "
+                f"{espn} on this pass is not an outage for it and nothing here "
+                "is a failover. Both halves of the standby answered and cover "
+                "the window, so StatPal's schedule and livescore writers run "
+                "for this sport now. NOTE THE LIMIT — the flip is not yet a "
+                "serving path on the OTHER side: on a pass where ESPN DOES "
+                "answer, this sport is processed by the ordinary ESPN loops "
+                "exactly as before, because they select on what ESPN returned "
+                "and not on this switch. `switch_wiring_note` carries the same "
+                "caveat for the operator"
             ),
         )
 
