@@ -1433,6 +1433,67 @@ async def _prefetch_outcomes(session, market_ids):
     return by_market
 
 
+#: A Kalshi series whose question is bounded to ONE PERIOD of a game, so the
+#: FINAL score cannot answer it (#4923).
+#:
+#: Matched against the SERIES — the part of the ticker before the first dash —
+#: because the suffix is a date and two club codes, and 282 event-linked
+#: markets carry an accidental "1h" there: `KXWTAMATCH-26JUL11HODCHA` is Hodzic
+#: vs Chan on the 11th, not a first half. The old `"1h" in ticker_lower` read
+#: the whole ticker and called all 282 first-half markets.
+#:
+#: The alternatives are the four period grammars measured over all 899
+#: event-linked Kalshi series on production 2026-09-10: halves (`KXEPL1H`,
+#: `KXMLS1HBTTS`, `KXNFL2HSPREAD`, `KXNCAAMB1HWINNER`), quarters
+#: (`KXNBA1QWINNER`, `KXNFL2QBTTS`, `KXNCAAF4QSPREAD`), the MLB first-N-innings
+#: windows (`KXMLBF5`, `KXMLBF5TOTAL`, `KXMLBF3`, `KXMLBF7`) and the
+#: first-inning run (`KXMLBRFI`).
+#:
+#: `[1-4]h` REFUSES A PRECEDING `h`, and that lookbehind is the whole reason
+#: this is a regex and not a tuple of substrings: `KXEPLH2H` and
+#: `KXEPLH2HFINISH` are head-to-head markets about the WHOLE game. They are the
+#: only false positive in the 899, and a false positive here does not print a
+#: wrong verdict — it silently deletes a correct one, which is the harder bug
+#: to ever notice.
+#:
+#: The MLB first-N-innings alternative is anchored to the END of the series
+#: (`f[357]` + an optional `spread`/`total`) because `f5` is otherwise a
+#: substring of college-football families: `KXNCAAF3QSPREAD` is NCAAF's third
+#: quarter, and it is refused by the `[1-4]q` alternative on its own terms.
+#:
+#: Deliberately NOT here: maps (`KXCS2MAP`), tennis sets (`KXATPSETWINNER`) and
+#: fight rounds (`KXUFCVICROUND`). None of them can reach either caller — the
+#: candidate scan's own ticker regex admits neither — and a token that guards
+#: nothing is a token nobody can test.
+#:
+#: NOT the same thing as ``_PERIOD_TICKER_PATTERN`` below, and neither replaces
+#: the other. That one is anchored to `…SPREAD`, guards the NHL spread-inversion
+#: rail, and is interpolated into SQL — so it must stay a Postgres ARE, which
+#: has no lookbehind and therefore cannot express the `h2h` carve-out at all.
+#: Widening it would silently change which rows that rail re-grades.
+_PERIOD_SERIES_RE = re.compile(r"(?<!h)[1-4]h|[1-4]q|f[357](?:spread|total)?$|rfi$")
+
+
+def _ticker_period(ticker: str | None) -> str | None:
+    """The period a Kalshi ticker binds its question to; ``None`` = whole game.
+
+    Returns the matched token (``"1h"``, ``"2q"``, ``"f5"``…) so a caller can
+    both refuse a period it has no score for AND keep the one path that DOES
+    have a score — first halves, which `_get_halftime_score` reconstructs.
+
+    ONE CLASSIFIER, TWO CALLERS. `_resolve_kalshi_from_scores` and
+    `_resolve_kalshi_spread_total_from_scores` both grade from the final score
+    and both used to decide "is this a period market?" their own way: an
+    explicit `_non_ml` ticker list in one (which named `1hwinner`/`2hwinner`
+    and never learned `1qwinner`), a bare `"1h" in ticker_lower` in the other
+    (which never learned `2h` at all). Two readings of one question is how
+    #4923 got two different wrong answers.
+    """
+    series = (ticker or "").split("-", 1)[0].lower()
+    match = _PERIOD_SERIES_RE.search(series)
+    return match.group(0) if match else None
+
+
 async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     """Resolve Kalshi game markets from actual Event scores.
 
@@ -1450,7 +1511,7 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     that function's ``scan_in`` for why the locked set is the exact stand-in
     for re-running the HAVING clause after this function's commits.
     """
-    stats = {"moneyline": 0, "btts": 0, "skipped": 0, "errors": []}
+    stats = {"moneyline": 0, "btts": 0, "skipped": 0, "refused_period": 0, "errors": []}
     # Markets this run has just given a non-overwritable winner. A market only
     # leaves the shared candidate set when SOME outcome ends up
     # `is_winner AND resolution_source NOT IN (overwritable)` — and every write
@@ -1506,6 +1567,38 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
                          markets[i:i + _OUTCOME_PREFETCH_BLOCK]],
                     )
                 ticker_lower = (row.ticker or "").lower()
+
+                # THIS FUNCTION GRADES FROM THE FINAL SCORE, SO IT MAY ONLY
+                # ANSWER QUESTIONS ABOUT THE FINAL SCORE (#4923).
+                #
+                # The `_non_ml` ticker list below is the same rule written out
+                # by hand, and it aged the way hand-written lists do: it names
+                # `1hwinner`/`2hwinner`/`1htotal`, and it is reached by NEITHER
+                # of the two branches that were caught inventing verdicts.
+                #
+                #   * BTTS `continue`s ~40 lines above it. `KXMLS1HBTTS-…`
+                #     contains `btts`, so a FIRST-HALF question was answered
+                #     with "did both teams score in the WHOLE match" — 49
+                #     markets, 45 of them affirmative. On production,
+                #     `/futures/60489789` told a reader **"Yes ✅ WON — markets
+                #     gave this just 1%"** about a first half that finished
+                #     1–0. Kalshi's own grade of the sibling market on the same
+                #     event (`1st Half Correct Score` → `Chicago Fire wins 1H
+                #     1-0`, `api_settlement`) is what proves it false.
+                #   * Quarter winners were never in the list at all
+                #     (`KXNBA1QWINNER`), so a 2-outcome quarter market took the
+                #     moneyline path on the game's final margin.
+                #
+                # A refusal here is not a lost verdict. `game_score` is not in
+                # OVERWRITABLE_WINNER_SOURCES_SQL, so a wrong one is PERMANENT —
+                # the candidate scan drops any market already holding one, and
+                # no later authority can repair it. Leaving the row ungraded
+                # keeps it in the scan for the venue's own settlement, and an
+                # ungraded row is a state every surface already renders
+                # honestly (#1638 / `_settled_grade_fields`).
+                if _ticker_period(row.ticker) is not None:
+                    stats["refused_period"] += 1
+                    continue
 
                 # BTTS: both teams to score
                 if "btts" in ticker_lower:
@@ -1632,10 +1725,12 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
 
     total = stats["moneyline"] + stats["btts"]
     logger.info(
-        "Kalshi score resolution: %d moneyline, %d btts, %d skipped, %d errors",
+        "Kalshi score resolution: %d moneyline, %d btts, %d skipped, "
+        "%d refused_period, %d errors",
         stats["moneyline"],
         stats["btts"],
         stats["skipped"],
+        stats["refused_period"],
         len(stats["errors"]),
     )
     return stats
@@ -2154,6 +2249,10 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
         "h1_total": 0,
         "no_plays": 0,
         "no_parse": 0,
+        # #4923: a market whose question is bounded to a period this function
+        # has no score for. Counted, never silent — the class it replaces was
+        # invisible precisely because a wrong grade looks like a grade.
+        "refused_period": 0,
         # CERT-499: a refusal that is not counted is a refusal nobody finds. These
         # two make "the grader declined to attribute this leg" a number in the
         # phase summary instead of silence.
@@ -2216,8 +2315,31 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                         [m.market_id for m in
                          markets[i:i + _OUTCOME_PREFETCH_BLOCK]],
                     )
-                ticker_lower = (row.ticker or "").lower()
-                is_1h = "1h" in ticker_lower or "1half" in ticker_lower
+                # #4923: the period test used to be `"1h" in ticker_lower`, and
+                # a test that only knows one period treats every OTHER period
+                # as the whole game. `KXMLS2HTOTAL-…` fell to the `else`
+                # branches below and was graded against the FULL-TIME total:
+                # production served `Over 1.5 2H goals scored — Won · 100%
+                # Settled` on a second half that had one goal. 288 markets /
+                # 1,237 outcomes carry a 2H `game_score` grade, 759 of them
+                # affirmative; quarters and the MLB first-five windows enter
+                # this loop the same way (the candidate regex admits `2htotal`
+                # explicitly and catches `2HSPREAD`/`1QSPREAD` on the bare
+                # substring `spread`).
+                #
+                # First halves keep their existing path: `_get_halftime_score`
+                # reconstructs a real 1H score and this loop already REFUSES
+                # when it cannot (`no_plays`). That refusal was always right;
+                # it just had no equivalent for any other period, and none of
+                # the others has a reconstructor to call. Building one — 2H is
+                # final minus halftime, the arithmetic already at the bottom of
+                # this module — is a follow-up, and it is a follow-up on
+                # purpose: a wrong verdict is replaced by no verdict first.
+                period = _ticker_period(row.ticker)
+                if period is not None and period != "1h":
+                    stats["refused_period"] += 1
+                    continue
+                is_1h = period == "1h"
 
                 # Get all outcomes for this market (block-prefetched above)
                 outcomes_list = block_outcomes.get(row.market_id, [])
@@ -2477,13 +2599,15 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
     resolved = stats["spread"] + stats["total"] + stats["h1_spread"] + stats["h1_total"]
     logger.info(
         "Kalshi spread/total resolution: %d resolved (spread=%d, total=%d, "
-        "h1_spread=%d, h1_total=%d), %d no_plays, %d no_parse, %d errors",
+        "h1_spread=%d, h1_total=%d), %d no_plays, %d refused_period, "
+        "%d no_parse, %d errors",
         resolved,
         stats["spread"],
         stats["total"],
         stats["h1_spread"],
         stats["h1_total"],
         stats["no_plays"],
+        stats["refused_period"],
         stats["no_parse"],
         len(stats["errors"]),
     )
@@ -6576,6 +6700,17 @@ async def _resolve_winners_only(limit: int = 2000):
         "total": spread_total_stats.get("total", 0),
         "player_props": player_prop_stats.get("resolved", 0),
         "total_bases": total_bases_stats.get("resolved", 0),
+        # #4923: period-bounded markets BOTH final-score resolvers declined,
+        # summed because the operational question is one question — "how many
+        # questions did we decline to answer from the wrong number this
+        # cycle". A counter outside this dict is a counter nothing operational
+        # can see (the rule `test_spread_shared_city_2352` states for
+        # `skipped_period`), and this one is the whole evidence that the
+        # refusal is running.
+        "refused_period": (
+            score_stats.get("refused_period", 0)
+            + spread_total_stats.get("refused_period", 0)
+        ),
     }
 
     # #991: forward score-resolution done — stop before the heavy backlog
