@@ -57,15 +57,27 @@ describe("describeCategoryPopulation", () => {
     expect(d.pools).toBe(true);
     expect(d.pooledFrom).toEqual([...HOCKEY_POOL].sort());
     // BOTH axes, or the sentence is a false account of the number beside it.
-    expect(d.sentence).toContain("pools 2 published categories");
+    // CAL-P1078: the grouping count is now the WHOLE pool (4), not the
+    // published half of it (2) — the sentence names the list it is actually
+    // enumerating, which is what made "2 published categories (hockey,
+    // icehockey_nhl)" beside a four-member fold misleading in the first place.
+    expect(d.sentence).toContain("4 categories grouped under one name");
     expect(d.sentence).toContain("icehockey_nhl");
     expect(d.sentence).toContain("traded outcomes only");
   });
 
-  it("splits published from unpublished instead of calling every member published", () => {
-    // #2108 defect 3. "published" is what tells a reader they can go and verify
-    // a member; two of hockey's four have no `by_category` row, and the shipped
-    // sentence invited a reader to look up all four.
+  it("still splits published from unpublished as DATA, off the sentence", () => {
+    // #2108 defect 3 was that the sentence called all four members "published"
+    // when two have no `by_category` row. CAL-P1078 does not un-fix that: it
+    // takes the whole distinction OFF the reader's screen, because "published"
+    // here means "our serialiser emits a row under this name" and no reader can
+    // do anything with that. The split is still computed, still complete, and
+    // still reaches every probe — the row hangs both lists on
+    // `data-published-members` / `data-unpublished-members`.
+    //
+    // #2108 STAYS OPEN. This ship hides our accounting of the gap; it does not
+    // close it, and standing notice 34's amended clause is what requires the
+    // numbers to survive as data when the sentence goes.
     const d = describeCategoryPopulation(
       "hockey",
       HOCKEY_POOL,
@@ -78,12 +90,13 @@ describe("describeCategoryPopulation", () => {
       "icehockey_sweden_allsvenskan",
       "icehockey_sweden_hockey_league",
     ]);
-    expect(d.sentence).toContain("2 unpublished");
-    expect(d.sentence).not.toContain("pools the published categories");
     // Both sets partition the fold — no member may be dropped by either label.
     expect(d.publishedMembers.length + d.unpublishedMembers.length).toBe(
       d.pooledFrom.length
     );
+    // …and neither label reaches the reader.
+    expect(d.sentence).not.toContain("unpublished");
+    expect(d.sentence).not.toContain("published");
   });
 
   it("says so plainly when a fold publishes nothing at all", () => {
@@ -95,10 +108,17 @@ describe("describeCategoryPopulation", () => {
     );
 
     expect(d.publishedMembers).toEqual([]);
-    expect(d.sentence).toContain("2 payload categories, none of them published");
+    // CAL-P1078: the SPLIT is still computed and still complete — it is the
+    // sentence that stopped naming it. See the "no payload vocabulary" block
+    // at the foot of this file for why.
+    expect(d.unpublishedMembers).toEqual([
+      "americanfootball_cfl",
+      "americanfootball_nfl",
+    ]);
+    expect(d.sentence).toContain("2 categories grouped under one name");
   });
 
-  it("reconciles against the figure the API publishes under the same name", () => {
+  it("anchors against the whole-population figure without naming the API", () => {
     const d = describeCategoryPopulation(
       "hockey",
       HOCKEY_POOL,
@@ -109,13 +129,16 @@ describe("describeCategoryPopulation", () => {
     expect(d.publishedEce).toBe(0.95);
     expect(d.publishedN).toBe(35416);
     // Amendment 5 — the anchor, available on its own so the page can render it
-    // as its own line rather than only as a sentence tail.
-    expect(d.anchorSentence).toContain("The API publishes");
+    // as its own line rather than only as a sentence tail. CAL-P1078 kept the
+    // anchor and both its figures; what left is "The API publishes", which is a
+    // sentence about our serialiser rather than about the reader's question.
+    expect(d.anchorSentence).toContain("Across all");
+    expect(d.anchorSentence).not.toContain("The API publishes");
     expect(d.sentence).toContain("0.95pp");
     expect(d.sentence).toContain("35,416");
-    // For a POOLED row the published twin differs on both axes, and saying only
-    // "the whole population" would understate it.
-    expect(d.sentence).toContain("the “hockey” category alone");
+    // For a POOLED row the whole-population twin differs on both axes, and
+    // saying only "not just this slice" would understate it.
+    expect(d.sentence).toContain("for “hockey” on its own");
   });
 
   it("names the cohort alone when a row pools nothing", () => {
@@ -127,12 +150,12 @@ describe("describeCategoryPopulation", () => {
     );
 
     expect(d.pools).toBe(false);
-    expect(d.sentence).not.toContain("pools");
+    expect(d.sentence).not.toContain("grouped under one name");
     expect(d.sentence).toContain("traded outcomes only");
-    expect(d.sentence).toContain("the whole population, not this cohort");
+    expect(d.sentence).toContain("not just this slice");
   });
 
-  it("claims no published twin when the displayed name is not a payload key", () => {
+  it("claims no whole-population twin when the displayed name is not a payload key", () => {
     // `football` is a DISPLAY name — the payload publishes
     // `americanfootball_nfl` and friends, never `football`. Inventing a
     // disagreement here would manufacture the exact confusion this fixes.
@@ -146,9 +169,9 @@ describe("describeCategoryPopulation", () => {
     expect(d.publishedEce).toBeNull();
     expect(d.publishedN).toBeNull();
     expect(d.anchorSentence).toBeNull();
-    expect(d.sentence).not.toContain("The API publishes");
-    // …but the pooling half still has to be stated.
-    expect(d.sentence).toContain("pools 1 published category");
+    expect(d.sentence).not.toContain("Across all");
+    // …but the grouping half still has to be stated.
+    expect(d.sentence).toContain("2 categories grouped under one name");
   });
 
   it("does not present a published category whose ece is null as a figure", () => {
@@ -182,8 +205,78 @@ describe("describeCategoryPopulation", () => {
       "excluding_never_moved"
     );
 
-    expect(d.title).toContain("pools 2 published categories and 2 unpublished");
+    expect(d.title).toContain("covers 4 categories grouped under one name");
     expect(d.title).not.toContain("icehockey_sweden_allsvenskan");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAL-P1078 — NO PAYLOAD VOCABULARY REACHES A READER (standing notice 34 as
+// amended by D102: the target is jargon, not grey type).
+//
+// Alex, on the live page: a bare "56 CATEGORIES" badge under Soccer, opening
+// onto "Published in `by_category` (1)" and "Not published (55)". Every string
+// this module hands the page is a reader's string, so the ban is asserted over
+// the module's OUTPUT across a population rather than by reading the source —
+// a source-scan would pass the moment someone builds the same words by
+// concatenation.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("no payload vocabulary in anything a reader sees", () => {
+  const BANNED = [
+    "by_category",
+    "payload",
+    "the API",
+    "unpublished",
+    "published",
+  ];
+
+  const SPECIMENS: ReadonlyArray<readonly [string, string[]]> = [
+    ["a pooled row with a published twin", HOCKEY_POOL],
+    ["a pooled row with no published member", ["americanfootball_nfl", "americanfootball_cfl"]],
+    ["a row that pools nothing", ["politics"]],
+    ["a row past the naming cap", Array.from({ length: MEMBER_NAME_CAP + 3 }, (_, i) => `p_${i}`)],
+  ];
+
+  it.each(SPECIMENS)("%s: sentence and tooltip are clean", (_what, pool) => {
+    for (const cohort of ["all", "excluding_never_moved"] as const) {
+      const d = describeCategoryPopulation(pool[0], pool, PUBLISHED, cohort);
+      for (const word of BANNED) {
+        expect(d.sentence.toLowerCase()).not.toContain(word.toLowerCase());
+        expect(d.title.toLowerCase()).not.toContain(word.toLowerCase());
+      }
+    }
+  });
+
+  it("the table-level note is clean on every cohort and both pooling states", () => {
+    for (const cohort of ["all", "excluding_never_moved"] as const) {
+      for (const pooled of [0, 6, 15]) {
+        const s = describeCategoryTablePopulation(cohort, pooled, 15);
+        for (const word of BANNED) {
+          expect(s.toLowerCase()).not.toContain(word.toLowerCase());
+        }
+        // A coverage count is notice 34's named shape; it must not come back
+        // as a fraction of rows either.
+        expect(s).not.toMatch(/\d+ of \d+ rows/);
+      }
+    }
+  });
+
+  it("the ban is a real ban — the shipped strings would have failed it", () => {
+    // NEGATIVE CONTROL. Every assertion above passes vacuously if `BANNED` is
+    // empty or the lowercasing is wrong, so the words that were live on
+    // production are run through the same predicate and must be caught.
+    const WAS_LIVE = [
+      "This row pools 1 published category (soccer) and 54 unpublished.",
+      "The API publishes 0.95pp for “hockey” over 35,416 outcomes",
+      "it will not match the whole-population number the API publishes in `by_category`",
+      "6 of 15 rows also pool several payload categories under one label",
+    ];
+    for (const line of WAS_LIVE) {
+      const hit =
+        BANNED.some(w => line.toLowerCase().includes(w.toLowerCase())) ||
+        /\d+ of \d+ rows/.test(line);
+      expect(hit).toBe(true);
+    }
   });
 });
 
@@ -249,30 +342,33 @@ describe("cohortPhrase", () => {
 });
 
 describe("describeCategoryTablePopulation", () => {
-  it("always states the cohort and the by_category mismatch", () => {
+  it("always states the cohort, which is the one fact only it can give", () => {
     const s = describeCategoryTablePopulation("all", 0, 15);
 
     expect(s).toContain("all resolved outcomes");
-    expect(s).toContain("by_category");
-    expect(s).not.toContain("also pool");
+    // No pooled rows ⇒ no grouping clause. A note that mentions grouping on a
+    // table with none is furniture.
+    expect(s).not.toContain("group");
   });
 
-  it("counts the pooled rows, and points at the expander rather than a hover", () => {
+  it("says a row can be a group, without counting how many are", () => {
     const s = describeCategoryTablePopulation("excluding_never_moved", 6, 15);
 
-    expect(s).toContain("6 of 15 rows also pool");
-    // Amendment 4 changed the affordance; the sentence has to change with it or
-    // it sends a reader hovering for something that is now a click.
-    expect(s).toContain("expand a row");
-    // Amendment 3: the members are payload categories, not published ones.
-    expect(s).toContain("payload");
+    expect(s).toContain("traded outcomes only");
+    expect(s).toContain("group several closely related categories");
+    // CAL-P1078 / notice 34: the coverage count is exactly the shape the notice
+    // names. It travels on `data-pooled-rows` / `data-total-rows` instead — see
+    // calibrationNotice34.test.ts, which asserts both attributes are still on
+    // the page.
+    expect(s).not.toMatch(/\d+ of \d+ rows/);
   });
 
-  it("never promises more pooled rows than the table renders", () => {
-    // Amendment 6, as a relation rather than as a value. The shipped bug was a
-    // numerator drawn from the normalized keys — a strictly larger population
-    // than the rendered rows — so the fraction could exceed 1.
-    const s = describeCategoryTablePopulation("all", 15, 15);
-    expect(s).toContain("15 of 15 rows");
+  it("the grouping clause is driven by the pooled count, not always on", () => {
+    // The two branches must be distinguishable, or the parameter is dead and a
+    // future edit can silently make the note constant.
+    const none = describeCategoryTablePopulation("all", 0, 15);
+    const some = describeCategoryTablePopulation("all", 15, 15);
+    expect(none).not.toEqual(some);
+    expect(some.startsWith(none)).toBe(true);
   });
 });
