@@ -76,6 +76,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.tournament_register import normalize_player_name  # noqa: E402
 
 #: ``KXATPMATCH-26AUG30BUBWOL`` -> the draw its two players belong to.
@@ -105,7 +107,7 @@ def db_query(sql: str, *, limit: int = 1000) -> list[dict[str, Any]]:
     request = urllib.request.Request(
         f"{base}/api/admin/db-query",
         data=json.dumps({"sql": sql, "limit": limit}).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(f"{base}/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
     )
     with urllib.request.urlopen(request, timeout=60) as response:
         payload = json.loads(response.read())

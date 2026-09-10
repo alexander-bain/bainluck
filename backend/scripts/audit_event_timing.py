@@ -35,6 +35,14 @@ from typing import Optional
 
 import httpx
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API_BASE = "https://api.bainluck.com"
 RESULTS_DIR = Path(__file__).parent / "audit_results"
 
@@ -133,7 +141,7 @@ def api_get(path: str, params: dict = None) -> dict:
     url = f"{API_BASE}{path}"
     if params:
         url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-    resp = httpx.get(url, timeout=30)
+    resp = httpx.get(url, timeout=30, headers=tagged(url))
     resp.raise_for_status()
     return resp.json()
 

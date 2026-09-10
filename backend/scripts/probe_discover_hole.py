@@ -70,6 +70,14 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import ORIGIN_HEADER, resolve_agent, tagged
+
 #: The two shapes, cited to the client that issues them. `principal` is the
 #: property that makes the pair a control rather than two samples of one thing.
 SHAPES: tuple[dict, ...] = (
@@ -105,10 +113,10 @@ def _hdr(headers: dict, name: str) -> str | None:
 
 
 def _sample(api: str, shape: dict, timeout: float) -> dict:
-    headers = {"X-Bainluck-Origin": "harness"}
+    headers = {ORIGIN_HEADER: resolve_agent() or "harness"}
     if shape["principal"] == "fresh_session":
         headers["x-session-id"] = str(uuid.uuid4())
-    request = urllib.request.Request(f"{api}{shape['path']}", headers=headers)
+    request = urllib.request.Request(f"{api}{shape['path']}", headers=tagged(f"{api}{shape['path']}", headers))
     started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:

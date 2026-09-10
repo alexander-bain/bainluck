@@ -30,6 +30,14 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Series that carry enough settled volume to date the cliff. Game series live
@@ -40,7 +48,7 @@ DEFAULT_SERIES = ("KXNBAPTS", "KXNHL", "KXMLBHRR", "KXNASDAQ100U")
 def _get(path: str, **params) -> tuple[int, dict | None]:
     url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
     req = urllib.request.Request(
-        url, headers={"Accept": "application/json", "User-Agent": "bainluck-retention-probe"}
+        url, headers=tagged(url, {"Accept": "application/json", "User-Agent": "bainluck-retention-probe"})
     )
     for attempt in range(3):
         try:

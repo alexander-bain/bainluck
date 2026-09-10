@@ -81,6 +81,8 @@ from sqlalchemy import text
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 # Import the MODULE, not the attribute. Binding `get_task_session` into this
 # namespace snapshots whatever object `app.tasks.base` held at import time, so a
 # later reassignment there — a test double, a pooled variant — is not observed
@@ -298,7 +300,7 @@ async def verify_gamma(sample: int) -> dict[str, Any]:
         for r in rows:
             try:
                 resp = await client.get(
-                    f"https://gamma-api.polymarket.com/events/{r['event_id']}"
+                    f"https://gamma-api.polymarket.com/events/{r['event_id']}", headers=tagged(f"https://gamma-api.polymarket.com/events/{r['event_id']}")
                 )
                 if resp.status_code != 200:
                     # gotcha #53: an unreachable source is NOT a disconfirmation.

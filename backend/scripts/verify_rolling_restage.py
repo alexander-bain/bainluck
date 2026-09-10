@@ -52,6 +52,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.calibration_published_twin import tolerance_pp  # noqa: E402
 
 
@@ -70,7 +72,7 @@ def _fetch(api: str) -> dict:
     try:
         req = urllib.request.Request(
             f"{api}/api/calibration",
-            headers={"User-Agent": "bainluck-cal-p079-restage-verify"},
+            headers=tagged(f"{api}/api/calibration", {"User-Agent": "bainluck-cal-p079-restage-verify"}),
         )
         with urllib.request.urlopen(req, timeout=90) as resp:
             body = resp.read()

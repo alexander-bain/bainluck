@@ -82,6 +82,14 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 # The pool sizes are DISCOVERED from the worker stats, never assumed. This map
 # only labels a worker by the queue whose tasks it is observed to run, so that
 # "the background pool was saturated" is a statement about the right two slots.
@@ -107,7 +115,7 @@ def _iso(ts: float) -> str:
 
 def _fetch(url: str, token: str, timeout: float) -> tuple[bool, Any, str]:
     """Return (ok, payload, note). ok=False NEVER yields a usable payload."""
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(url, headers=tagged(url, {"Authorization": f"Bearer {token}"}))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()

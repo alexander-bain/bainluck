@@ -20,12 +20,20 @@ if os.path.exists("backend/scripts"):
 
 import httpx
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API = "https://api.bainluck.com"
 
 
 def fetch_feed():
     """Fetch the raw feed from the live API."""
-    resp = httpx.get(f"{API}/api/feed?limit=200&event_pct=0.15", timeout=30)
+    resp = httpx.get(f"{API}/api/feed?limit=200&event_pct=0.15", timeout=30, headers=tagged(f"{API}/api/feed?limit=200&event_pct=0.15"))
     return resp.json().get("items", [])
 
 

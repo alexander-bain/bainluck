@@ -42,6 +42,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.calibration_published_twin import (  # noqa: E402
     FOLD_POPULATION_SOURCES,
     reconcile,
@@ -55,7 +57,7 @@ def get(path: str, *, auth: bool = False) -> dict:
     if not api:
         raise SystemExit("ABORT: source ~/.claude/.env first (BAINLUCK_API).")
     headers = {"Authorization": f"Bearer {token}"} if auth else {}
-    req = urllib.request.Request(api.rstrip("/") + path, headers=headers)
+    req = urllib.request.Request(api.rstrip("/") + path, headers=tagged(api.rstrip("/") + path, headers))
     with urllib.request.urlopen(req, timeout=180) as resp:
         return json.loads(resp.read().decode())
 

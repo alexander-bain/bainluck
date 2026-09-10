@@ -68,6 +68,14 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 #: Production's staged unit size as measured 2026-08-11 (CAL-P038 recorded
 #: 5,302 markets/unit while the PLANNER's own chunker flips between 3,000 and
 #: 3,500). Overridable, because the whole point is that this number moves.
@@ -97,10 +105,10 @@ def _post(api: str, token: str, body: dict, timeout: int = 120) -> dict:
     req = urllib.request.Request(
         f"{api.rstrip('/')}/api/admin/db-query",
         data=json.dumps(body).encode(),
-        headers={
+        headers=tagged(f"{api.rstrip('/')}/api/admin/db-query", {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-        },
+        }),
         method="POST",
     )
     try:

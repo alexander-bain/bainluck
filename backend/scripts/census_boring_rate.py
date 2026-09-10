@@ -48,6 +48,8 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.utils.agent_origin import tagged  # noqa: E402
+
 from app.utils.feed_quality_debug import (  # noqa: E402
     build_feed_quality_debug,
     load_default_ground_truth_items,
@@ -62,7 +64,7 @@ def _read(client: httpx.Client, url: str, params: dict) -> dict:
     """One read, with its own provenance attached. Never raises on a bad read."""
     stamp = datetime.now(timezone.utc).isoformat()
     try:
-        resp = client.get(url, params=params, timeout=45)
+        resp = client.get(url, params=params, timeout=45, headers=tagged(url))
     except Exception as exc:  # noqa: BLE001 - a failed read IS a sample
         return {"at": stamp, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
     if resp.status_code != 200:

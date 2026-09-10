@@ -27,6 +27,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import urlopen
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API_BASE = "https://api.bainluck.com"
 RESULTS_DIR = Path(__file__).parent / "audit_results"
 
@@ -645,7 +653,7 @@ def _kalshi_get(path: str) -> dict:
     """Get from Kalshi API (no auth needed for public endpoints)."""
     import os
     url = f"{KALSHI_API_BASE}{path}"
-    req = __import__("urllib.request", fromlist=["Request"]).Request(url)
+    req = __import__("urllib.request", fromlist=["Request"]).Request(url, headers=tagged(url))
     req.add_header("Accept", "application/json")
     api_key = os.getenv("KALSHI_API_KEY", "")
     if api_key:

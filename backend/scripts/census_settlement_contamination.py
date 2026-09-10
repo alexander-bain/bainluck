@@ -93,7 +93,7 @@ def db_query(sql: str, limit: int = 1000) -> list:
     body = json.dumps({"sql": sql, "limit": limit}).encode()
     req = urllib.request.Request(
         f"{api}/api/admin/db-query", data=body,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(f"{api}/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -123,6 +123,14 @@ from app.utils.market_identity import (  # ONE implementation — see that modul
     market_identity_disputed,
     ticker_game_date,
 )
+
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os  # noqa: E402
+import sys as _bl_sys  # noqa: E402
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged  # noqa: E402
 
 
 def _split_label(label: str) -> tuple[str, str]:

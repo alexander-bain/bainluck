@@ -20,6 +20,7 @@ import pytest
 from app.utils.agent_origin import (
     ORIGIN_HEADER,
     ORIGIN_USER,
+    curl_args,
     is_our_host,
     origin_headers,
     resolve_agent,
@@ -208,6 +209,62 @@ def test_caller_user_agent_is_not_clobbered(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# The argv rail — the one the shell shadow can never reach
+# ---------------------------------------------------------------------------
+
+
+def test_curl_args_names_our_host(monkeypatch):
+    monkeypatch.setenv("BL_AGENT", "latency")
+    args = curl_args("https://api.bainluck.com/api/events/typeahead?q=x")
+    assert args[0] == "-H"
+    assert f"{ORIGIN_HEADER}: latency" in args
+    # every header must arrive as its own `-H` pair or curl reads it as a URL
+    assert len(args) % 2 == 0
+    assert args[::2] == ["-H"] * (len(args) // 2)
+
+
+def test_curl_args_is_empty_for_a_third_party(monkeypatch):
+    monkeypatch.setenv("BL_AGENT", "latency")
+    assert curl_args("https://api.elections.kalshi.com/trade-api/v2/events") == []
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_curl_args_is_empty_for_an_unnamed_caller(monkeypatch, value):
+    """Notice 39 guard 1 on the argv rail: pass through, do not invent a name."""
+    if value is None:
+        monkeypatch.delenv("BL_AGENT", raising=False)
+    else:
+        monkeypatch.setenv("BL_AGENT", value)
+    assert curl_args("https://api.bainluck.com/api/x") == []
+
+
+def test_curl_args_does_not_restate_an_origin_the_argv_already_carries(monkeypatch):
+    """Two `-H x-bainluck-origin:` values would let this module's default
+    silently beat the caller's stated intent — curl sends both and the server
+    reads one."""
+    monkeypatch.setenv("BL_AGENT", "latency")
+    argv = ["curl", "-s", "-H", f"{ORIGIN_HEADER}: harness", "https://bainluck.com/"]
+    assert curl_args("https://bainluck.com/", argv) == []
+    # and case-insensitively, because a header name is
+    assert curl_args("https://bainluck.com/", ["-H", "X-BainLuck-Origin: user"]) == []
+
+
+def test_curl_args_agrees_with_the_header_builder(monkeypatch):
+    """One decision about who we are, rendered two ways. If these ever diverge,
+    the same probe is a lane over urllib and a person over curl."""
+    monkeypatch.setenv("BL_AGENT", "latency")
+    url = "https://api.bainluck.com/api/x"
+    from_headers = origin_headers(url)
+    rendered = {}
+    args = curl_args(url)
+    for flag, pair in zip(args[::2], args[1::2]):
+        assert flag == "-H"
+        name, _, value = pair.partition(": ")
+        rendered[name] = value
+    assert rendered == from_headers
+
+
+# ---------------------------------------------------------------------------
 # The gate scripts actually carry it
 # ---------------------------------------------------------------------------
 
@@ -221,37 +278,191 @@ def _http_gate_scripts():
     return [p for p in GATE_SCRIPTS if "urllib.request.Request" in p.read_text()]
 
 
-def test_the_http_gate_scripts_are_the_expected_three():
-    names = sorted(p.name for p in _http_gate_scripts())
-    assert names == [
-        "gate_futures_name_fts_index.py",
-        "gate_futures_open_trgm_index.py",
-        "gate_teams_fts_index.py",
-    ], names
+# ---------------------------------------------------------------------------
+# THE WHOLE DIRECTORY, NOT A HAND-LISTED SET (#4642)
+# ---------------------------------------------------------------------------
+#
+# The predecessor of this section asserted three scripts BY NAME. That guard
+# could only ever stay green: it said nothing about the 90 other scripts making
+# production calls, and a new one could be added untagged without failing
+# anything. Worse, the hand-list is what made the population unknowable —
+# #4642 was filed because "nobody can currently say which subset touches search
+# without reading all 56".
+#
+# So the rule below is stated over the DIRECTORY and the offender list is
+# computed, never enumerated. `tagged()`/`curl_args()` decide at RUNTIME whether
+# a given URL is ours, so the static rule is the simple one — every outbound
+# call goes through the carrier — and third-party hosts cost nothing because the
+# carrier returns empty for them.
+
+ALL_SCRIPTS = sorted(BACKEND.glob("scripts/*.py"))
+
+#: Attribute names that build an outbound request, by rail.
+_URLLIB = "Request"
+_CLIENT_VERBS = {"get", "post", "put", "delete", "head", "patch"}
 
 
-@pytest.mark.parametrize("path", _http_gate_scripts(), ids=lambda p: p.name)
-def test_every_gate_request_is_tagged(path: pathlib.Path):
-    """Every `urllib.request.Request` in a gate script passes headers through
-    `tagged(...)`. Asserted on the AST so a commented-out call cannot pass."""
-    tree = ast.parse(path.read_text())
-    requests = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "Request"
+def _dotted(call: ast.Call) -> str:
+    func, parts = call.func, []
+    while isinstance(func, ast.Attribute):
+        parts.append(func.attr)
+        func = func.value
+    if isinstance(func, ast.Name):
+        parts.append(func.id)
+    return ".".join(reversed(parts))
+
+
+def _is_tagged_call(node) -> bool:
+    return isinstance(node, ast.Call) and (
+        getattr(node.func, "id", None) == "tagged"
+        or getattr(node.func, "attr", None) == "tagged"
+    )
+
+
+def _untagged_sites(path: pathlib.Path) -> list:
+    """Every outbound call site in ``path`` that does not carry the tag.
+
+    Four rails, because the fleet has four and only the first was ever guarded:
+
+      1. ``urllib.request.Request(url, headers=...)``
+      2. ``urlopen(<a URL, not a Request>)`` — carries no headers AT ALL, so it
+         cannot be tagged without being converted to a Request first
+      3. ``httpx``/``requests`` ``.get``/``.post``/...
+      4. ``subprocess.run(["curl", ...])`` — rung 1 exports a shell FUNCTION,
+         and a subprocess executes the BINARY, so the shadow can never reach it
+    """
+    src = path.read_text()
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:  # a broken script is its own, louder failure
+        return [f"{path.name}: does not parse ({exc})"]
+
+    bad = []
+    for node in ast.walk(tree):
+        # rail 4 — a curl argv list
+        if isinstance(node, ast.List) and node.elts:
+            head = node.elts[0]
+            if isinstance(head, ast.Constant) and head.value == "curl":
+                seg = ast.get_source_segment(src, node) or ""
+                if "curl_args(" not in seg and "ORIGIN_HEADER" not in seg:
+                    bad.append(f"{path.name}:{node.lineno} curl argv is untagged")
+            continue
+
+        if not isinstance(node, ast.Call):
+            continue
+        name = _dotted(node)
+        short = name.split(".")[-1]
+
+        # rail 2 — urlopen given a URL rather than a Request
+        if short == "urlopen" and node.args:
+            first = node.args[0]
+            is_request = isinstance(first, ast.Call) and _dotted(first).split(".")[-1] == _URLLIB
+            # a bare Name is a Request built on an earlier line; that Request is
+            # itself a rail-1 site and is checked there.
+            if not is_request and not isinstance(first, ast.Name):
+                bad.append(
+                    f"{path.name}:{node.lineno} urlopen() on a URL carries no "
+                    f"headers — wrap it in urllib.request.Request(url, headers=tagged(url))"
+                )
+            continue
+
+        # rails 1 and 3
+        if short == _URLLIB:
+            pass
+        elif short in _CLIENT_VERBS and (
+            name.startswith("requests.")
+            or name.startswith("httpx.")
+            or name.split(".")[0].endswith("client")
+            or "client." in name
+        ):
+            pass
+        else:
+            continue
+
+        headers = next((k.value for k in node.keywords if k.arg == "headers"), None)
+        if headers is None:
+            bad.append(f"{path.name}:{node.lineno} {name}() built with no headers")
+        elif not _is_tagged_call(headers):
+            bad.append(f"{path.name}:{node.lineno} {name}() headers bypass tagged()")
+    return bad
+
+
+def test_the_script_population_is_big_enough_to_be_a_real_check():
+    """Denominator guard (the whole point of the rewrite).
+
+    A glob that silently returns nothing turns the assertion below into a
+    tautology. The count is deliberately a FLOOR well under today's ~276: this
+    asserts the glob works, not that the directory never shrinks.
+    """
+    assert len(ALL_SCRIPTS) >= 150, len(ALL_SCRIPTS)
+    carriers = [p for p in ALL_SCRIPTS if "agent_origin" in p.read_text()]
+    assert len(carriers) >= 60, (
+        f"only {len(carriers)} scripts import the carrier — the sweep regressed"
+    )
+
+
+def test_no_backend_script_makes_an_untagged_outbound_call():
+    """#4642 done-when 3: the count of untagged callers is 0, for the DIRECTORY.
+
+    Asserted on the AST, so a commented-out call cannot pass and a new script
+    cannot silently reintroduce one. The failure names every offending site.
+    """
+    offenders = [site for path in ALL_SCRIPTS for site in _untagged_sites(path)]
+    assert offenders == [], (
+        f"{len(offenders)} untagged outbound call site(s) under backend/scripts/. "
+        "Each one writes a row to search_query_logs if it reaches /api/events/search, "
+        "and CASTS A TRENDING VOTE the head warmer then spends real work on. "
+        "Route it through app.utils.agent_origin.tagged() / curl_args():\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_carrier_is_reached_by_the_search_touching_probes():
+    """The subset #4642 says nobody could name: probes that hit search/typeahead.
+
+    These are the only scripts where the tag has TEETH rather than being
+    attribution, so they are asserted by name as well as by the sweep above —
+    a rename that drops one out of the directory rule would otherwise be silent.
+    """
+    search_probes = [
+        p
+        for p in ALL_SCRIPTS
+        if "events/search" in p.read_text() or "/typeahead" in p.read_text()
     ]
-    assert requests, f"{path.name}: no urllib Request found — did the shape change?"
-    for call in requests:
-        kw = {k.arg: k.value for k in call.keywords}
-        assert "headers" in kw, f"{path.name}: Request built with no headers"
-        headers = kw["headers"]
-        assert isinstance(headers, ast.Call) and getattr(
-            headers.func, "id", None
-        ) == "tagged", (
-            f"{path.name}: Request headers are a bare dict — untagged probe traffic"
+    assert len(search_probes) >= 8, [p.name for p in search_probes]
+    untagged = [
+        p.name
+        for p in search_probes
+        if "agent_origin" not in p.read_text()
+        # a script may only MENTION the endpoint in prose; it needs the carrier
+        # only if it actually builds a call
+        and any(
+            marker in p.read_text()
+            for marker in ("urllib.request.Request", "httpx.", "requests.", '"curl"')
         )
+    ]
+    assert untagged == [], f"search/typeahead probes still voting untagged: {untagged}"
+
+
+def test_no_script_hand_spells_the_header():
+    """One definition, once — the drift `agent_origin`'s docstring exists for.
+
+    Six scripts spelled `X-Bainluck-Origin` as a literal. A sender and a reader
+    that disagree by one character produce no error anywhere.
+    """
+    offenders = []
+    for path in ALL_SCRIPTS:
+        for lineno, line in enumerate(path.read_text().split("\n"), 1):
+            stripped = line.strip()
+            if stripped.startswith("#") or "bainluck-origin" not in stripped.lower():
+                continue
+            # a docstring/comment may name it; an ASSIGNED literal may not
+            if re.search(r"""["']x-bainluck-origin["']\s*:""", stripped, re.I):
+                offenders.append(f"{path.name}:{lineno}")
+    assert offenders == [], (
+        "the header is spelled by hand instead of imported as ORIGIN_HEADER: "
+        + ", ".join(offenders)
+    )
 
 
 @pytest.mark.parametrize("path", _http_gate_scripts(), ids=lambda p: p.name)

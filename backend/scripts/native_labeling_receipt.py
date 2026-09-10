@@ -75,6 +75,8 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.reviewer_tier import GOLD_TIERS, tier_of  # noqa: E402
 
 VALID_LABELS = {"love", "fine", "bad", "kill"}
@@ -93,7 +95,7 @@ def _api() -> tuple[str, str]:
 def _get(path: str) -> dict:
     base, token = _api()
     req = urllib.request.Request(
-        f"{base}{path}", headers={"Authorization": f"Bearer {token}"}
+        f"{base}{path}", headers=tagged(f"{base}{path}", {"Authorization": f"Bearer {token}"})
     )
     with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
         return json.loads(res.read().decode())
@@ -111,7 +113,7 @@ def _query(sql: str, limit: int = 200) -> list[list]:
     req = urllib.request.Request(
         f"{base}/api/admin/db-query",
         data=json.dumps({"sql": sql, "limit": limit}).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(f"{base}/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=TIMEOUT) as res:

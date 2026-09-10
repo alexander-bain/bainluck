@@ -56,6 +56,8 @@ from datetime import date, datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.authority_tennis_names import (  # noqa: E402
     doubles_key,
     fold_tennis_name,
@@ -161,7 +163,7 @@ def our_register(first_day: str, last_day: str) -> list[dict]:
         req = urllib.request.Request(
             f"{api}/api/admin/db-query",
             data=json.dumps({"sql": sql, "limit": 1000}).encode(),
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            headers=tagged(f"{api}/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
         )
         page = json.loads(urllib.request.urlopen(req, timeout=90).read())
         rows += [dict(zip(page["columns"], r)) for r in page["rows"]]
@@ -206,8 +208,8 @@ def our_spellings(first_day: str, last_day: str) -> list[str]:
                 req = urllib.request.Request(
                     f"{api}/api/admin/db-query",
                     data=json.dumps({"sql": sql, "limit": 1000}).encode(),
-                    headers={"Authorization": f"Bearer {token}",
-                             "Content-Type": "application/json"},
+                    headers=tagged(f"{api}/api/admin/db-query", {"Authorization": f"Bearer {token}",
+                             "Content-Type": "application/json"}),
                 )
                 try:
                     page = json.loads(urllib.request.urlopen(req, timeout=120).read())

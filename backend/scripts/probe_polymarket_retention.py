@@ -56,6 +56,12 @@ from app.utils.polymarket_evidence import (  # noqa: E402
     classify_pm_evidence,
 )
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+from app.utils.agent_origin import curl_args
+
+
 CLOB = "https://clob.polymarket.com"
 DATA = "https://data-api.polymarket.com"
 GAMMA = "https://gamma-api.polymarket.com"
@@ -83,7 +89,7 @@ CONTROL = ("2026-08-09", "0x4225f2b7adb679445f814271142c5adb175e2a1c1a7a460cc6b6
 def _get(url: str, timeout: int = 25) -> tuple[int, str]:
     """curl, not urllib: Polymarket 403s urllib's default User-Agent."""
     p = subprocess.run(
-        ["curl", "-s", "-m", str(timeout), "-w", "\n%{http_code}", url],
+        ["curl", *curl_args(url), "-s", "-m", str(timeout), "-w", "\n%{http_code}", url],
         capture_output=True,
         text=True,
     )

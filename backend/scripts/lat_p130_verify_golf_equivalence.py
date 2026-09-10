@@ -47,6 +47,12 @@ from app.routes.playoffs import (  # noqa: E402
     _build_golf_candidate_filters,
 )
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+from app.utils.agent_origin import curl_args
+
+
 GOLF = get_league_config("golf")
 
 
@@ -123,7 +129,7 @@ def _post(body: dict) -> dict:
         raise CannotMeasure("BAINLUCK_API / ADMIN_TOKEN not set (source ~/.claude/.env)")
     proc = subprocess.run(
         [
-            "curl", "-s", "-X", "POST",
+            "curl", *curl_args(f"{api}/api/admin/db-query"), "-s", "-X", "POST",
             "-H", f"Authorization: Bearer {token}",
             "-H", "Content-Type: application/json",
             "-d", json.dumps(body),

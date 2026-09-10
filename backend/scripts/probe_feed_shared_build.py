@@ -53,6 +53,14 @@ import urllib.error
 import urllib.request
 import uuid
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 DEFAULT_BASE = "https://api.bainluck.com"
 
 #: Response headers worth keeping per sample. All are bounded, allowlisted
@@ -67,7 +75,7 @@ KEEP_HEADERS = (
 
 
 def _get(base: str, path: str, session_id: str | None, timeout: float) -> dict:
-    request = urllib.request.Request(f"{base}{path}", method="GET")
+    request = urllib.request.Request(f"{base}{path}", method="GET", headers=tagged(f"{base}{path}"))
     if session_id:
         request.add_header("x-session-id", session_id)
     started = time.perf_counter()

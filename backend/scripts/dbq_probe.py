@@ -31,6 +31,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
 
 
@@ -55,10 +63,10 @@ def run(sql: str, timeout_ms: int, explain: bool = False, analyze: bool = False)
     request = urllib.request.Request(
         f"{API}/api/admin/db-query",
         data=json.dumps(body).encode(),
-        headers={
+        headers=tagged(f"{API}/api/admin/db-query", {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-        },
+        }),
         method="POST",
     )
     started = time.monotonic()

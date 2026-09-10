@@ -40,6 +40,16 @@ import sys
 import time
 from typing import Any
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import ORIGIN_HEADER, resolve_agent
+
+
 #: Warmed arm: touched at T0, re-measured at T1.
 DEFAULT_WARMED = ["red sox", "patriots", "celtics", "yankees"]
 
@@ -71,7 +81,7 @@ def _server_ms(base: str, q: str) -> dict[str, Any] | None:
         # LAT-P118: declare machine traffic — this probe measures the warm
         # effect, so it must not also CAUSE one by voting in the head.
         ["curl", "-s", "-o", "/dev/null", "-w", _CURL_FMT,
-         "-H", "X-Bainluck-Origin: harness", "--max-time", "40", url],
+         "-H", f"{ORIGIN_HEADER}: {resolve_agent() or 'harness'}", "--max-time", "40", url],
         capture_output=True, text=True,
     )
     if proc.returncode != 0 or not proc.stdout.strip():

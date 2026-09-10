@@ -33,6 +33,8 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.utils.agent_origin import tagged  # noqa: E402
+
 from scripts.review_social_ground_truth import (  # noqa: E402
     accepted_rows,
     summarize as summarize_review_rows,
@@ -83,7 +85,7 @@ def download_capture_urls(
     capture_dir.mkdir(parents=True, exist_ok=True)
     paths: list[str] = []
     for index, url in enumerate(urls, start=1):
-        response = httpx.get(url, timeout=timeout, follow_redirects=True)
+        response = httpx.get(url, timeout=timeout, follow_redirects=True, headers=tagged(url))
         response.raise_for_status()
         suffix = _suffix_for_capture_url(url, response.headers.get("content-type", ""))
         path = capture_dir / f"capture_{index}{suffix}"

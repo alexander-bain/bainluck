@@ -70,6 +70,8 @@ import urllib.request
 from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from app.utils.agent_origin import tagged
 from app.utils.heavy_routing_falsifier import (  # noqa: E402
     CONSUMER_CEILING_S,
     CONSUMER_FLOOR_S,
@@ -93,7 +95,7 @@ def _fetch(name: str) -> dict[str, Any]:
     token = os.environ["ADMIN_TOKEN"]
     req = urllib.request.Request(
         f"{base}/api/admin/celery/task-metrics/{name}",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=tagged(f"{base}/api/admin/celery/task-metrics/{name}", {"Authorization": f"Bearer {token}"}),
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode())

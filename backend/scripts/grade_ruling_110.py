@@ -72,6 +72,8 @@ from typing import Any
 
 # Thresholds come FROM the instrument. Never re-typed here.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from app.utils.agent_origin import tagged
 from app.utils.heavy_routing_falsifier import (  # noqa: E402
     DEGRADE_P50_RATIO,
     HEAVY_MOVE_EXCEPTION,
@@ -101,7 +103,7 @@ def _fetch_live() -> dict[str, Any]:
         )
     req = urllib.request.Request(
         f"{base}/api/admin/heavy-move/falsifier",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=tagged(f"{base}/api/admin/heavy-move/falsifier", {"Authorization": f"Bearer {token}"}),
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode())

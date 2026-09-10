@@ -81,6 +81,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.tournament_register import normalize_player_name  # noqa: E402
 
 GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events"
@@ -119,7 +121,7 @@ def fetch_gamma_events(event_ids: list[str]) -> dict[str, dict[str, Any]]:
         for attempt in range(GAMMA_RETRIES):
             try:
                 request = urllib.request.Request(
-                    url, headers={"User-Agent": "bainluck-tournament-register/1.0"}
+                    url, headers=tagged(url, {"User-Agent": "bainluck-tournament-register/1.0"})
                 )
                 with urllib.request.urlopen(request, timeout=30) as response:
                     payload = json.loads(response.read())

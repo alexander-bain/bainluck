@@ -44,6 +44,14 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 #: Kalshi timestamp fields we compare. ``expiration_time`` is what the poller
@@ -61,7 +69,7 @@ def _get(path: str, **params) -> tuple[int, dict | None]:
     url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
     req = urllib.request.Request(
         url,
-        headers={"Accept": "application/json", "User-Agent": "bainluck-cal-p061-provenance"},
+        headers=tagged(url, {"Accept": "application/json", "User-Agent": "bainluck-cal-p061-provenance"}),
     )
     for attempt in range(4):
         try:

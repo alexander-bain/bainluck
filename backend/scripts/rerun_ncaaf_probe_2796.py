@@ -22,6 +22,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.match_receipts import (  # noqa: E402
     coverage_anchors,
     row_coverage,
@@ -63,7 +65,7 @@ def q(sql, limit=1000):
     req = urllib.request.Request(
         f"{API}/api/admin/db-query",
         data=json.dumps({"sql": sql, "limit": limit}).encode(),
-        headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+        headers=tagged(f"{API}/api/admin/db-query", {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}),
     )
     with urllib.request.urlopen(req, timeout=60) as r:
         body = json.load(r)

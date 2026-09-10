@@ -37,6 +37,12 @@ from app.config.league_configs import (  # noqa: E402
 from app.models import FuturesMarket  # noqa: E402
 from app.routes.playoffs import _build_grid_market_filters  # noqa: E402
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+from app.utils.agent_origin import curl_args
+
+
 API = os.environ["BAINLUCK_API"]
 TOKEN = os.environ["ADMIN_TOKEN"]
 
@@ -127,7 +133,7 @@ def explain_rows(sql: str):
     )
     out = subprocess.run(
         [
-            "curl", "-s", "-X", "POST",
+            "curl", *curl_args(f"{API}/api/admin/db-query"), "-s", "-X", "POST",
             "-H", f"Authorization: Bearer {TOKEN}",
             "-H", "Content-Type: application/json",
             "-d", body,

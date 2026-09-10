@@ -50,6 +50,14 @@ import time
 import urllib.request
 from pathlib import Path
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 #: Gauges lifted out of the ledger's ``stages`` map. Everything here is either a
 #: number the grader reads or a number a human needs beside it to believe the
 #: grade; the rest of the ledger is left where it is rather than copied.
@@ -291,7 +299,7 @@ def _db_query(api: str, token: str, sql: str, limit: int = 5) -> dict:
     body = json.dumps({"sql": sql, "limit": limit}).encode()
     req = urllib.request.Request(
         api + "/api/admin/db-query", data=body,
-        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+        headers=tagged(api + "/api/admin/db-query", {"Authorization": "Bearer " + token, "Content-Type": "application/json"}),
     )
     raw = urllib.request.urlopen(req, timeout=90).read().decode()
     try:
@@ -327,7 +335,7 @@ def fetch_ledger(api: str, token: str) -> dict:
 
 def fetch_served(api: str) -> dict:
     req = urllib.request.Request(
-        api + "/api/calibration", headers={"User-Agent": "bainluck-cal-p082-beat-sampler"})
+        api + "/api/calibration", headers=tagged(api + "/api/calibration", {"User-Agent": "bainluck-cal-p082-beat-sampler"}))
     with urllib.request.urlopen(req, timeout=90) as resp:
         payload = json.loads(resp.read())
     staged = payload.get("staged") or {}

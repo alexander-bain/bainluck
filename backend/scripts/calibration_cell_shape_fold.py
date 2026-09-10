@@ -85,6 +85,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.resolution_authority import (  # noqa: E402
     CALIBRATION_TRUTH_ELIGIBLE_SOURCES,
 )
@@ -118,8 +120,8 @@ def db_query(sql: str, limit: int = ROW_CAP, retries: int = 3) -> dict:
     for attempt in range(retries):
         req = urllib.request.Request(
             f"{base}/api/admin/db-query", data=body,
-            headers={"Authorization": "Bearer " + os.environ["ADMIN_TOKEN"],
-                     "Content-Type": "application/json"})
+            headers=tagged(f"{base}/api/admin/db-query", {"Authorization": "Bearer " + os.environ["ADMIN_TOKEN"],
+                     "Content-Type": "application/json"}))
         try:
             return json.loads(urllib.request.urlopen(req, timeout=180).read().decode())
         except urllib.error.HTTPError as e:

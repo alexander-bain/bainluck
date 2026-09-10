@@ -87,6 +87,14 @@ import sys
 import urllib.error
 import urllib.request
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 # --------------------------------------------------------------------------
 # The families. Each entry is (key, human label, ILIKE predicate over `query`).
 #
@@ -206,10 +214,10 @@ def _db_query(sql: str) -> dict:
     req = urllib.request.Request(
         f"{api}/api/admin/db-query",
         data=body,
-        headers={
+        headers=tagged(f"{api}/api/admin/db-query", {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-        },
+        }),
         method="POST",
     )
     try:

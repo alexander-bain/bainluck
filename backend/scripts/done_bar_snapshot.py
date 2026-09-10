@@ -109,6 +109,14 @@ import time
 import urllib.error
 import urllib.request
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import ORIGIN_HEADER, resolve_agent, tagged
+
 # --------------------------------------------------------------------------
 # The bars. Sourced, not invented — see the module docstring.
 # --------------------------------------------------------------------------
@@ -186,10 +194,10 @@ def _get(path: str, *, token: str | None = None) -> tuple[int, dict, float]:
     api = os.environ["BAINLUCK_API"]
     # LAT-P118: declare machine traffic on every request. See `cold_path_snapshot._get`
     # for the measurement — a probe term reached warm slot 40 of 40 on our votes alone.
-    headers = {"X-Bainluck-Origin": "harness"}
+    headers = {ORIGIN_HEADER: resolve_agent() or "harness"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(f"{api}{path}", headers=headers)
+    req = urllib.request.Request(f"{api}{path}", headers=tagged(f"{api}{path}", headers))
     t0 = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -256,7 +264,7 @@ def measure(n_feed: int, n_warm: int, n_cold: int, salt: str, offset: int,
     _, _, _ = _get("/api/health")
     status, headers, _ = _get("/api/health")
     api = os.environ["BAINLUCK_API"]
-    with urllib.request.urlopen(f"{api}/api/health", timeout=30) as resp:
+    with urllib.request.urlopen(urllib.request.Request(f"{api}/api/health", headers=tagged(f"{api}/api/health")), timeout=30) as resp:
         health = json.loads(resp.read())
     out["commit"] = health.get("commit")
     out["uptime_seconds"] = health.get("uptime_seconds")
@@ -278,7 +286,7 @@ def measure(n_feed: int, n_warm: int, n_cold: int, salt: str, offset: int,
     api = os.environ["BAINLUCK_API"]
     req = urllib.request.Request(
         f"{api}/api/admin/latency-stats?top=30",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=tagged(f"{api}/api/admin/latency-stats?top=30", {"Authorization": f"Bearer {token}"}),
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         stats = json.loads(resp.read())

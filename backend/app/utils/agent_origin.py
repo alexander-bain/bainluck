@@ -3,27 +3,45 @@
 Notice 39 / #1916: every production read our fleet makes should say whether a
 person or a lane made it. `tools/bl-agent-curl.sh` (rung 1) does that for the
 `curl` an agent types by hand. This module is the same contract for the other
-half of the fleet's traffic — the Python scripts under `backend/scripts/` that
-call `/api/admin/db-query` — which no shell shadow can reach.
+half of the fleet's traffic — the ~90 scripts under `backend/scripts/` — which
+no shell shadow can reach.
 
-WHAT THE TAG BUYS HERE, STATED HONESTLY
----------------------------------------
+FOUR RAILS, BECAUSE THE FLEET HAS FOUR (#4642)
+-----------------------------------------------
+The sweep that tagged the directory found the traffic does not leave by one
+door. `tagged()` serves the first three, `curl_args()` the fourth:
+
+  1. `urllib.request.Request(url, headers=...)`     — 81 sites
+  2. `urlopen(<a URL>)`, which carries no headers at all and had to be
+     converted to a Request before it could be tagged
+  3. `httpx` / `requests` verbs                     — 26 sites
+  4. `subprocess.run(["curl", ...])`                — 12 sites, and the one
+     rung 1 can NEVER cover: it exports a shell FUNCTION, and a subprocess
+     execs the binary
+
+WHAT THE TAG BUYS, STATED HONESTLY — AND IT DIFFERS BY ROUTE
+-------------------------------------------------------------
 On the SEARCH route the tag has teeth: `routes/events.py:_request_is_automation`
 suppresses the search-query log write and the trending vote, so an untagged
 probe does not merely add a row, it VOTES, and the head warmer then spends real
-work warming our own specimens.
+work warming our own specimens. Twelve scripts here reach `/api/events/search`
+or `/api/events/typeahead`, and for those this module is the whole point.
 
-The gate scripts call `/api/admin/db-query`, so none of that applies to them.
-Their tag is ATTRIBUTION ONLY, and deliberately so:
+Everywhere else — overwhelmingly `/api/admin/db-query` — the tag is
+ATTRIBUTION ONLY, and deliberately so:
 
-  * It buys them no rate-limit relief. Admin paths are keyed on a hash of the
+  * It buys no rate-limit relief. Admin paths are keyed on a hash of the
     admin token (300/min) and that bucket outranks the trusted-address ceiling
-    in `utils/rate_limit.py`, so tagging cannot and must not change what a gate
-    is allowed to spend.
+    in `utils/rate_limit.py`, so tagging cannot and must not change what a
+    script is allowed to spend.
   * The header is caller-supplied and therefore forgeable. It is fit for saying
     WHO, never for granting WHAT — see the "CEILING, NEVER EXEMPTION" note in
     `utils/rate_limit.py`. Nothing in this module should ever be read by an
     authorization path.
+
+Applying it to a third-party call costs nothing rather than needing a judgment
+call per site: `is_our_host` decides at RUNTIME, so the static rule the guard
+enforces stays the simple one — every outbound call goes through the carrier.
 
 THE HEADER NAME LIVES HERE, ONCE
 --------------------------------
@@ -36,7 +54,7 @@ someone counts. One definition removes that failure mode by construction.
 from __future__ import annotations
 
 import os
-from typing import Dict, Mapping, Optional
+from typing import Dict, Iterable, List, Mapping, Optional
 from urllib.parse import urlsplit
 
 #: The wire name. `routes/events.py` imports this; do not re-spell it anywhere.
@@ -149,3 +167,40 @@ def tagged(url: str, headers: Optional[Mapping[str, str]] = None) -> Dict[str, s
     merged = dict(headers or {})
     merged.update(origin_headers(url, merged))
     return merged
+
+
+def curl_args(url: str, existing: Optional[Iterable[str]] = None) -> List[str]:
+    """``-H`` arguments to SPLICE into a ``subprocess`` curl argv. Possibly empty.
+
+    THE SHELL SHADOW DOES NOT REACH HERE, AND THAT IS THE WHOLE POINT
+    ----------------------------------------------------------------
+    Rung 1 tags the ``curl`` an agent types by exporting a shell FUNCTION.
+    ``subprocess.run(["curl", ...])`` executes the curl BINARY directly: no
+    shell is involved, so no function can be interposed and the call goes out
+    untagged. Ten scripts under ``backend/scripts/`` fire this way and two of
+    them hit ``/api/events/typeahead``, so this is not a hypothetical rail —
+    it is the one the shadow can never cover.
+
+    Returns a list to splice, never a mutated argv, for the same reason
+    `origin_headers` returns a dict to merge: the caller owns its own command.
+
+    Every rule `origin_headers` applies applies here, and deliberately so — a
+    second answer to "should this call be tagged?" is a second thing to drift.
+    Third-party host, unnamed caller, or an argv that already states an origin
+    all yield ``[]``.
+    """
+    already = False
+    for arg in existing or ():
+        # `-H x-bainluck-origin: lane` arrives as its own argv element, so the
+        # header name is a PREFIX of the value string, not the whole of it.
+        if str(arg).lower().lstrip().startswith(f"{ORIGIN_HEADER}:"):
+            already = True
+            break
+    if already:
+        return []
+
+    headers = origin_headers(url)
+    args: List[str] = []
+    for name, value in headers.items():
+        args += ["-H", f"{name}: {value}"]
+    return args

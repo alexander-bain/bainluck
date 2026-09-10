@@ -142,6 +142,14 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 # The org is `alexander-bain`. It was `bain-luck` here until 2026-08-26, which
 # 404s — see docstring point 5. A wrong org does not error loudly; it becomes
 # arm A UNKNOWN, which becomes INCONCLUSIVE, which reads as "not yet proven".
@@ -435,7 +443,7 @@ def _get(url: str, timeout: float = 20.0):
     connection and a 500 are different facts and the whole point of this file
     is not to confuse two things that print the same (gotcha #36).
     """
-    req = urllib.request.Request(url, headers={"User-Agent": "bainluck-2107-watch"})
+    req = urllib.request.Request(url, headers=tagged(url, {"User-Agent": "bainluck-2107-watch"}))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.read()
@@ -648,7 +656,7 @@ def sum_buckets_since(buckets: list, since: datetime | None) -> tuple[int, int, 
 
 
 def _sentry_get(url: str, token: str):
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(url, headers=tagged(url, {"Authorization": f"Bearer {token}"}))
     with urllib.request.urlopen(req, timeout=45) as resp:
         return json.loads(resp.read())
 

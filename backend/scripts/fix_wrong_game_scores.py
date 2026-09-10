@@ -46,6 +46,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.utils.agent_origin import tagged
+
 # sport key -> ESPN summary path
 _SPORT_PATH = {
     "baseball_mlb": "baseball/mlb",
@@ -89,7 +91,7 @@ def _espn_final(path: str, espn_id: str):
     COMPLETED game, else None."""
     url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/summary?event={espn_id}"
     req = urllib.request.Request(
-        url, headers={"Accept-Encoding": "gzip", "User-Agent": "Mozilla/5.0"},
+        url, headers=tagged(url, {"Accept-Encoding": "gzip", "User-Agent": "Mozilla/5.0"}),
     )
     raw = urllib.request.urlopen(req, timeout=20, context=_CTX).read()
     if raw[:2] == b"\x1f\x8b":

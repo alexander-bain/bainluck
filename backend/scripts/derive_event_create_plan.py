@@ -51,6 +51,8 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.repair_apply_plan import (  # noqa: E402
     build_create_plan,
     create_gate,
@@ -88,7 +90,7 @@ def _db_query(sql: str, limit: int = 1000) -> list[list]:
     req = urllib.request.Request(
         f"{api}/api/admin/db-query",
         data=json.dumps({"sql": sql, "limit": limit}).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(f"{api}/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         payload = json.loads(resp.read())

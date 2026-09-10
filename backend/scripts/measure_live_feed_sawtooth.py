@@ -38,6 +38,14 @@ import sys
 import time
 import urllib.request
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 DEFAULT_API = "https://api.bainluck.com"
 
 #: The two real anonymous first-paint sports shapes. Native is `limit=50`
@@ -53,7 +61,7 @@ SHAPES = (
 
 def _sample(api: str, query: str, timeout: float) -> dict:
     started = time.monotonic()
-    req = urllib.request.Request(f"{api}/api/feed?{query}")
+    req = urllib.request.Request(f"{api}/api/feed?{query}", headers=tagged(f"{api}/api/feed?{query}"))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
@@ -94,7 +102,7 @@ def main() -> int:
         print(line, file=sink, flush=True)
 
     try:
-        with urllib.request.urlopen(f"{api}/api/health", timeout=15) as resp:
+        with urllib.request.urlopen(urllib.request.Request(f"{api}/api/health", headers=tagged(f"{api}/api/health")), timeout=15) as resp:
             health = json.loads(resp.read())
     except Exception as exc:  # noqa: BLE001
         health = {"error": str(exc)[:80]}

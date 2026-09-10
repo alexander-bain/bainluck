@@ -33,6 +33,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.utils.agent_origin import tagged
+
 MARKET_ID = 297
 SPAIN_TICKER = "KXMENWORLDCUP-26-ES"
 KALSHI_MARKET_URL = "https://api.elections.kalshi.com/trade-api/v2/markets/"
@@ -44,7 +46,7 @@ async def _kalshi_confirms_spain() -> bool:
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"{KALSHI_MARKET_URL}{SPAIN_TICKER}")
+            resp = await client.get(f"{KALSHI_MARKET_URL}{SPAIN_TICKER}", headers=tagged(f"{KALSHI_MARKET_URL}{SPAIN_TICKER}"))
             resp.raise_for_status()
             m = resp.json().get("market", {})
     except Exception as exc:  # noqa: BLE001

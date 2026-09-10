@@ -45,6 +45,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.utils.agent_origin import tagged  # noqa: E402
+
 DEFAULT_OUT = REPO_ROOT / "tests" / "fixtures" / "matching_golden_inputs.json"
 
 MARKET_CHUNK = 120
@@ -85,10 +87,10 @@ def db_query(sql: str, limit: int = 1000) -> list[list]:
     req = urllib.request.Request(
         f"{api}/api/admin/db-query",
         data=body,
-        headers={
+        headers=tagged(f"{api}/api/admin/db-query", {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-        },
+        }),
     )
     last = None
     for attempt in range(3):
