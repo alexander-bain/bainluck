@@ -144,6 +144,291 @@ OPENAI = 108559
 CONTROL = "KXIPOOPENAI-27JUN01"
 DEAD = ["KXIPOOPENAI-25SEP01", "KXIPOOPENAI-25NOV01"]
 
+TASK = "_refresh_stale_futures_prices"
+
+
+class _TaskResult(_Result):
+    """`_Result`, plus the `.scalar()` the task's censuses call on it."""
+
+    def __init__(self, rows=(), scalar=0):
+        super().__init__(list(rows))
+        self._scalar = scalar
+
+    def scalar(self):
+        return self._scalar
+
+
+class _TaskSession(_FakeSession):
+    """The arm's session widened to everything the whole task executes.
+
+    Still dispatches the arm's four statements on IDENTITY, so a renamed
+    constant cannot pass; everything else the task runs — the two `SET`s, the
+    `remaining_stale` census — falls through to an empty result instead of the
+    `AssertionError` the unit fake raises. The scans are monkeypatched out, so
+    this deliberately does NOT have to know their SQL.
+    """
+
+    async def execute(self, stmt, params=None):
+        try:
+            return await super().execute(stmt, params)
+        except AssertionError:
+            return _TaskResult()
+
+
+class _TaskRun:
+    """Drives the real `_refresh_stale_futures_prices` with a chosen batch.
+
+    The batch is injected at the SCAN boundary rather than through fake SQL,
+    because what is under test is what the task does with an empty Kalshi
+    selection — not whether `_CANDIDATE_SQL` can be made to return one.
+    """
+
+    def __init__(self, *, class_markets=(), unreached=(), candidates=(), answers=None):
+        self.class_markets = list(class_markets)
+        self.session = _TaskSession(
+            unreached=list(unreached), candidates=list(candidates), control=CONTROL
+        )
+        self.kalshi = _FakeKalshi(answers or {})
+        self.poly_closed = False
+        # The query budget the task armed, captured from get_task_session's
+        # kwargs. Recorded rather than swallowed: a double that accepts
+        # anything is what let #4482's signature change reach the desk as a
+        # composed-tree red instead of a red on this branch.
+        self.session_budget: dict | None = None
+
+    def run(self, monkeypatch, *, key="test-key"):
+        import contextlib
+
+        from app.utils.feed_served_markets import SERVED_EMPTY, ServedSignal
+
+        if key is None:
+            monkeypatch.delenv("KALSHI_API_KEY", raising=False)
+        else:
+            monkeypatch.setenv("KALSHI_API_KEY", key)
+
+        @contextlib.asynccontextmanager
+        async def _session(
+            *, statement_timeout_ms: int | None = None,
+            lock_timeout_ms: int | None = None,
+        ):
+            # Mirrors app.tasks.base.get_task_session as #4482 left it. The
+            # kwargs are keyword-only there, so they are keyword-only here.
+            self.session_budget = {
+                "statement_timeout_ms": statement_timeout_ms,
+                "lock_timeout_ms": lock_timeout_ms,
+            }
+            yield self.session
+
+        outer = self
+
+        class _Poly:
+            async def close(self):
+                outer.poly_closed = True
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _session)
+        monkeypatch.setattr(
+            "app.services.kalshi_api.KalshiAPIService", lambda: self.kalshi
+        )
+        monkeypatch.setattr(
+            "app.services.polymarket_api.PolymarketAPIService", lambda: _Poly()
+        )
+        monkeypatch.setattr(
+            "app.utils.tournament_register.registered_market_ids", lambda: set()
+        )
+        monkeypatch.setattr(
+            "app.utils.feed_served_markets.served_signal",
+            lambda: ServedSignal(state=SERVED_EMPTY, ids=[], shapes=1),
+        )
+        monkeypatch.setattr(
+            "app.utils.feed_served_markets.note_served_signal_healthy", lambda: None
+        )
+        monkeypatch.setattr(mod, "_load_attempt_skips", lambda ids: set())
+        monkeypatch.setattr(mod, "_mark_attempted", lambda ids, ttl_seconds: None)
+
+        async def _empty(session, **kwargs):
+            return []
+
+        async def _class(session, **kwargs):
+            return list(self.class_markets)
+
+        monkeypatch.setattr(mod, "_scan_served_candidates", _empty)
+        monkeypatch.setattr(mod, "_scan_registered_candidates", _empty)
+        monkeypatch.setattr(mod, "_scan_candidates", _class)
+        return asyncio.run(mod._refresh_stale_futures_prices())
+
+
+def _poly_market(market_id=99001):
+    """A Polymarket row the poll cannot address, so the batch has NO Kalshi row.
+
+    `poly_event_id=None` is a real production shape (`no_event_id` counts it) and
+    it takes the Polymarket arm's first `continue`, which keeps this test about
+    the Kalshi block and not about Polymarket pricing.
+    """
+    return {
+        "id": market_id,
+        "source": "polymarket",
+        "external_id": "0xdead",
+        "volume": 1_000,
+        "poly_event_id": None,
+        "venue_settled_since": None,
+        "arm": "class",
+        "registered": False,
+        "served": False,
+        "priority": False,
+    }
+
+
+class TestTheArmRunsWhenTheStaleBatchIsEmpty:
+    """🔴 CERT-2421's granted follow-up: the arm was scoped to somebody else's batch.
+
+    The reach arm shipped inside the batched arm's `if kalshi_markets:`, and the
+    task ALSO returns early when nothing at all is stale. Both suppressions have
+    the same shape as the six-hour staleness gate the arm exists to defeat — the
+    arm's population is live, actively traded markets, which are precisely the
+    ones that never make a stale batch. A pass that selects nothing is not a
+    pass with nothing for this arm to do; it is the pass where this arm is the
+    only Kalshi reach there is.
+
+    Each test asserts the batch really was empty before asserting the arm ran.
+    Without that the tests would pass on a run that quietly priced a Kalshi
+    market, which is the shape they exist to rule out.
+    """
+
+    def test_the_pass_arms_the_4482_query_budget(self, monkeypatch):
+        """The double must track `get_task_session`'s real signature.
+
+        Added after integrator-284 bounced `55f4a3f8`: calibration/1076
+        (#4482, `e3cd444a`) moved the budget from a bare `SET statement_timeout`
+        to keyword arguments on `get_task_session`, an hour after CERT-2424 was
+        banked. This file's double took no kwargs, so the composed tree went red
+        on six tests while both branches were independently green — a semantic
+        conflict a clean textual merge cannot see.
+
+        Asserting the VALUES, not just tolerating the kwargs, is the point: a
+        double that silently accepts anything is what let the drift through.
+        """
+        run = _TaskRun(
+            unreached=[(OPENAI, 1_083_106)],
+            candidates=[(OPENAI, DEAD[0])],
+            answers={CONTROL: True, DEAD[0]: False},
+        )
+        run.run(monkeypatch)
+
+        assert run.session_budget == {
+            "statement_timeout_ms": 60_000,
+            "lock_timeout_ms": 15_000,
+        }
+
+    def test_a_wholly_empty_batch_still_sweeps(self, monkeypatch):
+        run = _TaskRun(
+            unreached=[(OPENAI, 1_083_106)],
+            candidates=[(OPENAI, DEAD[0]), (OPENAI, DEAD[1])],
+            answers={CONTROL: True, DEAD[0]: False, DEAD[1]: False},
+        )
+        stats = run.run(monkeypatch)
+
+        # The control: this really is the nothing-was-stale early return.
+        assert stats["markets_attempted"] == 0
+        assert stats["terminal"] == "complete"
+
+        assert stats["unreached_markets_found"] == 1
+        assert stats["unreached_markets_checked"] == 1
+        assert stats["unreached_legs_retired"] == 2, (
+            "the task returned early on an empty stale batch and never ran the "
+            "reach arm — the OpenAI ladder's 100% legs stay on the page"
+        )
+        assert stats["errors"] == []
+
+    def test_a_batch_with_no_kalshi_row_still_sweeps(self, monkeypatch):
+        """The other suppression: a batch that is non-empty but all Polymarket."""
+        run = _TaskRun(
+            class_markets=[_poly_market()],
+            unreached=[(OPENAI, 1_083_106)],
+            candidates=[(OPENAI, DEAD[0]), (OPENAI, DEAD[1])],
+            answers={CONTROL: True, DEAD[0]: False, DEAD[1]: False},
+        )
+        stats = run.run(monkeypatch)
+
+        # The control: the batch was selected and held no Kalshi market at all,
+        # so the old `if kalshi_markets:` scoping would have skipped the arm.
+        assert stats["candidates"] == 1
+        assert stats["no_event_id"] == 1
+        assert stats["by_source"].get("kalshi", 0) == 0
+
+        assert stats["unreached_legs_retired"] == 2, (
+            "a Polymarket-only batch suppressed the Kalshi reach arm"
+        )
+
+    def test_the_empty_batch_is_not_excluded_from_its_own_sweep(self, monkeypatch):
+        """`exclude_ids` is the batch, so an empty batch excludes nothing."""
+        captured = {}
+
+        class _Capture(_TaskSession):
+            async def execute(self, stmt, params=None):
+                if stmt is mod._KALSHI_UNREACHED_FROZEN_SQL:
+                    captured.update(params)
+                return await super().execute(stmt, params)
+
+        run = _TaskRun()
+        run.session = _Capture(unreached=[], candidates=[], control=CONTROL)
+        run.run(monkeypatch)
+
+        assert captured["exclude_ids"] == []
+
+    def test_a_missing_key_is_reported_and_not_charged_to_the_pass(self, monkeypatch):
+        """The zero that would otherwise be silent.
+
+        Without a credential the arm cannot run, and `unreached_markets_found: 0`
+        would read exactly like a drained backlog. It says so instead — and NOT
+        through `errors`, which would turn every keyless pass `partial` and make
+        this a verdict about the pricing run rather than about one arm.
+        """
+        run = _TaskRun(
+            unreached=[(OPENAI, 1_083_106)],
+            candidates=[(OPENAI, DEAD[0])],
+            answers={CONTROL: True, DEAD[0]: False},
+        )
+        stats = run.run(monkeypatch, key=None)
+
+        assert stats["unreached_skipped_no_key"] is True
+        assert run.kalshi.calls == []
+        assert stats["unreached_markets_found"] == 0
+        assert stats["errors"] == []
+        assert stats["terminal"] == "complete"
+
+    def test_a_keyless_pass_with_no_kalshi_batch_is_still_not_an_error(
+        self, monkeypatch
+    ):
+        """The batch's error stays the batch's, on the path that can reach it.
+
+        Found by mutation: the sibling test above takes the empty-batch early
+        return, which never reaches the credential branch at all, so it cannot
+        see `elif kalshi_markets:` widened to `else:`. This one selects a batch
+        — so the branch is reached — with no Kalshi row in it, which is the pass
+        that must stay clean. "KALSHI_API_KEY not configured" is an error about
+        markets that were selected and then not priced; appending it here would
+        turn a keyless environment's every pass `partial` over an arm that
+        already reports its own skip.
+        """
+        run = _TaskRun(class_markets=[_poly_market()])
+        stats = run.run(monkeypatch, key=None)
+
+        assert stats["candidates"] == 1, "the credential branch was never reached"
+        assert stats["errors"] == []
+        assert stats["unreached_skipped_no_key"] is True
+
+    def test_a_present_key_leaves_the_skip_flag_down(self, monkeypatch):
+        """THE CONTROL for the flag. Without it, always-True would pass above."""
+        run = _TaskRun(
+            unreached=[(OPENAI, 1_083_106)],
+            candidates=[(OPENAI, DEAD[0])],
+            answers={CONTROL: True, DEAD[0]: False},
+        )
+        stats = run.run(monkeypatch)
+
+        assert stats["unreached_skipped_no_key"] is False
+        assert run.kalshi.calls, "the arm never reached the venue"
+
 
 class TestTheArmReachesWhatTheBatchNeverDid:
     def test_a_live_control_licenses_retiring_the_delisted_legs(self):
@@ -335,22 +620,38 @@ class TestTheQueryIsShapedAsClaimed:
         name `_sweep_unreached_kalshi_frozen` several times, so a source scan for
         the string is satisfied by the prose ABOUT the call and would pass with
         the call itself deleted. The AST sees calls only.
+
+        TWO HOPS since the reach arm was hoisted out of the batched arm's
+        `if kalshi_markets:`, and the second one is counted: the task has two
+        exits and both must run it, so a single call site here means one of them
+        was dropped. Which exit is which is proved behaviourally by
+        `TestTheArmRunsWhenTheStaleBatchIsEmpty` below — this only proves nothing
+        went inert.
         """
         import ast
         import inspect
 
         tree = ast.parse(inspect.getsource(mod))
-        sites = [
-            fn.name
-            for fn in ast.walk(tree)
-            if isinstance(fn, (ast.AsyncFunctionDef, ast.FunctionDef))
-            for call in ast.walk(fn)
-            if isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "_sweep_unreached_kalshi_frozen"
-        ]
-        assert "_refresh_stale_futures_prices" in sites, (
-            "the reach arm is not called by the task; #4253's reach half is inert"
+
+        def _callers(name: str) -> list[str]:
+            return [
+                fn.name
+                for fn in ast.walk(tree)
+                if isinstance(fn, (ast.AsyncFunctionDef, ast.FunctionDef))
+                for call in ast.walk(fn)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == name
+            ]
+
+        assert "_kalshi_reach_arm" in _callers("_sweep_unreached_kalshi_frozen"), (
+            "the reach arm is not called by its own wrapper; #4253's reach half "
+            "is inert"
+        )
+        task_calls = [c for c in _callers("_kalshi_reach_arm") if c == TASK]
+        assert len(task_calls) == 2, (
+            "the task must run the reach arm on BOTH of its exits — the normal "
+            f"path and the nothing-was-stale early return; found {len(task_calls)}"
         )
 
     def test_it_admits_only_uncrowned_frozen_legs_on_live_markets(self):
