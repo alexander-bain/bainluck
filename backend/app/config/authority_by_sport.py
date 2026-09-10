@@ -493,29 +493,52 @@ FLIP_EVIDENCE: dict[str, dict[str, Any]] = {}
 #: in `decide` that refused every sport: the gate.
 #:
 #: **It exempts the WAIT and nothing else.** `flip_permitted` consults this set
-#: only after its four structural refusals — measurement population, no shadow
-#: stamper, no working discovery pass, no governing number (D63). Those say
-#: "there is nothing here to flip TO", which is a different sentence from "come
-#: back in a week", and a ruling about proof days does not reach them.
-#: `baseball_mlb` is the case that keeps this honest: a top-tier league named in
-#: the same breath as football, still refused, because it has no governing
-#: identity number and that needs a ruling rather than a wait.
+#: only after its three structural refusals — measurement population, no shadow
+#: stamper, no working discovery pass. Those say "there is nothing here to flip
+#: TO", which is a different sentence from "come back in a week", and a ruling
+#: about proof days does not reach them. A ruled key with no stamper, or with no
+#: working discovery pass, is still refused; that is the guard Alex asked for on
+#: D113 — *"a sport with no backup data can never slip through"* — and it is
+#: pinned by `TestARulingCannotBuyBackupDataThatDoesNotExist`.
+#:
+#: **The governing number (D63) is NOT one of those three, since D113.** It used
+#: to be asked fourth, above this set, and `baseball_mlb` refused there. Alex
+#: ruled D113 = A on 2026-09-10 — *"move the check below the ruling so baseball
+#: fails over like football"* — because the governing number never decided
+#: anything about a flip: `authority_failover.decide` and `_act_on_failovers`
+#: never read `GOVERNING_IDENTITY_NUMBERS`. It decides which published percentage
+#: advances a STREAK, and after D104 a ruled sport's streak does not gate it. So
+#: the question moved down beside the other streak questions, where it still
+#: refuses every UNRULED sport that lacks one. Which percentage governs MLB
+#: remains unruled and still applies to the monitor; the ruled `why` says so.
 #:
 #: One release each, because that is what Alex asked for: *"Flip football first
 #: (the Thursday kickoff), then the rest in one release each."*
 #:
 #: Football shipped on #4417 and its resilience hole — a failover still gated on
 #: the MONITOR being readable — closed on #4443. `basketball_nba` is the second
-#: release, #4493. `icehockey_nhl` is the third and is deliberately still absent:
-#: it clears every structural branch and waits only on its streak, so it is a
+#: release, #4493. `baseball_mlb` is the third, #4436 under D113: it needed the
+#: branch reorder above as well as this line, which is why it did not ship with
+#: the NBA. `icehockey_nhl` is the fourth and is deliberately still absent: it
+#: clears every structural branch and waits only on its streak, so it is a
 #: one-line addition here when its release comes. Adding it early would land two
 #: flips under a cert that graded one.
 #:
-#: Each addition was refused on the WAIT ALONE before it was made, read from the
-#: live row rather than inferred from the config (standing notice 37). The NBA's
-#: row at 2026-09-09 21:19:54Z: `NO-FAILOVER-NOT-GATED`, *"has not cleared D50's
-#: measured half: basketball_nba is 5/7 consecutive days at or above 99.5% — a
-#: wait, not a defect"*. That is branch 6 and nothing else.
+#: The first two additions were refused on the WAIT ALONE before they were made,
+#: read from the live row rather than inferred from the config (standing notice
+#: 37). The NBA's row at 2026-09-09 21:19:54Z: `NO-FAILOVER-NOT-GATED`, *"has not
+#: cleared D50's measured half: basketball_nba is 5/7 consecutive days at or
+#: above 99.5% — a wait, not a defect"*. That is branch 6 and nothing else.
+#:
+#: **`baseball_mlb` is the exception to that sentence and it is the whole point
+#: of D113**: it was refused on the D63 branch, not on the wait, so adding this
+#: line alone would have changed nothing — measured on #4436's branch before the
+#: ruling, `flip_permitted("baseball_mlb", ...)` still returned `False` one
+#: branch earlier. The reorder is the ship; the set membership only becomes
+#: reachable because of it. Its distance from the bar was never a coverage gap
+#: either: counted once per game on production 2026-09-06 we and StatPal agree on
+#: 173 of 174 (#3616), and the 79 in-span "misses" were all a second row of ours
+#: for a game the same pass had already matched (#3093, lane1's under D39).
 #:
 #: Beware the number that looks bad: the NBA's identity `pct` reads 3.39 and the
 #: NHL's 2.28, and neither governs its sport. `GOVERNING_IDENTITY_NUMBERS` gives
@@ -528,7 +551,7 @@ FLIP_EVIDENCE: dict[str, dict[str, Any]] = {}
 #: that we lack is now OUR fetch bug to fix, filed under #2867, never a reason to
 #: say the venue does not cover it (standing notices 26/27).
 FLIP_RULED_WITHOUT_STREAK: frozenset[str] = frozenset(
-    {"americanfootball_nfl", "basketball_nba"}
+    {"americanfootball_nfl", "basketball_nba", "baseball_mlb"}
 )
 
 
@@ -743,6 +766,9 @@ def flip_permitted(
         service call parses nothing — so agreeing about the games we already have
         is the only thing this sport's streak could ever prove. Fix the path, do
         not wait for days;
+
+    …and then the STREAK meanings, which is where D113 put the fourth:
+
       * no governing number ruled, so no day could ever have advanced (D63);
       * no ledger at all — not measured, which is not a streak of zero;
       * a streak that is real and not seven days long yet;
@@ -754,15 +780,34 @@ def flip_permitted(
     reported with `compute_streak`'s own `stopped_by` detail, which names the day
     and the reason rather than making the reader go and look.
 
-    **D104 = A4 (Alex, 2026-09-09) retires the last two for a ruled sport, and
-    only those two.** A key in `FLIP_RULED_WITHOUT_STREAK` is permitted whatever
+    **D104 = A4 (Alex, 2026-09-09) retires the STREAK meanings for a ruled sport,
+    and only those.** A key in `FLIP_RULED_WITHOUT_STREAK` is permitted whatever
     its streak says, because Alex ruled the top-tier leagues need no proof days.
-    The ruling is asked AFTER the four structural refusals above and AFTER
+    The ruling is asked AFTER the three structural refusals above and AFTER
     `compute_streak` — after the refusals so it can never be read as a way past
-    "there is nothing here to flip TO" (`baseball_mlb` still refuses on D63), and
-    after the walk so the permission can report what the monitor currently says.
-    The days keep being folded and published either way; only their authority
-    over the answer is gone.
+    "there is nothing here to flip TO", and after the walk so the permission can
+    report what the monitor currently says. The days keep being folded and
+    published either way; only their authority over the answer is gone.
+
+    **D113 = A (Alex, 2026-09-10) moved the governing number below the ruling,
+    which is what let `baseball_mlb` join.** D63 reads as a fourth structural
+    refusal and is not one: MLB has a shadow stamper and a working hourly
+    discovery pass, so it is entirely able to fail over. The number decides only
+    which published percentage advances a STREAK — `authority_failover.decide`
+    and `_act_on_failovers` never read `GOVERNING_IDENTITY_NUMBERS` — so above
+    the ruling it refused a ruled sport on a fact that decided nothing about the
+    flip. It is now the first of the streak questions, and it still refuses every
+    UNRULED sport that lacks one.
+
+    **THE GUARD, which is Alex's condition on D113 and not a side effect of the
+    ordering:** *"a sport with no backup data can never slip through"*. The two
+    refusals that mean there is no backup data — no shadow stamper (nothing to
+    flip onto) and no working discovery pass (nothing that could find a game we
+    missed) — remain ABOVE the ruling, so a ruled key lacking either is still
+    refused. Pinned by `TestARulingCannotBuyBackupDataThatDoesNotExist` in
+    `test_mlb_fails_over_and_the_ruling_still_cannot_skip_the_structure_4436.py`,
+    against a CONSTRUCTED sport, because after this ship no real sport is left in
+    that state to borrow.
 
     A `True` here was, until D104, the first half of D50, whose second half is a
     YOUR-TURN entry Alex has seen. For a ruled sport that second half is what the
@@ -813,12 +858,11 @@ def flip_permitted(
             "StatPal finding one we missed, which is the whole point of the flip. "
             + detail
         )
-    if not GOVERNING_IDENTITY_NUMBERS.get(sport_key):
-        return False, (
-            f"{sport_key} has no governing identity number (D63), so no daily "
-            "row can advance its streak however good the agreement is — this "
-            "needs a ruling, not more days"
-        )
+    # THE D63 QUESTION USED TO BE ASKED HERE, and D113 moved it below the ruling
+    # (it is now the first of the streak questions). Left as a marker rather than
+    # deleted, because "why is baseball permitted when it has no governing
+    # number?" is the question the next reader of this function will have, and
+    # the answer is thirty lines further down where they will not think to look.
     # Materialised ONCE, before anything reads it. `compute_streak` consumes the
     # iterable, and `_counted_on` reads it again afterwards — handed a generator,
     # the second read would see an empty sequence and report "its days do not
@@ -828,7 +872,7 @@ def flip_permitted(
     days_recorded = list(ledger_days)
     streak = compute_streak(days_recorded)
     if sport_key in FLIP_RULED_WITHOUT_STREAK:
-        # D104 = A4. Asked AFTER the four structural refusals above, so the
+        # D104 = A4. Asked AFTER the three structural refusals above, so the
         # ruling exempts the WAIT and cannot be used to skip "there is nothing
         # here to flip TO" — and asked AFTER `compute_streak`, not instead of it,
         # because Alex kept the ledger running as a monitor and a permission that
@@ -841,6 +885,27 @@ def flip_permitted(
             else f"the monitor still runs and currently reads a run of "
             f"{observed} day(s) at or above {FLIP_BAR_PCT}%"
         )
+        # D113's disclosure, and the reason this branch says more for MLB than it
+        # does for football. The governing number stopped gating the flip; it did
+        # NOT get answered. A ruled sport that still lacks one is permitted on a
+        # question that is open, and a `True` that will not say which open
+        # question it walked past is the same silent-`True` failure this
+        # function's docstring argues against — so it is stated, with what the
+        # number still governs, rather than left for a reader to notice.
+        unruled_number = (
+            ""
+            if GOVERNING_IDENTITY_NUMBERS.get(sport_key)
+            else (
+                " WHAT IS STILL UNRULED: no governing identity number has been "
+                f"ruled for {sport_key} (D63), so which published percentage "
+                "advances its day is an OPEN question — but it is now a question "
+                "about the MONITOR only. D113 (Alex, 2026-09-10) moved that check "
+                "below this ruling because nothing on the failover path ever read "
+                "it: `authority_failover.decide` and `_act_on_failovers` do not "
+                "consult GOVERNING_IDENTITY_NUMBERS, and after D104 no streak "
+                "gates a ruled sport."
+            )
+        )
         return True, (
             f"{sport_key} may fail over to StatPal without a certification "
             "streak: Alex ruled D104 = A4 on 2026-09-09 — no proof days for the "
@@ -850,7 +915,29 @@ def flip_permitted(
             "THE LIMIT: this is a fallback BEHIND ESPN, not a standing source of "
             f"record — `AUTHORITY_BY_SPORT` still reads "
             f"`{authority_for(sport_key)}`, so on a pass where ESPN answers "
-            "nothing here changes"
+            "nothing here changes." + unruled_number
+        )
+    if not GOVERNING_IDENTITY_NUMBERS.get(sport_key):
+        # D63, asked here since D113 (Alex, 2026-09-10) instead of fourth.
+        #
+        # THIS BRANCH STILL REFUSES — it did not become a no-op, it became a
+        # STREAK question, which is what it always was: it says no daily row can
+        # advance a streak, and it is now asked among the other things that can
+        # stop one. An UNRULED sport with no governing number is refused exactly
+        # as before. Only a sport Alex has ruled past the streak entirely gets
+        # here without being asked, and that is the ruling doing precisely what
+        # it says: retiring the wait.
+        #
+        # No real sport reaches this line today — the four with a stamper and a
+        # discovery pass are either governed (NFL/NBA/NHL) or ruled (MLB) — so it
+        # is exercised by a constructed specimen (`tests/authority_specimens.py`,
+        # `governing=None`, `ruled=False`). That indirection is deliberate: #4493
+        # left a control green for the wrong reason by borrowing a real sport out
+        # from under it, and this branch has no real sport left to borrow.
+        return False, (
+            f"{sport_key} has no governing identity number (D63), so no daily "
+            "row can advance its streak however good the agreement is — this "
+            "needs a ruling, not more days"
         )
     if streak is None:
         # `None` is not zero. An empty ledger has never been measured, and

@@ -19,15 +19,29 @@ has six refusal branches and only one of them is a wait:
     1. the key is a MEASUREMENT POPULATION, not a sport key   -> still refuses
     2. no shadow stamper, so no id join to flip onto          -> still refuses
     3. no working StatPal discovery pass                      -> still refuses
-    4. no governing identity number (D63)                     -> still refuses
+    4. no governing identity number (D63)                     -> MOVED, see below
     5. no ledger at all — not measured                        -> see below
     6. a real streak shorter than seven days                  -> D104 RETIRES THIS
 
-Branches 1-4 are "there is nothing here to flip TO", which is a different
+Branches 1-3 are "there is nothing here to flip TO", which is a different
 sentence from "come back in a week", and a ruling about certification days has
-no business touching them. `baseball_mlb` is the live proof that this matters:
-it is a top-tier league Alex named, and it refuses on (4), so it must NOT flip
-on this ship however loudly D104 is quoted at it.
+no business touching them. They are unchanged and still asked above the ruling.
+
+AMENDED BY D113 (Alex, 2026-09-10, #4436): branch 4 is NOT one of those, and
+this file used to say it was. `baseball_mlb` was cited here as "the live proof
+that this matters" — a top-tier league Alex named, refusing on (4). It was the
+wrong example. MLB has a shadow stamper and a working hourly discovery pass, so
+it was always able to fail over; the governing number only decides which
+published percentage advances a STREAK, and `authority_failover` never reads it
+at all. So (4) refused a ruled sport on a fact that decided nothing about the
+flip, and Alex moved it below the ruling, where it is now the first of the
+streak questions and still refuses every UNRULED sport that lacks one.
+
+What survived intact is the thing the example was reaching for: **a ruling
+cannot buy backup data that does not exist.** That is branches 2 and 3, it is
+Alex's stated condition on D113, and it is pinned on a CONSTRUCTED sport in
+`test_mlb_fails_over_and_the_ruling_still_cannot_skip_the_structure_4436.py`
+rather than on whichever real sport happens to be unruled this week.
 
 The rest of the module — `compute_streak`, `fold_day`, the daily ledger and
 everything published on `/api/admin/statpal/authority-agreement` — is untouched
@@ -42,7 +56,6 @@ from app.config.authority_by_sport import (
     DISCOVERY_SCHEDULED_SPORTS,
     ESPN,
     FLIP_RULED_WITHOUT_STREAK,
-    GOVERNING_IDENTITY_NUMBERS,
     MEASUREMENT_POPULATION_SCOPES,
     SHADOW_STAMPERS,
     authority_for,
@@ -50,6 +63,7 @@ from app.config.authority_by_sport import (
     flip_permitted,
 )
 from app.utils.authority_streak import REQUIRED_STREAK_DAYS
+from tests.authority_specimens import register_specimen
 
 NFL = "americanfootball_nfl"
 
@@ -126,22 +140,53 @@ class TestFootballFlipsWithoutSevenDays:
 class TestTheStructuralRefusalsSurviveTheRuling:
     """D104 removed proof days. Everything else still refuses."""
 
-    def test_mlb_still_refuses_on_its_missing_governing_number(self):
-        """The live proof that D104 is not a skeleton key.
+    def test_an_unruled_sport_with_no_governing_number_still_refuses(
+        self, monkeypatch
+    ):
+        """D63 survives D113 — for an UNRULED sport, which is all it ever meant.
 
-        `baseball_mlb` is a top-tier league Alex named in the same sentence as
-        football, and it refuses on D63 — no governing identity number — which is
-        a ruling it needs, not a week it has to sit out. If this ever flips, the
-        ruling was made by accident.
+        This test used to be `test_mlb_still_refuses_on_its_missing_governing_
+        number`, and it carried the instruction that decided how to rewrite it:
+
+            "MLB acquired a governing number; this test's premise is gone and it
+             must be rewritten against whatever now refuses MLB, not deleted"
+
+        MLB did not acquire a governing number — Alex moved the question below
+        the ruling (D113) — but the instruction still applies, and "whatever now
+        refuses MLB" is nothing, because being ruled is the answer. So the test
+        follows the branch instead of the sport: D63 is asserted where it still
+        binds, on a sport that is not ruled.
+
+        Built rather than borrowed, because after #4436 there is no real sport
+        left in this state — every shadow-stamped, discovery-scheduled sport is
+        either governed (NFL/NBA/NHL) or ruled (MLB). Borrowing the next one
+        would put this test back on the clock of the next release.
         """
-        assert not GOVERNING_IDENTITY_NUMBERS.get("baseball_mlb"), (
-            "MLB acquired a governing number; this test's premise is gone and it "
-            "must be rewritten against whatever now refuses MLB, not deleted"
+        key = register_specimen(
+            monkeypatch, "unittest_unruled_ungoverned", governing=None, ruled=False
         )
-        permitted, why = flip_permitted("baseball_mlb", _days(30))
-        assert permitted is False
+        permitted, why = flip_permitted(key, _days(30))
+        assert permitted is False, why
         assert "governing identity number" in why
         assert "D63" in why
+
+    def test_the_ruling_is_what_carries_mlb_past_that_branch(self, monkeypatch):
+        """The other arm, so the test above cannot pass for the wrong reason.
+
+        Same specimen, same missing governing number, `ruled=True`. If this were
+        also refused, D113 would not have shipped; if the test above passed while
+        this one did too, the specimen would be refusing on something other than
+        D63 and neither assertion would mean what it says.
+        """
+        key = register_specimen(
+            monkeypatch, "unittest_ruled_ungoverned", governing=None, ruled=True
+        )
+        permitted, why = flip_permitted(key, _days(30))
+        assert permitted is True, why
+        assert "D63" in why, (
+            "a ruled sport permitted past an unruled governing number must "
+            f"disclose that the question is still open (D113): {why}"
+        )
 
     def test_a_measurement_population_still_refuses(self):
         for population in ("tennis_singles", "soccer"):
@@ -165,11 +210,17 @@ class TestTheStructuralRefusalsSurviveTheRuling:
         whose own comment says "fix the path, do not wait for days". Nothing in
         the shipped set is in that state today, so this is asserted on the
         ordering rather than on a specimen.
+
+        The governing number is NOT asserted here any more: D113 moved it below
+        the ruling, so a ruled sport lacking one is permitted BY DESIGN and this
+        loop would fail on `baseball_mlb` for the correct behaviour. What the
+        loop still asserts is exactly Alex's condition on D113 — every ruled
+        sport really does have the backup data (a stamper and a working
+        discovery pass) that the ruling is not allowed to conjure.
         """
         for key in FLIP_RULED_WITHOUT_STREAK:
             assert key in SHADOW_STAMPERS, key
             assert key in DISCOVERY_SCHEDULED_SPORTS, key
-            assert GOVERNING_IDENTITY_NUMBERS.get(key), key
             assert discovery_state(key)[0] == "SCHEDULED", key
 
 
@@ -189,11 +240,13 @@ class TestOnlyFootballShipsOnThisIssue:
     """
 
     def test_the_ruled_set_is_exactly_what_has_shipped(self):
-        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL, "basketball_nba"}), (
+        assert FLIP_RULED_WITHOUT_STREAK == frozenset(
+            {NFL, "basketball_nba", "baseball_mlb"}
+        ), (
             "the ruled set must equal the sports that have been graded: "
-            "football on #4417 and the NBA on #4493. NHL is one release of its "
-            "own under #2867; adding it lands two flips under a cert that "
-            "graded one"
+            "football on #4417, the NBA on #4493, MLB on #4436 under D113. NHL "
+            "is one release of its own under #2867; adding it lands two flips "
+            "under a cert that graded one"
         )
 
     def test_football_is_still_ruled(self):

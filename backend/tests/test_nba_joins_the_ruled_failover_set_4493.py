@@ -59,6 +59,7 @@ from app.config.authority_by_sport import (
     flip_permitted,
 )
 from app.utils.authority_streak import REQUIRED_STREAK_DAYS
+from tests.authority_specimens import register_specimen
 
 NFL = "americanfootball_nfl"
 NBA = "basketball_nba"
@@ -118,11 +119,20 @@ class TestTheNbaFailsOverWithoutTheWait:
 class TestOnlyTheNbaShipsOnThisIssue:
     """Alex: "then the rest in one release each" - so the set grows by one."""
 
-    def test_the_ruled_set_is_exactly_football_and_the_nba(self):
-        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL, NBA}), (
+    def test_the_ruled_set_is_exactly_what_has_been_graded(self):
+        """Renamed by #4436: the name asserted a membership, and it went stale.
+
+        `..._is_exactly_football_and_the_nba` was true for one release. MLB
+        joined under D113 and the name became a lie about a passing test, which
+        is worse than a red one — a reader greps the name, believes the set is
+        two, and never opens the assertion. The principle this class exists for
+        is unchanged: the set grows one graded release at a time.
+        """
+        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL, NBA, MLB}), (
             "the ruled set must equal what has actually been graded: football "
-            "on #4417 and the NBA on #4493. NHL is its own release under "
-            "#2867; adding it here lands two flips under a cert that graded one"
+            "on #4417, the NBA on #4493, MLB on #4436 under D113. NHL is its "
+            "own release under #2867; adding it here lands two flips under a "
+            "cert that graded one"
         )
 
     def test_the_nhl_still_waits(self):
@@ -139,30 +149,51 @@ class TestOnlyTheNbaShipsOnThisIssue:
 class TestTheStructuralRefusalsAreUntouched:
     """D104 exempts the WAIT. It does not reach "there is nothing to flip to"."""
 
-    def test_mlb_still_refuses_and_not_because_of_a_wait(self):
-        """The D63 case (#4436) - a top-tier league Alex named, still refused.
+    def test_a_sport_with_no_id_join_still_refuses_however_ruled_it_is(
+        self, monkeypatch
+    ):
+        """Replaces `test_mlb_still_refuses_and_not_because_of_a_wait` (#4436).
 
-        This is the test that keeps the ship honest. MLB is quoted in the same
-        breath as football and the NBA, so a change that flipped it too would
-        look like obedience to D104 rather than the bug it is.
+        The old test used MLB as the standing proof that D104 was not a skeleton
+        key. **D113 (Alex, 2026-09-10) ruled MLB past that branch on purpose**,
+        so the old assertion now describes a bug rather than the ship, and it was
+        rewritten rather than deleted — the property it protected is real and
+        still needs a guard.
+
+        The property is Alex's own condition on D113: *"a sport with no backup
+        data can never slip through"*. MLB was never an example of that; it has a
+        stamper and an hourly discovery pass. A sport with NO id join is, and no
+        ruling reaches it, because the shadow-stamper branch is still asked above
+        the ruling. Asserted on a constructed sport (`ruled=True`, `stamper=
+        False`) rather than a borrowed one, which is the whole reason
+        `tests/authority_specimens.py` was written.
         """
-        permitted, why = flip_permitted(MLB, _days(30))
+        key = register_specimen(
+            monkeypatch, "unittest_ruled_but_unstamped", stamper=False, ruled=True
+        )
+        permitted, why = flip_permitted(key, _days(30))
         assert permitted is False, why
-        assert f"5/{REQUIRED_STREAK_DAYS}" not in why, (
-            f"MLB must refuse on its missing governing number, not on a wait: {why}"
+        assert "no shadow stamper" in why, why
+        assert "D104" not in why, (
+            f"the ruling answered a sport with nothing to flip onto: {why}"
         )
 
-    def test_every_ruled_sport_still_clears_all_four_structural_branches(self):
+    def test_every_ruled_sport_still_clears_the_structural_branches(self):
         """Ordering, re-checked against the set as it now stands.
 
         The ruling is asked AFTER the structural branches, so a key may only
         join the ruled set if it would have passed them anyway. This is the
         assertion that fires if a future release adds a sport that does not.
+
+        `GOVERNING_IDENTITY_NUMBERS` dropped out of this loop on #4436: D113
+        moved it below the ruling, so it is no longer a structural branch and
+        `baseball_mlb` is ruled without one BY DESIGN. Keeping the line would
+        have failed on the correct behaviour. What remains is exactly the backup
+        data the ruling must not be able to conjure.
         """
         for key in FLIP_RULED_WITHOUT_STREAK:
             assert key in SHADOW_STAMPERS, key
             assert key in DISCOVERY_SCHEDULED_SPORTS, key
-            assert GOVERNING_IDENTITY_NUMBERS.get(key), key
             assert discovery_state(key)[0] == "SCHEDULED", key
 
     def test_an_empty_ledger_permits_only_ruled_sports(self):
