@@ -84,7 +84,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           # The version ci.yml's frontend-build job pins. Resolving on a
           # different major can emit a lockfile that runner's npm rewrites.
