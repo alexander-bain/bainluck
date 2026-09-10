@@ -62,8 +62,26 @@ function AnswerRow({
 
           Not `overflow-hidden` on the container: that stops the overlap by
           hard-cutting the tail, which silently eats the bytes #4136 exists to
-          preserve — a visible bug traded for an invisible one. */}
-      <div className="flex-1 min-w-0 flex items-center">
+          preserve — a visible bug traded for an invisible one.
+
+          #4545: the space that separates head from tail is a CHARACTER at the
+          end of the head (`snapToBoundary` cuts at `sp + 1`), and the head
+          truncates — so the moment it does, the space is inside the clipped
+          region and the ellipsis lands against the tail: `Roc...8th Inning
+          Winner`. What kept rows 2-5 legible was incidental slack between where
+          the ellipsis stops and where the head box ends, which varies with the
+          string and the font weight; the headline row is `font-medium`, its
+          slack is ~0, and it read as one run-on token. `gap-1` makes the
+          separation a property of the LAYOUT, which truncation cannot eat.
+
+          On the container, not as a margin on either child, because gap applies
+          only BETWEEN siblings: when `tail` is empty the second div is not
+          rendered, the container has one child, and the row stays byte-for-byte
+          what it is today — the guarantee #4136 rests on. The 4px is absorbed by
+          the head (`shrink-[9999]`); if the head has already collapsed the tail
+          gives it up by ellipsising inside its own box, which is the designed
+          degradation and cannot reintroduce #4518's overlap. */}
+      <div className="flex-1 min-w-0 flex items-center gap-1">
         <div className={`truncate shrink-[9999] ${nameClass}`}>{title.head}</div>
         {title.tail && (
           <div className={`truncate shrink ${nameClass}`}>{title.tail}</div>

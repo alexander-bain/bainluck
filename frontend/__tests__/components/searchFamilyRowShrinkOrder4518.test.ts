@@ -31,7 +31,10 @@ const CODE = stripComments(SRC);
 
 /** The JSX of the title container: from `flex-1 min-w-0` to the end of that element. */
 const titleBlock = () => {
-  const start = CODE.indexOf('"flex-1 min-w-0 flex items-center"');
+  // Anchored WITHOUT the closing quote on purpose: #4545 appended `gap-1` to this
+  // container, and an anchor that pins the end of the class list turns every
+  // assertion below into a false red the next time a class is added.
+  const start = CODE.indexOf('"flex-1 min-w-0 flex items-center');
   expect(start).toBeGreaterThan(-1);
   return CODE.slice(start, start + 400);
 };
@@ -68,6 +71,26 @@ describe("#4518 the title tail yields before it overlaps", () => {
 
   it("the title container still lets flexbox size it below content (min-w-0), so the row can compress at all", () => {
     expect(CODE).toContain("flex-1 min-w-0 flex items-center");
+  });
+
+  it("#4545: head and tail are separated by LAYOUT, not by a character truncation can eat", () => {
+    // The separating space lives at the end of the head (`snapToBoundary` cuts at
+    // `sp + 1`), so it is clipped away the moment the head truncates. `gap-1` on the
+    // container is what guarantees the gap survives.
+    const block = titleBlock();
+    const container = block.slice(0, block.indexOf(">"));
+    expect(container).toContain("gap-1");
+  });
+
+  it("#4545: the gap is on the CONTAINER, so a row with no tail is untouched", () => {
+    // gap only applies BETWEEN siblings. If this were a margin on the head instead, a
+    // row whose `tail` is empty — the ordinary, overwhelmingly common case #4136
+    // promises to leave alone — would shift. Pin that the head/tail divs carry no
+    // separating margin of their own.
+    const block = titleBlock();
+    expect(block).not.toMatch(/\b(ml-|mr-|pl-|pr-)\d/);
+    // and the tail is still conditional, which is what makes the container single-child
+    expect(block).toContain("title.tail &&");
   });
 
   it("the answer column keeps the #4136 contract: capped, truncatable, percentage pinned", () => {
