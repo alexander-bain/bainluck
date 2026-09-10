@@ -220,3 +220,472 @@ class TestItIsAttendedAndCapped:
         assert rp.APPLY_CAP == 1500
         body = MODULE_SOURCE.read_text()
         assert "min(int(limit or APPLY_CAP), APPLY_CAP)" in body
+
+
+# ── the paths that are only ever run once, by someone who needs them ──────────
+#
+# Everything above this line reads the module: its source text, its constants,
+# its pure functions. None of it EXECUTES `repair()` or `_undo()`, and the module
+# docstring's own boast is that the restore is "the one path nobody exercises
+# until they need it". A source-scan cannot tell a staged receipt from a staged
+# receipt that is never written, and an ordering assertion over file offsets
+# holds just as well if the delete is unreachable. So the doubles below run both
+# halves and read what came out of them.
+
+
+class _Result:
+    """What `AsyncSession.execute` hands back, as much of it as this uses."""
+
+    def __init__(self, rows=(), rowcount=0):
+        self._rows = list(rows)
+        self.rowcount = rowcount
+
+    def fetchall(self):
+        return self._rows
+
+
+def _entity(entity_id: int, name: str, **over):
+    base = dict(
+        id=entity_id,
+        canonical_name=name,
+        slug=name.lower().replace(" ", "-"),
+        kind="person",
+        sport_id=7,
+        sport_key="golf_pga",
+        external_ref=None,
+        entity_metadata={"seed_source": rp.SEED_SOURCE},
+        created_at=None,
+        source_team_id=None,
+        date_window_start=None,
+        date_window_end=None,
+        confidence=0.5,
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def _alias(alias_id: int, entity_id: int, alias: str):
+    return SimpleNamespace(
+        id=alias_id,
+        entity_id=entity_id,
+        alias=alias,
+        alias_norm=alias.lower(),
+        alias_type="derived",
+        source="seed",
+        confidence=0.5,
+        created_at=None,
+    )
+
+
+def _participant(row_id: int, entity_id: int):
+    return SimpleNamespace(
+        id=row_id, entity_id=entity_id, entity_type="person", entity_name="x"
+    )
+
+
+class _ApplySession:
+    """Answers the four SQL shapes the apply issues, and records the order.
+
+    The order is the point: a receipt staged after the delete, or a delete that
+    runs when the receipt did not persist, are both invisible to a census and
+    both cost the reversal. `calls` is the transcript the assertions read.
+    """
+
+    def __init__(self, cohort, aliases=(), participants=(), delete_rowcount=None):
+        self.cohort = list(cohort)
+        self.aliases = list(aliases)
+        self.participants = list(participants)
+        self.delete_rowcount = delete_rowcount
+        self.calls: list[str] = []
+        self.params: dict[str, dict] = {}
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def execute(self, stmt, params=None):
+        sql = " ".join(str(stmt).split())
+        params = params or {}
+        if "FROM entities e" in sql:
+            self.calls.append("cohort")
+            after = int(params.get("after_id") or 0)
+            rows = [r for r in self.cohort if r.id > after][
+                : int(params["scan_limit"])
+            ]
+            return _Result(rows)
+        if "FROM entity_aliases" in sql:
+            self.calls.append("read-aliases")
+            ids = set(params["ids"])
+            return _Result([a for a in self.aliases if a.entity_id in ids])
+        if "FROM event_participants" in sql:
+            self.calls.append("read-participants")
+            ids = set(params["ids"])
+            return _Result([p for p in self.participants if p.entity_id in ids])
+        if sql.startswith("UPDATE event_participants"):
+            self.calls.append("clear-participants")
+            self.params["clear"] = params
+            return _Result(rowcount=len(params.get("ids", [])))
+        if sql.startswith("DELETE FROM entities"):
+            self.calls.append("delete")
+            self.params["delete"] = params
+            n = params["ids"]
+            return _Result(
+                rowcount=(
+                    len(n) if self.delete_rowcount is None else self.delete_rowcount
+                )
+            )
+        raise AssertionError("unexpected statement: " + sql[:120])
+
+    async def commit(self):
+        self.calls.append("commit")
+        self.commits += 1
+
+    async def rollback(self):
+        self.calls.append("rollback")
+        self.rollbacks += 1
+
+
+@pytest.fixture
+def staged(monkeypatch):
+    """Capture the receipt instead of writing it, and report `ok` by default."""
+    seen: dict = {"status": "ok", "payloads": [], "sessions": []}
+
+    async def _publish(session, envelope, *, owner_key, owner):
+        seen["payloads"].append(envelope.payload)
+        seen["sessions"].append(session)
+        seen["owner_key"] = owner_key
+        seen["owner"] = owner
+        # Recorded on the transcript so ordering is asserted against the same
+        # timeline as the SQL, not inferred from two separate lists.
+        session.calls.append("stage-receipt")
+        return {"status": seen["status"]}
+
+    monkeypatch.setattr(
+        "app.services.durable_snapshots.publish_owned_snapshot_in_txn", _publish
+    )
+    return seen
+
+
+COHORT = [
+    _entity(11, "Rory McIlroy"),
+    _entity(12, "1+ strokes"),
+    _entity(13, "Jon Rahm beats McIlroy and Spieth"),
+    _entity(14, "Ludvig Åberg"),
+]
+REFUSED_IDS = [12, 13]
+
+
+async def _plan(session):
+    census = await rp.repair(session)
+    return census["plan_hash"]
+
+
+@pytest.mark.asyncio
+class TestTheApplyActuallyRuns:
+    async def test_the_dry_run_writes_nothing_and_names_both_sides(self, staged):
+        session = _ApplySession(COHORT)
+        census = await rp.repair(session)
+
+        assert census["would_delete"] == 2
+        assert census["kept_as_people"] == 2
+        assert census["scan_exhausted"] is True
+        assert session.calls == ["cohort"]
+        assert session.commits == 0
+        assert staged["payloads"] == []
+
+    async def test_it_deletes_the_refused_ids_and_only_those(self, staged):
+        session = _ApplySession(COHORT)
+        plan = await _plan(session)
+        out = await rp.repair(session, apply=True, plan_hash=plan)
+
+        assert sorted(session.params["delete"]["ids"]) == REFUSED_IDS
+        assert out["applied"] == 2
+        assert session.commits == 1
+
+    async def test_the_receipt_is_staged_before_the_delete_and_commits_once(
+        self, staged
+    ):
+        session = _ApplySession(
+            COHORT, aliases=[_alias(1, 12, "strokes")], participants=[]
+        )
+        plan = await _plan(session)
+        await rp.repair(session, apply=True, plan_hash=plan)
+
+        transcript = session.calls
+        assert transcript.index("stage-receipt") < transcript.index("delete")
+        # One transaction: no commit separates the receipt from the delete.
+        assert transcript[transcript.index("stage-receipt"):] == [
+            "stage-receipt",
+            "delete",
+            "commit",
+        ]
+        # And it was staged on the SAME session that runs the delete — a receipt
+        # published on its own connection is the failure this shape exists to
+        # prevent, and it looks identical from the outside.
+        assert staged["sessions"] == [session]
+
+    async def test_an_unpersisted_receipt_rolls_back_and_deletes_nothing(
+        self, staged
+    ):
+        staged["status"] = "occupied"
+        session = _ApplySession(COHORT)
+        plan = await _plan(session)
+        out = await rp.repair(session, apply=True, plan_hash=plan)
+
+        assert out["refused"] == "UNDO_NOT_PERSISTED"
+        assert out["undo_status"] == "occupied"
+        assert "delete" not in session.calls
+        assert session.rollbacks == 1
+        assert session.commits == 0
+
+    async def test_a_stale_plan_deletes_nothing(self, staged):
+        session = _ApplySession(COHORT)
+        out = await rp.repair(session, apply=True, plan_hash="0" * 16)
+
+        assert out["refused"] == "PLAN_STALE"
+        assert "delete" not in session.calls
+        assert session.commits == 0
+
+    async def test_no_plan_at_all_deletes_nothing(self, staged):
+        session = _ApplySession(COHORT)
+        out = await rp.repair(session, apply=True)
+
+        assert out["refused"] == "PLAN_HASH_REQUIRED"
+        assert "delete" not in session.calls
+
+    async def test_a_page_of_only_real_people_is_a_no_op_not_an_empty_delete(
+        self, staged
+    ):
+        session = _ApplySession([_entity(11, "Rory McIlroy")])
+        plan = await _plan(session)
+        out = await rp.repair(session, apply=True, plan_hash=plan)
+
+        assert out["applied"] == 0
+        assert "delete" not in session.calls
+        assert staged["payloads"] == []
+
+    async def test_applied_is_what_postgres_deleted_not_what_was_planned(
+        self, staged
+    ):
+        """Same rule as the restore's counts, on the forward half.
+
+        A concurrent delete between the plan and the DELETE takes rows out from
+        under it. `applied` must be the rowcount, because it is the number that
+        gets compared against the receipt when somebody reconciles a purge.
+        """
+        session = _ApplySession(COHORT, delete_rowcount=1)
+        plan = await _plan(session)
+        out = await rp.repair(session, apply=True, plan_hash=plan)
+
+        assert sorted(session.params["delete"]["ids"]) == REFUSED_IDS
+        assert out["applied"] == 1
+
+    async def test_the_receipt_carries_the_cascade_and_the_dangling_pointers(
+        self, staged
+    ):
+        session = _ApplySession(
+            COHORT,
+            aliases=[_alias(1, 12, "strokes"), _alias(2, 13, "spieth")],
+            participants=[_participant(90, 13)],
+        )
+        plan = await _plan(session)
+        out = await rp.repair(session, apply=True, plan_hash=plan)
+
+        payload = staged["payloads"][0]
+        assert [e["id"] for e in payload["entities"]] == REFUSED_IDS
+        assert [a["id"] for a in payload["aliases"]] == [1, 2]
+        assert payload["participants"] == [{"id": 90, "entity_id": 13}]
+        # Every column of the row, not just the ones the delete reads.
+        assert set(payload["entities"][0]) >= {
+            "kind", "canonical_name", "slug", "sport_id", "sport_key",
+            "external_ref", "entity_metadata", "created_at", "source_team_id",
+            "date_window_start", "date_window_end", "confidence",
+        }
+        assert session.params["clear"]["ids"] == [90]
+        assert out["participants_cleared"] == 1
+        assert out["aliases_cascaded"] == 2
+        assert out["restore_command"].endswith(out["undo_identity"] + '"')
+
+
+class _UndoSession:
+    """Postgres for the restore: `ON CONFLICT (id) DO NOTHING` is modelled.
+
+    `occupied` is the set of ids already present, and an INSERT naming one of
+    them reports rowcount 0 — exactly as Postgres would. Modelling that is the
+    whole value of the double: a double that always says 1 makes the difference
+    between "restored" and "reported restored" untestable.
+    """
+
+    def __init__(self, occupied_entities=(), occupied_aliases=(), repointed=()):
+        self.occupied_entities = set(occupied_entities)
+        self.occupied_aliases = set(occupied_aliases)
+        self.repointed = set(repointed)
+        self.inserted_entities: list[dict] = []
+        self.inserted_aliases: list[dict] = []
+        self.commits = 0
+
+    async def execute(self, stmt, params=None):
+        sql = " ".join(str(stmt).split())
+        params = params or {}
+        if sql.startswith("INSERT INTO entities"):
+            self.inserted_entities.append(params)
+            return _Result(rowcount=0 if params["id"] in self.occupied_entities else 1)
+        if sql.startswith("INSERT INTO entity_aliases"):
+            self.inserted_aliases.append(params)
+            return _Result(rowcount=0 if params["id"] in self.occupied_aliases else 1)
+        if sql.startswith("UPDATE event_participants"):
+            return _Result(rowcount=0 if params["id"] in self.repointed else 1)
+        raise AssertionError("unexpected statement: " + sql[:120])
+
+    async def commit(self):
+        self.commits += 1
+
+
+RECEIPT = {
+    "invocation": "abcd",
+    "issue": rp.ISSUE,
+    "taken_at": "2026-09-10T04:00:00+00:00",
+    "plan_hash": "deadbeefdeadbeef",
+    "entities": [
+        {
+            "id": 12, "kind": "person", "canonical_name": "1+ strokes",
+            "slug": "1-strokes", "sport_id": 7, "sport_key": "golf_pga",
+            "external_ref": None, "entity_metadata": {"seed_source": "x"},
+            "created_at": None, "source_team_id": None,
+            "date_window_start": None, "date_window_end": None, "confidence": 0.5,
+        },
+        {
+            "id": 13, "kind": "person", "canonical_name": "A beats B",
+            "slug": "a-beats-b", "sport_id": 7, "sport_key": "golf_pga",
+            "external_ref": None, "entity_metadata": None,
+            "created_at": None, "source_team_id": None,
+            "date_window_start": None, "date_window_end": None, "confidence": 0.5,
+        },
+    ],
+    "aliases": [
+        {
+            "id": 1, "entity_id": 12, "alias": "strokes", "alias_norm": "strokes",
+            "alias_type": "derived", "source": "seed", "confidence": 0.5,
+            "created_at": None,
+        }
+    ],
+    "participants": [{"id": 90, "entity_id": 13}],
+}
+
+
+@pytest.fixture
+def receipt(monkeypatch):
+    """Serve one stored receipt, with a settable read classification."""
+    state = {"payload": RECEIPT, "status": "ok"}
+
+    async def _read(identity, *, expected_version=None, max_age_s=None):
+        from app.utils.durable_state import DurableEnvelope, EnvelopeRead
+
+        if state["status"] != "ok":
+            return EnvelopeRead(status=state["status"], tier="durable")
+        envelope = DurableEnvelope.build(
+            identity=identity,
+            schema_version=rp.UNDO_SCHEMA,
+            payload=state["payload"],
+            complete=True,
+            source="test",
+        )
+        return EnvelopeRead(status="ok", tier="durable", envelope=envelope)
+
+    monkeypatch.setattr(
+        "app.services.durable_snapshots.read_snapshot_standalone", _read
+    )
+    return state
+
+
+@pytest.mark.asyncio
+class TestTheRestoreActuallyRuns:
+    async def test_the_dry_run_reports_the_receipt_and_writes_nothing(self, receipt):
+        session = _UndoSession()
+        out = await rp.repair(session, apply=False, undo_identity="id-1")
+
+        assert out["would_restore_entities"] == 2
+        assert out["would_restore_aliases"] == 1
+        assert out["would_restore_participants"] == 1
+        assert session.inserted_entities == []
+        assert session.commits == 0
+
+    async def test_it_puts_the_rows_back_under_their_original_ids(self, receipt):
+        session = _UndoSession()
+        out = await rp.repair(session, apply=True, undo_identity="id-1")
+
+        assert [e["id"] for e in session.inserted_entities] == [12, 13]
+        assert session.inserted_entities[0]["canonical_name"] == "1+ strokes"
+        assert [a["id"] for a in session.inserted_aliases] == [1]
+        assert out["restored_entities"] == 2
+        assert out["restored_aliases"] == 1
+        assert out["restored_participants"] == 1
+        assert session.commits == 1
+
+    async def test_the_metadata_is_handed_over_as_json_not_a_dict(self, receipt):
+        """`CAST(:entity_metadata AS JSONB)` needs text; a dict binds as a
+        parameter Postgres cannot cast, and it fails on the restore path only."""
+        session = _UndoSession()
+        await rp.repair(session, apply=True, undo_identity="id-1")
+
+        assert session.inserted_entities[0]["entity_metadata"] == (
+            '{"seed_source": "x"}'
+        )
+
+    async def test_it_reports_what_postgres_wrote_not_what_the_receipt_held(
+        self, receipt
+    ):
+        """The number an operator reads after a reversal.
+
+        `ON CONFLICT DO NOTHING` skips an occupied id, and the participant UPDATE
+        skips a row something has re-pointed since. Reporting the receipt's
+        length would print a full restore over a run that wrote one row.
+        """
+        session = _UndoSession(
+            occupied_entities=[12], occupied_aliases=[1], repointed=[90]
+        )
+        out = await rp.repair(session, apply=True, undo_identity="id-1")
+
+        assert out["restored_entities"] == 1
+        assert out["restored_aliases"] == 0
+        assert out["restored_participants"] == 0
+        assert out["skipped_already_present"] == {
+            "entities": 1, "aliases": 1, "participants": 1,
+        }
+
+    async def test_a_store_outage_is_not_reported_as_a_missing_receipt(
+        self, receipt
+    ):
+        """`read_snapshot_standalone` NEVER RAISES — it returns `unavailable`.
+
+        So the `not ok` branch is the one that fires when the database is down,
+        and telling an operator mid-reversal that their receipt does not exist
+        is how a recoverable purge becomes an unrecovered one.
+        """
+        receipt["status"] = "unavailable"
+        session = _UndoSession()
+        out = await rp.repair(session, apply=True, undo_identity="id-1")
+
+        assert out["refused"] == rp.REASON_UNDO_UNREADABLE
+        assert session.inserted_entities == []
+        assert session.commits == 0
+
+    async def test_a_genuinely_absent_receipt_still_says_missing(self, receipt):
+        receipt["status"] = "missing"
+        session = _UndoSession()
+        out = await rp.repair(session, apply=True, undo_identity="id-1")
+
+        assert out["refused"] == rp.REASON_UNDO_MISSING
+
+    async def test_a_malformed_envelope_is_unreadable_not_missing(self, receipt):
+        receipt["status"] = "malformed"
+        session = _UndoSession()
+        out = await rp.repair(session, apply=True, undo_identity="id-1")
+
+        assert out["refused"] == rp.REASON_UNDO_UNREADABLE
+
+    async def test_a_receipt_without_an_entities_list_is_corrupt(self, receipt):
+        receipt["payload"] = {"invocation": "x", "aliases": []}
+        session = _UndoSession()
+        out = await rp.repair(session, apply=True, undo_identity="id-1")
+
+        assert out["refused"] == rp.REASON_UNDO_CORRUPT
+        assert session.commits == 0

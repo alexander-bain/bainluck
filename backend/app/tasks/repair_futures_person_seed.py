@@ -188,8 +188,19 @@ async def _save_undo_co_commit(session, identity: str, payload: dict[str, Any]):
 
 
 async def _read_undo(identity: str) -> tuple[Optional[dict[str, Any]], str]:
-    """``(payload, reason)`` — a raise is "I could not read", never "not there"."""
+    """``(payload, reason)`` — "I could not read" is never "it is not there".
+
+    The store classifies its own failure (`ok` / `missing` / `malformed` /
+    `unavailable` / …) and `read_snapshot_standalone` NEVER RAISES — it converts
+    an exception into `status='unavailable'`. So a `not got.ok` test collapses a
+    store outage into "your receipt does not exist", on the one path where that
+    sentence is read as "this purge cannot be reversed" (gotcha #53). Only the
+    store's own MISSING is reported as missing; every other classification is
+    UNREADABLE, which says try again rather than give up. The `except` stays as
+    a backstop for a future caller that does raise.
+    """
     from app.services.durable_snapshots import read_snapshot_standalone
+    from app.utils.durable_state import MISSING
 
     try:
         got = await read_snapshot_standalone(
@@ -199,7 +210,13 @@ async def _read_undo(identity: str) -> tuple[Optional[dict[str, Any]], str]:
         logger.warning("%s undo read raised for %s", ISSUE, identity)
         return None, REASON_UNDO_UNREADABLE
     if not got.ok or got.envelope is None:
-        return None, REASON_UNDO_MISSING
+        if got.status == MISSING:
+            return None, REASON_UNDO_MISSING
+        logger.warning(
+            "%s undo read for %s was %s (%s) — NOT a missing receipt",
+            ISSUE, identity, got.status, got.error_class,
+        )
+        return None, REASON_UNDO_UNREADABLE
     payload = got.envelope.payload
     if not isinstance(payload, dict) or not isinstance(payload.get("entities"), list):
         return None, REASON_UNDO_CORRUPT
@@ -491,8 +508,15 @@ async def _undo(db, apply: bool, identity: str) -> dict[str, Any]:
     # `alias`, `alias_norm`, `alias_type`). `updated_at` is deliberately left to
     # its `now()` default: the row IS being written now, and forging the old
     # stamp would claim an observation that did not happen.
+    # Counted from what Postgres reports, never from the receipt's length. Every
+    # INSERT here is `ON CONFLICT DO NOTHING`, so a row whose id is already
+    # occupied is SKIPPED — and a restore that reports the receipt's length would
+    # print "restored 1,500" over 1,500 no-ops. The number an operator reads
+    # after a reversal is the one number that must be measured (gotcha #53).
+    written = {"entities": 0, "aliases": 0, "participants": 0}
+
     for e in entities:
-        await db.execute(
+        result = await db.execute(
             text(
                 """
                 INSERT INTO entities
@@ -511,8 +535,9 @@ async def _undo(db, apply: bool, identity: str) -> dict[str, Any]:
             ),
             {**e, "entity_metadata": json.dumps(e.get("entity_metadata"))},
         )
+        written["entities"] += int(result.rowcount or 0)
     for a in aliases:
-        await db.execute(
+        result = await db.execute(
             text(
                 """
                 INSERT INTO entity_aliases
@@ -527,18 +552,36 @@ async def _undo(db, apply: bool, identity: str) -> dict[str, Any]:
             ),
             a,
         )
+        written["aliases"] += int(result.rowcount or 0)
     for p in participants:
-        await db.execute(
+        # `entity_id IS NULL` on purpose: if something has re-pointed this
+        # participant since the purge, the live pointer is newer than the receipt
+        # and the restore must not overwrite it. That row is a skip, and the
+        # counts below are what make the skip visible.
+        result = await db.execute(
             text(
                 "UPDATE event_participants SET entity_id = :entity_id "
                 "WHERE id = :id AND entity_id IS NULL"
             ),
             p,
         )
+        written["participants"] += int(result.rowcount or 0)
     await db.commit()
 
-    out["restored_entities"] = len(entities)
-    out["restored_aliases"] = len(aliases)
-    out["restored_participants"] = len(participants)
-    logger.info("%s reversed apply %s", ISSUE, identity)
+    out["restored_entities"] = written["entities"]
+    out["restored_aliases"] = written["aliases"]
+    out["restored_participants"] = written["participants"]
+    out["skipped_already_present"] = {
+        "entities": len(entities) - written["entities"],
+        "aliases": len(aliases) - written["aliases"],
+        "participants": len(participants) - written["participants"],
+    }
+    logger.info(
+        "%s reversed apply %s — restored %s/%s entities, %s/%s aliases, "
+        "%s/%s participants",
+        ISSUE, identity,
+        written["entities"], len(entities),
+        written["aliases"], len(aliases),
+        written["participants"], len(participants),
+    )
     return out
