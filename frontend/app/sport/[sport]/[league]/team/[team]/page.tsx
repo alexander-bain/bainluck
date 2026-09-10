@@ -262,11 +262,24 @@ export default function TeamPage() {
                     {String((team.standings as Record<string, unknown>).conference)}
                   </span>
                 )}
-                {(team.standings as Record<string, unknown>).conf_rank && (
+                {/* The rank must name the pool it was counted over. StatPal's
+                    board nests teams under league[].division[], so `position`
+                    is a DIVISION place — served as `div_rank` since #4732.
+                    Printing it as "in conference" put four NBA teams at
+                    "#1 in conference" simultaneously. `conf_rank` stays first
+                    for any source that genuinely scopes to a conference. */}
+                {(team.standings as Record<string, unknown>).conf_rank ? (
                   <span>
                     #{String((team.standings as Record<string, unknown>).conf_rank)} in conference
                   </span>
-                )}
+                ) : (team.standings as Record<string, unknown>).div_rank ? (
+                  <span>
+                    #{String((team.standings as Record<string, unknown>).div_rank)}
+                    {(team.standings as Record<string, unknown>).division
+                      ? ` in ${String((team.standings as Record<string, unknown>).division)}`
+                      : " in division"}
+                  </span>
+                ) : null}
               </>
             )}
           </div>

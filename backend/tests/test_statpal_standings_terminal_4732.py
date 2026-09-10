@@ -655,3 +655,250 @@ class TestTheZeroYieldLogNamesTheKeysThatDiffer:
             "the zero-yield log must name the keys that differ between a sport "
             f"that parses and one that does not; got: {logged!r}"
         )
+
+
+# =============================================================================
+# 5. THE RANK NAMES THE POOL IT WAS COUNTED OVER.
+#
+# CERT-2501's BLOCK, and the half of it that production confirms. The venue
+# nests teams under `league[].division[]`, so `position` is a DIVISION place;
+# it was stored as `conf_rank`, and both renderers put a `conf_rank` against
+# the CONFERENCE name.
+#
+# The refutation is arithmetic, not taste: a conference has exactly one #1, so
+# a conference-scoped rank cannot repeat inside a conference. Production,
+# 2026-09-10, `teams` joined to `sports`:
+#
+#     26 (conference, conf_rank) pairs are shared by more than one team.
+#     FOUR NBA teams read "#1 Eastern Conference" simultaneously —
+#     Boston (Atlantic) and Detroit (Central) among them.
+#     div_rank was present on 0 of 75 rows.
+#
+# These tests walk the whole chain the BLOCK named: category payload -> sync ->
+# serializer -> presentation.
+# =============================================================================
+
+def _two_division_table(wrapper: str = "category") -> dict:
+    """One conference, two divisions, each with its own #1 and #2.
+
+    The single-division `_table` above cannot show this defect: with one
+    division per conference a division rank and a conference rank are the same
+    number, which is precisely why it survived so long.
+    """
+    return {
+        "standings": {
+            "sport": "x",
+            wrapper: {
+                "id": "1", "name": "League", "season": "2026",
+                "league": [
+                    {
+                        "name": "Eastern Conference",
+                        "division": [
+                            {"name": "Atlantic", "team": [
+                                {"name": "Boston Celtics", "won": 56, "lost": 26, "position": 1},
+                                {"name": "New York Knicks", "won": 53, "lost": 29, "position": 2},
+                            ]},
+                            {"name": "Central", "team": [
+                                {"name": "Detroit Pistons", "won": 60, "lost": 22, "position": 1},
+                            ]},
+                        ],
+                    }
+                ],
+            },
+        }
+    }
+
+
+class TestTheRankIsStoredAsWhatItActuallyCounts:
+
+    @pytest.fixture(autouse=True)
+    def _no_sleep(self, monkeypatch):
+        async def _sleep(*_a, **_k):
+            return None
+
+        monkeypatch.setattr("app.tasks.statpal_sync.asyncio.sleep", _sleep)
+
+    @pytest.mark.asyncio
+    async def test_a_division_nested_position_is_stored_as_div_rank(self, monkeypatch):
+        """THE REPAIR. `position` under `division[]` is a division place."""
+        from app.models.models import Team
+        from app.tasks.statpal_sync import _sync_statpal_standings
+
+        session = _wire_sports(
+            monkeypatch, "americanfootball_nfl",
+            teams=[("americanfootball_nfl", "Boston Celtics")],
+        )
+        _stub_venue(monkeypatch, {"nfl": _two_division_table()})
+
+        await _sync_statpal_standings("americanfootball_nfl")
+
+        stored = session.query(Team).filter_by(name="Boston Celtics").one().standings_data
+        assert stored["div_rank"] == 1
+        assert stored["division"] == "Atlantic"
+        assert "conf_rank" not in stored, (
+            "a division-nested position must not be published as a conference "
+            f"rank — that is the mislabel this repair exists for; got {stored!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_division_leaders_do_not_both_claim_the_conference(
+        self, monkeypatch
+    ):
+        """The production collision, reproduced in miniature.
+
+        Boston (Atlantic #1) and Detroit (Central #1) are in ONE conference.
+        Under the old mapping both carried `conf_rank: 1` and both rendered
+        "#1 Eastern Conference". Whatever else is true, that cannot be.
+        """
+        from app.models.models import Team
+        from app.tasks.statpal_sync import _sync_statpal_standings
+
+        session = _wire_sports(
+            monkeypatch, "americanfootball_nfl",
+            teams=[
+                ("americanfootball_nfl", "Boston Celtics"),
+                ("americanfootball_nfl", "Detroit Pistons"),
+            ],
+        )
+        _stub_venue(monkeypatch, {"nfl": _two_division_table()})
+
+        await _sync_statpal_standings("americanfootball_nfl")
+
+        rows = {
+            t.name: t.standings_data
+            for t in session.query(Team).all()
+            if t.standings_data
+        }
+        assert rows["Boston Celtics"]["div_rank"] == 1
+        assert rows["Detroit Pistons"]["div_rank"] == 1
+        # Same conference, both #1 — legal for a division, impossible for a
+        # conference. So neither may carry a conference claim.
+        assert rows["Boston Celtics"]["conference"] == rows["Detroit Pistons"]["conference"]
+        claims = [n for n, s in rows.items() if "conf_rank" in s]
+        assert claims == [], (
+            "two teams in one conference both ranked #1 — publishing that as "
+            f"`conf_rank` is the 26-collision production defect; claimed: {claims}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_control_a_conference_scoped_rank_would_still_be_published(
+        self, monkeypatch
+    ):
+        """A positive control for the arm above.
+
+        Without this, `conf_rank not in stored` would also pass if the repair
+        had simply deleted conference ranks everywhere. A team that is NOT
+        nested under a division keeps a scope-free rank, and `conf_rank` stays
+        available for a source that genuinely scopes to a conference.
+        """
+        from app.models.models import Team
+        from app.tasks.statpal_sync import _sync_statpal_standings
+
+        flat = {"standings": {"teams": [
+            {"name": "Boston Celtics", "won": 56, "lost": 26, "position": 2},
+        ]}}
+        session = _wire_sports(
+            monkeypatch, "americanfootball_nfl",
+            teams=[("americanfootball_nfl", "Boston Celtics")],
+        )
+        _stub_venue(monkeypatch, {"nfl": flat})
+
+        await _sync_statpal_standings("americanfootball_nfl")
+
+        stored = session.query(Team).filter_by(name="Boston Celtics").one().standings_data
+        assert stored["league_rank"] == 2, (
+            "an un-nested position is not a division place and must not be "
+            f"reported as one; got {stored!r}"
+        )
+        assert "div_rank" not in stored
+
+
+class TestTheRankReachesTheReaderSayingTheRightWord:
+    """The serializer and presentation halves of the BLOCK's required chain."""
+
+    def _team_with(self, standings, record="56-26"):
+        from app.models.models import Team
+
+        return Team(name="Boston Celtics", current_record=record, standings_data=standings)
+
+    def test_the_team_page_serializer_carries_the_division_rank(self):
+        """`_format_team` is what the team page reads."""
+        from app.routes.teams import _format_team
+
+        team = self._team_with(
+            {"wins": 56, "losses": 26, "div_rank": 1, "division": "Atlantic",
+             "conference": "Eastern Conference"}
+        )
+        out = _format_team(team)
+
+        assert out["standings"]["div_rank"] == 1
+        assert out["standings"]["division"] == "Atlantic"
+        # The record half of the BLOCK: production has `current_record`
+        # populated by ESPN on 32/32 NFL and 31/33 MLB teams, and this
+        # serializer serves it — the standings block was the missing half.
+        assert out["record"] == "56-26"
+
+    def test_the_event_context_prints_the_division_not_the_conference(self):
+        """`_compute_standings_context` is the pre-game line on an event."""
+        from app.routes.events import _compute_standings_context
+
+        home = self._team_with(
+            {"wins": 56, "losses": 26, "div_rank": 1, "division": "Atlantic",
+             "conference": "Eastern Conference"}
+        )
+        ctx = _compute_standings_context(home, None, "Boston Celtics", "x")
+
+        assert ctx["home"] == "56-26, #1 Atlantic", (
+            "the rank must be printed against the pool it was counted over; "
+            f"got {ctx['home']!r}"
+        )
+        assert "Conference" not in ctx["home"]
+
+    def test_top_seed_stakes_is_not_claimed_from_a_division_rank(self):
+        """Named in `statpal_sync.py`'s own comment, so the removal is pinned.
+
+        "Top seed matchup" reads `conf_rank`. Two teams leading DIFFERENT
+        divisions are not a top-seed game, and under the old mapping they
+        scored as one. With the rank stored truthfully the claim is simply not
+        made — and this test is what stops it being quietly restored.
+        """
+        from app.routes.events import _compute_standings_context
+
+        home = self._team_with(
+            {"wins": 56, "losses": 26, "div_rank": 1, "division": "Atlantic",
+             "conference": "Eastern Conference"}
+        )
+        away = self._team_with(
+            {"wins": 60, "losses": 22, "div_rank": 1, "division": "Central",
+             "conference": "Eastern Conference"},
+            record="60-22",
+        )
+        ctx = _compute_standings_context(home, away, "Boston Celtics", "Detroit Pistons")
+
+        assert ctx.get("stakes") != "Top seed matchup", (
+            "two division leaders are not a top-seed matchup; that claim was "
+            "the mislabel being read back out"
+        )
+
+    def test_division_rivals_becomes_reachable_for_the_first_time(self):
+        """The other side of the same change, and the reason it is a repair
+        rather than a deletion.
+
+        "Division rivals" reads `hs["div_rank"]`. Nothing has ever written that
+        key — 0 of 75 rows in production — so this arm has been dead for its
+        whole life. Storing the rank truthfully is what switches it on.
+        """
+        from app.routes.events import _compute_standings_context
+
+        home = self._team_with(
+            {"wins": 56, "losses": 26, "div_rank": 1, "division": "Atlantic",
+             "conference": "Eastern Conference"}
+        )
+        away = self._team_with(
+            {"wins": 53, "losses": 29, "div_rank": 2, "division": "Atlantic",
+             "conference": "Eastern Conference"},
+            record="53-29",
+        )
+        ctx = _compute_standings_context(home, away, "Boston Celtics", "New York Knicks")
+
+        assert ctx.get("stakes") == "Division rivals"

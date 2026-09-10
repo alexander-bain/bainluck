@@ -1809,6 +1809,14 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                                             # Inject conference/division from structure
                                             t["_conference"] = league_name
                                             t["_division"] = div_name
+                                            t["_rank_scope"] = "division"
+                                            # The team's `position` is scoped by
+                                            # the node it hangs under, and here
+                                            # that is ALWAYS a division. Recorded
+                                            # at the point the structure is still
+                                            # in hand — by the time the field map
+                                            # below runs, a flat dict cannot say
+                                            # what its own rank was counted over.
                                             teams_list.append(t)
                         # Fallback: groups/teams patterns
                         if not teams_list:
@@ -1865,13 +1873,56 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                     if losses is not None:
                         parsed["losses"] = int(losses)
 
+                    # WHERE THE RANK IS COUNTED, AND WHY IT IS NOT `conf_rank`.
+                    #
+                    # `position` used to be stored as `conf_rank` unconditionally.
+                    # It is read off a team nested under `league[].division[]`,
+                    # so it is the team's place IN ITS DIVISION — and both
+                    # renderers say "conference" when they see `conf_rank`
+                    # (`events.py` `_standings_context` prints "#1 Eastern
+                    # Conference"; `RelatedFutures.tsx`'s `StandingsCard` puts
+                    # the number against `standings.conference`).
+                    #
+                    # Measured on production 2026-09-10, and it is not a
+                    # judgement call — a conference has exactly one #1, so a
+                    # conference-scoped rank cannot repeat within a conference:
+                    #
+                    #   26 (conference, conf_rank) pairs are shared by >1 team.
+                    #   FOUR NBA teams read "#1 Eastern Conference" at once —
+                    #   Boston (Atlantic), Detroit (Central), and two more.
+                    #
+                    # That is a live TRUTH defect on the 75 NBA/NHL teams that
+                    # have standings today, and #4732 would have extended it to
+                    # NFL and MLB. The number was always right; the word beside
+                    # it was wrong. `div_rank` is the field both renderers pair
+                    # with `division`, so the fix is the label, not the value.
+                    #
+                    # NO CONFERENCE RANK IS SYNTHESISED. It is derivable-looking
+                    # — sort a conference's teams by win pct — and that is the
+                    # trap: NFL and NBA seeding turn on tiebreakers we do not
+                    # model, so a computed "#3 AFC" would be a fabricated
+                    # authority wearing the venue's credibility. A conference
+                    # rank needs a conference-scoped source. Until one exists
+                    # the claim is simply not made.
+                    #
+                    # Consequence, deliberate: `_standings_context`'s "Top seed
+                    # matchup" reads `conf_rank` and stops firing. It was firing
+                    # on this mislabel — two teams third in their own divisions
+                    # scored as a top-seed game — so this removes a false
+                    # signal, and `test_top_seed_stakes_is_not_claimed_from_a_
+                    # division_rank` pins that it stays removed. Its sibling
+                    # "Division rivals" reads `div_rank`, has been unreachable
+                    # for as long as nothing wrote that key (0 rows in
+                    # production), and starts working for the first time.
+                    rank_field = "div_rank" if team_entry.get("_rank_scope") == "division" else "league_rank"
+
                     # Direct fields — numeric
                     for src, dst in [
                         ("draws", "draws"), ("ties", "ties"),
                         ("points", "points"),
                         ("goals_for", "goals_for"), ("goals_against", "goals_against"),
                         ("goal_difference", "goal_difference"),
-                        ("position", "conf_rank"),
+                        ("position", rank_field),
                     ]:
                         val = team_entry.get(src)
                         if val is not None:

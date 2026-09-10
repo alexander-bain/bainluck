@@ -22,6 +22,25 @@ interface TeamStandings {
   division?: string;
 }
 
+/**
+ * The rank badge, named for the pool the rank was actually counted over.
+ *
+ * StatPal's standings board nests teams under `league[].division[]`, so the
+ * `position` it serves is a DIVISION place. It used to be stored as
+ * `conf_rank` and printed against the conference name, which put four NBA
+ * teams at "#1 Eastern Conference" at the same time. Since #4732 the sync
+ * writes `div_rank`; `conf_rank` is still preferred here for any source that
+ * genuinely scopes to a conference.
+ *
+ * `StandingsCard` below renders both rows on their own and does not use this.
+ */
+function standingsSeed(s?: TeamStandings | null): string | null {
+  if (!s) return null;
+  if (s.conf_rank) return `#${s.conf_rank} ${s.conference || ""}`.trim();
+  if (s.div_rank) return `#${s.div_rank} ${s.division || ""}`.trim();
+  return null;
+}
+
 interface RelatedFuturesProps {
   eventId: number;
   homeTeam: string;
@@ -2615,7 +2634,7 @@ export default function RelatedFutures({
           {(() => {
             const standings = homeStandings;
             const record = standings ? `${standings.wins ?? 0}-${standings.losses ?? 0}${standings.ties ? `-${standings.ties}` : ""}` : null;
-            const seed = standings?.conf_rank ? `#${standings.conf_rank} ${standings.conference || ""}` : null;
+            const seed = standingsSeed(standings);
             const homeAwards = mergedAwards.filter((a) => a.teamColor === hColor);
             return (
               <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5">
@@ -2681,7 +2700,7 @@ export default function RelatedFutures({
           {(() => {
             const standings = awayStandings;
             const record = standings ? `${standings.wins ?? 0}-${standings.losses ?? 0}${standings.ties ? `-${standings.ties}` : ""}` : null;
-            const seed = standings?.conf_rank ? `#${standings.conf_rank} ${standings.conference || ""}` : null;
+            const seed = standingsSeed(standings);
             const awayAwards = mergedAwards.filter((a) => a.teamColor === aColor);
             return (
               <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5">
