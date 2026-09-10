@@ -868,6 +868,122 @@ export function sortedResults(matches: TournamentResult[]): TournamentResult[] {
   );
 }
 
+/* ═══ WHY A RESULTS LIST IS GROUPED AND NOT MERELY SORTED (#4803) ═════════════
+ *
+ * The band over a run of rows is a GROUP HEADING, and a group heading that
+ * appears twice in one list is not a heading — it says the tournament played
+ * quarter-finals, then semi-finals, then quarter-finals again.
+ *
+ * `sortedResults` orders by `completed_at` alone, and the band was emitted
+ * wherever the round CHANGED between adjacent rows. That is only the same thing
+ * as "one band per round" while completion order happens to agree with the
+ * ladder, and on a real Grand Slam payload it does not:
+ *
+ *   - **Three draws share the Doubles pill** (#4124). Men's doubles were in the
+ *     quarter-finals while women's doubles were in the semi-finals, so recency
+ *     interleaved them and `QUARTER-FINALS` printed with a women's
+ *     `SEMI-FINALS` wedged inside it. This is the symptom #4803 was filed on.
+ *
+ *   - **A single draw interleaves with itself.** Measured on the live payload
+ *     2026-09-10, men's SINGLES — one draw, no merge — printed `Round 1` five
+ *     times and `Round 2` five times across 16 bands for 8 distinct rounds;
+ *     women's singles, 18 bands for 8. Halves of a 128-draw progress at
+ *     different rates and rain moves matches, so a bottom-half Round 1 finishes
+ *     after a top-half Round 2. The filed issue reasoned the singles tabs were
+ *     immune because each is a single draw; they are not — they were only
+ *     immune in the COLLAPSED five-row preview, where the newest five happened
+ *     to share a round. Expanded, all three tabs were wrong.
+ *
+ * So the fix cannot be a better sort key. Sorting into the register's ladder
+ * would fix the doubles case and still not guarantee uniqueness, because
+ * `roundHeading` passes ESPN's own words through verbatim for anything the
+ * register does not name (`Qualifying 1st Round`) and those have no rung.
+ *
+ * `groupedResults` therefore guarantees the property directly: partition into
+ * runs keyed by the heading a row will actually PRINT, in order of first
+ * appearance. One key, one run, one band — by construction, whatever the
+ * ordering and whatever the round vocabulary. Recency survives where it still
+ * means something: it decides which group leads, and the order inside a group.
+ */
+
+/** The two facts that decide a row's band: which draw, and which round. */
+function bandKey(
+  result: TournamentResult,
+  roundCount: number | undefined
+): string {
+  // NUL-joined: a separator no draw slug or round label can contain, so
+  // ("a", "b·c") and ("a·b", "c") can never collide into one band.
+  return `${result.draw}\u0000${roundHeading(result, roundCount)}`;
+}
+
+/**
+ * The same rows, reordered so every band is contiguous — one heading, once.
+ *
+ * A stable partition, not a sort: groups appear in the order their first row
+ * appears, and rows keep their relative order inside a group. Hand it
+ * `sortedResults` output and the newest group leads, newest row first within
+ * it, which is what the list meant to say before the bands collided.
+ */
+export function groupedResults(
+  matches: TournamentResult[],
+  roundCount?: number
+): TournamentResult[] {
+  const runs = new Map<string, TournamentResult[]>();
+  for (const match of matches) {
+    const key = bandKey(match, roundCount);
+    const run = runs.get(key);
+    if (run) run.push(match);
+    else runs.set(key, [match]);
+  }
+  // Map preserves insertion order, so this is first-appearance order.
+  return [...runs.values()].flat();
+}
+
+/**
+ * Does this list hold more than one draw? Then a band must say which.
+ *
+ * Only the Doubles pill can be true here today (#4124 merges three draws under
+ * it), and it is asked of the ROWS rather than the pill id so a future grouped
+ * selection gets the qualified heading without another edit. On a single-draw
+ * list the section's own `Finished · Men's Singles` already names the draw, and
+ * repeating it on every band would be noise (notice 34).
+ */
+export function resultsSpanDraws(matches: TournamentResult[]): boolean {
+  const first = matches[0]?.draw;
+  return matches.some((match) => match.draw !== first);
+}
+
+/**
+ * The text a band prints: the round, named by its draw when the list needs it.
+ *
+ * `draw_label` comes off the row — the payload has carried `Men's Doubles` /
+ * `Women's Doubles` / `Mixed Doubles` on every result row since #4124 and no
+ * surface read it. `DRAW_LABELS` is the fallback for a row that predates the
+ * field; the raw slug is the last resort and is still better than silence.
+ */
+export function resultBandHeading(
+  result: TournamentResult,
+  roundCount: number | undefined,
+  qualifyWithDraw: boolean
+): string {
+  const round = roundHeading(result, roundCount);
+  if (!qualifyWithDraw) return round;
+  const drawLabel = result.draw_label || DRAW_LABELS[result.draw] || result.draw;
+  return drawLabel ? `${drawLabel} · ${round}` : round;
+}
+
+/**
+ * What the `Finished · …` heading calls this pill.
+ *
+ * `DRAW_LABELS` is keyed on real draws, and `doubles` is a SELECTION covering
+ * three of them (#4124), so the lookup missed and the section printed the raw
+ * pill id — `FINISHED · doubles · 143`, a machine slug on a reader's screen.
+ */
+export function selectionLabel(selection: string): string {
+  if (selection === DOUBLES_SELECTION) return "Doubles";
+  return DRAW_LABELS[selection] ?? selection;
+}
+
 /**
  * The sentence a results section owes when it has nothing, or `null`.
  *

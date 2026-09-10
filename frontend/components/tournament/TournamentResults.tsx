@@ -6,21 +6,23 @@ import Link from "next/link";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
-  DRAW_LABELS,
   completionNote,
   drawIsPriced,
   formatPrematch,
+  groupedResults,
   prematchAttribution,
   prematchCoverage,
   prematchPercents,
+  resultBandHeading,
   resultScoreLine,
   resultsEmptyReason,
   resultsForDraw,
+  resultsSpanDraws,
   resultEventHref,
   resultLinkCoverage,
   resultsPopulationNote,
-  roundHeading,
   scoreWrapChunks,
+  selectionLabel,
   sortedResults,
   type TournamentResult,
   type TournamentResults as ResultsModel,
@@ -510,7 +512,13 @@ export default function TournamentResults({
   pending?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(initialExpanded);
-  const matches = sortedResults(resultsForDraw(results, draw));
+  /* Newest first, then partitioned so each band is contiguous (#4803). The sort
+     still decides which group leads and the order inside it; the grouping is
+     what stops one heading printing twice. See `groupedResults`. */
+  const matches = groupedResults(
+    sortedResults(resultsForDraw(results, draw)),
+    roundCount
+  );
 
   if (matches.length === 0) {
     const reason =
@@ -539,6 +547,11 @@ export default function TournamentResults({
   }
 
   const shown = expanded ? matches : matches.slice(0, COLLAPSED_LIST_COUNT);
+  /* Asked of the WHOLE list, never of `shown`: if the collapsed five happen to
+     be one draw, a band must not lose its draw name and grow it back on
+     `Show all`. The heading a row prints cannot depend on how many rows are
+     visible. */
+  const spansDraws = resultsSpanDraws(matches);
   const completion = completionNote(matches);
   /* Counted over THIS draw's rendered rows rather than read off the payload's
      `with_prematch`, which is the all-draws total. A footnote that says "12 of
@@ -614,7 +627,7 @@ export default function TournamentResults({
       <h2 className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
         Finished
         <span className="ml-1.5 font-normal normal-case tracking-normal">
-          · {DRAW_LABELS[draw] ?? draw} · {matches.length}
+          · {selectionLabel(draw)} · {matches.length}
         </span>
       </h2>
 
@@ -641,9 +654,14 @@ export default function TournamentResults({
                Dropping the band leaves no gap — `ResultRow` already draws
                `border-t` on its own winner cell, so rows inside a run stay
                separated. That is why this is a deletion and not a swap. */
-            const heading = roundHeading(result, roundCount);
+            /* #4803: the band names its DRAW too when the list merges several
+               (the Doubles pill merges three), because `QUARTER-FINALS` over a
+               men's run and `QUARTER-FINALS` over a women's run are two
+               different headings that happen to share a word. */
+            const heading = resultBandHeading(result, roundCount, spansDraws);
             const startsRun =
-              index === 0 || heading !== roundHeading(shown[index - 1], roundCount);
+              index === 0 ||
+              heading !== resultBandHeading(shown[index - 1], roundCount, spansDraws);
 
             return (
               <React.Fragment key={result.matchup_key}>
