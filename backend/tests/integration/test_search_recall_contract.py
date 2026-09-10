@@ -1511,3 +1511,89 @@ async def test_a_resolved_nickname_is_never_corrected_to_a_spelling_neighbour(se
         "that resolved a curated franchise nickname must never be answered with a "
         "different team that merely looks like it."
     )
+
+
+@pytest.fixture
+async def search_with_a_49ers_game(seeded_db, search):
+    """`search`, plus the ONE row `_seed` deliberately withholds.
+
+    The seed has no 49ers event ON PURPOSE — it is what keeps
+    `test_a_resolved_nickname_is_never_corrected_to_a_spelling_neighbour` from
+    passing vacuously, because with 49ers games in the window `total_count` is
+    never 0 and the "did you mean" fallback never runs.
+
+    The `9ers` test below needs the opposite state, so it gets its own row here
+    rather than in `_seed`, where it would silently disarm that suppression test.
+    `seeded_db` is function-scoped, so this row exists for this one test only.
+
+    Seattle is the opponent because it shares no word with any other seeded row —
+    a `Seahawks` collision would make a `9ers` hit ambiguous about which side of
+    the fixture matched.
+    """
+    from app.models.models import Event, Sport
+    from sqlalchemy import select
+
+    _engine, maker = seeded_db
+    async with maker() as session:
+        nfl = (
+            await session.execute(
+                select(Sport).where(Sport.key == "americanfootball_nfl")
+            )
+        ).scalar_one()
+        session.add(
+            Event(
+                sport_id=nfl.id,
+                home_team_name="San Francisco 49ers",
+                away_team_name="Seattle Seahawks",
+                commence_time=datetime.now(timezone.utc) + timedelta(days=2),
+                status="scheduled",
+            )
+        )
+        await session.commit()
+
+    return search
+
+
+async def test_substring_nickname_9ers_reaches_49ers_game_cards(
+    search_with_a_49ers_game,
+):
+    """🔴 CERT-2527's required repair, on a real Postgres.
+
+    `9ers` is the one curated alias that is SPELLED INSIDE its own token, and the
+    first cut of #4809 skipped it on the futures rail's reasoning: a substring
+    needs no arm, because ILIKE will find it. True of `FuturesMarket.name`; false
+    here, because the event matcher AND-s an FTS whole-word test onto the ILIKE::
+
+        ILIKE '%9ers%'  vs 'San Francisco 49ers'  -> TRUE
+        to_tsvector('San Francisco 49ers')        -> 'san' 'francisco' '49ers'
+        plainto_tsquery('9ers')                   -> '9ers'                -> FALSE
+
+    AND-ed that is FALSE, so the skip removed the only mechanism that could have
+    matched and `?q=9ers` returned the team row, 10 correct 49ers markets and zero
+    game cards — #4809's own symptom surviving inside #4809's fix.
+
+    This runs against a real Postgres and not the unit suite deliberately: the
+    defect lives in the disagreement between `ILIKE` and `to_tsvector`, and only
+    the engine that owns both can be asked whether they agree. A mocked matcher
+    would have reported this fix working while production returned nothing.
+    """
+    pairings = _event_pairings(await search_with_a_49ers_game("9ers"))
+    assert any("San Francisco 49ers" in p for p in pairings), (
+        f"`9ers` did not reach the 49ers' own game: {pairings!r}. The ILIKE arm "
+        "matches the substring but the AND-ed FTS arm cannot word-match `9ers` "
+        "against the lexeme `49ers`, so without an expansion arm the reader sees "
+        "no games."
+    )
+
+
+async def test_the_9ers_arm_does_not_fan_out_across_sports(search_with_a_49ers_game):
+    """The repair inherits the sport scope; it does not bypass it.
+
+    The cheap version of this fix — dropping the substring skip AND the
+    `Sport.key` guard together — would satisfy the test above. `9ers` expands to
+    the bare token `49ers`, and nothing about that token is intrinsically NFL.
+    """
+    pairings = _event_pairings(await search_with_a_49ers_game("9ers"))
+    assert not any("UTEP" in p or "St Kitts" in p for p in pairings), (
+        f"the `9ers` arm reached outside the NFL: {pairings!r}"
+    )

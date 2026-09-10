@@ -71,47 +71,85 @@ def test_the_derived_event_expansions_are_exactly_these() -> None:
         "pats": ("Patriots", "americanfootball_nfl"),
         "revs": ("Revolution", "soccer_usa_mls"),
         "niners": ("49ers", "americanfootball_nfl"),
+        "9ers": ("49ers", "americanfootball_nfl"),
         "bucs": ("Buccaneers", "americanfootball_nfl"),
         "sixers": ("76ers", "basketball_nba"),
     }
 
 
-def test_the_two_rails_cover_exactly_the_same_aliases() -> None:
+def test_the_two_rails_diverge_only_where_their_matchers_do() -> None:
     """The drift guard between the two consumers of one curated map.
 
-    A nickname that reaches the markets and not the games is the defect this
-    issue IS. Both maps derive from `CURATED_TEAM_ALIASES` with the same substring
-    skip, so adding a row to that map must light up both rails or neither — never
-    one, which is the state production was in between #4728 and #4809.
+    A nickname that reaches the markets and not the games is the defect this issue
+    IS, so the rails must not drift — but they are not identical either, and the
+    difference is principled rather than accidental (CERT-2527's required repair).
+
+    The futures rail skips an alias already spelled inside its token, because its
+    matcher is a plain ILIKE and `%9ers%` reaches `San Francisco 49ers` unaided.
+    The event matcher AND-s an FTS whole-word test onto the ILIKE, and `9ers` is
+    not a lexeme of that name, so the skip cost `9ers` every one of its game cards.
+
+    Stated as an exact set rather than "events ⊇ futures": a NEW alias landing on
+    only one rail is the original defect, and a loose ⊇ would wave it through.
     """
 
     event_map = team_nickname_event_expansions()
     futures_map = team_nickname_search_expansions()
 
-    assert set(event_map) == set(futures_map), (
-        "the game rail and the markets rail disagree about which nicknames exist: "
-        f"only-events={set(event_map) - set(futures_map)!r}, "
+    only_events = set(event_map) - set(futures_map)
+    assert only_events == {"9ers"}, (
+        "the rails diverge somewhere new. Only `9ers` may be event-only, and only "
+        "because it is a substring of `49ers` that the FTS arm cannot word-match: "
+        f"got only-events={only_events!r}"
+    )
+    assert not set(futures_map) - set(event_map), (
+        "a nickname reaches the markets and not the games — the exact state "
+        "production was in between #4728 and #4809: "
         f"only-futures={set(futures_map) - set(event_map)!r}"
     )
-    for alias in event_map:
+    for alias in set(event_map) & set(futures_map):
         assert event_map[alias][0] == futures_map[alias][0], (
             f"{alias} expands to a different token per rail: "
             f"{event_map[alias][0]!r} vs {futures_map[alias][0]!r}"
         )
 
 
-def test_an_alias_already_inside_its_token_gets_no_event_arm() -> None:
-    """`9ers` is in `49ers`, so the plain ILIKE arm already reaches those rows.
+def test_an_alias_already_inside_its_token_still_gets_an_event_arm() -> None:
+    """🔴 CERT-2527's required repair, as a unit assertion.
 
-    Same skip as the futures side, kept deliberately in step with it: an extra arm
-    here would be a duplicate probe for zero extra recall.
+    The first cut of #4809 copied the futures rail's substring skip, on the premise
+    that a substring needs no arm because ILIKE will find it. That premise is true
+    of `FuturesMarket.name` and false of the event rail, whose matcher AND-s an FTS
+    whole-word test onto the ILIKE::
+
+        ILIKE '%9ers%'  vs 'San Francisco 49ers'  -> TRUE
+        to_tsvector('San Francisco 49ers')        -> 'san' 'francisco' '49ers'
+        plainto_tsquery('9ers')                   -> '9ers'                -> FALSE
+
+    So the skip removed the only mechanism that could have matched, and `?q=9ers`
+    returned the team row, 10 correct markets and zero games — #4809's own symptom
+    surviving inside #4809's fix.
+
+    `9ers` is the ONLY alias the skip ever removed, which is why this went
+    unnoticed: `pats` is not inside `Patriots`, `bucs` not inside `Buccaneers`,
+    `sixers` not inside `76ers`, `niners` not inside `49ers`.
     """
 
     assert (
         "9ers" in CURATED_TEAM_ALIASES[("americanfootball_nfl", "San Francisco 49ers")]
     )
-    assert "9ers" not in team_nickname_event_expansions()
-    assert "niners" in team_nickname_event_expansions()
+    expansions = team_nickname_event_expansions()
+    assert expansions.get("9ers") == ("49ers", "americanfootball_nfl"), (
+        "`9ers` has no event arm, so its ILIKE match can never clear the AND-ed "
+        "FTS word test and the reader gets no game cards."
+    )
+    assert expansions.get("niners") == ("49ers", "americanfootball_nfl")
+
+    # The sibling's skip is still correct on its own rail and must stay.
+    assert "9ers" not in team_nickname_search_expansions(), (
+        "the futures rail is a plain ILIKE; an arm for `9ers` there is a duplicate "
+        "probe for zero extra recall."
+    )
 
 
 def test_every_event_expansion_carries_a_sport_key() -> None:
