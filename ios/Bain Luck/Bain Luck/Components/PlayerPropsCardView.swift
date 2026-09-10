@@ -36,6 +36,17 @@ struct PlayerPropsCardView: View {
         let teamLabel: String
         let color: Color
         let statGroups: [StatGroup]
+
+        /// #4857 — the total order's key. `topProbability` is 0 for a card with
+        /// no rungs, which cannot occur here (`groups` is filtered non-empty
+        /// before a card is built) but keeps the key total rather than optional.
+        var orderKey: PlayerPropsOrder.CardKey {
+            PlayerPropsOrder.CardKey(
+                rungs: statGroups.map(\.rungs.count).reduce(0, +),
+                topProbability: statGroups.flatMap(\.rungs).map(\.probability).max() ?? 0,
+                name: name
+            )
+        }
     }
 
     private struct StatGroup: Identifiable {
@@ -93,7 +104,14 @@ struct PlayerPropsCardView: View {
                 )
             }
             .filter { !$0.rungs.isEmpty }
-            .sorted { $0.rungs.count > $1.rungs.count }
+            // #4857 — ends on the stat type, which is this level's dictionary
+            // key, so two equal-length ladders cannot tie and swap on relaunch.
+            .sorted {
+                PlayerPropsOrder.statGroupPrecedes(
+                    .init(rungs: $0.rungs.count, type: $0.type),
+                    .init(rungs: $1.rungs.count, type: $1.type)
+                )
+            }
 
             guard !groups.isEmpty else { return nil }
 
@@ -108,7 +126,10 @@ struct PlayerPropsCardView: View {
                 statGroups: groups
             )
         }
-        .sorted { $0.statGroups.map(\.rungs.count).reduce(0, +) > $1.statGroups.map(\.rungs.count).reduce(0, +) }
+        // #4857 — ends on the player name, which is the dictionary key these
+        // cards were grouped under, so the per-process iteration order can no
+        // longer survive a tie and reach the screen.
+        .sorted { PlayerPropsOrder.cardPrecedes($0.orderKey, $1.orderKey) }
     }
 
     private var filteredCards: [PlayerCard] {
