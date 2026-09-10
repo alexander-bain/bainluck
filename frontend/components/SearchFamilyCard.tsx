@@ -16,16 +16,21 @@ import {
   movementArrow,
   resolutionLabel,
   familyRowTitles,
+  familySharedHead,
 } from "@/components/searchFamilyDisplay";
 
 function AnswerRow({
   market,
   title,
+  subject,
   prominent,
   onClick,
 }: {
   market: FuturesMarket;
   title: { head: string; tail: string };
+  /** #4583: set only when the card hoisted a shared subject into its header, in
+   *  which case this row's visible title no longer names the matchup. */
+  subject?: string | null;
   prominent?: boolean;
   onClick?: () => void;
 }) {
@@ -41,6 +46,16 @@ function AnswerRow({
       onClick={onClick}
       className="flex items-center gap-2 px-3 py-2 hover:bg-surface-elevated transition-colors"
     >
+      {/* #4583: when the card lifted the shared matchup into its header, this
+          link's visible text no longer says which game it is about. Sighted
+          readers get that from the header directly above; a screen reader
+          moving link-to-link does not, so the subject stays in the accessible
+          name here. `sr-only` is position:absolute, so it is not a flex item
+          and neither `gap-2` here nor `gap-1` below reserves any space for it —
+          the rendered row is byte-for-byte what it would be without it. Not an
+          `aria-label` on the Link: that would REPLACE the whole accessible
+          name, dropping the probability the row exists to announce. */}
+      {subject && <span className="sr-only">{subject} — </span>}
       {/* #4136: head truncates, tail does not. When `tail` is empty — the
           ordinary case, a row that shares no long prefix with a sibling — this
           is exactly the single truncating div it has always been.
@@ -130,14 +145,28 @@ export default function SearchFamilyCard({
   // row — the same market name is fine alone and unreadable beside its sibling.
   const rows = [family.headline, ...family.members];
   const titles = familyRowTitles(rows.map((m) => m.name));
+  // #4583: if every row split at the same point, the head is the CARD's subject,
+  // not the row's. Show it once above the rows and give each row its whole width
+  // for the bytes that tell it apart. `familySharedHead` returns null unless that
+  // is unambiguously true, and then this is a no-op and the rows are untouched.
+  const sharedHead = familySharedHead(titles);
+  const rowTitles = sharedHead
+    ? titles.map((t) => ({ head: t.tail, tail: "" }))
+    : titles;
   return (
     <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
       <div className="px-3 pt-2 text-xs font-medium text-accent-brand uppercase tracking-wide">
         {family.label}
       </div>
+      {sharedHead && (
+        <div className="px-3 text-sm font-medium text-text-primary truncate">
+          {sharedHead}
+        </div>
+      )}
       <AnswerRow
         market={family.headline}
-        title={titles[0]}
+        title={rowTitles[0]}
+        subject={sharedHead}
         prominent
         onClick={() => onRowClick?.("family_headline", family.headline.id)}
       />
@@ -147,7 +176,8 @@ export default function SearchFamilyCard({
             <AnswerRow
               key={m.id}
               market={m}
-              title={titles[i + 1]}
+              title={rowTitles[i + 1]}
+              subject={sharedHead}
               onClick={() => onRowClick?.("family_member", m.id)}
             />
           ))}

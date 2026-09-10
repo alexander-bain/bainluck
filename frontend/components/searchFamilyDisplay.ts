@@ -131,6 +131,48 @@ export function familyRowTitles(names: string[]): { head: string; tail: string }
   });
 }
 
+/** Trailing join characters left dangling on a hoisted head (`… Yankees - `).
+ *  Only ever applied to a string that is about to be shown on its own line, so
+ *  there is nothing after it for the separator to separate it from. */
+function trimTrailingSeparator(s: string): string {
+  return s.replace(/[\s–—\-:·,|]+$/, "");
+}
+
+/**
+ * #4583: the subject every row of a card shares, or null if they do not share one.
+ *
+ * The defect this exists for: `familyRowTitles` reserves the tail and lets CSS eat
+ * the head, which is correct when the head is the part a reader can spare. On the
+ * live `yank` card all five rows split at the SAME point, so the head was not a
+ * per-row string at all — it was one subject printed five times, and the row had
+ * to shrink it to fit a tail beside it. Production rendered
+ * `C 8th Inning Winner` / `C. 7th Inning Winner` / `C... 9th Inning Winner`:
+ * a single character is not an abbreviation, it is the layout giving up.
+ *
+ * The head is only hoistable when EVERY row has one and they are all identical —
+ * then showing it once loses nothing by construction, and each row gets the whole
+ * width for the bytes that tell it apart. A card whose heads differ keeps today's
+ * behaviour exactly, because there the head really is per-row information.
+ *
+ * Note this deliberately fixes the DUPLICATION rather than the shrink ratio. The
+ * head/tail widths were tuned three times (#4136, #4518, #4545) and the current
+ * order — head yields everything before the tail yields anything — is right; it
+ * was being asked to fit two copies of the same string into one row.
+ */
+export function familySharedHead(
+  titles: { head: string; tail: string }[],
+): string | null {
+  // A single row is never split (`familyRowTitles` returns it whole), so there is
+  // no shared subject to lift out of one.
+  if (titles.length < 2) return null;
+  // Every row must have been split. A card mixing split and whole rows has no one
+  // subject — the whole row's name would go missing from the header.
+  if (titles.some((t) => !t.tail)) return null;
+  const head = titles[0].head;
+  if (titles.some((t) => t.head !== head)) return null;
+  return trimTrailingSeparator(head) || null;
+}
+
 /** market_ids rendered inside families (headline + shown members) — filtered
  *  from the flat list so nothing double-renders. */
 export function familyShownIds(families: FuturesFamily[]): Set<number> {

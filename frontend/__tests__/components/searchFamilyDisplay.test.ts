@@ -7,6 +7,7 @@ import {
   cleanName,
   familyShownIds,
   familyRowTitles,
+  familySharedHead,
   FAMILY_ROW_VISIBLE_CHARS,
 } from "../../components/searchFamilyDisplay";
 
@@ -159,5 +160,121 @@ describe("familyRowTitles (#4136)", () => {
     const t = familyRowTitles(years);
     expect(t[0].head + t[0].tail).not.toMatch(/2026/);
     expect(t[1].tail).toBe("9th Inning Winner");
+  });
+});
+
+// #4583: five rows that all repeated one matchup, each showing one letter of it.
+describe("familySharedHead (#4583)", () => {
+  // Verbatim from GET /api/events/search?q=yank (api.bainluck.com, 2026-09-09),
+  // `futures_families[0]`: headline first, then members in served order. This is
+  // the whole card — every row of it — which is what makes it the right specimen
+  // for a question that is a property of the SET.
+  const YANK_CARD = [
+    "Colorado Rockies vs. New York Yankees - 8th Inning Winner",
+    "Colorado Rockies vs. New York Yankees - 7th Inning Winner",
+    "Colorado Rockies vs. New York Yankees - 9th Inning Winner",
+    "Colorado Rockies vs. New York Yankees - 6th Inning Winner",
+    "Colorado Rockies vs. New York Yankees - 3rd Inning Winner",
+  ];
+
+  test("the filed defect: the matchup is lifted out of the five rows that repeat it", () => {
+    expect(familySharedHead(familyRowTitles(YANK_CARD))).toBe(
+      "Colorado Rockies vs. New York Yankees",
+    );
+  });
+
+  test("the trailing join characters do not survive onto a line of their own", () => {
+    // The head is `… Yankees - `; on its own line there is nothing to its right
+    // for the dash to join it to.
+    const s = familySharedHead(familyRowTitles(YANK_CARD))!;
+    expect(s.endsWith("-")).toBe(false);
+    expect(s).toBe(s.trim());
+  });
+
+  test("🔴 THE CLASS: a card that reserves the same tail on every row must hoist", () => {
+    // This is the assertion that was missing, and it is worth stating as a rule
+    // rather than as five expected strings. When every row of a card reserves a
+    // tail AND every head is the same bytes, the matchup exists on the page ONLY
+    // inside a head that CSS is explicitly entitled to delete (`shrink-[9999]`)
+    // — and at 390px it did delete it, down to `C`. So for any such card the
+    // hoist must fire; a null here means the matchup is unreachable on a phone.
+    const titles = familyRowTitles(YANK_CARD);
+    const everyRowReservesATail = titles.every((t) => t.tail !== "");
+    const everyHeadIdentical = new Set(titles.map((t) => t.head)).size === 1;
+    expect(everyRowReservesATail && everyHeadIdentical).toBe(true);
+    expect(familySharedHead(titles)).not.toBeNull();
+  });
+
+  test("what each row shows after the hoist still tells the rows apart", () => {
+    // Post-hoist a row renders its tail alone, with the full width of the row.
+    const titles = familyRowTitles(YANK_CARD);
+    const shown = titles.map((t) => t.tail);
+    expect(shown).toEqual([
+      "8th Inning Winner",
+      "7th Inning Winner",
+      "9th Inning Winner",
+      "6th Inning Winner",
+      "3rd Inning Winner",
+    ]);
+    expect(new Set(shown).size).toBe(YANK_CARD.length);
+  });
+
+  test("no bytes are invented: the subject is a real prefix of every row's name", () => {
+    const subject = familySharedHead(familyRowTitles(YANK_CARD))!;
+    for (const name of YANK_CARD) expect(cleanName(name).startsWith(subject)).toBe(true);
+  });
+
+  test("the #4136 specimen is left completely alone — mixed cards do not hoist", () => {
+    // The original filed card: two Rockies rows among three tennis rows. The
+    // tennis rows diverge early and reserve no tail, so there is no one subject
+    // and lifting the Rockies matchup would put a header on a card most of whose
+    // rows are not about it.
+    const MIXED = [
+      "M15 Hurghada: Mayank Sharma vs Luis Klaus",
+      "Istanbul 3: Timofey Skatov vs Yanki Erel",
+      "Istanbul 3: Yanki Erel vs Radu Albot",
+      "Colorado Rockies vs. New York Yankees - First 5 Innings Winner",
+      "Colorado Rockies vs. New York Yankees - 9th Inning Winner",
+    ];
+    expect(familySharedHead(familyRowTitles(MIXED))).toBeNull();
+  });
+
+  test("heads that differ are per-row information and are never hoisted", () => {
+    // Two matchups, two rows each: every row reserves a tail, but the heads are
+    // not the same bytes, so a single header would be a lie about half the card.
+    const TWO = [
+      "Colorado Rockies vs. New York Yankees - 8th Inning Winner",
+      "Colorado Rockies vs. New York Yankees - 9th Inning Winner",
+      "Los Angeles Dodgers vs. Cincinnati Reds - 8th Inning Winner",
+      "Los Angeles Dodgers vs. Cincinnati Reds - 9th Inning Winner",
+    ];
+    const titles = familyRowTitles(TWO);
+    expect(titles.every((t) => t.tail !== "")).toBe(true); // all split...
+    expect(familySharedHead(titles)).toBeNull(); // ...but not all the same
+  });
+
+  test("a single-row card has no shared subject to lift", () => {
+    expect(familySharedHead(familyRowTitles([YANK_CARD[0]]))).toBeNull();
+    expect(familySharedHead([])).toBeNull();
+  });
+
+  test("a head that is only separators never becomes a header", () => {
+    expect(familySharedHead([{ head: " - ", tail: "A" }, { head: " - ", tail: "B" }])).toBeNull();
+  });
+
+  test("an unsplit row among identical heads blocks the hoist — its name would vanish", () => {
+    // Found by mutation: dropping the every-row-has-a-tail check failed nothing,
+    // because `familyRowTitles` cannot currently produce identical heads with an
+    // empty tail among them — the heads-differ check always fires first. The
+    // check is still the one that holds the contract of THIS function, which is
+    // exported and takes the pair shape from any caller: a row with no tail
+    // renders its head as its whole title, so hoisting that head into the card
+    // header would leave that row displaying nothing at all.
+    expect(
+      familySharedHead([
+        { head: "Rockies vs. Yankees - ", tail: "9th Inning Winner" },
+        { head: "Rockies vs. Yankees - ", tail: "" },
+      ]),
+    ).toBeNull();
   });
 });
