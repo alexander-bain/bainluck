@@ -250,7 +250,10 @@ struct EventCardView: View {
                 color: color,
                 size: isLive ? 28 : 24,
                 sportKey: event.sport,
-                isPhotograph: avatar.isPhotograph
+                isPhotograph: avatar.isPhotograph,
+                // #4720 — this card stacks both rows, so each circle is resolved
+                // against the other side rather than on its own.
+                opponentName: side == .away ? event.homeTeam : event.awayTeam
             )
             Text(name)
                 .font(.subheadline)

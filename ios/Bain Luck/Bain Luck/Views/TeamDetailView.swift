@@ -44,7 +44,10 @@ struct TeamDetailView: View {
                         } placeholder: {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(Color(hex: team.primaryColor ?? "#6B7280"))
-                                .overlay(Text(team.abbreviation ?? String(team.name.prefix(1))).font(.title2).bold().foregroundStyle(.white))
+                                // #4720 — the served abbreviation still wins; the
+                                // FALLBACK was one raw character ("1" for
+                                // "1. FC Heidenheim 1846") and is now the app's badge.
+                                .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.title2).bold().foregroundStyle(.white))
                         }
                         .frame(width: 64, height: 64)
                     }
