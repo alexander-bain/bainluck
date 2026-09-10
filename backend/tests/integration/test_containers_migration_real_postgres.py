@@ -290,16 +290,33 @@ def test_upgrade_creates_all_four_tables_and_the_receipt_column(round_trip, pg):
 
 def test_head_is_single_after_this_migration(round_trip):
     """Two heads fail the Heroku release phase outright — the site does not
-    deploy at all. Read from the migrated database, not from the files."""
-    result = _alembic(round_trip["url"], "current")
-    assert result.returncode == 0, result.stderr
-    assert THIS_REVISION in result.stdout, result.stdout
-    # `current` prints one line per head; more than one head means a branch.
-    head_lines = [
-        line
-        for line in result.stdout.splitlines()
-        if line.strip() and "(head)" in line
-    ]
+    deploy at all.
+
+    THE BRANCH IS READ FROM ``heads``, NOT FROM ``current`` (#4571). This
+    previously asserted that ``current`` printed exactly one line carrying
+    ``(head)`` — which is true only while :data:`THIS_REVISION` IS the head. The
+    fixture stops the database at this revision deliberately, so the first
+    migration to chain onto it makes ``current`` print the revision with no
+    ``(head)`` marker at all, the list comes back EMPTY, and the test fails with
+    "expected a single head, got: []" — a branch reported where none exists,
+    against a change that merely came after this one.
+
+    That is a false red aimed at whoever is next: `score_observation_stamp` hit
+    it, and so would every successor. The invariant the docstring names is a
+    property of the migration GRAPH — does `upgrade head` have one unambiguous
+    destination — so it is asserted against `heads`, which answers exactly that
+    and is unmoved by where this fixture happens to stop.
+
+    ``current`` is still read, for the different claim it can actually make:
+    that the database really is at this revision.
+    """
+    current = _alembic(round_trip["url"], "current")
+    assert current.returncode == 0, current.stderr
+    assert THIS_REVISION in current.stdout, current.stdout
+
+    heads = _alembic(round_trip["url"], "heads")
+    assert heads.returncode == 0, heads.stderr
+    head_lines = [line for line in heads.stdout.splitlines() if line.strip()]
     assert len(head_lines) == 1, f"expected a single head, got: {head_lines}"
 
 
