@@ -85,7 +85,16 @@ class TestPinPass:
             {
                 "type": "event",
                 "score": 35,
-                "data": {"status": "live", "home_team_data": {"logo": "x"}, "name": "game"},
+                # `game_clock` alongside `home_team_data` for the same reason
+                # the logo is here: this case is about the marquee keeping the
+                # top slot, so the game beneath it has to be one the lead is
+                # allowed to promote at all (#4872's substance bar).
+                "data": {
+                    "status": "live",
+                    "home_team_data": {"logo": "x"},
+                    "game_clock": "60'",
+                    "name": "game",
+                },
             },
             {"type": "concept", "score": 40, "_marquee_pin": True, "data": {"name": "TdF"}},
         ]

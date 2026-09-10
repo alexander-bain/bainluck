@@ -47,6 +47,7 @@ __all__ = [
     "MAX_LEAD",
     "SOON_WINDOW_HOURS",
     "MARQUEE_PIN_KEY",
+    "live_game_card_has_substance",
     "select_tonights_games",
     "lead_with_tonights_games",
     "compose_lead",
@@ -66,6 +67,65 @@ MAX_LEAD = 3
 # window a reader is actually thinking about, narrow enough that a lunchtime
 # visit does not lead with a game eight hours away.
 SOON_WINDOW_HOURS = 4
+
+
+def live_game_card_has_substance(item: dict) -> bool:
+    """Does this LIVE game card put anything on the screen beyond two names?
+
+    #4872, from the ranking eval's first row (0/10, hard check FAILS). Two cards
+    led Discover at slots 2 and 3 on 2026-09-10 19:20Z, both scored **35** — the
+    demotion cap, i.e. the scorer had already called them non-exceptional — and
+    both sat above a 98 and a 100:
+
+        Bodø/Glimt @ Bayern Munich    0–0  clock=None  period=None  96% / 4%
+        Sabah FK @ Manchester United  0–0  clock=None  period=None  97% / 3%
+
+    with `reason=""` and one crest missing each. The reader met a green card, a
+    grey placeholder box, the word "Live", and nothing else.
+
+    **WHY THIS PREDICATE EXISTS HERE AND NOT IN THE QUALITY FLOOR.**
+    `feed_market_quality.is_wholly_silent_card` is the shipped rule for a card
+    that does not speak, and it opens `if item.get("type") != "futures"`. That
+    scope is DELIBERATE and its docstring gives the reason — *"a game card
+    renders two team names, two scores and two logos"* — so a game card is never
+    silent for want of a caption. **That premise is true of the card it was
+    written about and false of this one:** a just-kicked-off game has 0–0, no
+    clock, and (per #4862, 35 of 49 served cards) frequently one missing crest.
+    Widening the futures predicate instead would collide head-on with #4681 and
+    notice 27, which require a settled marquee final — a card whose story IS the
+    score and which routinely carries no caption — to reach page one. So the
+    game-card test lives here, next to the pass that seats these cards, and the
+    futures predicate is left exactly as it is.
+
+    **THE DOORS, and why `headline` is not one of them.** A live card's headline
+    is the literal string ``"Live"`` on every live game, silent or not. Admitting
+    it would make this predicate true for the entire population it exists to
+    catch — the survivor a "just check all the text fields" version leaves
+    behind. Substance is a SENTENCE (`reason`/`context_summary`) or EVIDENCE THE
+    GAME IS UNDER WAY (a clock, a period, or a score on the board).
+
+    **A 0–0 with no clock is not a scoreless game, it is an unstarted one.** A
+    genuine 0–0 in the 60th minute carries a clock or a period and passes here on
+    that. The pair above carry neither, which is why "0–0" is not treated as a
+    score a reader can read.
+    """
+    if not isinstance(item, dict):
+        return False
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+
+    for door in ("reason", "context_summary"):
+        if str(item.get(door) or "").strip():
+            return True
+    for door in ("game_clock", "period"):
+        if str(data.get(door) or "").strip():
+            return True
+
+    # `bool` is an `int` subclass, so an explicit exclusion — a `True` here would
+    # otherwise read as the number 1 and put a phantom goal on the board.
+    scores = [data.get("home_score"), data.get("away_score")]
+    return any(
+        isinstance(s, int) and not isinstance(s, bool) and s > 0 for s in scores
+    )
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -117,9 +177,31 @@ def _is_eligible(item: dict, now: datetime, soon_window_hours: int) -> bool:
         return False
 
     if status == "live":
-        return True
+        # #4872 — and this NARROWS Alex's own acceptance criterion, so it is
+        # written as a decision rather than slipped in as a guard. The criterion
+        # on record (`live_first_page.py`, "WHY A PRICE IS REQUIRED") is "every
+        # event with status live and a price"; this adds "and with something on
+        # the screen". The case for it is that a 0–0 kick-off with no clock, a
+        # 97–3 price and a missing crest is not "the game that is on tonight" in
+        # any reader's sense of the phrase — and the scorer had already said so,
+        # capping both specimens at 35 while the lead seated them at slots 2 and
+        # 3 above a 98 and a 100. The lead was overriding a judgement the ranker
+        # had already made correctly.
+        #
+        # Safe by construction, which is the reason this pass is the right place
+        # for it: `compose_lead` only RE-ORDERS. A rejection here leaves the card
+        # exactly where the ranker put it — nothing is dropped, so this cannot
+        # empty anything (#1091, gotcha #43, and the module docstring's promise).
+        return live_game_card_has_substance(item)
 
     if status in {"scheduled", "upcoming", "pre", ""}:
+        # NOT extended to this arm, deliberately. A scheduled game has no clock
+        # and no score BECAUSE IT HAS NOT STARTED, and its substance is its start
+        # time — the same test here would reject every upcoming game and delete
+        # the pre-game half of the lead. The bus's row also flagged two
+        # "Starting soon" cards, but on `/sports`, which is a different pass and
+        # a different measurement; widening on the strength of a reading taken
+        # somewhere else is how a narrow fix becomes an unreviewable one.
         commence = _parse_dt(data.get("commence_time"))
         if commence is None:
             return False
