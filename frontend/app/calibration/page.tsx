@@ -28,7 +28,6 @@ import {
   describeCategoryPopulation,
   describeCategoryTablePopulation,
   footerPopulationPhrase,
-  nameAll,
 } from "@/lib/calibrationPopulation";
 import {
   anyNotProvable,
@@ -1794,7 +1793,13 @@ export default function CalibrationPage() {
                   data-pools={pop.pools ? "true" : "false"}
                   data-pooled-from={pop.pooledFrom.join(",")}
                   data-published-ece={pop.publishedEce ?? ""}
-                  data-graded-share={cm.graded_share ?? ""}>
+                  data-graded-share={cm.graded_share ?? ""}
+                  /* CAL-P1078: these four moved up from the deleted expander so
+                     the numbers outlive the sentence that used to carry them. */
+                  data-member-count={pop.pooledFrom.length}
+                  data-cap-applied={pop.capApplied ? "true" : "false"}
+                  data-published-members={pop.publishedMembers.join(",")}
+                  data-unpublished-members={pop.unpublishedMembers.join(",")}>
                   <td className="py-2 pr-4 font-medium text-text-primary">
                     {categoryLabel(cm.category)}
                     {notProvable && (
@@ -1815,58 +1820,31 @@ export default function CalibrationPage() {
                         {prov.badgeLabel}
                       </span>
                     )}
-                    {/* A pooled row's label is not the payload key it looks
-                        like. Marked visibly rather than only in a tooltip,
-                        because the reader who needs it is the one comparing
-                        against the API and he is not hovering.
+                    {/* CAL-P1078 — ALEX, ON THE LIVE PAGE: a bare "56
+                        CATEGORIES" badge under Soccer is jargon on a reader's
+                        screen (standing notice 34, as amended by D102). It went,
+                        and so did what it opened onto: a two-line split of the
+                        members into "Published in `by_category`" and "Not
+                        published" — an API field name in a <code> tag, and a
+                        distinction that exists inside our payload and nowhere in
+                        the reader's world.
 
-                        Option C amendment 4: the badge is an EXPANDER, and the
-                        expansion carries every member of both sets, uncapped.
-                        That is the whole licence for the collapsed sentence's
-                        "and N more" — soccer folds 55 identifiers and inlining
-                        them is the wall of text the ruling warned about, but a
-                        capped list with nowhere to finish reading it is #2108
-                        again. Cap the sentence, never the expansion. */}
-                    {pop.pools && (
-                      <details
-                        data-testid="calibration-pooled-expander"
-                        data-cap-applied={pop.capApplied ? "true" : "false"}
-                        data-member-count={pop.pooledFrom.length}
-                        className="inline-block align-middle ml-2"
-                      >
-                        <summary
-                          data-testid="calibration-pooled-categories-badge"
-                          title={pop.title}
-                          className="cursor-pointer list-none inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border border-surface-border text-text-muted hover:text-text-secondary"
-                        >
-                          {pop.pooledFrom.length} categories
-                        </summary>
-                        <div
-                          data-testid="calibration-pooled-members"
-                          className="mt-2 max-w-md whitespace-normal rounded-lg border border-surface-border bg-surface-card p-3 text-xs font-normal normal-case tracking-normal text-text-secondary"
-                        >
-                          <p className="mb-2">{pop.sentence}</p>
-                          <p className="mb-1">
-                            <span className="font-semibold text-text-primary">
-                              Published in <code>by_category</code> ({pop.publishedMembers.length})
-                            </span>
-                            :{" "}
-                            {pop.publishedMembers.length
-                              ? nameAll(pop.publishedMembers)
-                              : "none"}
-                          </p>
-                          <p>
-                            <span className="font-semibold text-text-primary">
-                              Not published ({pop.unpublishedMembers.length})
-                            </span>
-                            :{" "}
-                            {pop.unpublishedMembers.length
-                              ? nameAll(pop.unpublishedMembers)
-                              : "none"}
-                          </p>
-                        </div>
-                      </details>
-                    )}
+                        WHAT REPLACED IT, AND WHY THAT IS NOT A DELETION. The
+                        badge answered a real question — "Soccer" is not the
+                        payload key it looks like — so the answer moved rather
+                        than vanished:
+                          * the reader gets it in plain words in the row's own
+                            tooltip (`pop.title`), which notice 34 names as the
+                            right home for method;
+                          * every probe and rail keeps reading it off the row's
+                            `data-pools` / `data-pooled-from` / `data-member-*`
+                            attributes, which is notice 34's own amended clause
+                            for a self-audit that is still failing.
+                        And it IS still failing: the underlying gap — 55 of
+                        Soccer's 56 members having no published row of their own
+                        — is #2108, which is OPEN and must stay open until the
+                        payload publishes them. This ship hides our accounting of
+                        that gap from the reader; it does not close it. */}
                   </td>
                   <td className="py-2 pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>
                   <td title={pop.title} className={`py-2 pr-4 text-right tabular-nums ${

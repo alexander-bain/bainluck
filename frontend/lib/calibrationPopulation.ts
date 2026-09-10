@@ -251,30 +251,29 @@ export function describeCategoryPopulation(
   // The pooling clause leads when it applies, because it is the larger and the
   // less guessable of the two differences: a reader can imagine a cohort filter,
   // but cannot imagine that "Soccer" silently means 55 payload keys.
+  // CAL-P1078 / D102 — THE READER'S SENTENCE STOPS SPEAKING THE PAYLOAD'S
+  // VOCABULARY. The shipped clauses split the members into "published" and
+  // "unpublished" and named the field they are published IN. Both are true and
+  // neither is the reader's: "published" here means "the API emits a
+  // `by_category` row under this name", which is a fact about our serialiser.
+  // The distinction still travels — `publishedMembers` / `unpublishedMembers`
+  // are returned uncapped and the row hangs them on data-attributes — and #2108
+  // remains open on the underlying gap. What changed is the sentence a person
+  // reads, which now says the one thing he can act on: this row is more than
+  // one category, and here is which.
+  //
+  // The cap survives the rewrite and now applies to the WHOLE pooled list
+  // rather than the published half of it, because that is the list being named.
   let poolingClause: string | null = null;
   let poolingClauseCountsOnly: string | null = null;
   let capApplied = false;
   if (pools) {
-    const noun = plural(pub.length, "category", "categories");
-    if (pub.length === 0) {
-      poolingClause =
-        `pools ${pooled.length} payload categories, none of them published in ` +
-        "`by_category`";
-      poolingClauseCountsOnly = poolingClause;
-    } else if (unpub.length === 0) {
-      capApplied = pub.length > MEMBER_NAME_CAP;
-      poolingClause = `pools ${pub.length} published ${noun} (${nameCapped(pub, MEMBER_NAME_CAP)})`;
-      poolingClauseCountsOnly = `pools ${pub.length} published ${noun}`;
-    } else {
-      // Alex's ruled shape, verbatim in structure:
-      //   "pools 1 published category (soccer) and 54 unpublished"
-      capApplied = pub.length > MEMBER_NAME_CAP;
-      poolingClause =
-        `pools ${pub.length} published ${noun} ` +
-        `(${nameCapped(pub, MEMBER_NAME_CAP)}) and ${unpub.length} unpublished`;
-      poolingClauseCountsOnly =
-        `pools ${pub.length} published ${noun} and ${unpub.length} unpublished`;
-    }
+    const noun = plural(pooled.length, "category", "categories");
+    capApplied = pooled.length > MEMBER_NAME_CAP;
+    poolingClause =
+      `covers ${pooled.length} ${noun} grouped under one name ` +
+      `(${nameCapped(pooled, MEMBER_NAME_CAP)})`;
+    poolingClauseCountsOnly = `covers ${pooled.length} ${noun} grouped under one name`;
   }
 
   const build = (clause: string | null) => {
@@ -286,13 +285,16 @@ export function describeCategoryPopulation(
   // skeptical reader reconcile the two numbers instead of picking one. Omitted
   // when the displayed name is not a payload key at all: there is no published
   // twin, and inventing a disagreement is worse than naming none.
+  // CAL-P1078: same rewrite, same reason. "The API publishes X" is a sentence
+  // about our serialiser; the reader's version of the same fact is "across
+  // everything we have graded, not just the slice you are looking at". The
+  // figures themselves are unchanged and still travel as `publishedEce` /
+  // `publishedN`.
   const anchorSentence =
     twin && twin.ece !== null
-      ? `The API publishes ${twin.ece.toFixed(2)}pp for “${displayed}” over ` +
-        `${twin.n.toLocaleString()} outcomes` +
-        (pools
-          ? ` — that figure covers the “${displayed}” category alone, over the whole population.`
-          : " — that figure covers the whole population, not this cohort.")
+      ? `Across all ${twin.n.toLocaleString()} graded “${displayed}” outcomes, ` +
+        `not just this slice, the figure is ${twin.ece.toFixed(2)}pp` +
+        (pools ? ` — for “${displayed}” on its own.` : ".")
       : null;
 
   return {
@@ -328,14 +330,28 @@ export function describeCategoryTablePopulation(
   pooledRenderedRows: number,
   renderedRows: number
 ): string {
+  // CAL-P1078 / standing notice 34 as amended by D102 — THE TARGET HERE IS
+  // JARGON, NOT GREY TYPE. #4291 put this sentence behind a tap, which fixed
+  // its LOCATION; Alex read it there anyway and the words were still ours
+  // rather than a reader's. Two things went:
+  //
+  //   * "`by_category`" — a backticked API field name. The reader this sentence
+  //     is for does not curl the API, and the one who does can read the API.
+  //   * "N of M rows also pool several payload categories" — a coverage count,
+  //     which is notice 34's named shape verbatim. The two numbers still travel
+  //     on `data-pooled-rows` / `data-total-rows`, so every probe that reads
+  //     them still reads them; what left is the sentence.
+  //
+  // What survives is the one fact a reader cannot get anywhere else: the
+  // figures here describe the cohort he has selected, not everything we have
+  // ever graded. `renderedRows` stays in the signature because the ratio is
+  // still what the caller hands the data-attributes.
+  void renderedRows;
   const base =
-    `Every figure in this table is measured over ${cohortPhrase(cohort)}, so it will not ` +
-    "match the whole-population number the API publishes in `by_category` for " +
-    "the same name.";
+    `Every figure in this table is measured over ${cohortPhrase(cohort)}.`;
   if (pooledRenderedRows <= 0) return base;
   return (
     base +
-    ` ${pooledRenderedRows} of ${renderedRows} rows also pool several payload ` +
-    "categories under one label — expand a row to see every one of them."
+    " Some rows group several closely related categories under one name."
   );
 }
