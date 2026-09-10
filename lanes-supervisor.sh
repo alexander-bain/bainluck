@@ -37,10 +37,10 @@ launch () {
 }
 
 # `count_running` — how many processes are running EXACTLY this command line —
-# now lives in lanes.conf, sourced above, because start-lanes.sh needs the same
-# answer for the measurement bus and a second copy of a matcher is the drift this
-# whole arrangement exists to prevent. The reasoning (why not pgrep, why not
-# `ps | grep`, why whole-line, why -ww) is in the comment block beside it there.
+# now lives in lane-launch-lib.sh, sourced above, because start-lanes.sh needs
+# the same answer for the measurement bus and a second copy of a matcher is the
+# drift this whole arrangement exists to prevent. The reasoning (why not pgrep,
+# why not `ps | grep`, why whole-line, why -ww) is beside it there.
 #
 # One snapshot per pass, shared by every call in it via LAUNCH_PS_SNAP.
 

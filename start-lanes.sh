@@ -196,9 +196,9 @@ done
 # is how a second bus gets opened — the same reason the supervisor branch below
 # has been pgrep-guarded since it was written.
 #
-# `count_running` (lanes.conf), not `pgrep`: pgrep excludes its own ancestors, so
-# running this script from the bus's own Terminal window would report no bus and
-# open a duplicate — precisely the case the guard is for.
+# `count_running` (lane-launch-lib.sh), not `pgrep`: pgrep excludes its own
+# ancestors, so running this script from the bus's own Terminal window would
+# report no bus and open a duplicate — precisely the case the guard is for.
 BUS=0
 if [ -z "${BUS_RUNNER:-}" ] || [ ! -f "$BUS_RUNNER" ]; then
   echo "SKIPPED the measurement bus — no script at ${BUS_RUNNER:-<unset>}."
