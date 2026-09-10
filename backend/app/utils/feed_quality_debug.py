@@ -990,6 +990,32 @@ WHY_NOW_MARKERS = (
     "won as ",
 )
 
+#: Whole headlines that ARE the why-now, matched exactly rather than as
+#: substrings. `_concept_headline` and the tournament card branch in
+#: `routes/feed.py` both emit this closed four-string vocabulary and nothing
+#: else — "Live" when the thing is happening now, then a countdown inside the
+#: week. They are the most time-anchored copy the feed produces and the metric
+#: read none of them, because they were shipped without their entry here (the
+#: handshake failure #4695 is the other half of: a producer and a consumer that
+#: agree on a vocabulary, with nothing testing the join).
+#:
+#: EXACT, not substring, and headline-only. Every other entry above is a phrase
+#: long enough to be safe inside `in`; these are short common words, and
+#: "live" as a substring matches "delivery", "Oliver" and "livestream", while
+#: "today" appears inside copy that is explicitly NOT a why-now. Matching the
+#: whole stripped headline is what makes them safe, so they are kept in their
+#: own tuple rather than folded into `WHY_NOW_MARKERS`.
+#:
+#: Refusing them was also incoherent with the list above, which already credits
+#: "starting soon" and "starting in under an hour": a card that says it is LIVE
+#: is more imminent than one that says it is about to start.
+TEMPORAL_HEADLINE_WHY_NOWS = (
+    "live",
+    "today",
+    "tomorrow",
+    "this week",
+)
+
 #: Phrases that are a SELECTION FACT and never a why-now. Listed so the metric
 #: is explicit about what it is refusing rather than passing them by silence.
 NOT_A_WHY_NOW_MARKERS = (
@@ -1010,6 +1036,10 @@ def _card_why_now(item: dict[str, Any]) -> str | None:
         str(item.get("context_summary") or ""),
         str(item.get("reason") or ""),
     ]
+    # Headlines that are the why-now in their entirety, checked as whole
+    # strings. A bundle's members print their own, so they are collected on the
+    # same footing as the card's.
+    headlines = [str(item.get("headline") or "")]
     data = item.get("data") if isinstance(item.get("data"), dict) else {}
     # A bundle's own copy is its shared question; its why-now, if it has one,
     # lives in the member rows the card prints underneath.
@@ -1017,11 +1047,16 @@ def _card_why_now(item: dict[str, Any]) -> str | None:
         if isinstance(member, dict):
             texts.append(str(member.get("headline") or ""))
             texts.append(str(member.get("context_summary") or ""))
+            headlines.append(str(member.get("headline") or ""))
     for text in texts:
         lowered = text.lower()
         for marker in WHY_NOW_MARKERS:
             if marker in lowered:
                 return marker
+    for headline in headlines:
+        stripped = headline.strip().lower()
+        if stripped in TEMPORAL_HEADLINE_WHY_NOWS:
+            return stripped
     return None
 
 

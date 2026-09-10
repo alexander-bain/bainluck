@@ -14,7 +14,17 @@ so the two directions are both pinned: a change that made everything pass would
 break the first test, and a change that made nothing pass would break the rest.
 """
 
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from app.routes.feed import _concept_headline
 from app.utils.feed_quality_debug import why_now_coverage
+
+#: A fixed anchor. Offset FIRST, then compare (gotcha #44) — `_concept_headline`
+#: subtracts `.date()`s, so a test that built "tomorrow" from the wall clock
+#: would flip at midnight.
+_CONCEPT_NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
 
 # ── The ten cards production served, verbatim ────────────────────────────────
 
@@ -86,12 +96,27 @@ BASELINE_2026_09_08 = [
 ]
 
 
-def test_the_served_baseline_scores_zero_of_ten():
-    """Page one on 2026-09-08: not one card named something that happened."""
+def test_the_served_baseline_scores_one_of_ten():
+    """Page one on 2026-09-08: one card named something, nine did not.
+
+    This asserted 0/10 until #4080's supply measurement, and the nine are
+    unchanged. Slot 1 is the correction: the Vuelta concept card headlined
+    "Live" — the race was running as the reader looked at it — and the metric
+    scored it a miss because `TEMPORAL_HEADLINE_WHY_NOWS` did not exist yet.
+    Crediting "starting soon" while refusing "Live" was never a position
+    anybody held; it is what the vocabulary did.
+
+    Keeping the 0 would have been worse than cosmetic. #4080 demotes cards
+    this metric calls silent, and on the 2026-09-10 pool the same gap hid
+    SEVEN cards (every concept and tournament card that was live or inside the
+    week). Demoting on the uncorrected read would have swapped the live Vuelta
+    off page one for a futures card, which is the opposite of the ship.
+    """
     coverage = why_now_coverage(BASELINE_2026_09_08, top_n=10)
 
     assert coverage["slots"] == 10
-    assert coverage["with_why_now"] == 0
+    assert coverage["with_why_now"] == 1
+    assert coverage["items"][0]["why_now"] == "live"
 
 
 def test_the_baseline_report_names_every_offender_with_its_copy():
@@ -99,9 +124,9 @@ def test_the_baseline_report_names_every_offender_with_its_copy():
     coverage = why_now_coverage(BASELINE_2026_09_08, top_n=10)
     offenders = [row for row in coverage["items"] if not row["why_now"]]
 
-    assert len(offenders) == 10
-    assert offenders[1]["name"] == "MLB World Series Winner"
-    assert offenders[1]["served_copy"] == (
+    assert len(offenders) == 9
+    assert offenders[0]["name"] == "MLB World Series Winner"
+    assert offenders[0]["served_copy"] == (
         "Los Angeles Dodgers leads at 31% across 2 sources"
     )
 
@@ -234,3 +259,94 @@ def test_a_short_page_reports_the_slots_it_actually_had():
     coverage = why_now_coverage(BASELINE_2026_09_08[:3], top_n=10)
 
     assert coverage["slots"] == 3
+
+
+# ── The producer/consumer handshake (#4080 substrate) ────────────────────────
+#
+# #4695 was one vocabulary read at ten sites and emitted at none, and it
+# survived five months because the producer's tests asserted what it DID emit
+# and the consumer's tests hand-wrote their inputs. Neither half was red.
+# So this section drives the real producer and asserts the metric reads its
+# real output. It is deliberately NOT a scan of the source for the four
+# strings: the strings are what the branch returns, and a scan would pass on a
+# branch that had been made unreachable.
+
+
+@pytest.mark.parametrize(
+    "concept,expected_headline",
+    [
+        ({"status": "live"}, "Live"),
+        ({"latest_commence": _CONCEPT_NOW}, "Today"),
+        ({"latest_commence": _CONCEPT_NOW + timedelta(days=1)}, "Tomorrow"),
+        ({"latest_commence": _CONCEPT_NOW + timedelta(days=5)}, "This week"),
+    ],
+)
+def test_every_temporal_headline_the_concept_branch_emits_is_a_why_now(
+    concept, expected_headline
+):
+    """Drive `_concept_headline` itself; the metric must read what it returns.
+
+    The four states are the whole of its non-None output. If a fifth is added
+    and its string is not in `TEMPORAL_HEADLINE_WHY_NOWS`, this fails on the
+    new state rather than silently scoring the card as saying nothing.
+    """
+    headline = _concept_headline(concept, _CONCEPT_NOW)
+
+    assert headline == expected_headline, "producer changed; update the vocabulary"
+
+    coverage = why_now_coverage(
+        [{"type": "concept", "headline": headline, "data": {"name": "Vuelta"}}],
+        top_n=1,
+    )
+    assert coverage["with_why_now"] == 1, (
+        f"`_concept_headline` emits {headline!r} and the metric scores it silent"
+    )
+
+
+def test_a_concept_card_with_no_countdown_still_has_no_why_now():
+    """The other direction: the producer returns None past the week, and a
+    card with no headline must stay an offender. A vocabulary change that made
+    everything pass would break here."""
+    assert _concept_headline({"latest_commence": _CONCEPT_NOW + timedelta(days=30)}, _CONCEPT_NOW) is None
+
+    coverage = why_now_coverage(
+        [{"type": "concept", "headline": None, "data": {"name": "Vuelta"}}], top_n=1
+    )
+    assert coverage["with_why_now"] == 0
+
+
+@pytest.mark.parametrize("headline", ["Live", "Today", "Tomorrow", "This week"])
+def test_the_tournament_card_shares_the_same_four_string_vocabulary(headline):
+    """The golf tournament branch in `routes/feed.py` emits the same closed set
+    (`Live`, then the same countdown). It is inline in the serve function
+    rather than a callable, so this pins the consumer half it depends on."""
+    coverage = why_now_coverage(
+        [{"type": "tournament", "headline": headline, "data": {"name": "PGA"}}],
+        top_n=1,
+    )
+
+    assert coverage["with_why_now"] == 1
+
+
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Delivery vans by 2027",  # contains "live"
+        "Oliver Bearman to win",  # contains "live"
+        "Today's biggest movers",  # contains "today"
+        "Live Nation to announce a tour",  # starts with "live"
+    ],
+)
+def test_the_temporal_vocabulary_is_exact_and_never_a_substring(headline):
+    """Why the four live in their own tuple instead of `WHY_NOW_MARKERS`.
+
+    Folded into the substring list, each of these would score a why-now on a
+    card that names no development at all — and under #4080 that buys a
+    page-one slot.
+    """
+    coverage = why_now_coverage(
+        [{"type": "futures", "headline": headline, "data": {"name": headline}}],
+        top_n=1,
+    )
+
+    assert coverage["with_why_now"] == 0
