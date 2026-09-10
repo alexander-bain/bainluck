@@ -35,6 +35,14 @@ from typing import Optional
 
 import httpx
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API_BASE = "https://api.bainluck.com"
 RESULTS_DIR = Path(__file__).parent / "audit_results"
 
@@ -133,7 +141,7 @@ def api_get(path: str, params: dict = None) -> dict:
     url = f"{API_BASE}{path}"
     if params:
         url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-    resp = httpx.get(url, timeout=30)
+    resp = httpx.get(url, timeout=30, headers=tagged(url))
     resp.raise_for_status()
     return resp.json()
 
@@ -612,7 +620,7 @@ def print_summary(all_metrics: list[TimingMetrics], findings: list[AuditFinding]
     print()
 
     # By sport table
-    print(f"{'Sport':<28s} {'Events':>6s} {'ESPN%':>6s} {'Start\u00b1':>7s} {'End\u00b1':>7s} {'MaxGap':>7s} {'Markers':>8s} {'Dur\u00d7':>6s}")
+    print(f"{'Sport':<28s} {'Events':>6s} {'ESPN%':>6s} {'Start±':>7s} {'End±':>7s} {'MaxGap':>7s} {'Markers':>8s} {'Dur×':>6s}")
     print("\u2500" * 72)
     for sport, stats in by_sport.items():
         short = sport[:27]
@@ -623,7 +631,7 @@ def print_summary(all_metrics: list[TimingMetrics], findings: list[AuditFinding]
     print()
 
     # By coverage table
-    print(f"{'Coverage':<24s} {'Events':>6s} {'Start\u00b1':>7s} {'End\u00b1':>7s} {'MaxGap':>7s} {'Markers':>8s}")
+    print(f"{'Coverage':<24s} {'Events':>6s} {'Start±':>7s} {'End±':>7s} {'MaxGap':>7s} {'Markers':>8s}")
     print("\u2500" * 56)
     for label, stats in by_coverage.items():
         print(f"{label:<24s} {stats['count']:>6d} "

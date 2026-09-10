@@ -64,6 +64,12 @@ from app.utils.tournament_slate import (  # noqa: E402
     build_slate,
 )
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+from app.utils.agent_origin import curl_args
+
+
 #: db-query silently truncates at 1000 rows (a standing gotcha), so every read
 #: here is batched under that and the batch count is asserted rather than hoped.
 BATCH = 200
@@ -75,7 +81,7 @@ def _db_query(sql: str, *, limit: int = 1000) -> list[list[Any]]:
     body = json.dumps({"sql": sql, "limit": limit})
     proc = subprocess.run(
         [
-            "curl", "-s", "-m", "90",
+            "curl", *curl_args(f"{api}/api/admin/db-query"), "-s", "-m", "90",
             "-H", f"Authorization: Bearer {token}",
             "-H", "Content-Type: application/json",
             "-X", "POST", "-d", body,

@@ -21,6 +21,8 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.utils.agent_origin import tagged  # noqa: E402
+
 from app.utils.external_curator_ground_truth import (  # noqa: E402
     load_external_curator_ground_truth_from_path,
 )
@@ -48,7 +50,7 @@ def upload_rows(
         f"{base}/api/admin/discover-external-curator-ground-truth/import-rows",
         params={"secret": admin_token},
         json=build_import_payload(rows),
-        timeout=timeout,
+        timeout=timeout, headers=tagged(f"{base}/api/admin/discover-external-curator-ground-truth/import-rows"),
     )
     response.raise_for_status()
     return response.json()

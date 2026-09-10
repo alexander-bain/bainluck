@@ -47,6 +47,8 @@ from typing import Any, Iterable, Sequence
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.calibration_price_provenance import (  # noqa: E402
     LEG_SPLIT_SQL,
     POLICIES,
@@ -99,7 +101,7 @@ def db_query(sql: str, *, api: str, token: str, limit: int = ROW_CAP) -> dict[st
     request = urllib.request.Request(
         api.rstrip("/") + "/api/admin/db-query",
         data=body,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(api.rstrip("/") + "/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
     )
     try:
         with urllib.request.urlopen(request, timeout=90) as response:

@@ -118,6 +118,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+from app.utils.agent_origin import curl_args
+
+
 # The row path's budget is a hard 10s and `timeout_ms` is refused on it
 # (measured: "`timeout_ms` is only supported with `explain: true`"). So a chunk
 # that times out is SPLIT, never retried — a retry of an over-wide chunk is just
@@ -138,7 +144,7 @@ def db_query(sql: str, limit: int = ROW_CAP) -> list[dict]:
     api = os.environ["BAINLUCK_API"]
     tok = os.environ["ADMIN_TOKEN"]
     p = subprocess.run(
-        ["curl", "-s", "-X", "POST",
+        ["curl", *curl_args(f"{api}/api/admin/db-query"), "-s", "-X", "POST",
          "-H", f"Authorization: Bearer {tok}",
          "-H", "Content-Type: application/json",
          "-d", json.dumps({"sql": sql, "limit": limit}),
@@ -350,7 +356,7 @@ def published_cell_with_meta(sport_key: str) -> tuple[dict[int, dict], dict]:
     FRESH / CARRIED / STALE from. CAL-P998.
     """
     api = os.environ["BAINLUCK_API"]
-    p = subprocess.run(["curl", "-s", f"{api}/api/calibration"],
+    p = subprocess.run(["curl", *curl_args(f"{api}/api/calibration"), "-s", f"{api}/api/calibration"],
                        capture_output=True, text=True, timeout=120)
     payload = json.loads(p.stdout)
     out: dict[int, dict] = {}

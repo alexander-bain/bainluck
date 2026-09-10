@@ -51,6 +51,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import ORIGIN_HEADER, resolve_agent, tagged
+
 #: `app/tasks/typeahead_warmer.py::_STATIC_FLOOR`, mirrored. NOT the warmed set —
 #: see the module docstring. Kept so the historical series stays comparable.
 STATIC_FLOOR = (
@@ -149,7 +157,7 @@ def probe_once(base: str, term: str, timeout_s: float) -> dict:
     url = base.rstrip("/") + "/api/events/typeahead?" + urllib.parse.urlencode({"q": term})
     # LAT-P118: declare machine traffic so this probe stops voting in
     # `search:trending:24h`, the other half of the head the warmer elects from.
-    req = urllib.request.Request(url, headers={"X-Bainluck-Origin": "harness"})
+    req = urllib.request.Request(url, headers=tagged(url, {ORIGIN_HEADER: resolve_agent() or "harness"}))
     started = time.time()
     http_code = 0
     body = b""

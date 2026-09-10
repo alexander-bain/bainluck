@@ -27,6 +27,14 @@ from pathlib import Path
 
 import httpx
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API_KEY = os.getenv("MANUS_API_KEY", "")
 BASE = "https://api.manus.ai/v2"
 PROMPTS_DIR = Path(__file__).parent / ".." / ".." / "Manus" / "prompts"
@@ -107,7 +115,7 @@ def submit_task(prompt_text: str, module_name: str, display_name: str) -> str | 
             "hide_in_task_list": True,
             "agent_profile": "manus-1.6-max",
         },
-        headers={"x-manus-api-key": API_KEY},
+        headers=tagged(f"{BASE}/task.create", {"x-manus-api-key": API_KEY}),
         timeout=30,
     )
     if resp.status_code != 200:
@@ -128,7 +136,7 @@ def get_task_status(task_id: str) -> dict | None:
         resp = httpx.get(
             f"{BASE}/task.detail",
             params={"task_id": task_id},
-            headers={"x-manus-api-key": API_KEY},
+            headers=tagged(f"{BASE}/task.detail", {"x-manus-api-key": API_KEY}),
             timeout=15,
         )
         data = resp.json()
@@ -147,7 +155,7 @@ def _collect_messages(task_id: str) -> dict:
     resp = httpx.get(
         f"{BASE}/task.listMessages",
         params={"task_id": task_id, "order": "asc", "limit": 100},
-        headers={"x-manus-api-key": API_KEY},
+        headers=tagged(f"{BASE}/task.listMessages", {"x-manus-api-key": API_KEY}),
         timeout=30,
     )
     resp.raise_for_status()
@@ -191,7 +199,7 @@ def poll_task(task_id: str, timeout_seconds: int = 900) -> dict | None:
                     detail = httpx.get(
                         f"{BASE}/task.listMessages",
                         params={"task_id": task_id, "order": "desc", "limit": 3},
-                        headers={"x-manus-api-key": API_KEY},
+                        headers=tagged(f"{BASE}/task.listMessages", {"x-manus-api-key": API_KEY}),
                         timeout=30,
                     ).json()
                     for msg in detail.get("messages", []):
@@ -204,7 +212,7 @@ def poll_task(task_id: str, timeout_seconds: int = 900) -> dict | None:
                             httpx.post(
                                 f"{BASE}/task.confirmAction",
                                 json={"task_id": task_id, "event_id": evt_id, "input": {"accept": True}},
-                                headers={"x-manus-api-key": API_KEY},
+                                headers=tagged(f"{BASE}/task.confirmAction", {"x-manus-api-key": API_KEY}),
                                 timeout=15,
                             )
                             break

@@ -30,6 +30,8 @@ from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.authority_id_collisions import (  # noqa: E402
     AuthorityRecord,
     CandidateRow,
@@ -66,7 +68,7 @@ def db_query(sql: str, limit: int = 1000) -> dict[str, Any]:
     request = urllib.request.Request(
         f"{base}/api/admin/db-query",
         data=body,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(f"{base}/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
     )
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.load(response)

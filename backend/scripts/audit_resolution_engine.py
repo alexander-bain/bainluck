@@ -50,6 +50,8 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.utils.agent_origin import tagged
+
 from app.services.entity_registry import normalize_alias  # noqa: E402
 from app.services.grammar_adapters import (  # noqa: E402
     ROLE_PARTICIPANT,
@@ -82,10 +84,10 @@ def db_query(sql: str, limit: int = 1000) -> list[dict]:
     req = Request(
         f"{API}/api/admin/db-query",
         data=body,
-        headers={
+        headers=tagged(f"{API}/api/admin/db-query", {
             "Authorization": f"Bearer {TOKEN}",
             "Content-Type": "application/json",
-        },
+        }),
         method="POST",
     )
     try:

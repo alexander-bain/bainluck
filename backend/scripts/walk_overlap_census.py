@@ -30,6 +30,8 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+from app.utils.agent_origin import tagged
+
 import requests  # noqa: E402
 
 from app.tasks.census_overlap_trading import (  # noqa: E402
@@ -60,7 +62,7 @@ def _one_window(scan: int, cursor: int, timeout_s: int) -> tuple[bool, object, f
         resp = requests.post(
             f"{API}{ENDPOINT}",
             params={"limit": scan, "offset": cursor},
-            headers={"Authorization": f"Bearer {TOKEN}"},
+            headers=tagged(f"{API}{ENDPOINT}", {"Authorization": f"Bearer {TOKEN}"}),
             timeout=timeout_s,
         )
     except requests.RequestException as exc:

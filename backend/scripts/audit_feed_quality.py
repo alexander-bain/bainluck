@@ -19,6 +19,8 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.utils.agent_origin import tagged  # noqa: E402
+
 from app.utils.external_curator_ground_truth import (  # noqa: E402
     load_external_curator_ground_truth_report_from_env,
 )
@@ -51,7 +53,7 @@ def main() -> int:
         "include_futures": "true",
     }
 
-    resp = httpx.get(base_url, params=params, timeout=30)
+    resp = httpx.get(base_url, params=params, timeout=30, headers=tagged(base_url))
     resp.raise_for_status()
     payload = resp.json()
     items = [i for i in payload.get("items", []) if i.get("type") == "futures"]
@@ -346,7 +348,7 @@ def _load_gold_set_labels(base_url: str) -> dict:
         resp = httpx.get(
             export_url,
             params={"secret": admin_token, "days": "90", "limit": "10000"},
-            timeout=30,
+            timeout=30, headers=tagged(export_url),
         )
         if resp.status_code != 200:
             return {"loaded": False, "reason": f"HTTP {resp.status_code}"}

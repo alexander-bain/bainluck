@@ -25,6 +25,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.utils.market_grouping import detect_threshold_groups  # noqa: E402
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+from app.utils.agent_origin import curl_args
+
+
 API = os.environ["BAINLUCK_API"]
 TOKEN = os.environ["ADMIN_TOKEN"]
 CHUNKS = 24
@@ -34,7 +40,7 @@ def query(sql: str, limit: int = 1000) -> list[dict]:
     body = json.dumps({"sql": sql, "limit": limit})
     out = subprocess.run(
         [
-            "curl", "-s", "-X", "POST",
+            "curl", *curl_args(f"{API}/api/admin/db-query"), "-s", "-X", "POST",
             "-H", f"Authorization: Bearer {TOKEN}",
             "-H", "Content-Type: application/json",
             "-d", body, f"{API}/api/admin/db-query",

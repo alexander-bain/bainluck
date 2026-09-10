@@ -33,6 +33,14 @@ if sys.version_info < (3, 10):
 
 import httpx
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API_KEY = os.getenv("MANUS_API_KEY", "")
 BASE_URL = "https://api.manus.ai/v2"
 
@@ -48,7 +56,7 @@ def create_task(brief: str) -> dict:
     try:
         resp = httpx.post(
             f"{BASE_URL}/task.create",
-            headers=_headers(),
+            headers=tagged(f"{BASE_URL}/task.create", _headers()),
             json={
                 "message": {"content": brief},
                 "title": f"BainLuck Verify: {brief[:60]}",
@@ -73,7 +81,7 @@ def get_task_status(task_id: str) -> dict | None:
         resp = httpx.get(
             f"{BASE_URL}/task.detail",
             params={"task_id": task_id},
-            headers=_headers(),
+            headers=tagged(f"{BASE_URL}/task.detail", _headers()),
             timeout=15,
         )
         return resp.json().get("task", {})
@@ -86,7 +94,7 @@ def collect_messages(task_id: str) -> dict:
     resp = httpx.get(
         f"{BASE_URL}/task.listMessages",
         params={"task_id": task_id, "order": "asc", "limit": 100},
-        headers=_headers(),
+        headers=tagged(f"{BASE_URL}/task.listMessages", _headers()),
         timeout=30,
     )
     resp.raise_for_status()

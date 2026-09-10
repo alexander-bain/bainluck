@@ -114,6 +114,8 @@ from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
 # folds and this one hit the same endpoint and the same limit; two copies of the
 # predicate is one copy that stops recognising a re-worded refusal.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from app.utils.agent_origin import tagged  # noqa: E402
 from sharded_sweep import is_throttle  # noqa: E402
 
 #: The db-query row path's silent truncation point.
@@ -199,8 +201,8 @@ def db_query(sql: str, limit: int = ROW_CAP, retries: int = 3) -> dict:
     while (attempt := attempt + 1) < retries:
         req = urllib.request.Request(
             f"{base}/api/admin/db-query", data=body,
-            headers={"Authorization": "Bearer " + os.environ["ADMIN_TOKEN"],
-                     "Content-Type": "application/json"})
+            headers=tagged(f"{base}/api/admin/db-query", {"Authorization": "Bearer " + os.environ["ADMIN_TOKEN"],
+                     "Content-Type": "application/json"}))
         try:
             return json.loads(urllib.request.urlopen(req, timeout=180).read().decode())
         except urllib.error.HTTPError as e:
@@ -1443,7 +1445,7 @@ def fetch_payload() -> dict:
     base = os.environ["BAINLUCK_API"].rstrip("/")
     for attempt in range(PAYLOAD_RETRIES):
         try:
-            with urllib.request.urlopen(f"{base}/api/calibration", timeout=120) as fh:
+            with urllib.request.urlopen(urllib.request.Request(f"{base}/api/calibration", headers=tagged(f"{base}/api/calibration")), timeout=120) as fh:
                 return json.loads(fh.read().decode())
         except urllib.error.HTTPError as exc:
             if exc.code != 429 or attempt == PAYLOAD_RETRIES - 1:

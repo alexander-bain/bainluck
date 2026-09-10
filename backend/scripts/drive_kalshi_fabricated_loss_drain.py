@@ -78,6 +78,16 @@ import time
 from pathlib import Path
 from typing import Any
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import curl_args
+
+
 RAIL = "kalshi-fabricated-loss"
 
 
@@ -154,7 +164,7 @@ def _curl(url: str, token: str, timeout: int = 180) -> tuple[int, Any]:
     """POST and return (http_status, parsed_body_or_text)."""
     proc = subprocess.run(
         [
-            "curl", "-s", "-m", str(timeout), "-X", "POST",
+            "curl", *curl_args(url), "-s", "-m", str(timeout), "-X", "POST",
             "-H", f"Authorization: Bearer {token}",
             "-w", "\n%{http_code}", url,
         ],
@@ -200,7 +210,7 @@ _MUTUALLY_EXCLUSIVE_BOOK_SUM = 1.25
 def _db_query(api: str, token: str, sql: str, limit: int = 200) -> dict:
     proc = subprocess.run(
         [
-            "curl", "-s", "-m", "40", "-X", "POST",
+            "curl", *curl_args(f"{api}/api/admin/db-query"), "-s", "-m", "40", "-X", "POST",
             "-H", f"Authorization: Bearer {token}",
             "-H", "Content-Type: application/json",
             f"{api}/api/admin/db-query",

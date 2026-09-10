@@ -111,6 +111,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.sql_comment_strip import (  # noqa: E402
     count_statement_separators,
     strip_sql_comments,
@@ -417,7 +419,7 @@ def post(sql: str, *, explain: bool = False, analyze: bool = False,
     req = urllib.request.Request(
         api.rstrip("/") + "/api/admin/db-query",
         data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(api.rstrip("/") + "/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
         method="POST",
     )
     try:

@@ -2,6 +2,8 @@
 import asyncio, json, sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.utils.agent_origin import tagged
+
 async def run():
     from app.tasks.base import get_task_session
     from sqlalchemy import text
@@ -52,7 +54,7 @@ async def run():
 
     # Check how many matched markets appear in our feed
     try:
-        resp = httpx.get("https://api.bainluck.com/api/feed?limit=500&event_pct=0.15", timeout=30)
+        resp = httpx.get("https://api.bainluck.com/api/feed?limit=500&event_pct=0.15", timeout=30, headers=tagged("https://api.bainluck.com/api/feed?limit=500&event_pct=0.15"))
         feed = resp.json().get("items", [])
         feed_ids = set()
         for item in feed:

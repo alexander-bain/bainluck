@@ -57,6 +57,9 @@ from app.utils.calibration_published_twin import (  # noqa: E402
     tolerance_pp,
 )
 
+# notice 39 / #4642: name this probe on the wire.
+from app.utils.agent_origin import tagged
+
 DEFAULT_TIMEOUT_MS = 240_000
 
 
@@ -118,7 +121,7 @@ def _load_payload(args) -> tuple[dict, str | None]:
     try:
         import urllib.request
 
-        with urllib.request.urlopen(f"{args.api}/api/calibration", timeout=60) as resp:
+        with urllib.request.urlopen(urllib.request.Request(f"{args.api}/api/calibration", headers=tagged(f"{args.api}/api/calibration")), timeout=60) as resp:
             return json.loads(resp.read().decode()), None
     except Exception as exc:  # noqa: BLE001
         return {}, f"api_unreachable: {type(exc).__name__}: {exc}"

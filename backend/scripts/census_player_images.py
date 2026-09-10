@@ -71,6 +71,8 @@ from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.utils.agent_origin import tagged
+
 from app.services.espn_tennis import DRAW_SLUGS, normalize_name  # noqa: E402
 from app.utils.tournament_register import (  # noqa: E402
     TournamentRegister,
@@ -109,7 +111,7 @@ def wiki_summary(title: str, *, tries: int = 4) -> Optional[dict[str, Any]]:
     """
     url = WIKI_SUMMARY + urllib.parse.quote(title.replace(" ", "_"))
     for attempt in range(tries):
-        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        request = urllib.request.Request(url, headers=tagged(url, {"User-Agent": USER_AGENT}))
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 return json.loads(response.read())

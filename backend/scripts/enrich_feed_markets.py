@@ -10,12 +10,20 @@ from app.tasks.base import get_task_session
 from app.tasks.enrich_markets import _fetch_pexels_image, _extract_image_keywords
 from app.utils.image_dimensions import delivered_dimensions
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os  # noqa: E402
+import sys as _bl_sys  # noqa: E402
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged  # noqa: E402
+
 API_BASE = "https://api.bainluck.com"
 
 async def get_feed_market_ids():
     """Fetch feed and extract futures market IDs."""
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(f"{API_BASE}/api/feed", params={"limit": 200})
+        resp = await client.get(f"{API_BASE}/api/feed", params={"limit": 200}, headers=tagged(f"{API_BASE}/api/feed"))
         data = resp.json()
         ids = []
         for item in data.get("items", []):

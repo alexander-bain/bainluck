@@ -55,6 +55,8 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.services.espn_api import ESPN_API_BASE  # noqa: E402
 from app.tasks.reconcile_anchor_schedule import (  # noqa: E402
     DEFAULT_HORIZON,
@@ -89,10 +91,10 @@ def db_query(sql: str, limit: int = 1000) -> list[dict]:
     req = Request(
         f"{API}/api/admin/db-query",
         data=body,
-        headers={
+        headers=tagged(f"{API}/api/admin/db-query", {
             "Authorization": f"Bearer {TOKEN}",
             "Content-Type": "application/json",
-        },
+        }),
         method="POST",
     )
     try:
@@ -137,7 +139,7 @@ def fetch_summary(sport_key: str, authority_id: str) -> dict | None:
         # docstring already records for ``BainLuck/1.0``. urllib's own default
         # is accepted, so let it supply one.
         with urlopen(
-            Request(url, headers={"Accept": "application/json"}), timeout=25
+            Request(url, headers=tagged(url, {"Accept": "application/json"})), timeout=25
         ) as resp:
             return json.load(resp)
     except (HTTPError, URLError, json.JSONDecodeError, TimeoutError):

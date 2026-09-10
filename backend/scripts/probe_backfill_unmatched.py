@@ -37,6 +37,14 @@ from typing import Optional
 from urllib.request import Request, urlopen
 import json
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Mirrors app/services/kalshi_api.py's backfill loop exactly. A probe that
@@ -54,7 +62,7 @@ _MONTHS = {m: i + 1 for i, m in enumerate(
 
 
 def _get(path: str) -> dict:
-    req = Request(f"{BASE}{path}", headers={"User-Agent": "bainluck-probe/1"})
+    req = Request(f"{BASE}{path}", headers=tagged(f"{BASE}{path}", {"User-Agent": "bainluck-probe/1"}))
     with urlopen(req, timeout=45) as resp:
         return json.loads(resp.read())
 

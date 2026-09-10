@@ -61,6 +61,14 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 PAIRS = ["0,0.1", "0,0.2", "0,0.3"]
 LIMIT = 20
 
@@ -81,7 +89,7 @@ def _get(base: str, token: str, weights: str, timeout: float) -> tuple[bool, Any
         {"weights": weights, "limit": LIMIT, "stage": "served"}
     )
     url = f"{base}/api/admin/interestingness-side-by-side?{qs}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(url, headers=tagged(url, {"Authorization": f"Bearer {token}"}))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")

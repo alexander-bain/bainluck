@@ -55,13 +55,16 @@ from app.tasks.tournament_matchup_linker import (  # noqa: E402
     _match_date,
 )
 from scripts.capture_match_payload import _live_block, _sql_str, load_group  # noqa: E402
-from scripts.capture_tournament_payload import _db_query, _espn, _load_prices  # noqa: E402
+from scripts.capture_tournament_payload import _db_query, _espn, _load_prices
+
+# notice 39 / #4642: name this probe on the wire.
+from app.utils.agent_origin import tagged  # noqa: E402
 
 API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
 
 
 def _api(path: str) -> Any:
-    with urllib.request.urlopen(f"{API}{path}", timeout=60) as response:
+    with urllib.request.urlopen(urllib.request.Request(f"{API}{path}", headers=tagged(f"{API}{path}")), timeout=60) as response:
         return json.loads(response.read())
 
 

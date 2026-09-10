@@ -65,6 +65,14 @@ import sys
 import urllib.parse
 import urllib.request
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 PLACEHOLDER_BROKER_HOST = "ec2-0-0-0-0.compute-1.amazonaws.com"
 _HOST_RE = re.compile(r"ec2-\d+-\d+-\d+-\d+\.compute-1\.amazonaws\.com")
 _REDIS_URL_RE = re.compile(r"rediss?://[^\s]*")
@@ -100,7 +108,7 @@ def _fetch(org: str, token: str, params: list[tuple[str, str]]) -> list[dict]:
         if cursor:
             query.append(("cursor", cursor))
         url = f"https://sentry.io/api/0/organizations/{org}/events/?" + urllib.parse.urlencode(query)
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+        req = urllib.request.Request(url, headers=tagged(url, {"Authorization": f"Bearer {token}"}))
         with urllib.request.urlopen(req, timeout=60) as resp:
             payload = json.loads(resp.read())
             link = resp.headers.get("Link", "")

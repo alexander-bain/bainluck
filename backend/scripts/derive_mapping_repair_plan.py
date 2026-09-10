@@ -54,6 +54,8 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.calibration_phase_ledger import input_fingerprint  # noqa: E402
 from app.utils.repair_apply_plan import digest_fields  # noqa: E402
 
@@ -94,10 +96,10 @@ def _db_query(sql: str, limit: int = 1000):
     req = urllib.request.Request(
         f"{os.environ['BAINLUCK_API']}/api/admin/db-query",
         data=json.dumps({"sql": sql, "limit": limit}).encode(),
-        headers={
+        headers=tagged(f"{os.environ['BAINLUCK_API']}/api/admin/db-query", {
             "Authorization": f"Bearer {os.environ['ADMIN_TOKEN']}",
             "Content-Type": "application/json",
-        },
+        }),
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         payload = json.loads(resp.read())

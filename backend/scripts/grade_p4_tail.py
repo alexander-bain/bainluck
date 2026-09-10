@@ -106,6 +106,8 @@ from typing import Any
 # copy of `MEASURED_WALL_MAX_S` is a second thing to go stale, which is the
 # defect class this whole clause exists to close.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from app.utils.agent_origin import tagged
 from app.utils.typeahead_beat_budget import (  # noqa: E402
     MEASURED_WALL_MAX_S,
     RESPONSE_CACHE_TTL_S,
@@ -156,7 +158,7 @@ def _fetch_live() -> dict[str, Any]:
         )
     req = urllib.request.Request(
         f"{base}/api/admin/typeahead-warmer/last",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=tagged(f"{base}/api/admin/typeahead-warmer/last", {"Authorization": f"Bearer {token}"}),
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode())

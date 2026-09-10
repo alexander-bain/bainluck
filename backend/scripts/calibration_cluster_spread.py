@@ -95,6 +95,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.utils.agent_origin import tagged
+
 #: Mirrors ``calibration_cell_exact.DEFAULT_WIDTH``. Imported rather than
 #: re-declared where possible; the literal is the fallback for the standalone
 #: unit tests, which must not need the sibling module on the path.
@@ -207,7 +209,7 @@ def db_query(sql: str, limit: int = 50, retries: int = 3) -> dict:
     req = urllib.request.Request(
         base.rstrip("/") + "/api/admin/db-query",
         data=body,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(base.rstrip("/") + "/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
     )
     last = ""
     for _ in range(retries):

@@ -51,6 +51,13 @@ import sys
 import time
 import urllib.request
 
+# notice 39 / #4642: name this probe on the wire.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CAL_P085_ARTIFACT = os.path.join(REPO, "artifacts", "cal-p085", "price-provenance-whole-market.json")
 
@@ -129,7 +136,7 @@ def main() -> int:
         raise SystemExit("ABORT: source ~/.claude/.env first (BAINLUCK_API).")
 
     read_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    with urllib.request.urlopen(api.rstrip("/") + "/api/calibration", timeout=180) as resp:
+    with urllib.request.urlopen(urllib.request.Request(api.rstrip("/") + "/api/calibration", headers=tagged(api.rstrip("/") + "/api/calibration")), timeout=180) as resp:
         payload = json.loads(resp.read().decode())
 
     buckets = payload.get("buckets") or []

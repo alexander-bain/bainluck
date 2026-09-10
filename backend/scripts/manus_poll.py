@@ -15,6 +15,14 @@ import time
 
 import httpx
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API_KEY = os.getenv("MANUS_API_KEY", "")
 BASE = "https://api.manus.ai/v2"
 
@@ -29,7 +37,7 @@ def poll_task(task_id: str, interval: int = 15, max_polls: int = 40):
         resp = httpx.get(
             f"{BASE}/task.listMessages",
             params={"task_id": task_id, "order": "desc", "limit": 5},
-            headers={"x-manus-api-key": API_KEY},
+            headers=tagged(f"{BASE}/task.listMessages", {"x-manus-api-key": API_KEY}),
             timeout=30,
         )
         data = resp.json()
@@ -44,7 +52,7 @@ def poll_task(task_id: str, interval: int = 15, max_polls: int = 40):
                     full = httpx.get(
                         f"{BASE}/task.listMessages",
                         params={"task_id": task_id, "order": "asc", "limit": 100},
-                        headers={"x-manus-api-key": API_KEY},
+                        headers=tagged(f"{BASE}/task.listMessages", {"x-manus-api-key": API_KEY}),
                         timeout=30,
                     ).json()
                     for m in full.get("messages", []):

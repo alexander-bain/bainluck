@@ -566,6 +566,24 @@ _ADDRESSES_BUT_DOES_NOT_SEND = {
     "needle_latency.py",
 }
 
+#: How a script can DECLARE itself machine traffic. Any one of these reaches the
+#: wire with `x-bainluck-origin` on it.
+#:
+#: 🔴 THIS USED TO BE THE BARE LITERAL `"X-Bainluck-Origin"`, and #4642 caught it
+#: the only way it could be caught — by failing. That sweep replaced six
+#: hand-spelled literals with `ORIGIN_HEADER` imported from `app.utils.agent_origin`,
+#: which is strictly better (a sender and a reader that disagree by one character
+#: produce no error anywhere), and this guard promptly reported three correctly
+#: tagged probes as offenders. A guard keyed on ONE SPELLING of a thing measures
+#: the spelling, not the thing. Listing the carrier's entry points instead means
+#: the next re-spelling does not re-break it.
+_DECLARES_MACHINE_TRAFFIC = (
+    "X-Bainluck-Origin",  # the pre-LAT-P118 hand-spelled form, still valid
+    "ORIGIN_HEADER",      # #4642: the one constant, imported
+    "tagged(",            # the header builder
+    "curl_args(",         # the argv renderer, for the subprocess-curl rail
+)
+
 
 def test_every_search_probing_script_declares_itself_machine_traffic():
     """THE CLASS, not the six instances. RED before LAT-P118 on all of them.
@@ -588,7 +606,7 @@ def test_every_search_probing_script_declares_itself_machine_traffic():
         if path.name in _ADDRESSES_BUT_DOES_NOT_SEND:
             continue
         checked.append(path.name)
-        if "X-Bainluck-Origin" not in text:
+        if not any(marker in text for marker in _DECLARES_MACHINE_TRAFFIC):
             offenders.append(path.name)
 
     assert checked, (

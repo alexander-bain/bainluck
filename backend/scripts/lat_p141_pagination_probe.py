@@ -46,6 +46,14 @@ import urllib.error
 import urllib.request
 import uuid
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import ORIGIN_HEADER, resolve_agent, tagged
+
 API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com").rstrip("/")
 
 #: (label, surface, query) — every constant cited to the client that sends it.
@@ -63,10 +71,10 @@ SHAPES = [
 def one(query):
     req = urllib.request.Request(
         f"{API}/api/feed?{query}",
-        headers={
+        headers=tagged(f"{API}/api/feed?{query}", {
             "x-session-id": str(uuid.uuid4()),
-            "X-Bainluck-Origin": "harness",
-        },
+            ORIGIN_HEADER: resolve_agent() or "harness",
+        }),
     )
     t0 = time.perf_counter()
     try:

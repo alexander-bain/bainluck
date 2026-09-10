@@ -34,7 +34,7 @@ def query_api(path: str, params: dict = None) -> dict:
         params = {}
     if "secret" not in params and ADMIN_SECRET:
         params["secret"] = ADMIN_SECRET
-    resp = httpx.get(url, params=params, timeout=30)
+    resp = httpx.get(url, params=params, timeout=30, headers=tagged(url))
     resp.raise_for_status()
     return resp.json()
 
@@ -191,6 +191,8 @@ def main():
         kalshi_count = sum(1 for r in rows if r["source"] == "kalshi")
         pm_count = sum(1 for r in rows if r["source"] == "polymarket")
         print(f"  {surface:25s} Kalshi: {kalshi_count:3d}  PM: {pm_count:3d}  Total: {len(rows)}")
+
+from app.utils.agent_origin import tagged  # noqa: E402
 
 
 if __name__ == "__main__":

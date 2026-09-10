@@ -58,6 +58,14 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 ESPN_SCOREBOARD = (
     "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={date}"
 )
@@ -93,7 +101,7 @@ def _get_json(url: str, timeout: int = 30) -> dict:
     except ImportError:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return json.loads(resp.read().decode())
-    resp = requests.get(url, timeout=timeout)
+    resp = requests.get(url, timeout=timeout, headers=tagged(url))
     resp.raise_for_status()
     return resp.json()
 
@@ -221,7 +229,7 @@ def _db_query(sql: str, limit: int = 1000) -> list:
     req = urllib.request.Request(
         f"{api}/api/admin/db-query",
         data=body,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(f"{api}/api/admin/db-query", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}),
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         raw = resp.read().decode()

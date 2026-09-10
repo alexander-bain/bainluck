@@ -75,7 +75,7 @@ DECLARE_SLOT_SECONDS_PER_DAY = 3600.0  # one worker-slot-hour per day
 
 def _get(base: str, path: str, token: str, timeout: float = 30.0):
     url = base.rstrip("/") + path
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(url, headers=tagged(url, {"Authorization": f"Bearer {token}"}))
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         if resp.getcode() != 200:
             raise RuntimeError(f"{path} returned {resp.getcode()}")
@@ -245,6 +245,8 @@ def main() -> int:
         f"Spec: docs/doctrine.md, 'MECHANICAL SPEC — beat_cost'."
     )
     return EXIT_OK
+
+from app.utils.agent_origin import tagged  # noqa: E402
 
 
 if __name__ == "__main__":

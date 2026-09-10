@@ -54,6 +54,16 @@ import sys
 import time
 from typing import Any
 
+
+# notice 39 / #4642: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import ORIGIN_HEADER, resolve_agent
+
+
 #: The identical 8-query arm LAT-P054 used, held fixed so numbers compose.
 DEFAULT_ARM = [
     "red sox",
@@ -132,7 +142,7 @@ def _one(url: str, timeout_s: int = 30) -> dict[str, Any] | None:
     """
     proc = subprocess.run(
         ["curl", "-s", "-o", "/dev/null", "-w", _CURL_FMT,
-         "-H", "X-Bainluck-Origin: harness", "--max-time",
+         "-H", f"{ORIGIN_HEADER}: {resolve_agent() or 'harness'}", "--max-time",
          str(timeout_s), url],
         capture_output=True,
         text=True,
@@ -155,7 +165,7 @@ def _pair_on_one_connection(url: str, timeout_s: int = 30) -> list[dict[str, Any
     proc = subprocess.run(
         ["curl", "-s", "-o", "/dev/null", "-w", _CURL_FMT + "\n",
          "-o", "/dev/null", "-w", _CURL_FMT + "\n",
-         "-H", "X-Bainluck-Origin: harness",  # LAT-P118, as in `_one`
+         "-H", f"{ORIGIN_HEADER}: {resolve_agent() or 'harness'}",  # LAT-P118, as in `_one`
          "--max-time", str(timeout_s), url, url],
         capture_output=True,
         text=True,

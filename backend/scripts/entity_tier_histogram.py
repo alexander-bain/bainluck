@@ -65,6 +65,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.entity_page_tiers import (  # noqa: E402
     TIERS,
     resolve_entity_tier,
@@ -119,7 +121,7 @@ LEAGUE_LABELS = {r["sport_key"]: f"{r['sport_slug']}/{r['league_slug']}" for r i
 
 
 def _get(url: str, timeout: float = 30.0):
-    req = urllib.request.Request(url, headers={"User-Agent": "bainluck-tier-histogram"})
+    req = urllib.request.Request(url, headers=tagged(url, {"User-Agent": "bainluck-tier-histogram"}))
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         if resp.status != 200:
             raise RuntimeError(f"HTTP {resp.status}")

@@ -153,6 +153,9 @@ from app.tasks.precompute_calibration import (  # noqa: E402
     _calibration_population_ctes,
 )
 
+# notice 39 / #4642: name this probe on the wire.
+from app.utils.agent_origin import tagged  # noqa: E402
+
 
 def _load(name: str):
     """Load a sibling script WITHOUT registering it in ``sys.modules``.
@@ -668,7 +671,7 @@ def headline(payload: dict, cells: list[dict]) -> dict:
 def fetch_payload(url: str | None) -> dict:
     import os
     base = (url or os.environ["BAINLUCK_API"]).rstrip("/")
-    with urllib.request.urlopen(base + "/api/calibration", timeout=120) as fh:
+    with urllib.request.urlopen(urllib.request.Request(base + "/api/calibration", headers=tagged(base + "/api/calibration")), timeout=120) as fh:
         return json.loads(fh.read().decode())
 
 

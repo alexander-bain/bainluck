@@ -57,6 +57,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.sql_comment_strip import (  # noqa: E402
     count_statement_separators,
     strip_sql_comments,
@@ -114,10 +116,10 @@ def explain(sql: str, *, api: str, token: str, timeout_s: float = 120.0) -> dict
     req = urllib.request.Request(
         f"{api}/api/admin/db-query",
         data=json.dumps({"sql": sql, "explain": True}).encode(),
-        headers={
+        headers=tagged(f"{api}/api/admin/db-query", {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-        },
+        }),
         method="POST",
     )
     try:

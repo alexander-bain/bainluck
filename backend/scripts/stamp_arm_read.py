@@ -51,6 +51,14 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 #: The rate arm needs `window_s / interval_s >= MIN_EXPECTED_FIRES`, and `window_s`
 #: is bounded above by `WINDOW_COUNTER_TTL`. So the ceiling is arithmetic:
 #: 86400 / 2.0 = 43200s = 12h. Mirrored here rather than imported because this
@@ -81,7 +89,7 @@ def fetch(api: str, token: str, timeout: float = 60.0) -> dict:
     if _FORBIDDEN in _ENDPOINT:  # pragma: no cover - structural assertion
         raise AssertionError("this script must never poll celery-debug (#1994)")
     url = api.rstrip("/") + _ENDPOINT
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(url, headers=tagged(url, {"Authorization": f"Bearer {token}"}))
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         if resp.status != 200:
             raise RuntimeError(f"{url} -> HTTP {resp.status}")

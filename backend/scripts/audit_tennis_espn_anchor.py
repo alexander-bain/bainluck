@@ -49,6 +49,8 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.services.espn_tennis import (  # noqa: E402
     fetch_scoreboards,
     scoreboard_competitions,
@@ -75,10 +77,10 @@ def db_query(sql: str, limit: int = 1000) -> list[dict]:
     req = Request(
         f"{API}/api/admin/db-query",
         data=body,
-        headers={
+        headers=tagged(f"{API}/api/admin/db-query", {
             "Authorization": f"Bearer {TOKEN}",
             "Content-Type": "application/json",
-        },
+        }),
         method="POST",
     )
     try:

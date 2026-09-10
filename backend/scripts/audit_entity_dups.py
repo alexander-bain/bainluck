@@ -43,6 +43,14 @@ import sys
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
 TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
@@ -53,10 +61,10 @@ def db_query(sql: str, limit: int = 1000) -> list[dict]:
     req = Request(
         f"{API}/api/admin/db-query",
         data=body,
-        headers={
+        headers=tagged(f"{API}/api/admin/db-query", {
             "Authorization": f"Bearer {TOKEN}",
             "Content-Type": "application/json",
-        },
+        }),
         method="POST",
     )
     try:

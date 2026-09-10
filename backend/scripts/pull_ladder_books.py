@@ -30,6 +30,14 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterable, Optional
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 GAMMA_MARKETS = "https://gamma-api.polymarket.com/markets"
 
 #: The TRADE TAPE — a different endpoint measuring a different thing. Gamma's
@@ -76,7 +84,7 @@ USER_AGENT = "bainluck-ladder-book-pull/1.0 (+https://bainluck.com)"
 
 def _get_json(url: str, timeout: int = 30) -> Any:
     req = urllib.request.Request(
-        url, headers={"Accept": "application/json", "User-Agent": USER_AGENT}
+        url, headers=tagged(url, {"Accept": "application/json", "User-Agent": USER_AGENT})
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -87,11 +95,11 @@ def _post_json(url: str, payload: dict, token: str, timeout: int = 40) -> Any:
     req = urllib.request.Request(
         url,
         data=body,
-        headers={
+        headers=tagged(url, {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-        },
+        }),
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))

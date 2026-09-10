@@ -56,6 +56,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.utils.agent_origin import tagged
+
 from app.utils.issue_labels import (  # noqa: E402
     DEFAULT_PRIORITY,
     PRIORITY_PREFIX,
@@ -85,7 +87,7 @@ BROWSER_SWEEP_MARKER = "browser-sweep-fingerprint"
 def _request(method: str, path: str, token: str, data: dict | None = None):
     url = path if path.startswith("http") else f"{API}{path}"
     body = json.dumps(data).encode("utf-8") if data is not None else None
-    req = urllib.request.Request(url, data=body, method=method)
+    req = urllib.request.Request(url, data=body, method=method, headers=tagged(url))
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")

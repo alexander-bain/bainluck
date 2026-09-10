@@ -160,6 +160,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+from app.utils.agent_origin import ORIGIN_HEADER, resolve_agent, tagged  # noqa: E402
+
 # ONE term list for the whole program. A delta against a different term set is
 # not a delta (done_bar_snapshot.py's own note), so the sets are imported rather
 # than re-typed — a copy would drift on its first edit and nobody would see it.
@@ -398,12 +400,12 @@ def _get(
     """
     _pace()
     api = os.environ["BAINLUCK_API"]
-    headers: dict[str, str] = {"X-Bainluck-Origin": "harness"}
+    headers: dict[str, str] = {ORIGIN_HEADER: resolve_agent() or "harness"}
     if session_id:
         headers["x-session-id"] = session_id
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(f"{api}{path}", headers=headers)
+    req = urllib.request.Request(f"{api}{path}", headers=tagged(f"{api}{path}", headers))
     t0 = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -601,7 +603,7 @@ def measure(
     }
 
     api = os.environ["BAINLUCK_API"]
-    with urllib.request.urlopen(f"{api}/api/health", timeout=30) as resp:
+    with urllib.request.urlopen(urllib.request.Request(f"{api}/api/health", headers=tagged(f"{api}/api/health")), timeout=30) as resp:
         health = json.loads(resp.read())
     out["requests"]["health"] += 1
     out["commit"] = health.get("commit")

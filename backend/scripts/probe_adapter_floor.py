@@ -51,6 +51,14 @@ import time
 import urllib.error
 import urllib.request
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 DEFAULT_API = "https://api.bainluck.com"
 
 # Every domain in `app/utils/event_concept.py`'s registry as of 2026-08-12.
@@ -79,7 +87,7 @@ NEAR_MISS = {
 
 def fetch(api: str, key: str, timeout: float = 30.0):
     url = f"{api}/api/event/{key}"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    req = urllib.request.Request(url, headers=tagged(url, {"Accept": "application/json"}))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))

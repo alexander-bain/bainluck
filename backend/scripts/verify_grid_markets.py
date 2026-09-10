@@ -24,6 +24,14 @@ from pathlib import Path
 
 import httpx
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
+
 API_BASE = "https://api.bainluck.com"
 MANUS_CSV = Path(__file__).parent / ".." / ".." / "Manus" / "kalshi_sweep_april22.csv"
 
@@ -99,7 +107,7 @@ def load_manus_ground_truth() -> list[dict]:
 def fetch_grid_debug(slug: str) -> dict | None:
     """Fetch grid with debug info from prod API."""
     try:
-        resp = httpx.get(f"{API_BASE}/api/playoffs/{slug}?debug=true", timeout=30)
+        resp = httpx.get(f"{API_BASE}/api/playoffs/{slug}?debug=true", timeout=30, headers=tagged(f"{API_BASE}/api/playoffs/{slug}?debug=true"))
         if resp.status_code != 200:
             return None
         return resp.json()

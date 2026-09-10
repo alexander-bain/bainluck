@@ -50,6 +50,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# notice 39 / #4642: name this probe on the wire. The insert makes
+# `app` importable when the script is run directly from anywhere.
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import ORIGIN_HEADER, resolve_agent, tagged
+
 #: The LAT-P084 typeahead headline set, mirrored so the two series line up.
 HEADLINE_TERMS = (
     "masters winner",
@@ -87,7 +95,7 @@ def probe_one(base: str, term: str, timeout: float) -> dict:
     # table elects the 40 warm slots. `X-Bainluck-Origin` stops the vote WITHOUT
     # touching the response cache — which `?debug_timing=1` above does not, and
     # which is why the flag already on this URL was never enough.
-    req = urllib.request.Request(url, headers={"X-Bainluck-Origin": "harness"})
+    req = urllib.request.Request(url, headers=tagged(url, {ORIGIN_HEADER: resolve_agent() or "harness"}))
     t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
