@@ -52,6 +52,18 @@ import ScoringRecordsLadders, {
 const SHOW_SPARKLINE = true;
 const SHOW_MOVERS = true;
 
+/**
+ * #4897 / D111 — the heading AND nav label for the secondary EventProps section
+ * (golf's leftover round Top-N children, cycling's backend section split).
+ *
+ * One constant rather than the string twice, because the nav pill and the section
+ * heading it scrolls to must never disagree — L2-175 Item 3c already fixed that
+ * exact class of bug for the head-to-head pill, and two literals is how it comes
+ * back. The words themselves exist to keep this section distinct from THE
+ * SCRIPT's "More props (N)" fold; the reasoning is at the call site below.
+ */
+const SECONDARY_PROPS_TITLE = "More markets";
+
 export default function EventConceptPage() {
   const params = useParams();
   const router = useRouter();
@@ -337,8 +349,9 @@ export default function EventConceptPage() {
   else if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
   // L2-148: golf's per-round Top-N props surface in a secondary EventProps section
   // ALONGSIDE the props-script — give it its own nav anchor when both render.
+  // #4897 / D111: labelled "More markets", NOT "More props" — see the call site.
   if (hasPropsScript && propChildren.length > 0)
-    nav.push({ id: "more-props", label: "More props" });
+    nav.push({ id: "more-props", label: SECONDARY_PROPS_TITLE });
   if (hasScoringRecords) nav.push({ id: "scoring-records", label: "Scoring" });
   if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
 
@@ -464,10 +477,22 @@ export default function EventConceptPage() {
           there is no double-render; the leftover section-grouped props now surface
           under their backend labels (Round Top N …). Self-suppresses when empty
           (EventProps returns null on no items — the common no-leftover case). */}
+      {/* #4897 / D111 — WHY THIS SECTION IS "More markets" AND NOT "More props".
+          Alex ruled THE SCRIPT's collapsed fold reads "More props (N)". That fold
+          renders inside PropsSection, directly above this section, so on any page
+          where both appear — golf, where a props-script and leftover round Top-N
+          children coexist — a reader would meet the same two words twice, naming
+          two unrelated things, one of them a disclosure and one a section with its
+          own nav pill. Alex's words are fixed, so this one moved.
+          The ANCHOR stays `more-props`: it is a machine key, not a reader-facing
+          string (notice 33's clarification), and it is depended on by the nav pill
+          above, `EventProps.tsx`'s collision note and
+          `e2e/specs/tournament-inventory.spec.ts`. Renaming it would buy nothing a
+          reader can see and break three call sites. */}
       <EventProps
         items={propChildren}
         sections={data.sections}
-        title={hasPropsScript ? "More props" : undefined}
+        title={hasPropsScript ? SECONDARY_PROPS_TITLE : undefined}
         anchorId={hasPropsScript ? "more-props" : undefined}
         domain={event.domain}
       />

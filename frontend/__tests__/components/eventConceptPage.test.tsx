@@ -253,7 +253,12 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     // ...AND a secondary section-grouped props block now renders alongside it,
     // under its own anchor + heading (not colliding with the primary "Props").
     expect(html).toContain('id="more-props"');
-    expect(html).toContain("More props");
+    // #4897 / D111: the HEADING is "More markets". "More props" now belongs to
+    // THE SCRIPT's collapsed fold, and no fold renders on this fixture (every
+    // props_script row carries a pregame_mark), so the negative below is a real
+    // assertion about this section's words and not a coincidence of the data.
+    expect(html).toContain("More markets");
+    expect(html).not.toContain("More props");
     // The leftover round Top-N child (market_id 44, NOT in props_script) surfaces
     // under its backend section label instead of being dropped.
     expect(html).toContain("Round Top N");
@@ -263,6 +268,57 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     // block groups solely by the backend split, never the prop_type "By round"
     // fallback (which would signal an unclaimed leak).
     expect(html).not.toContain("By round");
+  });
+
+  // #4897 / D111 — THE COLLISION CASE, and the only configuration that shows it.
+  //
+  // Alex ruled THE SCRIPT's fold reads "More props (N)". This page already had a
+  // section titled "More props" with its own nav pill. Both render together only
+  // when a props-script row has NO pregame_mark (so a fold exists) AND leftover
+  // prop children exist (so the secondary section exists) — golf, exactly this
+  // fixture plus one bare row. Neither of the tests above reaches that state:
+  // every fixture row carries a mark, so each could pass while the two headings
+  // read identically on a real golf page.
+  //
+  // The event must also be PRE-match. `deriveState` maps a live event to THE
+  // DIVERGENCE and a finished one to WHAT HIT, and `partitionScript` folds in
+  // neither — only THE SCRIPT promises a pregame number, so only THE SCRIPT has
+  // the hole. The rest of this file's fixture is `status: "live"`, which is why
+  // the first draft of this test saw no fold at all.
+  test("the fold and the secondary section never read as the same words (#4897)", () => {
+    const script = ENVELOPE.props_script as unknown[];
+    const liveStatus = ENVELOPE.event.status;
+    (ENVELOPE.event as { status: string }).status = "scheduled";
+    // One row with no pregame_mark — the ONLY thing that makes a fold appear.
+    script.push({
+      key: 45,
+      market_id: 45,
+      label: "Hole-in-one",
+      pregame_mark: null,
+      current: 0.07,
+      graded_result: null,
+      graded_label: null,
+    });
+    try {
+      const html = renderToStaticMarkup(<EventConceptPage />);
+      // Both surfaces are on the page at once...
+      expect(html).toContain('id="more-props"'); // the secondary section
+      expect(html).toContain("<details"); // the fold
+      // ...and they do not say the same thing.
+      expect(html).toContain("More props (1)"); // the fold, naming its count
+      expect(html).toContain("More markets"); // the section heading + nav pill
+      // The fold's words appear ONCE on the whole page. Before this ship the
+      // section heading and its nav pill would both have matched too, so this
+      // count is what actually pins the collision shut.
+      expect(html.match(/More props/g)).toHaveLength(1);
+      // The folded row is collapsed, not dropped (gotcha #43), and does not
+      // print its live price where the pregame mark belongs.
+      expect(html).toContain("Hole-in-one");
+      expect(html).not.toContain("7%");
+    } finally {
+      script.pop();
+      (ENVELOPE.event as { status: string }).status = liveStatus;
+    }
   });
 
   test("reconstructs the API key from the domain/slug segments (L2-113)", () => {

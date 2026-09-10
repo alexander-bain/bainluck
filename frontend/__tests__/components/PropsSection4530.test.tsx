@@ -59,13 +59,13 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
   });
 
   test("the fold names its own count, in plain English", () => {
-    expect(script(MIXED)).toContain("No opening price (2)");
+    expect(script(MIXED)).toContain("More props (2)");
   });
 
   test("the count is the number of rows actually folded, not the row total", () => {
     const html = script(MIXED);
-    expect(html).toContain("No opening price (2)");
-    expect(html).not.toContain("No opening price (4)");
+    expect(html).toContain("More props (2)");
+    expect(html).not.toContain("More props (4)");
   });
 
   // Green on the parent too (see header): this guards the REFUSED alternative
@@ -97,7 +97,7 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
     const html = script(MIXED);
     expect(html).toContain("—");
     // The reason is stated once, by the summary — not repeated per row.
-    expect(html.match(/No opening price/g)).toHaveLength(1);
+    expect(html.match(/More props/g)).toHaveLength(1);
   });
 
   test("a family with NO marks at all folds entirely rather than emptying", () => {
@@ -106,7 +106,7 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
       { key: "Receptions|C: 3+", label: "C: 3+", pregame_mark: null, current: 0.34 },
     ];
     const html = script(allBare);
-    expect(html).toContain("No opening price (2)");
+    expect(html).toContain("More props (2)");
     expect(html).toContain("C: 2+");
     expect(html).not.toContain("57%");
   });
@@ -114,7 +114,7 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
   test("no fold is rendered when every row carries a mark", () => {
     const allMarked = MIXED.filter((m) => m.pregame_mark != null);
     const html = script(allMarked);
-    expect(html).not.toContain("No opening price");
+    expect(html).not.toContain("More props");
     expect(html).not.toContain("<details");
   });
 
@@ -128,7 +128,7 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
       { key: 102, label: "Top European", pregame_mark: null, current: 0.29 },
     ];
     const html = script(unnamed);
-    expect(html).toContain("No opening price (1)");
+    expect(html).toContain("More props (1)");
     expect(html).toContain("Top European");
     expect(html).not.toContain("29%");
   });
@@ -137,7 +137,7 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
 
   test("CONTROL: THE DIVERGENCE does not fold — a missing mark stays in sight", () => {
     const html = renderToStaticMarkup(<PropsSection items={MIXED} state="divergence" />);
-    expect(html).not.toContain("No opening price");
+    expect(html).not.toContain("More props");
     expect(html).toContain("B: 65+");
   });
 
@@ -146,7 +146,7 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
       { key: "F|D", label: "D over", pregame_mark: null, current: 0.5, graded_result: "hit" },
     ];
     const html = renderToStaticMarkup(<PropsSection items={graded} state="graded" />);
-    expect(html).not.toContain("No opening price");
+    expect(html).not.toContain("More props");
     expect(html).toContain("D over");
   });
 
@@ -162,7 +162,7 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
     ];
     const html = script(degenerate);
     expect(html).toContain("Opens after Round 1");
-    expect(html).not.toContain("No opening price");
+    expect(html).not.toContain("More props");
   });
 
   test("CONTROL: the section still returns null on an empty list", () => {

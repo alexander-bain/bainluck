@@ -69,8 +69,11 @@ describe("PropsSection rendering", () => {
     // pending". The honesty this test is about — never a fabricated number — is
     // unchanged and asserted below; only the words changed, and the row now
     // reaches the screen inside the fold. See PropsSection4530.test.tsx.
+    // D111 / #4897 (Alex, 2026-09-10): the fold's words moved again, "No opening
+    // price" → "More props". Same rows, same behaviour, neutral wording.
     expect(script).not.toContain("pregame mark pending");
-    expect(script).toContain("No opening price (1)");
+    expect(script).not.toContain("No opening price");
+    expect(script).toContain("More props (1)");
     expect(script).not.toContain("44%"); // `current` is never printed as the script
     const graded = renderToStaticMarkup(<PropsSection items={pending} state="graded" />);
     // UX-P044 (#1650): this asserted "grading pending" — the SECOND of the three

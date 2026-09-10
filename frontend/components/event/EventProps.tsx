@@ -195,8 +195,12 @@ interface EventPropsProps {
   sections?: EventConceptSection[] | null;
   /** L2-148: heading + anchor id. A secondary instance — golf's section-grouped
    *  prop children (per-round Top-N) rendered ALONGSIDE the props-script — reads
-   *  "More props" / #more-props so it doesn't collide with the primary props
-   *  section's "Props" / #props. Defaults preserve the sole-section behavior. */
+   *  "More markets" / #more-props so it doesn't collide with the primary props
+   *  section's "Props" / #props. Defaults preserve the sole-section behavior.
+   *  #4897 / D111: the heading was "More props" until Alex gave those words to
+   *  THE SCRIPT's collapsed fold, which renders on the same page. The anchor is
+   *  deliberately unchanged — it is a machine key, and the page's call site owns
+   *  the title string (`SECONDARY_PROPS_TITLE`) so the nav pill cannot drift. */
   title?: string;
   anchorId?: string;
   /** L2-175 Item 2c: event domain — person-field domains (cycling, mma, …) render

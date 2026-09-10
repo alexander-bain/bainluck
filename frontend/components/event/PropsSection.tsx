@@ -231,8 +231,23 @@ function isUnchanged(item: PropMark): boolean {
  * fields differ by a median of 4pts and by up to 22.5pts (George Holani 30+:
  * script 36.5%, current 59%). Printing the live price under a section that
  * says "What the market expected before the event" would fabricate the script.
+ *
+ * D111 (Alex, 2026-09-10, #4897) RE-WORDS THIS — and nothing above is retracted.
+ * The label is now "More props (N)". "No opening price" was true, but it is our
+ * sentence about our own data model on a reader's screen: a reader does not hold
+ * the distinction between a missing baseline and an untraded market, and does not
+ * need to in order to decide whether to open a disclosure. "More props" claims
+ * nothing about whether the rows are traded or priced, which is precisely why it
+ * survives the objection that sank "Untraded props" — it is neutral where that
+ * was false. The measurements above still bind the BEHAVIOUR: the rows folded
+ * here are exactly the ones with no pregame mark, and they still never print
+ * `current` in the mark's place.
+ *
+ * The words are Alex's and are not ours to tune. The collision they create —
+ * `app/event/[domain]/[slug]/page.tsx` also titled a section "More props" — was
+ * resolved by renaming THAT section, not this one. See the note at its call site.
  */
-const NO_OPENING_PRICE_LABEL = "No opening price";
+const MORE_PROPS_LABEL = "More props";
 
 /**
  * A row THE SCRIPT holds no number for, and can therefore say nothing about.
@@ -456,7 +471,7 @@ function ScriptFold({
   return (
     <details className={className}>
       <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
-        {NO_OPENING_PRICE_LABEL} ({items.length})
+        {MORE_PROPS_LABEL} ({items.length})
       </summary>
       <div className="mt-1 space-y-2">{items.map(renderRow)}</div>
     </details>
