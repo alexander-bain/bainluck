@@ -32,9 +32,23 @@
 #   * `BL_AGENT=user` is honoured POSITIVELY and keeps the row. Use it when you mean
 #     to measure as a person; it is the only value that does not suppress.
 #   * Tagging a call that goes somewhere OTHER than the search route is inert today
-#     (nothing else reads the header yet). It is still correct to send: rung 4 keys
-#     the rate-limit allowlist on this header, and a carrier retro-fitted later is a
-#     carrier that was missing in every measurement taken in between.
+#     (nothing else reads the header yet). It is still correct to send: a carrier
+#     retro-fitted later is a carrier that was missing in every measurement taken
+#     in between, and the per-agent counts rung 5 asks for can only ever be as good
+#     as the tagging that was running while the traffic happened.
+#
+#     🔴 It is inert for ATTRIBUTION, and that is the only thing it should ever buy.
+#     An earlier draft of this comment justified the tag by saying rung 4 would key
+#     the rate-limit allowlist on this header. Do not build that. The value is
+#     caller-supplied and forgeable by anyone on the internet, which is precisely
+#     what `_router_peer_ip` exists to avoid; `utils/rate_limit.py` says "CEILING,
+#     NEVER EXEMPTION" twice in capitals for the same reason. The problem rung 4
+#     aimed at was the fleet sharing one 60/min anonymous bucket, and that is
+#     already solved by the D70 trusted-ADDRESS ceiling — measured in force on
+#     `/api/events/search` on 2026-09-10 (160 requests across two single-window
+#     bursts, 0 x 429, confirmed server-side in the router log). A guard test
+#     (`test_rate_limiter_does_not_read_the_origin_header`) now fails if anyone
+#     wires this header into the limiter.
 #
 # ## Two things it deliberately refuses to do
 #
