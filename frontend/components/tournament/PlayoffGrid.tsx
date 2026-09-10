@@ -158,8 +158,10 @@ export const GRID_COL_TRACK_FIXED =
  *    `gridScrollFloorPx(5)` pins 452px over a 446px row, and those 6px went
  *    into the name track.
  * 2. *"`max-content` measures the longest name in the WHOLE table, because
- *    grid tracks are shared."* They are not shared here. The header and every
- *    `<li>` are each their OWN grid container, so the track resolves per row —
+ *    grid tracks are shared."* They were not shared here — #4593 has since
+ *    made them so with `subgrid`, but that is the `sm`+ half of the story and
+ *    it does not rescue this one; see below. The header and every `<li>` were
+ *    each their OWN grid container, so the track resolved per row —
  *    118px on a row whose name fits, 124px on one whose name does not. The
  *    numbers below each other therefore sit 6px out of column, and the sticky
  *    box that `scroll-pl-[138px]` is transcribed from is 144px wide on exactly
@@ -448,20 +450,59 @@ function Cell({
  * was verdicted against is byte-identical. The change bites in exactly the
  * range Alex named — 560px to 1024px — and nowhere else.
  *
- * A NOTE ON WHAT `max-content` MEASURES — AND THE CLAIM HERE WAS WRONG
- * (corrected #4558). It said: *"the longest name in the WHOLE table, not per
- * row, because grid tracks are shared."* Tracks are shared inside ONE grid
- * container, and this component renders the header and every `<li>` as its own
- * container, so above `sm` each row still sizes its own name track and the
- * value columns stagger by however much the names differ. Measured on
+ * A NOTE ON WHAT `max-content` MEASURES — WRONG, THEN RIGHT, AND IT TOOK A
+ * STRUCTURAL CHANGE TO MAKE IT RIGHT. The original sentence was *"the longest
+ * name in the WHOLE table, not per row, because grid tracks are shared."*
+ *
+ * #4558 corrected it to false: tracks are shared inside ONE grid container, and
+ * this component used to render the header and every `<li>` as its own
+ * container, so above `sm` each row sized its own name track. Measured on
  * production at 768px, five rows, first value cell at
- * `138 / 138.2 / 147.2 / 155.8 / 156.1` — an 18px stagger in a table whose
- * whole claim is that a column is a column. That is #4593 and it wants
- * `subgrid` (one container, tracks genuinely shared, and then this paragraph's
- * original sentence becomes true); it is NOT fixed here. What is fixed here is
- * the phone, where the same mechanism drank 6px of rounded-up scroll floor,
- * moved three rows' columns 6px right of the other two, and still left three
- * names clipped. Both states measured in `GRID_NAME_TRACK`.
+ * `156.1 / 138 / 138.2 / 155.8 / 147.2` — an 18px stagger in a table whose
+ * whole claim is that a column is a column, with the header's own track at 118
+ * so the round labels sat up to 38px left of their numbers.
+ *
+ * #4593 made the sentence TRUE rather than deleting it. There is one grid
+ * container now (the scroll-floor wrapper — see the render), and the header,
+ * the `<ol>` and every row adopt its tracks with `grid-cols-subgrid`. So
+ * `max-content` is resolved once, over every subgridded item's contribution,
+ * which IS the longest name in the whole table. UX-P147's ordering is
+ * untouched: the name track is still the only non-flexible growable track, so
+ * it still fills before the bars do — it now just reaches one width for
+ * everybody instead of five.
+ *
+ * ⚠️ THE HORIZONTAL PADDING BELONGS TO THE TRACK HOLDER, AND THE ROWS CANCEL
+ * THEIR OWN. This is the part that was got wrong first and caught by measuring
+ * rather than by reasoning, so it is written down at length.
+ *
+ * A subgrid contributes its own padding to the first and last tracks it spans.
+ * The tempting arrangement — leave `px-3.5` on the header and every row, as it
+ * has always been — LOOKS like it works, because above `sm` the name track is
+ * `minmax(…,max-content)` and simply grows by the padding. Below `sm` it is a
+ * FIXED length, so there is nothing to grow: the padding is taken out of the
+ * name instead. Measured on a 390px viewport, that arrangement cut every name
+ * from 96px of text to 82px and slid the first value column from 138px to
+ * 124px, which also silently desynced the `138` transcribed into
+ * `GRID_SCROLL_SNAP` from the layout it describes. Both are #4558's defect
+ * class, reintroduced by the fix for #4593 — and no guard in this file failed.
+ *
+ * So the padding sits on the ONE grid container, outside the tracks, exactly
+ * where `gridWidthPx`'s `2 * GRID_ROW_PADDING_PX + name + n*(col+gap)` has
+ * always assumed it was. The header, the rows and the show-more control then
+ * cancel it with `-mx-3.5 px-3.5` (`lg:-mx-5 lg:px-5`): the negative margin
+ * puts their BORDER box back at the card's edge, which is what keeps every
+ * `border-t` full-bleed the way a reader sees it today, while the matching
+ * padding puts their CONTENT box back on the shared track area, which is what
+ * keeps the columns aligned. Verified at 390px against production, row by row:
+ * identical text widths, identical row heights, first value column at 139px
+ * from the scroller's origin on both.
+ *
+ * The filler track (see the render) is the other half of full-bleed: without
+ * it `col-span-full` spans only 446px of a much wider card.
+ *
+ * What #4558 fixed, below `sm`, is untouched and still needed: there the name
+ * track is a fixed length, so the rounded-up scroll floor cannot be poured into
+ * it by any container, shared or not. Both states measured in `GRID_NAME_TRACK`.
  *
  * ═══ AND WHY THE VALUE TRACK IS NOW A VARIABLE (#3087, third pass) ═══
  *
@@ -715,13 +756,49 @@ export default function PlayoffGrid({
             window, where the grid is already wider than this and pinning it to
             a phone measurement would be the only thing keeping the columns
             narrow. Ruling 5 applies where ruling 5 was measured. */}
+        {/* #4593: THE ONE GRID CONTAINER. This div used to be a plain block that
+            existed only to carry the scroll floor, and the header and every
+            `<li>` each declared `gridTemplateColumns` for themselves — five
+            grids that happened to be given the same template, which is not the
+            same thing as five rows sharing tracks. `max-content` therefore
+            resolved PER ROW and each row bought its own name width. Measured on
+            production at 768px the morning this was fixed, five rows, first
+            value cell at `156.1 / 138 / 138.2 / 155.8 / 147.2` — and the header
+            at 118, so the word `QF` sat up to 38px left of the numbers under it.
+
+            Now the tracks are declared once, here, and the header, the `<ol>`
+            and each row span all of them (`col-span-full`) and adopt them
+            (`grid-cols-subgrid`). The `<ol>` has to subgrid too, not just pass
+            through: a `<li>` can only adopt the tracks of its own parent, so
+            the chain is wrapper → ol → li. Everything below is unchanged by
+            construction — see the note on `gridTemplate`. */}
         <div
-          className={scrolls ? "lg:!min-w-0" : undefined}
-          style={scrolls ? { minWidth: `${gridScrollFloorPx(grid.columns.length)}px` } : undefined}
+          className={`grid gap-x-1.5 px-3.5 lg:px-5${scrolls ? " lg:!min-w-0" : ""}`}
+          style={{
+            // …plus ONE FILLER TRACK, which is what keeps a row a full-width row.
+            // `col-span-full` spans the TRACKS, and the tracks total 446px inside a
+            // card that is much wider, so without a filler every `border-t` would
+            // stop under the Title column instead of reaching the card's edge as it
+            // does today. The filler is last, so it changes no column's position;
+            // it is `minmax(0,1fr)` rather than `1fr` so that it collapses to 0
+            // when the grid scrolls instead of imposing an auto minimum. UX-P147
+            // is unaffected: the name track's growth limit is `max-content`, which
+            // it reaches before any free space is left for an `fr` to claim.
+            gridTemplateColumns: `${template} minmax(0,1fr)`,
+            ...(scrolls
+              ? { minWidth: `${gridScrollFloorPx(grid.columns.length)}px` }
+              : {}),
+          }}
+          data-testid="grid-tracks"
         >
+          {/* The column gap is the WRAPPER's now and is deliberately not
+              re-declared on any subgrid below. A subgrid with its own
+              `column-gap` overrides the parent's gutter inside itself, which is
+              a silent misalignment the day the two disagree; omitting it means
+              they cannot. `GRID_STICKY_NAME`'s `-mr-1.5 pr-1.5` still paints
+              into 6px of gap, because 6px is still what it inherits. */}
           <div
-            className="grid items-center gap-1.5 border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted lg:px-5 lg:py-2.5 lg:text-[10.5px]"
-            style={{ gridTemplateColumns: template }}
+            className="col-span-full -mx-3.5 grid grid-cols-subgrid items-center border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted lg:-mx-5 lg:px-5 lg:py-2.5 lg:text-[10.5px]"
             data-testid="grid-header"
             ref={headerRef}
           >
@@ -748,12 +825,11 @@ export default function PlayoffGrid({
             ))}
           </div>
 
-          <ol>
+          <ol className="col-span-full grid grid-cols-subgrid">
             {visible.map((row) => (
               <li
                 key={row.entityKey}
-                className="grid items-center gap-1.5 border-t border-surface-border px-3.5 py-2 first:border-t-0 lg:px-5 lg:py-2.5"
-                style={{ gridTemplateColumns: template }}
+                className="col-span-full -mx-3.5 grid grid-cols-subgrid items-center border-t border-surface-border px-3.5 py-2 first:border-t-0 lg:-mx-5 lg:px-5 lg:py-2.5"
                 data-testid="grid-row"
                 data-entity={row.entityKey}
                 data-rank={row.rank ?? undefined}
@@ -817,12 +893,20 @@ export default function PlayoffGrid({
             ))}
           </ol>
 
+          {/* `col-span-full` because the wrapper is a grid now and a bare
+              child would be placed in track 1 — `w-full` inside `ShowMore`
+              would then measure the NAME column and the control would be 118px
+              wide under a 452px table. Wrapped rather than given a prop:
+              `ShowMore` is shared with the surfaces on this page that are not
+              grids, and its API should not learn about this one's layout. */}
           {grid.rows.length > COLLAPSED_LIST_COUNT && (
-            <ShowMore
-              expanded={expanded}
-              total={grid.rows.length}
-              onToggle={() => setExpanded((value) => !value)}
-            />
+            <div className="col-span-full -mx-3.5 lg:-mx-5">
+              <ShowMore
+                expanded={expanded}
+                total={grid.rows.length}
+                onToggle={() => setExpanded((value) => !value)}
+              />
+            </div>
           )}
         </div>
       </div>

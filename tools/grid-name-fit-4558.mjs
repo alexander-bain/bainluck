@@ -41,6 +41,7 @@ const width = Number(process.argv[3] || 390);
 if (!url) { console.error('usage: grid-name-fit-4558.mjs <url> [widthPx]'); process.exit(2); }
 
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(url);
 const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
 if (proxy) {
   args.push(`--proxy-server=${proxy}`);
@@ -48,12 +49,44 @@ if (proxy) {
   // production and fatal for a locally-served pre-merge build: the proxy has
   // never heard of port 4558. Invert it when the URL is local, exactly as
   // `tools/look-local.mjs` does.
-  const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(url);
   args.push(local ? '--proxy-bypass-list=127.0.0.1;localhost' : '--proxy-bypass-list=<-loopback>');
 }
 
 const browser = await chromium.launch({ headless: true, args });
 const page = await browser.newPage({ viewport: { width, height: 900 }, deviceScaleFactor: 2 });
+
+// A LOCAL BUILD CANNOT REACH THE API, AND THE BYPASS LIST ABOVE IS NOT ENOUGH (#4593).
+// Bypassing the proxy for loopback is what makes the local SERVER reachable; it does
+// nothing for the page's OWN fetches to `api.bainluck.com`, which this sandbox only
+// grants to `curl`. Without this the grid never renders and the tool exits 2 —
+// indistinguishable from "wrong URL", which is how it reads as a broken probe rather
+// than a missing capability. Same shim as `tools/look-local.mjs`, and deliberately
+// scoped to local URLs: a production measurement must stay byte-identical to the one
+// the defect was filed with, so no route interception exists on that path at all.
+if (local) {
+  const { execFileSync } = await import('child_process');
+  await page.route('**://api.bainluck.com/**', async (route) => {
+    const target = route.request().url();
+    let body;
+    try {
+      // curl, not the browser: this process has the session egress the page does not.
+      body = execFileSync('curl', ['-sS', '--max-time', '45', target], {
+        maxBuffer: 64 * 1024 * 1024,
+        encoding: 'utf8',
+      });
+    } catch (err) {
+      console.error(`  ! upstream failed ${target}: ${err.message}`);
+      return route.fulfill({ status: 502, contentType: 'application/json', body: '{}' });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body,
+    });
+  });
+}
+
 // NOT networkidle: a page that polls never idles and `goto` just times out at 90s.
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 await page.waitForTimeout(4000);
@@ -78,7 +111,15 @@ const out = await page.evaluate(() => {
   const scroller = document.querySelector('[data-testid="grid-scroller"]');
   const floorBox = scroller.firstElementChild;
   const header = scroller.querySelector('[data-testid="grid-header"]');
-  const template = getComputedStyle(header).gridTemplateColumns;
+  // READ THE TEMPLATE OFF WHOEVER ACTUALLY OWNS THE TRACKS (#4593). Since the grid
+  // became one container adopted by subgrid, the header's own computed
+  // `grid-template-columns` is the literal word `subgrid` — `parseFloat` turns that
+  // into NaN and the tool reported `header name track NaNpx` while measuring a
+  // perfectly healthy grid. A NaN is not a defect and must not read as one.
+  const trackHolder = scroller.querySelector('[data-testid="grid-tracks"]') || header;
+  const headerTemplate = getComputedStyle(header).gridTemplateColumns;
+  const subgridded = !/^\d/.test(headerTemplate.trim());
+  const template = subgridded ? getComputedStyle(trackHolder).gridTemplateColumns : headerTemplate;
   const tracks = template.split(' ').map((t) => Math.round(parseFloat(t) * 10) / 10);
 
   const rows = [...scroller.querySelectorAll('[data-testid="grid-row"]')].map((li) => {
@@ -127,11 +168,37 @@ const out = await page.evaluate(() => {
     };
   });
 
+  // WHERE THE HEADER'S FIRST LABEL STARTS, in the same frame of reference as a row's
+  // `valueLeft` (#4593). A column label that does not sit over its own numbers is the
+  // same defect as two rows disagreeing, and it was the larger half of it: with the
+  // header's name track at 118px and the widest row's at 156.1, `QF` sat 38px left of
+  // the QF column. Rows were compared to each other and the header to nothing, so
+  // that half was invisible to this tool.
+  const firstLabel = header.querySelector('[data-testid="grid-column"]');
+  const headerValueLeft = firstLabel
+    ? Math.round((firstLabel.getBoundingClientRect().left - header.getBoundingClientRect().left) * 10) / 10
+    : null;
+
+  // THE NUMBER `GRID_SCROLL_SNAP` IS TRANSCRIBED FROM (#4593). `scroll-pl-[138px]` is
+  // a padding on the SCROLLER, so the only measurement that can confirm or refute it
+  // is the first value column's offset from the scroller's own content origin —
+  // `valueLeft` above is relative to the ROW, which stops being the same number the
+  // moment the horizontal padding moves off the row. Reported so a change that
+  // silently desyncs the sticky snap from the layout cannot read as clean.
+  const firstRowValue = scroller.querySelector('[data-testid="grid-row"] [data-testid="grid-value-cell"]');
+  const sr = scroller.getBoundingClientRect();
+  const valueLeftFromScroller = firstRowValue
+    ? Math.round((firstRowValue.getBoundingClientRect().left - sr.left + scroller.scrollLeft) * 10) / 10
+    : null;
+
   return {
     viewport: window.innerWidth,
     columns: scroller.querySelectorAll('[data-testid="grid-column"]').length,
     template,
     tracks,
+    subgridded,
+    headerValueLeft,
+    valueLeftFromScroller,
     nameTrack: tracks[0],
     scroller: { client: scroller.clientWidth, scroll: scroller.scrollWidth },
     floorMinWidth: floorBox ? getComputedStyle(floorBox).minWidth : null,
@@ -151,6 +218,18 @@ console.log(
     ? `columns aligned: every row's first value cell starts at ${lefts[0]}px`
     : `⚠ columns MISALIGNED across rows: first value cell starts at ${lefts.join(' / ')}px`
 );
+console.log(`first value column sits ${out.valueLeftFromScroller}px from the scroller's origin (GRID_SCROLL_SNAP transcribes this)`);
+if (out.headerValueLeft !== null) {
+  // Compared against the WIDEST row, because that is the one a `max-content` track
+  // resolves to once the tracks are genuinely shared.
+  const widest = Math.max(...lefts);
+  const gap = Math.round((widest - out.headerValueLeft) * 10) / 10;
+  console.log(
+    Math.abs(gap) < 0.5
+      ? `header aligned: the first column label starts at ${out.headerValueLeft}px, over its own numbers`
+      : `⚠ HEADER MISALIGNED: first column label at ${out.headerValueLeft}px but its numbers at ${widest}px (${gap}px out)`
+  );
+}
 console.log(`row heights: ${out.rows.map((r) => `${r.name.split(' ').pop()}=${r.rowH}(${r.lines}L)`).join(' ')}`);
 await browser.close();
 process.exit(clipped.length > 0 ? 1 : 0);
