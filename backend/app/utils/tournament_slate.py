@@ -3021,8 +3021,164 @@ def _pair_probabilities(row: dict[str, Any]) -> Optional[tuple[float, float]]:
     return reading["home_probability"], reading["away_probability"]
 
 
+def _declared_legs(prop: dict[str, Any]) -> list[str]:
+    """The markets this card was curated FROM, not the ones that happened to
+    arrive.  A leg is identified by its external id where it has one, because
+    our own ``market_id`` is a local surrogate a re-ingest can move.
+    """
+    declared = [
+        str(entry.get("market_external_id") or entry.get("market_id"))
+        for entry in (prop.get("markets") or [])
+        if isinstance(entry, dict)
+    ]
+    if not declared:
+        # A pre-`markets` register entry: one card, one market, by shape.
+        declared = [
+            str(
+                prop.get("market_external_id")
+                or prop.get("market_id")
+                or prop.get("key")
+            )
+        ]
+    return declared
+
+
+def _outcome_leg(outcome: dict[str, Any], declared: list[str]) -> str:
+    """Which declared leg this outcome belongs to."""
+    return str(
+        outcome.get("market_external_id")
+        or outcome.get("market_id")
+        or (declared[0] if declared else "")
+    )
+
+
+def _ingested_settlement(
+    prop: dict[str, Any], *, prices: dict[int, dict[str, Any]]
+) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
+    """The VENUE's own settlement, for a card the register never stamped (#4801).
+
+    Same return shape as :func:`_prop_settlement`, which is the only caller.
+
+    ═══ WHY THIS EXISTS: THE BAR IS APPLIED ONCE AND THE TOURNAMENT PLAYS ON ═══
+
+    The curator's bar is written twice in ``populate_tournament_props.py`` and
+    it is the right bar: *"A prop whose top rows are decided facts is a dull row
+    wearing a probability."*  ``KXATPGRANDSLAM-26`` was DECLINED for exactly
+    that.  But the bar is applied by hand, once, when the register is written —
+    and nothing re-applies it, so a card curated as a live question stays a live
+    question however the draw goes.
+
+    Measured on production 2026-09-10 (#4801): four of the five US Open props
+    printed ``1%`` and ``99%`` in the live type over markets our own database
+    marked ``resolved``, with ``settled_at`` stamped and ``is_winner`` graded
+    since 9/8 and 9/9.  ``usa-women-quarterfinal-count`` asked whether three
+    American women would reach the quarter-finals 420 pixels below the page's
+    own list of those quarter-finals.  Against Alex's *settled means settled*.
+
+    ``sinner-competes`` is the discriminator: it is the only one of the five
+    carrying a hand-written ``settles_at``, and the only one that settled.
+
+    ═══ THE THREE RULES, EACH PAID FOR ═══
+
+    1. **``status == 'resolved'`` FIRST, and the grade is never read without
+       it.**  ``KXWTAGRANDSLAM-26`` is ``open`` — Sabalenka plays a semi-final
+       today — and its outcome already carries ``is_winner = False``, because a
+       born leg is written ``False`` rather than left NULL (#4788).  A rule that
+       read the grade alone would settle a match in progress, and settle it
+       wrongly.
+    2. **``settled_at``, never ``resolution_date``.**  The docstring of
+       :func:`_prop_settlement` objects to ``resolution_date`` and is right to:
+       it is a close time and often a guess (gotcha #14).  Measured:
+       ``KXGRANDSLAM-JSIN26`` reads 2026-08-31 against a real settlement of
+       2026-09-08.  ``settled_at`` is when the venue actually graded it.
+    3. **EVERY declared leg must be resolved.**  A comparison card is one
+       question printed twice; settling it on one graded leg would answer for a
+       subject still playing.  A leg we hold no price row for is not resolved
+       either — an absence is not a settlement (gotcha #53).
+
+    Curated stamps still win: this is only reached when the register declared
+    no usable instant of its own.
+    """
+    declared = _declared_legs(prop)
+    outcomes = [o for o in (prop.get("outcomes") or []) if isinstance(o, dict)]
+    if not declared or not outcomes:
+        return False, None, None, None
+
+    covered: set[str] = set()
+    stamps: list[datetime] = []
+    for outcome in outcomes:
+        loaded = prices.get(outcome.get("outcome_id")) or {}
+        if str(loaded.get("market_status") or "").strip().lower() != "resolved":
+            # Rule 1 and rule 3 in one line, and it is the fail-safe direction:
+            # an outcome we loaded no row for reads as unresolved and the card
+            # renders exactly as it did before this function existed.
+            return False, None, None, None
+        covered.add(_outcome_leg(outcome, declared))
+        stamp = loaded.get("market_settled_at")
+        if isinstance(stamp, datetime):
+            stamps.append(stamp)
+
+    if not set(declared) <= covered:
+        # A declared leg with no outcome in the register cannot be graded from
+        # here at all, so its market's state is unknown to us — rule 3.
+        return False, None, None, None
+
+    # THE LAST LEG TO RESOLVE is when the QUESTION was answered, which is the
+    # same thing `settles_at` means. `None` is a supported state: the contract
+    # says the card reads without it, and inventing an instant from
+    # `resolution_date` is the one thing rule 2 forbids.
+    at = max(stamps).isoformat() if stamps else None
+
+    def grade(outcome: dict[str, Any]) -> Optional[bool]:
+        return (prices.get(outcome.get("outcome_id")) or {}).get("is_winner")
+
+    answered = [o for o in outcomes if o.get("is_answer") is True]
+
+    if len(answered) == 1:
+        # THE YES/NO SHAPE. The card asks one thing and one row answers it, so
+        # the verdict is that row's grade read against the question — exactly
+        # how the curated `sinner-competes` answer works: its single `Yes`
+        # outcome LOST, and the hand-written answer is "No".
+        won = grade(answered[0])
+        if won is None:
+            return False, None, None, "SETTLED_WITHOUT_AN_ANSWER"
+        return True, ("Yes" if won is True else "No"), at, None
+
+    # THE COMPARISON / FIELD SHAPE — no single answering row, so the answer is
+    # who won, named. `second-major` is the specimen: two subjects, two markets,
+    # neither man won a second major.
+    population = answered or outcomes
+    if any(grade(o) is None for o in population):
+        # PROVABLY CLOSED, NOT FULLY GRADED. "Nobody won" is a claim about every
+        # row, so one ungraded row makes it unsayable — the caller withholds the
+        # card rather than printing a decided question in the live type.
+        return False, None, None, "SETTLED_WITHOUT_AN_ANSWER"
+
+    winners = [o for o in population if grade(o) is True]
+    if winners:
+        answer = " · ".join(
+            name
+            for name in (
+                str(o.get("display_name") or o.get("entity_key") or "").strip()
+                for o in winners
+            )
+            if name
+        )
+        if not answer:
+            # A graded winner we cannot name is an answer we do not hold.
+            return False, None, None, "SETTLED_WITHOUT_AN_ANSWER"
+        return True, answer, at, None
+
+    # Nobody. "Neither" is exact English for two named subjects and wrong for
+    # three, which is the whole reason this branch counts them.
+    return True, ("Neither" if len(population) == 2 else "None"), at, None
+
+
 def _prop_settlement(
-    prop: dict[str, Any], *, now: datetime
+    prop: dict[str, Any],
+    *,
+    now: datetime,
+    prices: dict[int, dict[str, Any]],
 ) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """Is this curated question already answered by the calendar? (Q465)
 
@@ -3036,6 +3192,15 @@ def _prop_settlement(
     play?" is decided by the draw and the first ball rather than by
     ``resolution_date`` — which on that market reads five weeks out and is a
     close time anyway (gotcha #14).
+
+    ⚠ **CURATED FIRST, INGESTED SECOND, NEVER BOTH (#4801).**  That objection is
+    correct about ``resolution_date`` and says nothing against the venue's
+    actual ``settled_at`` + ``is_winner``, which is what
+    :func:`_ingested_settlement` reads when the register declared no instant of
+    its own.  A curated stamp keeps overriding it, because a human who watched
+    the draw is more accurate about when the QUESTION closed than the venue is
+    about when it paid out — that is this docstring's whole point, and the
+    fallback is scoped so it cannot touch a card the curator has spoken for.
     """
     raw = prop.get("settles_at")
     settles_at: Optional[datetime] = None
@@ -3060,9 +3225,18 @@ def _prop_settlement(
         # states the same rule for the same reason. Coercing here means no
         # curated register can take the page down, whatever the gate let past.
         settles_at = settles_at.replace(tzinfo=timezone.utc)
-    if settles_at is None or now < settles_at:
-        # Not yet, or never declared. Either way the card is a live question and
-        # renders exactly as it did before this function existed.
+    if settles_at is None:
+        # NEVER DECLARED — so the register has no opinion to override, and the
+        # venue's own settlement is the best answer we hold (#4801). This is
+        # also where an unparseable stamp lands, deliberately: the fallback can
+        # only ever fire on a market the venue itself resolved, so the worst it
+        # can do to a broken register entry is tell the truth about it.
+        return _ingested_settlement(prop, prices=prices)
+    if now < settles_at:
+        # The curator has spoken and the instant has not arrived. The card is a
+        # live question and renders exactly as it did before this function
+        # existed — an ingested settlement does NOT get to overrule a human who
+        # watched the draw and said this closes later.
         return False, None, None, None
 
     answer = prop.get("settled_answer")
@@ -3142,14 +3316,20 @@ def build_props(
     — a question we can prove is answered but whose answer we do not hold must
     not be printed as though it were still open.  That is the one case where
     showing nothing beats showing the card, and it is counted rather than
-    silent (gotcha #53).  Before ``settles_at``, and for a prop that declares no
-    ``settles_at`` at all, nothing changes: ``settled`` is ``False`` and the card
-    renders exactly as it does today.
+    silent (gotcha #53).  Before ``settles_at``, nothing changes: ``settled`` is
+    ``False`` and the card renders exactly as it does today.
+
+    A prop that declares NO ``settles_at`` falls back to the venue's own
+    settlement (#4801) — see :func:`_ingested_settlement`.  Until 2026-09-10 it
+    stayed a live question forever, which is how four of the five US Open cards
+    came to print ``1%`` and ``99%`` for questions we had graded days earlier.
     """
     out: list[dict[str, Any]] = []
     withheld: dict[str, str] = {}
     for prop in TournamentRegister(register).props:
-        settled, settled_answer, settled_at, withhold = _prop_settlement(prop, now=now)
+        settled, settled_answer, settled_at, withhold = _prop_settlement(
+            prop, now=now, prices=prices
+        )
         if withhold is not None:
             withheld[str(prop.get("key"))] = withhold
             continue
@@ -3157,33 +3337,15 @@ def build_props(
         priced_times: list[Optional[datetime]] = []
         card_liquidity: list[Optional[str]] = []
         card_liquidity_reasons: set[str] = set()
-        # WHAT THE REGISTER DECLARED, not what happened to arrive.  A leg is
-        # identified by its external id where it has one, because our own
-        # `market_id` is a local surrogate a re-ingest can move.
-        declared = [
-            str(entry.get("market_external_id") or entry.get("market_id"))
-            for entry in (prop.get("markets") or [])
-            if isinstance(entry, dict)
-        ]
-        if not declared:
-            # A pre-`markets` register entry: one card, one market, by shape.
-            declared = [
-                str(
-                    prop.get("market_external_id")
-                    or prop.get("market_id")
-                    or prop.get("key")
-                )
-            ]
+        # WHAT THE REGISTER DECLARED, not what happened to arrive. Shared with
+        # `_ingested_settlement` so the two cannot disagree about what a leg is.
+        declared = _declared_legs(prop)
         legs_with_a_reading: set[str] = set()
 
         for outcome in prop.get("outcomes") or []:
             if not isinstance(outcome, dict):
                 continue
-            leg = str(
-                outcome.get("market_external_id")
-                or outcome.get("market_id")
-                or declared[0]
-            )
+            leg = _outcome_leg(outcome, declared)
             loaded = prices.get(outcome.get("outcome_id")) or {}
             probability = _as_float(loaded.get("probability"))
             observed = loaded.get("observed_at")

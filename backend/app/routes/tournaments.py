@@ -559,6 +559,32 @@ async def _load_prices(
                 # its own run-to-run noise. See the docstring for why BOTH
                 # clocks are read and why the newer one wins.
                 FuturesOutcome.last_updated,
+                # ── AND WHETHER THE VENUE HAS ALREADY ANSWERED IT (#4801).
+                #
+                # A price is a forecast; these three columns are the RESULT, and
+                # a surface that reads one without the other prints a question
+                # our own database closed days ago. Four of the five curated US
+                # Open props did exactly that on 2026-09-10 — `1%` and `99%` in
+                # the live type over markets carrying `settled_at` and a graded
+                # leg since 9/8.
+                #
+                # ⚠ `status` FIRST, ALWAYS, AND NEVER `is_winner` ALONE. Measured
+                # the same morning: `KXWTAGRANDSLAM-26` is `open` — Sabalenka
+                # plays a semi-final today — and its outcome already carries
+                # `is_winner = false`, because a born leg is written `False`
+                # rather than left NULL (#4788, lane1b's producer half). Reading
+                # the grade without the status would settle a match in progress.
+                #
+                # ⚠ AND NEVER `resolution_date`, which is a CLOSE time and often
+                # a guess (gotcha #14): `KXGRANDSLAM-JSIN26` reads 2026-08-31
+                # against a real settlement of 2026-09-08. `settled_at` is when
+                # the venue actually graded it.
+                #
+                # Free: `FuturesMarket` is already joined for `volume_24h`, so
+                # this is three more columns on a row the statement is reading.
+                FuturesMarket.status,
+                FuturesMarket.settled_at,
+                FuturesOutcome.is_winner,
             )
             # OUTER, and it matters: an INNER join would drop the whole price
             # row if a market were ever missing, and a dropped price does not
@@ -598,6 +624,13 @@ async def _load_prices(
                 probability=row.current_probability,
             ),
             "source_name": row.name,
+            # THE RESULT, BESIDE THE FORECAST (#4801). Carried raw — the reading
+            # rule ("resolved, and only then the grade") lives in one place, in
+            # `tournament_slate._ingested_settlement`, so no surface downstream
+            # can hold a second opinion about what a settled market is.
+            "market_status": row.status,
+            "market_settled_at": row.settled_at,
+            "is_winner": row.is_winner,
             # {"level": ..., "reasons": [...]}. Graded here, once, so no
             # builder downstream can hold a second opinion about the same book.
             "liquidity": grade_liquidity(

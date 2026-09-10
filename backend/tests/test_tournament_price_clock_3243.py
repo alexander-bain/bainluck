@@ -172,6 +172,12 @@ class _Row:
         self.volume_24h = None
         self.volume_updated_at = None
         self.last_updated = last_updated
+        # The RESULT columns (#4801). An open, ungraded market — this file is
+        # about the freshness clock and a settled row would change what the
+        # props builder does with these prices, which is another file's subject.
+        self.status = "open"
+        self.settled_at = None
+        self.is_winner = None
 
 
 class _Result:
