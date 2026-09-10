@@ -206,6 +206,20 @@ SHIPPED_DIMENSIONS = {
     # `calibration_cluster_sigma` still contributes exactly `marketid`, which
     # remains the thing being guarded.
     "ouside": ("OUSIDE_EXPR", "OUSIDE_JOIN", ""),
+    # SIXTH TIME (CAL-P1077, `loneclaim` + `pubband`), and per the note above this
+    # is not a seventh paragraph of narrative — it is a data point ON #2779, and it
+    # arrived with the one detail the first five did not record: the dynamic form
+    # already exists in this repository. `test_calibration_whole_vm_fold_p125.py`
+    # asks the identical question — "what did MY module add to the rail?" — by
+    # diffing a freshly-loaded rail against the mutated one
+    # (`inherited = set(cce_alone.DIMENSIONS) | ...`), and it has never needed a
+    # hand-maintained copy. Posted to #2779 rather than acted on here: the pinned
+    # table is load-bearing for `test_registration_does_not_rebind_an_existing_
+    # dimension`, which pins VALUES against an import-time rebind, so only the
+    # membership test can move and rewriting a guard in the same commit as the
+    # change it is guarding is how a guard stops guarding.
+    "loneclaim": ("LONECLAIM_EXPR", "LONECLAIM_JOIN", ""),
+    "pubband": ("PUBBAND_EXPR", "PUBBAND_JOIN", ""),
 }
 
 
