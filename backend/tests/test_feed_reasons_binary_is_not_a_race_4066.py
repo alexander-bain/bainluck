@@ -198,7 +198,10 @@ def test_a_yes_no_card_leads_with_a_catalyst_over_a_lifetime_move():
         now=NOW,
     )
 
-    assert copy.context_summary == "59% chance, resolving this week"
+    # #4805 reworded the rung: the predicate is a duration, so the copy is one
+    # too. The ordering under test here — catalyst over lifetime move — is
+    # untouched.
+    assert copy.context_summary == "59% chance, resolving within a week"
 
 
 def test_an_undated_lifetime_move_is_not_published_on_a_yes_no_card():

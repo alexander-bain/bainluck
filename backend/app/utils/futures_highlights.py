@@ -11,6 +11,7 @@ from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 from typing import NamedTuple, Optional
 
+from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
 from app.utils.outcome_display import drop_incoherent_ladder_outcomes
 
 # Market tier weights (lower tier number = more important)
@@ -466,7 +467,12 @@ PRIMARY_REASON_LABELS: list[tuple[str, str]] = [
     ("volume_spike", "Trading surge"),
     ("moderate_movement_24h", "Odds moving"),
     ("resolving_soon_7d", "Resolving soon"),
-    ("resolving_soon_30d", "Resolving this month"),
+    # #4805: the 30d label is IMPORTED, not spelled, because
+    # `generate_futures_context_summary` compares the headline it receives
+    # against this exact string and `routes/feed.py` can hand it either this
+    # value or `generate_futures_headline`'s. Two spellings of one string is a
+    # branch that goes quietly unreachable.
+    ("resolving_soon_30d", RESOLVING_WITHIN_MONTH_HEADLINE),
     # (No `major_surprise` / `moderate_surprise` rungs — see the second bullet
     # above. Both remain SCORING signals, worth 10 and 5; this is a copy fix, not
     # a ranking change, and a card still ranks on the move it no longer misnames.)

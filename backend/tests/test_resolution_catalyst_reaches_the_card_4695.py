@@ -218,7 +218,7 @@ def test_the_silent_specimen_gains_a_true_sentence():
 
     assert copy.reason.strip()
     assert copy.headline.strip()
-    assert "resolving this week" in copy.context_summary.lower()
+    assert "resolving within a week" in copy.context_summary.lower()
     # The catalyst is the news; the bare probability alone was #4056's defect.
     assert copy.context_summary != f"{KYIV_RENDERED_PERCENT}% chance"
 

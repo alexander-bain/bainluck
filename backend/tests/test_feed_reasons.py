@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app.utils.feed_reasons import (
+    RESOLVING_WITHIN_MONTH_HEADLINE,
     generate_event_reason,
     generate_futures_context_summary,
     generate_futures_headline,
@@ -208,7 +209,9 @@ def test_futures_reason_names_leader_for_monthly_resolution():
         leader_probability=0.64,
     )
 
-    assert reason == "Fed Decision in June? resolves this month, No change leads at 64%"
+    assert reason == (
+        "Fed Decision in June? resolves within a month, No change leads at 64%"
+    )
 
 
 def test_futures_reason_avoids_date_leader_for_monthly_resolution():
@@ -219,7 +222,9 @@ def test_futures_reason_avoids_date_leader_for_monthly_resolution():
         leader_probability=0.46,
     )
 
-    assert reason == "Russia x Ukraine ceasefire agreement by...? resolves this month"
+    assert reason == (
+        "Russia x Ukraine ceasefire agreement by...? resolves within a month"
+    )
 
 
 def test_futures_reason_names_new_favorite_without_llm_hook():
@@ -406,13 +411,13 @@ def test_futures_headline_formats_binary_side_naturally():
 
 def test_futures_context_summary_expands_generic_resolving_copy():
     summary = generate_futures_context_summary(
-        headline="Resolving this month",
+        headline=RESOLVING_WITHIN_MONTH_HEADLINE,
         highlight_reasons=["resolving_soon_30d"],
         leader_name="No",
         leader_probability=0.61,
     )
 
-    assert summary == "No leads at 61%; resolves this month"
+    assert summary == "No leads at 61%; resolves within a month"
 
 
 def test_futures_headline_names_leader_for_monthly_resolution():
@@ -422,7 +427,7 @@ def test_futures_headline_names_leader_for_monthly_resolution():
         leader_probability=0.61,
     )
 
-    assert headline == "No leads; resolves this month"
+    assert headline == "No leads; resolves within a month"
 
 
 def test_futures_headline_avoids_date_leader_for_monthly_resolution():
@@ -433,7 +438,9 @@ def test_futures_headline_avoids_date_leader_for_monthly_resolution():
         market_name="Russia x Ukraine ceasefire agreement by...?",
     )
 
-    assert headline == "Russia x Ukraine ceasefire agreement by... resolves this month"
+    assert headline == (
+        "Russia x Ukraine ceasefire agreement by... resolves within a month"
+    )
 
 
 def test_futures_context_summary_combines_signal_and_leader():
@@ -472,26 +479,26 @@ def test_futures_context_summary_adds_leader_to_source_disagreement_headline():
 
 def test_futures_context_summary_omits_weak_date_leader():
     summary = generate_futures_context_summary(
-        headline="Russia x Ukraine ceasefire agreement by... resolves this month",
+        headline="Russia x Ukraine ceasefire agreement by... resolves within a month",
         highlight_reasons=["resolving_soon_30d"],
         market_name="Russia x Ukraine ceasefire agreement by...?",
         leader_name="December 31",
         leader_probability=0.46,
     )
 
-    assert summary == "Resolution window is this month"
+    assert summary == "Resolves within a month"
 
 
 def test_futures_context_summary_avoids_repeating_market_title_prefix():
     summary = generate_futures_context_summary(
-        headline="Trump out as President by May 31 leads; resolves this month",
+        headline="Trump out as President by May 31 leads; resolves within a month",
         highlight_reasons=["resolving_soon_30d"],
         market_name="Trump out as President by May 31?",
         leader_name="Trump out as President by May 31",
         leader_probability=0.82,
     )
 
-    assert summary == "Resolution window is this month"
+    assert summary == "Resolves within a month"
 
 
 def test_event_reason_uses_category_tag_context_when_odds_reason_absent():

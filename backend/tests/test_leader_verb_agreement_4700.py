@@ -159,7 +159,7 @@ def _has_word(text: str, word: str) -> bool:
 
     It was `" leads " not in f" {text} "`, which is the SECOND way CERT-2482
     found this guard hollow: the 30-day headline ends the clause with a
-    semicolon — "Los Angeles Dodgers leads; resolves this month" — and a
+    semicolon — "Los Angeles Dodgers leads; resolves within a month" — and a
     space-delimited probe sails straight past it. Word boundaries, both
     directions, so punctuation cannot hide a defect again.
     """
@@ -302,7 +302,7 @@ def test_the_thirty_day_headline_agrees():
         rendered_leader_percent=30,
         leader_is_team=True,
         market_name="MLB World Series Winner",
-    ) == "Los Angeles Dodgers lead; resolves this month"
+    ) == "Los Angeles Dodgers lead; resolves within a month"
 
     assert generate_futures_headline(
         highlight_reasons=["resolving_soon_30d"],
@@ -311,4 +311,4 @@ def test_the_thirty_day_headline_agrees():
         rendered_leader_percent=29,
         leader_is_team=False,
         market_name="NASCAR Truck Series Champion",
-    ) == "Layne Riggs leads; resolves this month"
+    ) == "Layne Riggs leads; resolves within a month"
