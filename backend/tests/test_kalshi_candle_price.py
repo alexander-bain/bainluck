@@ -192,3 +192,54 @@ async def test_the_service_drops_the_candles_that_have_no_honest_price():
         await service.close()
 
     assert out == [{"t": 2, "yes_price": pytest.approx(0.05)}]
+
+
+@pytest.mark.asyncio
+async def test_the_batch_method_reduces_by_the_same_policy_as_the_singular_one():
+    """The copy of the old rule that the fix to its twin would not have found.
+
+    `get_market_candlesticks_batch` carried `(bid+ask)/2`-or-either-side
+    verbatim, 100 lines below the method CAL-P1084 repaired, and NOTHING calls
+    it — so no existing test, and no caller, would have noticed it disagreeing
+    with the policy. It is a trap for the next caller (a rail batching tickers
+    to save quota is the obvious one), and this is the guard that shuts it.
+    """
+    from app.services import kalshi_api as mod
+
+    service = mod.KalshiAPIService(api_key="test")
+    payload = {
+        "markets": [
+            {
+                "market_ticker": "KXPGAR2TOP10-TOC26-SBUR",
+                "candlesticks": [
+                    # Sam Burns' real candle: the old rule said 0.88, the ask.
+                    {"end_period_ts": 2, **_candle(bid="0.0000", ask="0.8800", previous="0.0500")},
+                    # the settled shell: the old rule said 1.00
+                    {"end_period_ts": 3, **_candle(bid="0.0000", ask="1.0000")},
+                ],
+            },
+            {
+                "market_ticker": "KXPGAR2TOP10-TOC26-MFIT",
+                # Fitzpatrick WON: the old rule midpointed the shell to 0.535.
+                "candlesticks": [
+                    {"end_period_ts": 2, **_candle(bid="0.0700", ask="1.0000", close="0.9500")}
+                ],
+            },
+        ]
+    }
+
+    async def _fake_get(url, params=None):
+        return _FakeResponse(payload)
+
+    service.client.get = _fake_get
+    try:
+        out = await service.get_market_candlesticks_batch(
+            ["KXPGAR2TOP10-TOC26-SBUR", "KXPGAR2TOP10-TOC26-MFIT"]
+        )
+    finally:
+        await service.close()
+
+    assert out == {
+        "KXPGAR2TOP10-TOC26-SBUR": [{"t": 2, "yes_price": pytest.approx(0.05)}],
+        "KXPGAR2TOP10-TOC26-MFIT": [{"t": 2, "yes_price": pytest.approx(0.95)}],
+    }

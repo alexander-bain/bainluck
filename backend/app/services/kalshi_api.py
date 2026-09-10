@@ -1274,6 +1274,14 @@ class KalshiAPIService(BaseAPIClient):
         """Get candlestick data for multiple markets in one API call.
 
         Returns dict of ticker → normalized candle list.
+
+        Reduces each candle through the SAME
+        :func:`app.utils.kalshi_candle_price.candle_yes_price` as
+        :meth:`get_market_candlesticks`. It carried its own copy of the old
+        ``(bid+ask)/2``-or-either-side rule until CAL-P1084; nothing calls this
+        method today, which is exactly why the copy survived the fix to its
+        singular twin and why it is converged rather than left as the trap the
+        next caller falls into.
         """
         import time as _time
         if start_ts is None:
@@ -1302,20 +1310,8 @@ class KalshiAPIService(BaseAPIClient):
                     ts = c.get("end_period_ts")
                     if ts is None:
                         continue
-                    yes_bid = c.get("yes_bid", {})
-                    yes_ask = c.get("yes_ask", {})
-                    try:
-                        bid = float(yes_bid.get("close_dollars") or 0)
-                        ask = float(yes_ask.get("close_dollars") or 0)
-                    except (ValueError, TypeError):
-                        continue
-                    if bid > 0 and ask > 0:
-                        price = (bid + ask) / 2
-                    elif ask > 0:
-                        price = ask
-                    elif bid > 0:
-                        price = bid
-                    else:
+                    price = candle_yes_price(c)
+                    if price is None:
                         continue
                     normalized.append({"t": ts, "yes_price": price})
                 results[ticker] = normalized

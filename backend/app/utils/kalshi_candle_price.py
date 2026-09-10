@@ -17,8 +17,9 @@ Round 2 Top 10, 2026-08-28), Kalshi's own hourly candlesticks, 511 candles:
     Matt Fitzpatrick (WON)     bid 0.07 / ask 1.00   0.95    0.535    0.95
 
 Both directions: a losing longshot is published near-certain, and a winner
-whose book has one side quoted is published near a coin flip. 57 of the 511
-candles moved, 31 of them by 0.20 or more.
+whose book has one side quoted is published near a coin flip. 83 of the 511
+candles moved, 31 of them by 0.20 or more, mean move 0.223 over the ones that
+move.
 
 THE POLICY IS NOT NEW AND IS NOT THIS FILE'S INVENTION. It is
 ``event_chart_backfill.normalize_candle``, shipped for user-facing curves after
@@ -27,6 +28,9 @@ the same defect drew a losing tennis player at 1.0, and it is gotcha #19's rule
 third variant: a price policy that exists twice drifts, so
 ``tests/test_kalshi_candle_price.py`` asserts the two agree candle for candle,
 and collapsing them into one call site is the follow-up this file wants.
+``get_market_candlesticks_batch`` was that third variant — the old rule,
+verbatim, 100 lines below the method that was fixed and uncalled by anything,
+so no test would have found it — and it now calls this function too.
 
 The rule, in order:
 

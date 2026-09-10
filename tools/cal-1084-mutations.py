@@ -66,6 +66,28 @@ MUTATIONS = [
         "    if _usable(bid) and _usable(ask):\n        return (bid + ask) / 2.0\n    return 0.0",
         "RED",
     ),
+    # M8 is not on the policy file. It reverts the SECOND call site — the batch
+    # method that carried the old rule verbatim and that nothing calls — to the
+    # reduction it shipped with, and asks whether the guard file notices a call
+    # site drifting off the policy. Written as a call swap rather than a paste
+    # of the old ten lines so the substitution stays asserted-unique.
+    (
+        "M8 the batch call site drifts back off the shared policy",
+        "app/services/kalshi_api.py",
+        "                    price = candle_yes_price(c)\n"
+        "                    if price is None:\n"
+        "                        continue\n"
+        '                    normalized.append({"t": ts, "yes_price": price})\n'
+        "                results[ticker] = normalized",
+        "                    bid = float((c.get(\"yes_bid\") or {}).get(\"close_dollars\") or 0)\n"
+        "                    ask = float((c.get(\"yes_ask\") or {}).get(\"close_dollars\") or 0)\n"
+        "                    price = (bid + ask) / 2 if bid > 0 and ask > 0 else (ask or bid)\n"
+        "                    if not price:\n"
+        "                        continue\n"
+        '                    normalized.append({"t": ts, "yes_price": price})\n'
+        "                results[ticker] = normalized",
+        "RED",
+    ),
     # NEGATIVE CONTROL. Renaming the local binding changes nothing a reader of
     # the policy could observe, so the guards must stay green — this is what
     # tells us the RED rows above are the policy failing and not the harness
