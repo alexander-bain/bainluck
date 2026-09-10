@@ -580,11 +580,26 @@ async def _load_prices(
                 # against a real settlement of 2026-09-08. `settled_at` is when
                 # the venue actually graded it.
                 #
+                # ⚠ AND `is_winner` IS NOT THE GRADE — `resolution_source` IS
+                # (CERT-2526). `futures_outcomes.is_winner` is
+                # `boolean NULL DEFAULT false`, so a row INSERTed without it is
+                # stored `False`, not NULL: "nobody has graded this yet" and
+                # "the venue graded this a loser" are the SAME VALUE in this
+                # column. Measured on production 2026-09-10 over markets
+                # `settled_at` within 21 days: 1,752 outcomes are `resolved`
+                # with `is_winner = false` and NO `resolution_source`. Reading
+                # `is_winner` alone prints a definitive `No`/`Neither` on every
+                # one of them that no source ever wrote. The canonical grade
+                # predicate is `resolution_source IS NOT NULL` — the same rule
+                # #4788 ships on the event page's Final Results rows — so the
+                # two halves travel together and are read together.
+                #
                 # Free: `FuturesMarket` is already joined for `volume_24h`, so
-                # this is three more columns on a row the statement is reading.
+                # this is four more columns on a row the statement is reading.
                 FuturesMarket.status,
                 FuturesMarket.settled_at,
                 FuturesOutcome.is_winner,
+                FuturesOutcome.resolution_source,
             )
             # OUTER, and it matters: an INNER join would drop the whole price
             # row if a market were ever missing, and a dropped price does not
@@ -631,6 +646,9 @@ async def _load_prices(
             "market_status": row.status,
             "market_settled_at": row.settled_at,
             "is_winner": row.is_winner,
+            # Travels BESIDE `is_winner` and is never optional: the reader in
+            # `_ingested_settlement` refuses to read the grade without it.
+            "resolution_source": row.resolution_source,
             # {"level": ..., "reasons": [...]}. Graded here, once, so no
             # builder downstream can hold a second opinion about the same book.
             "liquidity": grade_liquidity(

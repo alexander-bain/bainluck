@@ -35,6 +35,30 @@ THE ORDER OF THE TWO COLUMNS IS THE WHOLE RULE
 Measured the same morning: `KXWTAGRANDSLAM-26` is `open` and already carries
 `is_winner = False` while Sabalenka plays a semi-final. `status` is read first,
 and `TestTheOpenMarketTrap` is the test that costs the most if it goes.
+
+...AND THE GRADE IS A THIRD COLUMN, NOT THE SECOND ONE (CERT-2526)
+-------------------------------------------------------------------
+`status` says the MARKET closed; it cannot say whether anyone graded the ROW.
+`futures_outcomes.is_winner` is `boolean NULL DEFAULT false`, so "ungraded" and
+"graded a loser" are the same stored value and only `resolution_source` tells
+them apart. `TestTheUngradedDefault` is that guard.
+
+WHERE THE REAL-POSTGRES HALF OF THAT CLAIM LIVES
+--------------------------------------------------
+It is already a committed, CI-run gate and is deliberately not duplicated here:
+`tests/integration/test_futures_outcome_grade_schema_parity_pg.py` proves on a
+real database that a raw INSERT omitting `is_winner` stores `False`
+(`test_a_raw_insert_that_omits_is_winner_stores_false`), and it is registered
+both in `test_pg_gate_seed_completeness.py`'s `COVERED` tuple and as its own CI
+step, so it cannot silently not run. Its own header carries the production
+census this file's fakes are built to match: **778,306** outcomes with
+`is_winner NOT NULL` and `resolution_source NULL` (2026-08-31). Re-measured for
+this repair on 2026-09-10 over markets `settled_at` within 21 days, **1,752**
+are `resolved` as well as ungraded — the rows that would have rendered a
+fabricated verdict.
+
+So the chain is: that gate pins the column's real shape -> `_Row` below encodes
+that shape as its DEFAULT -> the tests here prove what the page does with it.
 """
 
 from __future__ import annotations
@@ -52,6 +76,9 @@ SETTLED_AT = datetime(2026, 9, 9, 16, 51, 9, 516502, tzinfo=timezone.utc)
 # settlement. Present on every row below so any test that started serving it
 # would be visibly wrong rather than plausibly wrong.
 RESOLUTION_DATE = datetime(2026, 8, 31, 15, 7, 35, tzinfo=timezone.utc)
+# What a real graded row carries. Both of production's US Open values are real
+# strings (`api_settlement`, `all_losers`); the rule is presence, not value.
+SOURCED = "api_settlement"
 
 
 class _Row:
@@ -59,8 +86,16 @@ class _Row:
     reads it. Attribute names are the ORM's, so a column renamed upstream
     breaks this fake rather than silently serving `None`."""
 
+    # ⚠ THE DEFAULTS BELOW ARE PRODUCTION'S OWN SERVER DEFAULTS, NOT
+    # CONVENIENCE (CERT-2526). `futures_outcomes.is_winner` is
+    # `boolean NULL DEFAULT false` and `resolution_source` is nullable with no
+    # default, so a row nobody has graded arrives here as `False` + `None` —
+    # NOT as `None`. This fake used to default `is_winner=None`, which is a
+    # shape production never produces, and that single wrong default is what
+    # let a rule that reads `is_winner` alone pass every test in this file
+    # while rendering a fabricated `No` on 1,752 live rows.
     def __init__(self, *, id, probability=0.99, status="open",
-                 settled_at=None, is_winner=None):
+                 settled_at=None, is_winner=False, resolution_source=None):
         self.id = id
         self.name = f"outcome-{id}"
         self.current_probability = probability
@@ -73,6 +108,7 @@ class _Row:
         self.status = status
         self.settled_at = settled_at
         self.is_winner = is_winner
+        self.resolution_source = resolution_source
         self.resolution_date = RESOLUTION_DATE
 
 
@@ -136,6 +172,40 @@ def _yes_no_prop():
     }
 
 
+def _comparison_prop():
+    """`second-major` — two subjects, two markets, no answering row, so the
+    verdict is a claim about EVERY leg (`Neither`). The real register entry."""
+    return {
+        "key": "second-major",
+        "title": "A second major in 2026?",
+        "hook": "Two men, one question.",
+        "draw": "mens-singles",
+        "source": "kalshi",
+        "markets": [{"market_id": 53796,
+                     "market_external_id": "KXGRANDSLAM-CALC26"},
+                    {"market_id": 53795,
+                     "market_external_id": "KXGRANDSLAM-JSIN26"}],
+        "outcomes": [
+            {
+                "entity_key": "second-major:alcaraz",
+                "display_name": "Carlos Alcaraz",
+                "outcome_id": 848773,
+                "is_answer": False,
+                "market_id": 53796,
+                "market_external_id": "KXGRANDSLAM-CALC26",
+            },
+            {
+                "entity_key": "second-major:sinner",
+                "display_name": "Jannik Sinner",
+                "outcome_id": 848769,
+                "is_answer": False,
+                "market_id": 53795,
+                "market_external_id": "KXGRANDSLAM-JSIN26",
+            },
+        ],
+    }
+
+
 async def _load(rows):
     session = _Session(rows)
     return await tournaments._load_prices(
@@ -146,15 +216,17 @@ async def _load(rows):
 class TestTheLoaderServesTheResult:
     """The payload half, by name."""
 
-    async def test_the_three_result_keys_travel_off_a_real_row(self):
+    async def test_the_four_result_keys_travel_off_a_real_row(self):
         loaded = await _load([_Row(
             id=222299660, status="resolved",
-            settled_at=SETTLED_AT, is_winner=True,
+            settled_at=SETTLED_AT, is_winner=True, resolution_source=SOURCED,
         )])
         row = loaded[222299660]
         assert row["market_status"] == "resolved"
         assert row["market_settled_at"] == SETTLED_AT
         assert row["is_winner"] is True
+        # The fourth, and the one whose absence made the other three lie.
+        assert row["resolution_source"] == SOURCED
 
     async def test_resolution_date_is_not_among_them(self):
         """It is on the row and it must not be served: it is a close time and
@@ -179,7 +251,11 @@ class TestTheLoaderServesTheResult:
         loaded = await _load([_Row(id=222299660, status="open")])
         assert loaded[222299660]["market_status"] == "open"
         assert loaded[222299660]["market_settled_at"] is None
-        assert loaded[222299660]["is_winner"] is None
+        # `False`, not `None` — this is the server default an ungraded row
+        # really carries, and serving it faithfully is what lets the reader
+        # notice that `resolution_source` is the only honest grade.
+        assert loaded[222299660]["is_winner"] is False
+        assert loaded[222299660]["resolution_source"] is None
 
 
 class TestTheLoaderAndTheBuilderMeet:
@@ -190,7 +266,7 @@ class TestTheLoaderAndTheBuilderMeet:
     async def test_a_resolved_graded_market_reaches_the_card_as_settled(self):
         prices = await _load([_Row(
             id=222299660, probability=0.99, status="resolved",
-            settled_at=SETTLED_AT, is_winner=True,
+            settled_at=SETTLED_AT, is_winner=True, resolution_source=SOURCED,
         )])
         card = build_props(_register([_yes_no_prop()]), prices=prices, now=NOW)[0]
         assert card["settled"] is True
@@ -232,6 +308,94 @@ class TestTheOpenMarketTrap:
         not about the value `False` happening to be falsy."""
         prices = await _load([_Row(
             id=222299660, probability=0.99, status="open", is_winner=True,
+            resolution_source=SOURCED,
         )])
         card = build_props(_register([_yes_no_prop()]), prices=prices, now=NOW)[0]
         assert card["settled"] is False
+
+
+class TestTheUngradedDefault:
+    """🔴 THE SECOND-MOST EXPENSIVE TEST IN THIS FILE, and the one that was
+    missing (CERT-2526).
+
+    `TestTheOpenMarketTrap` above guards the *status* half: a graded-looking
+    row on a market still in play. This class guards the *grade* half, which is
+    strictly harder, because the two states it separates are the same value.
+
+    `futures_outcomes.is_winner` is `boolean NULL DEFAULT false`. So:
+
+        nobody has graded this row yet   ->  is_winner = False
+        the venue graded this row a loss ->  is_winner = False
+
+    and only `resolution_source` tells them apart. Resolved-before-graded is
+    not an edge case — measured on production 2026-09-10 across markets
+    `settled_at` within 21 days, **1,752** outcomes are `resolved` with
+    `is_winner = false` and no `resolution_source`. Reading the grade alone
+    prints a definitive `No`/`Neither` on all of them that no source wrote,
+    which is the exact fabrication this ship exists to delete.
+    """
+
+    async def test_resolved_server_default_false_without_resolution_source_is_withheld(
+        self,
+    ):
+        """The BLOCK's own repro, through the real loader into the real
+        builder: resolved market, `is_winner` never written, so it reads
+        `False`, and nothing graded it."""
+        prices = await _load([_Row(
+            id=222299660, probability=0.99, status="resolved",
+            settled_at=SETTLED_AT, is_winner=False, resolution_source=None,
+        )])
+        cards = build_props(_register([_yes_no_prop()]), prices=prices, now=NOW)
+        # WITHHELD, not answered `No`. A question we can prove is closed but
+        # whose answer we do not hold must not be printed either way.
+        assert cards == []
+
+    async def test_the_same_row_with_a_source_answers_no(self):
+        """The discriminator. Identical row, one column added — so this pair
+        proves the rule keys on `resolution_source` and not on `is_winner`
+        being falsy, and proves the withhold above is not simply the fallback
+        going dead."""
+        prices = await _load([_Row(
+            id=222299660, probability=0.99, status="resolved",
+            settled_at=SETTLED_AT, is_winner=False, resolution_source="all_losers",
+        )])
+        card = build_props(_register([_yes_no_prop()]), prices=prices, now=NOW)[0]
+        assert card["settled"] is True
+        assert card["settled_answer"] == "No"
+
+    async def test_one_unsourced_leg_withholds_the_whole_comparison_card(self):
+        """`Neither` asserts about EVERY leg, so a single ungraded leg makes it
+        unsayable — even though the other leg is properly graded a loss."""
+        prices = await _load([
+            _Row(id=848773, status="resolved", settled_at=SETTLED_AT,
+                 is_winner=False, resolution_source="all_losers"),
+            _Row(id=848769, status="resolved", settled_at=SETTLED_AT,
+                 is_winner=False, resolution_source=None),
+        ])
+        assert build_props(
+            _register([_comparison_prop()]), prices=prices, now=NOW
+        ) == []
+
+    async def test_both_legs_sourced_still_says_neither(self):
+        """The control for the test above: the ship's real `second-major`
+        behaviour must survive the repair."""
+        prices = await _load([
+            _Row(id=848773, status="resolved", settled_at=SETTLED_AT,
+                 is_winner=False, resolution_source="all_losers"),
+            _Row(id=848769, status="resolved", settled_at=SETTLED_AT,
+                 is_winner=False, resolution_source=SOURCED),
+        ])
+        card = build_props(
+            _register([_comparison_prop()]), prices=prices, now=NOW
+        )[0]
+        assert card["settled"] is True
+        assert card["settled_answer"] == "Neither"
+
+    async def test_an_empty_string_source_is_not_a_grade(self):
+        """`resolution_source` is a nullable varchar, so blank is reachable and
+        is an absence wearing a value (gotcha #53)."""
+        prices = await _load([_Row(
+            id=222299660, probability=0.99, status="resolved",
+            settled_at=SETTLED_AT, is_winner=False, resolution_source="   ",
+        )])
+        assert build_props(_register([_yes_no_prop()]), prices=prices, now=NOW) == []

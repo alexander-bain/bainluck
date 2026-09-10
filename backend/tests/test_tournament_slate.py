@@ -730,10 +730,17 @@ def test_the_committed_register_answers_the_sinner_question():
 # would have settled Sabalenka's semi-final while she was playing it.
 # ---------------------------------------------------------------------------
 
-def _priced(probability=0.5, *, status=None, settled_at=None, is_winner=None,
-            observed_minutes=5):
+def _priced(probability=0.5, *, status=None, settled_at=None, is_winner=False,
+            resolution_source=None, observed_minutes=5):
     """One `_load_prices` row. Keys spelled exactly as the loader spells them —
-    a near-miss here would pass the test and ship the fix dead."""
+    a near-miss here would pass the test and ship the fix dead.
+
+    ⚠ `is_winner` DEFAULTS TO `False` AND `resolution_source` TO `None` BECAUSE
+    THAT IS THE UNGRADED SHAPE (CERT-2526). The column is
+    `boolean NULL DEFAULT false`, so an ungraded row reads `False`, never
+    `None`; a helper that defaulted to `None` described a row production does
+    not produce and hid a rule that read the grade without its source.
+    """
     row = {
         "probability": probability,
         "observed_at": NOW - timedelta(minutes=observed_minutes),
@@ -742,7 +749,12 @@ def _priced(probability=0.5, *, status=None, settled_at=None, is_winner=None,
         row["market_status"] = status
         row["market_settled_at"] = settled_at
         row["is_winner"] = is_winner
+        row["resolution_source"] = resolution_source
     return row
+
+
+# A real graded row carries one of these; the rule is presence, not value.
+SOURCED = "api_settlement"
 
 
 def _yes_no_prop(**overrides):
@@ -808,7 +820,8 @@ class TestIngestedSettlement:
         card = build_props(
             _register(props=[_yes_no_prop()]),
             prices={222299660: _priced(
-                0.99, status="resolved", settled_at=SETTLED_9_9, is_winner=True)},
+                0.99, status="resolved", settled_at=SETTLED_9_9, is_winner=True,
+                resolution_source=SOURCED)},
             now=NOW,
         )[0]
         assert card["settled"] is True
@@ -821,7 +834,8 @@ class TestIngestedSettlement:
         card = build_props(
             _register(props=[_yes_no_prop()]),
             prices={222299660: _priced(
-                0.01, status="resolved", settled_at=SETTLED_9_9, is_winner=False)},
+                0.01, status="resolved", settled_at=SETTLED_9_9, is_winner=False,
+                resolution_source="all_losers")},
             now=NOW,
         )[0]
         assert card["settled"] is True
@@ -899,7 +913,8 @@ class TestIngestedSettlement:
         card = build_props(
             _register(props=[_yes_no_prop()]),
             prices={222299660: _priced(
-                0.99, status="resolved", settled_at=None, is_winner=True)},
+                0.99, status="resolved", settled_at=None, is_winner=True,
+                resolution_source=SOURCED)},
             now=NOW,
         )[0]
         assert card["settled"] is True
@@ -946,9 +961,11 @@ class TestIngestedSettlement:
             _register(props=[_comparison_prop()]),
             prices={
                 848773: _priced(0.01, status="resolved",
-                                settled_at=SETTLED_9_9, is_winner=False),
+                                settled_at=SETTLED_9_9, is_winner=False,
+                                resolution_source="all_losers"),
                 848769: _priced(0.01, status="resolved",
-                                settled_at=SETTLED_9_8, is_winner=False),
+                                settled_at=SETTLED_9_8, is_winner=False,
+                                resolution_source="all_losers"),
             },
             now=NOW,
         )[0]
@@ -961,9 +978,11 @@ class TestIngestedSettlement:
             _register(props=[_comparison_prop()]),
             prices={
                 848773: _priced(0.99, status="resolved",
-                                settled_at=SETTLED_9_9, is_winner=True),
+                                settled_at=SETTLED_9_9, is_winner=True,
+                                resolution_source=SOURCED),
                 848769: _priced(0.01, status="resolved",
-                                settled_at=SETTLED_9_8, is_winner=False),
+                                settled_at=SETTLED_9_8, is_winner=False,
+                                resolution_source="all_losers"),
             },
             now=NOW,
         )[0]
@@ -1005,7 +1024,7 @@ class TestIngestedSettlement:
             _register(props=[_yes_no_prop()]),
             prices={222299660: _priced(
                 0.99, status=" Resolved ", settled_at=SETTLED_9_9,
-                is_winner=True)},
+                is_winner=True, resolution_source=SOURCED)},
             now=NOW,
         )[0]
         assert card["settled"] is True

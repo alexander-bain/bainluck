@@ -3078,7 +3078,7 @@ def _ingested_settlement(
     ``sinner-competes`` is the discriminator: it is the only one of the five
     carrying a hand-written ``settles_at``, and the only one that settled.
 
-    ═══ THE THREE RULES, EACH PAID FOR ═══
+    ═══ THE FOUR RULES, EACH PAID FOR ═══
 
     1. **``status == 'resolved'`` FIRST, and the grade is never read without
        it.**  ``KXWTAGRANDSLAM-26`` is ``open`` — Sabalenka plays a semi-final
@@ -3086,6 +3086,15 @@ def _ingested_settlement(
        born leg is written ``False`` rather than left NULL (#4788).  A rule that
        read the grade alone would settle a match in progress, and settle it
        wrongly.
+
+    1a. **AND THE GRADE ITSELF IS ``resolution_source``, NEVER ``is_winner``
+       ALONE (CERT-2526).**  Rule 1 bounds *when* the grade may be read; it
+       cannot tell a graded loser from an ungraded row, because
+       ``is_winner`` is ``boolean NULL DEFAULT false`` and both are ``False``.
+       Resolved-before-graded is the ordinary state — 1,752 such outcomes in
+       21 days — so :func:`grade` reads a grade only where
+       ``resolution_source`` is set, and an unsourced answer leg withholds the
+       card.  Rule 1 alone would have printed ``No`` for every one of them.
     2. **``settled_at``, never ``resolution_date``.**  The docstring of
        :func:`_prop_settlement` objects to ``resolution_date`` and is right to:
        it is a close time and often a guess (gotcha #14).  Measured:
@@ -3130,7 +3139,31 @@ def _ingested_settlement(
     at = max(stamps).isoformat() if stamps else None
 
     def grade(outcome: dict[str, Any]) -> Optional[bool]:
-        return (prices.get(outcome.get("outcome_id")) or {}).get("is_winner")
+        """The venue's grade for this row, or ``None`` if nobody has graded it.
+
+        ⚠ **`is_winner` ALONE CANNOT ANSWER THIS, AND SILENTLY SAYS "LOSER"
+        (CERT-2526).**  `futures_outcomes.is_winner` is
+        `boolean NULL DEFAULT false`.  A row INSERTed without the column is
+        therefore stored `False` — so "ungraded" and "graded a loser" are the
+        *same value*, and the ungraded one is the ordinary
+        resolved-before-graded state, not an edge case: measured on production
+        2026-09-10, **1,752** outcomes on markets `settled_at` within 21 days
+        are `resolved` with `is_winner = false` and no `resolution_source`.
+
+        Returning that `False` would print a definitive `No` or `Neither` that
+        no source ever wrote — the exact class of fabrication this ship exists
+        to remove, re-introduced by the fix for it.
+
+        `resolution_source IS NOT NULL` is the canonical grade predicate, and
+        the same rule #4788 renders by on the event page's Final Results rows.
+        Unsourced reads as `None`, which both shapes above already handle by
+        withholding the card (`SETTLED_WITHOUT_AN_ANSWER`) — the fail-safe
+        direction, and the reason this returns `None` rather than raising.
+        """
+        loaded = prices.get(outcome.get("outcome_id")) or {}
+        if not str(loaded.get("resolution_source") or "").strip():
+            return None
+        return loaded.get("is_winner")
 
     answered = [o for o in outcomes if o.get("is_answer") is True]
 

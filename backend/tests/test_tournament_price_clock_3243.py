@@ -175,9 +175,13 @@ class _Row:
         # The RESULT columns (#4801). An open, ungraded market — this file is
         # about the freshness clock and a settled row would change what the
         # props builder does with these prices, which is another file's subject.
+        # `is_winner` is `False` rather than `None` because that is the column's
+        # server default and so the shape an ungraded row really has; the grade
+        # is `resolution_source`, and an ungraded row has none (CERT-2526).
         self.status = "open"
         self.settled_at = None
-        self.is_winner = None
+        self.is_winner = False
+        self.resolution_source = None
 
 
 class _Result:
