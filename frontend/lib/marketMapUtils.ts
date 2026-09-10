@@ -241,7 +241,7 @@ export interface ParsedSpread {
    * carry).
    *
    * It exists because a margin ladder keyed on `(side, threshold)` folded two
-   * different questions into one rung. Read off production 2026-09-09 20:45
+   * different questions into one rung. Read off production 2026-09-09 19:29
    * PT, `/api/events/15308439/game-markets`, the US Open men's semi-final
    * Tiafoe (home) vs Shelton:
    *
