@@ -12,6 +12,10 @@ from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
+
+from app.utils.agent_origin import tagged  # noqa: E402
+
 
 def load_chartjs():
     """Load Chart.js from a local cache, downloading if needed."""
@@ -21,7 +25,9 @@ def load_chartjs():
             return f.read()
     import urllib.request
     url = "https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"
-    data = urllib.request.urlopen(url).read().decode("utf-8")
+    # A CDN, so `tagged()` returns {} and nothing is added to the wire.
+    req = urllib.request.Request(url, headers=tagged(url))
+    data = urllib.request.urlopen(req).read().decode("utf-8")
     with open(cache_path, "w") as f:
         f.write(data)
     return data

@@ -25,7 +25,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 # notice 39 / #4642: name this probe on the wire. The insert makes
 # `app` importable when the script is run directly from anywhere.
@@ -62,7 +62,8 @@ GAME_TICKER_PREFIXES: dict[str, list[str]] = {
 
 def api_get(path: str) -> dict:
     url = f"{API_BASE}{path}"
-    with urlopen(url, timeout=30) as resp:
+    req = Request(url, headers=tagged(url))
+    with urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
 

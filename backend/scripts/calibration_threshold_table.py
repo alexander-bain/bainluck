@@ -88,6 +88,13 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# `backend/`, so `app.utils.agent_origin` imports whether this runs from the
+# repo root or from `backend/`. Stated here rather than leaned on transitively:
+# `calibration_scorecard` happens to insert the same path today, and a guard
+# that depends on another module's side effect is a guard that breaks quietly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.utils.agent_origin import tagged  # noqa: E402
 
 from calibration_scorecard import (  # noqa: E402
     BAR_PP,
@@ -255,7 +262,8 @@ def render_markdown(result: dict, incumbent: dict, ratified: dict) -> str:
 
 
 def fetch(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=90) as r:
+    req = urllib.request.Request(url, headers=tagged(url))
+    with urllib.request.urlopen(req, timeout=90) as r:
         return json.loads(r.read().decode())
 
 

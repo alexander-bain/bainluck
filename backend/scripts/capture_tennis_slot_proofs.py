@@ -79,7 +79,9 @@ TENNIS_PATHS = (
 def _venue(path: str) -> dict:
     key = os.environ["STATPAL_API_KEY"]
     url = f"https://statpal.io/api/{path}?" + urllib.parse.urlencode({"access_key": key})
-    return json.loads(urllib.request.urlopen(url, timeout=60).read())
+    # StatPal is a third party: `tagged()` returns {} and the wire is unchanged.
+    req = urllib.request.Request(url, headers=tagged(url))
+    return json.loads(urllib.request.urlopen(req, timeout=60).read())
 
 
 def _iso(ddmmyyyy: str) -> str:

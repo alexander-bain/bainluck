@@ -14,6 +14,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -319,6 +320,88 @@ def _is_tagged_call(node) -> bool:
     )
 
 
+def _is_request_call(node) -> bool:
+    return isinstance(node, ast.Call) and _dotted(node).split(".")[-1] == _URLLIB
+
+
+def _scopes_of(tree: ast.AST) -> dict:
+    """Map every node to the innermost function that encloses it.
+
+    Needed because the same name — almost always ``url`` — is a parameter in one
+    function and a ``Request`` in another within a single script. Resolving at
+    module level would let the second vouch for the first.
+    """
+    enclosing = {}
+    for scope in ast.walk(tree):
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(scope):
+            # Overwrite, deliberately. `ast.walk` is BREADTH-first, so an outer
+            # function is visited before the nested one it contains, and the
+            # last writer therefore wins the innermost scope — which is the one
+            # a name resolves in. `setdefault` here would silently keep the
+            # OUTER scope and reintroduce the cross-function leak this exists
+            # to close.
+            enclosing[node] = scope
+    return enclosing
+
+
+def _bindings(scope: ast.AST) -> dict:
+    """Every value a name is bound to in ``scope``: assignments AND parameters.
+
+    Parameters are bindings too, and that is the half the previous rule missed.
+    ``def fetch(url: str)`` can never receive a ``Request``, so a bare
+    ``urlopen(url)` inside it is untagged no matter what the rest of the file
+    assigns to a name spelled ``url``.
+    """
+    bound: dict = {}
+    args = getattr(scope, "args", None)
+    if args is not None:
+        for arg in (
+            list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)
+            + [a for a in (args.vararg, args.kwarg) if a is not None]
+        ):
+            bound.setdefault(arg.arg, []).append(arg)
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            targets, value = [node.target], node.value
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            # A loop variable is bound to an ELEMENT of the iterable, which this
+            # cannot see. `None` is not a `Request`, so such a name is reported
+            # rather than trusted — the safe direction for a silent failure.
+            targets, value = [node.target], None
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                bound.setdefault(target.id, []).append(value)
+    return bound
+
+
+def _name_is_a_request(name: str, call: ast.Call, tree: ast.AST, scopes: dict) -> bool:
+    """True only when EVERY binding of ``name`` visible here builds a ``Request``.
+
+    The rule this replaces assumed it, in a comment: "a bare Name is a Request
+    built on an earlier line; that Request is itself a rail-1 site and is checked
+    there." True 72 times out of 83 on the directory as it stands — and false
+    eleven times, six of them against our own host (#4747). An assumption that
+    holds 87% of the time reads exactly like a check that holds 100% of the time,
+    which is why this resolves the name instead.
+
+    Unresolvable is reported, not waved through: the whole failure class here is
+    silent, so the safe direction for a name we cannot follow is to name it.
+    """
+    scope = scopes.get(call)
+    for candidate in (scope, tree) if scope is not None else (tree,):
+        values = _bindings(candidate).get(name)
+        if not values:
+            continue
+        return all(_is_request_call(v) for v in values)
+    return False
+
+
 def _untagged_sites(path: pathlib.Path) -> list:
     """Every outbound call site in ``path`` that does not carry the tag.
 
@@ -337,6 +420,7 @@ def _untagged_sites(path: pathlib.Path) -> list:
     except SyntaxError as exc:  # a broken script is its own, louder failure
         return [f"{path.name}: does not parse ({exc})"]
 
+    scopes = _scopes_of(tree)
     bad = []
     for node in ast.walk(tree):
         # rail 4 — a curl argv list
@@ -356,10 +440,14 @@ def _untagged_sites(path: pathlib.Path) -> list:
         # rail 2 — urlopen given a URL rather than a Request
         if short == "urlopen" and node.args:
             first = node.args[0]
-            is_request = isinstance(first, ast.Call) and _dotted(first).split(".")[-1] == _URLLIB
-            # a bare Name is a Request built on an earlier line; that Request is
-            # itself a rail-1 site and is checked there.
-            if not is_request and not isinstance(first, ast.Name):
+            # A Request built inline is fine — it is a rail-1 site and is checked
+            # below. A bare NAME is only fine once resolved: see
+            # `_name_is_a_request` for the eleven sites the old assumption missed.
+            ok = _is_request_call(first) or (
+                isinstance(first, ast.Name)
+                and _name_is_a_request(first.id, node, tree, scopes)
+            )
+            if not ok:
                 bad.append(
                     f"{path.name}:{node.lineno} urlopen() on a URL carries no "
                     f"headers — wrap it in urllib.request.Request(url, headers=tagged(url))"
@@ -415,6 +503,197 @@ def test_no_backend_script_makes_an_untagged_outbound_call():
         "Route it through app.utils.agent_origin.tagged() / curl_args():\n  "
         + "\n  ".join(offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# Rail 2 resolves the name it used to merely trust (#4747)
+# ---------------------------------------------------------------------------
+#
+# The census above is an ASSERTION THAT A NUMBER IS ZERO, and the cheapest way
+# to make such an assertion pass is to stop counting. That is not hypothetical
+# here: for the whole life of #4642 rail 2 skipped every `urlopen(<name>)`
+# on the stated reasoning that the name "is a Request built on an earlier line".
+# It was, 72 times out of 83 — and eleven times it was a URL string, six of
+# those against our own host.
+#
+# So these tests do not exercise the directory. They exercise the RULE, on
+# sources written to be unambiguous, and they fail if the rule ever degrades
+# back into trusting a name. A revert of `_name_is_a_request` to `return True`
+# leaves the census green and turns every case below red.
+
+
+def _sites_for(tmp_path, source: str) -> list:
+    script = tmp_path / "synthetic_probe.py"
+    script.write_text(textwrap.dedent(source))
+    return _untagged_sites(script)
+
+
+_OURS = "https://api.bainluck.com/api/events/search?q=x"
+
+RAIL2_CASES = [
+    (
+        "a name assigned a URL STRING is the bug this closes",
+        f'''
+        from urllib.request import urlopen
+        def go():
+            url = "{_OURS}"
+            with urlopen(url, timeout=5) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "a name assigned a tagged Request is genuinely fine",
+        f'''
+        from urllib.request import Request, urlopen
+        from app.utils.agent_origin import tagged
+        def go():
+            url = "{_OURS}"
+            req = Request(url, headers=tagged(url))
+            with urlopen(req, timeout=5) as r:
+                return r.read()
+        ''',
+        False,
+    ),
+    (
+        "a PARAMETER can never be a Request — the half whole-file lookup missed",
+        '''
+        from urllib.request import urlopen
+        def fetch(url: str):
+            with urlopen(url, timeout=5) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "an inline Request needs no resolution at all",
+        f'''
+        from urllib.request import Request, urlopen
+        from app.utils.agent_origin import tagged
+        def go():
+            url = "{_OURS}"
+            with urlopen(Request(url, headers=tagged(url)), timeout=5) as r:
+                return r.read()
+        ''',
+        False,
+    ),
+    (
+        "a Request built with UNtagged headers is still caught, by rail 1",
+        f'''
+        from urllib.request import Request, urlopen
+        def go():
+            url = "{_OURS}"
+            req = Request(url, headers={{"Accept": "application/json"}})
+            with urlopen(req, timeout=5) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "a loop variable is reported, not trusted",
+        f'''
+        from urllib.request import urlopen
+        def go(paths):
+            for url in paths:
+                with urlopen(url, timeout=5) as r:
+                    yield r.read()
+        ''',
+        True,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "why,source,expect_offender",
+    [pytest.param(w, s, e, id=w[:48]) for w, s, e in RAIL2_CASES],
+)
+def test_rail_two_resolves_the_name(tmp_path, why, source, expect_offender):
+    sites = _sites_for(tmp_path, source)
+    assert bool(sites) is expect_offender, f"{why}\n  got: {sites}"
+
+
+def test_a_name_does_not_borrow_another_function_s_request(tmp_path):
+    """The case that proves resolution is SCOPED, not a file-wide name lookup.
+
+    Both functions spell it `url`. One builds a Request; the other is handed a
+    string. A whole-file map — the obvious first implementation, and the one I
+    wrote first — lets the Request vouch for the parameter and reports nothing.
+    Two of the six real sites (`calibration_scorecard.fetch`,
+    `calibration_threshold_table.fetch`) have exactly this shape.
+    """
+    source = textwrap.dedent(
+        f'''
+        from urllib.request import Request, urlopen
+        from app.utils.agent_origin import tagged
+        def tagged_caller():
+            url = Request("{_OURS}", headers=tagged("{_OURS}"))
+            with urlopen(url, timeout=5) as r:  # CLEAN
+                return r.read()
+        def untagged_caller(url: str):
+            with urlopen(url, timeout=5) as r:  # OFFENDER
+                return r.read()
+        '''
+    )
+    sites = _sites_for(tmp_path, source)
+    assert len(sites) == 1, sites
+
+    # Anchor on the source line the census names, not on a hand-counted offset —
+    # a wrong constant here would read as a failure of the rule.
+    reported = int(sites[0].split(":")[1].split()[0])
+    assert "# OFFENDER" in source.splitlines()[reported - 1], (
+        f"census pointed at line {reported}: {source.splitlines()[reported - 1]!r}"
+    )
+
+
+def test_a_nested_function_does_not_resolve_against_its_enclosing_scope(tmp_path):
+    """Sibling functions cannot tell a correct scope map from a broken one.
+
+    `ast.walk` is breadth-first, so an outer function is walked BEFORE the
+    function nested inside it, and every node of the inner body is visited
+    twice. Recording the first writer (`setdefault`) therefore files inner nodes
+    under the OUTER scope — and for two functions that merely sit side by side
+    the two spellings are indistinguishable, which is how the first version of
+    this test passed against both.
+
+    Only nesting separates them. Here the outer `url` is a tagged Request and
+    the inner `url` is a parameter; under the broken map the outer vouches for
+    the inner and the call is reported clean.
+    """
+    source = textwrap.dedent(
+        f'''
+        from urllib.request import Request, urlopen
+        from app.utils.agent_origin import tagged
+        def outer():
+            url = Request("{_OURS}", headers=tagged("{_OURS}"))
+            def inner(url):
+                with urlopen(url, timeout=5) as r:  # OFFENDER
+                    return r.read()
+            with urlopen(url, timeout=5) as r:  # CLEAN
+                return inner, r.read()
+        '''
+    )
+    sites = _sites_for(tmp_path, source)
+    assert len(sites) == 1, sites
+    reported = int(sites[0].split(":")[1].split()[0])
+    assert "# OFFENDER" in source.splitlines()[reported - 1], (
+        f"census pointed at line {reported}: {source.splitlines()[reported - 1]!r}"
+    )
+
+
+def test_the_espn_fallback_stays_header_free(monkeypatch):
+    """`reconcile_mlb_schedule` measured that ESPN 403s a urllib call WITH headers.
+
+    Routing it through the carrier for the guard's benefit must not put a header
+    back on that wire. It does not, because ESPN is not our host — but the whole
+    point of #4747 is that "must not" reasoning in a comment is worth less than
+    an assertion, so this asserts it with an agent deliberately NAMED.
+    """
+    monkeypatch.setenv("BL_AGENT", "latency")
+    espn = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+
+    assert tagged(espn) == {}
+    assert tagged(espn, {"Accept": "application/json"}) == {"Accept": "application/json"}
+    assert "User-Agent" not in tagged(espn)
 
 
 def test_the_carrier_is_reached_by_the_search_touching_probes():

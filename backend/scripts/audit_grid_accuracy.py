@@ -23,7 +23,13 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
 
 GRID_API_BASE = "https://api.bainluck.com"
 LEAGUES = ["nba", "nhl", "mlb"]
@@ -126,7 +132,8 @@ def fetch_grid_api(league: str, debug: bool = True, base_url: str = GRID_API_BAS
     url = f"{base_url}/api/playoffs/{league}"
     if debug:
         url += "?debug=true"
-    with urlopen(url, timeout=30) as resp:
+    req = Request(url, headers=tagged(url))
+    with urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
 

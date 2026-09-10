@@ -104,6 +104,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # the builder re-exports them for exactly this reason.
 import calibration_sigma_ledger as sigma_ledger  # noqa: E402
 
+from app.utils.agent_origin import tagged  # noqa: E402
+
 # --------------------------------------------------------------------------
 # THE FINISH LINE AND THE FOLD NOW LIVE IN THE APP — CAL-P998, D46 = A.
 #
@@ -729,7 +731,8 @@ def render_markdown(result: dict, history: list[dict]) -> str:
 
 
 def fetch(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=90) as r:
+    req = urllib.request.Request(url, headers=tagged(url))
+    with urllib.request.urlopen(req, timeout=90) as r:
         return json.loads(r.read().decode())
 
 

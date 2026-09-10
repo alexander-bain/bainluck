@@ -99,7 +99,13 @@ def _get_json(url: str, timeout: int = 30) -> dict:
     try:
         import requests  # noqa: PLC0415 -- optional, fallback below
     except ImportError:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        # `tagged()` returns {} for ESPN (`is_our_host` is False), so this
+        # Request carries no custom headers and the load-bearing absence above
+        # is preserved. It is written this way rather than as a bare
+        # `urlopen(url)` so the guard can see the site; asserted by name in
+        # `test_the_espn_fallback_stays_header_free`.
+        req = urllib.request.Request(url, headers=tagged(url))
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode())
     resp = requests.get(url, timeout=timeout, headers=tagged(url))
     resp.raise_for_status()
