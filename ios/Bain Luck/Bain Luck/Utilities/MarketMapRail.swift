@@ -205,6 +205,66 @@ enum MarketMapRail {
         return true
     }
 
+    // MARK: - The heights a totals rail draws
+
+    /// The fourteen bar heights a totals rail draws, from the lines the event
+    /// served.
+    ///
+    /// Moved here from `MarketMapView` by #4692, body unchanged. It lived as a
+    /// `private func` on the view, which meant the rule below it — *is the shape
+    /// on this rail data?* — could not see its output and had to restate its
+    /// exits from the outside, off the thresholds. That restatement is the whole
+    /// defect #4692 is filed on, and a `private` builder is what forced it: the
+    /// mirror could not be tested against the thing it mirrored, so it agreed
+    /// with it on the two cases it was written from and disagreed on a third.
+    /// One file, one arithmetic, and the guard can now run the real path —
+    /// served prices in, heights out, rule on the heights.
+    ///
+    /// Two flat exits, both returning `Array(repeating: 8, count: segments)`:
+    /// fewer than two lines, and no pair of lines separated by a positive gap
+    /// (`rawPdf` skips every `dt <= 0`). Neither can produce the all-zero array
+    /// that a ladder quoted at one price does, which is why reading heights sees
+    /// a case that mirroring the exits cannot.
+    static func densityFromThresholds(
+        _ thresholds: [(threshold: Double, overProb: Double)],
+        rangeMin: Double, rangeMax: Double, segments: Int = 14
+    ) -> [Double] {
+        if thresholds.count < 2 { return Array(repeating: 8, count: segments) }
+        let sorted = thresholds.sorted(by: { $0.threshold < $1.threshold })
+        var rawPdf: [(mid: Double, density: Double)] = []
+        for i in 0..<(sorted.count - 1) {
+            let dt = sorted[i + 1].threshold - sorted[i].threshold
+            guard dt > 0 else { continue }
+            let dp = sorted[i].overProb - sorted[i + 1].overProb
+            rawPdf.append((mid: (sorted[i].threshold + sorted[i + 1].threshold) / 2, density: max(0, dp / dt)))
+        }
+        if rawPdf.isEmpty { return Array(repeating: 8, count: segments) }
+        let step = (rangeMax - rangeMin) / Double(segments)
+        var density = Array(repeating: 0.0, count: segments)
+        for i in 0..<segments {
+            let x = rangeMin + (Double(i) + 0.5) * step
+            if rawPdf.count == 1 { density[i] = rawPdf[0].density }
+            else if x <= rawPdf[0].mid { density[i] = rawPdf[0].density * max(0, 1 - (rawPdf[0].mid - x) / (step * 3)) }
+            else if x >= rawPdf.last!.mid { density[i] = rawPdf.last!.density * max(0, 1 - (x - rawPdf.last!.mid) / (step * 3)) }
+            else {
+                for j in 0..<(rawPdf.count - 1) {
+                    if x >= rawPdf[j].mid && x <= rawPdf[j + 1].mid {
+                        let t = (x - rawPdf[j].mid) / (rawPdf[j + 1].mid - rawPdf[j].mid)
+                        density[i] = rawPdf[j].density * (1 - t) + rawPdf[j + 1].density * t
+                        break
+                    }
+                }
+            }
+        }
+        let smoothed = density.enumerated().map { (i, _) in
+            let prev = i > 0 ? density[i - 1] : density[i]
+            let next = i < density.count - 1 ? density[i + 1] : density[i]
+            return (prev + density[i] * 2 + next) / 4
+        }
+        let peak = max(smoothed.max() ?? 0.001, 0.001)
+        return smoothed.map { ($0 / peak) * 96 }
+    }
+
     // MARK: - Whether a totals card has a distribution to show
 
     /// True when a totals rail has a real distribution under it.
@@ -224,32 +284,49 @@ enum MarketMapRail {
     /// the sport's range, and that nobody quoted a line) are all true and none
     /// of them is a distribution.
     ///
-    /// This mirrors, condition for condition, the two flat-array exits in
-    /// `MarketMapView.buildDensityFromThresholds` — the mapping is: fewer than
-    /// two lines, or no pair of lines separated by a positive gap (its `rawPdf`
-    /// skips every `dt <= 0`, so lines all quoted at the same number leave it
-    /// empty). Either exit returns `Array(repeating: 8, count: 14)`, which the
-    /// rail renders as one shade at alpha `0.21` across its whole width: a
-    /// placeholder that looks sourced. That is #3503's complaint one notch
-    /// smaller, in `marginMapIsEmptyChrome`'s own words, a rail that "looks like
-    /// a distribution and is not one".
-    ///
     /// Not a reason to hide the card (#2086 — declare, don't delete): the card
     /// keeps its FINAL tile and its correctly-labelled axis, and only stops
     /// claiming a shape it does not have.
     ///
-    /// Both of the builder's flat exits fall out of ONE expression, which is
-    /// why there is no `count >= 2` guard in front of it: with fewer than two
-    /// lines the pairwise zip is empty and `contains` is vacuously false, and
-    /// with two or more it applies exactly the `dt > 0` test that the builder's
-    /// `rawPdf` loop applies. A guard would restate the first case in a second
-    /// place, where it could later disagree with this one.
+    /// **#4692 — it reads the heights the rail is about to draw.** Until then
+    /// this asked the served THRESHOLDS whether any two were distinct, and
+    /// mirrored ``densityFromThresholds``' two flat exits condition for
+    /// condition, because those exits were early returns in a different file
+    /// that it could not see. That reason is gone — the builder is now the
+    /// function above this one — and the mirror was wrong in a way no
+    /// threshold can express: distinct lines all quoted at the SAME PRICE
+    /// difference to fourteen zeros, so the rule said "distribution" over a
+    /// rail with nothing on it.
     ///
-    /// - Parameter thresholds: every line that parsed, in any order — this
-    ///   sorts for itself rather than trusting the caller to have done it.
-    static func totalRailHasDistribution(thresholds: [Double]) -> Bool {
-        let sorted = thresholds.sorted()
-        return zip(sorted, sorted.dropFirst()).contains { $1 - $0 > 0 }
+    /// THE SECOND PHOTOGRAPH, `artifacts-native-093/before-4692-mlb-15308052-s1000.png`.
+    /// Event 15308052 (Reds 1 – Dodgers 14, MLB, `completed`), iPhone 17
+    /// simulator against production, 2026-09-10 — four map cards in one column,
+    /// the two MARGIN cards reading their drawn heights and getting it right
+    /// (the half card correctly withholds the word), the two TOTALS cards
+    /// printing "Final runs distribution" and "Half runs distribution" over a
+    /// uniform pale block. Eleven lines, 2.5 through 12.5, **every one served at
+    /// `over_probability = 0.99`** — the Dodgers won by thirteen, so every line
+    /// resolved to the same certainty, every `dp` is 0, and the builder returns
+    /// fourteen zeros. Same page, same reader, same second, two answers.
+    ///
+    /// A settled game does NOT collapse like that by construction, which is why
+    /// this is a rule and not a status check. Census of production 2026-09-10,
+    /// a random 60 of the 500 events completed in the last five days, through
+    /// `GET /api/events/{id}/game-markets` and then through
+    /// `extractTotalThresholds`' own filter — only outcomes NAMED "over" parse,
+    /// so a feed row count is not a line count: **34 draw two or more lines, 25
+    /// of them keep their word**, their lines straddling the final so the prices
+    /// step from ~0.99 below it to ~0.01 above. The **9** that lose it are the
+    /// blowouts, where every line landed on one side.
+    ///
+    /// One expression covers the builder's flat exits too, with no `count`
+    /// guard in front of it: both exits return `Array(repeating: 8, count: 14)`,
+    /// and a uniform non-zero array is exactly what reading heights refuses.
+    ///
+    /// - Parameter density: the array ``densityFromThresholds`` just returned —
+    ///   the heights that will actually be drawn, post-normalisation.
+    static func totalRailHasDistribution(density: [Double]) -> Bool {
+        densityVaries(density)
     }
 
     /// The subtitle a FULL-GAME totals map may print.
@@ -274,7 +351,7 @@ enum MarketMapRail {
     /// card's own words.
     ///
     /// #3576 covers this card too because it is the same sentence over the same
-    /// flat array: `halfTotalCard` calls the same `buildDensityFromThresholds`
+    /// flat array: `halfTotalCard` calls the same ``densityFromThresholds``
     /// and hard-codes "Half <unit> distribution" regardless of what came back.
     /// One rule, one implementation — #3554's lesson was three copies of a
     /// prefix-stripping rule drifting apart, and a second copy of this one would
@@ -785,14 +862,19 @@ enum MarketMapRail {
     /// untouched").
     ///
     /// **It reads the builder's OUTPUT, not its inputs, and that is the whole
-    /// design.** `totalRailHasDistribution` has to mirror
-    /// `buildDensityFromThresholds`' flat exits condition-for-condition, because
-    /// those exits are early returns it cannot see. `buildDensityFromSpreads` has
-    /// no early exit worth mirroring — it bins, then normalises — so the honest
+    /// design.** `buildDensityFromSpreads` bins, then normalises, so the honest
     /// question is simply *what did it just draw*, and asking the array removes
     /// the possibility of drift that a second copy of the arithmetic would
     /// reintroduce. #3554's lesson was three copies of one rule disagreeing; this
     /// keeps the count at one.
+    ///
+    /// This paragraph used to end by noting that the totals twin had to mirror
+    /// its builder's flat exits from the outside, "because those exits are early
+    /// returns it cannot see". That was true and it was the defect: the twin
+    /// agreed with the builder on the two exits it was written from and
+    /// disagreed on a third that no threshold can express. #4692 moved the
+    /// builder into this file and put the twin on its output too, so both cards
+    /// now ask one question of one array.
     ///
     /// **Distinct HEIGHTS, not populated bins** — and that distinction is
     /// measured, not aesthetic. Census of production, 2026-09-06, every event
@@ -843,7 +925,7 @@ enum MarketMapRail {
     /// a survival curve — on live 15305476 the mass between the 1.5 and 2.5 rungs
     /// is `0.58 - 0.12 = 0.46` and the rail draws `0.12`. This rule is about
     /// whether the card asserts a shape at all, and is correct either way; when
-    /// #3772 is fixed by differencing (as `buildDensityFromThresholds` already
+    /// #3772 is fixed by differencing (as ``densityFromThresholds`` already
     /// does) the surviving "distribution" is genuinely earned.
     ///
     /// - Parameter density: the array `buildDensityFromSpreads` just returned —
@@ -893,18 +975,23 @@ enum MarketMapRail {
     /// is not the same as gating the feature* — one layer up: the tile was
     /// gated, the frame it sat in was not.
     ///
-    /// **Why it reads the DENSITY and not `drawsDistribution`.** The card's own
-    /// `hasDistribution` flag comes from ``totalRailHasDistribution``, which asks
-    /// the THRESHOLDS whether they are distinct. This specimen's four lines
-    /// (5.5 / 7.5 / 9.5 / 11.5) are distinct, so that flag is **true** — and yet
-    /// `buildDensityFromThresholds` returned fourteen zeros, because all four are
+    /// **Why it reads the DENSITY and not `drawsDistribution`.** When this was
+    /// written the card's `hasDistribution` flag asked the THRESHOLDS whether
+    /// they were distinct. This specimen's four lines (5.5 / 7.5 / 9.5 / 11.5)
+    /// are distinct, so that flag was **true** — and yet
+    /// ``densityFromThresholds`` returned fourteen zeros, because all four are
     /// served at `p = 0.99` and every `dp` is therefore 0. The rail rendered one
     /// uniform `alpha 0.15` lavender block, which is what the photograph shows.
     /// A gate on the flag would have merged green and changed nothing on the
     /// card it was filed for; asking what was actually drawn is the only question
-    /// that sees this. (That the flag itself asks the wrong side of the builder
-    /// is real and is #4692 — 210 settled cards print "distribution" over a flat
-    /// block — but it flips 111 two-line cards' shading and is its own ship.)
+    /// that saw this.
+    ///
+    /// #4692 has since moved the flag onto the same array, so the two rules now
+    /// agree on this specimen — and the reason to keep reading the density here
+    /// is unchanged and is not that agreement: this rule owns the MARKER arm,
+    /// which no subtitle rule has, and `EmptyRailWithheld4671Tests`
+    /// `test_theMarkerArmIsWhatThisRuleAddsToTheSubtitles` is what stops the two
+    /// being collapsed into one.
     ///
     /// A marker is content, so any marker keeps the rail: the FINAL tile on a
     /// settled game and the PROJECTION tile on a scheduled one both still draw
