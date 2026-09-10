@@ -698,10 +698,364 @@ def test_the_committed_register_answers_the_sinner_question():
 
     # The other four curated questions are NOT time-bounded and must be
     # untouched — this fix has a named subject, not a blast radius.
+    #
+    # ⚠ Since #4801 that is true *of the curated path*, which is what this test
+    # is about, and it holds here because `prices={}`: with no price row there
+    # is no ingested settlement to read either. Those four DO settle from the
+    # venue's own grade once their rows are loaded — that is the whole of #4801
+    # and it is asserted in `TestIngestedSettlement` below.
     for key in ("usa-men-final-berth", "second-major", "sabalenka-title-defence",
                 "usa-women-quarterfinal-count"):
         assert cards[key]["settled"] is False, key
         assert cards[key]["settled_answer"] is None, key
+
+
+# ---------------------------------------------------------------------------
+# THE VENUE ALREADY ANSWERED IT (#4801)
+#
+# The curator's bar — "a prop whose top rows are decided facts is a dull row
+# wearing a probability" — is applied by hand, ONCE, when the register is
+# written. Nothing re-applies it, so a card curated as a live question stayed a
+# live question however the draw went.
+#
+# Measured on production 2026-09-10: four of the five US Open cards printed `1%`
+# and `99%` in the live type over markets we had marked `resolved` and graded on
+# 9/8 and 9/9. `usa-women-quarterfinal-count` asked whether three American women
+# would reach the quarter-finals 420 pixels below the page's own list of those
+# quarter-finals.
+#
+# The tests below are the CLASS, not those four rows. The one that matters most
+# is `test_a_grade_on_an_open_market_never_settles_it`: `is_winner` is written
+# `False` at birth (#4788), so a rule that read the grade without the status
+# would have settled Sabalenka's semi-final while she was playing it.
+# ---------------------------------------------------------------------------
+
+def _priced(probability=0.5, *, status=None, settled_at=None, is_winner=False,
+            resolution_source=None, observed_minutes=5):
+    """One `_load_prices` row. Keys spelled exactly as the loader spells them —
+    a near-miss here would pass the test and ship the fix dead.
+
+    ⚠ `is_winner` DEFAULTS TO `False` AND `resolution_source` TO `None` BECAUSE
+    THAT IS THE UNGRADED SHAPE (CERT-2526). The column is
+    `boolean NULL DEFAULT false`, so an ungraded row reads `False`, never
+    `None`; a helper that defaulted to `None` described a row production does
+    not produce and hid a rule that read the grade without its source.
+    """
+    row = {
+        "probability": probability,
+        "observed_at": NOW - timedelta(minutes=observed_minutes),
+    }
+    if status is not None:
+        row["market_status"] = status
+        row["market_settled_at"] = settled_at
+        row["is_winner"] = is_winner
+        row["resolution_source"] = resolution_source
+    return row
+
+
+# A real graded row carries one of these; the rule is presence, not value.
+SOURCED = "api_settlement"
+
+
+def _yes_no_prop(**overrides):
+    """The single-answer shape: one market, one row, `is_answer` on it."""
+    prop = {
+        "key": "usa-men-final-berth",
+        "title": "Will an American reach the men's final?",
+        "hook": "The market asks about the American men as a group.",
+        "draw": "mens-singles",
+        "source": "kalshi",
+        "market_id": 59694147,
+        "market_external_id": "KXATPNATSTAGE-26FIN",
+        "markets": [{"market_id": 59694147,
+                     "market_external_id": "KXATPNATSTAGE-26FIN"}],
+        "outcomes": [{
+            "entity_key": "usa-men-final-berth:yes",
+            "display_name": "Yes",
+            "outcome_id": 222299660,
+            "is_answer": True,
+            "market_id": 59694147,
+            "market_external_id": "KXATPNATSTAGE-26FIN",
+        }],
+    }
+    prop.update(overrides)
+    return prop
+
+
+def _comparison_prop():
+    """The `second-major` shape: two markets, two subjects, NO answering row."""
+    return {
+        "key": "second-major",
+        "title": "Who wins a second major this year?",
+        "hook": "Both already have one in 2026.",
+        "draw": "mens-singles",
+        "source": "kalshi",
+        "markets": [
+            {"market_id": 53796, "market_external_id": "KXGRANDSLAM-CALC26"},
+            {"market_id": 53795, "market_external_id": "KXGRANDSLAM-JSIN26"},
+        ],
+        "outcomes": [
+            {"entity_key": "second-major:carlos-alcaraz",
+             "display_name": "Carlos Alcaraz", "outcome_id": 848773,
+             "is_answer": False, "market_id": 53796,
+             "market_external_id": "KXGRANDSLAM-CALC26"},
+            {"entity_key": "second-major:jannik-sinner",
+             "display_name": "Jannik Sinner", "outcome_id": 848769,
+             "is_answer": False, "market_id": 53795,
+             "market_external_id": "KXGRANDSLAM-JSIN26"},
+        ],
+    }
+
+
+SETTLED_9_9 = datetime(2026, 9, 9, 16, 51, 9, tzinfo=timezone.utc)
+SETTLED_9_8 = datetime(2026, 9, 8, 2, 51, 56, tzinfo=timezone.utc)
+
+
+class TestIngestedSettlement:
+    """The venue's settlement reaches a card the register never stamped."""
+
+    def test_a_resolved_market_with_a_graded_leg_settles_the_card(self):
+        """DIRECTION 1. `usa-men-final-berth`: resolved, `Yes` graded a winner,
+        no curated `settles_at` — the card says Yes instead of pricing it."""
+        card = build_props(
+            _register(props=[_yes_no_prop()]),
+            prices={222299660: _priced(
+                0.99, status="resolved", settled_at=SETTLED_9_9, is_winner=True,
+                resolution_source=SOURCED)},
+            now=NOW,
+        )[0]
+        assert card["settled"] is True
+        assert card["settled_answer"] == "Yes"
+        assert card["settled_at"] == SETTLED_9_9.isoformat()
+
+    def test_a_graded_loss_reads_as_no_not_as_a_missing_answer(self):
+        """The same shape the curated `sinner-competes` answer has: its single
+        `Yes` row LOST and the hand-written answer is "No"."""
+        card = build_props(
+            _register(props=[_yes_no_prop()]),
+            prices={222299660: _priced(
+                0.01, status="resolved", settled_at=SETTLED_9_9, is_winner=False,
+                resolution_source="all_losers")},
+            now=NOW,
+        )[0]
+        assert card["settled"] is True
+        assert card["settled_answer"] == "No"
+
+    def test_an_open_market_still_renders_as_a_live_question(self):
+        """DIRECTION 2. The fix must not settle the whole section — the
+        `sabalenka-title-defence` shape stays live and keeps its number."""
+        card = build_props(
+            _register(props=[_yes_no_prop()]),
+            prices={222299660: _priced(0.415, status="open")},
+            now=NOW,
+        )[0]
+        assert card["settled"] is False
+        assert card["settled_answer"] is None
+        assert card["outcomes"][0]["probability"] == pytest.approx(0.415)
+        assert card["outcomes"][0]["probability_is_live"] is True
+
+    def test_a_grade_on_an_open_market_never_settles_it(self):
+        """🔴 THE ONE THAT WOULD HAVE COST THE MOST.
+
+        `is_winner` is written `False` when a leg is BORN, not when it loses
+        (#4788) — measured on production 2026-09-10, `KXWTAGRANDSLAM-26` is
+        `open` with `is_winner = False` while Sabalenka plays a semi-final.
+
+        A rule keyed on the grade would settle that match, in progress, and
+        settle it wrongly. `status == 'resolved'` is read FIRST and this test is
+        why the order is load-bearing rather than tidy.
+        """
+        card = build_props(
+            _register(props=[_yes_no_prop()]),
+            prices={222299660: _priced(
+                0.415, status="open", settled_at=None, is_winner=False)},
+            now=NOW,
+        )[0]
+        assert card["settled"] is False
+        assert card["settled_answer"] is None
+
+    def test_a_curated_instant_still_overrides_a_disagreeing_venue(self):
+        """DIRECTION 3. A human who watched the draw beats the venue's payout
+        clock, so a curated stamp in the FUTURE keeps the card live even though
+        the market has already resolved and graded."""
+        card = build_props(
+            _register(props=[_yes_no_prop(
+                settles_at=(NOW + timedelta(hours=6)).isoformat(),
+                settled_answer="No",
+            )]),
+            prices={222299660: _priced(
+                0.99, status="resolved", settled_at=SETTLED_9_8, is_winner=True)},
+            now=NOW,
+        )[0]
+        assert card["settled"] is False
+        assert card["settled_answer"] is None
+
+        # ...and a curated stamp in the PAST answers with the CURATED verdict,
+        # not the venue's grade. The two disagree on purpose here: the row won,
+        # the curator says "No". The curator wins.
+        earlier = build_props(
+            _register(props=[_yes_no_prop(
+                settles_at=(NOW - timedelta(hours=6)).isoformat(),
+                settled_answer="No",
+            )]),
+            prices={222299660: _priced(
+                0.99, status="resolved", settled_at=SETTLED_9_8, is_winner=True)},
+            now=NOW,
+        )[0]
+        assert earlier["settled"] is True
+        assert earlier["settled_answer"] == "No"
+
+    def test_resolution_date_is_never_the_instant(self):
+        """Gotcha #14, measured: `KXGRANDSLAM-JSIN26` reads a `resolution_date`
+        of 2026-08-31 against a real settlement of 2026-09-08. Only
+        `settled_at` may be served, and a resolved market that carries none
+        serves no instant rather than a guessed one."""
+        card = build_props(
+            _register(props=[_yes_no_prop()]),
+            prices={222299660: _priced(
+                0.99, status="resolved", settled_at=None, is_winner=True,
+                resolution_source=SOURCED)},
+            now=NOW,
+        )[0]
+        assert card["settled"] is True
+        assert card["settled_answer"] == "Yes"
+        assert card["settled_at"] is None
+
+    def test_a_resolved_market_with_no_grade_is_withheld_not_printed_live(self):
+        """Provably closed, answer not held — the existing
+        `SETTLED_WITHOUT_AN_ANSWER` path, now reachable from ingested
+        settlement instead of only from a hand-written stamp."""
+        props = build_props(
+            _register(props=[_yes_no_prop()]),
+            prices={222299660: _priced(
+                0.99, status="resolved", settled_at=SETTLED_9_9, is_winner=None)},
+            now=NOW,
+        )
+        assert props == []
+
+    def test_an_absent_price_row_is_not_a_settlement(self):
+        """THE FAIL-SAFE DIRECTION (gotcha #53). Nothing loaded means nothing
+        known, and an absence must never read as a resolution."""
+        card = build_props(
+            _register(props=[_yes_no_prop()]), prices={}, now=NOW)[0]
+        assert card["settled"] is False
+
+    def test_a_comparison_settles_only_when_every_declared_leg_resolves(self):
+        """One question printed twice. Settling it on one graded leg would
+        answer for a subject who is still playing."""
+        half = build_props(
+            _register(props=[_comparison_prop()]),
+            prices={
+                848773: _priced(0.01, status="resolved",
+                                settled_at=SETTLED_9_9, is_winner=False),
+                848769: _priced(0.30, status="open"),
+            },
+            now=NOW,
+        )[0]
+        assert half["settled"] is False
+
+    def test_a_comparison_nobody_won_reads_neither(self):
+        """`second-major`, both legs graded a loss: the answer to "who wins a
+        second major" is Neither, and the instant is the LAST leg to resolve."""
+        card = build_props(
+            _register(props=[_comparison_prop()]),
+            prices={
+                848773: _priced(0.01, status="resolved",
+                                settled_at=SETTLED_9_9, is_winner=False,
+                                resolution_source="all_losers"),
+                848769: _priced(0.01, status="resolved",
+                                settled_at=SETTLED_9_8, is_winner=False,
+                                resolution_source="all_losers"),
+            },
+            now=NOW,
+        )[0]
+        assert card["settled"] is True
+        assert card["settled_answer"] == "Neither"
+        assert card["settled_at"] == SETTLED_9_9.isoformat()
+
+    def test_a_comparison_names_the_subject_that_won(self):
+        card = build_props(
+            _register(props=[_comparison_prop()]),
+            prices={
+                848773: _priced(0.99, status="resolved",
+                                settled_at=SETTLED_9_9, is_winner=True,
+                                resolution_source=SOURCED),
+                848769: _priced(0.01, status="resolved",
+                                settled_at=SETTLED_9_8, is_winner=False,
+                                resolution_source="all_losers"),
+            },
+            now=NOW,
+        )[0]
+        assert card["settled_answer"] == "Carlos Alcaraz"
+
+    def test_a_comparison_with_one_ungraded_leg_is_withheld(self):
+        """"Nobody won" is a claim about EVERY row, so one ungraded row makes it
+        unsayable — and the card must not fall back to printing live."""
+        props = build_props(
+            _register(props=[_comparison_prop()]),
+            prices={
+                848773: _priced(0.01, status="resolved",
+                                settled_at=SETTLED_9_9, is_winner=False),
+                848769: _priced(0.01, status="resolved",
+                                settled_at=SETTLED_9_8, is_winner=None),
+            },
+            now=NOW,
+        )
+        assert props == []
+
+    def test_a_declared_leg_with_no_outcome_holds_the_card_live(self):
+        """A market the register declared but registered no row for cannot be
+        graded from here, so its state is unknown and the card stays live —
+        rule 3, in the direction that cannot over-settle."""
+        prop = _yes_no_prop()
+        prop["markets"] = prop["markets"] + [
+            {"market_id": 999, "market_external_id": "KXSOMETHING-ELSE"}
+        ]
+        card = build_props(
+            _register(props=[prop]),
+            prices={222299660: _priced(
+                0.99, status="resolved", settled_at=SETTLED_9_9, is_winner=True)},
+            now=NOW,
+        )[0]
+        assert card["settled"] is False
+
+    def test_status_is_read_case_and_space_insensitively(self):
+        card = build_props(
+            _register(props=[_yes_no_prop()]),
+            prices={222299660: _priced(
+                0.99, status=" Resolved ", settled_at=SETTLED_9_9,
+                is_winner=True, resolution_source=SOURCED)},
+            now=NOW,
+        )[0]
+        assert card["settled"] is True
+
+    def test_no_rendered_prop_prints_live_while_every_market_is_resolved(self):
+        """THE CENSUS ASSERTION — the invariant that would have caught all four
+        cards on 2026-09-10, stated over whatever the committed register holds
+        rather than over a fixture.
+
+        Every curated prop is given a resolved, graded price row; not one of
+        them may come back as an unsettled live question.
+        """
+        register = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "data" / "tournament_registers" / "us-open-2026.json"
+            ).read_text()
+        )
+        prices = {}
+        for prop in register["props"]:
+            for outcome in prop["outcomes"]:
+                prices[outcome["outcome_id"]] = _priced(
+                    0.99, status="resolved", settled_at=SETTLED_9_9,
+                    is_winner=True)
+
+        # After every curated `settles_at` has passed, so the curated path is
+        # not what is carrying these — the ingested one is.
+        after = datetime(2026, 9, 10, 18, 0, tzinfo=timezone.utc)
+        for card in build_props(register, prices=prices, now=after):
+            assert card["settled"] is True, card["key"]
+            assert card["settled_answer"], card["key"]
 
 
 # ---------------------------------------------------------------------------
