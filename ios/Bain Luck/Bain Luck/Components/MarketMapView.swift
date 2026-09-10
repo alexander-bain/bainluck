@@ -876,40 +876,46 @@ struct MarketMapView: View {
                 }
             }
 
-            // Density rail with marker dots
-            densityRail(
-                density: density, drawsDistribution: drawsDistribution,
-                rangeMin: rangeMin, rangeMax: rangeMax,
-                zeroPosition: zeroPosition,
-                leftRgb: leftRgb, rightRgb: rightRgb,
-                markers: markers
-            )
+            // #4671 — the rail and its axis are ONE thing and are withheld
+            // together. An axis is a scale FOR something; printing `0 · 10 · 21+`
+            // under nothing is the same empty chrome as the capsule above it, so
+            // gating only the rail would leave the numbers floating.
+            if !MarketMapRail.railDrawsNothing(density: density, markerCount: markers.count) {
+                // Density rail with marker dots
+                densityRail(
+                    density: density, drawsDistribution: drawsDistribution,
+                    rangeMin: rangeMin, rangeMax: rangeMax,
+                    zeroPosition: zeroPosition,
+                    leftRgb: leftRgb, rightRgb: rightRgb,
+                    markers: markers
+                )
 
-            // Axis labels. #3566 — the ends are fixed, but the MIDDLE one is
-            // only at the middle when the rail has no zero on it. On a margin
-            // rail the mid label names zero ("Tie"), so it is drawn where zero
-            // actually falls; `densityRail` no longer draws a second one.
-            HStack {
-                Text(axisLeft).foregroundStyle(.secondary)
-                Spacer()
-                Text(axisRight).foregroundStyle(.secondary)
-            }
-            .font(.system(size: 11, weight: .heavy))
-            .overlay {
-                GeometryReader { geo in
-                    switch MarketMapRail.midAxisLabel(zeroPercent: zeroPosition) {
-                    case .centred:
-                        Text(axisMid)
-                            .font(.system(size: 11, weight: .heavy))
-                            .foregroundStyle(.secondary)
-                            .position(x: geo.size.width / 2, y: geo.size.height / 2)
-                    case .at(let percent):
-                        Text(axisMid)
-                            .font(.system(size: 11, weight: .heavy))
-                            .foregroundStyle(.secondary)
-                            .position(x: geo.size.width * percent / 100.0, y: geo.size.height / 2)
-                    case .withheld:
-                        EmptyView()
+                // Axis labels. #3566 — the ends are fixed, but the MIDDLE one is
+                // only at the middle when the rail has no zero on it. On a margin
+                // rail the mid label names zero ("Tie"), so it is drawn where zero
+                // actually falls; `densityRail` no longer draws a second one.
+                HStack {
+                    Text(axisLeft).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(axisRight).foregroundStyle(.secondary)
+                }
+                .font(.system(size: 11, weight: .heavy))
+                .overlay {
+                    GeometryReader { geo in
+                        switch MarketMapRail.midAxisLabel(zeroPercent: zeroPosition) {
+                        case .centred:
+                            Text(axisMid)
+                                .font(.system(size: 11, weight: .heavy))
+                                .foregroundStyle(.secondary)
+                                .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                        case .at(let percent):
+                            Text(axisMid)
+                                .font(.system(size: 11, weight: .heavy))
+                                .foregroundStyle(.secondary)
+                                .position(x: geo.size.width * percent / 100.0, y: geo.size.height / 2)
+                        case .withheld:
+                            EmptyView()
+                        }
                     }
                 }
             }
