@@ -36,6 +36,7 @@ neither ever asked whether that field held a start anybody reported. See
 ``commence_time_is_a_reported_start``.
 """
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app.utils.sport_keys import statpal_anchor_is_shadow
 
@@ -521,6 +522,64 @@ def play_resumes(status) -> bool:
     ``completed_at`` in the same write.
     """
     return status in RESUMABLE_STATUSES
+
+
+# ── Which board day is the authority answering about? (#4652) ────────────────
+#
+#: ESPN files a fixture under the board day of its **Eastern** local start, and
+#: a bare ``/scoreboard`` call returns the board for the Eastern day it is asked
+#: on. Those two facts are the same fact for almost every game and come apart
+#: for exactly one population: a match that is still being played when Eastern
+#: midnight passes.
+ESPN_BOARD_TIMEZONE = ZoneInfo("America/New_York")
+
+
+def espn_board_date(moment) -> str:
+    """Which ESPN board day is this instant filed under? ``"YYYYMMDD"``."""
+    return moment.astimezone(ESPN_BOARD_TIMEZONE).strftime("%Y%m%d")
+
+
+def authority_board_day_has_rolled(commence_time, now) -> bool:
+    """Has ESPN's undated board moved on from the day this match is filed under?
+
+    🔴 **THE AUTHORITY WAS NEVER ASKED — #4652.**
+
+    ``update_event_fields_from_espn`` settles a row the moment ESPN says
+    ``post``/``completed``, and :func:`authority_may_settle` deliberately admits
+    ``suspended`` as well as ``live`` so a match that went quiet can still be
+    ended by an authority that speaks up later. Both are correct. Neither ever
+    ran on the population below, because ``_sync_espn_live_events`` fetched the
+    board with **no date** — so the only day it could ever ask about was today's.
+
+    MEASURED, production 2026-09-10 08:20Z. Four MLS fixtures kicked off at
+    ``02:30Z`` (10:30 pm ET on the 9th) and finished around ``04:30Z``. Eastern
+    midnight is ``04:00Z``, so by full time the undated board had already rolled
+    to the 10th and listed twelve ``pre`` fixtures — none of them the games that
+    had just ended. ESPN knew perfectly well: ``?dates=20260909`` returned all
+    fourteen of that day's matches, every one ``state=post completed=True FT``.
+    We simply asked the wrong day, every pass, forever.
+
+    The rows do not recover. Nothing else settles them, so the wall-clock net
+    turned them ``suspended`` and there they stayed — up to **151 hours** at the
+    time of measurement. Two of them sat at the top of ``/sports/soccer_usa_mls``
+    under "Live & Paused 2" reading *"No result reported"* while the thirteen
+    games that finished alongside them were correctly Finished with scores, and
+    one printed *"last score 1-0"* for a match ESPN records as 2-0 — a frozen
+    mid-game score presented as the closest thing the page had to a result.
+
+    ── WHY THIS IS A DATE QUESTION AND NOT A STATUS ONE ──
+
+    The tempting reading is that ``suspended`` is missing from the candidate
+    queries — and it is, in both of them. But widening those alone is INERT:
+    the board they are matched against still does not contain the match, so the
+    rows are fetched, unmatched, and left exactly as they were. The status
+    partition is a second lock on the same door; this is the first one.
+
+    Asking the wrong day is safe by construction — the straggler pass matches on
+    ``espn_id`` only, so a board that does not contain the row is a no-op rather
+    than a mismatch.
+    """
+    return espn_board_date(commence_time) != espn_board_date(now)
 
 
 # A source captured something this recently ⇒ the game is still being played, so
