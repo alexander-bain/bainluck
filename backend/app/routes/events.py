@@ -103,6 +103,7 @@ from app.utils.search_match_class import (
     query_is_entity_name,
     query_names_participant,
 )
+from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.feed_market_quality import has_no_real_price
 from app.utils.proven_duplicates import (
     FoldedBlendView,
@@ -4371,9 +4372,26 @@ async def search_events(
     # already reached, and it is null-safe by construction (see
     # `app/utils/proven_duplicates.py` — a bare NOT LIKE would drop every untagged
     # row, which is nearly all of them).
+    # #4794: and the same reasoning one step further — a row that can render
+    # NOTHING is not a search result either. `not_a_proven_duplicate` declines to
+    # print a row the registry proved is a second copy; `not_a_blank_card`
+    # declines to print a row that is empty, whoever else it may duplicate. Both
+    # are scope, both only ever REMOVE a row the recall arms already reached, and
+    # neither needs to know what the other decided.
+    #
+    # Specimen: `/search?q=Galatasaray` returned 16 game cards of which 10 were
+    # two team names and "No result reported" — no date, no score, no percentage.
+    # The markets those rows hold keep surfacing in this same response's
+    # `futures` list, which is why dropping the card loses nothing.
+    #
+    # It goes in THIS list and not at the four sites built from it for the reason
+    # #2263/CERT-439 put its sibling here: search reading a row the other rails
+    # decline to print is how the product answers "one game" or "two games"
+    # depending on how you navigated to it.
     event_scope_conditions = [
         Event.commence_time >= cutoff,
         not_a_proven_duplicate(),
+        not_a_blank_card(now),
     ]
 
     # Filter by status based on include_upcoming
@@ -4644,10 +4662,17 @@ async def search_events(
                 # clause carried only by `event_scope_conditions` above would be
                 # silently dropped for exactly the queries that reach here — the
                 # misspelled ones, which are the ones a person types.
+                #
+                # #4794: and the blank-card scope, for the same reason and with
+                # the same force. The paragraph above is the whole argument —
+                # this path is reached by the MISSPELLED queries, so a clause
+                # left behind here is missing from the searches a person
+                # actually types.
                 fuzzy_conditions = [
                     fuzzy_filter,
                     Event.commence_time >= cutoff,
                     not_a_proven_duplicate(),
+                    not_a_blank_card(now),
                 ]
                 if include_upcoming:
                     fuzzy_conditions.append(Event.status.in_(_SEARCH_STATUSES))
