@@ -87,11 +87,20 @@ async def _update_event_tags_impl(limit: int = 500) -> dict:
         # feeding the classification-health census toward a complete GREEN.
         drain = await _drain_missing_tags_oldest_first(session, slice_limit=limit)
 
+        # --- Contradiction reconcile (#4440) ---
+        # A THIRD arm, on its own budget. The two arms above select on absence
+        # and on a 30-minute `updated_at` window; neither can see a row that
+        # already has tags which have since become wrong. Its own budget because
+        # the other two are ~10:1 oversubscribed on one shared 500 ordered
+        # newest-first, so sharing would starve it on arrival (gotcha #41).
+        reconcile = await _reconcile_disagreeing_market_tags(session)
+
         return {
             "events_tagged": tagged,
             "events_errors": errors,
             "futures_tagged": futures_tagged,
             "drain": drain,
+            "reconcile": reconcile,
         }
 
 
@@ -225,6 +234,130 @@ async def _drain_missing_market_tags(session, rc, slice_limit: int) -> dict:
     rc.setex(_MARKET_DRAIN_CURSOR_KEY, _DRAIN_CURSOR_TTL, rows[-1].id)
 
     return {"checked": checked, "tagged": tagged, "remaining": int(remaining), "cursor": rows[-1].id}
+
+
+#: Its own budget, deliberately not the 500 the other arms share. #4440 measured
+#: those two ~10:1 oversubscribed with a `updated_at DESC` order, so an arm added
+#: to that pool would be starved on arrival — the same defect #4253's reach arm
+#: had (an arm bounded by another query's population). The number is small
+#: because the population is small (32 OPEN rows measured 2026-09-09) and
+#: self-draining: a repaired row stops matching.
+MARKET_TAG_RECONCILE_SLICE = 200
+
+
+def _sport_tags(tags) -> set[str]:
+    return {t for t in (tags or []) if str(t).startswith("sport:")}
+
+
+async def _reconcile_disagreeing_market_tags(
+    session, slice_limit: int = MARKET_TAG_RECONCILE_SLICE
+) -> dict:
+    """Re-derive `market_tags` on OPEN rows whose sport tag contradicts the row.
+
+    #4440. `market_tags` is written once at ingest, and the only two arms that
+    ever rewrite it select on ABSENCE (null/empty tags) or on a 30-minute
+    `updated_at` window. A row that already has tags and was updated an hour ago
+    is in neither. So when a classification repair corrects
+    `llm_sport_category` — #4229 corrected 21 Senate-confirmation rows — the row
+    keeps its OLD sport tag forever, and the Discover feed's static `tags=`
+    filter keys its candidate base on exactly that column. Measured 2026-09-09:
+    32 OPEN rows disagreeing, including Senate confirmation votes carrying
+    `sport:hockey`.
+
+    THE REFUSAL IS THE SAFETY ARGUMENT, and it is not hypothetical. Two of the
+    32 are live US Open ATP matches whose `llm_sport_category` is the wrong value
+    `table_tennis` while their stored `sport:tennis` tag is RIGHT. `table_tennis`
+    is not in ``ALLOWED_TAGS["sport"]``, so a blind re-derive emits no sport tag
+    at all and would DELETE a correct tag off a marquee fixture mid-tournament.
+    A recompute that would drop the sport tag entirely is therefore refused and
+    counted: that shape means the classification is wrong, not the tag, and it
+    belongs to the classifier (#3559) rather than here.
+
+    Poison-isolated per row, and no cursor: the population is small and drains
+    itself, so a slice that cannot make progress is visible as a standing
+    `remaining` rather than hidden behind a cursor that has moved past it.
+    """
+    tags_text = sa_cast(FuturesMarket.market_tags, String)
+    disagrees = and_(
+        FuturesMarket.status == "open",
+        FuturesMarket.llm_sport_category.isnot(None),
+        tags_text.like('%"sport:%'),
+        ~tags_text.like('%"sport:' + FuturesMarket.llm_sport_category + '"%'),
+    )
+
+    rows = (
+        (
+            await session.execute(
+                select(FuturesMarket)
+                .where(disagrees)
+                .order_by(FuturesMarket.id.asc())
+                .limit(slice_limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    remaining = (
+        await session.execute(
+            select(func.count()).select_from(FuturesMarket).where(disagrees)
+        )
+    ).scalar() or 0
+
+    stats = {
+        # Reported unconditionally, all of them: `checked: 0` with
+        # `remaining: 0` is a drained backlog and `checked: 0` with a standing
+        # `remaining` is an arm that cannot move its own population. Those are
+        # opposite states and a report that shares one zero between them is how
+        # this column went unrefreshed since ingest.
+        "checked": 0,
+        "changed": 0,
+        "unchanged": 0,
+        "refused_would_drop_sport": 0,
+        "errors": 0,
+        "remaining": int(remaining),
+    }
+    if not rows:
+        return stats
+
+    for market in rows:
+        stats["checked"] += 1
+        try:
+            new_tags = compute_market_tags(
+                llm_sport_category=market.llm_sport_category,
+                llm_league=market.llm_league,
+                llm_gender=market.llm_gender,
+                llm_level=market.llm_level,
+                market_tier=market.market_tier,
+                category=market.category,
+                status=market.status,
+                resolution_date=market.resolution_date,
+                source=market.source,
+            )
+        except Exception:
+            logger.exception("reconcile: failed to tag market %s", market.id)
+            stats["errors"] += 1
+            continue
+
+        old_tags = list(market.market_tags or [])
+        if sorted(new_tags) == sorted(old_tags):
+            # The SQL predicate is a text match and the recompute is the
+            # authority, so an over-selection lands here and costs one no-op.
+            stats["unchanged"] += 1
+            continue
+        if _sport_tags(old_tags) and not _sport_tags(new_tags):
+            stats["refused_would_drop_sport"] += 1
+            logger.info(
+                "taxonomy reconcile: refused to drop the sport tag on market %s "
+                "(llm_sport_category=%r is not an allowed sport) — #4440/#3559",
+                market.id, market.llm_sport_category,
+            )
+            continue
+        market.market_tags = new_tags
+        stats["changed"] += 1
+
+    if stats["changed"]:
+        await session.commit()
+    return stats
 
 
 async def _drain_missing_tags_oldest_first(session, slice_limit: int = 500) -> dict:
