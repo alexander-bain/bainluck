@@ -306,6 +306,33 @@ def _typeahead_pool_seeds():
     return rows
 
 
+# #4728 — (external_id, name, llm_sport_category) for the team-nickname arm.
+#
+# Copied from production 2026-09-10, not invented. The pair is the whole point:
+# both names carry the word "Patriots", and ONLY the sport category tells the New
+# England Patriots apart from the Caribbean Premier League side. Of 53 open
+# `%patriot%` markets that morning, 31 were New England's and 15 of the rest were
+# St. Kitts and Nevis — so the cricket row is not a hypothetical, it is the
+# majority of what an unscoped alias would serve a Patriots fan.
+_NICKNAME_SEEDS = [
+    ("kalshi-nickname-nfl-pats", "Jets vs. Patriots", "football"),
+    (
+        "kalshi-nickname-cpl-pats",
+        "Caribbean Premier League: Barbados Tridents vs "
+        "St. Kitts and Nevis Patriots",
+        "cricket",
+    ),
+    ("kalshi-nickname-mls-revs", "Chicago Fire FC vs. New England Revolution", "soccer"),
+    # The ADDITIVE control, copied from the production dropdown rather than
+    # invented: `pats` reaches this row by interior substring only (Kor*pats*ch),
+    # and it is what a fan sees today instead of their team. It is noise, but it
+    # is REACHABLE noise — a UNION arm can only add rows, so it must survive.
+    # A "fix" that made `pats` mean ONLY the Patriots would pass every other
+    # nickname case here and would be a filter wearing an alias's clothes.
+    ("kalshi-nickname-korpatsch", "Doubles: Huergo/Korpatsch vs Chan/Joint", "tennis"),
+]
+
+
 async def _seed(session):
     from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team
 
@@ -442,6 +469,20 @@ async def _seed(session):
                 status="open",
                 market_tier=market_tier,
                 volume=volume,
+                resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
+            )
+        )
+
+    # #4728: the nickname corpus. Name-only, like the pool rows above — the
+    # nickname arm is a NAME arm, and an outcome would let a second arm answer.
+    for external_id, name, category in _NICKNAME_SEEDS:
+        session.add(
+            FuturesMarket(
+                source="kalshi",
+                external_id=external_id,
+                name=name,
+                status="open",
+                llm_sport_category=category,
                 resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
             )
         )
@@ -1236,4 +1277,94 @@ async def test_a_concept_the_query_does_not_name_is_dropped(search):
     assert not any("wimbledon" in k.lower() for k in keys), (
         f"`swiatek` does not name the Wimbledon concept, so that concept holds "
         f"derived-only evidence and is UNRANKABLE under ruling 041. Got {keys!r}."
+    )
+
+
+# --------------------------------------------------------------------------
+# #4728 — the RECALL half: a fan types their team's nickname
+# --------------------------------------------------------------------------
+async def test_a_team_nickname_reaches_its_teams_markets(search):
+    """🔴 #4728: `pats` must reach the Patriots' markets.
+
+    Measured on production 2026-09-10: `?q=pats` returned ZERO of the 31 open
+    New England Patriots markets, `?q=revs` zero of 15, `?q=niners` zero of 36,
+    `?q=bucs` zero of 41. The nickname appears in no market name — venues write
+    "Jets vs. Patriots" — and it stems to a different lexeme than the full name
+    (`pats` -> `pat`, `patriots` -> `patriot`), so neither the substring arm nor
+    the whole-word arm can reach the row. Only an alias can.
+
+    The team ROW already resolves (`teams.alternate_names` carries these), which
+    is exactly what made the gap easy to miss: the page shows the right team and
+    none of its markets.
+    """
+    names = _futures_names(await search("pats"))
+    assert "Jets vs. Patriots" in names, (
+        f"`pats` did not reach the Patriots' own market: {names!r}. This is the "
+        "#4728 recall hole — a fan typing the nickname their team is known by "
+        "gets none of that team's markets."
+    )
+
+
+async def test_the_nickname_arm_does_not_fan_out_across_sports(search):
+    """The guard that makes the alias safe to ship, and to extend.
+
+    "Patriots" is not unique: 22 of the 53 open `%patriot%` markets on
+    2026-09-10 were NOT New England's, and 15 of those were the Caribbean
+    Premier League's St. Kitts and Nevis Patriots — a genuine whole-word match
+    on a cricket side. An alias that expanded `pats` to `patriots` and stopped
+    there would serve those 15 to a Patriots fan, which is the cross-league
+    fan-out `CURATED_TEAM_ALIASES`'s (sport_key, name) key exists to prevent.
+
+    This is the mutation-killing half of the pair: delete the
+    `llm_sport_category` term from `_team_nickname_futures_arms` and the test
+    above still passes while this one goes red.
+    """
+    names = _futures_names(await search("pats"))
+    assert not any("St. Kitts" in (n or "") for n in names), (
+        f"the nickname arm fanned out of the franchise's sport: {names!r}. "
+        "`pats` is the NFL New England Patriots; Caribbean Premier League "
+        "cricket is a different team that happens to share a word."
+    )
+
+
+async def test_the_nickname_arm_did_not_buy_its_recall_by_removing_any(search):
+    """The additive contract, on the row the arm is most likely to disturb.
+
+    `pats` reaches "Doubles: Huergo/Korpatsch vs Chan/Joint" by interior
+    substring today — it is noise, and it is most of what a fan actually gets,
+    but it is REACHABLE noise. A UNION arm can only ADD rows, so it must
+    survive. A "fix" that made `pats` mean ONLY the Patriots would satisfy both
+    tests above and would be a filter wearing an alias's clothes.
+    """
+    names = _futures_names(await search("pats"))
+    assert any("Korpatsch" in (n or "") for n in names), (
+        f"the substring match was REMOVED, not added to: {names!r}. #4728 is a "
+        "recall ADDITIVE — every row that reached the user before still must."
+    )
+
+
+async def test_a_second_nickname_in_a_second_sport_also_resolves(search):
+    """One green nickname could be a coincidence; the mechanism is the claim.
+
+    `revs` -> "Revolution" scoped to soccer exercises a different row of
+    `CURATED_TEAM_ALIASES`, a different sport category, and a different derived
+    token — so it fails if the derivation is hard-coded to the football case.
+    """
+    names = _futures_names(await search("revs"))
+    assert "Chicago Fire FC vs. New England Revolution" in names, (
+        f"`revs` did not reach the Revolution's market: {names!r}"
+    )
+
+
+async def test_a_query_with_no_nickname_is_untouched(search):
+    """The no-cost path: the overwhelming majority of queries.
+
+    `_team_nickname_futures_arms` must return [] for them, so the SQL is
+    byte-identical and no query pays for a feature it does not use. Asserted
+    here on behaviour, and directly on the helper in
+    `tests/test_search_team_nickname_aliases_4728.py`.
+    """
+    names = _futures_names(await search("nba champion"))
+    assert "NBA Champion 2026" in names, (
+        f"a query with no nickname in it changed: {names!r}"
     )

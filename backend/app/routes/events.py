@@ -76,6 +76,7 @@ from app.utils.game_window import (
     game_state_window as _game_state_window,
 )
 from app.utils.name_normalization import expand_search_terms
+from app.config.team_aliases import team_nickname_search_expansions
 from app.utils.search_headline_contender import (
     HEADLINE_MARKET_TIER,
     MIN_CONTENDER_PROBABILITY,
@@ -1890,6 +1891,49 @@ def _alias_futures_arms(terms: list[str]) -> list:
         expanded = _apply_search_synonyms(expand_search_terms(alternative))
         arms.append(
             and_(*[_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in expanded])
+        )
+    return arms
+
+
+# Built once at import: a dict rebuild per keystroke on the typeahead path would be
+# pure waste. `team_nickname_search_expansions()` is pure, so this is a constant.
+_TEAM_NICKNAME_EXPANSIONS: dict[str, tuple[str, str]] = team_nickname_search_expansions()
+
+
+def _team_nickname_futures_arms(terms: list[str]) -> list:
+    """Futures NAME arms for colloquial TEAM nicknames, sport-scoped (#4728).
+
+    `pats` -> "Patriots" AND football, `revs` -> "Revolution" AND soccer. The
+    sibling of `_alias_futures_arms` for the one-word case, with the one difference
+    that matters: **the sport scope is part of the arm, not a nicety.** Unscoped,
+    `pats` would serve a Patriots fan 15 Caribbean Premier League cricket markets
+    alongside their 31 real ones. See `app/config/team_aliases.py` for the census
+    those numbers come from.
+
+    Like its sibling this is name-only and UNION-shaped, so it can only ADD rows —
+    no alias can remove a result that reaches the user today — and it returns [] for
+    every query with no nickname in it, which is the overwhelming majority and the
+    no-cost path (byte-identical SQL).
+
+    The surrounding terms are KEPT, so the alias composes rather than only working
+    as the whole query: "pats win total" -> "Patriots win total".
+    """
+
+    arms = []
+    for index, term in enumerate(terms):
+        entry = _TEAM_NICKNAME_EXPANSIONS.get(term.lower())
+        if entry is None:
+            continue
+        token, category = entry
+        alternative = terms[:index] + [token] + terms[index + 1 :]
+        expanded = _apply_search_synonyms(expand_search_terms(alternative))
+        if not expanded:
+            continue
+        arms.append(
+            and_(
+                FuturesMarket.llm_sport_category == category,
+                *[_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in expanded],
+            )
         )
     return arms
 
@@ -5031,6 +5075,11 @@ async def search_events(
     _futures_alias_arms = _alias_futures_arms(terms)
     _futures_where_or.extend(_futures_alias_arms)
 
+    # #4728: the one-word sibling — colloquial team nicknames ("pats", "revs",
+    # "niners", "bucs"), sport-scoped. Same UNION shape, same both-surfaces rule as
+    # the phrase aliases above; see `_team_nickname_futures_arms`.
+    _futures_where_or.extend(_team_nickname_futures_arms(terms))
+
     # LAT-P006/#1494: the recall arms are combined with UNION, not OR.
     #
     # MEASURED in production 2026-08-08 (3.2M-row `futures_outcomes`, 3 GB), not
@@ -6866,6 +6915,11 @@ async def typeahead_search(
     # "had drifted, which is how /search kept the defect for three cycles after
     # /typeahead's twin was fixed". One helper, both callers, no second copy.
     ta_futures_where.extend(_alias_futures_arms(terms))
+
+    # #4728: nicknames, same helper both surfaces — the drift this file's own
+    # `_build_league_ticker_match` comment warns about is how /search kept a defect
+    # for three cycles after /typeahead's twin was fixed.
+    ta_futures_where.extend(_team_nickname_futures_arms(terms))
 
     # LAT-P007: UNION, not OR — the LAT-P006 treatment, same reasoning, same
     # measurement rail. A top-level OR blocks the hash-semi-join transformation,
