@@ -1617,6 +1617,43 @@ def _set_statpal_id(event, fixture_id: str):
 # =============================================================================
 
 
+#: The key between `standings` and `league[]` is NOT constant across StatPal's
+#: own sports. Measured against the venue 2026-09-10 (all four HTTP 200, #4732):
+#:
+#:     nfl   standings.category.league[].division[].team[]    32 teams
+#:     mlb   standings.category.league[].division[].team[]    30 teams
+#:     nba   standings.tournament.league[].division[].team[]  30 teams
+#:     nhl   standings.tournament.league[].division[].team[]  32 teams
+#:
+#: Navigating `tournament` alone cost NFL and MLB every standings row they have
+#: ever had — both read zero from inception, in season, on mornings their two
+#: siblings wrote successfully. One wrapper key, two whole leagues.
+STANDINGS_WRAPPER_KEYS = ("tournament", "category")
+
+
+def _standings_league_node(inner: dict) -> Optional[dict]:
+    """Return the node under `standings` that carries `league[]`, or None.
+
+    Known wrapper names are tried first and in a fixed order so the reading is
+    deterministic. The structural fallback exists because #4732 was a whole
+    sport lost to a key NAME: any child dict carrying `league` is the node we
+    were looking for, whatever the vendor decided to call it, and finding it
+    that way costs nothing when the name is already known.
+    """
+    if not isinstance(inner, dict):
+        return None
+    if "league" in inner:
+        return inner
+    for key in STANDINGS_WRAPPER_KEYS:
+        node = inner.get(key)
+        if isinstance(node, dict) and "league" in node:
+            return node
+    for value in inner.values():
+        if isinstance(value, dict) and "league" in value:
+            return value
+    return None
+
+
 async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
     """Sync league standings from StatPal and store on Team records.
 
@@ -1629,7 +1666,7 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
     from app.services.statpal_api import StatPalAPIService, is_available
 
     if not is_available():
-        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+        return {"terminal": "skipped", "skipped": True, "reason": "STATPAL_API_KEY not set"}
 
     if sport_key:
         sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
@@ -1640,6 +1677,30 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
     total_updated = 0
     details = []
     now = datetime.now(timezone.utc)
+
+    # Terminal accounting, ported from the schedules task (#2907, #4710). This
+    # task had NO terminal fields at all — `task_verdict` read it as
+    # `not_enforced(unknown:no_terminal_fields)` — so a pass that wrote 62 rows
+    # for two off-season sports and 0 for the two in season banked the same
+    # green as a pass that got everything (#4732).
+    fetch_failures: list[dict] = []
+    sports_asked = 0
+    #: TWO arms reach "unasked" here, and both are appended below — the count is
+    #: stated because #4710 was a comment that enumerated two arms while the code
+    #: implemented one, and the comment is exactly what stopped anybody checking:
+    #:
+    #:   `sport_not_found`     the key resolves to no `sports` row, so the loop
+    #:                         drops it before the fetch.
+    #:   `no_venue_path`       the sport IS rowed and IS mapped, but StatPal
+    #:                         serves no standings product for it — soccer and
+    #:                         tennis both answer HTTP 404 (measured 2026-09-10).
+    #:                         NINE of the thirteen mapped keys: soccer ×7,
+    #:                         tennis ×2.
+    #:
+    #: The second is much the larger, exactly as `no_day_token` is on the
+    #: schedules side, and for the same reason: it is a permanent property of the
+    #: vendor's product, so it must not be counted as asked and must not alarm.
+    sports_unasked: list[dict] = []
 
     try:
         async with get_task_session() as session:
@@ -1654,14 +1715,47 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                 sport_row = sport_result.first()
                 if not sport_row:
                     details.append({"sport": our_key, "status": "sport_not_found"})
+                    sports_unasked.append({
+                        "sport": our_key,
+                        "statpal_sport": statpal_sport,
+                        "reason": "sport_not_found",
+                    })
                     continue
 
                 sport_id = sport_row.id
 
-                # Fetch standings from StatPal
-                standings_data = await service.get_standings(statpal_sport)
-                if not standings_data:
+                # Fetch standings from StatPal. The result object, not the bare
+                # payload: `None` alone cannot tell "no standings product"
+                # (permanent, 9 of 13 keys) from "we asked and it broke"
+                # (gotcha #53), and this task banked green on both.
+                fetch = await service.get_standings_result(statpal_sport)
+                standings_data = fetch.data
+
+                if not fetch.asked:
+                    details.append({"sport": our_key, "status": fetch.reason})
+                    sports_unasked.append({
+                        "sport": our_key,
+                        "statpal_sport": statpal_sport,
+                        "reason": fetch.reason,
+                    })
+                    continue
+
+                # Counted BEFORE the failure branch, not after: a sport we asked
+                # and could not read is still a sport we asked, and the `failed`
+                # terminal is "every sport I asked was unreadable". Incrementing
+                # after the `continue` made a wholly dark pass read `no_work` —
+                # authoritative UNKNOWN — which is the one thing an outage must
+                # not look like.
+                sports_asked += 1
+
+                if fetch.is_alarm or not standings_data:
                     details.append({"sport": our_key, "status": "no_standings"})
+                    fetch_failures.append({
+                        "sport": our_key,
+                        "statpal_sport": statpal_sport,
+                        "reason": fetch.reason,
+                        "endpoint": fetch.endpoint,
+                    })
                     continue
 
                 # Get our DB teams for matching
@@ -1690,9 +1784,9 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                     if isinstance(inner, list):
                         teams_list = inner
                     elif isinstance(inner, dict):
-                        # Navigate: tournament.league[].division[].team[]
-                        tournament = inner.get("tournament", inner)
-                        if isinstance(tournament, dict):
+                        # Navigate: <wrapper>.league[].division[].team[]
+                        tournament = _standings_league_node(inner)
+                        if tournament is not None:
                             leagues = tournament.get("league", [])
                             if isinstance(leagues, dict):
                                 leagues = [leagues]
@@ -1715,6 +1809,14 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                                             # Inject conference/division from structure
                                             t["_conference"] = league_name
                                             t["_division"] = div_name
+                                            t["_rank_scope"] = "division"
+                                            # The team's `position` is scoped by
+                                            # the node it hangs under, and here
+                                            # that is ALWAYS a division. Recorded
+                                            # at the point the structure is still
+                                            # in hand — by the time the field map
+                                            # below runs, a flat dict cannot say
+                                            # what its own rank was counted over.
                                             teams_list.append(t)
                         # Fallback: groups/teams patterns
                         if not teams_list:
@@ -1724,7 +1826,18 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                             elif "teams" in inner:
                                 teams_list = inner["teams"]
                     if not teams_list:
-                        logger.info(f"Standings for {our_key}: unexpected format, keys={list(standings_data.keys())}")
+                        # This line existed through every one of #4732's silent
+                        # months and could not have caught it: it printed
+                        # `standings_data.keys()`, which is `['standings']` for
+                        # NFL, MLB, NBA and NHL alike — the one key the two
+                        # broken sports shared with the two working ones. The
+                        # keys that discriminate are one level in.
+                        logger.warning(
+                            "Standings for %s: parsed 0 teams — outer keys=%s inner keys=%s",
+                            our_key,
+                            sorted(standings_data),
+                            sorted(inner) if isinstance(inner, dict) else type(inner).__name__,
+                        )
 
                 logger.info(f"Standings for {our_key}: parsed {len(teams_list)} teams")
 
@@ -1760,13 +1873,56 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                     if losses is not None:
                         parsed["losses"] = int(losses)
 
+                    # WHERE THE RANK IS COUNTED, AND WHY IT IS NOT `conf_rank`.
+                    #
+                    # `position` used to be stored as `conf_rank` unconditionally.
+                    # It is read off a team nested under `league[].division[]`,
+                    # so it is the team's place IN ITS DIVISION — and both
+                    # renderers say "conference" when they see `conf_rank`
+                    # (`events.py` `_standings_context` prints "#1 Eastern
+                    # Conference"; `RelatedFutures.tsx`'s `StandingsCard` puts
+                    # the number against `standings.conference`).
+                    #
+                    # Measured on production 2026-09-10, and it is not a
+                    # judgement call — a conference has exactly one #1, so a
+                    # conference-scoped rank cannot repeat within a conference:
+                    #
+                    #   26 (conference, conf_rank) pairs are shared by >1 team.
+                    #   FOUR NBA teams read "#1 Eastern Conference" at once —
+                    #   Boston (Atlantic), Detroit (Central), and two more.
+                    #
+                    # That is a live TRUTH defect on the 75 NBA/NHL teams that
+                    # have standings today, and #4732 would have extended it to
+                    # NFL and MLB. The number was always right; the word beside
+                    # it was wrong. `div_rank` is the field both renderers pair
+                    # with `division`, so the fix is the label, not the value.
+                    #
+                    # NO CONFERENCE RANK IS SYNTHESISED. It is derivable-looking
+                    # — sort a conference's teams by win pct — and that is the
+                    # trap: NFL and NBA seeding turn on tiebreakers we do not
+                    # model, so a computed "#3 AFC" would be a fabricated
+                    # authority wearing the venue's credibility. A conference
+                    # rank needs a conference-scoped source. Until one exists
+                    # the claim is simply not made.
+                    #
+                    # Consequence, deliberate: `_standings_context`'s "Top seed
+                    # matchup" reads `conf_rank` and stops firing. It was firing
+                    # on this mislabel — two teams third in their own divisions
+                    # scored as a top-seed game — so this removes a false
+                    # signal, and `test_top_seed_stakes_is_not_claimed_from_a_
+                    # division_rank` pins that it stays removed. Its sibling
+                    # "Division rivals" reads `div_rank`, has been unreachable
+                    # for as long as nothing wrote that key (0 rows in
+                    # production), and starts working for the first time.
+                    rank_field = "div_rank" if team_entry.get("_rank_scope") == "division" else "league_rank"
+
                     # Direct fields — numeric
                     for src, dst in [
                         ("draws", "draws"), ("ties", "ties"),
                         ("points", "points"),
                         ("goals_for", "goals_for"), ("goals_against", "goals_against"),
                         ("goal_difference", "goal_difference"),
-                        ("position", "conf_rank"),
+                        ("position", rank_field),
                     ]:
                         val = team_entry.get(src)
                         if val is not None:
@@ -1814,12 +1970,79 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                     "teams_updated": sport_updated,
                 })
 
+                # The venue answered and we stored nothing. This is #4732's own
+                # defect: NFL and MLB reached here on every run since inception,
+                # in season, with a 200 and a full table in hand, and the pass
+                # still banked `success` on the strength of the two off-season
+                # siblings beside them. A zero here is never routine — the only
+                # sports that get this far are the four WITH a standings
+                # product, and those tables are not empty during a season.
+                if not teams_list:
+                    fetch_failures.append({
+                        "sport": our_key,
+                        "statpal_sport": statpal_sport,
+                        "reason": "parsed_zero_teams",
+                        "endpoint": fetch.endpoint,
+                    })
+                elif not sport_updated:
+                    fetch_failures.append({
+                        "sport": our_key,
+                        "statpal_sport": statpal_sport,
+                        "reason": "matched_zero_teams",
+                        "endpoint": fetch.endpoint,
+                    })
+
                 await asyncio.sleep(0.3)
 
     finally:
         await service.close()
 
+    # Terminal, read the way the schedules task reads its own (#2907), with ONE
+    # deliberate divergence spelled out below. `total_teams_updated` cannot carry
+    # this alone: 62 is a healthy-looking number and it is precisely the number
+    # NFL and MLB were entirely absent from.
+    #
+    # THE DIVERGENCE. On the schedules side ANY entry in `sports_unasked` makes a
+    # pass `partial`. Here only the `sport_not_found` arm does. The difference is
+    # the BEAT, not the principle:
+    #
+    #   * every scheduled `sync-statpal-schedules-*` beat passes an explicit
+    #     `sport_key`, so that task's unasked list is empty in production and
+    #     `partial` stays a signal;
+    #   * `sync-statpal-standings-daily` passes NO `sport_key` — the all-sports
+    #     form is the only form it ever runs.
+    #
+    # So counting the nine permanent `no_venue_path` keys would put this task in
+    # `partial` on every run it will ever make. A terminal that is always amber
+    # cannot report the day a table goes empty, and that day is the whole of
+    # #4732. `no_venue_path` is still REPORTED in `sports_unasked` — the choice
+    # is between grading it and hiding it, and this hides nothing.
+    #
+    # `sport_not_found` still grades, because that arm is our own config being
+    # wrong and is fixable — #4691 was exactly that, and it sat for months.
+    #
+    # Only `fetch_failed` counts towards `failed`. A parse gap is a real pass
+    # with a real hole in it — `partial` — because something WAS read and stored,
+    # and what an operator needs is which sport came back empty, not a red light
+    # over the whole task.
+    misconfigured = [u for u in sports_unasked if u["reason"] == "sport_not_found"]
+    total_failures = sum(1 for f in fetch_failures if f["reason"] == "fetch_failed")
+    if not sports_asked:
+        terminal = "no_work"
+    elif total_failures == sports_asked:
+        terminal = "failed"
+    elif fetch_failures or misconfigured:
+        terminal = "partial"
+    else:
+        terminal = "complete"
+
     return {
+        "terminal": terminal,
+        # Always present; `[]` is the reading, not an absence — same rule as the
+        # schedules task, and for the same reason.
+        "fetch_failures": fetch_failures,
+        "sports_asked": sports_asked,
+        "sports_unasked": sports_unasked,
         "total_teams_updated": total_updated,
         "details": details,
     }

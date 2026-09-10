@@ -378,6 +378,53 @@ class StatPalFixtureFetch:
         return self.reason in ("fetch_failed", "partial_fetch")
 
 
+#: The sports that CANNOT BE ASKED THROUGH THIS METHOD. Measured 2026-09-10
+#: (#4732): `GET /v2/soccer/standings` and `GET /v1/tennis/standings` both answer
+#: **HTTP 404**, while nfl/mlb/nba/nhl answer 200 with a full table. That is nine
+#: of the thirteen mapped keys — soccer ×7, tennis ×2.
+#:
+#: Stated as a property of THIS PATH, not of the vendor's whole product: what was
+#: measured is that `{sport}/standings` does not exist for these two. A soccer
+#: league table or a tennis ranking may well be served somewhere else under
+#: another name, and nobody should read this constant as evidence it is not
+#: (notices 26/27 — the venue's own listing is what settles that, and it was not
+#: read here).
+#:
+#: This is the standings twin of `DAY_BOARD_SPORTS`, and it is a caller shape
+#: rather than an upstream absence for exactly the same reason.
+NO_STANDINGS_SPORTS: frozenset[str] = frozenset({"soccer", "tennis"})
+
+
+@dataclass
+class StatPalStandingsFetch:
+    """What one STANDINGS fetch proves, not just what it returned (#4732).
+
+    `None` was the same object for "StatPal serves no standings for this sport"
+    (soccer and tennis, permanently), "we asked and it broke" (401/429/timeout)
+    and "the table came back empty" — three different operational facts, one of
+    which is an alarm and one of which can never change (gotcha #53). The task
+    reading them had no terminal at all, so all three banked the same green.
+    """
+
+    data: Optional[dict]
+    #: One of `ok`, `no_venue_path`, `fetch_failed`, `empty`.
+    reason: str
+    sport: str
+    #: The path actually asked, or None when nothing was asked.
+    endpoint: Optional[str] = None
+
+    @property
+    def asked(self) -> bool:
+        """False only for `NO_STANDINGS_SPORTS`, which cannot be asked through
+        this method at all — a caller shape, not an upstream absence."""
+        return self.reason != "no_venue_path"
+
+    @property
+    def is_alarm(self) -> bool:
+        """A supported sport we could not read. `empty` is not an alarm."""
+        return self.reason == "fetch_failed"
+
+
 def is_available() -> bool:
     """Check if StatPal API key is configured."""
     return bool(os.getenv("STATPAL_API_KEY"))
@@ -1853,6 +1900,28 @@ class StatPalAPIService(BaseAPIClient):
             params["season"] = season
 
         return await self._get(sport, "standings", params)
+
+    async def get_standings_result(
+        self, sport: str, season: Optional[str] = None
+    ) -> StatPalStandingsFetch:
+        """Fetch standings and say what the answer PROVES (#4732).
+
+        `get_standings` is kept beside this for callers that only want the
+        payload; every caller that has to decide whether a pass went well needs
+        this one, because `None` from that method is three different facts.
+        """
+        if sport in NO_STANDINGS_SPORTS:
+            # Not asked, deliberately: measured 404 at both base URLs. Asking
+            # anyway would spend a request to learn a constant and would turn a
+            # vendor gap into an hourly alarm.
+            return StatPalStandingsFetch(None, "no_venue_path", sport, None)
+
+        data = await self.get_standings(sport, season)
+        if data is None:
+            return StatPalStandingsFetch(None, "fetch_failed", sport, "standings")
+        if not data:
+            return StatPalStandingsFetch(data, "empty", sport, "standings")
+        return StatPalStandingsFetch(data, "ok", sport, "standings")
 
 
 # =============================================================================

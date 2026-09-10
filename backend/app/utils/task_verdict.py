@@ -530,6 +530,23 @@ ENFORCED_TASKS = frozenset({
     # unreadable, `partial` when some were, and `complete` otherwise — a quiet
     # board is not an alarm, or the alarm stops being read.
     "statpal_schedules",               # terminal + fetch_failures
+    # #4732, enrolled IN THE SAME CHANGE that gives it a terminal — this task had
+    # NO terminal fields at all and read `not_enforced(unknown:no_terminal_fields)`.
+    # The cost of that was measured, not imagined: NFL and MLB standings were
+    # EMPTY FROM INCEPTION — 0 of 32 and 0 of 33 teams, in season, on mornings
+    # NBA and NHL wrote 30 and 32 successfully — because the parser navigated
+    # `standings.tournament...` and those two sports nest under
+    # `standings.category...`. The pass banked `success` with
+    # `total_teams_updated: 62` throughout: a healthy-looking number that was
+    # exactly the two off-season sports and neither of the two in season.
+    #
+    # `complete` only when every sport it could ask was asked AND yielded rows;
+    # `partial` when one came back unreadable, unparsed or unmatched; `failed`
+    # when every asked sport was unreadable; `no_work` when it asked nobody. The
+    # nine `no_venue_path` keys (soccer ×7, tennis ×2 — both 404 for standings)
+    # are reported but do not grade, because this task's beat runs the all-sports
+    # form daily and a permanently amber terminal reports nothing.
+    "statpal_standings",               # terminal + fetch_failures + sports_unasked
     # #2927 Phase 2: the event-container assembly pass. Enrolled IN THE SAME
     # CHANGE that gives it terminals, because this file's own trap is that
     # either half alone is worthless — and here the empty case is not an edge

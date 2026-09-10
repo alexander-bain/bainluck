@@ -479,6 +479,16 @@ class TestEnforcementScope:
             # and a pass that could not reach it banked one identical green
             # row. Terminal comes from `_sync_statpal_schedules` itself.
             "statpal_schedules",
+            # #4732 (authority/102): the standings pass, enrolled in the change
+            # that gives it a terminal — it had none at all and read
+            # `not_enforced(unknown:no_terminal_fields)`. Measured, not feared:
+            # NFL and MLB standings were EMPTY FROM INCEPTION (0 of 32 and 0 of
+            # 33 teams, in season) because the parser walked
+            # `standings.tournament...` while those two sports nest under
+            # `standings.category...`, and every such pass banked `success` with
+            # `total_teams_updated: 62` — the two OFF-season sports, and neither
+            # of the two in it. Terminal comes from `_sync_statpal_standings`.
+            "statpal_standings",
             # #2927 Phase 2: the event-container assembly pass, enrolled at
             # BIRTH in the change that gives it terminals. Its empty case is
             # not an edge case — it is the NORMAL state for as long as the
