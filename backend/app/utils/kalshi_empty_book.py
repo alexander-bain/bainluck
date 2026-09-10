@@ -57,6 +57,12 @@ from typing import Optional
 #: drift this constant exists to make loud.
 ASK_ONLY_TRUSTED_MAX = 0.50
 
+#: ``futures_odds_snapshots.bookmaker`` for the venue this rule is about. The
+#: SQL form carries it because its only caller (Phase 0c-repair) reads EVERY
+#: source's snapshots, and this policy is Kalshi's alone — see
+#: :func:`lone_ask_on_empty_book_sql`.
+KALSHI_BOOKMAKER = "kalshi"
+
 
 def is_lone_ask_on_empty_book(
     yes_bid: Optional[float],
@@ -86,14 +92,36 @@ def lone_ask_on_empty_book_sql(alias: str) -> str:
     """The same rule as a SQL boolean over a ``futures_odds_snapshots`` alias.
 
     Returns an expression that is TRUE for exactly the rows
-    :func:`is_lone_ask_on_empty_book` accepts. ``yes_bid``/``yes_ask`` are
-    nullable, so the expression is written to evaluate to FALSE — never NULL —
-    when the book is absent, which keeps it safe under ``NOT (...)``.
+    :func:`is_lone_ask_on_empty_book` accepts **and that Kalshi wrote**.
+    ``yes_bid``/``yes_ask`` are nullable, so the expression is written to
+    evaluate to FALSE — never NULL — when the book is absent, which keeps it
+    safe under ``NOT (...)``.
+
+    WHY THE BOOKMAKER TERM IS IN HERE and not left to the caller (CERT-2508).
+    The one caller, Phase 0c-repair, reads every source's snapshots and filters
+    only on ``fm.status = 'resolved'``. Without the scoping this Kalshi book
+    policy is applied to Polymarket, whose rule for the same columns is a
+    different one (gotcha #19: wide spread → ``lastTradePrice``; no trade and no
+    bid → skip). Measured on production over a 4-hour window, 14:35Z 2026-09-10:
+
+        bookmaker    snapshots   with yes_bid   matching this predicate
+        kalshi          95,401        95,398              0
+        polymarket      20,150        15,876             23
+
+    Kalshi is zero because the WRITE guard has refused this shape since
+    2026-07-13 — the whole Kalshi population this module exists for is
+    historical. So the unscoped expression was inert on the venue it was written
+    for and live on the one it was not. The term lives here rather than at the
+    call site because a predicate that is only correct when the caller remembers
+    to add something is the bug, restored.
+
+    ``bookmaker`` is NOT NULL, so adding it cannot make the expression NULL.
     """
     if not alias.isidentifier():
         raise ValueError(f"alias must be a bare SQL identifier, got {alias!r}")
     return (
-        f"(COALESCE({alias}.yes_bid, -1) = 0"
+        f"({alias}.bookmaker = '{KALSHI_BOOKMAKER}'"
+        f" AND COALESCE({alias}.yes_bid, -1) = 0"
         f" AND COALESCE({alias}.last_price, 0) = 0"
         f" AND COALESCE({alias}.yes_ask, 0) > {ASK_ONLY_TRUSTED_MAX})"
     )

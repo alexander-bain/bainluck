@@ -16,6 +16,7 @@ import pytest
 
 from app.utils.kalshi_empty_book import (
     ASK_ONLY_TRUSTED_MAX,
+    KALSHI_BOOKMAKER,
     is_lone_ask_on_empty_book,
     lone_ask_on_empty_book_sql,
 )
@@ -31,6 +32,31 @@ def _backfill_winners_source() -> str:
     """
     module = importlib.import_module("app.tasks.backfill_winners")
     return inspect.getsource(module)
+
+
+def _eval_sql(bid, ask, last, bookmaker) -> bool:
+    """Evaluate the emitted SQL expression under Python's own semantics.
+
+    Substitutes one snapshot row's columns into the string the helper emits and
+    evaluates it. Not a Postgres run — the Postgres agreement is proved
+    separately against the production engine — but it is what binds the two
+    dialects row for row.
+    """
+    sql = lone_ask_on_empty_book_sql("fos")
+    expr = (
+        sql.replace("fos.bookmaker", repr(bookmaker))
+        .replace("fos.yes_bid", repr(bid))
+        .replace("fos.yes_ask", repr(ask))
+        .replace("fos.last_price", repr(last))
+        .replace("COALESCE", "_coalesce")
+        .replace(" AND ", " and ")
+        .replace(" = ", " == ")
+    )
+    return bool(
+        eval(  # noqa: S307 - fixed expression built from a constant
+            expr, {"_coalesce": lambda v, d: d if v is None else v, "None": None}
+        )
+    )
 
 
 class TestIsLoneAskOnEmptyBook:
@@ -117,20 +143,41 @@ class TestLoneAskOnEmptyBookSql:
 
         A price policy that exists twice drifts. This is the same binding
         ``test_kalshi_candle_price`` puts on its own pair of reducers.
+
+        Bookmaker is held at Kalshi here — the Python predicate has no bookmaker
+        argument because its only caller is the Kalshi poller. The scoping's own
+        behaviour is :meth:`test_the_sql_is_false_for_every_other_venue`.
+        """
+        assert _eval_sql(bid, ask, last, KALSHI_BOOKMAKER) is is_lone_ask_on_empty_book(
+            bid, ask, last
+        )
+
+    @pytest.mark.parametrize("bookmaker", ["polymarket", "draftkings", "datagolf_model"])
+    def test_the_sql_is_false_for_every_other_venue(self, bookmaker):
+        """CERT-2508. The book shape alone must not condemn another venue's row.
+
+        Phase 0c-repair reads every source's snapshots. Polymarket populates
+        ``yes_bid``/``yes_ask`` on the same table — measured 15,876 of 20,150
+        rows in a 4-hour production window — under a different price policy
+        (gotcha #19). The textbook offending book must read FALSE for them.
+        """
+        assert is_lone_ask_on_empty_book(0.0, 0.98, 0.0) is True, "control"
+        assert _eval_sql(0.0, 0.98, 0.0, bookmaker) is False
+
+    def test_the_scoping_cannot_make_the_expression_null(self):
+        """``bookmaker`` is NOT NULL, so it adds no NULL path under ``NOT``.
+
+        Belt and braces with :meth:`test_is_never_null_so_it_is_safe_under_NOT`:
+        that one counts COALESCEs, this one proves the new term is a plain
+        equality on a non-nullable column rather than something that could go
+        three-valued.
         """
         sql = lone_ask_on_empty_book_sql("fos")
-        expr = (
-            sql.replace("fos.yes_bid", repr(bid))
-            .replace("fos.yes_ask", repr(ask))
-            .replace("fos.last_price", repr(last))
-            .replace("COALESCE", "_coalesce")
-            .replace(" AND ", " and ")
-            .replace(" = ", " == ")
+        assert f"fos.bookmaker = '{KALSHI_BOOKMAKER}'" in sql, sql
+        assert "COALESCE(fos.bookmaker" not in sql, (
+            "bookmaker is NOT NULL; wrapping it in COALESCE would hide a schema "
+            "change that made it nullable"
         )
-        evaluated = eval(  # noqa: S307 - fixed expression built from a constant
-            expr, {"_coalesce": lambda v, d: d if v is None else v, "None": None}
-        )
-        assert bool(evaluated) is is_lone_ask_on_empty_book(bid, ask, last)
 
 
 class TestBoundToTheLivePoller:
@@ -191,6 +238,37 @@ class TestPhase0cRepairUsesTheGuard:
             "book it recorded — the #4745 regression, restored"
         )
         assert "NOT " in block
+
+    def test_phase0c_empty_book_filter_is_kalshi_scoped(self):
+        """CERT-2508, named by the grader. The promotion is an ALL-SOURCE query.
+
+        Its only source predicate is ``fm.status = 'resolved'``; every venue's
+        snapshots pass through the same LATERAL. So the Kalshi book rule must
+        carry its own venue, or it silently governs Polymarket — which populates
+        the same three columns under a different policy.
+
+        Asserted on the expression the block actually interpolates rather than on
+        the block's text, because the scoping lives in the helper: a future
+        refactor that moves the term to the call site keeps this green only if
+        the emitted SQL still carries it.
+        """
+        source = _backfill_winners_source()
+        marker = "opening_source = 'first_snapshot'"
+        block_start = source.rindex("WITH first_snaps AS", 0, source.index(marker))
+        block = source[block_start : source.index(marker)]
+
+        alias = "fos"
+        assert f'lone_ask_on_empty_book_sql("{alias}")' in block, (
+            "the promotion no longer calls the guard on the snapshot alias; this "
+            "scoping test is stale"
+        )
+        assert f"{alias}.bookmaker = '{KALSHI_BOOKMAKER}'" in (
+            lone_ask_on_empty_book_sql(alias)
+        ), (
+            "the Kalshi empty-book rule is being applied to every venue's "
+            "snapshots — Polymarket writes yes_bid/yes_ask under gotcha #19's "
+            "different policy, and 23 of its rows matched in a 4-hour window"
+        )
 
     def test_guard_filters_the_snapshot_not_the_outcome(self):
         """A leg that opened on an empty book and later traded keeps an opening.
