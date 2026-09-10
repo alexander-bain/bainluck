@@ -78,9 +78,28 @@ export function espnTeamLogoUrl(espnTeamId: string, sport: string = "nba", size:
 
 /**
  * Known ESPN team IDs for major North American teams.
- * Key format: "Team Name" (lowercased).
+ * Key format: "Team Name" (lowercased). Several clubs are keyed twice, under both
+ * their current and their former name — see the comments inline.
+ *
+ * #4911 — THESE IDS ARE ESPN'S, AND ONLY ESPN'S.
+ *
+ * The value is interpolated straight into an `a.espncdn.com` logo URL, so an id
+ * borrowed from any other provider does not fail — it silently renders a DIFFERENT
+ * CLUB'S CREST. That is exactly what happened here: 22 of the 32 NHL entries held
+ * the NHL's *own* API team ids, 7 held ESPN's, 3 were numbers the two systems happen
+ * to share, and none was a typo. Toronto (NHL-API 10) drew Montreal; Milwaukee
+ * (MLB id 21, which is the Mets at ESPN) drew the Mets. Five NHL ids collided
+ * pairwise for the same reason.
+ *
+ * A wrong logo is worse than no logo (see `958a7c24`, "stop printing a bird"), and
+ * on `/sports/<league>` this map is not a fallback: `GET /api/leagues/*` carries no
+ * `*_team_data`, so every crest on those pages comes from here.
+ *
+ * Do not hand-edit an id. Regenerate the pinned fixture and let the guard check it:
+ *   node frontend/scripts/refresh-espn-team-ids.mjs
+ *   npx jest --testPathPatterns=espnTeamIdMap4911
  */
-const ESPN_TEAM_IDS: Record<string, { id: string; sport: string }> = {
+export const ESPN_TEAM_IDS: Record<string, { id: string; sport: string }> = {
   // NBA
   "atlanta hawks": { id: "1", sport: "nba" },
   "boston celtics": { id: "2", sport: "nba" },
@@ -94,6 +113,8 @@ const ESPN_TEAM_IDS: Record<string, { id: string; sport: string }> = {
   "golden state warriors": { id: "9", sport: "nba" },
   "houston rockets": { id: "10", sport: "nba" },
   "indiana pacers": { id: "11", sport: "nba" },
+  // ESPN's own displayName is "LA Clippers"; our rows say "Los Angeles Clippers". Both keyed.
+  "la clippers": { id: "12", sport: "nba" },
   "los angeles clippers": { id: "12", sport: "nba" },
   "los angeles lakers": { id: "13", sport: "nba" },
   "memphis grizzlies": { id: "29", sport: "nba" },
@@ -161,10 +182,14 @@ const ESPN_TEAM_IDS: Record<string, { id: string; sport: string }> = {
   "los angeles angels": { id: "3", sport: "mlb" },
   "los angeles dodgers": { id: "19", sport: "mlb" },
   "miami marlins": { id: "28", sport: "mlb" },
-  "milwaukee brewers": { id: "21", sport: "mlb" },
+  "milwaukee brewers": { id: "8", sport: "mlb" },
   "minnesota twins": { id: "9", sport: "mlb" },
   "new york mets": { id: "21", sport: "mlb" },
   "new york yankees": { id: "10", sport: "mlb" },
+  // ESPN now lists this club as "Athletics"; our own rows carry that name (82 events,
+  // production 2026-09-10), so the relocation-era key alone rendered no crest at all.
+  // Both keys are kept — same club, same ESPN id.
+  "athletics": { id: "11", sport: "mlb" },
   "oakland athletics": { id: "11", sport: "mlb" },
   "philadelphia phillies": { id: "22", sport: "mlb" },
   "pittsburgh pirates": { id: "23", sport: "mlb" },
@@ -180,44 +205,68 @@ const ESPN_TEAM_IDS: Record<string, { id: string; sport: string }> = {
   "anaheim ducks": { id: "25", sport: "nhl" },
   "boston bruins": { id: "1", sport: "nhl" },
   "buffalo sabres": { id: "2", sport: "nhl" },
-  "calgary flames": { id: "20", sport: "nhl" },
-  "carolina hurricanes": { id: "12", sport: "nhl" },
+  "calgary flames": { id: "3", sport: "nhl" },
+  "carolina hurricanes": { id: "7", sport: "nhl" },
   "chicago blackhawks": { id: "4", sport: "nhl" },
   "colorado avalanche": { id: "17", sport: "nhl" },
   "columbus blue jackets": { id: "29", sport: "nhl" },
   "dallas stars": { id: "9", sport: "nhl" },
   "detroit red wings": { id: "5", sport: "nhl" },
-  "edmonton oilers": { id: "22", sport: "nhl" },
-  "florida panthers": { id: "13", sport: "nhl" },
-  "los angeles kings": { id: "26", sport: "nhl" },
+  "edmonton oilers": { id: "6", sport: "nhl" },
+  "florida panthers": { id: "26", sport: "nhl" },
+  "los angeles kings": { id: "8", sport: "nhl" },
   "minnesota wild": { id: "30", sport: "nhl" },
-  "montreal canadiens": { id: "8", sport: "nhl" },
-  "nashville predators": { id: "18", sport: "nhl" },
-  "new jersey devils": { id: "1", sport: "nhl" },
-  "new york islanders": { id: "2", sport: "nhl" },
-  "new york rangers": { id: "3", sport: "nhl" },
-  "ottawa senators": { id: "9", sport: "nhl" },
-  "philadelphia flyers": { id: "4", sport: "nhl" },
-  "pittsburgh penguins": { id: "5", sport: "nhl" },
-  "san jose sharks": { id: "28", sport: "nhl" },
-  "seattle kraken": { id: "55", sport: "nhl" },
+  "montreal canadiens": { id: "10", sport: "nhl" },
+  "nashville predators": { id: "27", sport: "nhl" },
+  "new jersey devils": { id: "11", sport: "nhl" },
+  "new york islanders": { id: "12", sport: "nhl" },
+  "new york rangers": { id: "13", sport: "nhl" },
+  "ottawa senators": { id: "14", sport: "nhl" },
+  "philadelphia flyers": { id: "15", sport: "nhl" },
+  "pittsburgh penguins": { id: "16", sport: "nhl" },
+  "san jose sharks": { id: "18", sport: "nhl" },
+  "seattle kraken": { id: "124292", sport: "nhl" },
   "st. louis blues": { id: "19", sport: "nhl" },
-  "tampa bay lightning": { id: "14", sport: "nhl" },
-  "toronto maple leafs": { id: "10", sport: "nhl" },
-  "utah hockey club": { id: "56", sport: "nhl" },
-  "vancouver canucks": { id: "23", sport: "nhl" },
-  "vegas golden knights": { id: "54", sport: "nhl" },
-  "washington capitals": { id: "15", sport: "nhl" },
-  "winnipeg jets": { id: "52", sport: "nhl" },
+  "tampa bay lightning": { id: "20", sport: "nhl" },
+  "toronto maple leafs": { id: "21", sport: "nhl" },
+  // Renamed from "Utah Hockey Club" for 2026-27; our own rows carry "Utah Mammoth"
+  // (21 events, production 2026-09-10). Both keys kept — same club, same ESPN id.
+  "utah hockey club": { id: "129764", sport: "nhl" },
+  "utah mammoth": { id: "129764", sport: "nhl" },
+  "vancouver canucks": { id: "22", sport: "nhl" },
+  "vegas golden knights": { id: "37", sport: "nhl" },
+  "washington capitals": { id: "23", sport: "nhl" },
+  "winnipeg jets": { id: "28", sport: "nhl" },
 };
+
+/**
+ * Fold a team name to its lookup key: lowercase, trimmed, and stripped of diacritics.
+ *
+ * #4911 — the accent half. Our own rows carry "Montréal Canadiens" (33 events,
+ * production 2026-09-10) while the map is keyed in ASCII, so the lookup returned null
+ * and the club rendered NO crest at all — on the NHL opener, Montréal @ Toronto,
+ * 2026-09-19. Folding here rather than adding an accented key fixes the whole class
+ * instead of the one row we happened to notice.
+ */
+function teamNameKey(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // combining diacritical marks, split out by NFD
+    .toLowerCase()
+    .trim();
+}
+
+/** Diacritic-folded index, built once. Map keys are ASCII, so this is a widening only. */
+const ESPN_TEAM_IDS_BY_KEY: Record<string, { id: string; sport: string }> = Object.fromEntries(
+  Object.entries(ESPN_TEAM_IDS).map(([k, v]) => [teamNameKey(k), v]),
+);
 
 /**
  * Get an ESPN team logo URL by team name (no API call needed).
  * Returns null if team is not in the lookup table.
  */
 export function espnTeamLogoByName(teamName: string, sportKey?: string | null): string | null {
-  const key = teamName.toLowerCase().trim();
-  const entry = ESPN_TEAM_IDS[key];
+  const entry = ESPN_TEAM_IDS_BY_KEY[teamNameKey(teamName)];
   if (!entry) return null;
   return espnTeamLogoUrl(entry.id, entry.sport, 500);
 }
