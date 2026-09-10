@@ -212,6 +212,7 @@ from sqlalchemy import Text, and_, cast, func, literal_column, or_, select, unio
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 
+from app.utils.agent_origin import tagged
 from app.models.models import FuturesMarket
 from app.routes.events import (
     _SEARCH_TS_CONFIG_SQL,
@@ -299,7 +300,10 @@ def _post(sql: str, *, analyze: bool, timeout_ms: int = 30000) -> dict:
     request = urllib.request.Request(
         f"{API}/api/admin/db-query",
         data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(
+            API,
+            {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        ),
         method="POST",
     )
     try:

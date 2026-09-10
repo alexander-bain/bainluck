@@ -103,6 +103,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
 
+from app.utils.agent_origin import tagged
 from app.models.models import Team
 from app.routes.events import _build_team_search_filter, _SEARCH_TS_CONFIG_SQL
 
@@ -151,7 +152,10 @@ def _post(sql: str, *, analyze: bool, timeout_ms: int = 25000) -> dict:
     request = urllib.request.Request(
         f"{API}/api/admin/db-query",
         data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=tagged(
+            API,
+            {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        ),
         method="POST",
     )
     try:
