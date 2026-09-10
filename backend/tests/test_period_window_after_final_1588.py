@@ -72,6 +72,22 @@ GRADED = "Over 4.5 runs in the first 5 innings"
 # A full-game market, ungraded — not window-bounded, must always survive.
 FULL_GAME = "Tampa Bay wins by over 1.5 runs"
 
+# ── #4741 — THE SECOND KIND OF GRADE, WHICH CARRIES NO `resolution_source` ──
+#
+# A window-bounded PLAYER PROP the venue never graded, whose verdict comes from
+# the BOX SCORE via `_grade_settled_prop`: it supplies `hit` and leaves
+# `resolution_source` None. The page renders it "2.0 — hit", so suppressing it
+# would delete a result the reader is already looking at.
+#
+# Both halves of the name are load-bearing: "Hits" is what `_prop_stat_keys`
+# reads to find the stat, "First 5 Innings" is what makes the row
+# window-bounded — without that it would survive for the boring reason that the
+# rule never reached it, and the test would prove nothing.
+BOX_GRADED_MARKET = "Yandy Diaz: Hits in the First 5 Innings"
+BOX_GRADED = "Over 0.5"
+# The player must be found in `box_score_data["players"]` (gotcha #37).
+BOX_PLAYER = "Yandy Diaz"
+
 # ── The two shapes CERT-2486 measured walking through the first cut ──────────
 #
 # Neither is identifiable from `market_name`, which is all the filter used to
@@ -117,6 +133,10 @@ def _rays_at_braves(status: str, period: str | None):
     event.completed_at = (
         datetime.now(timezone.utc) - timedelta(hours=7) if status == "completed" else None
     )
+    # #4741 — the box score is what grades `BOX_GRADED_MARKET`. Players are keyed
+    # by name under "players" (gotcha #37); 2 hits clears the 0.5 line, so `hit`
+    # is True and, crucially, `resolution_source` stays None.
+    event.box_score_data = {"players": {BOX_PLAYER: {"hits": 2}}}
 
     leaked = _make_futures_market(
         id=901, name="Tampa Bay vs Atlanta: First 5 Spread", source="kalshi"
@@ -149,6 +169,15 @@ def _rays_at_braves(status: str, period: str | None):
     outcome_only.status = "open"
     outcome_only.event_id = EVENT_ID
 
+    # #4741 — ungraded at the venue on purpose: `status='open'` and the outcome
+    # below carries no `resolution_source`, so the ONLY thing that can save this
+    # row from the window filter is the box-score `hit`.
+    box_graded = _make_futures_market(
+        id=906, name=BOX_GRADED_MARKET, source="kalshi"
+    )
+    box_graded.status = "open"
+    box_graded.event_id = EVENT_ID
+
     outcomes = [
         _make_outcome(id=9101, market_id=901, name=LEAKED, probability=0.99),
         _make_outcome(
@@ -162,8 +191,13 @@ def _rays_at_braves(status: str, period: str | None):
         _make_outcome(id=9301, market_id=903, name=FULL_GAME, probability=0.99),
         _make_outcome(id=9401, market_id=904, name=TICKER_ONLY, probability=0.62),
         _make_outcome(id=9501, market_id=905, name=OUTCOME_ONLY, probability=0.94),
+        _make_outcome(id=9601, market_id=906, name=BOX_GRADED, probability=0.88),
     ]
-    return event, [leaked, graded, full_game, ticker_only, outcome_only], outcomes
+    return (
+        event,
+        [leaked, graded, full_game, ticker_only, outcome_only, box_graded],
+        outcomes,
+    )
 
 
 async def _client_for(status: str, period: str | None):
@@ -381,7 +415,8 @@ async def test_the_graded_and_full_game_controls_survive_the_new_reads(
     )
 
 
-def test_a_box_score_grade_counts_as_a_grade():
+@pytest.mark.asyncio
+async def test_a_box_score_grade_counts_as_a_grade(finished_client):
     """The second kind of grade, found by LOOKing at the finished specimen.
 
     `/events/15308050` renders its settled player props as "1.0 — miss", graded
@@ -389,20 +424,45 @@ def test_a_box_score_grade_counts_as_a_grade():
     leave `resolution_source` None. A carve-out testing only the venue grade
     would suppress a window-bounded prop that is already showing its result.
 
-    Asserted against the predicate the route uses, so it fails if either half of
-    the disjunction is dropped.
+    ── #4741: WHY THIS GOES THROUGH THE ROUTE ──────────────────────────────────
+
+    This test used to re-declare `_window_open`'s first line inside itself and
+    assert against the copy. That passes whatever the route does: dropping
+    ``or item.get("hit") is not None`` from `app/routes/events.py` reddened
+    nothing, and a box-score-graded prop would have vanished from every finished
+    event page in silence.
+
+    So it is asserted end-to-end instead. The row is window-bounded (First 5
+    Innings) and ungraded at the venue (`status='open'`, no `resolution_source`),
+    which means the box-score `hit` is the ONLY thing standing between it and the
+    suppression — exactly the disjunct under test.
     """
+    payload = (await finished_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
 
-    def window_open(item):
-        return item.get("resolution_source") is not None or item.get("hit") is not None
-
-    assert window_open({"resolution_source": "api_settlement", "hit": None}) is True
-    assert window_open({"resolution_source": None, "hit": True}) is True
-    assert window_open({"resolution_source": None, "hit": False}) is True, (
-        "a graded MISS is still a grade — hiding it loses half the WHAT HIT surface"
+    served = [
+        row
+        for row in (payload.get("player_props") or [])
+        if (row.get("outcome_name") or "") == BOX_GRADED
+    ]
+    assert served, (
+        "a window-bounded prop the BOX SCORE already graded was suppressed after "
+        "the final — this is the 'hit' disjunct of `_window_open` going missing, "
+        f"and the reader loses a result they can see. Served: {_names(payload)}"
     )
-    assert window_open({"resolution_source": None, "hit": None}) is False, (
-        "ungraded and unsourced is the row this rule exists to suppress"
+
+    row = served[0]
+    # The premise of the carve-out, asserted rather than assumed: if this row
+    # ever grows a `resolution_source`, it stops being the specimen for the
+    # second grade path and this test quietly starts proving the first one.
+    assert row.get("resolution_source") is None, (
+        "this specimen must carry NO venue grade, or it no longer exercises the "
+        f"box-score half of the disjunction. Got: {row.get('resolution_source')!r}"
+    )
+    assert row.get("hit") is True, (
+        f"the box score says 2 hits against a 0.5 line. Got: {row.get('hit')!r}"
+    )
+    assert row.get("actual") == 2, (
+        f"the graded number the page prints. Got: {row.get('actual')!r}"
     )
 
 
