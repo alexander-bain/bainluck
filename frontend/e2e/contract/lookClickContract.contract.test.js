@@ -569,5 +569,20 @@ describe("#4664 — a whole-page capture must contain the chart", () => {
       "shop-shot.mjs never grows the viewport, so its whole-page shot can only " +
         "be the captureBeyondViewport one that loses the chart",
     );
+    // PRESENCE IS NOT REACH, and this line is here because the assertion above
+    // was not enough. Mutating the rail's decision to a hard-coded
+    // `const plan = { mode: "beyondViewport" }` — which puts every whole-page
+    // shot back on the chart-losing capture — left this suite GREEN, because
+    // `chooseCapture(` still appeared at the SECOND call site, inside the branch
+    // the mutation had just made unreachable.
+    //
+    // `shop-shot.mjs` cannot be executed here (it launches Chromium at import),
+    // so the reachable property is this one: the rail never FABRICATES a capture
+    // plan. Every `mode` it acts on has to come out of the guarded module.
+    assert.ok(
+      !/\bmode\s*:\s*['"]/.test(src),
+      "shop-shot.mjs writes its own capture-plan literal instead of using the " +
+        "one chooseCapture() returned — the guarded decision is being bypassed",
+    );
   });
 });
