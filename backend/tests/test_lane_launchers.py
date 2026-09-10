@@ -32,6 +32,7 @@ import re
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -1106,8 +1107,11 @@ def test_restock_once_does_not_requeue_a_running_directive(tmp_path):
 # itself. `LANE_IDLE_SLEEP` exists so they can.
 
 
-def _run_loop(tmp_path, handoff, fake_claude, seconds=3.0, after_start=None, **env):
-    """Run the real serve loop for a moment, then kill it, and return its output.
+def _run_loop(
+    tmp_path, handoff, fake_claude, seconds=3.0, after_start=None,
+    until=None, ceiling=45.0, **env,
+):
+    """Run the real serve loop until its pass condition appears, then kill it.
 
     SIGKILL to the whole process group, and `start_new_session=True` so that
     group is never pytest's: the runner traps INT/TERM/HUP and answers with
@@ -1117,6 +1121,27 @@ def _run_loop(tmp_path, handoff, fake_claude, seconds=3.0, after_start=None, **e
     WORKDIR is tmp_path, not REPO: the runner seeds a cross-root settings.json
     into whatever workdir it is handed, and a test has no business writing that
     into the checkout.
+
+    🔴 `seconds=` USED TO BE A DURATION, AND THAT MADE THESE TESTS A STOPWATCH
+    ----------------------------------------------------------------------------
+    The old shape slept a fixed budget, killed the runner, and asserted ONCE on
+    whatever had been printed by then. That budget was not a property of the
+    thing under test — it was a guess about how fast this machine boots a bash
+    runner, and it silently became the assertion. integrator-288 measured the
+    consequence: composed into a 149-file band, two of these went red (a
+    different subset each run, so a flake, not order pollution) while passing
+    66/66 when the file runs alone. `lane-runner.sh` had gained a few `git`
+    subprocesses on the startup path, the runner reached `idle - no queued work`
+    a second later than before, and the reaping iteration never ran inside the
+    budget. Nothing about the behaviour under test had changed.
+
+    So `until=` is the acceptance's OWN condition and the wait is a DEADLINE:
+    poll the runner's output until that string appears, or until a generous
+    ceiling elapses. A slow machine now costs seconds, not a red — and a genuine
+    regression still fails, because the string never arrives.
+
+    `seconds=` is kept for the callers that assert on an ABSENCE, where there is
+    no string to wait for and a fixed observation window is the correct shape.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -1136,20 +1161,87 @@ def _run_loop(tmp_path, handoff, fake_claude, seconds=3.0, after_start=None, **e
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         cwd=str(REPO), env=e, start_new_session=True,
     )
+    # Drain stdout on a thread. The deadline below has to READ the output while
+    # the runner is still alive, and a pipe that nobody drains can also fill and
+    # block the runner mid-startup — which would look exactly like the slowness
+    # this deadline exists to tolerate.
+    chunks: list[str] = []
+    reader = threading.Thread(
+        target=lambda: chunks.extend(iter(p.stdout.readline, "")), daemon=True
+    )
+    reader.start()
+
+    def _wait_for(cond, limit):
+        """Poll until `cond` holds. A string is matched against the runner's
+        output; a callable receives that output and returns the test's own
+        acceptance.
+
+        🔴 THE PASS CONDITION IS WHATEVER THE TEST ASSERTS — ALL OF IT. This
+        took two wrong turns, and both are the same mistake from opposite ends:
+
+          * Waiting on `"was renamed by the session itself"` fired one line too
+            EARLY: the runner prints it *before* calling `sweep_session_running`,
+            so the SIGKILL landed before the sweep ran and the tests went red on
+            their filesystem assertion having "reached" their condition.
+          * Waiting on the retired file appearing on disk fired one line too
+            LATE-in-the-wrong-way: `retire_running_marker` does `mv` and THEN
+            echoes, so the predicate went true between the two and the kill ate
+            the log line the test also asserts on.
+
+        A test that asserts on output AND on disk has a conjunction for a pass
+        condition, so the predicate is that conjunction. Anything narrower grades
+        something the test does not.
+        """
+        stop = time.monotonic() + limit
+        while time.monotonic() < stop:
+            out_so_far = "".join(chunks)
+            if cond(out_so_far) if callable(cond) else cond in out_so_far:
+                return True
+            time.sleep(0.05)
+        return False
+
     try:
         if after_start is not None:
             # The point of the idle-loop test: this state must appear AFTER the
             # runner has started, or startup crash-recovery reaches it first and
             # the loop's own reaper is never the thing under test.
-            time.sleep(1.0)
+            #
+            # 🔴 THIS WAS `time.sleep(1.0)`, AND THAT IS THE OTHER HALF OF THE
+            # FLAKE. One second was a guess at how long the runner takes to
+            # finish its ONE-SHOT crash-recovery pass. When `lane-runner.sh`
+            # gained a few `git` subprocesses on the startup path, the guess
+            # stopped holding under band load: `after_start` fired FIRST, so
+            # crash recovery — which is not bounded by SESSION_START — retired
+            # the sibling marker the test requires to survive, and the test read
+            # as a broken SINCE bound. Waiting for the runner's own "serving
+            # lanes" line makes the ordering an INVARIANT rather than a race:
+            # that line is printed after the recovery pass, so once it appears
+            # the pass is provably done however slow the machine is.
+            assert _wait_for("[runner] serving lanes:", ceiling), (
+                "the runner never finished its startup pass within "
+                f"{ceiling}s:\n{''.join(chunks)}"
+            )
             after_start()
-        time.sleep(seconds)
+        if until is None:
+            time.sleep(seconds)
+        else:
+            _wait_for(until, ceiling)
     finally:
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
-    return p.communicate(timeout=30)[0]
+
+    reader.join(timeout=30)
+    try:
+        p.stdout.close()
+    except OSError:
+        pass
+    try:
+        p.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
+    return "".join(chunks)
 
 
 def test_idle_loop_reaps_a_marker_orphaned_after_the_runner_started(tmp_path):
@@ -1164,7 +1256,14 @@ def test_idle_loop_reaps_a_marker_orphaned_after_the_runner_started(tmp_path):
     inbox = handoff / "runner-inbox" / "demo"
 
     out = _run_loop(
-        tmp_path, handoff, "#!/bin/bash\nexit 0\n", seconds=4.0,
+        tmp_path, handoff, "#!/bin/bash\nexit 0\n",
+        # The deadline's condition IS the assertion below. Anything else and the
+        # wait grades something the test does not.
+        until=lambda out: (
+            "retired orphaned marker" in out
+            and list(inbox.glob("047-orphan.md.stale-*"))
+            and not list(inbox.glob("*.md.running"))
+        ),
         LANE_SESSION_TIMEOUT="1", LANE_STALE_RUNNING_GRACE="0",
         after_start=lambda: (inbox / "047-orphan.md.running").write_text("orphaned\n"),
     )
@@ -1200,7 +1299,15 @@ def test_a_session_that_renames_its_own_marker_does_not_wedge_the_lane(tmp_path)
         ': > "$INBOX/047-self-written.md.running"\n'
         "exit 0\n"
     )
-    out = _run_loop(tmp_path, handoff, fake, seconds=3.0)
+    # The acceptance is output AND disk, so the wait condition is both.
+    out = _run_loop(
+        tmp_path, handoff, fake,
+        until=lambda out: (
+            "was renamed by the session itself" in out
+            and list(inbox.glob("047-self-written.md.stale-*"))
+            and not list(inbox.glob("*.md.running"))
+        ),
+    )
 
     assert "was renamed by the session itself" in out, out
     assert not list(inbox.glob("*.md.running")), (
@@ -1243,7 +1350,13 @@ def test_the_post_session_sweep_only_touches_this_sessions_own_leftovers(tmp_pat
     )
     # Default 7200s cap throughout, so the idle reaper is not what spares
     # `other` — only the sweep's SINCE bound can.
-    out = _run_loop(tmp_path, handoff, fake, seconds=4.0, after_start=stage)
+    out = _run_loop(
+        tmp_path, handoff, fake, after_start=stage,
+        until=lambda out: (
+            "was renamed by the session itself" in out
+            and list(inbox.glob("047-self-written.md.stale-*"))
+        ),
+    )
 
     assert "was renamed by the session itself" in out, out
     assert list(inbox.glob("047-self-written.md.stale-*")), (
