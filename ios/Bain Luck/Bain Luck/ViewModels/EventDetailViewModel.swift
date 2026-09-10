@@ -4,6 +4,22 @@ import SwiftUI
 
 private let logger = Logger(subsystem: "com.bainluck", category: "eventDetail")
 
+/// The six fetches an event page makes, as a seam.
+///
+/// Same reason as `DiscoverFeedProviding`: the lifecycle this view model runs —
+/// when a scheduled page starts polling, what a delivering stream does to that
+/// poll, whether a status flip is ever noticed — is not reachable from a test
+/// that has to make six real requests. Declared here and conformed at the foot
+/// of this file so `APIClient.swift` (latency's) is not touched.
+protocol EventDetailProviding: Sendable {
+    func fetchEvent(id: Int) async throws -> EventDetail
+    func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse
+    func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse
+    func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse
+    func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse
+    func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse
+}
+
 final class EventDetailViewModel: ObservableObject {
     @Published private(set) var event: EventDetail?
     @Published private(set) var loading = true
@@ -19,6 +35,10 @@ final class EventDetailViewModel: ObservableObject {
     @Published private(set) var lastLoadedAt: Date?
 
     private var refreshTask: Task<Void, Never>?
+    /// The cadence the installed `refreshTask` is running at, so a `load()` that
+    /// changes nothing does not cancel and re-create the loop it is running
+    /// inside. `nil` whenever no task is installed.
+    private var installedPlan: EventRefreshPlan?
     let eventId: Int
 
     // MARK: - Live push (#2687)
@@ -36,18 +56,38 @@ final class EventDetailViewModel: ObservableObject {
     private let makeStreamHandle: (@MainActor (Int) throws -> LiveStreamHandle)?
     private let now: () -> TimeInterval
 
-    /// Whether a periodic auto-refresh request is currently installed. Only live
-    /// events poll; scheduled/completed pages do not, so their UI must not imply it.
+    /// Whether a periodic auto-refresh request is currently installed, and at
+    /// what cadence. A FINISHED page installs nothing; every other state polls,
+    /// at a rate `EventRefreshPlan` chooses — see that file for why a scheduled
+    /// page has to.
+    ///
+    /// This says nothing about chrome. `EventDetailView` gates its refresh ring
+    /// on its own `isLive`, so a scheduled page polling quietly in the
+    /// background does not start claiming a countdown at the reader.
     var isAutoRefreshing: Bool { refreshTask != nil }
+    var currentRefreshPlan: EventRefreshPlan? { installedPlan }
+
+    private let client: EventDetailProviding
+
+    /// Injected so a test can run the poll loop without waiting for it. Returns
+    /// the interval it was asked to wait, which is what makes the CADENCE — not
+    /// merely the fact of a poll — assertable.
+    private let sleep: @Sendable (TimeInterval) async -> Void
 
     init(
         eventId: Int,
+        client: EventDetailProviding = APIClient.shared,
         makeStreamHandle: (@MainActor (Int) throws -> LiveStreamHandle)? = nil,
-        now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 }
+        now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
+        sleep: (@Sendable (TimeInterval) async -> Void)? = nil
     ) {
         self.eventId = eventId
+        self.client = client
         self.makeStreamHandle = makeStreamHandle
         self.now = now
+        self.sleep = sleep ?? { seconds in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        }
     }
 
     @MainActor
@@ -55,30 +95,31 @@ final class EventDetailViewModel: ObservableObject {
         loading = event == nil
 
         // Start secondary fetches immediately (they only need eventId)
+        let client = self.client
         let historyTask = Task { () -> EventHistoryResponse? in
-            do { return try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168) }
+            do { return try await client.fetchEventHistory(id: eventId, hours: 168) }
             catch { logger.error("History fetch failed for \(self.eventId): \(error)"); return nil }
         }
         let relatedFuturesTask = Task { () -> RelatedFuturesResponse? in
-            do { return try await APIClient.shared.fetchRelatedFutures(eventId: eventId) }
+            do { return try await client.fetchRelatedFutures(eventId: eventId) }
             catch { logger.error("Related futures failed for \(self.eventId): \(error)"); return nil }
         }
         let progressionTask = Task { () -> TeamProgressionResponse? in
-            do { return try await APIClient.shared.fetchTeamProgression(eventId: eventId) }
+            do { return try await client.fetchTeamProgression(eventId: eventId) }
             catch { logger.error("Team progression failed for \(self.eventId): \(error)"); return nil }
         }
         let gameMarketsTask = Task { () -> GameMarketsResponse? in
-            do { return try await APIClient.shared.fetchGameMarkets(eventId: eventId) }
+            do { return try await client.fetchGameMarkets(eventId: eventId) }
             catch { logger.error("Game markets failed for \(self.eventId): \(error)"); return nil }
         }
         let lineMovementTask = Task { () -> LineMovementResponse? in
-            do { return try await APIClient.shared.fetchLineMovement(eventId: eventId) }
+            do { return try await client.fetchLineMovement(eventId: eventId) }
             catch { logger.error("Line movement failed for \(self.eventId): \(error)"); return nil }
         }
 
         // Await primary fetch (controls loading state)
         do {
-            event = try await APIClient.shared.fetchEvent(id: eventId)
+            event = try await client.fetchEvent(id: eventId)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -124,44 +165,67 @@ final class EventDetailViewModel: ObservableObject {
 
     @MainActor
     private func configureAutoRefresh() {
-        refreshTask?.cancel()
-        refreshTask = nil
-        guard event?.status == "live" else {
-            // Not live: no poll and, per the ruling, no push either.
+        // The push stream stays a LIVE-only affair, exactly as the #2687 ruling
+        // left it: a scheduled page now polls, but it does not open a socket to
+        // wait for a match that has not started.
+        if event?.status == "live" {
+            startStreamIfNeeded()
+        } else {
             stopStream()
+        }
+
+        // Decided AFTER the socket work, never before it: `stopStream()` clears
+        // `streamDelivering`, and that is an input. Reading it first would let a
+        // page that just lost its stream keep the slow push cadence.
+        let plan = EventRefreshPlan.decide(
+            status: event?.status,
+            streamDelivering: streamDelivering,
+            commenceTime: event?.commenceTime?.asDate,
+            now: Date(timeIntervalSince1970: now())
+        )
+
+        guard case .poll(let interval) = plan else {
+            refreshTask?.cancel()
+            refreshTask = nil
+            installedPlan = nil
             return
         }
-        startStreamIfNeeded()
-        // #2687 — while push is DELIVERING the poll stands down entirely. This
-        // is the whole saving: a live page re-fetched SIX endpoints every 30
-        // seconds, and the stream carries the one number that was actually
-        // changing between them. The instant `streamDelivering` goes false —
-        // refused, errored, aged out, or the publisher going quiet — the poll
-        // comes straight back. A push path that dies must degrade to polling,
-        // never to a frozen number.
-        guard !streamDelivering else { return }
+
+        // IDEMPOTENT. `load()` calls this, and the poll loop calls `load()`, so
+        // an unconditional cancel here would have every cycle cancel the very
+        // task it is running inside and build a new one. Leaving an unchanged
+        // plan alone also means the interval a running loop is sleeping on is
+        // always the interval its plan names.
+        if installedPlan == plan, refreshTask != nil { return }
+
+        refreshTask?.cancel()
         // A `@MainActor` Task loop rather than a `Timer`, for the same reason as
-        // the tick loop below: this method is now main-actor isolated, and a
+        // the tick loop below: this method is main-actor isolated, and a
         // `Timer`'s `@Sendable` block cannot reach a non-Sendable view model
         // across that boundary without the compiler saying so.
         //
-        // ONE BEHAVIOURAL DIFFERENCE, and it is an improvement: the gap is 30s
-        // BETWEEN loads rather than every 30s on the wall clock, so a six-endpoint
-        // refresh that takes longer than the interval on a slow network no longer
-        // stacks a second one on top of it.
+        // The gap is measured BETWEEN loads rather than on the wall clock, so a
+        // six-endpoint refresh that takes longer than the interval on a slow
+        // network never stacks a second one on top of itself.
+        let wait = sleep
         refreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                await wait(interval)
                 guard !Task.isCancelled, let self else { return }
                 await self.load()
             }
         }
+        installedPlan = plan
     }
 
     @MainActor
     func stopRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
+        // Cleared with the task it describes. Leaving it set would have
+        // `currentRefreshPlan` name a cadence nothing is running at, and the
+        // idempotence check above read a stale plan on the way back in.
+        installedPlan = nil
         stopStream()
     }
 
@@ -256,3 +320,11 @@ final class EventDetailViewModel: ObservableObject {
         // — the exact fiction C43 P2 removed.
     }
 }
+
+// MARK: - Production event-fetch conformance
+
+/// The real transport. Every method already exists on the actor with these
+/// signatures, so this is a declaration of conformance and nothing else — there
+/// is no adapter here to drift from what production does. Kept in this file
+/// rather than in `APIClient.swift` so the seam does not edit latency's file.
+extension APIClient: EventDetailProviding {}
