@@ -48,21 +48,45 @@ def _run(*args, timeout=60):
     )
 
 
-def _wait_visible(pid, pattern, timeout=10.0):
-    """Block until `ps` shows the pid carrying the pattern, or fail loudly.
+def _wait_visible(proc, pattern, timeout=20.0):
+    """Block until `ps` shows the process carrying the pattern, or fail loudly.
 
     Without this the tool can run before the fork is in the process table, which
     would make every arm below pass for the wrong reason.
+
+    The failure message has to DISCRIMINATE. "Never appeared in ps" is produced
+    equally by a bash that died at startup, a `ps` that cannot be run at all, and
+    a `ps` whose output was truncated past the script name — and the first CI run
+    of this file hit one of those three while reporting a sentence that fitted all
+    three. So on timeout, say which: whether the process is alive, and what `ps`
+    actually printed for it.
     """
     deadline = time.time() + timeout
+    last = ""
     while time.time() < deadline:
-        out = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True
+        # `-ww`, or procps truncates to 80 columns when stdout is not a terminal
+        # and pytest's tmp_path pushes the script name past the cut — which is
+        # exactly how this failed on Linux CI while passing on macOS.
+        last = subprocess.run(
+            ["ps", "-ww", "-o", "command=", "-p", str(proc.pid)],
+            capture_output=True, text=True,
         ).stdout
-        if pattern in out:
+        if pattern in last:
             return
         time.sleep(0.1)
-    pytest.fail(f"pid {pid} never appeared in ps carrying {pattern!r}")
+
+    alive = proc.poll() is None
+    allps = subprocess.run(
+        ["ps", "-axww", "-o", "pid=,command="], capture_output=True, text=True
+    )
+    pytest.fail(
+        f"pid {proc.pid} never appeared in ps carrying {pattern!r}.\n"
+        f"process alive: {alive} (returncode {proc.returncode})\n"
+        f"ps -ww -p {proc.pid} printed: {last!r}\n"
+        f"ps -axww rc={allps.returncode}, {len(allps.stdout.splitlines())} lines, "
+        f"rows mentioning the pattern: "
+        f"{[ln for ln in allps.stdout.splitlines() if pattern in ln]}"
+    )
 
 
 @pytest.fixture
@@ -79,7 +103,7 @@ def launcher(tmp_path, request):
         started = time.time()
         proc = subprocess.Popen(["/bin/bash", str(script), str(sentinel)])
         procs.append(proc)
-        _wait_visible(proc.pid, script.name)
+        _wait_visible(proc, script.name)
         # Both conditions, because they answer different questions: `ps` says the
         # process exists, the sentinel says bash has finished reading its script
         # and is inside the loop. Only the second makes it safe to touch the file.

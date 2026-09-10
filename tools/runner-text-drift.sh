@@ -81,7 +81,12 @@ file_mtime_epoch() {
 # from the pattern: two checkouts can hold the same filename, and the whole point
 # of this tool is to be exact about WHICH file the process is behind.
 pid_script_path() {
-  ps -o command= -p "$1" 2>/dev/null | tr ' ' '\n' | grep -m1 -- "/$2\$"
+  # `-ww` for the same reason as the snapshot below: without it procps truncates
+  # the command to 80 columns when stdout is not a terminal, so a launcher under a
+  # long path resolves to no script at all. Measured in CI, where the runner's own
+  # path pushed the script name past the cut and every live-process arm reported
+  # UNKNOWN. Safe direction (UNKNOWN is counted as a finding, not skipped) but wrong.
+  ps -ww -o command= -p "$1" 2>/dev/null | tr ' ' '\n' | grep -m1 -- "/$2\$"
 }
 
 matched_pids() {
