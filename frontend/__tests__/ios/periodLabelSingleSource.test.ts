@@ -107,7 +107,15 @@ d("iOS period labels have exactly one implementation", () => {
 
   it.each(CONSUMERS)("%s delegates rather than reimplementing", (path) => {
     const src = readFileSync(path, "utf8");
-    expect(src).toContain("PeriodLabel.normalize(raw)");
+    // #4888 widened this from the literal `PeriodLabel.normalize(raw)`: both
+    // chart consumers now pass the event's sport key, which the shared parser
+    // consults for a BARE period number and nothing else. What this line is
+    // for is that the consumer hands its RAW string to the shared parser
+    // instead of reading it itself, and `normalize(raw` still says exactly
+    // that — the argument list after it is not the ratchet. The ratchet is the
+    // regex count below, which is what actually separates "calls the shared
+    // rule" from "quietly grew its own again".
+    expect(src).toMatch(/PeriodLabel\.normalize\(raw[,)]/);
 
     // A real reimplementation is a body full of period regexes. The delegating
     // shim has none, so counting them separates "calls the shared rule" from
