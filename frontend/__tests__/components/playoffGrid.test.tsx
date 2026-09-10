@@ -30,6 +30,7 @@ import PlayoffGrid, {
   gridTemplate,
 } from "@/components/tournament/PlayoffGrid";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
+import { COLLAPSED_LIST_COUNT } from "@/components/tournament/ShowMore";
 import {
   columnSumSentence,
   formatAge,
@@ -863,6 +864,217 @@ describe("#4558 — three names were clipped and three rows' columns were 6px ou
     // The floor's own invariant, restored: the rounded-up pixels are gutter.
     expect(gridScrollFloorPx(5)).toBeGreaterThan(gridWidthPx(5));
     expect(gridWidthPx(5)).toBe(2 * GRID_ROW_PADDING_PX + GRID_NAME_WIDTH_PX + 5 * (GRID_COLUMN_WIDTH_PX + GRID_GAP_PX));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4593 — the OTHER half of the same mechanism: at `sm` and above the free
+// space is real, so a per-row track staggers the columns by up to 18px. One
+// grid container, adopted by subgrid, is the fix.
+// ---------------------------------------------------------------------------
+
+describe("#4593 — the columns are a column because there is only ONE grid", () => {
+  // The specimen is the one that was measured: the five men still on the board
+  // at 768px on 2026-09-10, names and all. Name LENGTH is the whole mechanism —
+  // "Alexander Zverev" is what bought its row a wider track than "Ben Shelton"
+  // — so a fixture of equal-length placeholders would render the defect
+  // invisible while every assertion below stayed green.
+  const MEASURED = [
+    "Alexander Zverev", "Ben Shelton", "Frances Tiafoe",
+    "Karen Khachanov", "Lorenzo Musetti",
+  ];
+  const FIVE = grid({
+    columns: COLUMNS.slice(0, 5),
+    rows: MEASURED.map((name, i) => ({
+      entity_key: name.toLowerCase().replace(/ /g, "-"),
+      display_name: name,
+      seed: null,
+      rank: i + 1,
+      on_board: true,
+      cells: Object.fromEntries(COLUMNS.map((c) => [c.key, cell()])),
+    })),
+  });
+  const render = () => renderToStaticMarkup(<PlayoffGrid grid={FIVE} />);
+
+  it("THE DEFECT: five grids given the same template are not five rows sharing tracks", () => {
+    /* Measured on production, `/tournaments/us-open`, 768px, anonymous,
+     * 2026-09-10 03:44 PT, with `tools/grid-name-fit-4558.mjs` — which reads
+     * the RESOLVED `gridTemplateColumns` and each row's own rects, never a
+     * screenshot:
+     *
+     *   header name track   118px
+     *   Alexander Zverev    first value cell at 156.1
+     *   Ben Shelton                             138.0
+     *   Frances Tiafoe                          138.2
+     *   Karen Khachanov                         155.8
+     *   Lorenzo Musetti                         147.2
+     *
+     * 18.1px of stagger across five rows, and the header 38px left of the
+     * widest of them — so `QF` did not sit over the QF numbers either. The
+     * cause is one word in the old markup: the header and every `<li>` each
+     * declared `grid-template-columns`, so `max-content` resolved per row and
+     * each row bought its own name width.
+     *
+     * The guard for that is a COUNT, not a presence: the template string is in
+     * the markup before AND after the fix, so every `toContain` assertion on it
+     * is green on the bug (the same trap #3417's guard documents). Before the
+     * fix a five-row grid printed it 7 times — header + 5 rows + 0 wrapper;
+     * now exactly once.
+     */
+    const declarations = render().match(/grid-template-columns:/g) ?? [];
+    expect(declarations).toHaveLength(1);
+  });
+
+  it("and the one declaration is on the wrapper that also carries the scroll floor", () => {
+    // Both directions in one assertion: the template must be on the element
+    // that owns the tracks, not merely present somewhere. `gridScrollFloorPx`
+    // pins a min-width on this same element, and free space can only stay out
+    // of the tracks if the thing it is pinned to IS the track-holder.
+    const wrapper = /<div[^>]*data-testid="grid-tracks"[^>]*>/.exec(render());
+    expect(wrapper).not.toBeNull();
+    expect(wrapper![0]).toContain(`grid-template-columns:${gridTemplate(5)}`);
+    expect(wrapper![0]).toContain(`min-width:${gridScrollFloorPx(5)}px`);
+    // …and it is a GRID. `grid-template-columns` on a non-grid element is
+    // inert: the subgrids below would then have no parent grid to adopt, fall
+    // back to one implicit column, and every number would stack under the
+    // name. Dropping this one class breaks the whole table and every other
+    // assertion in this file stays green — measured, which is why it is here.
+    // Matched as a standalone class token, because `grid-template-columns` and
+    // `grid-tracks` both contain the substring.
+    const classes = /class="([^"]*)"/.exec(wrapper![0]);
+    expect(classes).not.toBeNull();
+    expect(classes![1].split(/\s+/)).toContain("grid");
+  });
+
+  it("the header, the list AND every row adopt those tracks — the chain is unbroken", () => {
+    // A `<li>` can only subgrid its OWN parent, so the `<ol>` has to subgrid
+    // too or the rows fall back to their own single-column grid and every
+    // number stacks under the name. Three links, asserted by count so that
+    // dropping any one of them fails here: 1 header + 1 ol + 5 rows.
+    const html = render();
+    expect((html.match(/grid-cols-subgrid/g) ?? [])).toHaveLength(7);
+    for (const testid of ["grid-header", "grid-row"]) {
+      const el = new RegExp(`<(?:div|li)[^>]*data-testid="${testid}"[^>]*>`).exec(html);
+      expect(el).not.toBeNull();
+      expect(el![0]).toContain("grid-cols-subgrid");
+      // Spanning every track is what makes it a row rather than a cell.
+      expect(el![0]).toContain("col-span-full");
+    }
+    expect(/<ol[^>]*class="[^"]*grid-cols-subgrid/.test(html)).toBe(true);
+  });
+
+  it("no subgrid re-declares the column gap, which is how they stay aligned", () => {
+    // A subgrid with its own `column-gap` overrides the parent's gutter INSIDE
+    // itself. Today both would be 6px and nothing would move, which is exactly
+    // why this needs a guard rather than a comment: the misalignment appears
+    // the day one of the two is changed and the other is not. The gap is
+    // declared once, on the wrapper, and inherited by all three subgrids.
+    const html = render();
+    const rowLike = html.match(/<(?:div|li|ol)[^>]*grid-cols-subgrid[^>]*>/g) ?? [];
+    expect(rowLike.length).toBeGreaterThan(0);
+    for (const el of rowLike) {
+      expect(el).not.toMatch(/\bgap-1\.5\b/);
+      expect(el).not.toMatch(/\bgap-x-/);
+    }
+    const wrapper = /<div[^>]*data-testid="grid-tracks"[^>]*>/.exec(html);
+    expect(wrapper![0]).toContain("gap-x-1.5");
+  });
+
+  it("the padding is on the track holder, and every subgrid cancels its own", () => {
+    /* THE ARITHMETIC INVARIANT, and the one this fix got wrong on the first
+     * attempt. A subgrid contributes its own padding to the first and last
+     * tracks it spans. Leaving `px-3.5` on the rows reads as harmless — above
+     * `sm` the name track is `minmax(…,max-content)` and just grows by it — but
+     * below `sm` that track is a FIXED length, so the padding comes out of the
+     * NAME. Measured at 390px: text room per row 96px → 82px and the first
+     * value column 138px → 124px, which also desyncs the `138` that
+     * `GRID_SCROLL_SNAP` transcribes. #4558's defect, reintroduced by #4593's
+     * fix, with every other guard in this file still green.
+     *
+     * So: the padding lives on the track holder, OUTSIDE the tracks, which is
+     * where `gridWidthPx`'s `2 * GRID_ROW_PADDING_PX + …` has always assumed it
+     * was; and each subgridded row cancels it with `-mx` + matching `px` so its
+     * border box stays full-bleed (the dividers reach the card's edge, as they
+     * do on production today) while its content box lands back on the shared
+     * tracks. Asserted as a PAIR, because either half alone is a defect: `-mx`
+     * without `px` parts the columns, `px` without `-mx` shortens the name.
+     */
+    const html = render();
+    const classesOf = (el: string) => (/class="([^"]*)"/.exec(el)?.[1] ?? "").split(/\s+/);
+    const wrapper = /<div[^>]*data-testid="grid-tracks"[^>]*>/.exec(html)![0];
+
+    // The track holder carries it, at both breakpoints.
+    expect(classesOf(wrapper)).toEqual(expect.arrayContaining(["px-3.5", "lg:px-5"]));
+    // …and it is the same number the rest of this file is transcribed from, so
+    // the two cannot drift apart silently.
+    expect(classesOf(wrapper)).toContain(`px-${GRID_ROW_PADDING_PX / 4}`);
+
+    // Every subgridded item cancels it, in both directions and at both breakpoints.
+    const subgrids = html.match(/<(?:div|li|ol)[^>]*grid-cols-subgrid[^>]*>/g) ?? [];
+    expect(subgrids).toHaveLength(7); // 1 header + 1 ol + 5 rows
+    for (const el of subgrids) {
+      const c = classesOf(el);
+      const padded = c.includes("px-3.5");
+      // The `<ol>` is a pure pass-through link in the chain and carries neither.
+      expect(padded ? c.includes("-mx-3.5") : !c.includes("-mx-3.5")).toBe(true);
+      if (padded) expect(c).toEqual(expect.arrayContaining(["lg:px-5", "lg:-mx-5"]));
+    }
+    // The header and the rows are the ones that must be padded — asserted by
+    // count so that dropping the pair from one of them fails here rather than
+    // reading as "no subgrid is padded, therefore consistent".
+    expect(subgrids.filter((el) => classesOf(el).includes("px-3.5"))).toHaveLength(6);
+  });
+
+  it("the show-more control spans the table, not the name column", () => {
+    // The wrapper is a grid now, so a bare child lands in track 1 and
+    // `ShowMore`'s own `w-full` measures 118px instead of the table.
+    const many = grid({
+      rows: Array.from({ length: COLLAPSED_LIST_COUNT + 2 }, (_, i) => ({
+        entity_key: `p-${i}`, display_name: `Player ${i}`, seed: null,
+        rank: i + 1, on_board: true,
+        cells: Object.fromEntries(COLUMNS.map((c) => [c.key, cell()])),
+      })),
+    });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={many} />);
+    const button = /<button[^>]*>/.exec(html);
+    expect(button).not.toBeNull();
+    // The control exists, the element wrapping it spans every track, and it
+    // cancels the holder's padding the same way the rows do — its top border is
+    // one of the dividers a reader sees, and on production that reaches the
+    // card's edge like all the others.
+    const wrap = /<div class="([^"]*)">\s*<button/.exec(html);
+    expect(wrap).not.toBeNull();
+    const wrapClasses = wrap![1].split(/\s+/);
+    expect(wrapClasses).toContain("col-span-full");
+    expect(wrapClasses).toEqual(expect.arrayContaining(["-mx-3.5", "lg:-mx-5"]));
+  });
+
+  it("a trailing filler track is what makes a row reach the card's edge", () => {
+    // `col-span-full` spans the TRACKS, and the tracks total `gridWidthPx` —
+    // 446px for five columns — inside a card that is far wider. Without a
+    // filler every `border-t` stops under the Title column instead of running
+    // edge to edge, which is what production draws today. It must be LAST, or
+    // it moves the value columns; and `minmax(0,1fr)` rather than `1fr` so it
+    // collapses instead of imposing an auto minimum when the grid scrolls.
+    const wrapper = /<div[^>]*data-testid="grid-tracks"[^>]*>/.exec(render())![0];
+    const template = /grid-template-columns:([^;"]*)/.exec(wrapper);
+    expect(template).not.toBeNull();
+    expect(template![1].trim()).toBe(`${gridTemplate(5)} minmax(0,1fr)`);
+  });
+
+  it("UX-P147 survives: the name track is still the only growable one", () => {
+    // Sharing the tracks must not change WHICH track wins the free space.
+    // Alex: "names get priority over bar width; bars compress first." The name
+    // track's `max-content` is a growth limit and `1fr` is not, so the name
+    // still fills before the bars — it now just reaches one width for
+    // everybody rather than five.
+    expect(GRID_NAME_TRACK).toContain("max-content");
+    expect(gridTemplate(5)).toBe("var(--grid-name-track) repeat(5, var(--grid-col-track))");
+    // And the phone half of #4558 is untouched by the structural change: a
+    // fixed track below `sm` is still what keeps the rounded-up scroll floor
+    // out of the name, shared container or not.
+    const base = GRID_NAME_TRACK.split(" ").filter((c) => !/^(sm|md|lg):/.test(c));
+    expect(base).toEqual(["[--grid-name-track:var(--grid-name-w)]"]);
   });
 });
 
