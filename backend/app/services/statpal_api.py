@@ -653,17 +653,23 @@ class StatPalAPIService(BaseAPIClient):
 
         data = await self._get(sport, endpoint, params)
         if data is None:
-            # `sport` is UNTRUSTED here: `routes/admin_providers.py` passes the
-            # request's own `Query` string straight into `get_fixtures(sport)`.
-            # So log the key we MATCHED, never the caller's string — a value
-            # drawn from a closed set cannot carry a forged log record, which
-            # removes the injection sink by construction instead of scrubbing
-            # for it (CodeQL Log Injection, #2907). An unmapped sport is itself
-            # the interesting fact, and it is reported as one.
-            known_sport = sport if sport in self._SCHEDULE_ENDPOINTS else "unmapped"
+            # `sport` NEVER reaches this log line. It is untrusted —
+            # `routes/admin_providers.py` passes the request's own `Query`
+            # string straight into `get_fixtures(sport)` — so putting it in a
+            # log record is a log-injection sink (CodeQL, #2907). Note that
+            # `if sport in self._SCHEDULE_ENDPOINTS` does NOT launder it: a
+            # membership test still hands on the caller's own string object.
+            #
+            # Nothing is lost by omitting it. `endpoint` is a VALUE from that
+            # dict (or the literal default), so it is safe and it already names
+            # the shape of the read; and the caller that matters — the writer in
+            # `tasks/statpal_sync.py` — logs `our_key` from `STATPAL_SPORT_MAPPING`,
+            # an internal constant, so the failing sport IS named, by the layer
+            # that knows it without being told.
             logger.error(
-                "StatPal %s/%s: read failed — this is NOT an empty schedule "
-                "(#2907)", known_sport, self._SCHEDULE_ENDPOINTS.get(known_sport),
+                "StatPal schedule read failed on %s (sport mapped: %s) — this "
+                "is NOT an empty schedule (#2907)",
+                endpoint, sport in self._SCHEDULE_ENDPOINTS,
             )
             return StatPalFixtureFetch([], "fetch_failed", sport, endpoint)
 
