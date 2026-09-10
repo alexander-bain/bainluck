@@ -25,6 +25,13 @@ jobs:
 
       - name: Run health checks
         env:
+          # Notice 39 / #4763 Rail A: name this robot on our own wire. The tagging
+          # code in `scripts/daily_health_check.py` has been live since #4706, but
+          # `resolve_agent()` reads BL_AGENT at call time and returns None when it
+          # is unset — so every read this job makes has been going out UNTAGGED,
+          # indistinguishable from a person's in `search_query_logs`. This line is
+          # the half that makes the other half do anything.
+          BL_AGENT: ci-daily-health-check
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}

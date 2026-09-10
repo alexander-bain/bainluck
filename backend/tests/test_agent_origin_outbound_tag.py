@@ -863,6 +863,75 @@ def test_gate_scripts_import_cleanly(path: pathlib.Path):
 
 
 # ---------------------------------------------------------------------------
+# IS IT SWITCHED ON? (#4763 Rail A)
+# ---------------------------------------------------------------------------
+#
+# Everything above asks whether the tagging code is CORRECT. Nothing above asks
+# whether anything ever sets `BL_AGENT`, and the answer until this commit was
+# no: #4706 routed the repo-root scripts through the carrier, every guard went
+# green, and `daily-health-check.yml` went on making four production reads every
+# six hours with `resolve_agent()` returning None on each one.
+#
+# That is the third time in a week the same shape has shipped — #4632 (the
+# trusted-address ceiling, correct and inert four days until its env var was
+# set) and notice 39 rung 2 (merged, executing on zero lanes, #4777). Each
+# passed every gate, because every gate asked "is it correct?".
+#
+# The rule is computed from the workflows' own `run:` lines against the same
+# ROOT_SCRIPTS glob used above, so a NEW workflow that calls a production script
+# inherits it without anyone remembering this file exists.
+
+WORKFLOWS = sorted((BACKEND.parent / ".github" / "workflows").glob("*.yml"))
+
+#: A script that never names our host cannot be attributed and has nothing to
+#: attribute. `alert_intake.py` and `setup_sentry_alerts.py` call GitHub and
+#: Sentry only, so they are exempt — but by COMPUTATION, not by name: the day
+#: one of them reads our API it gains the marker and the rule starts applying.
+_OUR_HOST_MARKERS = ("bainluck.com", "BAINLUCK_API")
+
+
+def _our_host_root_scripts() -> dict:
+    return {
+        p.stem: p
+        for p in ROOT_SCRIPTS
+        if any(m in p.read_text() for m in _OUR_HOST_MARKERS)
+    }
+
+
+def test_the_workflow_population_is_real():
+    """Denominator guard. An empty glob makes the rule below vacuously true."""
+    assert len(WORKFLOWS) >= 5, [p.name for p in WORKFLOWS]
+    ours = _our_host_root_scripts()
+    assert len(ours) >= 3, (
+        f"only {len(ours)} root scripts name our host — either the marker list "
+        f"went stale or the population moved: {sorted(ours)}"
+    )
+
+
+def test_every_workflow_running_an_our_host_script_names_its_agent():
+    """A workflow that reads our own API must say which robot is reading.
+
+    Without `BL_AGENT` the carrier adds no header (notice 39 guard 1, and
+    deliberately so — see `resolve_agent`), and the row it writes to
+    `search_query_logs` is indistinguishable from a person's. The tagging code
+    it invokes is then decoration.
+    """
+    our_host_names = set(_our_host_root_scripts())
+    offenders = []
+    for wf in WORKFLOWS:
+        src = wf.read_text()
+        invoked = set(re.findall(r"scripts/([A-Za-z0-9_]+)\.py", src)) & our_host_names
+        if not invoked:
+            continue
+        if not re.search(r"^\s*BL_AGENT\s*:", src, re.M):
+            offenders.append(f"{wf.name} runs {sorted(invoked)} but sets no BL_AGENT")
+    assert offenders == [], (
+        "a workflow reads our own production API without naming itself, so its "
+        "rows cannot be told from a reader's (notice 39):\n  " + "\n  ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
 # The tag must never buy privilege
 # ---------------------------------------------------------------------------
 
