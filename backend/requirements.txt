@@ -10,13 +10,13 @@ uvicorn[standard]>=0.27.0
 python-dotenv>=1.2.2
 
 # Database
-sqlalchemy>=2.0.25
+sqlalchemy>=2.0.50
 asyncpg>=0.31.0
 psycopg2-binary>=2.9.9
 alembic>=1.13.1
 
 # HTTP Client (for odds API)
-httpx>=0.26.0
+httpx>=0.28.1
 
 # Fast JSON decode (#995 attempt-10): stdlib json.loads holds the GIL for the
 # whole parse of a giant Kalshi nested-markets page (~67s observed), freezing the
@@ -37,8 +37,8 @@ redis>=5.0.1
 limits>=5.0.0
 
 # Validation
-pydantic>=2.5.3
-pydantic-settings>=2.1.0
+pydantic>=2.13.4
+pydantic-settings>=2.14.1
 
 # Auth (optional)
 firebase-admin>=6.3.0
