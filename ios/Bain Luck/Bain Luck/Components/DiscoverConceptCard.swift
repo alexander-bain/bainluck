@@ -147,10 +147,8 @@ struct NativeConceptDiscoverCard: View {
                                     .lineLimit(1)
                             }
                             Spacer(minLength: 0)
-                            if let fieldSize = leader.fieldSize, fieldSize > 2 {
-                                // A 52% favourite in a two-way fight and a 52%
-                                // favourite in a 20-car field are different facts.
-                                Text("of \(fieldSize)")
+                            if let qualifier = Self.fieldSizeLabel(leader.fieldSize) {
+                                Text(qualifier)
                                     .font(.caption2)
                                     .foregroundStyle(.white.opacity(0.7))
                             }
@@ -182,6 +180,30 @@ struct NativeConceptDiscoverCard: View {
     /// past 100% (gotcha #23) and a card must not print 104%.
     private func probabilityLabel(_ probability: Double) -> String {
         "\(FeedProbabilityScale.wholePercent(fromFraction: probability))%"
+    }
+
+    /// The favourite's field-size qualifier, or `nil` when there is no field
+    /// worth naming.
+    ///
+    /// A 52% favourite in a two-way fight and a 52% favourite in a 20-car field
+    /// are different facts, which is why the qualifier exists at all. It used to
+    /// render as a bare `of 30` sitting immediately after the probability chip,
+    /// so the card read aloud as "Tadej Pogacar seventy-five percent OF THIRTY"
+    /// — arithmetic performed on the percentage, not the size of the field
+    /// (#4031). Web named the noun in #3989; this is the native half.
+    ///
+    /// `static`, not `private`, and deliberately so: the two helpers below are
+    /// `private func`s on a `View`, which `@testable import` cannot reach, so
+    /// every test written against them has had to paraphrase the rule instead of
+    /// executing it. This one is callable, so `ConceptFieldQualifierTests`
+    /// exercises the real string and the real `> 2` boundary.
+    ///
+    /// The `> 2` floor is the point: a two-sided fight (every UFC bout the feed
+    /// serves carries `field_size: 2`) has no field to name, and "field of 2"
+    /// would be noise on a card that already prints both names.
+    static func fieldSizeLabel(_ fieldSize: Int?) -> String? {
+        guard let fieldSize, fieldSize > 2 else { return nil }
+        return "field of \(fieldSize)"
     }
 
     /// 24h movement in percentage POINTS, shown only when it is worth a glance.
