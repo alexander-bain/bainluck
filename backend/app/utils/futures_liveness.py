@@ -195,6 +195,46 @@ BASE_LIVENESS_SQL = """
 #: be priced" composes THIS, and the guard test asserts they all do.
 LIVE_MARKET_SQL = f"{BASE_LIVENESS_SQL}       AND {SETTLED_PREDICATE_SQL.strip()}\n"
 
+#: #4840 — THE SAME CONTRACT, ONE LEVEL DOWN: "this LEG can still be priced".
+#:
+#: Everything above answers it about a MARKET. This answers it about an outcome
+#: row, and it exists for the reason the top of this file gives about the market
+#: bound: *the writer one level down already refuses to touch a settled outcome,
+#: so the selector was queueing markets whose every interesting outcome the
+#: writer was going to decline.* That happened again, at the leg level:
+#:
+#: * ``tournament_price_refresh._write_refreshed_prices`` refuses a leg on
+#:   ``is_winner IS NOT TRUE`` **and** ``resolution_source <> 'api_settlement'``;
+#: * ``polymarket_condition_refresh``'s selector refused only the first.
+#:
+#: So a leg with ``is_winner = false`` and ``resolution_source = 'api_settlement'``
+#: was selectable and unwritable. Its ``last_updated`` never advances, which makes
+#: it permanently the stalest thing in its class, and the selector orders
+#: ``stalest ASC`` — it pinned its market to the head of the queue forever while
+#: markets below the LIMIT were never seen. **Measured on production 2026-09-10
+#: 19:03Z: 365 of the first 3,600 candidates carried such a leg, and for 155 of
+#: them EVERY ungraded leg was one** — nothing the writer could ever write.
+#:
+#: ``COALESCE(…, '')`` because ``resolution_source`` is nullable and NULL is the
+#: overwhelmingly common case: a bare ``<> 'api_settlement'`` is NULL for those
+#: rows, which is not TRUE, and would refuse every ungraded leg in the database.
+#:
+#: Alias-parameterised because the three call sites bind different table aliases
+#: to the same table, and a constant that hard-codes ``fo.`` cannot be reused by
+#: the probe that calls it ``fo_a`` — which is exactly how a fourth copy gets
+#: typed by hand.
+def writable_leg_sql(alias: str = "fo") -> str:
+    """The per-leg refusal both the selector and the writer must apply.
+
+    One definition, the same reason this module exists. ``alias`` is the SQL
+    alias the caller has bound to ``futures_outcomes``.
+    """
+    return (
+        f"{alias}.is_winner IS NOT TRUE\n"
+        f"                   AND COALESCE({alias}.resolution_source, '') <> 'api_settlement'"
+    )
+
+
 #: Which of the two settled bounds retired a market, for the guard's exclusion
 #: report. A market can satisfy both; the winner is named first because it is
 #: our own reading and does not depend on an upstream being reachable.

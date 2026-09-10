@@ -175,7 +175,7 @@ from typing import Any
 #: waiting), and a second writer would be a second answer to "what does a Gamma
 #: market mean for these rows".
 from app.tasks.tournament_price_refresh import BATCH_SIZE
-from app.utils.futures_liveness import LIVE_MARKET_SQL
+from app.utils.futures_liveness import LIVE_MARKET_SQL, writable_leg_sql
 
 logger = logging.getLogger(__name__)
 
@@ -306,10 +306,15 @@ def _attempt_key(market_id: int) -> str:
 #: MIN() would skip — "nobody has ever read this book" is the strongest possible
 #: claim on the budget, not an absence.
 #:
-#: ``is_winner IS NOT TRUE`` mirrors the write path's own refusal (CERT-452), so
-#: a market is not selected on the staleness of a leg the writer would decline.
-#: A market with no ungraded legs left produces a NULL ``stalest`` and is
-#: excluded by the comparison — there is nothing here to write.
+#: :func:`writable_leg_sql` IS the write path's own refusal (CERT-452, #4840) —
+#: one definition in ``futures_liveness``, applied here and by
+#: ``_write_refreshed_prices``, so a market is not selected on the staleness of a
+#: leg the writer would decline. A market with no writable legs left produces a
+#: NULL ``stalest`` and is excluded by the comparison — there is nothing here to
+#: write. Before #4840 this said only ``is_winner IS NOT TRUE`` while the writer
+#: also refused ``resolution_source = 'api_settlement'``, and the half-leg gap
+#: pinned 155 permanently-unwritable markets to the head of a ``stalest ASC``
+#: queue.
 #: #4827: ADDRESSABILITY IS A PROPERTY OF THE LEGS, so it is tested on the legs.
 #: ``fm.external_id LIKE '0x%'`` used to be the pool's fence and it fenced out
 #: 7,608 live markets whose every leg carried a condition id. The fence is now
@@ -324,11 +329,11 @@ def _attempt_key(market_id: int) -> str:
 #: ``regexp_replace`` strips the ``_yes``/``_no`` suffix the sub-market ingest
 #: writes — measured 2026-09-10, 45,435 of 46,175 event-keyed legs carry the bare
 #: id and 735 carry a suffixed one, and both name the same book.
-_ADDRESSABLE_LEG_SQL = """
+_ADDRESSABLE_LEG_SQL = f"""
            EXISTS (
                 SELECT 1 FROM futures_outcomes fo_a
                  WHERE fo_a.market_id = fm.id
-                   AND fo_a.is_winner IS NOT TRUE
+                   AND {writable_leg_sql("fo_a")}
                    AND fo_a.external_id LIKE '0x%'
               )
 """
@@ -365,7 +370,7 @@ _CANDIDATE_SQL = f"""
                    END AS request_ids
               FROM futures_outcomes fo
              WHERE fo.market_id = p.id
-               AND fo.is_winner IS NOT TRUE
+               AND {writable_leg_sql("fo")}
            ) s ON TRUE
      WHERE s.stalest < NOW() - make_interval(hours => :stale_hours)
        AND COALESCE(ARRAY_LENGTH(s.request_ids, 1), 0) > 0
