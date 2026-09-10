@@ -294,9 +294,16 @@ TIE = "Tie 6th inning"
 SPREAD = "Tampa Bay -1.5 first 5 innings"
 # Not window-bounded — the control that must be untouched in every direction.
 FULL_GAME = "Tampa Bay wins by over 1.5 runs"
+# A PLAYER PROP, priced outside the interest band, and NOT window-bounded — the
+# only row in this fixture that can tell "the closed window is carved out" apart
+# from "extreme prices are back" (CERT-2502). It must stay dropped: step 9's
+# judgement that a 0.98 leg has stopped being a question is correct for every row
+# whose window is still the whole game.
+BORING_PROP = "1+ hits"
+BORING_PROP_MARKET = "Ronald Acuña Jr. Hits"
 
 
-def _rays_at_braves_finished(*, box_score_data=...):
+def _rays_at_braves_finished(*, box_score_data=..., winner_prices=None):
     event = _make_event(
         id=EVENT_ID,
         home_team="Atlanta Braves",
@@ -338,18 +345,24 @@ def _rays_at_braves_finished(*, box_score_data=...):
     full_game.status = "open"
     full_game.event_id = EVENT_ID
 
+    boring = _make_futures_market(id=904, name=BORING_PROP_MARKET, source="kalshi")
+    boring.status = "open"
+    boring.event_id = EVENT_ID
+
     # The winner market's full production field — three legs, not one. A
     # single-leg fixture is not merely thinner: a one-outcome field market is
     # dropped upstream of the window filter entirely, so it would have tested
     # nothing about this ship.
+    win_p, lose_p, tie_p = winner_prices or (0.30, 0.50, 0.20)
     outcomes = [
-        _make_outcome(id=9101, market_id=901, name=WINNER, probability=0.30),
-        _make_outcome(id=9102, market_id=901, name=LOSER, probability=0.50),
-        _make_outcome(id=9103, market_id=901, name=TIE, probability=0.20),
+        _make_outcome(id=9101, market_id=901, name=WINNER, probability=win_p),
+        _make_outcome(id=9102, market_id=901, name=LOSER, probability=lose_p),
+        _make_outcome(id=9103, market_id=901, name=TIE, probability=tie_p),
         _make_outcome(id=9201, market_id=902, name=SPREAD, probability=0.99),
         _make_outcome(id=9301, market_id=903, name=FULL_GAME, probability=0.99),
+        _make_outcome(id=9401, market_id=904, name=BORING_PROP, probability=0.98),
     ]
-    return event, [winner, spread, full_game], outcomes
+    return event, [winner, spread, full_game, boring], outcomes
 
 
 async def _client(**kwargs):
@@ -377,6 +390,23 @@ async def _client(**kwargs):
 @pytest.fixture
 async def finished_client():
     app, cache = await _client()
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            yield ac
+    cache.clear()
+
+
+@pytest.fixture
+async def settled_price_client():
+    """The same game with the winner legs SETTLED at the venue's own extremes.
+
+    0.99 / 0.01 / 0.01 — the shape 859 of the 935 gradable production outcomes
+    actually wear (CERT-2502). Everything else about the fixture is identical to
+    `finished_client`, so the only variable between the two arms is the price.
+    """
+    app, cache = await _client(winner_prices=(0.99, 0.01, 0.01))
     with patch("app.main.init_db", new_callable=AsyncMock):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -481,3 +511,107 @@ async def test_without_a_line_score_the_page_is_exactly_as_it_was(no_line_score_
     assert WINNER not in served
     assert SPREAD not in served
     assert FULL_GAME in served
+
+
+# ---------------------------------------------------------------------------
+# CERT-2502 — the settled-extreme cohort, which is most of the ship
+# ---------------------------------------------------------------------------
+#
+# The first cut of this file wrote the mid-band prices above as a CONSTRAINT on
+# the ship and moved on. It is not a constraint, it is the ship: step 9 of the
+# endpoint drops any player-prop leg outside `0.05 <= p <= 0.95` as "boring",
+# ~180 lines before the window filter could collect it, and on 1,000 production
+# outcome rows **859 of the 935 gradable ones sit outside that band**. So the
+# grader worked, its tests were green, and the dominant cohort of finished-page
+# rows still showed the reader nothing.
+#
+# "Boring" means the market has stopped being a question. On a closed window
+# that is not a reason to drop the row — it is the reason the row has an answer.
+
+
+@pytest.mark.asyncio
+async def test_a_settled_inning_row_comes_back_as_a_verdict(settled_price_client):
+    """0.99 / 0.01 — the cohort the interest filter used to eat."""
+    payload = (await settled_price_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+    script = _script_by_label(payload)
+
+    assert WINNER in script, (
+        "a 0.99 settled inning row never reached WHAT HIT — the interest filter "
+        f"ate it before the window filter could collect it; labels={sorted(script)}"
+    )
+    # Graded on the SIXTH inning (1–0 Atlanta), not the 2–7 final.
+    assert script[WINNER]["graded_result"] == "hit"
+    assert script[WINNER]["graded_label"] == "1–0 — hit"
+
+    # The 0.01 legs are the same cohort at the other end of the band.
+    assert script[LOSER]["graded_result"] == "miss"
+    assert script[TIE]["graded_result"] == "miss"
+
+
+@pytest.mark.asyncio
+async def test_the_settled_row_arrives_price_free(settled_price_client):
+    """A verdict, never a rehabilitated 0.99. #1588 is not undone by its repair."""
+    payload = (await settled_price_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+
+    served = _all_served_outcome_names(payload)
+    for label in (WINNER, LOSER, TIE, SPREAD):
+        assert label not in served, f"{label}: a settled window row is back in a price bucket"
+
+    script = _script_by_label(payload)
+    for label in (WINNER, LOSER, TIE):
+        assert script[label]["pregame_mark"] is None, f"{label} republished a mark"
+        assert script[label]["current"] is None, f"{label} republished a live price"
+
+
+@pytest.mark.asyncio
+async def test_a_boring_prop_whose_window_is_the_whole_game_stays_dropped(
+    settled_price_client,
+):
+    """The other direction, which is what stops this becoming "extremes are back".
+
+    `BORING_PROP` is a player prop at 0.98 whose window is the whole game. Step 9
+    is RIGHT about it — a 0.98 leg on an open-ended question has stopped being a
+    question — and this ship must not rehabilitate it. It is the one row in the
+    fixture that separates "closed windows are carved out" from "the interest
+    filter was weakened", so it is the row that fails if the carve-out ever grows
+    to mean the latter.
+
+    Both directions asserted: it must not come back as a PRICE (a served bucket)
+    and it must not come back as a VERDICT (a WHAT HIT row it has no answer for).
+    """
+    payload = (await settled_price_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+    assert BORING_PROP not in _all_served_outcome_names(payload), (
+        "a boring full-game prop is back in a price bucket — the interest filter "
+        "was widened, not carved out"
+    )
+    assert BORING_PROP not in _script_by_label(payload), (
+        "a boring full-game prop reached WHAT HIT — the line score cannot answer it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_extreme_priced_control_keeps_its_price(settled_price_client):
+    """`FULL_GAME` is 0.99 and not window-bounded: a real price on a real market.
+
+    It reaches neither the carve-out nor the suppression filter, which is the
+    proof that this ship is scoped to closed windows and not to settled-looking
+    numbers in general.
+    """
+    payload = (await settled_price_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+    assert FULL_GAME in _all_served_outcome_names(payload)
+    assert FULL_GAME not in _script_by_label(payload)
+
+
+@pytest.mark.asyncio
+async def test_the_mid_band_arm_is_unchanged_by_the_carve_out(finished_client):
+    """The regression direction: the rows that already worked still work.
+
+    Same four labels, same verdicts, priced 0.30/0.50/0.20. A carve-out that
+    re-routed the mid-band rows through the new path — rather than leaving them to
+    the suppression filter that already collected them — would show up here as a
+    duplicate or a vanished row, not as a wrong verdict.
+    """
+    payload = (await finished_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+    rows = [r for r in (payload.get("props_script") or []) if r["label"] == WINNER]
+    assert len(rows) == 1, f"the mid-band winner row appears {len(rows)}× in WHAT HIT"
+    assert rows[0]["graded_label"] == "1–0 — hit"

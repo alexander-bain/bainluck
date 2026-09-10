@@ -12471,12 +12471,102 @@ async def _build_game_markets(
         sport_key,
     )
 
+    # ── the window classifier, hoisted (CERT-2502) ────────────────────────────
+    #
+    # These four names used to be defined ~180 lines below, beside the #1588
+    # suppression filter that is their only other reader. They are here because
+    # step 9 needs them, and step 9 runs first.
+    #
+    # `prop_window_closed` is fail-safe by construction (see its module
+    # docstring): it returns False for anything it cannot positively prove, so an
+    # unparsed period or an unclassifiable market keeps its card. Lazy-loading
+    # `event.sport` here would risk an async ORM crash, so the league comes off
+    # the row itself via __dict__.
+    _league = (event.__dict__.get("llm_league") or "").strip().upper()
+    _period_now = event.__dict__.get("period")
+    _sport_hint = "baseball_mlb" if _league == "MLB" else (_league.lower() or None)
+
+    # WHAT IDENTIFIES THE WINDOW HAS TO REACH THIS FILTER (CERT-2486). The first
+    # cut passed `market_name` and a literal `None` ticker, and two provider
+    # shapes walked through it: a Kalshi row whose generic title says nothing but
+    # whose `KXMLBRFI…` TICKER encodes the first inning, and a Polymarket row
+    # whose generic matchup title puts `1st 5 Innings Spread -1.5` only in the
+    # OUTCOME name. `prop_window` accepted a ticker all along; nothing supplied
+    # one.
+    #
+    # The ticker is resolved through `_market_id`, which every item in all six
+    # buckets already carries, rather than by adding `_external_id` to the nine
+    # dict literals that build them — one map, and the payload's shape does not
+    # change. Built from the plain list, before any commit boundary, so no ORM
+    # attribute is read lazily here (gotcha #6).
+    _ticker_by_market_id = {m.id: m.external_id for m in markets}
+
+    # #1735 — THE SUPPRESSED ROWS ARE EXACTLY THE ROWS OWED A RESULT.
+    #
+    # #1588's own acceptance criterion is "shows a graded result OR is
+    # suppressed"; the suppression bought the honesty and left the result owed. A
+    # row the filter below drops is, by construction, one whose window we PROVED
+    # is over — which is the same thing as saying its question has an answer.
+    _window_closed_items: list[dict] = []
+
+    def _window_is_closed(item: dict) -> bool:
+        """The ONE window classification in this endpoint.
+
+        Both readers — step 9's carve-out and the #1588 suppression filter — ask
+        it through this function rather than each calling `prop_window_closed`
+        with their own arguments. CERT-2486 is what a second call site costs: two
+        of them drifted on which fields identify the window, and two provider
+        shapes walked through the gap.
+        """
+        return prop_window_closed(
+            item.get("market_name"),
+            _ticker_by_market_id.get(item.get("_market_id")),
+            _sport_hint,
+            _period_now,
+            event.status,
+            finished=event_is_finished,
+            outcome=item.get("outcome_name"),
+        )
+
     # 9. Filter out boring player props where neither side is interesting
     # (e.g., "2+ home runs: 98%" — the "over" is a near-certainty)
-    player_props = [
-        p for p in player_props
-        if 0.05 <= p["over_probability"] <= 0.95
-    ]
+    #
+    # A SETTLED WINDOW IS NOT A BORING PRICE, AND THIS FILTER COULD NOT TELL THEM
+    # APART (CERT-2502). "Boring" means the market has stopped being a question.
+    # For a window-bounded leg on a finished game that is not a reason to drop the
+    # row — it is the reason the row has an ANSWER. Measured on 1,000 production
+    # outcome rows, 859 of the 935 gradable ones sit outside 0.05–0.95, so this
+    # filter was silently eating the DOMINANT cohort of #1735's ship ~180 lines
+    # before the suppression filter could collect it: the grader worked and the
+    # page still showed nothing.
+    #
+    # They are moved aside rather than kept in `player_props`, which is the
+    # narrower change of the two. Leaving them in would carry a settled 0.99 leg
+    # through cross-source dedup (9b) and the monotonicity pass (9c) — neither of
+    # which is written for rows whose price is a leftover — and 9c drops the
+    # violators it finds. Taken out here, they reach `_window_closed_items`
+    # directly, and their price is gone from the payload for the same reason it is
+    # gone today: they never re-enter a price bucket.
+    _boring_closed_windows: list[dict] = []
+    _interesting_props: list[dict] = []
+    for p in player_props:
+        if 0.05 <= p["over_probability"] <= 0.95:
+            _interesting_props.append(p)
+        elif _window_is_closed(p):
+            _boring_closed_windows.append(p)
+    player_props = _interesting_props
+    # Deduped on identity, not on price: the same settled inning can arrive from
+    # Kalshi and Polymarket, and 9b — the pass that would have merged them — is
+    # below this line and no longer sees them. Two identical "1–0 — hit" rows in
+    # WHAT HIT is not a false statement, but it is not one settled vocabulary
+    # either (#1650).
+    _seen_closed: set = set()
+    for p in _boring_closed_windows:
+        key = (p.get("market_name"), p.get("outcome_name"))
+        if key in _seen_closed:
+            continue
+        _seen_closed.add(key)
+        _window_closed_items.append(p)
 
     # 9b. Cross-source dedup: when Kalshi and Polymarket both have the same
     # player+stat+threshold, merge into one entry with averaged probability
@@ -12627,11 +12717,6 @@ async def _build_game_markets(
     # with the resolver, whereas a read path can stop publishing a false number
     # right now — and against a false number, an absent card is strictly better.
     #
-    # `prop_window_closed` is fail-safe by construction (see its module docstring):
-    # it returns False for anything it cannot positively prove, so an unparsed
-    # period or an unclassifiable market keeps its card. Lazy-loading
-    # `event.sport` here would risk an async ORM crash, so the league comes off
-    # the row itself via __dict__.
     # AFTER FULL TIME TOO (#1588, Fable's "2nd Quarter 99%" card). The rule
     # originally ran only while `event.status == "live"`, which left the worst
     # version of the bug untouched: a window market on a game that has FINISHED,
@@ -12649,36 +12734,11 @@ async def _build_game_markets(
     # be used — it is a Boolean defaulting to False, so ungraded rows read as
     # "lost" (that docstring measured 6,032 such rows), and keying on it would
     # hand a live-looking price back to exactly the rows this rule must suppress.
-    _league = (event.__dict__.get("llm_league") or "").strip().upper()
-    _period_now = event.__dict__.get("period")
-    _sport_hint = "baseball_mlb" if _league == "MLB" else (_league.lower() or None)
-
-    # WHAT IDENTIFIES THE WINDOW HAS TO REACH THIS FILTER (CERT-2486). The first
-    # cut passed `market_name` and a literal `None` ticker, and two provider
-    # shapes walked through it: a Kalshi row whose generic title says nothing but
-    # whose `KXMLBRFI…` TICKER encodes the first inning, and a Polymarket row
-    # whose generic matchup title puts `1st 5 Innings Spread -1.5` only in the
-    # OUTCOME name. `prop_window` accepted a ticker all along; nothing supplied
-    # one.
     #
-    # The ticker is resolved through `_market_id`, which every item in all six
-    # buckets already carries, rather than by adding `_external_id` to the nine
-    # dict literals that build them — one map, and the payload's shape does not
-    # change. Built from the plain list, before any commit boundary, so no ORM
-    # attribute is read lazily here (gotcha #6).
-    _ticker_by_market_id = {m.id: m.external_id for m in markets}
-
-    # #1735 — THE SUPPRESSED ROWS ARE EXACTLY THE ROWS OWED A RESULT.
-    #
-    # #1588's own acceptance criterion is "shows a graded result OR is
-    # suppressed"; the suppression above bought the honesty and left the result
-    # owed. A row this filter drops is, by construction, one whose window we
-    # PROVED is over — which is the same thing as saying its question has an
-    # answer. So they are collected here rather than re-derived later: any
-    # second pass would have to re-run the classifier and the two would drift
-    # (CERT-2486 is what that drift costs).
-    _window_closed_items: list[dict] = []
-
+    # The classifier, `_ticker_by_market_id` and `_window_closed_items` are
+    # defined above step 9 (CERT-2502) — step 9 is the endpoint's other reader of
+    # them, and it runs first. Rows it set aside are already in
+    # `_window_closed_items`; the ones below join them.
     def _window_open(item: dict) -> bool:
         # A GRADED ROW IS A RESULT, NOT A PRICE, SO IT SURVIVES. Two independent
         # kinds of grade reach this payload and both count, which a LOOK at the
@@ -12689,15 +12749,7 @@ async def _build_game_markets(
         # already showing the reader its result.
         if item.get("resolution_source") is not None or item.get("hit") is not None:
             return True
-        if prop_window_closed(
-            item.get("market_name"),
-            _ticker_by_market_id.get(item.get("_market_id")),
-            _sport_hint,
-            _period_now,
-            event.status,
-            finished=event_is_finished,
-            outcome=item.get("outcome_name"),
-        ):
+        if _window_is_closed(item):
             _window_closed_items.append(item)
             return False
         return True
