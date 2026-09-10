@@ -110,18 +110,28 @@ try {
   // to photograph what a PERSON sees, and a bot UA can change what the site serves.
   //
   // No loss. The header is what the backend actually reads and what notice 39 point 4
-  // wants the rate-limit allowlist keyed on ("allowlist by header, not IP"); the cookie
-  // covers rung 3. The UA is the one carrier with no reader and a real failure mode.
+  // wants the rate-limit allowlist keyed on ("allowlist by header, not IP"). The UA is
+  // the one carrier with no reader and a real failure mode.
+  //
+  // 🔴 A `bl_agent` COOKIE used to be set here too, for rung 3's client-analytics drop.
+  // It is gone and must not come back: rung 3 is WITHDRAWN because all four client rails
+  // were already agent-free, so nothing ever read it (#4606, #4608).
+  //   - GA4, Vercel Analytics and Web Vitals are consent-gated. A fresh Playwright
+  //     context has no stored consent, so `decideTelemetry(null)` returns NOTHING.
+  //   - Speed Insights — the one UNGATED rail (D30) — drops us at the VENDOR level. Its
+  //     loaded script opens with the equivalent of
+  //     `if (navigator.webdriver || navigator.userAgent.includes("Headless")) return;`
+  //     before it reads any config, and this browser trips both tells.
+  // Measured on production 2026-09-09, two arms of one run: identical script and dataset
+  // both times, 0 vitals beacons as stock Playwright, 2 POSTs to `<basePath>/vitals` with
+  // those two tells removed. Re-adding a cookie would be inert code carrying a live bug
+  // (#4608: it was set on the APEX origin while the shot redirects to www, so it never
+  // reached the page even once).
   const page = await browser.newPage({
     viewport: { width: W, height: H },
     deviceScaleFactor: 2,
     extraHTTPHeaders: { 'x-bainluck-origin': AGENT },
   });
-  // Rung 3's half: the Vercel/GA4 `beforeSend` drop keys on this cookie. Set on the
-  // target's own origin, and never fatal — client analytics is not worth a lost shot.
-  try {
-    await page.context().addCookies([{ name: 'bl_agent', value: AGENT, url: new URL(url).origin }]);
-  } catch { /* not a reason to fail a screenshot */ }
   await page.goto(url, { waitUntil: 'load', timeout: 60000 });
   await page.waitForTimeout(7000);
   try {
