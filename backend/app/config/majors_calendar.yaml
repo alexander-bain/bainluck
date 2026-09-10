@@ -17,6 +17,12 @@
 #   concept_key     event-concept key the page resolves at (event:<domain>:<slug>),
 #                   or null when the surface is a plain event/bracket with no concept
 #                   adapter yet (still tracked; page-check is best-effort)
+#   fixture         optional {sport_key: <key>} — names a single GAME rather than a
+#                   concept surface. marquee:true + fixture pins that game's own event
+#                   card atop the Sports tab (#4541), which a concept_key cannot do:
+#                   the concept pin only ever reaches type:"concept" cards. The entry's
+#                   start/end dates bracket the KICKOFF, and they are UTC — a US
+#                   primetime game belongs to the NEXT UTC day (see the NFL entry).
 #   domain          adapter domain (golf/tennis/f1/soccer/cycling/awards/election/...)
 #   start / end     ISO dates (YYYY-MM-DD). end == start for single-day events.
 #   archetype       expected surface shape: winner_field | bracket | single_event |
@@ -105,6 +111,26 @@ majors:
     archetype: winner_field
     marquee: true
     date_confidence: approximate
+
+  - name: "NFL Kickoff Game 2026 (Patriots at Seahawks)"
+    slug: nfl-kickoff-2026
+    competition: nfl-kickoff-game
+    concept_key: null
+    fixture:
+      sport_key: americanfootball_nfl
+    domain: nfl
+    start: 2026-09-10
+    end: 2026-09-10
+    archetype: team_match
+    marquee: true
+    date_confidence: confirmed
+    notes: "#4541. A FIXTURE entry, not a concept — it pins the game's own event card.
+      Dated 2026-09-10 because the 00:20 UTC kickoff is Wednesday EVENING in America:
+      a US primetime game always belongs to the NEXT UTC day, and dating it by the
+      local day matches nothing. Measured at 5:28pm PT on kickoff night, seven minutes
+      into the game, the opener sat at rank 30 with score 66 — behind eight futures, a
+      FINISHED MLB game, and six MMA prelims — because the scoring model reads drama
+      only and a 0-0 first quarter has none."
 
   - name: "Emmy Awards 2026"
     slug: emmys-2026
@@ -414,6 +440,13 @@ competitions:
     domain: nfl
     archetype: single_event
     aliases: ["superbowl"]
+    standing_concept_key: null
+
+  - slug: nfl-kickoff-game
+    name: "NFL Kickoff Game"
+    domain: nfl
+    archetype: team_match
+    aliases: ["nfl-opener", "season-opener", "kickoff-game"]
     standing_concept_key: null
 
   - slug: march-madness
