@@ -608,6 +608,37 @@ class TestTheOrderingIsAcceptanceOneMadeMechanical:
         )
         assert rail.KICKOFF_STALE_MINUTES < 60
 
+    def test_the_budget_still_leaves_the_backlog_drain_a_real_share(self):
+        """The other half of the trade, and the half nothing else asserts.
+
+        `test_the_kickoff_class_still_fits_inside_one_run` pins the window that
+        sizes the class. It cannot see the other operand: `CONDITION_BUDGET` is
+        what the class is spent AGAINST, and lowering it starves #4827's drain
+        just as surely as widening the horizon does. At the measured 24h cost
+        the two numbers are 656 and 1,000, and nothing in this file would fire
+        if the budget were cut to 700 and the drain silently went to ~44 ids a
+        beat over a ~54,000-id population — which is the rail doing nothing but
+        re-reading tonight's games, the exact failure the blocked cut was
+        blocked for.
+
+        So the guard is on the DIFFERENCE, not on either constant alone.
+        """
+        # MEASURED, production 2026-09-10 22:1xZ, 24h lead, per beat. The upper
+        # end of the observed 539-656 range, because a floor argued from the
+        # cheap end of a range is not a floor.
+        KICKOFF_CLASS_IDS_MEASURED = 656
+        # What the drain needs to stay a drain rather than a rounding error.
+        DRAIN_FLOOR_IDS = 300
+
+        drain = rail.CONDITION_BUDGET - KICKOFF_CLASS_IDS_MEASURED
+        assert drain >= DRAIN_FLOOR_IDS, (
+            f"the kickoff class costs ~{KICKOFF_CLASS_IDS_MEASURED} ids a beat "
+            f"and CONDITION_BUDGET is {rail.CONDITION_BUDGET}, leaving {drain} "
+            f"for #4827's backlog rotation — below the {DRAIN_FLOOR_IDS} floor. "
+            "Either raise the budget or re-measure the class; do NOT narrow "
+            "KICKOFF_LEAD_HOURS, which is what CERT-2549 blocked."
+        )
+
     def test_the_budget_and_the_window_are_one_sizing(self):
         """1,200 x 12 = 14,400 against the 13,746 served markets measured on
         production 2026-09-08. A budget that could not cover the population
