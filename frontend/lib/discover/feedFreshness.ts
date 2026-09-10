@@ -19,6 +19,45 @@ import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 export const COMPLETED_EVENT_MAX_AGE_HOURS = 8;
 
 /**
+ * The same hours for the ONE OR TWO finished games Discover deliberately kept
+ * (#4681's marquee arm) — D118 = B, Alex, Thu 2026-09-10 10:35am PT.
+ *
+ * WHY A SECOND NUMBER AND NOT A BIGGER FIRST ONE. Eight hours from the whistle
+ * retired the NFL season opener (SEA 13-10 NE, ended 8:26pm PT) at 4:26am
+ * Pacific. #4776 had already moved that clock off the kickoff, and 4:26am is
+ * still before anyone is awake: the ship "last night's big game is there with
+ * your coffee" is not delivered by any anchor change, only by a longer window.
+ * Fourteen hours puts an 8:30pm final on the page at 10:30am, which is the
+ * answer Alex picked from the three offered.
+ *
+ * It is scoped to the marquee cards because that is what he was told it did:
+ * *"It only ever affects genuinely big finished games — there is a separate
+ * limit of two such cards at a time, so Discover cannot turn into a
+ * scoreboard."* Raising `COMPLETED_EVENT_MAX_AGE_HOURS` itself would also have
+ * moved `/sports`' shared guard, which no ruling touched. So the flag below is
+ * how the promise stays literally true in code rather than in a docstring.
+ */
+export const MARQUEE_FINAL_MAX_AGE_HOURS = 14;
+
+/**
+ * How long THIS finished card may live — 14h if the backend kept it as one of
+ * Discover's marquee finals, 8h otherwise.
+ *
+ * `discover_marquee_final` is stamped by `_recent_marquee_final_ids`' caller in
+ * `app/routes/feed.py`, on finished event cards only, and it is stamped `false`
+ * as well as `true` — an absent flag means "this payload predates the stamp, or
+ * came from a surface that does not select marquee finals", and both of those
+ * must read as the ordinary 8 hours. Never `??`/`||` this into the long window:
+ * the expensive direction of the error is keeping a dead card, and unknown
+ * provenance is not evidence of marquee status.
+ */
+export function finishedEventMaxAgeHours(ed: FeedEventData): number {
+  return ed.discover_marquee_final === true
+    ? MARQUEE_FINAL_MAX_AGE_HOURS
+    : COMPLETED_EVENT_MAX_AGE_HOURS;
+}
+
+/**
  * When the clock on those hours starts (#4776).
  *
  * A completed event's age starts when it FINISHES. Ageing from `commence_time`
@@ -66,7 +105,9 @@ export function isStale(item: FeedItem): boolean {
       const anchor = finishedEventAgeAnchor(ed);
       const hoursAgo =
         (Date.now() - new Date(anchor as string).getTime()) / (1000 * 60 * 60);
-      if (hoursAgo > COMPLETED_EVENT_MAX_AGE_HOURS) return true;
+      // D118 — and how many hours those are depends on whether Discover kept
+      // this card on purpose. `finishedEventMaxAgeHours` says why.
+      if (hoursAgo > finishedEventMaxAgeHours(ed)) return true;
     }
   }
   return false;

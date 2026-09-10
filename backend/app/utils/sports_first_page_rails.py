@@ -96,11 +96,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CLIENT_COMPLETED_MAX_AGE_HOURS",
+    "CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS",
     "FINISHED_RAIL_FIRST_PAGE_CAP",
     "FINISHED_STATUSES",
     "FUTURES_FIRST_PAGE_CAP",
     "cap_futures_on_games_led_first_page",
     "client_deletes_finished_card",
+    "finished_card_max_age_hours",
     "finished_event_age_anchor",
     "finished_rail_key",
     "cap_repeated_finished_rails",
@@ -122,6 +124,25 @@ __all__ = [
 #: numbers ever diverge. Change the frontend constant and this one follows, or
 #: CI stops you.
 CLIENT_COMPLETED_MAX_AGE_HOURS = 8
+
+#: The same age for a card Discover kept as one of its marquee finals (#4681),
+#: which the client grants a longer life. D118 = B, Alex, Thu 2026-09-10.
+#:
+#: ALSO A MIRROR, NOT A POLICY, for the same reason and guarded by the same
+#: test. The authority is ``frontend/lib/discover/feedFreshness.ts``::
+#:
+#:     export const MARQUEE_FINAL_MAX_AGE_HOURS = 14;
+#:
+#: Eight hours from the whistle retired the NFL season opener at 4:26am Pacific
+#: — after #4776 had already moved the clock off the kickoff — so no anchor
+#: change could deliver "last night's big game is there with your coffee".
+#: Fourteen puts an 8:30pm final on the page at 10:30am.
+#:
+#: It is a SECOND number rather than a bigger first one because the reader of
+#: the ordinary window is ``/sports``' shared guard, which no ruling moved. The
+#: two numbers are selected between per card by
+#: :func:`finished_card_max_age_hours`, never by which caller is asking.
+CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS = 14
 
 #: Statuses this pass counts as a finished game. ``suspended`` is absent on
 #: purpose: it is not a result, it renders a different card, and live/048 put it
@@ -325,7 +346,28 @@ def finished_event_age_anchor(data: dict) -> object:
     return data.get("commence_time")
 
 
-def client_deletes_finished_card(item: dict, *, now: datetime | None = None) -> bool:
+def finished_card_max_age_hours(data: dict) -> float:
+    """The window THIS finished card gets — the mirror of
+    ``finishedEventMaxAgeHours`` in ``feedFreshness.ts``.
+
+    ``discover_marquee_final is True`` and nothing looser. The flag is stamped
+    ``False`` as well as ``True``, and it is absent entirely from a ``/sports``
+    payload and from any Discover payload cached before D118 shipped, so three
+    distinct states reach here and only one of them is evidence. Truthiness
+    would fold the other two into the long window and keep dead cards on the
+    page; an identity test on ``True`` is what makes an unstamped payload behave
+    exactly as it did yesterday.
+    """
+    if not isinstance(data, dict):
+        return float(CLIENT_COMPLETED_MAX_AGE_HOURS)
+    if data.get("discover_marquee_final") is True:
+        return float(CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS)
+    return float(CLIENT_COMPLETED_MAX_AGE_HOURS)
+
+
+def client_deletes_finished_card(
+    item: dict, *, now: datetime | None = None, max_age_hours: float | None = None
+) -> bool:
     """True when the web client will delete this card before it paints.
 
     A line-for-line mirror of ``isStale``'s event arm in
@@ -355,6 +397,13 @@ def client_deletes_finished_card(item: dict, *, now: datetime | None = None) -> 
     * The comparison is strict ``>``. A card at exactly the threshold is
       RENDERED, so this function must not use ``>=``.
 
+    ``max_age_hours`` overrides the window for the ONE caller that must ask
+    before the answer exists: ``_recent_marquee_final_ids`` is what decides
+    whether a card is a marquee final, so it cannot read the flag that records
+    that decision (#4681 + D118). Every other caller leaves it ``None`` and gets
+    :func:`finished_card_max_age_hours`, which reads the served payload exactly
+    as the browser does.
+
     Only ``type == "event"`` cards are considered. Futures have their own arm in
     ``isStale`` keyed on ``resolution_date``; this pass does not reason about
     them, because the defect it fixes is finished GAMES eating game slots, and
@@ -373,7 +422,12 @@ def client_deletes_finished_card(item: dict, *, now: datetime | None = None) -> 
     )
     if age is None:
         return False
-    return age > CLIENT_COMPLETED_MAX_AGE_HOURS
+    window = (
+        float(max_age_hours)
+        if max_age_hours is not None
+        else finished_card_max_age_hours(data)
+    )
+    return age > window
 
 
 def _renders_as_a_game(item: dict, *, now: datetime) -> bool:

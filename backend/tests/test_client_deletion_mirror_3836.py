@@ -60,6 +60,7 @@ import pytest
 
 from app.utils.sports_first_page_rails import (
     CLIENT_COMPLETED_MAX_AGE_HOURS,
+    CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
     client_deletes_finished_card,
 )
 
@@ -183,6 +184,65 @@ class TestTheMirrorHolds:
             "`finishedEventAgeAnchor`, so the anchor test above is now pinning "
             "a function the client does not use. Both sides read one anchor on "
             "purpose; if the arm inlined its own field, re-derive the mirror."
+        )
+
+    def test_the_marquee_window_mirrors_too(self):
+        """D118 added a SECOND number, so the mirror has a second seam.
+
+        The hazard is the same one and it is worse on this constant: if the
+        frontend's marquee window drops back to eight while the backend keeps
+        fourteen, ``_recent_marquee_final_ids`` spends both of Discover's
+        finished slots on cards the browser deletes before paint, and page one
+        loses two cards with every test green — indistinguishable from a thin
+        slate, which is precisely how #4681 shipped, certed, and served nobody
+        for a day.
+        """
+        match = re.search(
+            r"MARQUEE_FINAL_MAX_AGE_HOURS\s*=\s*(\d+(?:\.\d+)?)", _source()
+        )
+        assert match, (
+            "MARQUEE_FINAL_MAX_AGE_HOURS is no longer declared in "
+            f"{FEED_FRESHNESS_TS.name}. Discover's marquee-final arm selects on "
+            "this window (D118); if the client stopped naming it, the arm is "
+            "keeping cards on a promise nothing enforces."
+        )
+        frontend_hours = float(match.group(1))
+        assert frontend_hours == float(CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS), (
+            f"{FEED_FRESHNESS_TS.name} says {frontend_hours}h for a marquee "
+            f"final but app/utils/sports_first_page_rails.py says "
+            f"{CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS}h."
+        )
+
+    def test_the_frontend_picks_the_window_from_the_stamp_this_side_writes(self):
+        """The FIELD half of the marquee seam — the same split as the anchor
+        test above, for the same reason: pin only the number and the client can
+        stop reading the flag entirely while the constant still matches, at
+        which point every finished card on `/sports` quietly gets fourteen
+        hours and the promise Alex was given ("only genuinely big finished
+        games") is false with nothing red.
+
+        `=== true` is asserted, not just the field name. Truthiness would hand
+        the long window to any payload carrying a stray value in that key, and
+        an absent flag — a `/sports` payload, or a Discover payload cached
+        before D118 — must read as the ordinary eight hours.
+        """
+        source = _source()
+        selector = source[source.index("export function finishedEventMaxAgeHours") :]
+        selector_body = _without_comments(selector[: selector.index("}")])
+        assert "discover_marquee_final === true" in selector_body, (
+            "finishedEventMaxAgeHours no longer tests "
+            "`discover_marquee_final === true`. The backend stamps that flag in "
+            "`_stamp_marquee_finals` and writes `false` as well as `true`; a "
+            "truthiness test or a different field name breaks the pair."
+        )
+
+        body = source[source.index("export function isStale") :]
+        event_arm = _without_comments(body[body.index('item.type === "event"') :])
+        assert "finishedEventMaxAgeHours(" in event_arm, (
+            "isStale's event arm no longer routes through "
+            "`finishedEventMaxAgeHours`, so it is comparing against a fixed "
+            "constant again and D118's marquee window is unreachable on the "
+            "client — the backend would keep cards the browser deletes."
         )
 
     def test_the_frontend_still_treats_both_terminal_statuses(self):
