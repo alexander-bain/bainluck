@@ -1500,6 +1500,13 @@ _SEARCH_TEAM_PREFIX_RANK_WEIGHT = 0.5
 _SEARCH_FUTURES_MARKET_WEIGHT = "B"
 _SEARCH_FUTURES_OUTCOME_WEIGHT = "C"
 
+#: The same trade for the FUTURES ORDER BY (#4572). Same value as the Teams
+#: weight and deliberately a SEPARATE constant: the two surfaces have different
+#: populations and different risk profiles (see `_team_prefix_tsquery`), so a
+#: future change to one must not silently move the other. Ordering only — this
+#: number never appears in a WHERE clause.
+_SEARCH_FUTURES_PREFIX_RANK_WEIGHT = 0.5
+
 # LAT-P038/#1769: the three numbers the futures bucket is built from, named so
 # the relationship between them is visible. The window was a bare `20` and the
 # page a bare `10` at two call sites; the fact that the window is the page's
@@ -2212,6 +2219,26 @@ def _team_prefix_tsquery(q: str):
 
     Returns ``None`` when there is nothing safe to build; callers must treat that
     as "no prefix arm", never as a match-nothing predicate.
+    """
+    return _last_token_prefix_tsquery(q)
+
+
+def _last_token_prefix_tsquery(q: str):
+    """The SHAPE and the BOUNDARY of a last-token prefix tsquery, in ONE place.
+
+    Extracted verbatim from `_team_prefix_tsquery` (#4126) when the futures
+    ORDER BY became a second consumer (#4572). It is one function on purpose:
+    this file has already paid twice for a duplicated boundary rule — the
+    `_SEARCH_MIN_OUTCOME_MATCH_CHARS` drift between /search and /typeahead that
+    LAT-P013 had to reconcile, and the `len(term)` copy LAT-P037 replaced — and
+    two callers that disagreed about what counts as a prefix would be the same
+    defect a third time.
+
+    Read `_team_prefix_tsquery` for the SHAPE (only the LAST token gets ``:*``),
+    the BOUNDARY (`_has_extractable_trigram`), the return contract, and the
+    scope of the file's standing refusal of prefix matching. Nothing here
+    decides WHERE the result may be used — that judgment belongs to each caller
+    and is written at each call site.
     """
     tokens = re.findall(r"[^\W_]+", q or "", re.UNICODE)
     if not tokens or not _has_extractable_trigram(tokens[-1]):
@@ -5077,10 +5104,74 @@ async def search_events(
     # `fts_q` string. `fts_q` was `exp if exp else term` — an expansion REPLACED
     # its term instead of widening it, which zeroed the rank of 311 of the 316
     # `fed` name matches. See `_expanded_tsquery` for the measurement.
+    _futures_name_vector = _weighted_search_vector(
+        FuturesMarket.name, _SEARCH_FUTURES_MARKET_WEIGHT
+    )
     futures_search_rank = _search_rank_tsquery(
-        _weighted_search_vector(FuturesMarket.name, _SEARCH_FUTURES_MARKET_WEIGHT),
+        _futures_name_vector,
         _expanded_tsquery(expanded),
     )
+
+    # #4572: a DISCOUNTED last-token prefix score, added to the rank above.
+    #
+    # 🔴 ORDERING ONLY. This tsquery never enters a WHERE clause, and that is the
+    # whole reason it is allowed to exist here. `_futures_name_match_term`'s
+    # LAT-P037 docstring refuses prefix matching "with numbers" — `fed:*` ->
+    # `federico`, the 25 rows of minor-tour tennis LAT-P033/LAT-P034 closed — and
+    # that refusal is about RECALL: a prefix arm in the predicate FETCHES rows
+    # that are not answers. Nothing below fetches anything. The candidate set,
+    # the tier CASE and every arm in `_futures_where_or` are byte-identical; this
+    # can only reorder rows the query already returns. Recall cannot move, so the
+    # LAT-P002 revert shape (`f98d8104`, the arm whose emptying reverted a ship)
+    # is structurally out of reach.
+    #
+    # THE DEFECT (#4572), measured on production 2026-09-10. `q=yank`:
+    #
+    #     to_tsvector('New York Yankees')  -> 'yanke'   websearch_to_tsquery('yank') NO
+    #     to_tsvector('Mayank Sharma')     -> 'mayank'  websearch_to_tsquery('yank') NO
+    #
+    # `yankees` stems to `yanke`, which is not the lexeme `yank`, so the word test
+    # rejects the REAL answer too. Both rows therefore fall to tier 2 with
+    # `ts_rank_cd` **0.0**, and the page is decided by `market_tier`, `volume` and
+    # `updated_at` — none of which is about the query. A $15k ITF qualifier
+    # matched on the middle of "Ma*yank*" took slot 0 and the Yankees' own game
+    # took slot 3. This is exactly the pathology LAT-P111 and `_expanded_tsquery`
+    # both document: when the relevance signal is structurally dead, whatever
+    # sorts next decides the page.
+    #
+    # WHY A PREFIX IS THE RIGHT DISCRIMINATOR HERE, and not a general widening:
+    # a prefix is a STRICTLY STRONGER claim than the substring recall that
+    # admitted the row. Measured in the same production read:
+    #
+    #     to_tsvector('…New York Yankees…') @@ to_tsquery('yank:*')  ->  true
+    #     to_tsvector('…Mayank Sharma…')    @@ to_tsquery('yank:*')  ->  false
+    #
+    # `yank:*` matches the lexeme `yanke` and does NOT match `mayank`, because
+    # `mayank` does not START with `yank`. So this separates precisely the two
+    # cases the issue is about — a real prefix on a marquee entity vs four
+    # letters interior to an unrelated foreign first name — and it separates them
+    # with a rule, not with a tiebreak that happened to fall the right way.
+    #
+    # DISCOUNTED and ADDED, never substituted — the `_team_search_rank` (#4126)
+    # shape, for its reason: a whole-lexeme match earns on BOTH terms, so it stays
+    # strictly above a prefix-only row. `yankees` must still answer with the
+    # Yankees, and a market whose name literally contains the typed word must
+    # still outrank one that merely starts the same way.
+    #
+    # It sits BELOW `_futures_name_tier` in the ORDER BY and that placement is
+    # load-bearing: LAT-P033 put the tier ahead of the rank so name matches beat
+    # outcome-only collisions across the LIMIT boundary. Summing into the rank
+    # leaves that split exactly where it is and only orders WITHIN a tier — the
+    # place where, today, nothing orders at all.
+    #
+    # `_last_token_prefix_tsquery` returns None for a query with no usable last
+    # token, in which case the compiled SQL is byte-identical to before.
+    _futures_prefix_tsquery = _last_token_prefix_tsquery(q)
+    if _futures_prefix_tsquery is not None:
+        futures_search_rank = futures_search_rank + (
+            _SEARCH_FUTURES_PREFIX_RANK_WEIGHT
+            * _search_rank_tsquery(_futures_name_vector, _futures_prefix_tsquery)
+        )
 
     # LAT-P033/#1732: enforce the name-match tier IN SQL, ahead of the rank.
     #

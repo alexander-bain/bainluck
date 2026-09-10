@@ -164,6 +164,33 @@ _FUTURES_SEEDS = [
     # would fail for a reason that has nothing to do with what it is testing.
     ("kalshi-france-award", "France Football Award 2026",
      ["Winner of the d'Or", "Award vacated"]),
+    # ---- #4572: an interior substring must not outrank a real prefix. --------
+    #
+    # `yank` reaches BOTH of these rows and reaches them the SAME way, which is
+    # the whole point: neither passes the word test, because `Yankees` stems to
+    # `yanke` and the query's lexeme is `yank`. So both are tier 2 with
+    # `ts_rank_cd` 0.0 and — before the fix — the page is decided by
+    # `market_tier`, `volume`, `updated_at` and finally `id`.
+    #
+    # 🔴 SEED ORDER IS LOAD-BEARING AND MUST NOT BE "TIDIED". The ITF row is
+    # listed FIRST so it takes the LOWER id, and the pre-fix ORDER BY's last key
+    # is `FuturesMarket.id ASC`. That is what makes the guard RED without the
+    # ranking change instead of passing on a coin-flip: with these two rows the
+    # wrong answer is the DETERMINISTIC one. Swap them and the test goes green
+    # against a broken ranker.
+    #
+    # Volume is left unset on both on purpose. `_rerank_search_futures` classes
+    # both as name-matches (its `_name_match` is a plain Python substring test,
+    # so "Ma*yank*" counts) and sorts that bucket by volume — a stable sort, so
+    # with equal volumes the SQL order is what survives to the payload. Give one
+    # of them a volume and this stops testing the ORDER BY at all.
+    #
+    # Transcribed from the production reading in #4572 (2026-09-10 01:35Z), where
+    # the ITF row held slot 0 and the Yankees' own game held slot 3.
+    ("kalshi-itf-hurghada-m15", "M15 Hurghada: Mayank Sharma vs Luis Klaus",
+     ["Mayank Sharma", "Luis Klaus"]),
+    ("kalshi-rockies-yankees-f5", "Colorado Rockies vs. New York Yankees - First 5 Innings Winner",
+     ["New York Yankees", "Colorado Rockies"]),
 ]
 
 # LAT-P053 Item 5 — the seeded futures corpus, carried FIVE times and ruled into
@@ -842,6 +869,68 @@ async def test_the_rule_does_not_take_the_real_team_with_the_noise(search):
     pairings = _event_pairings(await search("sun"))
     assert "Connecticut Sun vs Sunrisers Leeds" in pairings, (
         f"the whole-word team was dropped along with the prefix noise: {pairings!r}"
+    )
+
+
+_YANK_REAL = "Colorado Rockies vs. New York Yankees - First 5 Innings Winner"
+_YANK_NOISE = "M15 Hurghada: Mayank Sharma vs Luis Klaus"
+
+
+async def test_an_interior_substring_does_not_outrank_a_real_prefix(search):
+    """#4572: `yank` must lead with the Yankees, not with "Ma*yank*".
+
+    Measured on production 2026-09-10 01:35Z: slot 0 was a $15k ITF qualifier
+    whose only connection to the query was four letters sitting in the MIDDLE of
+    the first name "Mayank"; the Yankees' own game was slot 3.
+
+    The cause is not the recall arm the issue first blamed. It is that the word
+    test rejects the REAL answer too — `Yankees` stems to `yanke`, the query's
+    lexeme is `yank` — so both rows land in tier 2 with `ts_rank_cd` **0.0** and
+    the page falls through to `market_tier`/`volume`/`updated_at`/`id`, none of
+    which is about the query. This is the pathology LAT-P111 named: when the
+    relevance signal is structurally dead, whatever sorts next decides the page.
+
+    The fix adds a DISCOUNTED prefix score to the futures rank, and a prefix is a
+    strictly stronger claim than the substring that admitted the row:
+
+        to_tsvector('…New York Yankees…') @@ to_tsquery('yank:*')  ->  true
+        to_tsvector('…Mayank Sharma…')    @@ to_tsquery('yank:*')  ->  false
+
+    This test can only run here. `ts_rank_cd`, English stemming and the ORDER BY
+    are Postgres semantics — a unit test that mocked them would be green on a
+    ranker that shipped the ITF row first, which is exactly the state production
+    was in when this was filed.
+    """
+    names = _futures_names(await search("yank"))
+    assert _YANK_REAL in names, (
+        f"the Yankees market is not even in the bucket: {names!r}. This is a "
+        "RECALL failure, which the ranking fix was never supposed to cause — "
+        "check the outcome arm before touching the ORDER BY."
+    )
+    assert names.index(_YANK_REAL) < names.index(_YANK_NOISE), (
+        f"an interior substring still outranks a real prefix: {names!r}. "
+        f"{_YANK_NOISE!r} matches `yank` only in the MIDDLE of 'Mayank'."
+    )
+
+
+async def test_the_prefix_rank_did_not_buy_its_ordering_with_recall(search):
+    """The other direction, and the reason #4572's fix is ORDERING-ONLY.
+
+    The refusal in `_futures_name_match_term` (LAT-P037) is about RECALL: a
+    prefix arm in the WHERE fetches rows that are not answers (`fed:*` ->
+    `federico`, the 25 rows LAT-P033/LAT-P034 closed). #4572 adds its prefix
+    score to the ORDER BY and nowhere else, so the candidate set must be
+    IDENTICAL — including the noise row, which is still a legitimate substring
+    match and is still reachable, just no longer first.
+
+    A "fix" that filtered the ITF row out would satisfy the test above and would
+    be a recall change wearing a ranking change's clothes. This is the control
+    that tells them apart.
+    """
+    names = _futures_names(await search("yank"))
+    assert _YANK_NOISE in names, (
+        f"the substring match was REMOVED from the bucket, not just demoted: "
+        f"{names!r}. #4572 is a ranking fix — recall must not move."
     )
 
 
