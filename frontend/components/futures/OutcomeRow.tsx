@@ -8,6 +8,82 @@ import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images
 import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
 
 /**
+ * The verdict this row is allowed to state: `"won"`, `"lost"`, or `null` for
+ * "say nothing".
+ *
+ * ## #4788 / #4783 / #1638 — a default is not a verdict
+ *
+ * `futures_outcomes.is_winner` is `boolean NULL DEFAULT false`. An INSERT that
+ * merely OMITS the column stores an affirmative graded **LOSS** on a leg nobody
+ * called (CAL-P1004R), and three of the four Polymarket outcome INSERTs do
+ * exactly that — 27,197 legs since 2026-09-07, of which 10,337 sit on 3,308
+ * RESOLVED markets and therefore print. So `is_winner === false` answers two
+ * different questions with one bit: "a grader called this a loser" and "nobody
+ * has been here".
+ *
+ * `resolution_source` is the field that separates them, and it is the whole
+ * rule: **a row with no source was not graded, whatever `is_winner` says.**
+ *
+ * Measured on the specimen this landed against, `/futures/59700266` (NFL
+ * Receptions, finished 2026-09-09): 24 of 75 legs carry
+ * `is_winner=false, resolution_source=NULL` and **0 carry a source at all** —
+ * nobody graded that market. Two of the 24 are Jaxon Smith-Njigba 7+ and 8+,
+ * which Kalshi settled `yes` (he caught 8); under a heading reading *Final
+ * Results* we printed a red `Lost · 0% · Settled` on both while our own last
+ * recorded price on each was **99%**. The other 51 legs carry an explicit
+ * `is_winner: null` and were already rendering honestly, so the page
+ * contradicted itself about rows of identical grading status.
+ *
+ * ### Why this returns a verdict rather than a boolean "is it graded"
+ *
+ * Four separate branches below key off the settled state — the row tint, the
+ * `Won`/`Lost` pill, the `100%`/`0%` + `Settled` numbers cell, and
+ * `outcomeRowPrintsMove`'s suppression of the movement column. Each one of them
+ * previously restated `isResolved && outcome.is_winner === X` for itself, which
+ * is the defect `outcomeRowPrintsMove` was extracted to end (see its note): a
+ * branch changed on one side and missed on the other. One function answers it
+ * once, so a row cannot be tinted as a loss while its cell declines to say so.
+ *
+ * ### The `true` arm is deliberately gated too, and is a no-op today
+ *
+ * A fabricated grade is always `false` — `false` is the column default, so a
+ * `true` had to be written by something. Probed on production: resolved
+ * outcomes with `is_winner IS TRUE AND resolution_source IS NULL` return
+ * **0 rows**, so gating the win branch changes nothing that renders now. It is
+ * gated anyway because the asymmetric version — guard the loss, trust the win —
+ * is a rule that silently stops holding the first time a producer defaults the
+ * other way, and nothing would catch it.
+ *
+ * Note this is a WEAKER guarantee than the props rail's `readPropGrade`, which
+ * refuses to believe `is_winner` even WITH a source ("only `hit` types a
+ * verdict", UX-P044/#1642, after 70 measured false red MISSes built from a
+ * generic source plus a defaulted `false`). That rail has an independently
+ * derived `hit` to stand on; the futures wire carries no such second field, so
+ * `resolution_source` is the strongest discriminator available here. Grading
+ * accuracy GIVEN a source is the producers' half of #4783/#4788 and is not
+ * something the renderer can adjudicate (ruling 003).
+ */
+export function outcomeRowVerdict(
+  outcome: FuturesOutcome,
+  isResolved: boolean,
+): "won" | "lost" | null {
+  if (!isResolved) return null;
+  // A SERVED null means the payload looked and found no grader ⇒ say nothing.
+  //
+  // `=== null`, never `== null`, and this is the load-bearing line of the whole
+  // change. ABSENT is not the same answer as NULL: Vercel deploys ahead of
+  // Heroku, so this component runs against the OLD payload — which has no
+  // `resolution_source` key at all — for the length of every deploy. Folding
+  // `undefined` in with `null` would withhold on EVERY resolved market during
+  // that window, blanking genuine `Won` marks across the site to fix a defect
+  // that only ever prints a false `Lost`. Absent means "this payload cannot
+  // say", and the honest response to that is today's behaviour, not a blackout.
+  if (outcome.resolution_source === null) return null;
+  if (outcome.is_winner == null) return null;
+  return outcome.is_winner ? "won" : "lost";
+}
+
+/**
  * Does this row's "Last move" cell print a MOVE, or the muted dash?
  *
  * #3358: the row and the table have to agree on this, and the only way to be sure
@@ -21,8 +97,10 @@ export function outcomeRowPrintsMove(
   outcome: FuturesOutcome,
   isResolved: boolean,
 ): boolean {
-  // A settled row prints its result, never a movement.
-  if (isResolved && outcome.is_winner !== null) return false;
+  // A settled row prints its result, never a movement. #4788: "settled" is a
+  // row that STATES a verdict, not merely one on a resolved market — an ungraded
+  // row has no result to print instead, so it keeps its movement like any other.
+  if (outcomeRowVerdict(outcome, isResolved) !== null) return false;
   const change = outcome.probability_change_24h;
   // UX-P275: the gate asks whether a move PRINTS, not whether the wire fraction is
   // nonzero — anything that rounds to zero is no move.
@@ -146,6 +224,10 @@ export default function OutcomeRow({
   const change = outcome.probability_change_24h;
   const rankChange = outcome.rank_change_24h;
   const printsMove = outcomeRowPrintsMove(outcome, isResolved);
+  // #4788: the ONE settled-state decision for this row. Every branch below reads
+  // it — never `isResolved && outcome.is_winner === X`, which counts a defaulted
+  // `false` as a grader's verdict.
+  const verdict = outcomeRowVerdict(outcome, isResolved);
 
   // Entity image detection. #4483: the non-sports test alone was the bug — it
   // asks "could this name have a Wikipedia picture?" and a threshold answers yes.
@@ -165,9 +247,9 @@ export default function OutcomeRow({
       className={`flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-2 sm:gap-y-0 p-3 rounded-lg transition-colors ${
         isSelected
           ? "bg-blue-50 border border-blue-200"
-          : isResolved && outcome.is_winner === true
+          : verdict === "won"
           ? "bg-emerald-50 border border-emerald-200"
-          : isResolved && outcome.is_winner === false
+          : verdict === "lost"
           ? "bg-slate-50/50"
           : isLeader
           ? "bg-amber-50 border border-amber-200"
@@ -245,11 +327,27 @@ export default function OutcomeRow({
           >
             {outcome.name}
           </span>
-          {isResolved && outcome.is_winner === true && (
-            <span className="text-xs text-emerald-600 font-medium">Won</span>
+          {/* #4788: the verdict carries its own testid. Read off the ROW's
+              `textContent`, this word has no boundary after it — the pill and the
+              price column are adjacent elements, so the row reads
+              "…7+LostOPEN51%" and `/\bLost\b/` does not match. A verifier written
+              that way reports zero verdicts on the arm that is printing them, and
+              so reads identically before and after this fix. */}
+          {verdict === "won" && (
+            <span
+              data-testid="outcome-verdict"
+              className="text-xs text-emerald-600 font-medium"
+            >
+              Won
+            </span>
           )}
-          {isResolved && outcome.is_winner === false && (
-            <span className="text-xs text-red-400 font-medium">Lost</span>
+          {verdict === "lost" && (
+            <span
+              data-testid="outcome-verdict"
+              className="text-xs text-red-400 font-medium"
+            >
+              Lost
+            </span>
           )}
         </div>
       </div>
@@ -313,12 +411,20 @@ export default function OutcomeRow({
             making. WHEN that latest reading was taken is stated once for the whole
             market, above the table, rather than repeated on all eight rows. */}
         <div className="text-right shrink-0">
-          {!isResolved && (
+          {/* #4788: the label goes with the PRICE branch, not with "the market is
+              open". An ungraded row on a resolved market prints its last recorded
+              price — the same cell an open row prints — so it needs the same
+              header. Gated on the verdict rather than on `isResolved` because
+              those are the same condition that picks the branch below; keying it
+              off `isResolved` left the 51 already-ungraded rows on
+              `/futures/59700266` printing a bare unlabelled number. Open markets
+              are unaffected: `verdict` is always null when not resolved. */}
+          {verdict === null && (
             <div className="text-[10px] uppercase tracking-wide text-text-muted">
               Latest
             </div>
           )}
-          {isResolved && outcome.is_winner === true ? (
+          {verdict === "won" ? (
             <>
               <div className="font-mono text-base tabular-nums font-bold text-emerald-600">
                 100%
@@ -327,7 +433,7 @@ export default function OutcomeRow({
                 Settled
               </div>
             </>
-          ) : isResolved && outcome.is_winner === false ? (
+          ) : verdict === "lost" ? (
             <>
               <div className="font-mono text-base tabular-nums font-semibold text-text-muted">
                 0%

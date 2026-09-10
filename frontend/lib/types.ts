@@ -531,6 +531,22 @@ export interface FuturesOutcome {
   opening_probability: number | null;
   opening_american_odds: number | null;
   is_winner: boolean | null;
+  /**
+   * Which settlement process graded this outcome, or `null` for "nobody did".
+   *
+   * #4788/#4783. `is_winner` is `boolean NULL DEFAULT false`, so a row that was
+   * never graded is indistinguishable from one graded a loser — the never-graded
+   * cohort carries exactly `is_winner: false, resolution_source: null`. This is
+   * the only field that separates them, so the verdict branches read it and not
+   * `is_winner` alone (`outcomeRowVerdict` in `components/futures/OutcomeRow`).
+   *
+   * OPTIONAL on purpose, and the three states are distinct. A `string` is a
+   * grade; a served `null` is "nobody graded this"; ABSENT is "this payload
+   * cannot say" — which is what the old serialiser returns for the length of
+   * every deploy, since Vercel ships ahead of Heroku. `outcomeRowVerdict`
+   * therefore withholds on `=== null` only, and absent keeps prior behaviour.
+   */
+  resolution_source?: string | null;
   last_updated: string | null;
 }
 
