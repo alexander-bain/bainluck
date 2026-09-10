@@ -1,6 +1,8 @@
 import { ImageResponse } from "next/og";
 import type { EventDetailResponse } from "@/lib/types";
 import { formatShareProbability } from "@/lib/share";
+import { getSportLabel } from "@/lib/sportCategories";
+import { teamCrestBadge } from "@/lib/teamShortName";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -24,16 +26,6 @@ async function fetchEvent(id: string): Promise<EventDetailResponse | null> {
   }
 }
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(-2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase();
-}
-
 function eventStatus(event: EventDetailResponse): string {
   if (event.status === "live") return "Live now";
   if (event.status === "completed" || event.status === "closed") return "Final";
@@ -51,6 +43,14 @@ export default async function Image({ params }: { params: { id: string } }) {
   const awayColor = event?.away_team_data?.primary_color || "#dc2626";
   const awayTeam = event?.away_team || "Away";
   const homeTeam = event?.home_team || "Home";
+  // #4839. This card is the first thing anyone sees of Bain Luck — a pasted
+  // link in iMessage, Slack or a tweet — and it was printing the raw sport key.
+  // Precedence is unchanged (`sport_key` then `sport`) so no row that renders a
+  // league today renders "Event" instead; only the WORDS change. `getSportLabel`
+  // is the same call `EventCard` makes, which is what keeps the card and the
+  // page it links to from naming one league two ways (notice 34 / D102).
+  const sportKey = event?.sport_key || event?.sport || null;
+  const leagueLabel = sportKey ? getSportLabel(sportKey, event?.sport_name) : "Event";
 
   return new ImageResponse(
     (
@@ -81,7 +81,7 @@ export default async function Image({ params }: { params: { id: string } }) {
               color: "#4b5563",
             }}
           >
-            {event?.sport_key || event?.sport || "Event"}
+            {leagueLabel}
           </div>
         </div>
 
@@ -101,7 +101,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {initials(awayTeam)}
+              {teamCrestBadge(awayTeam)}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05 }}>{awayTeam}</div>
             <div style={{ fontSize: 74, fontWeight: 950, color: awayColor }}>{awayPct}</div>
@@ -124,7 +124,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {initials(homeTeam)}
+              {teamCrestBadge(homeTeam)}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right" }}>{homeTeam}</div>
             <div style={{ fontSize: 74, fontWeight: 950, color: homeColor }}>{homePct}</div>
