@@ -1500,12 +1500,10 @@ _SEARCH_TEAM_PREFIX_RANK_WEIGHT = 0.5
 _SEARCH_FUTURES_MARKET_WEIGHT = "B"
 _SEARCH_FUTURES_OUTCOME_WEIGHT = "C"
 
-#: The same trade for the FUTURES ORDER BY (#4572). Same value as the Teams
-#: weight and deliberately a SEPARATE constant: the two surfaces have different
-#: populations and different risk profiles (see `_team_prefix_tsquery`), so a
-#: future change to one must not silently move the other. Ordering only — this
-#: number never appears in a WHERE clause.
-_SEARCH_FUTURES_PREFIX_RANK_WEIGHT = 0.5
+#: #4572 deliberately has NO counterpart constant for the futures surface. Its
+#: prefix signal is a separate ORDER BY key below the rank, not a weighted
+#: addend, so there is no weight to tune — see the call site for why the two
+#: surfaces differ.
 
 # LAT-P038/#1769: the three numbers the futures bucket is built from, named so
 # the relationship between them is visible. The window was a bare `20` and the
@@ -5112,7 +5110,7 @@ async def search_events(
         _expanded_tsquery(expanded),
     )
 
-    # #4572: a DISCOUNTED last-token prefix score, added to the rank above.
+    # #4572: a last-token prefix test, as an ORDER BY key below the rank above.
     #
     # 🔴 ORDERING ONLY. This tsquery never enters a WHERE clause, and that is the
     # whole reason it is allowed to exist here. `_futures_name_match_term`'s
@@ -5152,26 +5150,41 @@ async def search_events(
     # letters interior to an unrelated foreign first name — and it separates them
     # with a rule, not with a tiebreak that happened to fall the right way.
     #
-    # DISCOUNTED and ADDED, never substituted — the `_team_search_rank` (#4126)
-    # shape, for its reason: a whole-lexeme match earns on BOTH terms, so it stays
-    # strictly above a prefix-only row. `yankees` must still answer with the
-    # Yankees, and a market whose name literally contains the typed word must
-    # still outrank one that merely starts the same way.
+    # A SEPARATE ORDER BY KEY, BELOW THE RANK — deliberately NOT summed into it,
+    # and this differs from `_team_search_rank` (#4126) on purpose.
     #
-    # It sits BELOW `_futures_name_tier` in the ORDER BY and that placement is
-    # load-bearing: LAT-P033 put the tier ahead of the rank so name matches beat
-    # outcome-only collisions across the LIMIT boundary. Summing into the rank
-    # leaves that split exactly where it is and only orders WITHIN a tier — the
-    # place where, today, nothing orders at all.
+    # There the prefix arm ADDS RECALL: it fetches teams that would otherwise not
+    # appear at all, so those rows need ordering AMONG THEMSELVES and a summed
+    # score is the only thing that gives it. Here the prefix fetches nothing. Its
+    # entire job is to break a tie that is already dead, so it needs to be a
+    # tiebreak and nothing more.
     #
-    # `_last_token_prefix_tsquery` returns None for a query with no usable last
-    # token, in which case the compiled SQL is byte-identical to before.
+    # Summing would also be strictly less safe. A prefix-only row would score
+    # `0 + w*prefix`, and a genuine whole-lexeme match whose cover density is low
+    # — a multi-term query whose terms land far apart in a long market name —
+    # can rank BELOW that. The sum makes the inversion reachable and then relies
+    # on a weight constant to stay out of trouble. Ranking second makes it
+    # unreachable: `futures_search_rank` strictly dominates, so a whole-lexeme
+    # match can never be displaced by a prefix, whatever either scores. There is
+    # no weight to tune and no invariant to protect.
+    #
+    # Placement is load-bearing in both directions. BELOW the rank, for the
+    # reason above. Below `_futures_name_tier` too, because LAT-P033 put the tier
+    # ahead of the rank so name matches beat outcome-only collisions across the
+    # LIMIT boundary — this only orders WITHIN a tier, which is exactly the place
+    # where, today, nothing orders at all. And ABOVE `market_tier`/`volume`/
+    # `updated_at`/`id`, because those four are what decided the page in the
+    # defect and none of them is about the query.
+    #
+    # `_last_token_prefix_tsquery` returns None when there is no usable last
+    # token (`re`), in which case NOTHING is appended and the compiled SQL is
+    # byte-identical to before this change.
     _futures_prefix_tsquery = _last_token_prefix_tsquery(q)
-    if _futures_prefix_tsquery is not None:
-        futures_search_rank = futures_search_rank + (
-            _SEARCH_FUTURES_PREFIX_RANK_WEIGHT
-            * _search_rank_tsquery(_futures_name_vector, _futures_prefix_tsquery)
-        )
+    _futures_prefix_order_keys = (
+        []
+        if _futures_prefix_tsquery is None
+        else [_futures_name_vector.op("@@")(_futures_prefix_tsquery).desc()]
+    )
 
     # LAT-P033/#1732: enforce the name-match tier IN SQL, ahead of the rank.
     #
@@ -5243,6 +5256,10 @@ async def search_events(
             .order_by(
                 _futures_name_tier.asc(),
                 futures_search_rank.desc(),
+                # #4572: a real prefix beats an interior substring, but ONLY
+                # among rows the rank above could not separate. Empty list for a
+                # query with no usable last token.
+                *_futures_prefix_order_keys,
                 FuturesMarket.market_tier.asc().nulls_last(),
                 FuturesMarket.volume.desc().nulls_last(),
                 FuturesMarket.updated_at.desc(),

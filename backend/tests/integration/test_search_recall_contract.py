@@ -890,8 +890,8 @@ async def test_an_interior_substring_does_not_outrank_a_real_prefix(search):
     which is about the query. This is the pathology LAT-P111 named: when the
     relevance signal is structurally dead, whatever sorts next decides the page.
 
-    The fix adds a DISCOUNTED prefix score to the futures rank, and a prefix is a
-    strictly stronger claim than the substring that admitted the row:
+    The fix adds a prefix test as an ORDER BY key directly below the rank, and a
+    prefix is a strictly stronger claim than the substring that admitted the row:
 
         to_tsvector('…New York Yankees…') @@ to_tsquery('yank:*')  ->  true
         to_tsvector('…Mayank Sharma…')    @@ to_tsquery('yank:*')  ->  false
@@ -913,7 +913,7 @@ async def test_an_interior_substring_does_not_outrank_a_real_prefix(search):
     )
 
 
-async def test_the_prefix_rank_did_not_buy_its_ordering_with_recall(search):
+async def test_the_prefix_key_did_not_buy_its_ordering_with_recall(search):
     """The other direction, and the reason #4572's fix is ORDERING-ONLY.
 
     The refusal in `_futures_name_match_term` (LAT-P037) is about RECALL: a

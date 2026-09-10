@@ -31,8 +31,8 @@ dead, whatever sorts next decides the page.
 
 ═══ THE FIX, AND THE REFUSAL IT DOES NOT BREAK ═══
 
-A DISCOUNTED last-token prefix score is added to the futures rank. A prefix is a
-strictly stronger claim than the substring that admitted the row:
+A last-token prefix test becomes an ORDER BY key placed directly BELOW the rank.
+A prefix is a strictly stronger claim than the substring that admitted the row:
 
     to_tsvector('…New York Yankees…') @@ to_tsquery('yank:*')  ->  true
     to_tsvector('…Mayank Sharma…')    @@ to_tsquery('yank:*')  ->  false   (interior)
@@ -58,24 +58,31 @@ in `tests/integration/test_search_recall_contract.py`, which the `search-recall`
 job runs against a real database:
 
     test_an_interior_substring_does_not_outrank_a_real_prefix
-    test_the_prefix_rank_did_not_buy_its_ordering_with_recall
+    test_the_prefix_key_did_not_buy_its_ordering_with_recall
 
-The rank arithmetic behind that guard, measured on production so the numbers are
-read rather than asserted:
+The state behind that guard, measured on production so the numbers are read
+rather than asserted:
 
-    row                              rank_before   prefix   rank_after
-    Colorado Rockies vs. NY Yankees        0.0        0.4        0.2
-    M15 Hurghada: Mayank Sharma            0.0        0.0        0.0
+    row                              ts_rank_cd   prefix match
+    Colorado Rockies vs. NY Yankees        0.0        true      <- now first
+    M15 Hurghada: Mayank Sharma            0.0        false
 
-and the `fed` control, which is the case the refusal exists to protect:
+Both are tier 2 and both rank 0.0, so before the fix the ORDER BY reached
+`market_tier`/`volume`/`updated_at`/`id` to choose between them. The prefix key
+sits between the two and decides it on the query instead.
 
-    Federal Reserve … decision?            0.4        0.4        0.6   tier 0
-    Federico Coria vs Thiago Tirante       0.0        0.4        0.2   tier 2
-    Russian Federation to win?             0.0        0.4        0.2   tier 2
+The `fed` control, which is the case the refusal exists to protect:
 
-The junk rises, and it cannot matter: `_futures_name_tier` is the FIRST ORDER BY
-key and this score is folded into the SECOND, so a tier-2 row cannot cross a
-tier-0 one however it scores. Even ignoring the tier, 0.6 > 0.2.
+    Federal Reserve … decision?            0.4        true      tier 0
+    Federico Coria vs Thiago Tirante       0.0        true      tier 2
+    Russian Federation to win?             0.0        true      tier 2
+
+The junk matches the prefix too, and it cannot matter twice over.
+`_futures_name_tier` is the FIRST key, so a tier-2 row cannot cross a tier-0 one
+at all; and `ts_rank_cd` is the SECOND, above the prefix key, so a whole-lexeme
+match is never displaced by a prefix even within one tier. The prefix key only
+ever separates rows that were already indistinguishable — which is why it is a
+sort key here and NOT a summed score (see `TestTheRankStrictlyDominates`).
 """
 
 import inspect
@@ -88,7 +95,6 @@ from app.routes.events import (
     _futures_name_match_term,
     _last_token_prefix_tsquery,
     _team_prefix_tsquery,
-    _SEARCH_FUTURES_PREFIX_RANK_WEIGHT,
     _SEARCH_TEAM_PREFIX_RANK_WEIGHT,
 )
 
@@ -157,33 +163,61 @@ class TestOneCopyOfTheRule:
         assert _last_token_prefix_tsquery("re") is None
 
 
-class TestTheDiscountIsARealDiscount:
-    """The weight carries an invariant, not just a number."""
+class TestTheRankStrictlyDominates:
+    """🔴 WHY THIS IS A SEPARATE SORT KEY AND NOT A SUMMED SCORE.
 
-    def test_strictly_between_zero_and_one(self):
-        """Above 0 so a prefix-only row is ORDERED rather than left to a
-        tiebreak that is not about the query; below 1 so a whole-lexeme match —
-        which earns on BOTH terms — always stays above a row that merely starts
-        the same way. `yankees` must still answer with the Yankees."""
-        assert 0 < _SEARCH_FUTURES_PREFIX_RANK_WEIGHT < 1
+    `_team_search_rank` (#4126) sums a discounted prefix score, and that is right
+    THERE: its prefix arm adds RECALL, so prefix-only rows need ordering among
+    themselves. Here the prefix fetches nothing — its only job is to break a tie
+    that is already dead.
 
-    def test_each_surface_multiplies_by_its_own_constant(self):
-        """Same VALUE today, deliberately separate NAMES — the Teams population
-        is curated and strips individual-sport athletes, the futures feed does
-        not, so tuning one must not silently move the other.
+    Summing would also be strictly less safe. A prefix-only row would score
+    `0 + w*prefix`, and a genuine whole-lexeme match with low cover density — a
+    multi-term query whose terms land far apart in a long name — can rank below
+    that. Ranking second makes the inversion UNREACHABLE rather than merely
+    unlikely, and removes the weight constant that would otherwise be the only
+    thing standing between the two.
+    """
 
-        Asserted on the call sites rather than on the values, because while the
-        two numbers are equal a value comparison cannot tell a wired-up constant
-        from an unused one and would pass on a route that multiplied by the
-        Teams weight.
-        """
+    def test_the_futures_surface_has_no_prefix_weight_to_tune(self):
+        """The absence is the design, so it is asserted rather than assumed. A
+        future edit that reintroduces a weight has switched to the summed shape
+        and must re-argue the inversion above."""
+        assert not hasattr(events, "_SEARCH_FUTURES_PREFIX_RANK_WEIGHT"), (
+            "a futures prefix WEIGHT is back, which means the prefix is being "
+            "summed into the rank again — re-read the inversion argument at the "
+            "call site before keeping it"
+        )
+
+    def test_the_teams_surface_keeps_its_weight(self):
+        """The control: #4572 must not have "tidied" #4126's summed score away.
+        Removing it would leave `yank` reaching the Yankees and unable to order
+        the teams it recalled."""
         team_src = inspect.getsource(events._team_search_rank)
         assert "_SEARCH_TEAM_PREFIX_RANK_WEIGHT" in team_src
-        assert "_SEARCH_FUTURES_PREFIX_RANK_WEIGHT" not in team_src
+        assert _SEARCH_TEAM_PREFIX_RANK_WEIGHT is not None
 
+    def test_the_prefix_key_sorts_below_the_rank_and_above_the_quality_priors(self):
+        """Placement IS the fix. Above the rank it would displace whole-lexeme
+        matches; below `market_tier`/`volume` it would never fire, because those
+        are precisely the keys that decided the page in the defect."""
         route_src = inspect.getsource(events.search_events)
-        assert "_SEARCH_FUTURES_PREFIX_RANK_WEIGHT" in route_src
-        assert "_SEARCH_TEAM_PREFIX_RANK_WEIGHT" not in route_src
+        flat = " ".join(route_src.split())
+        # Anchored on the futures tier key, NOT on the first `.order_by(` — the
+        # handler has several and the first belongs to the EVENTS query, which
+        # is how the first draft of this test failed.
+        order_by = flat[flat.index("_futures_name_tier.asc()"):]
+
+        rank_at = order_by.index("futures_search_rank.desc()")
+        prefix_at = order_by.index("*_futures_prefix_order_keys")
+        tier_at = order_by.index("FuturesMarket.market_tier.asc()")
+
+        assert rank_at < prefix_at < tier_at, (
+            "the #4572 prefix key has moved. It must sort AFTER "
+            "`futures_search_rank` (so a whole-lexeme match is never displaced) "
+            "and BEFORE `market_tier` (so it actually breaks the dead tie that "
+            "handed slot 0 to an ITF qualifier)."
+        )
 
 
 class TestTheRefusalStillHolds:
@@ -213,7 +247,7 @@ class TestTheRefusalStillHolds:
             if "_futures_prefix_tsquery" in line and not line.strip().startswith("#")
         ]
         assert uses, (
-            "the prefix rank is gone from the route — #4572 has been reverted "
+            "the prefix key is gone from the route — #4572 has been reverted "
             "without this suite noticing"
         )
         forbidden = (".where(", ".filter(", "and_(", "or_(", "candidate_filter")
@@ -223,20 +257,14 @@ class TestTheRefusalStillHolds:
                 "permitted in the ORDER BY only — in a WHERE it fetches rows "
                 "that are not answers, which is exactly what LAT-P037 refuses."
             )
-        # Whitespace-flattened, because the fold spans four physical lines and a
-        # per-line test cannot see it — the first draft of this assertion failed
-        # against the very code it was written for.
+        # Whitespace-flattened: the key is built across several physical lines
+        # and consumed in another statement, so a per-line test cannot see the
+        # connection — the first draft of this assertion failed against the very
+        # code it was written for.
         flat = " ".join(route_src.split())
-        fold = "futures_search_rank = futures_search_rank +"
-        assert fold in flat, (
-            "the prefix score is no longer ADDED to the futures rank. If it is "
-            "now assigned outright, the discount is gone and a prefix-only row "
-            "can outrank a whole-lexeme match — `yankees` stops answering with "
-            "the Yankees."
-        )
-        assert "_futures_prefix_tsquery" in flat[flat.index(fold):][:320], (
-            "the prefix tsquery is built but is not what the rank is folding in, "
-            "so it orders nothing"
+        assert "*_futures_prefix_order_keys" in flat, (
+            "the prefix key is built but never spliced into the ORDER BY, so it "
+            "orders nothing — #4572 is inert"
         )
 
     def test_the_futures_name_arm_never_gets_a_prefix(self):
