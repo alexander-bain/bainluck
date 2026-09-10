@@ -1554,7 +1554,11 @@ async def _backfill_box_scores(
                         scoring_plays = context.get("scoring_plays", [])
                         scores = context.get("scores", {})
 
-                        now_str = datetime.now(timezone.utc).isoformat()
+                        # One clock, two renderings — the box-score payload
+                        # wants the string, the #4571 stamp wants the datetime.
+                        # Derived rather than re-read so they can never disagree.
+                        _observed_at = datetime.now(timezone.utc)
+                        now_str = _observed_at.isoformat()
 
                         _fix = _corrected_final_score(
                             event.home_score,
@@ -1569,9 +1573,7 @@ async def _backfill_box_scores(
                             # this pass observed, and a settled row that shows
                             # one should be able to say when it was read.
                             stamp_score_observation(
-                                event,
-                                source="espn",
-                                observed_at=datetime.fromisoformat(now_str),
+                                event, source="espn", observed_at=_observed_at,
                             )
                             stats["scores_backfilled"] += 1
 
