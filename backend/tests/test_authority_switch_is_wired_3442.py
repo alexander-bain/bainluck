@@ -42,6 +42,7 @@ import pytest
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     ESPN,
+    FLIP_RULED_WITHOUT_STREAK,
     SWITCH_CONSUMERS,
     SWITCH_IS_WIRED,
     SWITCH_REPORTERS,
@@ -228,14 +229,33 @@ async def test_the_row_publishes_the_wiring_beside_the_current_authority(monkeyp
 
     Reuses the running suite's own fixtures rather than a second stub of the
     route, so a change to how the endpoint is invoked breaks one place.
+
+    THE MONITOR IS STUBBED, AND #4531 IS WHY. This test used to read the real
+    durable ledger, which in CI cannot be reached at all — so every sport came
+    back `days=None`, hit the pre-#4531 `(False, ledger_why)` short-circuit, and
+    the blanket `is False` below was green because of the DEFECT rather than
+    because of the property. It had already disagreed with production since
+    #4493, where football and the NBA report `FAILOVER-ESPN-DARK`. A verdict
+    that depends on whether the test host can reach Redis is not an assertion
+    about the payload, so the ledger state is now named here.
+
+    `[]` is a real, successful, empty measurement. It is deliberately the same
+    verdict the unreadable path now produces — `gate_on_unreadable_ledger` asks
+    the gate with `[]` — so this test pins the answer, not the route to it.
     """
     from tests.test_authority_agreement_endpoint import FakeSession
     import app.routes.admin_providers as route
+    import app.services.authority_ledger as ledger
 
     monkeypatch.setattr(route, "_check_admin_secret", lambda *a, **k: None)
     import app.tasks.redis_state as redis_state
 
     monkeypatch.setattr(redis_state, "get_task_metrics", lambda name: {})
+
+    async def _read(sport_key):
+        return [], "read ok"
+
+    monkeypatch.setattr(ledger, "read_ledger_days", _read)
 
     out = await route.statpal_authority_agreement(
         request=None, secret="x", db=FakeSession()
@@ -256,10 +276,22 @@ async def test_the_row_publishes_the_wiring_beside_the_current_authority(monkeyp
         # they are the same operator's two halves: "does flipping do anything"
         # and "does the outage cover behind it work". Both must be inside
         # `authority`, for the same reason the note is.
+        #
+        # Per sport, and derived from the ruled set rather than written out:
+        # D104 (2026-09-09) permits a ruled sport's failover with no streak, so
+        # a blanket "nothing fires" is no longer true of this payload and an
+        # eighth sport must not be able to slip in under a hardcoded name.
         failover = authority["failover"]
-        assert failover["would_fire_if_espn_went_dark"] is False
-        assert failover["code"] == "NO-FAILOVER-NOT-GATED"
-        assert "measured half" in failover["why"]
+        ruled = entry["sport_key"] in FLIP_RULED_WITHOUT_STREAK
+        assert failover["would_fire_if_espn_went_dark"] is ruled, (
+            f"{entry['sport_key']} is {'' if ruled else 'not '}D104-ruled, so "
+            f"its projection should be {ruled}: {failover['why']!r}"
+        )
+        assert failover["code"] == (
+            "FAILOVER-ESPN-DARK" if ruled else "NO-FAILOVER-NOT-GATED"
+        )
+        if not ruled:
+            assert "measured half" in failover["why"]
 
 
 def test_nothing_has_flipped_so_the_note_is_the_only_thing_standing_between():

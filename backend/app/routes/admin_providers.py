@@ -2060,7 +2060,10 @@ async def statpal_authority_agreement(
         MEASUREMENT_POPULATION_SCOPES,
         SHADOW_STAMPERS,
     )
-    from app.utils.authority_failover import would_fail_over_now
+    from app.utils.authority_failover import (
+        gate_on_unreadable_ledger,
+        would_fail_over_now,
+    )
     from app.utils.provider_anchor_keys import statpal_id_space
 
     now = datetime.now(timezone.utc)
@@ -2131,8 +2134,23 @@ async def statpal_authority_agreement(
         # favourable hypothetical — ESPN dark, StatPal holding fixtures — so it
         # cannot disagree with what would actually happen. A second reading of
         # the same rules, written here, is a disclosure that drifts.
+        #
+        # THE GATE IS BOTH LINES, AND #4531 IS WHAT IT COST TO LEARN THAT.
+        # This call site honoured the rule for `flip_permitted` and broke it one
+        # line earlier: it built the gate's ARGUMENT itself, with the
+        # `(False, ledger_why)` short-circuit D104 retired. So whenever the
+        # monitor's store was unreadable the row reported
+        # `would_fire_if_espn_went_dark: false` for a ruled sport while the
+        # runtime failed over — and it did so in the one hour that matters,
+        # since ESPN going dark and the snapshot store going away are not
+        # independent events. `gate_on_unreadable_ledger` is now the single
+        # shared answer both this row and `espn_sync._decide_failovers` ask.
         days, ledger_why = await read_ledger_days(sport_key)
-        gate = (False, ledger_why) if days is None else flip_permitted(sport_key, days)
+        gate = (
+            gate_on_unreadable_ledger(sport_key, ledger_why)
+            if days is None
+            else flip_permitted(sport_key, days)
+        )
         hypothetical = would_fail_over_now(sport_key, gate)
         entry["authority"]["failover"] = {
             "would_fire_if_espn_went_dark": hypothetical.failed_over,
