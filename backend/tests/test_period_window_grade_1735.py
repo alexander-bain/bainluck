@@ -700,6 +700,55 @@ def test_one_label_bounded_to_two_windows_stays_two_verdicts():
     assert by_market["Tampa Bay vs Atlanta: 1st Inning Total"]["hit"] is False
 
 
+@pytest.mark.parametrize("ungradable_first", [True, False], ids=["refusal-first", "refusal-second"])
+def test_ungradable_same_span_yes_does_not_hide_gradable_run_verdict(ungradable_first):
+    """CERT-2509: a refusal must not consume the question key.
+
+    Two production rows share span `(inning, 1, 1)` AND the outcome "Yes", so they
+    share the dedupe key:
+
+        "…: 1st Inning Total" / "Yes"                  -> refused (a lone Yes with
+                                                          the line nowhere on the
+                                                          row; 14 of this ship's 50
+                                                          documented refusals)
+        "Will there be a run in the first inning?" /
+        "Yes"                                          -> "0 runs — miss"
+
+    Claiming the key before the verdict made whichever arrived FIRST exclusive, so
+    the reader lost a settled verdict in one input order and not the other. Both
+    orders are asserted because a single order passes under the bug half the time.
+    """
+    from app.routes.events import _grade_closed_windows
+
+    event = _make_event(
+        id=EVENT_ID, home_team="Atlanta Braves", away_team="Tampa Bay Rays",
+        status="completed", sport_key="baseball_mlb", home_score=2, away_score=7,
+    )
+    event.llm_league = "MLB"
+    event.box_score_data = {
+        "players": {},
+        "home_period_scores": HOME_PERIODS,
+        "away_period_scores": AWAY_PERIODS,
+    }
+    refusal = {"market_name": "Tampa Bay vs Atlanta: 1st Inning Total",
+               "outcome_name": "Yes", "_market_id": 811}
+    gradable = {"market_name": "Will there be a run in the first inning?",
+                "outcome_name": "Yes", "_market_id": 812}
+    items = [refusal, gradable] if ungradable_first else [gradable, refusal]
+
+    graded = _grade_closed_windows(items, event, {})
+
+    assert len(graded) == 1, (
+        f"expected the one gradable row; got {graded} "
+        f"(ungradable_first={ungradable_first})"
+    )
+    # The first inning was 0–0, so the run question is a miss — a REAL verdict, not
+    # the silence a consumed key produces.
+    assert graded[0]["market_name"] == "Will there be a run in the first inning?"
+    assert graded[0]["actual"] == "0 runs"
+    assert graded[0]["hit"] is False
+
+
 @pytest.mark.asyncio
 async def test_the_mid_band_arm_is_unchanged_by_the_carve_out(finished_client):
     """The regression direction: the rows that already worked still work.

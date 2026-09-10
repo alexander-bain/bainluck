@@ -11519,8 +11519,22 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
     # them would delete a real row.
     #
     # The span is what makes them the same question, and `prop_window_span` has
-    # just returned it — so this runs BEFORE `grade_period_window`, and a
-    # duplicate costs no grading work.
+    # just returned it — so the LOOKUP runs before `grade_period_window` and a
+    # duplicate of an already-answered question costs no grading work.
+    #
+    # ONLY A SUCCESSFUL GRADE CONSUMES THE KEY (CERT-2509), and the two halves of
+    # this rule deliberately sit on opposite sides of the grader. Claiming the key
+    # up front made a REFUSAL exclusive: production carries `1st Inning Total` /
+    # "Yes" — a lone Yes with the line nowhere on the row, one of this ship's 50
+    # documented refusals — and `Will there be a run in the first inning?` / "Yes",
+    # which grades to `0 runs — miss`. Same span, same outcome, so the same key.
+    # With the key taken before the verdict, whichever arrived first won: put the
+    # ungradable row first and the reader lost a settled verdict, put it second and
+    # nothing happened. An order-dependent absence, which is the worst shape a bug
+    # in this ship can take because the page looks merely empty.
+    #
+    # A row that produced no answer has not answered the question, so it has no
+    # claim on it.
     _seen_questions: set = set()
     for item in closed_items:
         # gotcha #42 — one unclassifiable row must never cost the whole pass.
@@ -11541,7 +11555,6 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
             question_key = (unit, first_period, last_period, outcome_name)
             if question_key in _seen_questions:
                 continue
-            _seen_questions.add(question_key)
             verdict = grade_period_window(
                 unit,
                 first_period,
@@ -11556,6 +11569,7 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
             )
             if verdict is None:
                 continue
+            _seen_questions.add(question_key)
             graded.append({
                 "market_name": market_name,
                 "outcome_name": outcome_name,
