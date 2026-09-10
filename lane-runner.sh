@@ -158,6 +158,70 @@ bl_tag_lane() {
   esac
 }
 
+# #4689: one line per session saying whether this lane's production reads are
+# actually tagged — and when they are not, WHICH of the three reasons, because
+# they need three different fixes and today they share one silence.
+#
+# 🔴 THE SILENCE THIS ENDS, measured 2026-09-10 by latency/316. The fleet
+# restarted at 13:25:02; the checkout carrying CERT-2518's widening of
+# `BL_TAG_LANES` to `all` landed at 13:28:07 — three minutes LATER, so all ten
+# runners parsed the old `latency`-only default and nine lanes ran untagged with
+# nothing anywhere saying so. Recovering that afterwards took dating the runner
+# process start times against the checkout's reflog, because macOS SIP blocks
+# `ps -E` against another process: from inside a session the tag state was not
+# merely unlogged, it was unobservable. "Deliberately off" and "broken" have to
+# be different words in the log or the next miss is silent too.
+#
+# #4714 caps the budget — per-lane startup git calls already flake
+# `test_lane_launchers.py` under band load — so the end-to-end probe is NOT paid
+# per session. The carrier directory is content-addressed (`<chain>-<shadow>`),
+# so the probe's verdict is a pure function of the bundle: it runs once per
+# bundle and is stamped beside it, leaving one `[ -f ]` in steady state. The
+# stamp is per-bundle and not per-lane on purpose — the shadow interpolates
+# `$BL_AGENT`, so the MECHANISM is lane-independent and only the header's value
+# differs.
+#
+# Advisory, like every other check here: it prints and returns 0. A lane must
+# never fail to start because its reads would be untagged.
+bl_tag_state() {
+  bl_l=$1
+  bl_zd=${2:-}
+
+  if ! bl_tag_lane "$bl_l"; then
+    echo "[runner:$bl_l] TAG OFF (by config) — '$bl_l' is not in BL_TAG_LANES='$BL_TAG_LANES'; this lane's production reads are untagged (#4689)"
+    return 0
+  fi
+  if [ -z "$bl_zd" ]; then
+    echo "[runner:$bl_l] TAG BROKEN — '$bl_l' is allowlisted but no carrier could be delivered from $BL_CARRIER_REF; reads fall through to plain curl (#4689)"
+    return 0
+  fi
+
+  # No zsh is "could not check", which is not "broken". Saying BROKEN here would
+  # manufacture a defect out of a missing instrument (gotcha #53).
+  if ! command -v zsh >/dev/null 2>&1; then
+    echo "[runner:$bl_l] TAG ON (unverified) — carrier delivered; no zsh on this host to prove the shell end (#4689)"
+    return 0
+  fi
+
+  bl_stamp="$bl_zd/../../.verified-tag"
+  if [ ! -f "$bl_stamp" ]; then
+    # `zsh -c`, not `zsh -l -c`: `.zshenv` is read by every zsh there is, and a
+    # login shell would drag in `.zprofile` for nothing. BL_CURL_PRINT makes it
+    # argv-only — no network, no side effect.
+    bl_probe=$(ZDOTDIR="$bl_zd" BL_AGENT="$bl_l" BL_CURL_PRINT=1 \
+               zsh -c 'curl -s https://api.bainluck.com/' 2>/dev/null)
+    case "$bl_probe" in
+      *"x-bainluck-origin: $bl_l"*) : > "$bl_stamp" 2>/dev/null ;;
+      *)
+        echo "[runner:$bl_l] TAG BROKEN — carrier delivered, but curl in a child shell did NOT add x-bainluck-origin; reads are untagged (#4689)"
+        return 0
+        ;;
+    esac
+  fi
+
+  echo "[runner:$bl_l] TAG ON — reads carry 'x-bainluck-origin: $bl_l' (carrier verified end-to-end)"
+}
+
 # #4689: say so, once per runner, when the script EXECUTING this lane is not the
 # committed one. Silent drift is how a tooling ship merges green and does nothing
 # for four days (#4632's shape, and CERT-2461's). Advisory only — never fatal,
@@ -630,9 +694,15 @@ while true; do
     # Notice 39 rung 2. Inside the subshell so the runner's own environment is
     # never touched: the exports reach `claude` and everything it spawns, and
     # nothing else. PIPESTATUS below still reads the pipeline, not this `if`.
-    ( if bl_tag_lane "$L" && BL_ZD=$(bl_carrier_zdotdir); then
+    ( BL_ZD=""
+      if bl_tag_lane "$L" && BL_ZD=$(bl_carrier_zdotdir); then
         export BL_AGENT="$L" ZDOTDIR="$BL_ZD"
       fi
+      # #4689: into the SESSION LOG, not only the runner's terminal. A warning
+      # that lands on a scrollback nobody owns reads as noise — #4878's own
+      # correction about `runner-text-drift.sh`. In the log it is greppable by
+      # the next session, which is the only reader that can act on it.
+      bl_tag_state "$L" "$BL_ZD" | tee -a "$LOG"
       timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
         --output-format stream-json -p "$(cat "$HANDOFF/STANDING-NOTICES.md" 2>/dev/null; echo; cat "$RUN")" \
         2>&1 | python3 -u -c "$FMT" | tee -a "$LOG"
