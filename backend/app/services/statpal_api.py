@@ -342,6 +342,42 @@ class StatPalInjuryFetch:
         return self.reason == "fetch_failed"
 
 
+@dataclass
+class StatPalFixtureFetch:
+    """What one SCHEDULE fetch proves, not just what it returned (#2907).
+
+    The same collapse as `StatPalInjuryFetch` above, one endpoint over and on
+    the path that matters most: `get_fixtures` feeds `_sync_statpal_schedules`,
+    which is #2867's ship — every game exists before a market lists it. `[]` was
+    the same object for "the venue is dark", "we asked and it broke" and "no
+    games on this board" (gotcha #53), so a run that could not ask banked the
+    same green row as a run that correctly wrote nothing.
+
+    `partial_fetch` exists only because soccer reads TWO boards (offsets 1 and
+    2). Half a schedule is neither a schedule nor an outage, and collapsing it
+    into either direction is the same bug in a smaller font.
+    """
+
+    fixtures: list[StatPalFixture]
+    #: One of `ok`, `empty`, `fetch_failed`, `partial_fetch`, `no_day_token`.
+    reason: str
+    sport: str
+    #: The path actually asked, or None when nothing was asked.
+    endpoint: Optional[str] = None
+
+    @property
+    def asked(self) -> bool:
+        """False only for the day-token sports, which cannot be asked through
+        this method at all — that is a caller shape, not an upstream absence."""
+        return self.reason != "no_day_token"
+
+    @property
+    def is_alarm(self) -> bool:
+        """`empty` is NOT an alarm — a quiet board is the normal state of most
+        sports most days, and an alarm that fires on it stops being read."""
+        return self.reason in ("fetch_failed", "partial_fetch")
+
+
 def is_available() -> bool:
     """Check if StatPal API key is configured."""
     return bool(os.getenv("STATPAL_API_KEY"))
@@ -504,6 +540,23 @@ class StatPalAPIService(BaseAPIClient):
         "tennis": "daily/{day}",
     }
 
+    #: The boards soccer discovery reads, and the whole list of them.
+    #:
+    #: **`offset=0` IS DELIBERATELY ABSENT, AND NOT BECAUSE IT 404s.** It
+    #: answers 200 and is `matches/live` BYTE FOR BYTE — same length, same md5,
+    #: same `live_matches` section name (measured three times: #3800 at 05:08Z
+    #: 2026-09-07 and again at 12:07Z 2026-09-09, and by authority/081 while
+    #: paying #4320). So it is a board of IN-PROGRESS matches, not today's card.
+    #:
+    #: Handing that to `_sync_statpal_schedules` would CREATE rows: under ruling
+    #: 048 a StatPal listing claim carries no id-anchored correspondence, so it
+    #: never absorbs an existing row — at ~197 matches a day, which is #3607's
+    #: warning and #4520's symptom. Widening this tuple is a matching change
+    #: that belongs to #2693, not a one-line ingestion tweak.
+    #:
+    #: Pinned by `test_statpal_schedules_zero_yield_2907.py`.
+    _SOCCER_DISCOVERY_OFFSETS: tuple[int, ...] = (1, 2)
+
     async def get_fixtures(
         self,
         sport: str,
@@ -512,6 +565,11 @@ class StatPalAPIService(BaseAPIClient):
         league_id: Optional[str] = None,
     ) -> list[StatPalFixture]:
         """Fetch scheduled and completed games.
+
+        Thin wrapper over `get_fixtures_result` for callers that only want the
+        list. **A caller that needs to tell "the venue is dark" from "no games"
+        must use `get_fixtures_result` instead** — that distinction is exactly
+        what this return type cannot carry (gotcha #53, #2907).
 
         Args:
             sport: Sport identifier (nfl, nba, mlb, nhl, soccer)
@@ -522,18 +580,38 @@ class StatPalAPIService(BaseAPIClient):
         Returns:
             List of StatPalFixture objects.
         """
+        result = await self.get_fixtures_result(
+            sport, season=season, date=date, league_id=league_id
+        )
+        return result.fixtures
+
+    async def get_fixtures_result(
+        self,
+        sport: str,
+        season: Optional[str] = None,
+        date: Optional[str] = None,
+        league_id: Optional[str] = None,
+    ) -> StatPalFixtureFetch:
+        """Fetch scheduled and completed games, carrying WHY the list is the
+        length it is. See `StatPalFixtureFetch`.
+
+        Never raises on an upstream failure, and that is #2907's own ruling
+        rather than a preference: *"a sync task that dies on a bad upstream day
+        is worse than one that skips a cycle. The right fix here is probably a
+        loud zero-yield verdict, not a raise."* The alarm travels in `reason`.
+        """
         endpoint = self._SCHEDULE_ENDPOINTS.get(sport, "season-schedule")
 
         # Day-token endpoints (tennis) cannot be fetched without a day: this
-        # method has no offset argument. Return empty rather than requesting a
-        # literal "{day}" path — callers that want tennis schedules must use
+        # method has no offset argument. Reported as `no_day_token` rather than
+        # as an empty board — callers that want tennis schedules must use
         # get_schedule_fixtures(sport, day_offset=N).
         if "{day}" in endpoint:
             logger.debug(
                 f"StatPal: {sport} schedule needs a day token — "
                 f"use get_schedule_fixtures('{sport}', day_offset=N)"
             )
-            return []
+            return StatPalFixtureFetch([], "no_day_token", sport, endpoint)
 
         params = {}
         if season:
@@ -541,26 +619,50 @@ class StatPalAPIService(BaseAPIClient):
         if league_id:
             params["league"] = league_id
 
-        # Soccer v2 uses "matches/daily" with an offset param (0 = today)
+        # Soccer v2 serves its schedule one calendar board at a time via
+        # "matches/daily", so it takes TWO reads where every other sport takes
+        # one. Which boards, and why not today's, is `_SOCCER_DISCOVERY_OFFSETS`.
         if sport == "soccer" and endpoint == "matches/daily":
-            # Fetch today (offset=0 is not supported, use offset=1 for tomorrow
-            # and offset=-1 for yesterday). We'll fetch today's live scores
-            # via get_live_scores() instead and fetch tomorrow's schedule here.
-            params["offset"] = 1
-            data = await self._get(sport, endpoint, params)
-            results = self._parse_fixtures(data, sport) if data else []
-            # Also fetch +2 days for upcoming
-            params["offset"] = 2
-            data2 = await self._get(sport, endpoint, params)
-            if data2:
-                results.extend(self._parse_fixtures(data2, sport))
-            return results
+            results: list[StatPalFixture] = []
+            failed: list[int] = []
+            for offset in self._SOCCER_DISCOVERY_OFFSETS:
+                params["offset"] = offset
+                data = await self._get(sport, endpoint, params)
+                if data is None:
+                    failed.append(offset)
+                    continue
+                results.extend(self._parse_fixtures(data, sport))
+
+            if len(failed) == len(self._SOCCER_DISCOVERY_OFFSETS):
+                logger.error(
+                    "StatPal soccer/%s: every board failed (offsets %s) — this "
+                    "is NOT an empty schedule (#2907)",
+                    endpoint, list(self._SOCCER_DISCOVERY_OFFSETS),
+                )
+                return StatPalFixtureFetch([], "fetch_failed", sport, endpoint)
+            if failed:
+                logger.warning(
+                    "StatPal soccer/%s: offset(s) %s failed, %d fixture(s) read "
+                    "from the rest — a PARTIAL schedule (#2907)",
+                    endpoint, failed, len(results),
+                )
+                return StatPalFixtureFetch(results, "partial_fetch", sport, endpoint)
+            return StatPalFixtureFetch(
+                results, "ok" if results else "empty", sport, endpoint
+            )
 
         data = await self._get(sport, endpoint, params)
-        if not data:
-            return []
+        if data is None:
+            logger.error(
+                "StatPal %s/%s: read failed — this is NOT an empty schedule "
+                "(#2907)", sport, endpoint,
+            )
+            return StatPalFixtureFetch([], "fetch_failed", sport, endpoint)
 
-        return self._parse_fixtures(data, sport)
+        fixtures = self._parse_fixtures(data, sport)
+        return StatPalFixtureFetch(
+            fixtures, "ok" if fixtures else "empty", sport, endpoint
+        )
 
     async def get_live_scores(self, sport: str) -> list[StatPalFixture]:
         """Fetch live/in-progress games — the INGESTION door.

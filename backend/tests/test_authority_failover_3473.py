@@ -859,9 +859,17 @@ async def test_a_failover_serves_in_line_and_dispatches_nothing(
             reached.append("writer:livescores")
             return [live_row]
 
-        async def get_fixtures(self, *a, **k):
+        async def get_fixtures_result(self, sport, *a, **k):
+            # #2907: the writer reads the RESULT, so the marker lives here.
+            # `empty`, not a failure — this test's subject is that the schedule
+            # half RAN, and a dark venue would now be a different outcome.
             reached.append("writer:schedules")
-            return []
+            return statpal_api.StatPalFixtureFetch([], "empty", sport, "season-schedule")
+
+        async def get_fixtures(self, *a, **k):
+            # Delegates exactly as the real client does, so the double cannot
+            # drift into implementing a wrapper the service does not have.
+            return (await self.get_fixtures_result(*a, **k)).fixtures
 
         async def close(self):
             pass
