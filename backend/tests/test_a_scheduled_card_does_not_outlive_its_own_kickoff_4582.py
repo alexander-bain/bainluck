@@ -319,3 +319,85 @@ class TestTheHelper:
         assert events_route._unstarted_entry_ttl(
             {"commence_time": naive}, COMMENCE_EPOCH - 100.0
         ) == 130.0
+
+
+class TestTheWiringIsLive:
+    """The helper is only a fix if the payload it reads really carries the field.
+
+    The abstention above is the quiet failure mode of this whole ship: a payload
+    with no `commence_time` gets the full default TTL and the bound never fires,
+    silently, forever. Every other test in this file would still pass in that
+    world, because they all hand the helper a payload they built themselves.
+
+    So this reads the two ends against each other out of the source — the key
+    `_unstarted_entry_ttl` asks for, and the keys `_format_event` writes — rather
+    than asserting a literal twice and calling that agreement.
+    """
+
+    @staticmethod
+    def _module_ast():
+        import ast
+        import inspect
+
+        return ast.parse(inspect.getsource(events_route))
+
+    @staticmethod
+    def _fn(tree, name):
+        import ast
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        raise AssertionError(f"{name} not found — renamed? this guard is stale")
+
+    def test_the_key_the_helper_reads_is_the_key_the_serializer_writes(self):
+        import ast
+
+        tree = self._module_ast()
+
+        reads = [
+            node.args[0].value
+            for node in ast.walk(self._fn(tree, "_unstarted_entry_ttl"))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ]
+        assert len(reads) == 1, f"expected one payload lookup, found {reads}"
+        key = reads[0]
+
+        written = {
+            k.value
+            for node in ast.walk(self._fn(tree, "_format_event"))
+            if isinstance(node, ast.Dict)
+            for k in node.keys
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+        }
+        assert key in written, (
+            f"`_unstarted_entry_ttl` reads {key!r} but `_format_event` never "
+            f"writes it — the bound would abstain on every request and #4582 "
+            f"would be live again with all its tests green"
+        )
+
+    def test_the_serializer_is_still_the_one_the_cache_stores(self):
+        """`get_event` caches what `_format_event` returned, not a later mutation."""
+        import ast
+        import inspect
+
+        src = inspect.getsource(events_route.get_event)
+        assert "_format_event(" in src
+        assert "_event_detail_cache[" in src, (
+            "the write site moved; re-check that the cached dict is still the "
+            "serialized payload this helper reads"
+        )
+        tree = ast.parse(inspect.getsource(events_route))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "_event_detail_cache"
+                and isinstance(getattr(node, "ctx", None), ast.Store)
+            ):
+                return
+        raise AssertionError("no store into _event_detail_cache found")
