@@ -218,6 +218,25 @@ final class MemoizedPresentation<Value> {
 
     init() {}
 
+    /// Explicit, and load-bearing: it is what makes the app archivable.
+    ///
+    /// Swift 6.3.3's `EarlyPerfInliner` crashes while inlining into this class's
+    /// *synthesized* deallocating destructor, so `-O` builds of the app die with
+    /// "While running pass SILFunctionTransform \"EarlyPerfInliner\" on
+    /// SILFunction @$s9Bain_Luck20MemoizedPresentationCfD". Debug builds optimize
+    /// nothing and are unaffected, which is why every simulator build, every
+    /// `xcodebuild test` run and all of CI stayed green while `xcodebuild
+    /// archive` could not produce a binary at all. Writing the destructor out by
+    /// hand gives the pass a real body and it no longer crashes.
+    ///
+    /// Releasing the storage here is also what the synthesized destructor did, so
+    /// this is a codegen workaround with no behaviour change. Guarded by
+    /// `ReleaseBuildArchivabilityTests` and by `tools/native-release-check.sh`.
+    deinit {
+        value = nil
+        signature = nil
+    }
+
     /// Return the memoized value for `signature`, invoking `build` only when the
     /// signature differs from the last resolved one.
     func resolve(signature newSignature: String, build: () -> Value) -> Value {

@@ -22,6 +22,25 @@ final class SportsSiblingMerge<T: Sendable>: @unchecked Sendable {
     private var closed = false
     private var pending: CheckedContinuation<T?, Never>?
 
+    /// Explicit, and load-bearing: it is what makes the app archivable. Same
+    /// Swift 6.3.3 codegen bug as `MemoizedPresentation` — `EarlyPerfInliner`
+    /// crashes inlining into a generic class's *synthesized* deallocating
+    /// destructor, so `-O` builds die on `@$s9Bain_Luck18SportsSiblingMergeCfD`
+    /// while every Debug build and all of CI stay green. Writing the destructor
+    /// out by hand gives the pass a real body. See the note on
+    /// `MemoizedPresentation.deinit` for the full account; these are the only two
+    /// generic classes in the target and `ReleaseBuildArchivabilityTests` pins
+    /// that fact so a third cannot be added without this deinit.
+    ///
+    /// Releases exactly what the synthesized destructor released, and no more.
+    /// In particular it does **not** resume `pending`: dropping an unresumed
+    /// `CheckedContinuation` is what deallocating this channel has always done,
+    /// and resuming here would change behaviour, not preserve it.
+    deinit {
+        queue.removeAll()
+        pending = nil
+    }
+
     /// Deliver one sibling result. Handed to a waiting `next()` immediately, or
     /// buffered until the next `next()`. Dropped once the channel is closed, so a
     /// cancellation-ignoring sibling that returns after the deadline cannot publish.
