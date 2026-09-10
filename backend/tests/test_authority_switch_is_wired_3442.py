@@ -66,6 +66,14 @@ ACTOR_FUNCTION = "_act_on_failovers"
 #: serving without anyone having to update this file.
 WRITER_PREFIX = "_serve_"
 
+#: The LIVE half specifically, and it needs its own name because `WRITER_PREFIX`
+#: cannot tell the two writers apart (CERT-2552's non-blocking follow-up).
+#: `_serve_live_from_statpal` is the only writer under it; a prefix keeps a
+#: rename of the `_from_statpal` suffix from silently finding nothing, and a
+#: rename of `_serve_live` itself reads as NOT reaching, which fails loudly
+#: against the declaration rather than passing vacuously.
+LIVE_WRITER_PREFIX = "_serve_live"
+
 CONFIG_MODULE = "app.config.authority_by_sport"
 
 #: The names that, imported from the config, mean "this module reads the switch".
@@ -115,6 +123,16 @@ def _tests_standing_statpal(test: ast.AST) -> bool:
     return False
 
 
+def _call_name(node: ast.Call) -> str:
+    """The bare name a call is made through — `f()` and `obj.f()` alike."""
+    func = node.func
+    return (
+        func.id if isinstance(func, ast.Name)
+        else func.attr if isinstance(func, ast.Attribute)
+        else ""
+    )
+
+
 def _dispatches_a_writer(body: list[ast.stmt]) -> bool:
     """Does this branch body call one of the StatPal-serving helpers?
 
@@ -127,36 +145,156 @@ def _dispatches_a_writer(body: list[ast.stmt]) -> bool:
     """
     for statement in body:
         for node in ast.walk(statement):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = (
-                func.id if isinstance(func, ast.Name)
-                else func.attr if isinstance(func, ast.Attribute)
-                else ""
-            )
-            if name.startswith(WRITER_PREFIX):
+            if isinstance(node, ast.Call) and _call_name(node).startswith(
+                WRITER_PREFIX
+            ):
                 return True
     return False
 
 
-def _standing_branch_serves(tree: ast.AST) -> bool:
-    """Does the actor's standing-sport branch run a writer? (#4947)
+def _actor_function(tree: ast.AST) -> ast.AST | None:
+    """The named actor, or None — never "the first function that looks right"."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == ACTOR_FUNCTION:
+                return node
+    return None
+
+
+def _standing_branch(function: ast.AST) -> ast.If | None:
+    for node in ast.walk(function):
+        if isinstance(node, ast.If) and _tests_standing_statpal(node.test):
+            return node
+    return None
+
+
+def _accumulators_appended_to(body: list[ast.stmt]) -> set[str]:
+    """The names `x` for which this branch body calls `x.append(...)`.
+
+    The standing branch does not call the live writer; it puts the sport into a
+    list that a single call after the loop consumes. That indirection is the
+    whole reason `_dispatches_a_writer` cannot see the live half.
+    """
+    found: set[str] = set()
+    for statement in body:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "append":
+                if isinstance(func.value, ast.Name):
+                    found.add(func.value.id)
+    return found
+
+
+def _subtree_ids(node: ast.AST) -> set[int]:
+    return {id(child) for child in ast.walk(node)}
+
+
+def _chain_root(function: ast.AST, branch: ast.If) -> ast.If:
+    """The outermost `If` of the chain the standing branch belongs to.
+
+    An `elif` is an `If` inside the previous arm's `orelse`, so the whole
+    if/elif/else chain is one nested node and the standing branch sits some way
+    down it. Everything arm-conditional lives inside this root; the coalesced
+    call we are looking for is a sibling of the loop, outside it.
+    """
+    root = branch
+    largest = len(_subtree_ids(branch))
+    for node in ast.walk(function):
+        if not isinstance(node, ast.If):
+            continue
+        ids = _subtree_ids(node)
+        if id(branch) in ids and len(ids) > largest:
+            root, largest = node, len(ids)
+    return root
+
+
+def _standing_branch_dispatches_schedule(tree: ast.AST) -> bool:
+    """Does the actor's standing-sport branch call a writer directly? (#4947)
 
     The question `SWITCH_CONSUMERS` cannot ask. That set is built from imports,
     so it answers the same before and after #4434 — what moved was the body of
     one `elif`, and an import walk is blind to a body.
     """
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    function = _actor_function(tree)
+    if function is None:
+        return False
+    branch = _standing_branch(function)
+    return branch is not None and _dispatches_a_writer(branch.body)
+
+
+def _standing_branch_reaches_live(tree: ast.AST) -> bool:
+    """Does a flipped sport reach the LIVE writer? (CERT-2552 follow-up)
+
+    **The half the direct-dispatch walk above is structurally blind to.** The
+    schedule writer takes a sport key and is called inside the branch, so a walk
+    of the branch body finds it. The livescore writer takes none, covers every
+    live sport in one call, and is therefore called ONCE after the loop with the
+    list the branch appended to (`_serve_live_from_statpal`, CERT-2052's
+    coalescing). Nothing in the standing branch names it.
+
+    So `_dispatches_a_writer` stays True with `served.append(sport_key)`
+    deleted, and what this FILE claims about the tree stops being true.
+
+    **AND CI WOULD STILL GO RED, WHICH IS THE HONEST BOUNDARY OF THIS GUARD.**
+    `test_standing_statpal_is_a_serving_state_4434
+    ::test_a_standing_sport_dispatches_the_writers_counted_apart` runs the real
+    actor against a standing sport and asserts BOTH writers fired; it was
+    measured killing exactly this mutation ("the standing sport's writers did
+    not run: ['schedule:americanfootball_nfl']"). #4434 shipped its own
+    behavioural cover and the containment is older than this walk. So what is
+    bought here is not a hole a defect could reach production through — it is
+    that `SWITCH_ACTOR_SERVES`, the declared fact the operator's sentence is
+    derived from, is now derived from both halves rather than one. A file whose
+    whole subject is a disclosure staying true to the tree should not itself
+    hold a claim only half-checked.
+
+    The link asserted is the real one: the branch appends the sport to some
+    accumulator, and that same accumulator is what a `_serve_live*` call outside
+    the if/elif chain is passed. Both halves are needed — an append nothing
+    consumes serves no one, and a live call passed something else never sees
+    this sport.
+    """
+    function = _actor_function(tree)
+    if function is None:
+        return False
+    branch = _standing_branch(function)
+    if branch is None:
+        return False
+
+    accumulators = _accumulators_appended_to(branch.body)
+    if not accumulators:
+        return False
+
+    # Everything inside the chain is arm-conditional: a live call in the
+    # uncovered arm or the final `else` is not one the standing branch reaches,
+    # and the chain root is what puts all of those out of scope at once.
+    arm_conditional = _subtree_ids(_chain_root(function, branch))
+
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call) or id(node) in arm_conditional:
             continue
-        if node.name != ACTOR_FUNCTION:
+        if not _call_name(node).startswith(LIVE_WRITER_PREFIX):
             continue
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.If) and _tests_standing_statpal(sub.test):
-                if _dispatches_a_writer(sub.body):
+        passed = [*node.args, *(keyword.value for keyword in node.keywords)]
+        for argument in passed:
+            for name in ast.walk(argument):
+                if isinstance(name, ast.Name) and name.id in accumulators:
                     return True
     return False
+
+
+def _standing_branch_serves(tree: ast.AST) -> bool:
+    """BOTH writers, because the served sentence says "writers RUN", plural.
+
+    `SWITCH_ACTOR_SERVES` publishes one claim and it is a claim about two
+    writers: a flipped sport gets its fixtures AND its scores. Requiring both
+    here is what makes the plural in the note true rather than half-true.
+    """
+    return _standing_branch_dispatches_schedule(tree) and (
+        _standing_branch_reaches_live(tree)
+    )
 
 
 def _consumers() -> set[str]:
@@ -264,19 +402,43 @@ def test_the_standing_branch_serves_and_the_note_says_so():
     Both directions, because the sentence is wrong either way round: strip the
     dispatch out of the standing branch and a note promising writers is a lie;
     add one and a note omitting it is the lie we actually shipped.
-    """
-    serves_in_tree = _standing_branch_serves(
-        ast.parse(ACTOR_PATH.read_text(), filename=str(ACTOR_PATH))
-    )
 
-    assert serves_in_tree is SWITCH_ACTOR_SERVES, (
+    **BOTH WRITERS SINCE CERT-2552's FOLLOW-UP, and the two halves are asserted
+    apart so the failure names which one went.** The note's promise is plural.
+    The first cut pinned only the direct dispatch; the live writer is named
+    nowhere in the branch, so deleting `served.append(sport_key)` left this
+    test green. Scope, stated so nobody reads more into it than it does:
+    #4434's behavioural test kills that mutation and always did, so this is the
+    declared fact being made to match its own sentence, not a hole being shut.
+    """
+    tree = ast.parse(ACTOR_PATH.read_text(), filename=str(ACTOR_PATH))
+    schedule_in_tree = _standing_branch_dispatches_schedule(tree)
+    live_in_tree = _standing_branch_reaches_live(tree)
+    serves_in_tree = _standing_branch_serves(tree)
+
+    assert schedule_in_tree is SWITCH_ACTOR_SERVES, (
         f"`{ACTOR_FUNCTION}`'s STANDING_STATPAL branch "
-        f"{'dispatches' if serves_in_tree else 'does not dispatch'} a "
+        f"{'dispatches' if schedule_in_tree else 'does not dispatch'} a "
         f"`{WRITER_PREFIX}*` writer, but `SWITCH_ACTOR_SERVES` is "
         f"{SWITCH_ACTOR_SERVES}. Update the declaration and the served "
         "`switch_note` together — an operator reads that sentence immediately "
         "before flipping a sport (#4947)"
     )
+
+    assert live_in_tree is SWITCH_ACTOR_SERVES, (
+        f"`{ACTOR_FUNCTION}`'s STANDING_STATPAL branch "
+        f"{'reaches' if live_in_tree else 'does not reach'} a "
+        f"`{LIVE_WRITER_PREFIX}*` writer, but `SWITCH_ACTOR_SERVES` is "
+        f"{SWITCH_ACTOR_SERVES}. The branch reaches the live half ONLY by "
+        "appending the sport to the list the coalesced post-loop call is "
+        "passed, so the schedule dispatch above can stay green while a "
+        "flipped sport gets fixtures and no score, clock or status — which is "
+        "the half `switch_note`'s plural promises (CERT-2552 follow-up)"
+    )
+
+    # And the composite the declaration actually stands for, so a future
+    # rewrite cannot satisfy the two halves separately and neither together.
+    assert serves_in_tree is SWITCH_ACTOR_SERVES
 
     if SWITCH_ACTOR_SERVES:
         # The two facts the accounting-only sentence omitted, and the reason
@@ -297,6 +459,10 @@ def test_the_serving_walk_can_tell_a_dispatch_from_a_log_line():
     never found the function — would agree with today's answer for the wrong
     reason. Both arms are synthetic, so this stays honest when the real file
     changes shape.
+
+    Scoped to the DIRECT-dispatch half since CERT-2552's follow-up: every arm
+    below is a statement about what the branch body names, which is the only
+    thing this predicate now claims to see. The live half has its own control.
     """
     dispatching = (
         "async def _act_on_failovers(decisions, stats):\n"
@@ -306,7 +472,7 @@ def test_the_serving_walk_can_tell_a_dispatch_from_a_log_line():
         "        elif decision.code == STANDING_STATPAL:\n"
         "            await _serve_schedule_from_statpal(k, stats)\n"
     )
-    assert _standing_branch_serves(ast.parse(dispatching)) is True
+    assert _standing_branch_dispatches_schedule(ast.parse(dispatching)) is True
 
     # The pre-#4434 shape: the branch exists and only accounts. The FAILOVER
     # branch above it still calls the writer, so a walk that read the whole
@@ -320,7 +486,7 @@ def test_the_serving_walk_can_tell_a_dispatch_from_a_log_line():
         "            stats['standing_serving'] = 1\n"
         "            logger.info('standing')\n"
     )
-    assert _standing_branch_serves(ast.parse(accounting_only)) is False
+    assert _standing_branch_dispatches_schedule(ast.parse(accounting_only)) is False
 
     # The branch accounts, and a LATER arm serves. An `elif` lives in the
     # previous branch's `orelse`, so everything below the standing branch is
@@ -337,7 +503,8 @@ def test_the_serving_walk_can_tell_a_dispatch_from_a_log_line():
         "        else:\n"
         "            await _serve_schedule_from_statpal(k, stats)\n"
     )
-    assert _standing_branch_serves(ast.parse(served_by_a_later_arm)) is False
+    later_arm = ast.parse(served_by_a_later_arm)
+    assert _standing_branch_dispatches_schedule(later_arm) is False
 
     # And a tree with no such branch at all — the #3473 state — is not serving.
     no_branch = (
@@ -346,12 +513,105 @@ def test_the_serving_walk_can_tell_a_dispatch_from_a_log_line():
         "        if decision.code in FAILOVER_CODES:\n"
         "            await _serve_schedule_from_statpal(k, stats)\n"
     )
-    assert _standing_branch_serves(ast.parse(no_branch)) is False
+    assert _standing_branch_dispatches_schedule(ast.parse(no_branch)) is False
 
     # A renamed actor must read as not-serving rather than silently passing:
     # that is the failure mode where the guard finds nothing and says nothing.
     renamed = dispatching.replace(ACTOR_FUNCTION, "_act_on_failovers_v2")
-    assert _standing_branch_serves(ast.parse(renamed)) is False
+    assert _standing_branch_dispatches_schedule(ast.parse(renamed)) is False
+
+
+def test_the_live_walk_needs_the_append_AND_the_call_that_consumes_it():
+    """The control for the half the dispatch walk cannot see (CERT-2552).
+
+    Every arm here is a shape that leaves the SCHEDULE dispatch intact, so each
+    one is a mutation this FILE was blind to before — the branch keeps calling
+    `_serve_schedule_from_statpal` and only the live half goes. Blind to, not
+    unguarded: #4434's behavioural test catches them, and saying so is the
+    difference between defence in depth and a discovered defect.
+    """
+    real_shape = (
+        "async def _act_on_failovers(decisions, stats):\n"
+        "    served = []\n"
+        "    for k in decisions:\n"
+        "        if decision.code in FAILOVER_CODES:\n"
+        "            served.append(k)\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+        "        elif decision.code == STANDING_STATPAL:\n"
+        "            served.append(k)\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+        "    if served:\n"
+        "        await _serve_live_from_statpal(served, stats)\n"
+    )
+    assert _standing_branch_reaches_live(ast.parse(real_shape)) is True
+    # The schedule half is unmoved in every arm below — that is the point.
+    assert _standing_branch_dispatches_schedule(ast.parse(real_shape)) is True
+
+    # THE MUTATION THIS EXISTS FOR: the append alone is gone. The failover arm
+    # still appends, so `served` is still truthy and the live writer still
+    # runs — for the sports in an outage, and not for the flipped one.
+    no_append = real_shape.replace(
+        "        elif decision.code == STANDING_STATPAL:\n"
+        "            served.append(k)\n",
+        "        elif decision.code == STANDING_STATPAL:\n",
+    )
+    assert _standing_branch_reaches_live(ast.parse(no_append)) is False
+    assert _standing_branch_dispatches_schedule(ast.parse(no_append)) is True
+
+    # The call is gone: an accumulator nothing consumes serves nobody.
+    no_call = real_shape.replace(
+        "    if served:\n        await _serve_live_from_statpal(served, stats)\n", ""
+    )
+    assert _standing_branch_reaches_live(ast.parse(no_call)) is False
+
+    # The call is there and is passed something else. `served` is still built
+    # and still appended to, so a walk that only asked "does an append exist
+    # and is a live writer called" reads this as covered.
+    wrong_list = real_shape.replace(
+        "await _serve_live_from_statpal(served, stats)",
+        "await _serve_live_from_statpal(failed_over, stats)",
+    )
+    assert _standing_branch_reaches_live(ast.parse(wrong_list)) is False
+
+    # The branch appends to a DIFFERENT list from the one the call consumes —
+    # the same defect wearing a rename, which is how it would really arrive.
+    other_accumulator = real_shape.replace(
+        "        elif decision.code == STANDING_STATPAL:\n"
+        "            served.append(k)\n",
+        "        elif decision.code == STANDING_STATPAL:\n"
+        "            standing.append(k)\n",
+    )
+    assert _standing_branch_reaches_live(ast.parse(other_accumulator)) is False
+
+    # Arm-conditional and therefore not reached: the live call sits in the
+    # `else`, which is inside the standing branch's own `orelse` subtree.
+    live_in_a_later_arm = (
+        "async def _act_on_failovers(decisions, stats):\n"
+        "    served = []\n"
+        "    for k in decisions:\n"
+        "        if decision.code in FAILOVER_CODES:\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+        "        elif decision.code == STANDING_STATPAL:\n"
+        "            served.append(k)\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+        "        else:\n"
+        "            await _serve_live_from_statpal(served, stats)\n"
+    )
+    assert _standing_branch_reaches_live(ast.parse(live_in_a_later_arm)) is False
+
+    # A renamed actor reads as not reaching rather than passing vacuously,
+    # exactly as the dispatch walk does.
+    renamed_actor = real_shape.replace(ACTOR_FUNCTION, "_act_on_failovers_v2")
+    assert _standing_branch_reaches_live(ast.parse(renamed_actor)) is False
+
+    # And a keyword-passed accumulator still counts: `sports=served` is the
+    # same wiring, and a positional-only walk would call the real thing broken
+    # the first time someone spelled the call out.
+    by_keyword = real_shape.replace(
+        "_serve_live_from_statpal(served, stats)",
+        "_serve_live_from_statpal(sports=served, stats=stats)",
+    )
+    assert _standing_branch_reaches_live(ast.parse(by_keyword)) is True
 
 
 def test_the_note_has_three_states_and_the_middle_one_is_still_reachable():
