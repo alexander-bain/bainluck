@@ -101,13 +101,14 @@ __all__ = [
     "FUTURES_FIRST_PAGE_CAP",
     "cap_futures_on_games_led_first_page",
     "client_deletes_finished_card",
+    "finished_event_age_anchor",
     "finished_rail_key",
     "cap_repeated_finished_rails",
     "swap_client_deleted_finished_off_first_page",
 ]
 
-#: The age, in hours since ``commence_time``, past which the WEB CLIENT deletes
-#: a finished game before it paints.
+#: The age, in hours since the game ENDED (:func:`finished_event_age_anchor`,
+#: #4776), past which the WEB CLIENT deletes a finished game before it paints.
 #:
 #: THIS IS A MIRROR, NOT A POLICY. The authority is
 #: ``frontend/lib/discover/feedFreshness.ts``::
@@ -296,6 +297,34 @@ def _commence_age_hours(value, *, now: datetime) -> float | None:
     return (now - parsed).total_seconds() / 3600.0
 
 
+def finished_event_age_anchor(data: dict) -> object:
+    """The stamp a finished card's age is measured from — ``ed.ended_at ||
+    ed.commence_time`` in ``feedFreshness.ts``'s ``finishedEventAgeAnchor``.
+
+    THE PREFERENCE IS ONLY EVER SAFE IN ONE DIRECTION, and that is why it is a
+    named function rather than an inline ``or``. A game ends after it starts, so
+    ``ended_at`` is never older than ``commence_time`` and ageing on it can only
+    ever KEEP a card the old rule deleted — it cannot newly delete one. The
+    expensive error this whole module guards against (trading away a slot for a
+    card the browser was going to paint) is therefore unreachable through this
+    change, which is what let it go in without re-deriving #3836's swap pass.
+
+    ``ended_at`` is preferred only when it is a NON-EMPTY STRING. JavaScript's
+    ``||`` and Python's ``or`` agree on ``None``, ``""`` and a missing key, and
+    disagree on the shapes that cannot occur in this payload (``[]`` is falsy in
+    Python and truthy in JS); pinning the type here makes the two sides agree on
+    the malformed cases too, and lands the disagreement on the KEEP side either
+    way, since a garbage stamp reads as an unreadable age and an unreadable age
+    is rendered.
+    """
+    if not isinstance(data, dict):
+        return None
+    ended_at = data.get("ended_at")
+    if isinstance(ended_at, str) and ended_at.strip():
+        return ended_at
+    return data.get("commence_time")
+
+
 def client_deletes_finished_card(item: dict, *, now: datetime | None = None) -> bool:
     """True when the web client will delete this card before it paints.
 
@@ -303,18 +332,26 @@ def client_deletes_finished_card(item: dict, *, now: datetime | None = None) -> 
     ``frontend/lib/discover/feedFreshness.ts``::
 
         if (ed.status === "completed" || ed.status === "closed") {
+          const anchor = finishedEventAgeAnchor(ed);   // ed.ended_at || ed.commence_time
           const hoursAgo =
-            (Date.now() - new Date(ed.commence_time).getTime()) / (1000*60*60);
+            (Date.now() - new Date(anchor).getTime()) / (1000*60*60);
           if (hoursAgo > COMPLETED_EVENT_MAX_AGE_HOURS) return true;
         }
 
     Two details in that snippet are load-bearing and are easy to get wrong:
 
-    * It reads **``commence_time``, not ``completed_at``.** They are not
-      interchangeable — a four-hour baseball game finishing right now has a
-      ``commence_time`` more than four hours old — and in the served payload
-      ``completed_at`` is ``None`` anyway, so ``commence_time`` is both the
-      correct field and the only available one.
+    * **The clock starts at the whistle, not the kickoff** (#4776). It ages on
+      ``ended_at`` and falls back to ``commence_time``. This was
+      ``commence_time`` alone until 2026-09-10, on the stated grounds that
+      ``completed_at`` "is ``None`` in the served payload" — true of
+      ``completed_at``, and the payload carries the same fact under D109's
+      ``ended_at`` on 39 of 39 finished rows. Charging a finished card for its
+      own duration cost it a measured median 2.26h of an eight-hour life (MLB
+      2.78h, NFL 3.11h), which is why the NFL season opener left Discover at
+      1:20AM PT and #4681's marquee arm has never had a morning it could fire
+      on. ``ended_at`` is OPTIONAL by D109's rule — absent on unsettled rows,
+      and a cached payload can predate it — so the fallback is not defensive
+      dressing, it is the contract.
     * The comparison is strict ``>``. A card at exactly the threshold is
       RENDERED, so this function must not use ``>=``.
 
@@ -332,7 +369,7 @@ def client_deletes_finished_card(item: dict, *, now: datetime | None = None) -> 
     if (data.get("status") or "").strip().lower() not in FINISHED_STATUSES:
         return False
     age = _commence_age_hours(
-        data.get("commence_time"), now=now or datetime.now(timezone.utc)
+        finished_event_age_anchor(data), now=now or datetime.now(timezone.utc)
     )
     if age is None:
         return False
