@@ -34,7 +34,10 @@ import { FuturesChart } from "@/components/FuturesChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import QuantityGroup, { buildThresholdRungs } from "@/components/QuantityGroup";
 import ProgressionTable from "@/components/ProgressionTable";
-import OutcomeRow, { outcomeRowPrintsMove } from "@/components/futures/OutcomeRow";
+import OutcomeRow, {
+  outcomeRowPrintsMove,
+  outcomeRowShowsEntityImage,
+} from "@/components/futures/OutcomeRow";
 import RelatedByTag from "@/components/RelatedByTag";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import {
@@ -550,6 +553,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // 80px column is most of why the name column had 26px to print a name in.
   const showLastMove = displayedOutcomes.some((o) =>
     outcomeRowPrintsMove(o, isResolved),
+  );
+  // #4483: whether the rows draw an entity picture is also a whole-table decision,
+  // and it reuses the `marketShape` already resolved above rather than resolving a
+  // second time — two calls are two chances to disagree.
+  //
+  // This is the OTHER half of the Q478 comment up there. Q478 routed a date/threshold
+  // ladder away from the ranked table so it would stop drawing "BA"/"BJ" avatars —
+  // but Q481 then ruled that a SETTLED quantity market never ladders, so it falls
+  // back to this very table and draws them again. That is exactly how #4483's
+  // specimen (a resolved `quantity` market) ends up with four identical `A5` chips:
+  // the avatar was fixed on the ladder path and left standing on the fallback path.
+  const showEntityImage = outcomeRowShowsEntityImage(
+    market.llm_sport_category,
+    marketShape,
   );
   // UX-P233 (board item 11): "as of Aug 28" when the prices are older than a day,
   // null when they are current. One line for the whole table — see the render.
@@ -1079,6 +1096,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               rendered={renderedById.get(outcome.id)?.current ?? null}
               renderedOpening={renderedById.get(outcome.id)?.opening ?? null}
               showLastMove={showLastMove}
+              showEntityImage={showEntityImage}
             />
           ))}
         </div>

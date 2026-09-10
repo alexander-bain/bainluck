@@ -166,7 +166,14 @@ function all(root: Node): Node[] {
 
 function render(
   o: FuturesOutcome,
-  opts: { showLastMove: boolean; isResolved?: boolean; rankChange?: number | null } = {
+  opts: {
+    showLastMove: boolean;
+    isResolved?: boolean;
+    rankChange?: number | null;
+    /** #4483 added this as a REQUIRED prop; `mma` is a sports category, so this
+     *  harness's rows never drew an entity picture and false preserves that. */
+    showEntityImage?: boolean;
+  } = {
     showLastMove: false,
   },
 ): Node {
@@ -182,6 +189,7 @@ function render(
         marketCategory="mma"
         marketName="Bantamweight Title Holder on Dec 31, 2026?"
         isResolved={opts.isResolved ?? false}
+        showEntityImage={opts.showEntityImage ?? false}
         rendered={null}
         renderedOpening={null}
         showLastMove={opts.showLastMove}
