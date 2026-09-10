@@ -361,7 +361,6 @@ async def test_a_standing_sport_dispatches_the_writers_counted_apart(monkeypatch
     which is the normal state for a flipped sport, and folding it into the
     failover count would report a permanent degradation.
     """
-    import app.tasks.espn_sync as espn_sync
     import app.tasks.statpal_sync as statpal_sync
     from app.tasks.espn_sync import _act_on_failovers
 
@@ -377,7 +376,6 @@ async def test_a_standing_sport_dispatches_the_writers_counted_apart(monkeypatch
 
     monkeypatch.setattr(statpal_sync, "_sync_statpal_schedules", _schedules)
     monkeypatch.setattr(statpal_sync, "_sync_statpal_livescores", _livescores)
-    assert espn_sync is not None
 
     decision = _standing(espn=DARK, statpal=FIXTURES, statpal_live=FIXTURES)
     stats: dict = {"errors": []}
@@ -489,12 +487,12 @@ async def test_the_caller_reads_the_standby_for_a_flipped_sport(monkeypatch):
     a standing sport too or the acceptance is unreachable in production however
     correct the pure function is.
     """
-    import app.config.authority_by_sport as cfg
     import app.tasks.espn_sync as espn_sync
     import app.tasks.statpal_sync as statpal_sync
-    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
 
-    monkeypatch.setitem(cfg.AUTHORITY_BY_SPORT, NFL, STATPAL)
+    # The module-level import is the same dict object `authority_for` reads, so
+    # mutating it here really does flip the sport for the duration of the test.
+    monkeypatch.setitem(AUTHORITY_BY_SPORT, NFL, STATPAL)
 
     reads: list[str] = []
 
@@ -514,8 +512,8 @@ async def test_the_caller_reads_the_standby_for_a_flipped_sport(monkeypatch):
     monkeypatch.setattr(statpal_sync, "_sync_statpal_livescores", _livescores)
 
     stats: dict = {"errors": []}
-    decisions = await _decide_failovers({}, {NFL}, stats)
-    await _act_on_failovers(decisions, stats)
+    decisions = await espn_sync._decide_failovers({}, {NFL}, stats)
+    await espn_sync._act_on_failovers(decisions, stats)
 
     assert reads == [NFL], (
         "the caller never read the standby for a flipped sport, so the standing "
