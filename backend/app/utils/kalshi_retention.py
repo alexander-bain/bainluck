@@ -104,6 +104,19 @@ COUNTER_SPECIMEN = (
     "KXITFMATCH-26JUN14FONSZA (ITF tennis, purged at 68d, 2026-08-21)."
 )
 
+# 2026-09-10 (CAL-P1082/1083) — a THIRD data point, recorded rather than acted on.
+# Probing the 35 winner-less Kalshi golf round-leader markets venue-side, every
+# cohort ticker aged 70 days or older was already gone (``KXPGAR1LEAD-JODC26``,
+# 2026-07-03, ``markets: []``) while 63 days was still present — 17 of 35 reachable.
+# That sits between the 47d counter-specimen and the 74d survivor observation and
+# CONTRADICTS NEITHER, which is the point: it is the third independent confirmation
+# that ``OBSERVED_PRESENT_MAX_AGE_DAYS`` (74) describes the markets that happened to
+# live, not a floor anything may plan against. **No constant moves on this.** A
+# survivor observation cannot be raised or lowered by another survivor observation;
+# only a purge measured on a POPULATION can move ``*_ANY_SERIES``, and 70d does not
+# beat 47d. Golf is a new family for this table (the four measured series are not
+# golf), so the next re-measure has a fourth sport to sample.
+
 
 # ---------------------------------------------------------------------------
 # 2026-08-24 — RETENTION IS NON-MONOTONIC, AND AGE PROVES NOTHING
