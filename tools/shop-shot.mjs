@@ -87,7 +87,41 @@ let ok = false;
 try {
   const W = parseInt(process.env.SHOT_W || '1280', 10);
   const H = parseInt(process.env.SHOT_H || '2200', 10);
-  const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 2 });
+  // Notice 39 / #1916 rung 1: say who we are. Every shot this tool takes is a real
+  // request to production, and `look.sh` delegates here, so this one call site is the
+  // whole fleet — nine lanes plus the bus's probes.
+  //
+  // 🔴 This is not cosmetic labelling: `x-bainluck-origin` is READ by the backend
+  // (`routes/events.py:_request_is_automation`) and any non-empty value other than the
+  // literal "user" SUPPRESSES the search-query log write and the trending vote. So
+  // before this, every `look.sh <…/search?q=X>` shot voted X into the search head that
+  // the warmer then warms — our own screenshot tool was shaping the thing it photographs.
+  //
+  // Shoot deliberately AS a person with `BL_AGENT=user` (the backend honours that
+  // spelling positively); that is the only value that keeps the row.
+  const AGENT = process.env.BL_AGENT || 'look.sh';
+
+  // 🔴 Deliberately NOT also suffixing the User-Agent with `BainLuckBot/1.0`, which
+  // notice 39 asks for. Appending to a UA means first READING it, and the only way to
+  // read it is a second context — which this browser cannot give: it is launched
+  // `--single-process`, and the probe context closes the browser under the real page
+  // (`browser.newPage: Target page, context or browser has been closed`, reproduced
+  // locally before this shipped). Replacing the UA outright is worse: this tool exists
+  // to photograph what a PERSON sees, and a bot UA can change what the site serves.
+  //
+  // No loss. The header is what the backend actually reads and what notice 39 point 4
+  // wants the rate-limit allowlist keyed on ("allowlist by header, not IP"); the cookie
+  // covers rung 3. The UA is the one carrier with no reader and a real failure mode.
+  const page = await browser.newPage({
+    viewport: { width: W, height: H },
+    deviceScaleFactor: 2,
+    extraHTTPHeaders: { 'x-bainluck-origin': AGENT },
+  });
+  // Rung 3's half: the Vercel/GA4 `beforeSend` drop keys on this cookie. Set on the
+  // target's own origin, and never fatal — client analytics is not worth a lost shot.
+  try {
+    await page.context().addCookies([{ name: 'bl_agent', value: AGENT, url: new URL(url).origin }]);
+  } catch { /* not a reason to fail a screenshot */ }
   await page.goto(url, { waitUntil: 'load', timeout: 60000 });
   await page.waitForTimeout(7000);
   try {
