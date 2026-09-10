@@ -2016,12 +2016,104 @@ def _dedupe_futures_by_group_id(futures_items: list[dict]) -> list[dict]:
     return kept
 
 
+def _seasonless_canonical_prefix(key: str | None) -> str | None:
+    """`baseball:MLB:championship` for a key whose SEASON segment is empty, else None.
+
+    #4799 — `compute_canonical_market_key` writes `{sport}:{league}:{category}:{season}`
+    and leaves the last segment empty when the row carries no season, so a market whose
+    title has no year is stored as `baseball:MLB:championship:` and can never share a key
+    with the venue row that says `baseball:MLB:championship:2026`.
+    """
+    if not key:
+        return None
+    parts = str(key).split(":")
+    if len(parts) != 4 or parts[3]:
+        return None
+    return ":".join(parts[:3])
+
+
+def _leader_outcome_name(data: dict) -> str:
+    """The name the card prints beside its hero number, casefolded for comparison."""
+    outcomes = data.get("top_outcomes") or []
+    if not outcomes:
+        return ""
+    return str((outcomes[0] or {}).get("name") or "").strip().casefold()
+
+
+def _canonical_dedupe_keys(futures_items: list[dict]) -> list[str | None]:
+    """One dedupe key per item, in feed order: the stored key, unless a card that
+    names NO season is the unique seasoned sibling's question wearing an empty key.
+
+    THE READER'S SIDE (#4799). Discover page one served "MLB World Series Winner"
+    (`baseball:MLB:championship:`, odds_api, Dodgers 29%) beside "MLB World Series
+    Champion 2026" (`baseball:MLB:championship:2026`, Kalshi+Polymarket, Dodgers 32%),
+    six deals out of six, with the web client's own three-word grouping folding them into
+    ONE card headed "2 markets": one question, one leader, two numbers, in one card. That
+    is the standing ruling read backwards — the blend is the product, one number per
+    question — and the audit target is `duplicate-family-rate@20=0`.
+
+    WHY THE KEY CANNOT SIMPLY BE COMPLETED. The obvious repair is to fill the empty
+    segment from the row and let the existing pass do the rest, and it is inert: the
+    seasonless rows are odds_api rows and `resolution_date` is NULL on every one of them
+    (measured on both page-one specimens, ids 1 and 86832), so `detect_season` — which
+    reads the title, then the date — has nothing left to read. The ingest half, which is
+    where a season could be stamped, is #4800 and is the matcher's under D35.
+
+    SO THE RULE IS ADOPTION, NOT COMPLETION, AND IT IS DELIBERATELY REFUSABLE:
+
+    * the card names no season, and shares `sport:league:category` with a card that does;
+    * EXACTLY ONE seasoned key with that prefix is in this feed. Two would mean guessing
+      an edition — `baseball:MLB:championship` alone holds open rows for 2024, 2026, 2027
+      and 2028 — and this pass refuses rather than guesses;
+    * both cards LEAD WITH THE SAME OUTCOME. This arm is stricter than the exact-key pass
+      it extends, on the principle the cross-source matcher states about display: a
+      deduper that over-pairs DELETES a card the reader wanted. Same-leader is also
+      exactly the duplication the reader sees — both cards printed "Los Angeles Dodgers
+      lead at …" — so a pair that disagrees on who leads is left on the page as two cards
+      rather than silently resolved to one by rank.
+
+    The existing `_outcomes_overlap` gate in the caller still applies on top, and the
+    survivor is still the better-ranked row. Nothing that folds today stops folding: the
+    stored key is returned unchanged for every card that fails any clause above, including
+    the 22 open markets that share `soccer::championship:` and already fold against each
+    other under it.
+    """
+    stored = [
+        (item.get("data") or {}).get("canonical_market_key") for item in futures_items
+    ]
+
+    seasoned_by_prefix: dict[str, set[str]] = {}
+    leaders_by_key: dict[str, set[str]] = {}
+    for item, key in zip(futures_items, stored):
+        if not key or _seasonless_canonical_prefix(key) is not None:
+            continue
+        parts = str(key).split(":")
+        if len(parts) != 4:
+            continue
+        seasoned_by_prefix.setdefault(":".join(parts[:3]), set()).add(str(key))
+        leaders_by_key.setdefault(str(key), set()).add(
+            _leader_outcome_name(item.get("data") or {})
+        )
+
+    keys: list[str | None] = []
+    for item, key in zip(futures_items, stored):
+        prefix = _seasonless_canonical_prefix(key)
+        siblings = seasoned_by_prefix.get(prefix or "", set())
+        if prefix is not None and len(siblings) == 1:
+            sibling_key = next(iter(siblings))
+            leader = _leader_outcome_name(item.get("data") or {})
+            if leader and leader in leaders_by_key.get(sibling_key, set()):
+                keys.append(sibling_key)
+                continue
+        keys.append(key)
+    return keys
+
+
 def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
     """Deduplicate futures by canonical key using the feed's existing rules."""
     seen_canonical: dict[str, dict] = {}
     deduped: list[dict] = []
-    for fitem in futures_items:
-        key = fitem["data"].get("canonical_market_key")
+    for fitem, key in zip(futures_items, _canonical_dedupe_keys(futures_items)):
         if key is None or not _canonical_key_safe_for_dedupe(key):
             deduped.append(fitem)
             continue
