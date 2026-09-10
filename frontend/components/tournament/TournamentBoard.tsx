@@ -59,8 +59,14 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
       /* RULING 8 adds a fifth column: rank, PICTURE, name, trend, number.
          28px + the 10px gap, taken from the name column, which was the only
          one with slack — the rank, the trend and the 52px number are all at
-         their measured minimum (see GRID_COLUMN_WIDTH_PX's note). */
-      className="grid grid-cols-[22px_28px_1fr_auto_52px] items-center gap-2.5 border-t border-surface-border px-3.5 py-2.5 first:border-t-0"
+         their measured minimum (see GRID_COLUMN_WIDTH_PX's note).
+
+         #4538: below `sm` there is no fifth column. Measured on production at
+         390px, this row's content box is 332px and the name track was 102.6px
+         of it — `Alexander Zverev` wants 125px and printed `Alexander Z…`. At
+         360px ALL THREE visible rows clipped, `Ben Shelton` included. Dropping
+         the sparkline track returns 52px + its 10px gap to the name. */
+      className="grid grid-cols-[22px_28px_1fr_auto] items-center gap-2.5 border-t border-surface-border px-3.5 py-2.5 first:border-t-0 sm:grid-cols-[22px_28px_1fr_auto_52px]"
       data-testid="board-row"
       data-entity={row.entity_key}
       data-rank={row.rank}
@@ -73,7 +79,15 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
       <PlayerAvatar name={row.display_name} image={row.image} size={28} />
 
       <div className="min-w-0">
-        <div className="truncate text-[15px] font-semibold text-text-primary">
+        {/* #4538: the name WRAPS, it does not truncate. Returning the sparkline's
+            62px covers every name in both US Open draws at 390px and all but the
+            longest at 360px — `Felix Auger-Aliassime` and `Ekaterina
+            Alexandrova` (21 chars, the longest of the 80 rows) still want more
+            than a 360px phone has. An ellipsis answers that by hiding the one
+            fact the row exists to state; a second line answers it by costing
+            22px of height. `break-words` is the safety net for a name with no
+            space in it, and does nothing to a name that has one. */}
+        <div className="break-words text-[15px] font-semibold text-text-primary">
           {/* The reference's colour tie-in: a charted contender's name is
               underlined in its own line colour, so the list and the chart are
               legible as one thing rather than two coincident rankings. */}
@@ -172,7 +186,22 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
         )}
       </div>
 
-      <TrendSparkline trend={row.trend} delta={row.trend_delta} muted={!isLive} />
+      {/* #4538. `hidden` is `display:none`, so below `sm` this is not a grid
+          item at all and cannot open an implicit sixth row against the
+          four-track template above.
+
+          Why THIS element is the one that goes: the row prints the same fact
+          twice, 10px apart. `+19.9` states the move in points; the sparkline
+          draws it — and draws it at 52x26px on a fixed 0-100 axis, where a
+          contender's whole fortnight is a near-flat line. It is also passed
+          `delta` and takes its colour from `trendDirection(delta)`, so it is
+          the same input rendered a second way. On this page the ContenderChart
+          sits directly above the card drawing these very series full-size with
+          an axis and range tabs, making the sparkline a THIRD rendering. At
+          `sm` and up the row has the width for all of it and is unchanged. */}
+      <div className="hidden sm:block" data-testid="board-row-trend-slot">
+        <TrendSparkline trend={row.trend} delta={row.trend_delta} muted={!isLive} />
+      </div>
     </li>
   );
 }
