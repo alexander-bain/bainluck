@@ -167,12 +167,20 @@ class TestWhatCountsAsSilent:
 
     def test_whitespace_is_not_speech(self):
         card = {
+            "type": "futures",
             "headline": "   ",
             "reason": "",
             "context_summary": None,
             "data": {"name": "x", "hook_description": "\n"},
         }
         assert is_wholly_silent_card(card)
+
+    def test_an_item_with_no_type_at_all_is_not_judged(self):
+        """Fail safe in the same direction as everything else here: unknown
+        card type means "do not demote", never "demote"."""
+        assert not is_wholly_silent_card(
+            {"headline": None, "reason": "", "context_summary": "", "data": {}}
+        )
 
     def test_a_card_carrying_no_text_keys_at_all_is_not_judged(self):
         """Absence of capture is not silence.
@@ -345,3 +353,58 @@ class TestTheTwoLayersCannotDrift:
     def test_card_sum_reason_is_not_in_the_discover_chain(self):
         """The specific claim the BLOCK rested on, asserted at the source."""
         assert "card_sum_reason" not in self._discover_caption_fields()
+
+
+class TestOnlyFuturesCardsAreJudged:
+    """Scope by card type, both directions (gotcha #43).
+
+    The door list is `feedContextSnippet`'s FUTURES branch. Off that branch it
+    means nothing: a game card's story is the score, a concept card's is the
+    matchup, a bundle's is its member rows. None needs a caption to speak.
+
+    This is not hypothetical. Unscoped, the predicate demoted the finished NFL
+    opener that #4681 and notice 27 exist to put ON page one —
+    `test_finished_marquee_on_discover_4681` passed on master and failed here,
+    on the rebase that first brought the two together.
+    """
+
+    #: The #4681 specimen's shape: a settled game whose story is the score, with
+    #: no caption of any kind.
+    FINISHED_GAME = {
+        "type": "event",
+        "score": 67,
+        "headline": None,
+        "data": {
+            "id": 14780138,
+            "sport": "americanfootball_nfl",
+            "status": "completed",
+            "home_team": "Seattle Seahawks",
+            "away_team": "New England Patriots",
+            "home_score": 13,
+            "away_score": 10,
+        },
+    }
+
+    def test_a_captionless_finished_game_is_not_silent(self):
+        assert not is_wholly_silent_card(self.FINISHED_GAME), (
+            "a settled game card renders two teams and a score; demoting it for "
+            "want of a caption contradicts #4681 and notice 27"
+        )
+
+    def test_a_captionless_finished_game_keeps_its_page_one_slot(self):
+        items = [self.FINISHED_GAME] + [_speaking(f"c-{n}") for n in range(12)]
+
+        out, meta = enforce_first_page_quality_floor(items, first_page_size=10)
+
+        assert meta["silent_in_window"] == 0
+        assert meta["demoted"] == 0
+        assert out[0] is self.FINISHED_GAME
+
+    @pytest.mark.parametrize("card_type", ["event", "concept", "tournament", "bundle"])
+    def test_no_non_futures_card_is_ever_called_silent(self, card_type):
+        card = dict(SUM_REASON_ONLY, type=card_type)
+        assert not is_wholly_silent_card(card)
+
+    def test_but_a_futures_card_with_the_same_emptiness_still_yields(self):
+        """The control that keeps the scope from becoming a blanket exemption."""
+        assert is_wholly_silent_card(dict(SUM_REASON_ONLY, type="futures"))

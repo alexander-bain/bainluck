@@ -2079,6 +2079,25 @@ def is_wholly_silent_card(item: dict) -> bool:
     is on the screen. Distinct from `is_first_page_quality_offender`, which is
     about a card that should not LEAD; this is a card that does not SPEAK.
 
+    **FUTURES CARDS ONLY, and that is not a convenience — the door list IS the
+    futures branch of `feedContextSnippet` and means nothing off it.** A futures
+    card with no caption really is wordless: a percentage, a question, and
+    nothing else. Every other card type carries its own visible substance that
+    no caption field holds. A game card renders two team names, two scores and
+    two logos ("Seattle Seahawks 13, New England Patriots 10"); a concept card
+    renders the matchup ("Van vs Pantoja"); a bundle renders its member rows,
+    each with its own headline. None of them is silent to a reader for want of
+    a caption sentence, and judging them by the futures chain is a category
+    error.
+
+    It is also a direct collision. #4681 and notice 27 say a finished marquee
+    final REACHES page one; a settled game card frequently carries no caption
+    (its story is the score), so an unscoped predicate demotes exactly the card
+    another shipped ruling requires. `test_finished_marquee_on_discover_4681`
+    caught this on the rebase — it passed on master and failed here — and it is
+    the same lesson as gotcha #43: scope by card type, and assert both
+    directions.
+
     **Absence of capture is not silence.** The check is skipped entirely unless
     the item carries at least one text-door KEY. The #1958 corpus fixture is
     reduced to the fields the audit's oracle reads and carries none of them, so
@@ -2087,6 +2106,9 @@ def is_wholly_silent_card(item: dict) -> bool:
     always carries the keys — with ``None`` or ``""`` in them when it has
     nothing to say — so the real population is unaffected by the guard.
     """
+    if item.get("type") != "futures":
+        return False
+
     data = item.get("data") if isinstance(item.get("data"), dict) else {}
     has_a_door = any(door in item for door in _CARD_TEXT_DOORS_TOP) or any(
         door in data for door in _CARD_TEXT_DOORS_DATA
