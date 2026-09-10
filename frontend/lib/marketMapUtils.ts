@@ -232,6 +232,96 @@ export interface ParsedSpread {
   source: string;
   isHome: boolean;
   margin: number;
+  /**
+   * ═══ #4598: THE NUMBER IS NOT THE QUESTION — THE UNIT IS PART OF IT ═══
+   *
+   * The unit the venue quoted this rung IN, lower-case and plural as the
+   * outcome says it (`"games"`, `"sets"`, `"runs"`), or `null` where the
+   * outcome names none (`"Lakers -4.5"`, which is every points sport we
+   * carry).
+   *
+   * It exists because a margin ladder keyed on `(side, threshold)` folded two
+   * different questions into one rung. Read off production 2026-09-09 19:29
+   * PT, `/api/events/15308439/game-markets`, the US Open men's semi-final
+   * Tiafoe (home) vs Shelton:
+   *
+   *     Ben Shelton wins by over 1.5 sets    0.305   kalshi
+   *     Ben Shelton -1.5 games               0.185   kalshi
+   *
+   * Both parsed to `A|1.5`. `collapseDuplicateRungs` saw one rung quoted at
+   * two prices 12 points apart, and did the right thing with what it was told:
+   * WITHHELD it. What was left was the OTHER set rung — `Frances Tiafoe wins
+   * by over 1.5 sets` at 0.185 — so the game-margin rail drew its projection
+   * marker at **`TIA by 1.5+`**, a SET margin printed on a GAMES axis, naming
+   * the player the same card's hero gives a **27%** chance of winning.
+   *
+   * That is the ux/1034 B5 defect from a third direction: not a number we
+   * invented and not a score in the wrong unit, but a market rung read in the
+   * wrong unit — which looks the most sourced of the three and is the hardest
+   * to catch by eye, because 1.5 is a plausible number on either axis.
+   */
+  unit: string | null;
+}
+
+/**
+ * The units a spread outcome can name, longest first so `"sets"` is not eaten
+ * by a substring of something else and a singular never shadows its plural.
+ * A rung whose outcome names none of them is `unit: null` — the shape of every
+ * points-sport line (`"Lakers -4.5"`) — and a consumer must treat `null` as
+ * "not stated", never as "not this unit", or every basketball rail goes blank.
+ */
+const SPREAD_UNIT_WORDS = ["games", "game", "sets", "set", "points", "point", "runs", "run", "goals", "goal"];
+
+/** Plural, so it can be compared with `SportScoringVocab.unit` directly. */
+function spreadUnitOf(outcomeName: string): string | null {
+  const lower = ` ${outcomeName.toLowerCase()} `;
+  for (const word of SPREAD_UNIT_WORDS) {
+    if (lower.includes(` ${word} `) || lower.includes(` ${word},`)) {
+      return word.endsWith("s") ? word : `${word}s`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Does a rung belong on a rail measured in `railUnit`?
+ *
+ * The three cases, and the middle one is the one that keeps the points sports
+ * working: a rung that STATES a different unit is refused; a rung that states
+ * nothing is kept (that is `"Lakers -4.5"`, and refusing it would empty every
+ * NBA and NFL margin map); and a rail whose sport declares no unit of its own
+ * (`UNSCORED_IN_POINTS`) keeps everything a venue quoted, because that
+ * vocabulary exists precisely to show only what was quoted and to invent
+ * nothing.
+ */
+export function spreadRungMatchesRail(rung: ParsedSpread, railUnit: string): boolean {
+  if (rung.unit == null) return true;
+  if (!railUnit) return true;
+  return rung.unit === railUnit;
+}
+
+/**
+ * Every spread row a rail may draw: parsed, and filtered to the rail's unit.
+ *
+ * ONE function rather than the rule written at each parse site. `MarketMapSection`
+ * parses spreads twice — the full-game rail and the two half rails — and the
+ * defect this fixes was one rail knowing something its twin did not. A drift
+ * guard over two copies would only demand the duplication back; a single seam
+ * means the second rail cannot fall behind because there is nothing there to
+ * fall behind with.
+ */
+export function parseSpreadRungs(
+  rows: Array<{ outcome_name?: string | null; probability?: number | null; source?: string | null }>,
+  homeTeam: string,
+  awayTeam: string,
+  railUnit: string
+): ParsedSpread[] {
+  return rows
+    .map((s) =>
+      parseSpreadOutcome(s.outcome_name ?? "", s.probability ?? 0, s.source ?? "", homeTeam, awayTeam)
+    )
+    .filter((p): p is ParsedSpread => p != null)
+    .filter((p) => spreadRungMatchesRail(p, railUnit));
 }
 
 export function parseSpreadOutcome(
@@ -255,7 +345,7 @@ export function parseSpreadOutcome(
   const team = isHome ? homeTeam : awayTeam;
   const margin = isHome ? threshold : -threshold;
 
-  return { team, threshold, probability, source, isHome, margin };
+  return { team, threshold, probability, source, isHome, margin, unit: spreadUnitOf(outcomeName) };
 }
 
 export function isFullGameSpread(marketName: string): boolean {
