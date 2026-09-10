@@ -73,7 +73,7 @@ from app.utils.sports_first_page_rails import (
     cap_repeated_finished_rails,
     swap_client_deleted_finished_off_first_page,
 )
-from app.utils.tonights_games import compose_lead
+from app.utils.tonights_games import MARQUEE_PIN_KEY, compose_lead
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
     compute_aggregate_probability as _compute_aggregate_probability,
@@ -6957,6 +6957,22 @@ async def _score_events(
     )
     from app.tasks.odds_polling import get_statpal_end_time
 
+    # #4541: calendar-declared marquee FIXTURES. Loaded once per build, exactly as
+    # the concept pin loads its entries, and best-effort — an unreadable calendar
+    # means no pin, never a broken feed.
+    try:
+        from app.utils.majors_calendar import (
+            fixture_marquee_pinned,
+            marquee_fixture_entries,
+        )
+
+        _marquee_fixtures = marquee_fixture_entries()
+    except Exception:
+        _marquee_fixtures = []
+
+        def fixture_marquee_pinned(*_a, **_k):  # type: ignore[misc]
+            return False
+
     for event in events:
         try:
             if not my_teams_only:
@@ -7337,6 +7353,32 @@ async def _score_events(
                 "data": event_data,
                 "_sort_time": sort_time,
             }
+
+            # #4541: a marquee GAME leads the tab on its OCCASION, not on its drama.
+            #
+            # Everything above this line scores an event on what is happening inside
+            # it — closeness, upsets, swings, lead changes. That model has no term for
+            # how much the fixture MATTERS, so the NFL season opener (tier 1, primetime,
+            # national TV, twenty sportsbooks) scored 66 against 98 for a routine
+            # Tuesday MLB game whose only distinction was being a coin flip, and sat at
+            # rank 30 seven minutes after kickoff.
+            #
+            # A pin rather than a score boost, deliberately: the drama stack tops out
+            # near the 98 display cap, so any additive term large enough to guarantee
+            # the lead would have to be large enough to distort everything it touches.
+            # A pin guarantees the position and changes no score at all — `compose_lead`
+            # emits `pinned + games + tail`, and it already anticipated this case
+            # ("A marquee that is itself an eligible game is already leading").
+            #
+            # Curated, not inferred. The alternatives measured tonight both fail: the
+            # `timing:national_tv` tag is coverage-biased (only MLB/NFL/MLS/UCL carry
+            # broadcast_info at all — tennis and MMA carry none), and `timing:primetime`
+            # is any 19:00-23:59 ET start, which is most of the slate.
+            if fixture_marquee_pinned(
+                sport_key, event.commence_time, now, entries=_marquee_fixtures
+            ):
+                item[MARQUEE_PIN_KEY] = True
+
             personalization_trace = _build_personalization_trace(
                 ctx=ctx,
                 item_type="event",

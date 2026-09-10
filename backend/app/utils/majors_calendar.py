@@ -55,6 +55,95 @@ def calendar_entry_by_concept_key(path: str | Path | None = None) -> dict[str, d
     return out
 
 
+# How long after kickoff a pinned FIXTURE keeps its pin.
+#
+# A fixture's pin cannot use the concept window (midnight after the `end` DAY,
+# then +36h), because a single game is over in three hours and the calendar day
+# it sits in is not: the NFL opener kicks off 00:20 UTC, so a day-anchored pin
+# would hold the top of the Sports tab for thirteen hours after the final
+# whistle. The tail is therefore anchored on the game's OWN commence_time.
+#
+# 6.0 is `feed_scoring.COMPLETED_DECAY_HOURS` — the hour at which the freshness
+# model has finished decaying a completed game to its floor and calls the result
+# yesterday's news. The pin releasing on the same clock that stops crediting the
+# result is one decision, not two that can drift apart.
+FIXTURE_PIN_TAIL_HOURS = 6.0
+
+
+def marquee_fixture_entries(path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Calendar entries that name a single FIXTURE rather than a concept surface.
+
+    An entry qualifies when it is flagged ``marquee`` and carries a ``fixture``
+    block with a ``sport_key``. These are the entries that can pin a
+    ``type: "event"`` card — a marquee GAME, as opposed to the multi-day
+    tournament concepts ``marquee_concept_keys`` serves.
+    """
+    out: list[dict[str, Any]] = []
+    for e in load_calendar(path):
+        if not e.get("marquee"):
+            continue
+        fixture = e.get("fixture")
+        if isinstance(fixture, dict) and fixture.get("sport_key"):
+            out.append(e)
+    return out
+
+
+def fixture_marquee_pinned(
+    sport_key: str | None,
+    commence_time: datetime | None,
+    now: datetime,
+    entries: list[dict[str, Any]] | None = None,
+    tail_hours: float = FIXTURE_PIN_TAIL_HOURS,
+) -> bool:
+    """Is this game inside a calendar-declared marquee pin window?
+
+    Returns a plain bool rather than the ``"live"``/``"whathit"`` vocabulary
+    ``marquee_pin_state`` uses. Those states exist because a settled concept's
+    WHAT-HIT window drives champion resolution; nothing downstream of a fixture
+    pin asks which half of the window it is in, and inventing a "whathit" for a
+    game would mean inventing a per-sport game length to place the boundary.
+    One honest question, one honest answer.
+
+    A fixture matches an entry when its ``sport_key`` is the entry's and its
+    kickoff falls on one of the entry's UTC dates. The window then runs from the
+    entry's ``start`` (00:00 UTC) to ``commence_time + tail_hours``, so the tab
+    can lead with the game before it starts and stops leading with it once the
+    result is stale.
+
+    ⚠️ THE ENTRY'S DATES ARE UTC, AND A US PRIMETIME KICKOFF IS THE NEXT UTC DAY.
+    The 2026 NFL opener is Wednesday evening in America and ``2026-09-10`` here.
+    Dating such an entry by its local day silently matches nothing.
+
+    Pure and defensive: anything unusable returns False, never an exception —
+    a bad calendar edit must not be able to empty or crash the feed.
+    """
+    if not sport_key or commence_time is None:
+        return False
+    if entries is None:
+        entries = marquee_fixture_entries()
+    if commence_time.tzinfo is None:
+        commence_time = commence_time.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    kickoff_date = commence_time.date()
+    for entry in entries:
+        fixture = entry.get("fixture")
+        if not isinstance(fixture, dict) or fixture.get("sport_key") != sport_key:
+            continue
+        start_d = _as_utc_date(entry.get("start"))
+        end_d = _as_utc_date(entry.get("end"))
+        if start_d is None or end_d is None:
+            continue
+        if not (start_d <= kickoff_date <= end_d):
+            continue
+        window_open = datetime.combine(start_d, time.min, tzinfo=timezone.utc)
+        window_close = commence_time + timedelta(hours=tail_hours)
+        if window_open <= now < window_close:
+            return True
+    return False
+
+
 def _as_utc_date(value: Any) -> date | None:
     """Coerce a YAML date field (date, datetime, or 'YYYY-MM-DD' str) to a date."""
     if isinstance(value, datetime):
