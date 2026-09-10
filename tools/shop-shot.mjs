@@ -18,6 +18,7 @@ import {
   EXIT_CAMERA,
   EXIT_CLICK_FAILED,
   EXIT_USAGE,
+  chooseCapture,
   clearStaleArtifact,
   clickFailHint,
   parseClickSteps,
@@ -248,15 +249,52 @@ try {
     console.error(shot.message);
     process.exit(EXIT_USAGE);
   }
+  // Which capture actually ran, for the stderr line below. A lane reading
+  // "mode=fullPage" on a PNG whose chart came out empty has to be able to tell
+  // whether it got the grown capture or the #4664-unsafe fallback.
+  let capture = shot.mode === 'fullPage' ? 'fullPage' : `viewport@${scroll}`;
   if (shot.mode === 'fullPage') {
-    await page.screenshot({ path: out, fullPage: true });
+    // #4664: `fullPage: true` is NOT a photograph of the page we just measured.
+    // Chromium serves it through captureBeyondViewport, which re-renders the
+    // document off-screen, remounts every chart, and restarts Recharts' entry
+    // animation — so the shutter catches the line at a ~6px dash and the plot
+    // comes out EMPTY while a 64-vertex path sits in the DOM. It also stamps
+    // the fixed bottom nav across mid-page content. Growing the viewport to the
+    // document height and taking an ordinary viewport shot gets both right.
+    // The full measurement, in both directions, is on `chooseCapture`.
+    const plan = chooseCapture({ docHeight, viewportHeight: H });
+    if (plan.warning) console.error(plan.warning);
+    if (plan.mode === 'grow') {
+      // Growing puts the whole document on screen, so anything that loads on
+      // intersection loads now and the page can get TALLER. Re-measure and grow
+      // again rather than photograph a page that outgrew its own frame — but
+      // bounded, because a page that grows every time it is measured (an
+      // infinite feed) would otherwise never reach the shutter.
+      let target = plan.height;
+      for (let i = 0; i < 2; i++) {
+        await page.setViewportSize({ width: W, height: target });
+        await page.waitForTimeout(2500);
+        const grown = await page.evaluate(() => document.body.scrollHeight);
+        const next = chooseCapture({ docHeight: grown, viewportHeight: H });
+        if (next.mode !== 'grow' || next.height <= target) break;
+        target = next.height;
+      }
+      // The resize can leave the document scrolled; a whole-page shot starts at 0.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: out });
+      capture = `wholePage@grown${target}`;
+    } else {
+      await page.screenshot({ path: out, fullPage: true });
+      capture = 'fullPage(CHART-UNSAFE)';
+    }
   } else {
     await page.evaluate((to) => window.scrollTo(0, to), shot.y);
     // Let lazy rails and any scroll-triggered animation settle before the shot.
     await page.waitForTimeout(2500);
     await page.screenshot({ path: out });
   }
-  console.error(`docHeight=${docHeight} mode=${shot.mode === 'fullPage' ? 'fullPage' : `viewport@${scroll}`}`);
+  console.error(`docHeight=${docHeight} mode=${capture}`);
   ok = true;
   console.log(out);
 } catch (e) {
