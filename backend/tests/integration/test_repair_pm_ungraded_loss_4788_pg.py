@@ -18,6 +18,13 @@ because all three are about what a SERVER does with the SQL:
 3. **Is the result a fixed point?** A withdrawn row must leave its own bound, or
    the second page re-backs-up rows at their withdrawn value and the D51 undo
    silently becomes a no-op.
+4. **Does it survive a grader writing underneath it?** (CERT-2524.) This rail
+   pages, attended, over 574,832 legs while ``backfill_winners`` runs every six
+   hours and ``pm-never-graded`` grades ONE LEG PER COMMIT. Everything about
+   that failure is invisible to one session: it needs a real server, two real
+   connections, and a real commit landing in the window between the backup and
+   the write. A single-session test of a race is a test of the happy path with
+   extra steps.
 
 Opt-in on ``SEARCH_TEST_DATABASE_URL``, following its neighbours: ``initdb``
 dies on ``shmget`` in the agent sandbox, so CI's ``search-recall`` job is the
@@ -337,6 +344,170 @@ async def test_pm_never_graded_s_compare_and_set_still_matches_a_withdrawn_leg(d
     ).scalar_one()
 
     assert matched == 2
+
+
+# ---------------------------------------------------------------------------
+# CERT-2524 — a grader committing underneath the apply
+# ---------------------------------------------------------------------------
+
+
+async def _grade_in_a_second_session(winner_id):
+    """Commit a grade from a SEPARATE connection, exactly as a grader does.
+
+    `pm-never-graded` writes one leg and commits it (`repair_pm_never_graded.py:
+    1364-1382`), which is why a market is observable half-graded at all. The
+    write here is a copy of its shape, not a call into it: this file's subject is
+    what OUR statements do when somebody else's commit lands, and importing the
+    grader would couple this gate to that rail's plan-and-approve machinery.
+
+    The sibling leg is deliberately LEFT ALONE — an untouched sibling on a
+    now-graded market is the row CERT-2524 said could be withdrawn to NULL.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    engine = create_async_engine(DB_URL)
+    try:
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        async with maker() as other:
+            await other.execute(
+                text(
+                    "UPDATE futures_outcomes "
+                    "SET is_winner = true, resolution_source = 'clob_never_graded' "
+                    "WHERE id = :i"
+                ),
+                {"i": winner_id},
+            )
+            await other.commit()
+    finally:
+        await engine.dispose()
+
+
+async def test_apply_cannot_withdraw_or_unback_a_page_when_a_grader_commits_between_backup_and_update(db):  # noqa: E501
+    """The CERT-2524 race, run for real: two sessions, one commit, one window.
+
+    The old apply re-ran a ``LIMIT``ed scope four times. Grading market 8001
+    pushes both of its legs out of the bound, so the third and fourth runs of
+    that query returned market 8006's legs instead — rows the backup step never
+    saw. The write then changed them, and the "one command puts it back" promise
+    in the module docstring quietly stopped being true for exactly the rows it
+    had just altered.
+
+    Two assertions, because the finding had two halves:
+
+    * **no unbacked id changes** — 8006's legs were never planned, never backed
+      up, and must not be touched however far the bound has moved.
+    * **no leg of the newly graded market becomes NULL** — 90012 is the sibling
+      the grader did not reach. It is now a genuine loss on a market with a
+      crowned winner, which is the ONE shape this rail must never withdraw.
+    """
+    await _seed_the_three_market_shapes(db)
+    # A second cohort market, further down the id order. Under the old code this
+    # is what the re-run LIMIT reached for once 8001 left the bound.
+    await _market(db, 8006)
+    await _leg(db, 90061, 8006, "Yes", False, None, price=0.7)
+    await _leg(db, 90062, 8006, "No", False, None, price=0.3)
+    await db.commit()
+
+    # limit=2 makes the page exactly market 8001's two legs, so a grade on 8001
+    # empties the page and the LIMIT has somewhere to move to.
+    census = await rail.repair(
+        db,
+        apply=True,
+        limit=2,
+        _between_backup_and_update=lambda: _grade_in_a_second_session(90011),
+    )
+
+    # -- the market the grader took --------------------------------------
+    assert await _is_winner(db, 90011) is True, "the grader's verdict was clobbered"
+    assert await _is_winner(db, 90012) is False, (
+        "the untouched sibling of a newly graded market was withdrawn to NULL — "
+        "a genuine loss re-rendered as ungraded, which is CERT-2524's harm"
+    )
+
+    # -- the rows the moving LIMIT used to reach --------------------------
+    assert await _is_winner(db, 90061) is False, (
+        "an id the plan never saw was changed — it has no backup row, so the "
+        "D51 undo cannot reach it"
+    )
+    assert await _is_winner(db, 90062) is False
+
+    # -- and the backup describes exactly what happened -------------------
+    assert census["changed"] == 0
+    assert census["conceded_to_a_grader"] == 2, (
+        "the concession must be reported: a page that quietly wrote nothing "
+        "reads identically to a page that had nothing to do"
+    )
+    backed_up = (
+        await db.execute(text(f"SELECT count(*) FROM {rail.BAK_TABLE}"))
+    ).scalar_one()
+    assert backed_up == 0, (
+        "a backup row survived for a leg we did not change — a later undo would "
+        "push our remembered `false` over the grader's verdict"
+    )
+
+
+async def test_every_row_the_apply_changed_is_recoverable_from_the_backup(db):
+    """The invariant the join buys, asserted as set equality on real rows.
+
+    Not "the counts match" — two counts can agree while naming different rows,
+    which is the same reasoning `_BAK_MISSING` is written as a COUNT OVER THE
+    BOUND for.
+    """
+    await _seed_the_three_market_shapes(db)
+
+    await rail.repair(db, apply=True)
+
+    withdrawn = {
+        r[0]
+        for r in (
+            await db.execute(
+                text("SELECT id FROM futures_outcomes WHERE is_winner IS NULL")
+            )
+        ).all()
+    }
+    backed = {
+        r[0]
+        for r in (
+            await db.execute(text(f"SELECT outcome_id FROM {rail.BAK_TABLE}"))
+        ).all()
+    }
+
+    assert withdrawn == backed == {90011, 90012}
+
+
+async def test_the_undo_leaves_alone_a_leg_somebody_graded_after_the_withdrawal(db):
+    """A late undo must not overwrite a verdict written since the apply.
+
+    This is CERT-2516's `4745-RESTORE-PRESERVES-POST-REPAIR-REPRICING` arriving
+    at this rail by construction: the withdrawal is what MAKES the leg gradeable
+    by `pm-never-graded`, so "graded after the withdrawal" is the expected
+    sequence, not an edge case. Restoring `false` over it would re-create the
+    fabricated `Lost` on a market that has since been graded honestly.
+    """
+    await _seed_the_three_market_shapes(db)
+    await rail.repair(db, apply=True)
+    assert await _is_winner(db, 90011) is None
+
+    # `pm-never-graded` does its job on the market this rail just withdrew.
+    await db.execute(
+        text(
+            "UPDATE futures_outcomes "
+            "SET is_winner = true, resolution_source = 'clob_never_graded' "
+            "WHERE id = :i"
+        ),
+        {"i": 90011},
+    )
+    await db.commit()
+
+    census = await rail.restore(db, apply=True)
+
+    assert await _is_winner(db, 90011) is True, "the undo clobbered a real verdict"
+    assert await _is_winner(db, 90012) is False, "the ungraded leg was not put back"
+    assert census["restored"] == 1
+    assert census["skipped_now_graded"] == 1, (
+        "the skip has to be a number an operator can see, not a shortfall they "
+        "have to work out by subtracting"
+    )
 
 
 async def test_the_page_boundary_does_not_strand_a_half_withdrawn_market(db):

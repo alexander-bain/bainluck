@@ -197,6 +197,89 @@ def test_the_backup_never_overwrites_an_earlier_row():
 
 
 # ---------------------------------------------------------------------------
+# CERT-2524 — the page is frozen, and the write cannot outrun its backup
+# ---------------------------------------------------------------------------
+
+
+def test_only_the_plan_read_is_limited_and_keyset_paged():
+    """The finding, as a source invariant: ONE moving read, and it is the first.
+
+    `_BOUND_SQL` is `ORDER BY ... LIMIT`, so re-running it under a later
+    snapshot returns a DIFFERENT set of rows — a grader that pushes a market out
+    of the bound lets the `LIMIT` pull an unseen row in. The first cut of this
+    rail re-ran it to back up, to check the backup, and again inside the
+    `UPDATE`; the rows that entered on the third run were changed with no backup
+    behind them. Every statement after the plan must therefore be keyed on the
+    frozen id list and on nothing else.
+    """
+    for name in ("_BAK_COPY", "_BAK_MISSING", "_APPLY_SQL", "_BAK_PRUNE"):
+        sql = getattr(rail, name)
+        assert ":page_ids" in sql, f"{name} does not key on the frozen page"
+        assert "LIMIT" not in sql.upper(), f"{name} re-derives a LIMITed scope"
+        assert ":after_id" not in sql, f"{name} re-walks the keyset"
+
+
+def test_the_write_can_only_reach_a_row_the_backup_already_holds():
+    """`FROM <backup> b WHERE b.outcome_id = fo.id` — a join, not a check.
+
+    A counting gate can be beaten by anything that changes between the count and
+    the write. A join cannot: a row with no backup row has nothing to join to,
+    so it is not merely rejected, it is unreachable. That is what makes the
+    one-command D51 undo a property of the statement rather than a promise.
+    """
+    apply_sql = rail._APPLY_SQL
+    assert f"FROM {rail.BAK_TABLE} b" in apply_sql
+    assert "b.outcome_id = fo.id" in apply_sql
+
+
+def test_the_write_re_tests_the_market_gate_it_was_planned_under():
+    """The plan may be seconds old; the market may have been graded since.
+
+    The gate has to be re-evaluated in the write's OWN snapshot, not inherited
+    from the plan read, or a market graded in between is withdrawn from a stale
+    reading of the world.
+    """
+    apply_sql = rail._APPLY_SQL
+    assert "NOT EXISTS" in apply_sql
+    assert "g.resolution_source IS NOT NULL" in apply_sql
+    assert "g.is_winner IS TRUE" in apply_sql
+    assert "fo.is_winner = false" in apply_sql
+    assert "fo.resolution_source IS NULL" in apply_sql
+
+
+def test_the_lock_covers_every_leg_of_the_market_not_just_the_page():
+    """A market split across a page boundary leaves the grader an unlocked leg.
+
+    Locking only the page's own legs would let a grader crown the sibling on the
+    far side of the boundary at the same instant this rail withdraws the near
+    side — the market ends up with a winner AND withdrawn losers, which is the
+    reader-visible defect this rail exists to remove, re-created on a market
+    that now has a genuine grade.
+    """
+    assert "fo.market_id = ANY(:market_ids)" in rail._LOCK_SQL
+    assert "FOR UPDATE" in rail._LOCK_SQL
+    assert "LIMIT" not in rail._LOCK_SQL.upper()
+
+
+def test_the_lock_is_bounded_so_a_busy_row_refuses_instead_of_hanging():
+    """An attended admin request must not wait on a lock for ever."""
+    assert rail.LOCK_TIMEOUT_MS > 0
+    assert rail._LOCK_TIMEOUT_SQLSTATE == "55P03"
+
+
+def test_the_undo_will_not_overwrite_a_verdict_somebody_else_wrote():
+    """`resolution_source IS NULL` on the restore.
+
+    Every backed-up leg was source-less when it was withdrawn. If one carries a
+    source now, `pm-never-graded` (or any grader) decided it in the meantime,
+    and putting our remembered `false` back would re-fabricate the very `Lost`
+    this rail removed — this time on a market that HAS been graded honestly.
+    """
+    assert "fo.resolution_source IS NULL" in rail._RESTORE_SQL
+    assert "fo.resolution_source IS NULL" in rail._RESTORE_PENDING
+
+
+# ---------------------------------------------------------------------------
 # the decision, without a database
 # ---------------------------------------------------------------------------
 
@@ -310,8 +393,8 @@ async def test_apply_rolls_back_when_the_backup_does_not_cover_the_plan():
             if "WHERE NOT EXISTS (SELECT 1 FROM bak" in sql:
                 # Seven in-scope rows have no backup row.
                 return _Result(value=7)
-            if "WITH scope AS" in sql:
-                return _Result(rowcount=999)
+            if sql.lstrip().startswith("UPDATE futures_outcomes"):
+                return _Result(rows=[(1,)], rowcount=999)
             if sql.lstrip().startswith("SELECT fo.id AS outcome_id"):
                 return _Result(rows=[_row()])
             return _Result()
@@ -329,9 +412,13 @@ async def test_apply_rolls_back_when_the_backup_does_not_cover_the_plan():
     assert census["backup_missing"] == 7
     assert "ROLLBACK" in calls
     assert "COMMIT" not in calls
-    assert not any("WITH scope AS" in c for c in calls), (
+    assert not any(c.lstrip().startswith("UPDATE futures_outcomes") for c in calls), (
         "the write ran despite an incomplete backup"
     )
+    # The refusal must also come BEFORE the lock — an admin request that takes
+    # `FOR UPDATE` on a market it has already decided not to write is holding
+    # rows against every grader for nothing.
+    assert not any("FOR UPDATE" in c for c in calls)
 
 
 @pytest.mark.asyncio
