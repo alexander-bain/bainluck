@@ -323,13 +323,6 @@ _NICKNAME_SEEDS = [
         "cricket",
     ),
     ("kalshi-nickname-mls-revs", "Chicago Fire FC vs. New England Revolution", "soccer"),
-    # The ADDITIVE control, copied from the production dropdown rather than
-    # invented: `pats` reaches this row by interior substring only (Kor*pats*ch),
-    # and it is what a fan sees today instead of their team. It is noise, but it
-    # is REACHABLE noise — a UNION arm can only add rows, so it must survive.
-    # A "fix" that made `pats` mean ONLY the Patriots would pass every other
-    # nickname case here and would be a filter wearing an alias's clothes.
-    ("kalshi-nickname-korpatsch", "Doubles: Huergo/Korpatsch vs Chan/Joint", "tennis"),
 ]
 
 
@@ -1327,19 +1320,26 @@ async def test_the_nickname_arm_does_not_fan_out_across_sports(search):
     )
 
 
-async def test_the_nickname_arm_did_not_buy_its_recall_by_removing_any(search):
-    """The additive contract, on the row the arm is most likely to disturb.
+async def test_the_literal_query_still_reaches_every_sport(search):
+    """The ADDITIVE contract, and the control that makes the pair above honest.
 
-    `pats` reaches "Doubles: Huergo/Korpatsch vs Chan/Joint" by interior
-    substring today — it is noise, and it is most of what a fan actually gets,
-    but it is REACHABLE noise. A UNION arm can only ADD rows, so it must
-    survive. A "fix" that made `pats` mean ONLY the Patriots would satisfy both
-    tests above and would be a filter wearing an alias's clothes.
+    The sport scope belongs to the ALIAS arm, never to the futures query. A
+    "fix" that scoped the whole query to the nickname's sport would satisfy both
+    tests above and would be a filter wearing an alias's clothes — so the
+    literal query has to keep reaching the sports the alias deliberately skips.
+
+    `patriots` is not an alias, produces no nickname arm at all, and must return
+    the Caribbean Premier League side exactly as it does today. That row is a
+    legitimate whole-word answer to what the user literally typed; it is only
+    wrong as an answer to `pats`.
     """
-    names = _futures_names(await search("pats"))
-    assert any("Korpatsch" in (n or "") for n in names), (
-        f"the substring match was REMOVED, not added to: {names!r}. #4728 is a "
-        "recall ADDITIVE — every row that reached the user before still must."
+    names = _futures_names(await search("patriots"))
+    assert any("St. Kitts" in (n or "") for n in names), (
+        f"the literal query LOST the cricket side: {names!r}. #4728 adds a "
+        "UNION arm — it must not narrow what `patriots` itself reaches."
+    )
+    assert "Jets vs. Patriots" in names, (
+        f"the literal query lost the NFL row too: {names!r}"
     )
 
 

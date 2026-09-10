@@ -5078,7 +5078,16 @@ async def search_events(
     # #4728: the one-word sibling — colloquial team nicknames ("pats", "revs",
     # "niners", "bucs"), sport-scoped. Same UNION shape, same both-surfaces rule as
     # the phrase aliases above; see `_team_nickname_futures_arms`.
-    _futures_where_or.extend(_team_nickname_futures_arms(terms))
+    #
+    # LIKE THE ALIAS ARMS, THIS IS THREE WIRINGS AND NOT ONE, and the comment at
+    # `_futures_tier_whens` says why in full: recall alone got `nba finals` from
+    # "unreachable" to "on the page", "which sounds like the fix and is not". A
+    # recall-only nickname lands in tier 2 with the outcome-only collisions and
+    # never reaches the 20-row window at all. Measured here the same way: with
+    # only this line, the real-Postgres gate returned an EMPTY futures list for
+    # `pats` and `revs`. Recall, tier1 window, relevance tier — all three.
+    _futures_nickname_arms = _team_nickname_futures_arms(terms)
+    _futures_where_or.extend(_futures_nickname_arms)
 
     # LAT-P006/#1494: the recall arms are combined with UNION, not OR.
     #
@@ -5140,7 +5149,7 @@ async def search_events(
     # candidate set this route can see is exactly what it was.
     _futures_tier1_arms = [
         arm for arm in (futures_name_match, league_ticker_match) if arm is not None
-    ] + list(_futures_alias_arms)
+    ] + list(_futures_alias_arms) + list(_futures_nickname_arms)
 
     # #993 Slice-Speed: rank by the NAME vector only. The old vector appended a
     # correlated string_agg(outcome names) computed for every candidate row
@@ -5283,6 +5292,14 @@ async def search_events(
         _futures_tier_whens.append((league_ticker_match, 1))
     if _futures_alias_arms:
         _futures_tier_whens.append((or_(*_futures_alias_arms), 1))
+    # #4728: a nickname is the same kind of inference as a phrase alias — the
+    # canonical phrasing we substituted on the user's behalf — so it earns the
+    # same tier 1, and for the same reason: `_expanded_tsquery` ranks against the
+    # LITERAL query, which scores an aliased name 0, so without a tier the
+    # ordering falls through to `market_tier` and the row loses to whatever
+    # market-quality prior happens to sit above it.
+    if _futures_nickname_arms:
+        _futures_tier_whens.append((or_(*_futures_nickname_arms), 1))
     _futures_name_tier = case(*_futures_tier_whens, else_=2)
 
     def _futures_window_query(candidate_filter):

@@ -206,3 +206,45 @@ def test_both_surfaces_actually_wire_the_nickname_arms_in() -> None:
         assert "_team_nickname_futures_arms(terms)" in source, (
             f"{route.__name__} no longer adds the nickname recall arms"
         )
+
+
+def test_search_wires_the_nickname_arms_into_all_three_places() -> None:
+    """🔴 RECALL ALONE IS NOT THE FIX, and this is the test that says so.
+
+    `/search` uses its futures arms in THREE places, and the first shipped
+    version of #4728 wired only the first:
+
+      1. `_futures_where_or`    — the candidate set (recall)
+      2. `_futures_tier1_arms`  — the arms `_fetch_futures_window` actually
+                                  fetches the 20-row window from
+      3. `_futures_tier_whens`  — the relevance tier that orders that window
+
+    With only (1), the real-Postgres gate returned an **empty** futures list for
+    `pats` and `revs`: the rows were in the candidate set and no query ever
+    fetched them. Every unit test passed, because the helper was right and the
+    route did call it.
+
+    This is not a new lesson — the comment at `_futures_tier_whens` records
+    LAT-P029 making the same mistake with the phrase aliases, where recall alone
+    got `nba finals` from "unreachable" to "on the page", "which sounds like the
+    fix and is not". A nickname with no tier lands in tier 2 with the
+    outcome-only collisions and is ranked by `market_tier`, a market-QUALITY
+    prior that is not about the query at all.
+
+    A source guard rather than a behavioural one on purpose: the behaviour needs
+    a real Postgres (it is covered in `tests/integration/`), while the wiring is
+    exactly the thing a later refactor drops by accident.
+    """
+
+    source = inspect.getsource(search_events)
+    assert "_futures_nickname_arms = _team_nickname_futures_arms(terms)" in source
+    for wiring, what in (
+        ("_futures_where_or.extend(_futures_nickname_arms)", "the candidate set"),
+        ("list(_futures_nickname_arms)", "the tier-1 window arms"),
+        ("or_(*_futures_nickname_arms)", "the relevance tier"),
+    ):
+        assert wiring in source, (
+            f"the nickname arms are no longer wired into {what} — with recall "
+            "alone the rows are candidates that nothing fetches, and `pats` "
+            "returns an empty futures list while every unit test stays green"
+        )
