@@ -195,7 +195,7 @@ struct ChampionshipPathView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(color.opacity(0.15))
                                 .overlay(
-                                    Text(String((team.shortName ?? team.name).prefix(2)))
+                                    Text(TeamShortName.abbreviation(team.shortName ?? team.name))
                                         .font(.system(size: 12, weight: .bold))
                                         .foregroundStyle(color)
                                 )
@@ -207,7 +207,7 @@ struct ChampionshipPathView: View {
                         .fill(color.opacity(0.15))
                         .frame(width: 40, height: 40)
                         .overlay(
-                            Text(String((team.shortName ?? team.name).prefix(2)))
+                            Text(TeamShortName.abbreviation(team.shortName ?? team.name))
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(color)
                         )

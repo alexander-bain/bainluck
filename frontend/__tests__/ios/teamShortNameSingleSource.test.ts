@@ -64,6 +64,38 @@ const REIMPLEMENTATION_TELLS: Array<[string, RegExp]> = [
   // through — which is why the signed-in user's own avatar needs an entry in
   // NOT_TEAM_LABELS below rather than escaping the scan by accident.
   ["takes the first character of a name", /String\((?:[^()]|\([^()]*\))*\.prefix\(1\)\)/],
+  // #4757 — the TWO- AND THREE-GLYPH rules, the neighbours of the tell above.
+  //
+  // #4720 fixed and pinned `prefix(1)`. Widening the same idea by one and two
+  // characters found four more hand-rolled badges that had been invisible to
+  // every assertion in this file:
+  //
+  //   RelatedFuturesView:1152   Text(shortName.prefix(3).uppercased())
+  //   ChampionshipPathView:198  Text(String((team.shortName ?? team.name).prefix(2)))
+  //   ChampionshipPathView:210  (the same badge, the no-logo branch)
+  //   LadderCardView:319        String(label.prefix(3)).uppercased()   <- NOT a team, see below
+  //
+  // The first three took glyphs off a team name and are fixed. The damage is the
+  // shape `abbreviation` exists to prevent: `short` returns the FULL name for a
+  // designator-ending club, so the first characters put the designator back on
+  // the badge — "FC Schalke 04" drew `FC ` with a trailing space, "AD Ceuta FC"
+  // drew `AD `, "1. FC Heidenheim 1846" drew `1. `.
+  //
+  // TWO tells, because the two offending forms do not share a wrapper and one
+  // tell cannot see both. `String(...)`-anchoring alone would have missed
+  // RelatedFuturesView entirely (it is `Text(...)`, not `String(...)`), which is
+  // the same way `prefix(1)` hid until #4720 went looking.
+  //
+  // Neither tell may fire on a COLLECTION slice — `outcomes.prefix(3)`,
+  // `Array(items.prefix(2))`, `golfers.dropFirst().prefix(3)` — of which this
+  // tree has nineteen, none of them badges. The discriminators are exactly what
+  // separates glyph-taking from list-taking: a slice is never wrapped in
+  // `String(...)` and never `.uppercased()`.
+  [
+    "takes two or three characters of a name",
+    /String\((?:[^()]|\([^()]*\))*\.prefix\([23]\)\)/,
+  ],
+  ["uppercases a two- or three-character slice", /\.prefix\([23]\)\.uppercased\(\)/],
 ];
 
 /**
@@ -91,6 +123,24 @@ const NOT_TEAM_LABELS = new Map<string, Array<[string, string]>>([
       [
         "authManager.user?.displayName ?? authManager.user?.email",
         "#4720 — the SIGNED-IN USER's own account avatar, not a competitor. A person's own initial is what every account circle draws, and `TeamShortName` would badge an email address",
+      ],
+    ],
+  ],
+  [
+    join(IOS_ROOT, "Components/LadderCardView.swift"),
+    [
+      [
+        'default:             abbrev = String(label.prefix(3)).uppercased()',
+        "#4757 — a MILESTONE label, not a team. `shortDeltaLabel` abbreviates the ladder's last COLUMN for the '… 24H' header tag, and routing a milestone through a team-name helper would be a worse bug than the one it looks like. MEASURED against /api/playoffs/{mlb,nfl,nba,nhl} on 2026-09-10: the last column is 'World Series' / 'Super Bowl' / 'Champion' / 'Stanley Cup', so no team name reaches this line and no label yields a trailing space. Separately filed: the switch above it names 'PLAYOFFS' and 'DIVISION', neither of which is ever the last column, so three of four leagues fall to this default",
+      ],
+    ],
+  ],
+  [
+    join(IOS_ROOT, "Views/EntertainmentView.swift"),
+    [
+      [
+        "let initials = String(title.prefix(2)).uppercased()",
+        "#4757 — a FILM/SHOW title ('Dune: Part Three'), not a competitor. `TeamShortName` would apply club-designator rules to a work of art",
       ],
     ],
   ],
@@ -203,6 +253,43 @@ d("iOS team short names have exactly one implementation", () => {
     for (const line of prefix) {
       const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(stripComments(line)));
       expect(hits.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the two/three-glyph tells fire on the REAL pre-fix source, all three badges", () => {
+    // #4757. Copied verbatim from origin/master at cded0081 — the three badges
+    // that took glyphs off a team name by hand. A tell proven only against a
+    // synthetic is a tell that has never met the code it is for.
+    const prefix = [
+      `                        Text(shortName.prefix(3).uppercased())`,
+      `                                    Text(String((team.shortName ?? team.name).prefix(2)))`,
+      `                            Text(String((team.shortName ?? team.name).prefix(2)))`,
+    ];
+    for (const line of prefix) {
+      const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(stripComments(line)));
+      expect(hits.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the two/three-glyph tells do NOT fire on collection slices", () => {
+    // The failure mode that would make the tells above unshippable. Nineteen
+    // lines in this tree take `.prefix(2)`/`.prefix(3)` of an ARRAY, and a tell
+    // that cannot tell a list from a name would red the suite on all of them and
+    // be reverted within the hour. Copied verbatim from the tree.
+    const slices = [
+      `                        ForEach(Array(outcomes.prefix(3).enumerated()), id: \\.offset) { idx, outcome in`,
+      `                            ForEach(golfers.dropFirst().prefix(3)) { golfer in`,
+      `                selectedNames = Set(result.outcomes.prefix(3).map(\\.name))`,
+      `                items.append(contentsOf: extra.prefix(2))`,
+      `        let pinnedLead = Array(items.prefix(3))`,
+      `            if let outcomes = futures.topOutcomes?.prefix(3) {`,
+      `            distinctive.compactMap { $0.first(where: { $0.isLetter || $0.isNumber }) }.prefix(3)`,
+    ];
+    for (const line of slices) {
+      const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(stripComments(line))).map(
+        ([why]) => why
+      );
+      expect(hits).toEqual([]);
     }
   });
 
