@@ -41,6 +41,7 @@ import {
   getServerTelemetryDecision,
   subscribeTelemetryConsent,
 } from '@/lib/analytics';
+import { isAgentClient, subscribeAgentOrigin } from '@/lib/analytics/agentOrigin';
 import WebVitalsReporter from './WebVitalsReporter';
 import ScreenTimingReporter from './ScreenTimingReporter';
 import { GoogleAnalytics } from './GoogleAnalytics';
@@ -57,6 +58,30 @@ export function TelemetryGate() {
     getTelemetryDecision,
     getServerTelemetryDecision,
   );
+
+  // #1916 / notice 39 rung 3: an agent is not a person, whatever it has stored.
+  //
+  // This is deliberately NOT load-bearing today and is still not ceremony. A
+  // `look.sh` shot runs a fresh Playwright context, so its consent level is
+  // `null` and `decideTelemetry` already returns NOTHING — every provider below
+  // is absent for the fleet as things stand. What it is absent BY is a property
+  // of the current harness, not a decision: a shot rig with a persistent
+  // profile, or one that accepts the banner in order to photograph the
+  // post-consent state, silently re-opens GA4, Vercel Analytics and Web Vitals
+  // to agent traffic all at once. The rail that DOES need a filter today is
+  // Speed Insights, which is ungated by ruling D30 and is handled at its mount
+  // in `app/layout.tsx`.
+  //
+  // Read after the hooks, never before them, and by absence rather than by an
+  // internal opt-out flag — the same enforcement this component already uses
+  // for consent. Hydration-safe for free: the server render and an agent render
+  // are the same empty output, so there is nothing for React to disagree about.
+  const isAgent = useSyncExternalStore(
+    subscribeAgentOrigin,
+    isAgentClient,
+    () => false,
+  );
+  if (isAgent) return null;
 
   return (
     <>

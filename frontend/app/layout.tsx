@@ -4,6 +4,7 @@ import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AnalyticsProvider, ConsentBanner, TelemetryGate } from "@/components/Analytics";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { speedInsightsAgentDropSnippet } from "@/lib/analytics/agentOrigin";
 import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
 import UserMenu from "@/components/UserMenu";
@@ -165,6 +166,24 @@ export default function RootLayout({
             declines still sends speed beacons. `/privacy` and the banner both
             say so — the C90 P1 lesson runs in both directions, and copy that
             claims a decline stops everything would now be the false half. */}
+        {/* #1916 / notice 39 rung 3. Being ungated is exactly why this rail —
+            alone of the four — was counting OUR OWN agents: `look.sh` drives a
+            fresh Playwright context, so the consent-gated rails were already
+            silent for it, while every shot still sent a speed beacon. Nine
+            lanes shooting all day were dragging the p75 the latency lane tunes.
+
+            This registers a Speed Insights `beforeSend` that returns null for a
+            client carrying the `bl_agent` cookie. It is an inline string rather
+            than the `beforeSend` prop because this file is a SERVER component
+            and a function cannot cross the RSC boundary; the mount itself must
+            not move (D30, guarded) and must not become conditional (that would
+            make the root layout dynamic and cost every real visitor TTFB).
+            Running during HTML parse also beats the beacon race that a
+            `useEffect` registration would lose. Full reasoning + the shared
+            predicate: lib/analytics/agentOrigin.ts. */}
+        <script
+          dangerouslySetInnerHTML={{ __html: speedInsightsAgentDropSnippet() }}
+        />
         <SpeedInsights />
         <SWRProvider>
         <AnalyticsProvider>
