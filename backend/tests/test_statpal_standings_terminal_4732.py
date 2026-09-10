@@ -45,17 +45,17 @@ this I asserted in a code comment that standings had ONE unasked arm, because
 nine of the thirteen mapped keys cannot be asked at all. `test_the_unasked_arms`
 below pins both, so the count in the comment cannot drift from the code again.
 """
-import json
-
 import pytest
 
 import app.services.statpal_api as statpal_api
-from app.services.statpal_api import (
-    NO_STANDINGS_SPORTS,
-    StatPalStandingsFetch,
-)
 from app.tasks.statpal_sync import _standings_league_node
 from app.utils.task_verdict import ENFORCED_TASKS, NOT_GREEN, verdict_for
+
+#: Module-qualified rather than imported by name, matching
+#: `test_statpal_schedules_zero_yield_2907.py`: `_stub_venue` has to monkeypatch
+#: attributes ON this module, so binding some names locally and reaching through
+#: the module for others would leave two ways to say one thing.
+NO_STANDINGS_SPORTS = statpal_api.NO_STANDINGS_SPORTS
 
 
 # =============================================================================
@@ -302,11 +302,11 @@ def _stub_venue(monkeypatch, payload_by_statpal_sport):
     class _Service:
         async def get_standings_result(self, sport, *a, **k):
             if sport in NO_STANDINGS_SPORTS:
-                return StatPalStandingsFetch(None, "no_venue_path", sport, None)
+                return statpal_api.StatPalStandingsFetch(None, "no_venue_path", sport, None)
             payload = payload_by_statpal_sport.get(sport)
             if payload is None:
-                return StatPalStandingsFetch(None, "fetch_failed", sport, "standings")
-            return StatPalStandingsFetch(payload, "ok", sport, "standings")
+                return statpal_api.StatPalStandingsFetch(None, "fetch_failed", sport, "standings")
+            return statpal_api.StatPalStandingsFetch(payload, "ok", sport, "standings")
 
         async def get_standings(self, sport, *a, **k):
             return (await self.get_standings_result(sport)).data
