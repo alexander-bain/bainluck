@@ -89,11 +89,14 @@ def real_lanes():
     return [tuple(line.split(None, 1)) for line in out.strip().splitlines()]
 
 
-def write_conf(tmp_path, lanes, graders=2, runner=None, lane4=None, bus=None):
+def write_conf(
+    tmp_path, lanes, graders=2, runner=None, lane4=None, bus=None, supervisor=None
+):
     """A synthetic lanes.conf. `lanes` maps lane name -> worktree dir.
 
-    `bus` defaults to None = BUS_RUNNER unset, which is the older-checkout case:
-    the launchers must still bring up every lane and grader without it.
+    `bus` and `supervisor` default to None = the variable unset, which is the
+    older-checkout case: the launchers must still bring up every lane and grader
+    without either.
     """
     conf = tmp_path / "lanes.conf"
     arms = "".join(f'    {n}) echo "{d}" ;;\n' for n, d in lanes.items())
@@ -104,8 +107,29 @@ def write_conf(tmp_path, lanes, graders=2, runner=None, lane4=None, bus=None):
         f"LANE4_GRADERS={graders}\n"
         f'LANE4_RUNNER="{lane4 or LANE4}"\n'
         + (f'BUS_RUNNER="{bus}"\n' if bus else "")
+        + (f'SUPERVISOR="{supervisor}"\n' if supervisor else "")
     )
     return conf
+
+
+def stub_pgrep(tmp_path, found):
+    """A directory to prepend to PATH whose `pgrep` reports found / not-found.
+
+    The supervisor branch in `start-lanes.sh` asks `pgrep` whether one is
+    already running, and on a lane machine the honest answer is always "yes" —
+    so the arm that actually LAUNCHES could never be exercised on the machine
+    that runs it. Shadowing `pgrep` on PATH drives the real branch either way
+    without a test hook in the script, and without killing the live supervisor.
+
+    Only `pgrep` is shadowed; every other command still resolves normally.
+    `--dry-run` skips the reap block, so this is the script's only `pgrep` call.
+    """
+    d = tmp_path / ("pathstub-found" if found else "pathstub-missing")
+    d.mkdir()
+    p = d / "pgrep"
+    p.write_text("#!/bin/bash\n" + ("echo 424242\nexit 0\n" if found else "exit 1\n"))
+    p.chmod(0o755)
+    return d
 
 
 # ---------------------------------------------------------------- syntax ----
@@ -1807,3 +1831,137 @@ def test_a_chain_without_its_shadow_degrades_to_plain_curl_and_stays_quiet(tmp_p
         assert noise not in out, (
             f"an absent shadow made noise on every shell's stderr: {out!r}"
         )
+
+
+# ------------------------------------------------ the supervisor window ----
+#
+# latency/313, 2026-09-10 (Fable-5, at Alex's ask). `start-lanes.sh` used to END
+# by printing the supervisor command for Alex to run by hand in a second window.
+# That made the fleet's self-healing depend on a human remembering a step after
+# every reboot — and it is the one step whose omission is SILENT: without the
+# supervisor, the first lane that dies stays dead, while every lane still up
+# makes the fleet look healthy.
+#
+# Both arms are asserted. A test that only covered "it launches one" would pass
+# just as happily on a script that launches a second supervisor over a live one,
+# and two supervisors double every relaunch either of them decides to make.
+
+
+def _fake_supervisor(tmp_path):
+    p = tmp_path / "fake-lanes-supervisor.sh"
+    p.write_text("#!/bin/bash\nsleep 0\n")
+    p.chmod(0o755)
+    return p
+
+
+def test_start_lanes_launches_the_supervisor_when_none_is_running(tmp_path):
+    sup = _fake_supervisor(tmp_path)
+    conf = write_conf(tmp_path, {"alpha": str(tmp_path)}, graders=0, supervisor=str(sup))
+    rc, out = run(
+        START,
+        "--dry-run",
+        env={
+            "LANES_CONF": str(conf),
+            "PATH": f"{stub_pgrep(tmp_path, found=False)}:{os.environ['PATH']}",
+        },
+    )
+    assert rc == 0, out
+    assert "supervisor: started" in out, f"no supervisor window is opened:\n{out}"
+    assert str(sup) in out, f"the window does not run the supervisor script:\n{out}"
+    # It is counted in the tally, or Alex reads "13 windows opened" and sees 14.
+    assert "and 1 supervisor" in out, f"the supervisor is opened but not counted:\n{out}"
+
+
+def test_start_lanes_does_not_open_a_SECOND_supervisor(tmp_path):
+    sup = _fake_supervisor(tmp_path)
+    conf = write_conf(tmp_path, {"alpha": str(tmp_path)}, graders=0, supervisor=str(sup))
+    rc, out = run(
+        START,
+        "--dry-run",
+        env={
+            "LANES_CONF": str(conf),
+            "PATH": f"{stub_pgrep(tmp_path, found=True)}:{os.environ['PATH']}",
+        },
+    )
+    assert rc == 0, out
+    assert "supervisor: already running" in out, out
+    assert "supervisor: started" not in out, f"opened a second supervisor:\n{out}"
+    assert str(sup) not in out, f"a duplicate supervisor window is opened:\n{out}"
+    assert "and 0 supervisor" in out, f"counted a window it did not open:\n{out}"
+
+
+def test_the_supervisor_window_prevents_sleep_but_lets_the_DISPLAY_sleep(tmp_path):
+    """`-is`, never `-d`.
+
+    Alex had been running `caffeinate -dimsu` in a window of its own beside the
+    supervisor. Folding that in wholesale would keep his SCREEN awake for as long
+    as the fleet runs, which nothing about supervising lanes needs. The flags are
+    asserted exactly, because `-dis` would pass any check for "contains -i".
+    """
+    sup = _fake_supervisor(tmp_path)
+    conf = write_conf(tmp_path, {"alpha": str(tmp_path)}, graders=0, supervisor=str(sup))
+    rc, out = run(
+        START,
+        "--dry-run",
+        env={
+            "LANES_CONF": str(conf),
+            "PATH": f"{stub_pgrep(tmp_path, found=False)}:{os.environ['PATH']}",
+        },
+    )
+    assert rc == 0, out
+    line = next((ln for ln in out.splitlines() if "caffeinate" in ln), None)
+    assert line is not None, f"the supervisor is not launched under caffeinate:\n{out}"
+    flags = re.search(r"caffeinate\s+(-\S+)", line)
+    assert flags, line
+    assert set(flags.group(1)) == set("-is"), (
+        f"caffeinate flags are {flags.group(1)!r}, expected exactly -is "
+        f"(no -d: the display may sleep): {line}"
+    )
+
+
+def test_start_lanes_survives_a_checkout_with_no_supervisor_script(tmp_path):
+    """Tolerated, not fatal — the same rule the measurement bus gets above.
+
+    An older checkout must still bring up every lane. But it must SAY so: a
+    missing supervisor and a running one both produce a fleet that looks fine
+    for exactly as long as nothing dies.
+    """
+    conf = write_conf(
+        tmp_path,
+        {"alpha": str(tmp_path)},
+        graders=0,
+        supervisor=str(tmp_path / "nope-supervisor.sh"),
+    )
+    rc, out = run(
+        START,
+        "--dry-run",
+        env={
+            "LANES_CONF": str(conf),
+            "PATH": f"{stub_pgrep(tmp_path, found=False)}:{os.environ['PATH']}",
+        },
+    )
+    assert rc == 0, out
+    assert "supervisor: SKIPPED" in out, f"a missing supervisor is silent:\n{out}"
+    assert "alpha" in out, f"a missing supervisor stopped the lanes launching:\n{out}"
+
+
+def test_start_lanes_no_longer_asks_alex_to_run_the_supervisor_by_hand():
+    """The instruction has to LEAVE, not merely be joined by the automation.
+
+    A script that opens the window and still prints "also run the supervisor
+    once" teaches the reader to run a second one, which is the state this change
+    exists to end.
+    """
+    src = START.read_text()
+    assert "Also run the supervisor once" not in src, (
+        "start-lanes.sh still tells Alex to launch the supervisor by hand"
+    )
+
+
+def test_the_supervisor_path_lives_in_lanes_conf_like_every_other_runner():
+    """Same reason the lane list does: the two scripts must not be able to
+    disagree about the topology, and which script is the supervisor is part of
+    it. A path spelled inside start-lanes.sh is a second copy by definition."""
+    assert source_conf('echo "${SUPERVISOR:-UNSET}"').strip().endswith(
+        "lanes-supervisor.sh"
+    ), "lanes.conf does not name the supervisor"
