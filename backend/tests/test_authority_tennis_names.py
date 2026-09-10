@@ -116,9 +116,45 @@ def test_our_bare_surnames_produce_a_key_with_no_initial():
     assert our_tennis_keys("Gaston") == frozenset({("gaston", None)})
 
 
+def test_a_bare_surname_of_several_tokens_produces_one_too():
+    """#4617. The rule above stopped at one token, so a surname that runs to two
+    or three produced no initial-less reading at all — and every reading it did
+    produce mis-read one of the surname's own tokens as the forename:
+
+        `our_tennis_keys('Van de Zandschulp')` -> ('zandschulp', 'v') …
+
+    That `'v'` is from *Van*, and it can never agree with the canonical's real
+    `('zandschulp', 'b')` from *Botic*. Measured over 17 real ATP/WTA names, 12
+    failed and all 12 were multi-token or hyphenated surnames.
+    """
+    assert ("van de zandschulp", None) in our_tennis_keys("Van de Zandschulp")
+    assert ("bautista agut", None) in our_tennis_keys("Bautista Agut")
+    # Hyphens fold to spaces, so a hyphenated surname is the same shape.
+    assert ("auger aliassime", None) in our_tennis_keys("Auger-Aliassime")
+    # The single-token case is unchanged — it IS this rule, stopping naturally.
+    assert our_tennis_keys("Hrazdil") == frozenset({("hrazdil", None)})
+
+
 def test_a_missing_initial_never_becomes_a_disagreement():
     assert tennis_names_agree("Alcaraz", "C. Alcaraz")
     assert tennis_names_agree("Monfils", "G. Monfils")
+
+
+def test_statpal_can_join_a_multi_token_surname_from_our_side_too():
+    """The same #4617 hole read from the other end, and the reason it went unseen.
+
+    `statpal_tennis_key` has always parsed `B. Van De Zandschulp` correctly to
+    `('van de zandschulp', 'b')` — it is that function's own docstring example —
+    but our side could produce no key with that surname, so the join could never
+    be made and the failure looked like StatPal not listing the player.
+    """
+    assert tennis_names_agree("Van de Zandschulp", "B. Van De Zandschulp")
+    assert tennis_names_agree("de Minaur", "A. De Minaur")
+    assert tennis_names_agree("Carreno Busta", "P. Carreno Busta")
+    # …and the surname must still match WHOLE, so a shared trailing token is not
+    # enough: `Moro Canas` is not `A. Canas`.
+    assert not tennis_names_agree("Moro Canas", "A. Canas")
+    assert not tennis_names_agree("Bautista Agut", "R. Bautista")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -273,8 +309,26 @@ def test_no_two_different_players_collide_on_a_full_key(corpus):
 
     contested = {k: v for k, v in buckets.items() if len(v) > 1}
     # Pinned so that a loosening which multiplies the collisions has to say so.
-    assert len(buckets) == 10617
-    assert len(contested) == 572
+    #
+    # #4617 said so. `our_tennis_keys` now emits the whole folded name with no
+    # initial for a multi-token name, as it always has for a single-token one, so
+    # a row whose entire value is a surname (`Van de Zandschulp`, `Bautista
+    # Agut`) is readable at all. Both numbers moved and the second one is the one
+    # that carries the safety:
+    #
+    #     buckets    10617 -> 14109   (+3492: one new key per singles name)
+    #     contested    572 ->   618   (+46, and 0 removed)
+    #
+    # **All 46 of the new contested keys are ONE player our register spells more
+    # than one way — 0 are two different people.** They are the spelling classes
+    # this module exists to fold: case (`McFadzean`/`Mcfadzean`), diacritics
+    # (`Léonard`/`Leonard`), hyphenation (`Meng-Yi Chen`/`Meng Yi Chen`),
+    # apostrophes (`O'Connell`/`O'connell`) and particle case (`von`/`Von
+    # Deichmann`). Every one resolves MATCHED against a single
+    # `register_identity`, which the loop below re-proves from the shipped rule
+    # rather than from this comment.
+    assert len(buckets) == 14109
+    assert len(contested) == 618
 
     # Every contested key, resolved against its own claimants, must refuse.
     unexpressable = 0
@@ -315,7 +369,17 @@ def test_no_two_different_players_collide_on_a_full_key(corpus):
     # MATCHED; an ordered one refuses them by name. Each of these is a whole
     # class of silent substitution, so the direction of a change here matters
     # more than the digit — DOWN is a refusal being added, UP is a tolerance.
-    assert matched_on_contested == 170
+    #
+    # #4617 moved it UP, 170 -> 216, and that is a tolerance being added, so it
+    # owes the argument. All +46 are the whole-name key finding one player our
+    # register spells two ways — `McFadzean`/`Mcfadzean`, `Léonard`/`Leonard`,
+    # `O'Connell`/`O'connell`, `von`/`Von Deichmann`. None is two people.
+    #
+    # The line BELOW is what proves that rather than asserts it: the count of
+    # contested keys that come back AMBIGUOUS — the refusals — is **401 before
+    # and 401 after**. The widening added 46 fused SPELLINGS and zero new
+    # ambiguities, so nothing that used to be refused is now being decided.
+    assert matched_on_contested == 216
     assert len(contested) - unexpressable - matched_on_contested == 401
 
 

@@ -647,19 +647,59 @@ def statpal_tennis_key(name: object) -> Optional[TennisKey]:
 def our_tennis_keys(name: object) -> frozenset[TennisKey]:
     """Every key one of our names could answer to.
 
-    A bare surname yields exactly ``(surname, None)``. A multi-token name yields
-    both readings — surname-last for every trailing run, surname-first for every
-    leading run — because our column does not record which one it stored, and
-    guessing from the tokens is the mistake this module's header measures.
+    A bare surname yields exactly ``(surname, None)`` **however many tokens it
+    runs to**. A multi-token name additionally yields both split readings —
+    surname-last for every trailing run, surname-first for every leading run —
+    because our column does not record which one it stored, and guessing from
+    the tokens is the mistake this module's header measures.
+
+    🔴 **THE WHOLE-NAME READING IS NOT AN EXTRA TOLERANCE; IT IS THE ONE-TOKEN
+    RULE STOPPING AT ONE TOKEN.** Until #4617 the ``(surname, None)`` reading was
+    emitted only when the name was a single token, so a name whose *entire* value
+    is a multi-token surname got no initial-less reading at all, and every
+    reading it did get mis-read one of the surname's own tokens as the forename:
+
+        ``our_tennis_keys('Van de Zandschulp')``
+            -> ``('zandschulp', 'v')``, ``('de zandschulp', 'v')``, …
+
+    That ``'v'`` is from *Van*. Against the canonical's real ``('zandschulp',
+    'b')`` — from *Botic* — no combination can agree, so a live US Open row
+    printed twice (`15307491`/`15307525`, 18 markets on one and 8 on the other).
+
+    The class is a naming SHAPE, not a tail: of 17 real ATP/WTA names measured,
+    **12 failed and every one of them was a multi-token or hyphenated surname**
+    (``de Minaur``, ``Davidovich Fokina``, ``Bautista Agut``, ``Carreno Busta``,
+    ``Del Potro``, ``Auger-Aliassime``, …), while all five single-token surnames
+    passed. Dutch, Spanish, Argentine and French conventions are a large share of
+    the tour.
+
+    **What it does NOT widen**, and the reason this is safe rather than merely
+    useful: the new key's surname is the *whole* name, so it can only agree with
+    a side that spells that same whole string as one of its own surname runs.
+    ``('moro canas', None)`` cannot reach ``Alejandro Canas``, and
+    ``('bautista agut', None)`` cannot reach ``Roberto Bautista`` — both measured
+    False and both kept as controls. A ``None`` initial matching two *real*
+    people is the pre-existing cost this module already documents at
+    ``('damm', None)``; where it happens the resolver answers ``AMBIGUOUS``
+    rather than picking one (:func:`resolve_tennis_name`, "two matches is not a
+    match"), so the widening fails loudly in the direction this module is biased
+    toward.
+
+    It also repairs the StatPal arm, which had the same hole read from the other
+    end: :func:`statpal_tennis_key` correctly parses ``B. Van De Zandschulp`` to
+    ``('van de zandschulp', 'b')`` — its own docstring's example — while our side
+    could produce no key with that surname at all, so the join could never be
+    made.
     """
     if is_doubles_name(name) or not looks_like_a_player(name):
         return frozenset()
     toks = _tokens(name)
     if not toks:
         return frozenset()
-    if len(toks) == 1:
-        return frozenset({(toks[0], None)})
-    keys: set[TennisKey] = set()
+    # The whole value read as a surname with no given name known. For a
+    # single-token name this IS the entire former special case (the loop below
+    # does not run), which is why that branch is gone rather than duplicated.
+    keys: set[TennisKey] = {(" ".join(toks), None)}
     for cut in range(1, len(toks)):
         # surname-last: "Carlos Alcaraz" -> ('alcaraz', 'c')
         keys.add((" ".join(toks[cut:]), toks[0][0]))

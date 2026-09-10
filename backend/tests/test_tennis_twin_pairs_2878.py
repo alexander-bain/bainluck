@@ -356,3 +356,119 @@ class TestTheBlockKey:
 
     def test_different_fixtures_get_different_buckets(self):
         assert block_key("Fritz", "Cerundolo") != block_key("Swiatek", "Zheng")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# #4617 — a surname that runs to more than one token
+# ════════════════════════════════════════════════════════════════════════════
+
+#: Bare row → its canonical, one per naming convention on the tour. Every one of
+#: these was measured FALSE against `players_agree` before #4617 and TRUE after;
+#: the five single-token controls at the end passed both times and are here so a
+#: regression that broke them is visible in the same table.
+_ONE_PLAYER_TWO_SPELLINGS = [
+    # Dutch/Belgian particles — the live US Open specimen is the first row
+    ("Van de Zandschulp", "Botic van de Zandschulp"),
+    ("de Minaur", "Alex de Minaur"),
+    ("Van Rijthoven", "Tim Van Rijthoven"),
+    ("De Jong", "Jesper De Jong"),
+    # Spanish/Argentine double surnames
+    ("Davidovich Fokina", "Alejandro Davidovich Fokina"),
+    ("Bautista Agut", "Roberto Bautista Agut"),
+    ("Carreno Busta", "Pablo Carreno Busta"),
+    ("Ramos Vinolas", "Albert Ramos Vinolas"),
+    ("Del Potro", "Juan Martin Del Potro"),
+    ("Moro Canas", "Alejandro Moro Canas"),
+    # Hyphenated — folded to two tokens, so it fails the same way
+    ("Auger-Aliassime", "Felix Auger-Aliassime"),
+    ("Gueymard Wayenburg", "Arthur Gueymard Wayenburg"),
+    # Single-token controls: unaffected by #4617, and passing before it
+    ("Munar", "Jaume Munar"),
+    ("Tsitsipas", "Stefanos Tsitsipas"),
+    ("Etcheverry", "Tomas Martin Etcheverry"),
+    ("Baez", "Sebastian Baez"),
+    ("Struff", "Jan-Lennard Struff"),
+]
+
+
+class TestAMultiTokenSurnameIsStillOneSurname:
+    """#4617. The bare row's whole value is a surname; the confirm step read one
+    of that surname's own tokens as a forename and refused the pair.
+
+    ``our_tennis_keys('Van de Zandschulp')`` yielded ``('zandschulp', 'v')`` —
+    the ``'v'`` from *Van* — against the canonical's real ``('zandschulp', 'b')``
+    from *Botic*, so no combination of the 24 readings could ever agree. On the
+    live tournament that printed ``Zverev / Van de Zandschulp`` twice
+    (``15307491`` bare with 18 markets, ``15307525`` tournament-keyed with 8)
+    while the structurally identical ``Khachanov / Blockx`` and
+    ``Gauff / Rybakina`` were both tagged.
+
+    **The defect was two functions in this one module disagreeing about the same
+    pair**, so every case below asserts both of them, which is why the guard is
+    written as a table and not as one assertion per name.
+    """
+
+    @pytest.mark.parametrize("bare,canon", _ONE_PLAYER_TWO_SPELLINGS)
+    def test_the_bucket_and_the_confirm_step_agree_on_one_player(self, bare, canon):
+        """Measured 12/17 FALSE before #4617 — every failure a multi-token or
+        hyphenated surname, every single-token name passing. Dutch, Spanish,
+        Argentine and French conventions are a large share of the draw, so this
+        was a hole in a whole naming SHAPE rather than a long tail."""
+        assert players_agree(bare, canon) is True
+        # …and the coarse key must still bucket them, or the confirm step above
+        # is never reached on a real sweep and this test would pass vacuously
+        # while the twin stayed on the page.
+        assert block_key(bare, "Zverev") == block_key(canon, "Alexander Zverev")
+
+    def test_the_live_specimen_is_now_one_fixture(self):
+        """The end the reader sees: `15307491`/`15307525` returned NOT_A_TWIN
+        ("participants disagree") and printed two cards for one match. Modelled
+        on the unplayed arm, which is the state the pair was actually in."""
+        verdict = classify_pair(
+            ghost(15307491, "Zverev", "Van de Zandschulp", settled=False),
+            canonical(
+                15307525,
+                "Alexander Zverev",
+                "Botic van de Zandschulp",
+                settled=False,
+                anchored=True,
+            ),
+        )
+        assert verdict.outcome == TWIN_FOUND
+        assert verdict.ghost_id == 15307491
+
+    def test_it_reads_the_surname_whole_and_not_as_a_wildcard(self):
+        """The widening is bounded by the surname still having to match WHOLE.
+
+        These three are different people who share a token, and the fix must not
+        reach them — `('moro canas', None)` cannot address `Alejandro Canas`
+        because that row's surname run is `canas`, not `moro canas`. Measured
+        False both before and after, i.e. these are the cases that make the
+        parametrised table above mean something."""
+        assert players_agree("Moro Canas", "Alejandro Canas") is False
+        assert players_agree("Bautista Agut", "Roberto Bautista") is False
+        assert players_agree("De Jong", "Jesper de Minaur") is False
+
+    def test_a_bare_surname_still_cannot_separate_two_brothers(self):
+        """`Zverev` vs `Mischa Zverev` agrees — and did before #4617 too, via the
+        single-token `('zverev', None)` reading that has always been emitted.
+
+        Pinned as EXISTING behaviour so it is not read as something the fix
+        introduced. A bare surname genuinely does not carry the information; what
+        backstops it is `classify_pair`'s asymmetry guard and the 96h fence, not
+        the name predicate."""
+        assert players_agree("Zverev", "Mischa Zverev") is True
+
+    def test_the_two_functions_are_not_required_to_agree_in_general(self):
+        """Stated so the guard above is not over-read into a false invariant.
+
+        The block key is deliberately LOOSER than the confirm step, so it buckets
+        `Moro Canas` with `Alejandro Canas` — two different players — and the
+        confirm step is what refuses them. The invariant is one-directional:
+        anything `players_agree` confirms, `block_key` must also bucket, because
+        a pair the key drops never reaches the careful predicate at all. The
+        reverse is the design."""
+        assert block_key("Moro Canas", "Zverev") == block_key(
+            "Alejandro Canas", "Alexander Zverev"
+        )
+        assert players_agree("Moro Canas", "Alejandro Canas") is False
