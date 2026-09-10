@@ -147,6 +147,31 @@ class Event(Base):
     home_score: Mapped[Optional[int]] = mapped_column(Integer)
     away_score: Mapped[Optional[int]] = mapped_column(Integer)
 
+    # WHEN THE SCORE ABOVE WAS OBSERVED, AND BY WHOM (#4571).
+    #
+    # Every PRICE on an event payload knows its own age —
+    # `win_probability_sources[*].updated_at` — and the score, the number the
+    # reader actually looks at, knew nothing. Measured 2026-09-09 on the NFL
+    # opener (event 14780138, live): four fresh price stamps beside a bare
+    # `home_score = 0`. ESPN's own scoreboard read `14:48 Q2` against our
+    # `15:00 Q2`, so the score was ~12s behind — correct that night, and
+    # unknowable from the payload on any other one.
+    #
+    # STAMPED ON OBSERVATION, NOT ON CHANGE, and that is the whole point. The
+    # row that most needs an age is the 0-0 game the writer agrees with, which
+    # produces no change at all; a stamp gated on `!=` would leave exactly the
+    # issue's own specimen null all night. Same reasoning as the tennis games
+    # line (`espn_sync`, live/073), which is unconditional for the same reason.
+    #
+    # `score_source` names the writer, so a regression is attributable from a
+    # query instead of a log stakeout (#4576: 172 non-monotonic transitions on
+    # 78 events in 24h, with no way to say which of two writers wrote the stale
+    # number). See `app/utils/score_observation.py` — the one decision site.
+    score_source: Mapped[Optional[str]] = mapped_column(String(20))
+    score_observed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+
     # Opening odds (set once when first odds received, never updated)
     # Used to detect favorite switches, score swings, etc.
     opening_home_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
