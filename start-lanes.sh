@@ -25,6 +25,14 @@ CONF="${LANES_CONF:-$SELF_DIR/lanes.conf}"
 R="$LANE_RUNNER"
 [ -x "$R" ] || chmod +x "$R"
 
+# The shared launcher code (`count_running`). A tracked sibling, found the same
+# way lanes.conf is and for the same reason. Not in lanes.conf: that file is the
+# topology, and the tests synthesize one.
+LIB="${LAUNCH_LIB:-$SELF_DIR/lane-launch-lib.sh}"
+[ -f "$LIB" ] || LIB="$HOME/bainluck/lane-launch-lib.sh"
+[ -f "$LIB" ] || { echo "missing $LIB — the shared launcher library"; exit 1; }
+. "$LIB"
+
 DRYRUN=0
 [ "${1:-}" = "--dry-run" ] && DRYRUN=1
 
@@ -178,13 +186,28 @@ done
 # missing rather than fatal — an older checkout without the script should still
 # bring up every lane and both graders, the same way a missing worktree only
 # skips its own lane.
+#
+# IDEMPOTENT, 2026-09-10 (latency/318). Every other window this script opens is
+# safe to duplicate — lanes take queues atomically, and the graders are counted,
+# not presence-checked. The measurement bus is the one that is NOT: two of them
+# race on the same bucket's artifacts and, unlike the two cert graders under D44,
+# nothing tells the second what to do. The common case for running this script is
+# bringing back ONE lane that died, not a cold boot, so an unguarded launch here
+# is how a second bus gets opened — the same reason the supervisor branch below
+# has been pgrep-guarded since it was written.
+#
+# `count_running` (lanes.conf), not `pgrep`: pgrep excludes its own ancestors, so
+# running this script from the bus's own Terminal window would report no bus and
+# open a duplicate — precisely the case the guard is for.
 BUS=0
-if [ -n "${BUS_RUNNER:-}" ] && [ -f "$BUS_RUNNER" ]; then
-  launch "$BUS_RUNNER"
-  BUS=1
-else
+if [ -z "${BUS_RUNNER:-}" ] || [ ! -f "$BUS_RUNNER" ]; then
   echo "SKIPPED the measurement bus — no script at ${BUS_RUNNER:-<unset>}."
   echo "  The recurring M-R set will only run when someone drives it by hand."
+elif [ "$(count_running "$BUS_RUNNER")" -gt 0 ]; then
+  echo "measurement bus: already running"
+else
+  launch "$BUS_RUNNER"
+  BUS=1
 fi
 
 # THE SUPERVISOR, 2026-09-10 (Fable-5, at Alex's ask). This script used to end by

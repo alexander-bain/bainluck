@@ -20,6 +20,14 @@ CONF="${LANES_CONF:-$SELF_DIR/lanes.conf}"
 . "$CONF"
 R="$LANE_RUNNER"
 
+# The shared launcher code (`count_running`). A tracked sibling, found the same
+# way lanes.conf is and for the same reason. Not in lanes.conf: that file is the
+# topology, and the tests synthesize one.
+LIB="${LAUNCH_LIB:-$SELF_DIR/lane-launch-lib.sh}"
+[ -f "$LIB" ] || LIB="$HOME/bainluck/lane-launch-lib.sh"
+[ -f "$LIB" ] || { echo "missing $LIB — the shared launcher library"; exit 1; }
+. "$LIB"
+
 DRYRUN=0
 [ "${1:-}" = "--dry-run" ] && DRYRUN=1
 
@@ -28,33 +36,16 @@ launch () {
   osascript -e "tell application \"Terminal\" to do script \"$1\"" >/dev/null
 }
 
-# How many processes are running EXACTLY this command line? ($1 = full argv, no args)
-# A WHOLE-LINE match against a ps snapshot, and every word of that matters:
+# `count_running` — how many processes are running EXACTLY this command line —
+# now lives in lanes.conf, sourced above, because start-lanes.sh needs the same
+# answer for the measurement bus and a second copy of a matcher is the drift this
+# whole arrangement exists to prevent. The reasoning (why not pgrep, why not
+# `ps | grep`, why whole-line, why -ww) is in the comment block beside it there.
 #
-#  1. NOT pgrep: pgrep EXCLUDES ITS OWN ANCESTORS. Run this supervisor from a
-#     lane's Terminal window and pgrep cannot see that lane's runner, so it
-#     reports "no runner" and opens a duplicate window every 5 minutes forever.
-#     Observed 9/3 the first time --dry-run was run from the integrator window.
-#  2. NOT `ps | grep pattern`: that catches GREP ITSELF — grep's argv holds the
-#     pattern and grep is alive while ps walks the table. Snapshot first, match
-#     after, and the matcher is never in the data.
-#  3. WHOLE LINE, not substring: any unrelated process that merely mentions the
-#     path — an editor, another agent's shell, a heredoc — inflates a substring
-#     count, and an inflated count means a DEAD grader is never relaunched.
-#     That is the unsafe direction, so the match is anchored at both ends.
-#     (Measured while testing: a substring count read "3 of 5" graders when two
-#     were running, because the testing shell's own argv quoted the path.)
-#  4. `-ww`: without it macOS truncates argv to the terminal width and every
-#     lane under a narrow window reads as missing.
-#
-# Terminal's `do script` runs the command under bash, so the live argv is
-# "/bin/bash <path> [args]"; a hand-run script is just "<path> [args]". Both count.
-count_running () {
-  printf '%s\n' "$PS_SNAP" | grep -c -e "^/bin/bash $1\$" -e "^$1\$"
-}
+# One snapshot per pass, shared by every call in it via LAUNCH_PS_SNAP.
 
 while true; do
-  PS_SNAP=$(ps -axww -o command= 2>/dev/null)
+  LAUNCH_PS_SNAP=$(ps -axww -o command= 2>/dev/null)
   for L in $LANES_ALL; do
     D="$(lane_dir "$L")"; [ -d "$D" ] || continue
     # One runner per lane, one lane per runner (9/3): the argv is exactly the one

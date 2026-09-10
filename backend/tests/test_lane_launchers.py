@@ -45,6 +45,7 @@ SUPERVISOR = REPO / "lanes-supervisor.sh"
 RUNNER = REPO / "lane-runner.sh"
 LANE4 = REPO / "lane4-runner.sh"
 BUS = REPO / "bus-runner.sh"
+LIB = REPO / "lane-launch-lib.sh"
 
 # The lane roster is a property of Alex's machine, not of the repo (worktrees and
 # `.claude/` are untracked). Tests that assert against the REAL conf are skipped
@@ -112,6 +113,28 @@ def write_conf(
     return conf
 
 
+def fake_script(tmp_path, name):
+    """A synthetic runner/bus/grader that a test may safely start and match on.
+
+    NEVER hand a launcher one of THIS repo's real script paths when the thing
+    under test is "is one already running": on the lane machine that exact path
+    IS the live fleet. Both the supervisor and (since 2026-09-10) start-lanes.sh
+    decide by counting processes running the argv the conf names, so a test that
+    names the real `bus-runner.sh` asserts "relaunch the dead bus" against a bus
+    that is very much alive, and goes red for the one reason that is not a defect.
+    It passes in every worktree and in CI, and fails only in ~/bainluck.
+
+    Measured 9/10: the measurement bus read that red as evidence that THREE bus
+    processes were running and told the fleet to close windows that did not exist.
+    The topology was correct all along — one bus, two graders (LANE4_GRADERS=2),
+    one supervisor.
+    """
+    p = tmp_path / name
+    p.write_text("#!/bin/bash\nsleep 30\n")
+    p.chmod(0o755)
+    return p
+
+
 def stub_pgrep(tmp_path, found):
     """A directory to prepend to PATH whose `pgrep` reports found / not-found.
 
@@ -135,7 +158,7 @@ def stub_pgrep(tmp_path, found):
 # ---------------------------------------------------------------- syntax ----
 
 
-@pytest.mark.parametrize("script", [CONF, START, SUPERVISOR, RUNNER, LANE4, BUS])
+@pytest.mark.parametrize("script", [CONF, LIB, START, SUPERVISOR, RUNNER, LANE4, BUS])
 def test_launcher_scripts_parse(script):
     """A launcher with a syntax error fails at reboot, when nobody is watching."""
     p = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
@@ -167,6 +190,51 @@ def test_launchers_hardcode_no_lane_list(script):
         f"{script.name} still pairs integrator+lane1 in one runner — stale since "
         "lane1 got its own worktree (Alex, 2026-09-03)"
     )
+
+
+def test_the_running_process_matcher_is_defined_once_in_the_shared_lib():
+    """`count_running` moved out of lanes-supervisor.sh on 2026-09-10.
+
+    start-lanes.sh needed the same answer ("is a measurement bus already up?"),
+    and the choice was copy the matcher or share it. Copying is the drift this
+    arrangement exists to prevent, and this matcher in particular has four
+    non-obvious rules compressed into one line (not pgrep, not `ps | grep`,
+    whole-line, -ww) — a second copy would lose at least one of them.
+
+    It lives in a LIB, not in lanes.conf, because the tests here synthesize a
+    lanes.conf per case: behaviour in that file would have to be copied into
+    every synthetic conf, which is the same drift wearing a different hat.
+    """
+    assert "function" in source_conf("type -t count_running || true", conf=LIB), (
+        f"{LIB.name} does not define count_running"
+    )
+    assert "count_running" not in CONF.read_text(), (
+        "lanes.conf carries launcher behaviour; it is the topology, and the tests "
+        "synthesize one"
+    )
+    for script in (START, SUPERVISOR):
+        code = "\n".join(
+            l for l in script.read_text().splitlines() if not l.lstrip().startswith("#")
+        )
+        assert "count_running ()" not in code, (
+            f"{script.name} carries its own copy of the process matcher"
+        )
+        assert "lane-launch-lib.sh" in code, f"{script.name} does not source the lib"
+
+
+def test_start_lanes_does_not_decide_the_bus_with_pgrep():
+    """pgrep EXCLUDES ITS OWN ANCESTORS.
+
+    Run start-lanes.sh from the measurement bus's own Terminal window — which is
+    exactly what someone does when the bus window is the one they are looking at —
+    and a pgrep guard reports no bus and opens a second one. The supervisor learned
+    this on 9/3; the guard added here must not have to learn it again.
+    """
+    code = "\n".join(
+        l for l in START.read_text().splitlines() if not l.lstrip().startswith("#")
+    )
+    bus_guard = [l for l in code.splitlines() if "BUS_RUNNER" in l and "pgrep" in l]
+    assert not bus_guard, f"the bus guard uses pgrep: {bus_guard}"
 
 
 def test_lanes_conf_names_the_nine_lanes_and_two_graders():
@@ -234,11 +302,21 @@ def test_start_lanes_covers_the_real_roster_with_no_skips():
     expected = [f"{runner} {wt} {lane}" for lane, wt in real_lanes()]
     expected += [lane4] * int(source_conf('printf %s "$LANE4_GRADERS"'))
     bus = source_conf('printf %s "${BUS_RUNNER:-}"')
-    if bus:
+    # The bus window is opened only when no bus is already running (the guard
+    # added 2026-09-10 — two of them race on one bucket's artifacts). On this
+    # machine the normal state is "running", so the honest assertion is that the
+    # bus is ACCOUNTED FOR either way, never silently absent from both.
+    already = "measurement bus: already running" in out
+    if bus and not already:
         expected.append(bus)
     assert launched == expected
     assert "SKIPPED lane" not in out, out
     assert "SKIPPED the measurement bus" not in out, out
+    if bus:
+        assert (bus in launched) != already, (
+            "the measurement bus is neither opened nor reported already running "
+            f"(or both at once):\n{out}"
+        )
 
 
 # ------------------------------------------------- the measurement bus ----
@@ -252,14 +330,54 @@ def test_start_lanes_covers_the_real_roster_with_no_skips():
 
 
 def test_start_lanes_opens_the_measurement_bus_when_the_conf_names_it(tmp_path):
-    conf = write_conf(tmp_path, {"a": str(tmp_path)}, graders=0, bus=BUS)
+    bus = fake_script(tmp_path, "bus-runner.sh")   # synthetic: see fake_script
+    conf = write_conf(tmp_path, {"a": str(tmp_path)}, graders=0, bus=bus)
     rc, out = run(START, "--dry-run", env={"LANES_CONF": str(conf)})
     assert rc == 0, out
     launched = re.findall(r"would open Terminal window: (.+)$", out, re.M)
-    assert launched.count(str(BUS)) == 1, (
+    assert launched.count(str(bus)) == 1, (
         "the measurement bus must open exactly one window — two would race on the "
         "same bucket's artifacts, and unlike the two cert graders (D44) there is no "
         f"tie-break rule for that.\ngot: {launched}"
+    )
+
+
+def test_start_lanes_does_not_open_a_SECOND_measurement_bus(tmp_path):
+    """The one window in this script that is NOT safe to duplicate.
+
+    Every other launch here is idempotent by consequence: lanes take queues
+    atomically and the graders are COUNTED against LANE4_GRADERS. The bus is
+    neither — two of them race on the same bucket's artifacts with no tie-break
+    rule (lanes.conf) — and the common reason to re-run this script is bringing
+    back one dead lane, not a cold boot. So the launch is guarded on a running
+    bus, the same way the supervisor branch below has always been.
+
+    Both arms against the same synthetic tree: nothing running -> opened;
+    running -> reported, not opened.
+    """
+    bus = fake_script(tmp_path, "bus-runner.sh")
+    conf = write_conf(tmp_path, {}, graders=0, bus=bus)
+
+    rc, out = run(START, "--dry-run", env={"LANES_CONF": str(conf)})
+    assert rc == 0, out
+    assert str(bus) in out, f"a bus that is NOT running must be opened:\n{out}"
+
+    proc = subprocess.Popen(["/bin/bash", str(bus)])
+    try:
+        time.sleep(0.5)
+        rc, out = run(START, "--dry-run", env={"LANES_CONF": str(conf)})
+    finally:
+        proc.kill()
+        proc.wait()
+    assert rc == 0, out
+    assert "measurement bus: already running" in out, out
+    launched = re.findall(r"would open Terminal window: (.+)$", out, re.M)
+    assert str(bus) not in launched, (
+        "start-lanes.sh opens a second measurement bus over a live one — two race "
+        f"on one bucket's artifacts:\n{out}"
+    )
+    assert "0 measurement bus" in out, (
+        f"the tally counts a bus window it did not open:\n{out}"
     )
 
 
@@ -286,12 +404,43 @@ def test_supervisor_relaunches_a_dead_measurement_bus(tmp_path):
 
     A bus that dies on Saturday and is not relaunched is a hole in the record
     until Monday, which is the whole thing integrator/135 was written to close.
+
+    The bus is SYNTHETIC (see `fake_script`). This test named the repo's own
+    `bus-runner.sh` until 2026-09-10, which in ~/bainluck is the live bus — so the
+    supervisor correctly declined to relaunch it and the test went red on the lane
+    machine, and only there.
     """
-    conf = write_conf(tmp_path, {}, graders=0, bus=BUS)
+    bus = fake_script(tmp_path, "bus-runner.sh")
+    conf = write_conf(tmp_path, {}, graders=0, bus=bus)
     rc, out = run(SUPERVISOR, "--dry-run", env={"LANES_CONF": str(conf)})
     assert rc == 0, out
-    assert str(BUS) in re.findall(r"would relaunch: (.+)$", out, re.M), (
+    assert str(bus) in re.findall(r"would relaunch: (.+)$", out, re.M), (
         f"the supervisor does not keep the measurement bus alive:\n{out}"
+    )
+
+
+def test_supervisor_leaves_a_live_measurement_bus_alone(tmp_path):
+    """Control arm — the one the bus tests never had.
+
+    The lanes have one (`test_supervisor_leaves_a_live_lane_alone`) and the
+    graders have one (`..._counts_graders_and_not_mere_mentions`); the bus had
+    only the treatment arm, and the machine supplied the control by accident.
+    Relaunching a bus that is already up is the expensive direction: two buses
+    race on one bucket's artifacts.
+    """
+    bus = fake_script(tmp_path, "bus-runner.sh")
+    conf = write_conf(tmp_path, {}, graders=0, bus=bus)
+
+    proc = subprocess.Popen(["/bin/bash", str(bus)])
+    try:
+        time.sleep(0.5)
+        rc, out = run(SUPERVISOR, "--dry-run", env={"LANES_CONF": str(conf)})
+    finally:
+        proc.kill()
+        proc.wait()
+    assert rc == 0, out
+    assert "would relaunch" not in out, (
+        f"the supervisor cannot see a live measurement bus:\n{out}"
     )
 
 
