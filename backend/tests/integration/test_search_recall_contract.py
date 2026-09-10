@@ -408,6 +408,53 @@ async def _seed(session):
             )
         )
 
+    # #4809 — the GAME-CARD half of the nickname alias. Transcribed from
+    # production 2026-09-10, the morning after #4728 went live, when `?q=pats`
+    # answered with the right TEAM and the right MARKETS and **zero games**.
+    #
+    # Three rows, and each one is load-bearing:
+    #
+    #   New England Patriots  the recall target. `pats` must reach it.
+    #   St Kitts & Nevis      a real Caribbean Premier League cricket side and a
+    #     Patriots            genuine WHOLE-WORD match on the token `Patriots`.
+    #                         `pats` must NOT reach it; the literal query
+    #                         `patriots` still must, or the alias has become a
+    #                         filter. On the EVENT rail this fan-out is sharper
+    #                         than on the futures rail: event team names are the
+    #                         same words the venue prints.
+    #   UTEP Miners           the `niners` specimen. NO 49ers event is seeded on
+    #                         purpose, so the nickname arm finds nothing and the
+    #                         query falls to the trigram "did you mean" — which
+    #                         in production corrected `niners` to `UTEP Miners`
+    #                         and served two college football games inside a
+    #                         response whose markets were all correctly the 49ers.
+    nfl = Sport(key="americanfootball_nfl", name="NFL")
+    cricket = Sport(key="cricket_cpl", name="Caribbean Premier League")
+    ncaaf = Sport(key="americanfootball_ncaaf", name="NCAA Football")
+    session.add_all([nfl, cricket, ncaaf])
+    await session.flush()
+
+    for sport_row, home, away in [
+        (nfl, "New England Patriots", "New York Jets"),
+        (cricket, "Barbados Tridents", "St Kitts & Nevis Patriots"),
+        (ncaaf, "UTEP Miners", "Texas Southern Tigers"),
+    ]:
+        session.add(
+            Event(
+                sport_id=sport_row.id,
+                home_team_name=home,
+                away_team_name=away,
+                commence_time=datetime.now(timezone.utc) + timedelta(days=2),
+                status="scheduled",
+            )
+        )
+
+    # The fallback resolves its correction against `teams`, so the Miners need a
+    # team row for the `niners` path to be reachable at all — without it the
+    # suppression test would pass vacuously. The fallback is proven ALIVE in this
+    # fixture by `celtcs` -> Boston Celtics above (similarity 0.294, measured).
+    session.add(Team(sport_id=ncaaf.id, name="UTEP Miners", abbreviation="UTEP"))
+
     for external_id, name, outcomes in _FUTURES_SEEDS:
         market = FuturesMarket(
             source="kalshi",
@@ -1367,4 +1414,100 @@ async def test_a_query_with_no_nickname_is_untouched(search):
     names = _futures_names(await search("nba champion"))
     assert "NBA Champion 2026" in names, (
         f"a query with no nickname in it changed: {names!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# #4809 — the GAME-CARD half: a fan's nickname must reach their team's games
+# --------------------------------------------------------------------------
+async def test_a_team_nickname_reaches_its_teams_game_cards(search):
+    """🔴 #4809: `pats` must reach the Patriots' GAMES, not just their markets.
+
+    Measured on production 2026-09-10, with #4728 already live: `?q=pats`
+    returned the right team row and 10 correct markets and **0 game cards**;
+    `revs` 0; `niners` 2, both of them UTEP Miners.
+
+    The cause is that the two rails match different columns. #4728's alias lives
+    on `teams.alternate_names`, which the futures arm reaches through the team
+    row — but the game rail matches the DENORMALISED `Event.home_team_name` /
+    `away_team_name` text and never joins `teams`, so the alias is invisible to
+    it. Only an event-side arm can close it.
+    """
+    pairings = _event_pairings(await search("pats"))
+    assert any("New England Patriots" in p for p in pairings), (
+        f"`pats` did not reach the Patriots' own game: {pairings!r}. This is the "
+        "#4809 hole — the nickname reaches the team row and the markets, and the "
+        "reader still sees no games."
+    )
+
+
+async def test_the_nickname_game_arm_does_not_fan_out_across_sports(search):
+    """The guard that makes the event arm safe, and safe to extend.
+
+    On the EVENT rail this matters MORE than on the futures rail: event team
+    names are the same words the venue prints, so the bare token `Patriots`
+    reaches `St Kitts & Nevis Patriots` — a Caribbean Premier League cricket
+    side, a genuine whole-word match, and a wrong answer to `pats`.
+
+    This is the mutation-killing half of the pair below: delete
+    `Sport.key == sport_key` from `_team_nickname_event_arms` and the test above
+    still passes while this one goes red.
+    """
+    pairings = _event_pairings(await search("pats"))
+    assert not any("St Kitts" in p for p in pairings), (
+        f"the nickname game arm fanned out of the franchise's sport: {pairings!r}. "
+        "`pats` is the NFL New England Patriots; Caribbean Premier League cricket "
+        "is a different team that happens to share a word."
+    )
+
+
+async def test_the_literal_query_still_reaches_every_sports_games(search):
+    """The ADDITIVE contract for the game rail, and the honesty control.
+
+    The sport scope belongs to the ALIAS arm, never to the event query. A "fix"
+    that scoped the whole query to the nickname's sport would satisfy both tests
+    above and be a filter wearing an alias's clothes — so the literal query has
+    to keep reaching the sport the alias deliberately skips.
+
+    `patriots` is not an alias, produces no nickname arm at all, and must return
+    the Caribbean Premier League side exactly as it does today. That row is a
+    legitimate whole-word answer to what the user literally typed; it is only
+    wrong as an answer to `pats`.
+    """
+    pairings = _event_pairings(await search("patriots"))
+    assert any("St Kitts" in p for p in pairings), (
+        f"the literal query lost the cricket side: {pairings!r}. The alias arm is "
+        "UNION-shaped and may only ADD rows; it must never narrow what the user "
+        "actually typed."
+    )
+    assert any("New England Patriots" in p for p in pairings), (
+        f"the literal query lost the NFL side: {pairings!r}"
+    )
+
+
+async def test_a_resolved_nickname_is_never_corrected_to_a_spelling_neighbour(search):
+    """🔴 The `niners` -> UTEP Miners half, which recall alone does NOT fix.
+
+    No 49ers event is seeded here on purpose, so the nickname arm finds nothing
+    and `total_count` is 0 — exactly the state that sends a query to the trigram
+    "did you mean" fallback. In production that fallback corrected `niners` to
+    the nearest team NAME, `UTEP Miners`, and served two college football games
+    inside a response whose 10 markets were all correctly San Francisco 49ers.
+
+    With 49ers games in the window the recall arm alone would hide this, because
+    the count is no longer 0 and the fallback never runs. That is why the seed
+    withholds them: a bye week, an off-season or a narrow `days_back` reproduces
+    this state in production at any time.
+
+    We KNOW what `niners` names — the map is curated, franchise-anchored and
+    sport-keyed — so an honest empty rail beats a guess, and the team and market
+    rails still answer. The fallback itself is proven ALIVE in this fixture by
+    the `celtcs` -> Boston Celtics correction (similarity 0.294, measured), so
+    this assertion is not passing vacuously.
+    """
+    pairings = _event_pairings(await search("niners"))
+    assert not any("UTEP" in p for p in pairings), (
+        f"`niners` was 'corrected' to a spelling neighbour: {pairings!r}. A query "
+        "that resolved a curated franchise nickname must never be answered with a "
+        "different team that merely looks like it."
     )

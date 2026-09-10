@@ -101,3 +101,56 @@ def team_nickname_search_expansions() -> dict[str, tuple[str, str]]:
                 continue
             expansions[alias] = (token, category)
     return expansions
+
+
+def team_nickname_event_expansions() -> dict[str, tuple[str, str]]:
+    """`alias -> (canonical team token, sport_key)` for GAME-CARD recall (#4809).
+
+    The third consumer of the map above, and the one that needed no new data at
+    all — only the key this file has been carrying since it was written.
+
+    #4728 gave the nickname the TEAMS rail (via `teams.alternate_names`) and the
+    FUTURES rail (via :func:`team_nickname_search_expansions`). It could not give
+    it the game-card rail, because that rail matches the DENORMALISED
+    `Event.home_team_name`/`away_team_name` text and never joins `teams`, so an
+    alias living on the team row is invisible to it. Measured on production
+    2026-09-10, after #4728 was live::
+
+        query     team row   futures   GAME CARDS
+        pats      ✓          10        0
+        revs      ✓          10        0
+        niners    ✓          10        2   <- both are UTEP MINERS
+
+    `niners` is the sharpest of the three: the empty game rail sent the query to
+    the fuzzy "did you mean" fallback, which corrected it to the nearest team
+    NAME by trigram similarity — `UTEP Miners` — and filled the rail with two
+    college football games that have nothing to do with San Francisco.
+
+    **The scope is a `sport_key`, not an `llm_sport_category`, and that is the
+    only difference from the sibling.** Events carry no category column; they
+    reach their sport through `sport_id -> sports.key`, which the search query
+    already joins. `CURATED_TEAM_ALIASES` is keyed by the sport key directly, so
+    this needs no inversion of `SPORT_PREFIX_TO_LLM_CATEGORY` and cannot drift
+    from it.
+
+    **The scope is not optional here either, and for a sharper reason than on the
+    futures side.** Event team names are the same words venues print, so the bare
+    token `Patriots` reaches `St Kitts & Nevis Patriots` — a Caribbean Premier
+    League cricket side that is a genuine whole-word match and a wrong answer to
+    `pats`. `Sport.key == 'americanfootball_nfl'` takes that to zero without
+    touching what the literal query `patriots` returns.
+
+    Same substring skip as the sibling and for the same reason: `9ers` is inside
+    `49ers`, so the plain ILIKE arm already reaches those rows and an extra arm
+    would be duplicate work for zero recall.
+    """
+
+    expansions: dict[str, tuple[str, str]] = {}
+    for (sport_key, team_name), aliases in CURATED_TEAM_ALIASES.items():
+        token = _canonical_market_token(team_name)
+        for alias in aliases:
+            alias = alias.lower()
+            if alias in token.lower():
+                continue
+            expansions[alias] = (token, sport_key)
+    return expansions

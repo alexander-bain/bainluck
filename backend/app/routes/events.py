@@ -77,7 +77,10 @@ from app.utils.game_window import (
     game_state_window as _game_state_window,
 )
 from app.utils.name_normalization import expand_search_terms
-from app.config.team_aliases import team_nickname_search_expansions
+from app.config.team_aliases import (
+    team_nickname_event_expansions,
+    team_nickname_search_expansions,
+)
 from app.utils.search_headline_contender import (
     HEADLINE_MARKET_TIER,
     MIN_CONTENDER_PROBABILITY,
@@ -1901,6 +1904,12 @@ def _alias_futures_arms(terms: list[str]) -> list:
 # pure waste. `team_nickname_search_expansions()` is pure, so this is a constant.
 _TEAM_NICKNAME_EXPANSIONS: dict[str, tuple[str, str]] = team_nickname_search_expansions()
 
+#: #4809 — the same map keyed for the EVENT rail: `alias -> (token, sport_key)`.
+#: Built once at import for the same reason as its sibling above; also pure.
+_TEAM_NICKNAME_EVENT_EXPANSIONS: dict[str, tuple[str, str]] = (
+    team_nickname_event_expansions()
+)
+
 
 def _team_nickname_futures_arms(terms: list[str]) -> list:
     """Futures NAME arms for colloquial TEAM nicknames, sport-scoped (#4728).
@@ -1935,6 +1944,60 @@ def _team_nickname_futures_arms(terms: list[str]) -> list:
             and_(
                 FuturesMarket.llm_sport_category == category,
                 *[_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in expanded],
+            )
+        )
+    return arms
+
+
+def _team_nickname_event_arms(terms: list[str]) -> list:
+    """EVENT (game-card) arms for colloquial team nicknames, sport-scoped (#4809).
+
+    The game-card half of #4728, and a separate arm rather than a widening of the
+    existing one because the two rails match different columns: the futures arm
+    reads `FuturesMarket.name`, this one reads the denormalised
+    `Event.home_team_name`/`away_team_name`. An alias on `teams.alternate_names`
+    reaches NEITHER — the event rail never joins `teams` — which is why #4728
+    fixed the markets and left `?q=pats` returning 0 games.
+
+    Shaped exactly like its sibling, with two deliberate differences:
+
+    * the scope is ``Sport.key == sport_key``, not an `llm_sport_category`.
+      Events reach their sport through `sport_id`, and the search query already
+      joins `Sport`, so the arm costs no extra join. See
+      :func:`team_nickname_event_expansions` for why the key is the honest one.
+    * the name test is :func:`_event_name_match`, this file's event-side matcher
+      (substring recall AND whole-word about-ness), so the arm inherits LAT-P034's
+      judgment rather than re-deciding it. `fed` does not become `Federico` here
+      any more than it does on the primary arm.
+
+    Returned as UNION arms, never OR'd into the primary predicate — that is
+    `_event_recall_arms`' contract and the reason it exists (LAT-P031/#1494: the
+    OR form costs 6,416 shared blocks on EVERY league query regardless of the
+    answer). Being a UNION arm also makes the change **additive by construction**:
+    it can only ADD game cards, never remove one that reaches a reader today.
+
+    Returns `[]` for every query with no curated nickname in it — the
+    overwhelming majority — and on that path the compiled SQL is byte-identical
+    to before, because a single-arm `_event_recall_arms` skips the UNION entirely.
+
+    The surrounding terms are KEPT, so the alias composes rather than only working
+    as the whole query: "pats game" -> "Patriots game".
+    """
+
+    arms = []
+    for index, term in enumerate(terms):
+        entry = _TEAM_NICKNAME_EVENT_EXPANSIONS.get(term.lower())
+        if entry is None:
+            continue
+        token, sport_key = entry
+        alternative = terms[:index] + [token] + terms[index + 1 :]
+        expanded = _apply_search_synonyms(expand_search_terms(alternative))
+        if not expanded:
+            continue
+        arms.append(
+            and_(
+                Sport.key == sport_key,
+                *[_event_name_match(t, e) for t, e in expanded],
             )
         )
     return arms
@@ -4380,6 +4443,16 @@ async def search_events(
     #   "nba"          -> the bare league arm is kept, since a league-only query IS
     #                     asking for the league (corpus case `league_only_explicit`).
     _event_recall_arms = [team_filter]
+
+    # #4809 — the nickname's game-card arm. #4728 gave `pats` the team row and the
+    # markets; this gives it the games. A separate UNION arm for the same reason
+    # the league arm is one, and additive by construction: it can only ADD cards.
+    #
+    # Kept in a named local because the "did you mean" fallback below has to know
+    # whether one fired — see the `_event_nickname_arms` clause on its trigger.
+    _event_nickname_arms = _team_nickname_event_arms(terms)
+    _event_recall_arms.extend(_event_nickname_arms)
+
     if sport_alias_keys:
         league_scope = Sport.key.in_(sport_alias_keys)
         if non_league_expanded:
@@ -4660,12 +4733,30 @@ async def search_events(
     else:
         had_substring_match = False
 
+    # #4809 — a query that resolved a CURATED nickname is never "corrected".
+    #
+    # `_event_nickname_arms` above fixes the empty rail; this fixes what filled it
+    # while it was empty. `niners` returned 0 events, fell through to the trigram
+    # "did you mean" below, matched the nearest team NAME — `UTEP Miners`, similarity
+    # over 0.25 on the shared `iners` — and served two college football games in a
+    # response whose 10 markets were all correctly San Francisco 49ers.
+    #
+    # The recall arm alone would usually hide that: with 49ers games in the window
+    # `total_count` is no longer 0 and this branch never runs. "Usually" is the
+    # problem — a bye week, an off-season or a narrow `days_back` puts the count
+    # back to 0 and the Miners come back. The two halves fix different things and
+    # the guard suite asserts each with the other mutated away.
+    #
+    # We KNOW what `niners` names: the map is curated, franchise-anchored and
+    # sport-keyed. Guessing at a spelling neighbour is strictly worse than showing
+    # the honest empty rail, and the markets and team rails still answer.
     if (
         total_count == 0
         and not degraded
         and len(terms) == 1
         and not sport_alias_keys
         and not had_substring_match
+        and not _event_nickname_arms
     ):
         try:
             # LAT-P002/#1494 (1c): the WHERE uses the `%` OPERATOR, which the
