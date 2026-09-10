@@ -26,6 +26,7 @@ import { join } from "path";
 
 import {
   isNonDistinctiveTrailingWord,
+  teamCrestBadge,
   teamShortName,
   teamShortNames,
 } from "@/lib/teamShortName";
@@ -65,13 +66,32 @@ function tokensInLiteral(source: string, opener: RegExp): string[] {
   return Array.from(body.matchAll(/"([^"]+)"/g), (m) => m[1].toLowerCase());
 }
 
+const swiftSource = readFileSync(SWIFT, "utf8");
+const webSource = readFileSync(WEB, "utf8");
+
+/** Swift source with line comments and block comments removed. Control below. */
+function stripSwiftComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+const swiftCode = stripSwiftComments(swiftSource);
+
 const swiftDesignators = tokensInLiteral(
-  readFileSync(SWIFT, "utf8"),
+  swiftSource,
   /private static let designators\s*:\s*Set<String>\s*=/,
 );
 const webSuffixes = tokensInLiteral(
-  readFileSync(WEB, "utf8"),
+  webSource,
   /const CLUB_TYPE_SUFFIXES\s*:\s*ReadonlySet<string>\s*=/,
+);
+const swiftUnshippable = tokensInLiteral(
+  swiftSource,
+  /private static let unshippableBadges\s*:\s*Set<String>\s*=/,
+);
+const webUnshippable = tokensInLiteral(
+  webSource,
+  /const UNSHIPPABLE_BADGES\s*:\s*ReadonlySet<string>\s*=/,
 );
 
 describe("#4250 — one team-short-name rule, two clients", () => {
@@ -263,6 +283,108 @@ describe("#4271 — the iPhone's pair fixtures agree with the iPhone's designato
       "Sassuolo Calcio → Calcio",
       "San Diego State → Diego State",
     ]);
+  });
+});
+
+/**
+ * #4539 — the parity that mattered was never only the SET.
+ *
+ * #4466 gave the browser a badge rule the iPhone did not have: a name whose
+ * distinctive part is three or more words takes their initials, so PSG stops
+ * being "GER". It shipped to the browser alone, and for a day the two clients
+ * disagreed on the badge for roughly a fifth of all names — this file was green
+ * throughout, because it compared the designator sets and the badge rule is not
+ * a set.
+ *
+ * So the checks below are on the RULE. They still read both files out of source
+ * rather than transcribing either, for the same reason as everything above: a
+ * transcribed copy is a third implementation.
+ *
+ * WHY THE SWIFT SIDE IS CHECKED STRUCTURALLY AND NOT BY OUTPUT. CI compiles no
+ * Swift (#4302), so jest cannot call `TeamShortName.abbreviation` and diff it
+ * against `teamCrestBadge` — the only honest output comparison lives in
+ * `BainLuckTests/CrestBadgeInitialsTests.swift`, whose every expectation was read
+ * off THIS module before being written down. What jest can prove is that the
+ * iPhone still has the rule at all, and that the two halves it shares with the
+ * browser — the token filter's source set and the unshippable backstop — have
+ * not drifted apart again.
+ */
+describe("#4539 — one badge rule, two clients", () => {
+  it("both unshippable-badge sets were actually found and read", () => {
+    // The reachability check. A regex that matches nothing yields [], and every
+    // assertion below then passes having compared two empty sets — the exact
+    // way the set-only version of this file stayed green through #4466.
+    expect(swiftUnshippable.length).toBeGreaterThanOrEqual(15);
+    expect(webUnshippable.length).toBeGreaterThanOrEqual(15);
+    expect(swiftUnshippable).toContain("wtf");
+    expect(webUnshippable).toContain("wtf");
+  });
+
+  it("the two unshippable-badge sets are identical", () => {
+    // A badge banned on one client and not the other is a badge that ships.
+    const swift = new Set(swiftUnshippable);
+    const web = new Set(webUnshippable);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("the comment stripper is load-bearing and works", () => {
+    // The scans below read CODE. The Swift's own doc comment names
+    // `CLUB_TYPE_SUFFIXES` to explain why it borrows `designators` instead, so a
+    // raw scan for that identifier fires on the CORRECT file — which is
+    // `discoverCrestBadge4466.test.tsx`'s lesson arriving here by experiment: a
+    // guard that reads its target's prose is measuring the prose.
+    expect(stripSwiftComments("/// mentions CLUB_TYPE_SUFFIXES\n")).not.toMatch(
+      /CLUB_TYPE_SUFFIXES/,
+    );
+    expect(stripSwiftComments("let x = CLUB_TYPE_SUFFIXES")).toMatch(
+      /CLUB_TYPE_SUFFIXES/,
+    );
+    // …and it must not eat the code it is meant to keep.
+    expect(swiftCode).toMatch(/static func abbreviation/);
+    expect(swiftCode.length).toBeGreaterThan(1500);
+  });
+
+  it("the iPhone still forks on three or more distinctive tokens", () => {
+    // Structural, and deliberately narrow: the fork's THRESHOLD and the fact
+    // that it filters before counting. Deleting either — the failure mode that
+    // silently reopens #4539 — changes both of these.
+    expect(swiftCode).toMatch(/distinctiveTokens\s*\(/);
+    expect(swiftCode).toMatch(/distinctive\.count\s*>=\s*3/);
+    // …and the filter is the one this file already guarantees agrees with the
+    // browser, rather than a second transcribed copy of CLUB_TYPE_SUFFIXES.
+    expect(swiftCode).toMatch(/designators\.contains\(lower\)/);
+    expect(swiftCode).not.toMatch(/CLUB_TYPE_SUFFIXES/);
+  });
+
+  it("the browser's own fork is still there to be matched", () => {
+    // The other half of the same assertion. If #4466's rule is reverted or
+    // rewritten on the web, the iPhone's port is the thing that is now wrong,
+    // and this is the line that says so.
+    expect(webSource).toMatch(/export function teamCrestBadge/);
+    expect(webSource).toMatch(/distinctive\.length\s*<\s*3/);
+  });
+
+  it("the token filter agrees with the browser's predicate on the fork corpus", () => {
+    // The Swift borrows `designators` in place of CLUB_TYPE_SUFFIXES, which is
+    // only sound because containment is asserted BOTH ways above. This pins the
+    // clauses that are NOT the set — length, squad marker, bare number, roman
+    // numeral — against the browser's predicate, since the Swift restates them
+    // rather than sharing them.
+    for (const token of ["fc", "u20", "1846", "iii", "al", "sc"]) {
+      expect(isNonDistinctiveTrailingWord(token)).toBe(true);
+    }
+    for (const token of ["paris", "saint", "germain", "lakers", "sadd"]) {
+      expect(isNonDistinctiveTrailingWord(token)).toBe(false);
+    }
+  });
+
+  it("the browser badges the photographed club correctly, under both spellings", () => {
+    // The reader-visible anchor, and the pair is the point: the stored name is
+    // an input and both spellings were live on production the same afternoon.
+    // `CrestBadgeInitialsTests` asserts the identical pair on the iPhone.
+    expect(teamCrestBadge("Paris Saint Germain")).toBe("PSG");
+    expect(teamCrestBadge("Paris Saint-Germain")).toBe("PSG");
   });
 });
 

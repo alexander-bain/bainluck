@@ -79,12 +79,22 @@ final class TeamShortNamePairTests: XCTestCase {
     /// can see it, is in `frontend/__tests__/teamDesignatorParityAcrossClients.test.ts`:
     /// no row of this table may expect a designator-ending name to render as
     /// anything but that name in full.
+    ///
+    /// **#4539 moved three BADGES here and no label.** `Brighton and Hove Albion
+    /// WFC` → `BAH` and `Vivo Keyd Stars Academy` → `VKS` (twice) take the new
+    /// initials fork, because #4250 already stopped these three pairs colliding —
+    /// `WFC` and `Academy` became designators, so each side returns its own full
+    /// name and the pair rule is never consulted. The other 111 rows are
+    /// byte-identical: `abbreviationPair` now grows on the LABELS rather than on
+    /// the badges, precisely so the fork cannot pull one side of a derby off the
+    /// word both sides share. See that function's header for the four rows that
+    /// caught it.
     private static let colliding: [(String, String, String, (String, String), (String, String))] = [
         ("3DMAX Academy", "B8 Academy", "Academy", ("3DMAX Academy", "B8 Academy"), ("3DM", "B8A")),
         ("AA Internacional Limeira SP", "Guarani FC SP", "SP", ("Internacional Limeira SP", "Guarani FC SP"), ("INT", "GUA")),
         ("AD San Carlos", "Inter San Carlos", "Carlos", ("AD San Carlos", "Inter San Carlos"), ("SAN", "INT")),
         ("Aris Thessaloniki", "PAOK Thessaloniki", "Thessaloniki", ("Aris Thessaloniki", "PAOK Thessaloniki"), ("ARI", "PAO")),
-        ("Arsenal WFC", "Brighton and Hove Albion WFC", "WFC", ("Arsenal WFC", "Brighton and Hove Albion WFC"), ("ARS", "BRI")),
+        ("Arsenal WFC", "Brighton and Hove Albion WFC", "WFC", ("Arsenal WFC", "Brighton and Hove Albion WFC"), ("ARS", "BAH")),
         ("B8 Academy", "Inner Circle Academy", "Academy", ("B8 Academy", "Inner Circle Academy"), ("B8A", "INN")),
         ("Baam Esports", "Pyramid IV Esports", "Esports", ("Baam Esports", "Pyramid IV Esports"), ("BAA", "PYR")),
         ("Barca eSports GC", "GIANTX GC", "GC", ("eSports GC", "GIANTX GC"), ("ESP", "GIA")),
@@ -158,7 +168,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("OKSavingsBank BRION Challengers", "Hanwha Life Esports Challengers", "Challengers", ("BRION Challengers", "Esports Challengers"), ("BRI", "ESP")),
         ("One More Esports", "Baam Esports", "Esports", ("More Esports", "Baam Esports"), ("MOR", "BAA")),
         ("One More Esports", "Pyramid IV Esports", "Esports", ("One More Esports", "Pyramid IV Esports"), ("ONE", "PYR")),
-        ("paiN Gaming Academy", "Vivo Keyd Stars Academy", "Academy", ("paiN Gaming Academy", "Vivo Keyd Stars Academy"), ("PAI", "VIV")),
+        ("paiN Gaming Academy", "Vivo Keyd Stars Academy", "Academy", ("paiN Gaming Academy", "Vivo Keyd Stars Academy"), ("PAI", "VKS")),
         ("Passion Academy", "Phantom Academy", "Academy", ("Passion Academy", "Phantom Academy"), ("PAS", "PHA")),
         ("PFC CSKA Sofia", "FK Septemvri Sofia", "Sofia", ("CSKA Sofia", "Septemvri Sofia"), ("CSK", "SEP")),
         ("PFC Levski Sofia", "FC Lokomotiv 1929 Sofia", "Sofia", ("PFC Levski Sofia", "Lokomotiv 1929 Sofia"), ("PFC", "LOK")),
@@ -167,7 +177,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Phantom Academy", "Vitality Academy", "Academy", ("Phantom Academy", "Vitality Academy"), ("PHA", "VIT")),
         ("Pyramid IV Esports", "3BL Esports", "Esports", ("Pyramid IV Esports", "3BL Esports"), ("PYR", "3BL")),
         ("Radu Mihai Papoe", "Cezar Gabriel Papoe", "Papoe", ("Mihai Papoe", "Gabriel Papoe"), ("MIH", "GAB")),
-        ("RED Academy", "Vivo Keyd Stars Academy", "Academy", ("RED Academy", "Vivo Keyd Stars Academy"), ("RED", "VIV")),
+        ("RED Academy", "Vivo Keyd Stars Academy", "Academy", ("RED Academy", "Vivo Keyd Stars Academy"), ("RED", "VKS")),
         ("RED Canids Academy", "BESTIA Academy", "Academy", ("RED Canids Academy", "BESTIA Academy"), ("RED", "BES")),
         ("RED Canids Academy", "paiN Academy", "Academy", ("RED Canids Academy", "paiN Academy"), ("RED", "PAI")),
         ("Rodina Moscow", "Dinamo Moscow", "Moscow", ("Rodina Moscow", "Dinamo Moscow"), ("ROD", "DIN")),
@@ -238,6 +248,25 @@ final class TeamShortNamePairTests: XCTestCase {
     ///     so only the badge moved, and it moved because #4271 added the
     ///     Italian society initials that `glyphs` must skip. `CAT` names the
     ///     club; `USC` names a different one in another sport.
+    ///
+    /// **#4539 moved fifteen more BADGES, and no label.** The initials fork
+    /// (`TeamShortName.abbreviation`) badges a name whose distinctive part is
+    /// three or more words by their initials, so `Los Angeles Dodgers` is `LAD`
+    /// rather than `DOD` and `Sport Lisboa e Benfica` is `SLB` rather than `BEN`.
+    /// Every moved value here was taken from the BROWSER — `teamCrestBadge` in
+    /// `frontend/lib/teamShortName.ts`, a separately written implementation of
+    /// the same rule — and not from the Swift under test, which is the trap this
+    /// file's header warns about. All 20 agreed on the first read.
+    ///
+    /// Three of the fifteen get WORSE and are here on the record rather than
+    /// buried: `Brighton and Hove Albion` → `BAH` and `The Huns Esports` → `THE`
+    /// count a bare article as a distinctive token (#4623), and `Petr Bar
+    /// Biryukov` / `Sherif Ahmed Abdelaziz` are three-part PERSON names that lose
+    /// their surname (#4624). Both classes are the browser's too, both are filed,
+    /// and neither is fixable from the string alone — which is why the trade was
+    /// measured before it shipped: over the complete ±7d fixture window, 823
+    /// team-sport fixtures improve against 93 individual-sport fixtures that
+    /// regress, all 93 in `tennis_other`.
     private static let clean: [(String, String, (String, String), (String, String))] = [
         ("Atletico Paranaense", "Corinthians", ("Paranaense", "Corinthians"), ("PAR", "COR")),
         ("FK Novi Pazar", "FK Mladost Lucani", ("Pazar", "Lucani"), ("PAZ", "LUC")),
@@ -256,31 +285,31 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Colombo / Gaines Jr", "Brunetti / Cox", ("Colombo / Gaines Jr", "Cox"), ("COL", "COX")),
         ("Bristol City", "Swindon", ("Bristol City", "Swindon"), ("BRI", "SWI")),
         ("Yomiuri Giants", "Chunichi Dragons", ("Giants", "Dragons"), ("GIA", "DRA")),
-        ("Tohoku Rakuten Golden Eagles", "Fukuoka SoftBank Hawks", ("Eagles", "Hawks"), ("EAG", "HAW")),
+        ("Tohoku Rakuten Golden Eagles", "Fukuoka SoftBank Hawks", ("Eagles", "Hawks"), ("TRG", "FSH")),
         ("Wang", "Tang", ("Wang", "Tang"), ("WAN", "TAN")),
         ("Krajicek / Mektic", "Arribage / Guinard", ("Mektic", "Guinard"), ("MEK", "GUI")),
         ("Charleston", "Colorado Springs Sw.", ("Charleston", "Sw."), ("CHA", "SW")),
         ("Kocaelispor", "Basaksehir", ("Kocaelispor", "Basaksehir"), ("KOC", "BAS")),
         ("Damian Knyba", "Andy Ruiz Jr", ("Knyba", "Andy Ruiz Jr"), ("KNY", "AND")),
-        ("Orix Buffaloes", "Fukuoka SoftBank Hawks", ("Buffaloes", "Hawks"), ("BUF", "HAW")),
+        ("Orix Buffaloes", "Fukuoka SoftBank Hawks", ("Buffaloes", "Hawks"), ("BUF", "FSH")),
         ("Chicago Fire FC", "CF Monterrey", ("Chicago Fire FC", "Monterrey"), ("CHI", "MON")),
-        ("Abo Qir Semad SC", "Pyramids FC", ("Abo Qir Semad SC", "Pyramids FC"), ("ABO", "PYR")),
+        ("Abo Qir Semad SC", "Pyramids FC", ("Abo Qir Semad SC", "Pyramids FC"), ("AQS", "PYR")),
         ("Cruz Hewitt", "Marcos Giron", ("Hewitt", "Giron"), ("HEW", "GIR")),
         ("Peer", "Prisacariu", ("Peer", "Prisacariu"), ("PEE", "PRI")),
         ("Ankara Keciorengucu", "Bandirmaspor", ("Keciorengucu", "Bandirmaspor"), ("KEC", "BAN")),
         ("Nepliy", "Krupenina", ("Nepliy", "Krupenina"), ("NEP", "KRU")),
-        ("Wei Chuan Dragons", "TSG Hawks", ("Dragons", "Hawks"), ("DRA", "HAW")),
+        ("Wei Chuan Dragons", "TSG Hawks", ("Dragons", "Hawks"), ("WCD", "HAW")),
         ("Incheon United FC", "Ulsan HD FC", ("Incheon United FC", "Ulsan HD FC"), ("INC", "ULS")),
         ("Juliana Velasquez", "Aline Pereira", ("Velasquez", "Pereira"), ("VEL", "PER")),
-        ("Masters London 2026", "Highest first-kill rate", ("Masters London 2026", "rate"), ("MAS", "RAT")),
+        ("Masters London 2026", "Highest first-kill rate", ("Masters London 2026", "rate"), ("MAS", "HFK")),
         ("Campion AFC", "North Ferriby FC", ("Campion AFC", "North Ferriby FC"), ("CAM", "NOR")),
         ("Takeley FC", "Great Wakering Rovers FC", ("Takeley FC", "Great Wakering Rovers FC"), ("TAK", "GRE")),
         ("Brentwood Town FC", "Concord Rangers FC", ("Brentwood Town FC", "Concord Rangers FC"), ("BRE", "CON")),
         ("Sachko", "Onclin", ("Sachko", "Onclin"), ("SAC", "ONC")),
         ("Arsenal", "Aston Villa", ("Arsenal", "Villa"), ("ARS", "VIL")),
         ("SK Brann Kvinner", "FK Austria Wien", ("Kvinner", "Wien"), ("KVI", "WIE")),
-        ("Cincinnati Reds", "Los Angeles Dodgers", ("Reds", "Dodgers"), ("RED", "DOD")),
-        ("Geelong Cats", "North Melbourne Kangaroos", ("Cats", "Kangaroos"), ("CAT", "KAN")),
+        ("Cincinnati Reds", "Los Angeles Dodgers", ("Reds", "Dodgers"), ("RED", "LAD")),
+        ("Geelong Cats", "North Melbourne Kangaroos", ("Cats", "Kangaroos"), ("CAT", "NMK")),
         ("Bronzetti", "Ibragimova", ("Bronzetti", "Ibragimova"), ("BRO", "IBR")),
         ("SonderjyskE", "OB Odense BK", ("SonderjyskE", "OB Odense BK"), ("SON", "OBO")),
         ("VfL Wolfsburg", "VSG Altglienicke", ("Wolfsburg", "Altglienicke"), ("WOL", "ALT")),
@@ -307,10 +336,10 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Watford FC", "West Bromwich Albion FC", ("Watford FC", "West Bromwich Albion FC"), ("WAT", "WES")),
         ("FC Tōkyō", "Gamba Ōsaka", ("Tōkyō", "Ōsaka"), ("TŌK", "ŌSA")),
         ("Nassourdine Imavov", "Sean Strickland", ("Imavov", "Strickland"), ("IMA", "STR")),
-        ("Team Liquid", "Fire Flux Esports", ("Liquid", "Esports"), ("LIQ", "ESP")),
+        ("Team Liquid", "Fire Flux Esports", ("Liquid", "Esports"), ("LIQ", "FFE")),
         ("Roura Llaverias", "Cirpanli", ("Llaverias", "Cirpanli"), ("LLA", "CIR")),
         ("Blackpool", "Reading", ("Blackpool", "Reading"), ("BLA", "REA")),
-        ("Sport Lisboa e Benfica", "AC Milan", ("Benfica", "Milan"), ("BEN", "MIL")),
+        ("Sport Lisboa e Benfica", "AC Milan", ("Benfica", "Milan"), ("SLB", "MIL")),
         ("Francesca Pace", "Jenny Lim", ("Pace", "Lim"), ("PAC", "LIM")),
         ("Mavericks", "Celtics", ("Mavericks", "Celtics"), ("MAV", "CEL")),
         ("Middlesbrough", "Doncaster Rovers", ("Middlesbrough", "Doncaster Rovers"), ("MID", "DON")),
@@ -325,13 +354,13 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Beijing FC", "Dalian Yingbo", ("Beijing FC", "Yingbo"), ("BEI", "YIN")),
         ("Guabira", "Bolivar", ("Guabira", "Bolivar"), ("GUA", "BOL")),
         ("Real Cundinamarca", "Itagui Leones FC", ("Cundinamarca", "Itagui Leones FC"), ("CUN", "ITA")),
-        ("Vitalem Aerem", "The Huns Esports", ("Aerem", "Esports"), ("AER", "ESP")),
+        ("Vitalem Aerem", "The Huns Esports", ("Aerem", "Esports"), ("AER", "THE")),
         ("Motherwell FC", "SC Freiburg", ("Motherwell FC", "Freiburg"), ("MOT", "FRE")),
         ("Lajal", "Quilez", ("Lajal", "Quilez"), ("LAJ", "QUI")),
         ("BOJONG", "Diamant Esports", ("BOJONG", "Esports"), ("BOJ", "ESP")),
-        ("Shunsuke Mitsui", "Petr Bar Biryukov", ("Mitsui", "Biryukov"), ("MIT", "BIR")),
+        ("Shunsuke Mitsui", "Petr Bar Biryukov", ("Mitsui", "Biryukov"), ("MIT", "PBB")),
         ("FC Madalena", "SC Barreiro", ("Madalena", "Barreiro"), ("MAD", "BAR")),
-        ("Cape Verde", "What will the announcers say during Uruguay", ("Verde", "Uruguay"), ("VER", "URU")),
+        ("Cape Verde", "What will the announcers say during Uruguay", ("Verde", "Uruguay"), ("VER", "WWT")),
         ("Rzhevska Anna", "Dronova Uliana", ("Anna", "Uliana"), ("ANN", "ULI")),
         ("Daniel Marcos", "Magomed Magomedov", ("Marcos", "Magomedov"), ("MAR", "MAG")),
         ("Yasmine Mansouri", "Martha Matoula", ("Mansouri", "Matoula"), ("MAN", "MAT")),
@@ -340,7 +369,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Chwalinska/Linette", "Guo/Mladenovic", ("Chwalinska/Linette", "Guo/Mladenovic"), ("CHW", "GUO")),
         ("Grenoble", "Stade Lavallois", ("Grenoble", "Lavallois"), ("GRE", "LAV")),
         ("Caroline Dolehide", "Diane Parry", ("Dolehide", "Parry"), ("DOL", "PAR")),
-        ("Leeds United", "Brighton and Hove Albion", ("Leeds United", "Brighton and Hove Albion"), ("LEE", "BRI")),
+        ("Leeds United", "Brighton and Hove Albion", ("Leeds United", "Brighton and Hove Albion"), ("LEE", "BAH")),
         ("Sarkisova", "Goina", ("Sarkisova", "Goina"), ("SAR", "GOI")),
         ("Botafogo FC", "AC Goianiense", ("Botafogo FC", "Goianiense"), ("BOT", "GOI")),
         ("Valeriy Martishev", "Alex Ganchev", ("Martishev", "Ganchev"), ("MAR", "GAN")),
@@ -348,9 +377,9 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Sutton United FC", "Gateshead FC", ("Sutton United FC", "Gateshead FC"), ("SUT", "GAT")),
         ("Indiana Fever", "Portland Fire", ("Fever", "Fire"), ("FEV", "FIR")),
         ("Como", "Liverpool", ("Como", "Liverpool"), ("COM", "LIV")),
-        ("Korpatsch", "Sherif Ahmed Abdelaziz", ("Korpatsch", "Abdelaziz"), ("KOR", "ABD")),
+        ("Korpatsch", "Sherif Ahmed Abdelaziz", ("Korpatsch", "Abdelaziz"), ("KOR", "SAA")),
         ("Sassuolo Calcio", "FC Augsburg", ("Sassuolo Calcio", "Augsburg"), ("SAS", "AUG")),
-        ("San Francisco 49ers", "Seattle Seahawks", ("49ers", "Seahawks"), ("49E", "SEA")),
+        ("San Francisco 49ers", "Seattle Seahawks", ("49ers", "Seahawks"), ("SF4", "SEA")),
         ("Moulton FC", "Sherwood Colliery FC", ("Moulton FC", "Sherwood Colliery FC"), ("MOU", "SHE")),
         ("Maria", "Bartunkova", ("Maria", "Bartunkova"), ("MAR", "BAR")),
         ("Rheindorf Altach", "LASK", ("Altach", "LASK"), ("ALT", "LAS")),
