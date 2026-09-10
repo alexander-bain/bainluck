@@ -144,6 +144,51 @@ class TestTheFrontendFenceThatMakesTheAbsentCaseSafe:
             "the length of each deploy (the old payload omits the key). Use `===`."
         )
 
+    def test_the_retraction_is_refused_and_spelled_the_same_on_both_sides(self):
+        """CERT-2517's repair: `4788-DETAIL-RETRACTION-IS-NOT-A-VERDICT`.
+
+        A non-empty `resolution_source` is NOT a grade. Exactly one value is a
+        RETRACTION — `ungradeable_result` (CAL-P056, #1852) — which asserts NO
+        winner and is written by `repair_kalshi_fabricated_loss.py` while leaving
+        `is_winner=false` in place. Trusting it would print a confident red
+        `Lost` on precisely the rows this ship exists to rescue, which is the
+        reading CERT-2222 blocked on the sibling surface.
+
+        The frontend keeps a mirror of the constant because it cannot import
+        Python. A mirror that can drift is a bug waiting on a rename, so the two
+        spellings are pinned to each other here — read from the FRONTEND SOURCE,
+        so this fails when either side moves.
+        """
+        from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+
+        src = self._outcome_row_src()
+        m = re.search(
+            r'RETRACTED_RESOLUTION_SOURCE\s*=\s*"([^"]+)"', src
+        )
+        assert m, "the frontend no longer names a retracted resolution source"
+        assert m.group(1) == RETRACTION_SOURCE, (
+            f"frontend mirror {m.group(1)!r} != backend {RETRACTION_SOURCE!r}; "
+            "the futures detail page would treat a retraction as a grade."
+        )
+        assert re.search(
+            r"outcome\.resolution_source\s*===\s*RETRACTED_RESOLUTION_SOURCE",
+            src,
+        ), "`outcomeRowVerdict` no longer refuses the retraction."
+
+    def test_the_retraction_is_still_classified_terminal_no_winner(self):
+        """The mirror above is only correct while the backend still treats this
+        source as structurally no-winner. If it were ever promoted to an
+        authoritative grade, refusing it on the page would start hiding real
+        results — so the classification is asserted, not assumed."""
+        from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+        from app.utils.resolution_authority import (
+            AUTHORITATIVE_SOURCES,
+            TERMINAL_SOURCES,
+        )
+
+        assert RETRACTION_SOURCE in TERMINAL_SOURCES
+        assert RETRACTION_SOURCE not in AUTHORITATIVE_SOURCES
+
     def test_no_verdict_branch_reads_is_winner_directly(self):
         """The four verdict branches — row tint, Won/Lost pill, the
         100%/0%+Settled cell, and the movement suppression — must all go through

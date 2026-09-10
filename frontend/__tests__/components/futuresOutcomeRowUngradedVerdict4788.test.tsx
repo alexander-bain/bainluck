@@ -300,3 +300,79 @@ describe("#4788 the specimen market, whole", () => {
     for (const o of SPECIMEN) expect(html).toContain(o.name);
   });
 });
+
+/**
+ * CERT-2517's required repair: `4788-DETAIL-RETRACTION-IS-NOT-A-VERDICT`.
+ *
+ * The first cut of `outcomeRowVerdict` withheld on a NULL source and then trusted
+ * every non-null one. That is the reading CERT-2222 had already blocked on the
+ * sibling surface (`_outcome_is_settled`, `routes/league_futures.py`): a non-empty
+ * `resolution_source` is not a grade, because exactly one value is a RETRACTION.
+ *
+ * `ungradeable_result` (CAL-P056, #1852) is the state of a leg whose stored loss
+ * the venue never declared. It asserts NO winner, and it is written — leaving
+ * `is_winner=false` in place — by the attended repair in
+ * `app/tasks/repair_kalshi_fabricated_loss.py`. So the rows this ship is meant to
+ * rescue are precisely the rows the repair stamps, and trusting the source would
+ * have printed a confident red `Lost` on every one of them: the same lie the ship
+ * removes, re-entering through the fix itself.
+ *
+ * Asserted through the REAL `OutcomeRow`, not the predicate alone, because the
+ * predicate drives four separate branches and the reader only ever sees the
+ * rendered ones.
+ */
+describe("#4788 a retraction is not a verdict (CERT-2517 repair)", () => {
+  const retracted = (over: Partial<FuturesOutcome> = {}) =>
+    outcome({ resolution_source: "ungradeable_result", ...over });
+
+  it("THE DEFECT: a retracted leg with `is_winner=false` prints no verdict", () => {
+    expect(outcomeRowVerdict(retracted({ is_winner: false }), true)).toBeNull();
+    const html = render(retracted({ is_winner: false }));
+    expect(html).not.toContain("Lost");
+    expect(html).not.toContain("Settled");
+  });
+
+  it("refuses it in the OTHER direction too — retracted AND crowned is a contradiction", () => {
+    // A row that is both "we cannot know" and "this one won" cannot be rendered
+    // as a result in either direction; the honest render is the live one.
+    expect(outcomeRowVerdict(retracted({ is_winner: true }), true)).toBeNull();
+    const html = render(retracted({ is_winner: true }));
+    expect(html).not.toContain("Won");
+    expect(html).not.toContain("100%");
+  });
+
+  it("PRESERVES THE PRICE: the retracted row still shows its last recorded number", () => {
+    const html = render(retracted({ is_winner: false, probability: 0.99 }));
+    expect(html).toContain("99%");
+    expect(html.toUpperCase()).toContain("LATEST");
+  });
+
+  it("CONTROL: a REAL source is still a grade, in both directions", () => {
+    // The repair must not blanket-refuse every source — that would blank the
+    // site's genuine verdicts, which is the opposite failure.
+    expect(
+      outcomeRowVerdict(
+        outcome({ is_winner: false, resolution_source: "api_settlement" }),
+        true,
+      ),
+    ).toBe("lost");
+    expect(
+      outcomeRowVerdict(
+        outcome({ is_winner: true, resolution_source: "api_settlement" }),
+        true,
+      ),
+    ).toBe("won");
+    expect(render(outcome({ is_winner: true, resolution_source: "api_settlement" })))
+      .toContain("Won");
+  });
+
+  it("CONTROL: the ABSENT-field deploy-skew fence still holds", () => {
+    const absent = outcome({ is_winner: false });
+    delete (absent as { resolution_source?: string | null }).resolution_source;
+    expect(outcomeRowVerdict(absent, true)).toBe("lost");
+  });
+
+  it("a retracted leg on an OPEN market is unaffected — it was never a verdict", () => {
+    expect(outcomeRowVerdict(retracted({ is_winner: false }), false)).toBeNull();
+  });
+});

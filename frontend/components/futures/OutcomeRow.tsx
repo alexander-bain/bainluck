@@ -21,8 +21,14 @@ import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
  * different questions with one bit: "a grader called this a loser" and "nobody
  * has been here".
  *
- * `resolution_source` is the field that separates them, and it is the whole
- * rule: **a row with no source was not graded, whatever `is_winner` says.**
+ * `resolution_source` is the field that separates them: **a row with no source
+ * was not graded, whatever `is_winner` says.**
+ *
+ * But a non-empty source is NOT automatically a grade, and reading it as one is
+ * its own defect (CERT-2222 on the sibling surface, CERT-2517 here). Exactly one
+ * value — `ungradeable_result` — is a RETRACTION: our own statement that the leg
+ * is unknowable. It is refused first and unconditionally; see
+ * `RETRACTED_RESOLUTION_SOURCE` below.
  *
  * Measured on the specimen this landed against, `/futures/59700266` (NFL
  * Receptions, finished 2026-09-09): 24 of 75 legs carry
@@ -63,10 +69,39 @@ import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
  * accuracy GIVEN a source is the producers' half of #4783/#4788 and is not
  * something the renderer can adjudicate (ruling 003).
  */
+/**
+ * The one `resolution_source` that is a RETRACTION rather than a grade.
+ *
+ * CAL-P056 (#1852). `ungradeable_result` is the state of a leg whose stored loss
+ * the venue never declared (a Kalshi `result` of `"scalar"` or `""`). It asserts
+ * NO winner — it exists to take a fabricated loss OUT of the published curve
+ * instead of re-grading it — and `resolution_authority.py` files it as TERMINAL
+ * (tier 1), structurally no-winner and calibration-truth ineligible.
+ *
+ * Mirror of `RETRACTION_SOURCE` in `app/utils/kalshi_fabricated_loss.py`, and
+ * pinned to it by `test_futures_serves_resolution_source_4788.py` so the two
+ * cannot drift.
+ */
+export const RETRACTED_RESOLUTION_SOURCE = "ungradeable_result";
+
 export function outcomeRowVerdict(
   outcome: FuturesOutcome,
   isResolved: boolean,
 ): "won" | "lost" | null {
+  // THE RETRACTION IS REFUSED FIRST, AND UNCONDITIONALLY — before `isResolved`,
+  // before the null test, before `is_winner`.
+  //
+  // CERT-2222 blocked this exact reading on the sibling surface, and CERT-2517
+  // blocked it here: "a non-empty `resolution_source` is not a grade". A row we
+  // have explicitly declared unknowable is the LAST row entitled to a verdict,
+  // and treating the retraction as a grade turns it into the confident red `Lost`
+  // this whole ship exists to remove — the worse lie, because it looks like a
+  // result. `_outcome_is_settled` in `routes/league_futures.py` states the rule
+  // at length; this is the same rule, not a second private copy of it.
+  //
+  // Unconditional in BOTH directions: a row that is both retracted and crowned is
+  // a contradiction, and the honest render for a contradiction is the live one.
+  if (outcome.resolution_source === RETRACTED_RESOLUTION_SOURCE) return null;
   if (!isResolved) return null;
   // A SERVED null means the payload looked and found no grader ⇒ say nothing.
   //

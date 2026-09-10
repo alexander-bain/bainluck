@@ -23,7 +23,7 @@
 // Capture it with:
 //   source ~/.claude/.env && curl -s "$BAINLUCK_API/api/futures/59700266" -o payload.json
 //
-// Usage: node tools/ungraded-verdict-shot-4788.mjs <base> <marketId> <before|after> <out.png> <payload.json> [scrollPx]
+// Usage: node tools/ungraded-verdict-shot-4788.mjs <base> <marketId> <before|after|retracted> <out.png> <payload.json> [scrollPx]
 import { createRequire } from 'module';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 
@@ -41,7 +41,7 @@ const { chromium } = createRequire(findPlaywright())('playwright');
 
 const [base, marketId, arm, out, payloadPath, scrollPx] = process.argv.slice(2);
 if (!base || !marketId || !arm || !out || !payloadPath) {
-  console.error('usage: <base> <marketId> <before|after> <out.png> <payload.json> [scrollPx]');
+  console.error('usage: <base> <marketId> <before|after|retracted> <out.png> <payload.json> [scrollPx]');
   process.exit(2);
 }
 // Every API call the page makes, captured with curl into a fixture dir keyed by
@@ -86,6 +86,11 @@ await page.route('**/api.bainluck.com/**', async (route) => {
   const body = JSON.parse(raw);
   for (const o of body.outcomes ?? []) {
     if (arm === 'after') o.resolution_source = null; // what the DB says: ungraded
+    // CERT-2517's repair arm. `ungradeable_result` is a RETRACTION (CAL-P056),
+    // written by the attended repair while leaving `is_winner=false` in place —
+    // so it is a NON-NULL source on exactly the rows this ship rescues, and the
+    // first cut of the predicate printed a red `Lost` on every one of them.
+    else if (arm === 'retracted') o.resolution_source = 'ungradeable_result';
     else delete o.resolution_source; // what today's serialiser sends
     patched++;
   }
