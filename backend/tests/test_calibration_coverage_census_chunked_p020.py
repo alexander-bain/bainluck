@@ -54,7 +54,24 @@ from app.tasks.precompute_calibration import (
     _coverage_universe_cte,
     _COVERAGE_RUNG_KEYS,
     _main_futures_sql,
+    _roster_pushdown_predicates,
+    VM_ROSTER_MARKET_INFO_EXTRA,
 )
+
+
+def _frozen_chunk_universe() -> str:
+    """The chunk-scoped universe AS ``_main_futures_sql(frozen=True)`` emits it.
+
+    D119 / CAL-P1090 pushed the roster conjunct onto the universe's
+    ``market_info`` join, so the universe text is no longer a bare
+    ``_coverage_universe_cte(chunk_scoped=True)`` — it carries the same predicate
+    the population chain does. Derived here rather than hard-coded so the two
+    cannot drift.
+    """
+    _vm, mi = _roster_pushdown_predicates(
+        frozen_vm_roster=True, market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA
+    )
+    return _coverage_universe_cte(chunk_scoped=True, roster_predicate=mi)
 from app.utils.calibration_staged_futures import merge_futures_rows
 
 CENSUS = "app.tasks.precompute_calibration.COVERAGE_CENSUS_ENABLED"
@@ -150,7 +167,7 @@ class TestOneLadderTwoScopes:
 
     def test_the_universe_is_the_only_thing_that_differs(self, census_on):
         frozen = _main_futures_sql(frozen=True)
-        chunked_universe = _coverage_universe_cte(chunk_scoped=True)
+        chunked_universe = _frozen_chunk_universe()
         global_universe = _coverage_universe_cte(chunk_scoped=False)
         # Swap the frozen statement's universe for the global one and the two
         # statements' census halves become the same text. Anything else that
@@ -261,7 +278,9 @@ class TestTheGuardStillRefusesTheWrongThing:
         # Mutation: put the OLD global universe back under the frozen scope.
         monkeypatch.setattr(
             "app.tasks.precompute_calibration._coverage_universe_cte",
-            lambda *, chunk_scoped: _coverage_universe_cte(chunk_scoped=False),
+            lambda *, chunk_scoped, roster_predicate="": _coverage_universe_cte(
+                chunk_scoped=False
+            ),
         )
         with pytest.raises(ValueError, match="not chunk-scoped"):
             _main_futures_sql(frozen=True)
@@ -269,7 +288,9 @@ class TestTheGuardStillRefusesTheWrongThing:
     def test_the_refusal_still_names_the_work(self, monkeypatch, census_on):
         monkeypatch.setattr(
             "app.tasks.precompute_calibration._coverage_universe_cte",
-            lambda *, chunk_scoped: _coverage_universe_cte(chunk_scoped=False),
+            lambda *, chunk_scoped, roster_predicate="": _coverage_universe_cte(
+                chunk_scoped=False
+            ),
         )
         with pytest.raises(ValueError) as excinfo:
             _main_futures_sql(frozen=True)

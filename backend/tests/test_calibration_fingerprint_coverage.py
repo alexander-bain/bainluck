@@ -338,10 +338,18 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         """
         assert artifact["uncovered_sql_shaping"] == 22
 
-    def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
+    def test_the_five_hashed_roots_are_derived_not_declared_here(self, artifact):
+        # D119 / CAL-P1090 added the fifth: `_roster_pushdown_predicates`, the
+        # gate deciding when the roster conjunct may be pushed onto each
+        # futures_outcomes scan. It is a SQL-shaping helper CALLED by two of the
+        # roots below, and `inspect.getsource` never covers a callee — so an
+        # edit widening the gate would change which rows a chunk reads while
+        # leaving a carried cursor resumable. Adding a root is meant to be a
+        # deliberate, visible act; that is why this list is spelled out.
         assert sorted(artifact["hashed_roots"]) == [
             "_calibration_population_ctes",
             "_main_futures_sql",
+            "_roster_pushdown_predicates",
             "_virtual_market_ctes",
             "compute_calibration_payload",
         ]

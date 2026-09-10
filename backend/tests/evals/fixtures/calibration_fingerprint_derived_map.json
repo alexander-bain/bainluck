@@ -16,6 +16,7 @@
   "hashed_roots": [
     "_calibration_population_ctes",
     "_main_futures_sql",
+    "_roster_pushdown_predicates",
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
@@ -660,7 +661,7 @@
       "origin": "app.tasks.precompute_calibration:VM_ROSTER_MARKET_IDS_PARAM",
       "sql_interpolated": true,
       "used_in": [
-        "_calibration_population_ctes",
+        "_roster_pushdown_predicates",
         "_run_staged_futures",
         "_virtual_market_ctes"
       ]
@@ -673,7 +674,8 @@
       "origin": "app.tasks.precompute_calibration:VM_ROSTER_MARKET_INFO_EXTRA",
       "sql_interpolated": true,
       "used_in": [
-        "_main_futures_sql"
+        "_main_futures_sql",
+        "_roster_pushdown_predicates"
       ]
     },
     {
@@ -783,7 +785,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "5a69dbd6757015cca35d18d1fae034a820bd1ad2b7f64fe7326ca5310cf57de7",
+  "source_sha256": "73ac7623af18c68796ed533728d7d94534ca7bcabf14e54ee76dbe6eb64c7e77",
   "uncovered_behavior_or_evidence": 32,
   "uncovered_count": 54,
   "uncovered_sql_shaping": 22
