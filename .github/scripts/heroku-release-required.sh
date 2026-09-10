@@ -58,7 +58,20 @@ git cat-file -e "${BEFORE}^{commit}" 2>/dev/null \
 git cat-file -e "${AFTER}^{commit}" 2>/dev/null \
   || emit true "head commit ${AFTER} not present — cannot prove frontend-only"
 
-CHANGED="$(git diff --name-only "$BEFORE" "$AFTER")" \
+# `--no-renames` IS LOAD-BEARING, NOT TIDINESS.
+#
+# Rename detection is ON by default, and for a detected rename `--name-only`
+# prints ONE line: the DESTINATION. So moving `backend/app/served.py` to
+# `frontend/app/served.py` — a change that deletes a file the dynos serve —
+# reports as the single path `frontend/app/served.py`, every path reads
+# frontend-only, and this script skips a release that production needs. Heroku
+# then sits behind master with nobody watching, which is the exact failure mode
+# the whole file is written to fail away from.
+#
+# `--no-renames` reports both halves of a move, so the vanishing `backend/`
+# path is seen and forces the release. The cost is that a pure frontend/ ->
+# frontend/ move lists two safe paths instead of one, which changes no verdict.
+CHANGED="$(git diff --name-only --no-renames "$BEFORE" "$AFTER")" \
   || emit true "git diff failed — cannot prove frontend-only"
 
 [ -n "$CHANGED" ] || emit true "empty diff — cannot prove frontend-only"

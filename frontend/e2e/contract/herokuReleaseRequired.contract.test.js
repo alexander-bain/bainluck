@@ -88,6 +88,45 @@ function verdictFor(files) {
   }
 }
 
+/**
+ * Build a throwaway repo whose HEAD commit MOVES `from` to `to`.
+ *
+ * A move is its own case because git reports it differently from an
+ * add+delete: with rename detection on (the default), `--name-only` prints
+ * only the destination, so the vanishing source path is invisible.
+ */
+function repoWithRename(from, to) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rel-required-mv-"));
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "config", "user.email", "t@t.t");
+  git(dir, "config", "user.name", "t");
+  const src = path.join(dir, from);
+  fs.mkdirSync(path.dirname(src), { recursive: true });
+  // Enough content that this is unambiguously one file moving, not two
+  // coincidentally-similar tiny files.
+  fs.writeFileSync(src, Array.from({ length: 40 }, (_, i) => `line ${i}\n`).join(""));
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "seed");
+  const before = git(dir, "rev-parse", "HEAD").trim();
+
+  const dst = path.join(dir, to);
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  git(dir, "mv", from, to);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "move");
+  const after = git(dir, "rev-parse", "HEAD").trim();
+  return { dir, before, after };
+}
+
+function verdictForRename(from, to) {
+  const { dir, before, after } = repoWithRename(from, to);
+  try {
+    return decide(dir, before, after);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 describe("#4456 — a frontend-only merge does not cycle the Heroku dynos", () => {
   test("the decision lives in a FILE, so this suite can execute it", () => {
     // The #3171 lesson: a guard inlined in ci.yml is unreachable by every gate
@@ -143,6 +182,41 @@ describe("#4456 — a frontend-only merge does not cycle the Heroku dynos", () =
     ]) {
       assert.strictEqual(verdictFor([f]), "true", `${f} must force a release`);
     }
+  });
+
+  // ---- moves: the source path must not disappear from the decision -------
+  test("THE RENAME ONE — moving a file OUT of backend/ still forces a release", () => {
+    // CERT-2423's BLOCK. Rename detection is on by default and prints only the
+    // DESTINATION for a detected rename, so `backend/app/served.py` ->
+    // `frontend/app/served.py` reported as the single path
+    // `frontend/app/served.py`: every path read frontend-only and the script
+    // said "false", silently skipping a release production needed. The deleted
+    // backend file is exactly the thing that changes what the dynos serve.
+    assert.strictEqual(
+      verdictForRename("backend/app/served.py", "frontend/app/served.py"),
+      "true"
+    );
+    // Same shape for the other safe roots, so the fix is not a one-path patch.
+    assert.strictEqual(verdictForRename("backend/app/thing.py", "docs/thing.py"), "true");
+    assert.strictEqual(verdictForRename("Procfile", "docs/Procfile"), "true");
+  });
+
+  test("moving a file INTO backend/ forces a release", () => {
+    assert.strictEqual(
+      verdictForRename("frontend/lib/calc.ts", "backend/app/calc.ts"),
+      "true"
+    );
+  });
+
+  test("NEGATIVE CONTROL — a move that stays inside safe roots still skips", () => {
+    // Without this, "return true on any rename" would pass every assertion
+    // above while disabling the feature for the frontend refactors it exists
+    // to serve.
+    assert.strictEqual(
+      verdictForRename("frontend/components/Old.tsx", "frontend/components/New.tsx"),
+      "false"
+    );
+    assert.strictEqual(verdictForRename("docs/a.md", "tools/a.md"), "false");
   });
 
   test("a path that merely STARTS like a safe one is not safe", () => {
