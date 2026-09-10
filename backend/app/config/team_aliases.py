@@ -65,8 +65,8 @@ def _canonical_market_token(team_name: str) -> str:
     "New England Patriots" -> "Patriots", "San Francisco 49ers" -> "49ers". Venues
     name games "Jets vs. Patriots" and "SF 49ers vs LA Rams" — the CITY is the part
     they drop, so the last word is the token that reaches market names. Pinned
-    value-by-value in `test_team_nickname_search_expansions.py` so a future entry
-    whose last word is wrong fails a test rather than quietly under-matching.
+    value-by-value in `tests/test_search_team_nickname_aliases_4728.py` so a future
+    entry whose last word is wrong fails a test rather than quietly under-matching.
     """
     return team_name.split()[-1]
 
