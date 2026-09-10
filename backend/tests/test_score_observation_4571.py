@@ -15,7 +15,6 @@ green.
 """
 
 import ast
-import inspect
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -398,11 +397,15 @@ def test_format_event_still_serves_the_score_itself():
 
 def test_helper_stays_dependency_free():
     """Imported by two task modules and a helper; it must never be the reason
-    one of them acquires a cycle (same discipline as sport_keys, gotcha #3)."""
-    import app.utils.score_observation as mod
+    one of them acquires a cycle (same discipline as sport_keys, gotcha #3).
 
-    src = inspect.getsource(mod)
-    tree = ast.parse(src)
+    Read from the path like the AST guards above rather than re-importing the
+    module under a second name: `from … import` at the top of this file plus an
+    `import …` here is the same module bound two ways, which CodeQL flags
+    (`py/import-and-import-from`, notice level) and which the rest of this file
+    has no need of.
+    """
+    tree = _module_tree("app/utils/score_observation.py")
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             assert not (node.module or "").startswith("app."), (
