@@ -681,6 +681,42 @@
   .pageTitle {
     font-size: 26px;
   }
+
+  /* #4651 — same defect as `/politics`, same shape, different row.
+
+     `.sectionHead` is a flex row of title + `.sectionMeta { margin-left: auto }`,
+     and `.sectionMeta` carries a `.tabBar` of segmented tabs. Measured on
+     production at 390px: the Music section's bar wants 313px and the Movies
+     section's 225px, both starting well right of centre, so the widest right
+     edge landed at 472.7px and `document.scrollWidth` read 473 against 390 — the
+     page scrolled sideways. Two bars overflowed rather than one, which is why
+     the single-culprit probe could only name their common ancestor
+     (`.main`, itself a comfortable 366px) and the cause looked impossible.
+
+     Three declarations, and each is load-bearing:
+
+       - `.sectionHead` wraps, so the bar drops below its title and gets the full
+         column instead of the remainder.
+       - `.tabBar` wraps, so a bar too wide for one line breaks between TABS.
+       - `.tabBtn` is `nowrap`, so a tab never breaks INSIDE its own label.
+
+     The last two go together. Without them the bar still fits — the buttons are
+     `flex: 0 1 auto` and shrink — but they shrink by wrapping their text, and
+     "Spotify Race" reads as "Spotify" over "Race" in a control whose whole job
+     is to look like one word per tab. Verified by injection on the live page:
+     scrollWidth 473 -> 390, overflow 0, with every label whole. Inert above
+     ~430px where the row already fits. */
+  .sectionHead {
+    flex-wrap: wrap;
+  }
+
+  .tabBar {
+    flex-wrap: wrap;
+  }
+
+  .tabBtn {
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 400px) {

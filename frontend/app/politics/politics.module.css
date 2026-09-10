@@ -754,4 +754,27 @@
   .chamberGrid {
     grid-template-columns: 1fr;
   }
+
+  /* #4651 — the whole PAGE scrolled sideways on a phone, and this row was why.
+
+     `.presHeroHead` is a two-column flex row: the question on the left, the
+     controls pushed right by `.presHeroActions { margin-left: auto }`. Measured
+     on production at 390px, the actions block wants 345px (Rankings/Trends at
+     ~142px + the Merged/Kalshi/Polymarket toggle at 197px, plus the gap) against
+     roughly 318px of card interior — 390 less the page's 24px of padding less
+     the card's 48px. Nothing in a flex row makes it give up: the children are
+     chips whose text IS their content, so `min-width: 0` only buys the right to
+     clip a label. The row therefore stayed 345px wide, its right edge landed at
+     484.9px, and `document.scrollWidth` read 485 against a 390px viewport — so
+     every section on the page, not just this card, slid under the thumb.
+
+     Wrapping is the fix, and one declaration is the whole of it: the controls
+     drop to their own line and the auto margin resolves to zero there, so they
+     sit flush left under the question instead of stranded at the right. Verified
+     by injecting this rule into the live page: scrollWidth 485 -> 390, overflow
+     0. It is inert above ~430px, where the row already fits on one line, which
+     is why it can live in the existing 720px block without a new breakpoint. */
+  .presHeroHead {
+    flex-wrap: wrap;
+  }
 }
