@@ -6932,6 +6932,92 @@ async def typeahead_search(
     else:
         _ta_candidate_filter = FuturesMarket.id.in_(_ta_arm_selects[0])
 
+    # #4723: the dropdown's candidate pool gets the two QUERY-RELEVANCE keys it
+    # has never had. Until now this ORDER BY was `market_tier`, `volume` — a
+    # market-QUALITY prior and a popularity prior, neither of which is about what
+    # the user typed — so the pool that reaches `_rerank_search_futures` was
+    # chosen by trading volume, and the reranker can only reorder the twenty rows
+    # SQL already picked. That is LAT-P033's page-boundary argument (`fed`: 7 of
+    # 20 junk, 300+ name matches below the cut) applied to the surface that never
+    # got the fix.
+    #
+    # MEASURED on production 2026-09-10, the served dropdown:
+    #
+    #   q=nfl   1 NFL market + 4 i-NFL-ation      q=nba   1 NBA + WNBA/Caribbea-n
+    #   q=ipo   pool led by Vuelta a Espana         (Tri-nba-go), Vuelta a Espana
+    #
+    # 🔴 ORDERING ONLY, and the same reasoning as #4572 one surface over: neither
+    # key enters a WHERE clause. `ta_futures_where`, the UNION arms and
+    # `_ta_candidate_filter` above are byte-identical, so recall cannot move and
+    # LAT-P037's refusal of prefix MATCHING is untouched — see the block at
+    # `_futures_prefix_order_keys` in `search_events` for the full argument.
+    #
+    # TWO KEYS, WHOLE-LEXEME FIRST, and the order between them is the measurement
+    # rather than a preference. #4723 proposed the prefix key alone; measured on
+    # production it is WORSE THAN LIVE on `fed` (73 log hits), because `fed:*`
+    # prefixes `feder` and hands slots 0-3 to "Next German federal election
+    # winner?", "Brazil Federal District Governor winner?" — the exact
+    # Con-fed-eration/Fed-erico class `_expanded_tsquery` documents. The
+    # whole-lexeme key sits above it and answers 5/5 Federal Reserve markets.
+    # Same on `nfl`: prefix-alone trades i-NFL-ation for Netflix (NFLX), which
+    # genuinely IS a prefix; the word key puts the five real NFL markets first.
+    #
+    # This is the cheap analogue of `search_events`'s `_futures_name_tier` +
+    # `futures_search_rank` pair. A boolean `@@` rather than a `ts_rank_cd`
+    # because this surface is on a keystroke budget (LAT-P007/LAT-P143 bound this
+    # exact stage) and the pool only needs the name matches SEPARATED from the
+    # substring collisions, not ordered among themselves — `market_tier` and
+    # `volume` below still do that, and the reranker sorts the survivors by
+    # volume anyway.
+    #
+    # `_expanded_tsquery`, not the `ta_fts_q` string beside it: that string is
+    # `exp if exp else term`, so an expansion REPLACES its term, which is #1732
+    # verbatim and would zero this key for every expanded query.
+    #
+    # 🔴 BOTH KEYS SIT BEHIND ONE BOUNDARY, AND IT IS A LATENCY GATE, not tidiness.
+    #
+    # MEASURED on production 2026-09-10, `%re%` over open futures, INTERLEAVED
+    # across four rounds because a paired run reads as signal when it is ordering
+    # bias (the trap #4572 fell into and had to re-measure):
+    #
+    #     baseline   899 / 465 / 524 / 397 ms
+    #     + word key 1875 / 2189 / 1248 / 1077 ms
+    #
+    # 2-4x, every round. A sub-trigram query matches most of the table, so the
+    # keys are computed per candidate row over a huge candidate set — and this is
+    # the surface that fires on every keystroke, where LAT-P010/LAT-P013 already
+    # measured 12.06s for `q=re` and the stage sheds rather than waits. Paying
+    # that to reorder a query with no word to be right about is the wrong trade
+    # twice over.
+    #
+    # So the boundary is `_last_token_prefix_tsquery`'s own None contract — the
+    # `_has_extractable_trigram` cliff this surface already treats as its ONE
+    # boundary (LAT-P013/LAT-P037 replaced `len(term)` with the alnum-run rule so
+    # a second copy could not drift). Below it NOTHING is appended and the
+    # compiled SQL is byte-identical to before #4723, so `re`, `la` and `ai`
+    # cannot have regressed in ordering OR in latency: there is nothing to
+    # regress. Above it the same measurement shows no cost — `fed` 35.6 -> 35.9ms.
+    _ta_futures_name_vector = func.to_tsvector(
+        _SEARCH_TS_CONFIG_SQL, func.coalesce(FuturesMarket.name, "")
+    )
+    # Unweighted, unlike `search_events`'s `_futures_name_vector`: `setweight`
+    # exists to feed `ts_rank_cd`, and these keys only TEST with `@@`, where the
+    # weight cannot change the answer. This is the exact vector `_fts_filter`
+    # builds for the recall arms, so the keys order on the same text the
+    # candidate set was matched on.
+    _ta_futures_prefix_tsquery = _last_token_prefix_tsquery(q)
+    _ta_futures_relevance_order_keys = (
+        []
+        if _ta_futures_prefix_tsquery is None
+        else [
+            # WHOLE-LEXEME FIRST — see the measurement above.
+            _ta_futures_name_vector.op("@@")(_expanded_tsquery(ta_expanded)).desc(),
+            # Then the prefix, by the SAME helper /search and the teams surface
+            # call — never a second copy of the rule.
+            _ta_futures_name_vector.op("@@")(_ta_futures_prefix_tsquery).desc(),
+        ]
+    )
+
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -6940,6 +7026,7 @@ async def typeahead_search(
             *_ta_open_now,
         )
         .order_by(
+            *_ta_futures_relevance_order_keys,
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume.desc().nulls_last(),
         )
