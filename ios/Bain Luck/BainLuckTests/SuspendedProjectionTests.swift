@@ -121,9 +121,11 @@ final class SuspendedProjectionTests: XCTestCase {
     ///
     /// This asserts the helper's answer rather than the card's, so it states the
     /// REASON the local gate exists. If someone later teaches `SpectrumTense`
-    /// about ungradeable games — the copy question routed to Alex in
-    /// `native-090b-2146PT-…` — this test is the one that will fail, and its
-    /// failure is the signal that the gate in `ladderRow` can come out.
+    /// about ungradeable games — call 2 ("Projected margin" / "Projected total
+    /// runs") of `alex-inbox/an-abandoned-games-cards-two-wording-calls.md`,
+    /// still unanswered; call 1 became D120 = C above — this test is the one that
+    /// will fail, and its failure is the signal that the gate in `ladderRow` can
+    /// come out.
     func testTheSharedRungCaptionStillSaysPreGameForAnAbandonedGame() {
         // `finalTotal` is nil for a suspended game: `actualTotal` requires
         // `isDone`, so no final total is ever computed for one.
@@ -137,6 +139,61 @@ final class SuspendedProjectionTests: XCTestCase {
                      "a graded rung already draws no caption")
         XCTAssertNotNil(MarketMapRail.spectrumRungCaption(finalTotal: nil, isSettled: true),
                         "a finished-but-ungradable rung keeps its settled caption")
+    }
+
+    // MARK: - The third card: the caption, not the number (#4018 / D120 = C)
+
+    /// The ship. On the photographed specimen the props card read
+    /// `STRIKEOUTS · chance of hitting · 5+ ▓▓▓░░ 62%` — present tense over a game
+    /// that stopped. The 62% is a real quote and stays; three words change.
+    func testAnAbandonedGamesPropsCaptionIsPastTense() {
+        XCTAssertEqual(
+            EventState.propsChanceCaption("suspended", commenceTime: started, now: afterStart),
+            "last quoted chance"
+        )
+    }
+
+    /// 🔴 THE #4021 CLAUSE, AND THE REASON THE VIEW HAD TO GAIN A `commenceTime`.
+    /// Reading the bare status would caption event 416569 — suspended four days
+    /// BEFORE kick-off — "last quoted chance" about a game nobody has played. This
+    /// is the assertion that fails if someone simplifies the helper to
+    /// `isSuspended(status)`.
+    func testAFixtureSuspendedBeforeItIsPlayedKeepsThePresentTenseCaption() {
+        XCTAssertEqual(
+            EventState.propsChanceCaption("suspended", commenceTime: started, now: beforeStart),
+            "chance of hitting",
+            "a fixture still to be played is still a chance of hitting"
+        )
+    }
+
+    /// THE CONTROL. D120 ruled on ABANDONED games. A finished game's props card
+    /// draws the actual value and a ✓/– beside every rung, so its caption reads as
+    /// the historical quote it is — and Alex has not been asked about it. This
+    /// fails if the predicate is widened to `!canStillBeGraded`, which is the
+    /// tempting one-line generalisation.
+    func testEveryOtherStateKeepsTheCaptionItHadBeforeD120() {
+        for (status, now) in [("completed", afterStart), ("closed", afterStart),
+                              ("live", afterStart), ("scheduled", beforeStart)] {
+            XCTAssertEqual(
+                EventState.propsChanceCaption(status, commenceTime: started, now: now),
+                "chance of hitting",
+                "D120 did not rule on \(status)"
+            )
+        }
+        XCTAssertEqual(
+            EventState.propsChanceCaption(nil, commenceTime: nil, now: afterStart),
+            "chance of hitting",
+            "a status-less row is not an abandoned one"
+        )
+    }
+
+    /// A dateless suspended row inherits `hasStarted`'s TRUE default, same as the
+    /// projection gate above. Pinned so the two cards cannot drift apart on it.
+    func testADatelessSuspendedRowGetsThePastTenseCaptionToo() {
+        XCTAssertEqual(
+            EventState.propsChanceCaption("suspended", commenceTime: nil, now: afterStart),
+            "last quoted chance"
+        )
     }
 
     /// THE CONTROL THAT KEEPS THIS FROM BECOMING A SETTLED CLAIM. Flipping the

@@ -572,20 +572,43 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
     );
   });
 
-  it("PlayerPropsCardView is left alone ON PURPOSE, and that is recorded", () => {
-    // NOT AN OVERSIGHT. #4018 names three cards; two of them print a number the
-    // APP computes and labels as a forecast of the final, which is mechanically
-    // wrong once no final can arrive. The props card prints the MARKET's price
-    // for a prop — a real quote, not our projection — so suppressing it is a
-    // product decision about what an ungraded prop should look like, not a bug
-    // fix. Routed to Alex rather than guessed at, and the routing is a FILE so
-    // the claim can be checked:
-    // `alex-inbox/native-090b-2146PT-a-game-that-was-abandoned-still-shows-a-forecast-one-card-needs-your-call.md`
-    // (three options, recommending "chance of hitting" -> "last quoted chance",
-    // defaulting Fri 2026-09-11 9:00am PT). This assertion exists so the omission
-    // is visible to the next reader instead of looking like a miss.
+  it("the props card captions its rungs from EventState, not a literal", () => {
+    // #4018's THIRD card. It was left out until Alex ruled, because unlike the
+    // other two it prints the MARKET's price for a prop — a real quote, not our
+    // projection — so suppressing it was a product decision, not a bug fix. The
+    // call went to Alex as three options
+    // (`alex-inbox/an-abandoned-games-cards-two-wording-calls.md`) and he ruled
+    // C on Thu 2026-09-10 (D120, via Fable-5): keep the numbers, change three
+    // words. The number stays; only the caption is state-dependent now.
+    //
+    // WHY A SOURCE SCAN. `SuspendedProjectionTests` proves the helper returns
+    // the right two strings. It cannot prove the view BODY calls it — that is
+    // exactly the #4002 mutant this file exists to kill — and CI compiles no
+    // Swift. Re-inlining `Text("chance of hitting")` leaves every Swift test
+    // green and is caught only here.
+    const props = read("Components/PlayerPropsCardView.swift");
+    expect(props).toMatch(
+      /Text\(EventState\.propsChanceCaption\(\s*eventStatus, commenceTime: commenceTime\s*\)\)/,
+    );
+    expect(props).not.toMatch(/Text\("chance of hitting"\)/);
+  });
+
+  it("the props card is handed the clock, not just the status", () => {
+    // The #4021 clause, asserted at the CALL SITE. `propsChanceCaption` asks
+    // `isSuspendedAndStarted`, so a `commenceTime` that never travels leaves it
+    // permanently nil — and nil means "started", which would caption a
+    // future-dated suspended fixture "last quoted chance". The Swift test pins
+    // the helper's behaviour; this pins that `EventDetailView` actually passes
+    // the date, which no XCTest can see.
     expect(read("Components/PlayerPropsCardView.swift")).toMatch(
-      /private var isDone: Bool \{ EventState\.isFinished\(eventStatus\) \}/,
+      /var commenceTime: Date\?/,
+    );
+    // Anchored on the `boxScore:` line, which is unique to THIS call site.
+    // A `PlayerPropsCardView\([\s\S]*?commenceTime:` span would run past the
+    // closing paren and match the NEXT call's date — three sibling views on
+    // this screen are passed the same expression.
+    expect(read(DETAIL)).toMatch(
+      /commenceTime: event\.commenceTime\?\.asDate,\s*boxScore: vm\.relatedFutures\?\.boxScore/,
     );
   });
 });

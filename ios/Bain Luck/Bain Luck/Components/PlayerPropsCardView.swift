@@ -7,6 +7,11 @@ struct PlayerPropsCardView: View {
     let homeColor: Color
     let awayColor: Color
     let eventStatus: String?
+    /// #4018 — needed for the caption alone. `eventStatus` cannot answer "did
+    /// this game stop?" by itself: `suspended` is a status, not a phase, and
+    /// #4021's future-dated row proves the two disagree. `EventState` asks the
+    /// clock, so the clock has to travel.
+    var commenceTime: Date?
     var boxScore: [String: [String: Double]]?
 
     @State private var teamFilter: String = "all"
@@ -311,7 +316,9 @@ struct PlayerPropsCardView: View {
                     .tracking(0.5)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
-                Text("chance of hitting")
+                Text(EventState.propsChanceCaption(
+                    eventStatus, commenceTime: commenceTime
+                ))
                     .font(.system(size: 8))
                     .foregroundStyle(.quaternary)
                     .lineLimit(1)
