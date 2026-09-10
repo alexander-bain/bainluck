@@ -28,6 +28,10 @@ private struct MapMarker: Identifiable {
 struct MarketMapView: View {
     let gameMarkets: GameMarketsResponse
     let eventStatus: String?
+    /// #4018 — the clock half of "can a final still arrive?". A status alone
+    /// cannot answer it: `suspended` is also worn by fixtures that have not been
+    /// played yet (#4021), and those keep their projection.
+    var commenceTime: Date? = nil
     let homeTeam: String
     let awayTeam: String
     let homeAbbr: String?
@@ -64,6 +68,13 @@ struct MarketMapView: View {
     private var aAbbr: String { sides.away }
     private var isDone: Bool { EventState.isFinished(eventStatus) }
     private var isLive: Bool { eventStatus == "live" }
+
+    /// #4018 — whether a forecast on this card is still a forecast of anything.
+    /// Distinct from `isDone`, which stays the SETTLED test: a suspended game must
+    /// not have its partial score published as a FINAL.
+    private var canStillBeGraded: Bool {
+        EventState.canStillBeGraded(eventStatus, commenceTime: commenceTime)
+    }
     private var isPre: Bool { !isDone && !isLive }
     /// The sport's own words and rail width. Was a pair of local `switch`es
     /// that knew four sports and no tennis, so a US Open match got basketball's
@@ -398,7 +409,7 @@ struct MarketMapView: View {
         // (The totals card below is NOT the same shape — its LIVE branch says
         // `PRE-GAME` too — so it is gated separately rather than by a shared
         // helper that would have to know which card it was on.)
-        if MarketMapRail.drawsPregameMarker(isDone: isDone), let pv = projValue {
+        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded), let pv = projValue {
             markers.append(MapMarker(
                 id: "proj",
                 value: pv,
@@ -569,7 +580,7 @@ struct MarketMapView: View {
         // longer has to span a line the card will not draw. It only bites when
         // `ouLine` came from the event-level number; a ladder-derived one is
         // already in `allThresh` and moves nothing.
-        if MarketMapRail.drawsPregameMarker(isDone: isDone), let ou = ouLine {
+        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded), let ou = ouLine {
             markers.append(MapMarker(
                 id: isLive ? "pre" : "proj",
                 value: ou,
@@ -730,7 +741,7 @@ struct MarketMapView: View {
         // because before the off "PRE-GAME" is at least true, and changing it to
         // the full card's "PROJECTION" is a wording change nobody has
         // photographed and is not what #3885 asks for.
-        if MarketMapRail.drawsPregameMarker(isDone: isDone), let pv = projValue {
+        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded), let pv = projValue {
             markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
         }
 
@@ -763,7 +774,7 @@ struct MarketMapView: View {
         var markers: [MapMarker] = []
         // #3885 — as on `halfMarginCard` above: no lifecycle branch existed, so
         // a settled half total captioned a settlement price `PRE-GAME` too.
-        if MarketMapRail.drawsPregameMarker(isDone: isDone),
+        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded),
            let ou = thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold {
             markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
         }
