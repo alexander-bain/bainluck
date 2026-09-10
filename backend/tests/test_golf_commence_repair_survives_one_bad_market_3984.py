@@ -127,7 +127,12 @@ def _install(monkeypatch, markets, *, schedule=None, raise_on=None):
             _MockSession([_Result(markets)], log),
         ]
     )
-    monkeypatch.setattr(kalshi_task, "get_task_session", lambda: next(sessions))
+    monkeypatch.setattr(
+        kalshi_task,
+        "get_task_session",
+        # #4482: the budget is a kwarg on `get_task_session` now, not a `SET`.
+        lambda **_budget: next(sessions),
+    )
 
     async def _schedule(*a, **k):
         return schedule
@@ -473,7 +478,8 @@ async def _run_poll(monkeypatch, *, golf_enabled, errors):
     service.close = AsyncMock()
 
     @asynccontextmanager
-    async def _session_cm():
+    async def _session_cm(**_budget):
+        # #4482: budget kwargs, not a `SET` on the session.
         yield _EmptySession()
 
     monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)

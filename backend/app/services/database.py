@@ -65,7 +65,12 @@ elif DATABASE_URL.startswith("postgresql://") and "asyncpg" not in DATABASE_URL:
 DB_STATEMENT_TIMEOUT_MS = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", str(30 * 60 * 1000)))
 
 
-def build_connect_args(url: str = None) -> dict:
+def build_connect_args(
+    url: str = None,
+    *,
+    statement_timeout_ms: int | None = None,
+    lock_timeout_ms: int | None = None,
+) -> dict:
     """Driver-level connect arguments shared by EVERY engine in the app.
 
     One home rather than a copy per engine (ruling 005): the task engine in
@@ -78,6 +83,29 @@ def build_connect_args(url: str = None) -> dict:
     set by the CONNECTION rather than by any statement: it survives commit,
     rollback and ``RESET``, which a ``SET LOCAL`` by construction does not.
     Skipped for non-asyncpg URLs (sqlite in tests), which have no such channel.
+
+    #4482 — THE PER-JOB BUDGET USES THE SAME CHANNEL, AND HAS TO. Eight task
+    call sites armed a tighter budget than the resting one with a bare ``SET``
+    at the top of their session, on the assumption stated verbatim at
+    ``app/tasks/kalshi.py`` — *"SET (not SET LOCAL) persists across the
+    incremental commits on this one connection"*. It is one connection only by
+    luck. Measured on ``sqlalchemy.pool`` + ``Session`` (three statements, a
+    commit after each): ``checkedout`` drops to 0 at **every** commit, and with
+    the pool's recycle age reached the next checkout is a different DBAPI
+    connection — 3 distinct ids where the healthy run has 1. That new connection
+    is unarmed, silently: the statement bound falls back to the resting 30
+    minutes and ``lock_timeout``, which has no resting value, falls back to
+    UNBOUNDED. ``pool_recycle=1800`` and ``pool_pre_ping=True`` both do this.
+
+    ``SET LOCAL`` is not the repair — it is strictly worse at those five sites,
+    because it would end at the first commit of every run rather than at an
+    unlucky one. A budget that must outlive commits has to be attached to the
+    connection, which is what this channel is.
+
+    Both overrides are milliseconds and are per-ENGINE, so they only reach the
+    connections that engine creates (``get_task_session`` builds a fresh one per
+    call). Omitted ⇒ today's behaviour exactly: the resting statement bound and
+    no lock bound.
     """
     resolved = DATABASE_URL if url is None else url
     args: dict = {}
@@ -85,7 +113,15 @@ def build_connect_args(url: str = None) -> dict:
         # Production database - require SSL
         args["ssl"] = "require"
     if "asyncpg" in resolved:
-        args["server_settings"] = {"statement_timeout": str(DB_STATEMENT_TIMEOUT_MS)}
+        statement_ms = (
+            DB_STATEMENT_TIMEOUT_MS
+            if statement_timeout_ms is None
+            else int(statement_timeout_ms)
+        )
+        settings = {"statement_timeout": str(statement_ms)}
+        if lock_timeout_ms is not None:
+            settings["lock_timeout"] = str(int(lock_timeout_ms))
+        args["server_settings"] = settings
     return args
 
 

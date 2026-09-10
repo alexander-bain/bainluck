@@ -229,7 +229,9 @@ async def _run_poll(monkeypatch, *, golf_enabled, golf_returns=_REHEARSAL_TOTAL)
     service.close = AsyncMock()
 
     @asynccontextmanager
-    async def _session_cm():
+    async def _session_cm(**_budget):
+        # #4482: the per-job statement/lock budget is a kwarg on
+        # `get_task_session` now, not a `SET` executed on the session.
         yield _Session()
 
     monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)

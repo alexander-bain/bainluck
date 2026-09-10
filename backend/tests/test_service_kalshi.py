@@ -676,13 +676,29 @@ class TestPollKalshiSigkillHardening:
         return textwrap.dedent(inspect.getsource(_poll_kalshi_markets))
 
     def test_sets_statement_and_lock_timeout(self):
-        src = self._src()
-        assert "SET statement_timeout" in src, (
+        """#4482: the budget is a kwarg on ``get_task_session`` now, not a
+        ``SET`` on the session — the upsert loop below commits per market, the
+        pool takes the connection back each time, and a recycled connection
+        arrived with neither bound. Read off the parsed call: the substring form
+        this replaces was satisfied by any comment containing the words.
+        """
+        import ast
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(self._src()))
+        armed = [
+            {kw.arg: ast.unparse(kw.value) for kw in n.keywords if kw.arg}
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "get_task_session"
+            and any(kw.arg == "statement_timeout_ms" for kw in n.keywords)
+        ]
+        assert armed, (
             "poll_kalshi must bound its longest single DB op (the orphan-cleanup "
-            "DELETE) with statement_timeout so it can't hang to the 660s wall"
+            "DELETE) with a statement budget so it can't hang to the 660s wall"
         )
-        assert "SET lock_timeout" in src, (
-            "poll_kalshi must set lock_timeout so a DELETE blocked on a "
+        assert all("lock_timeout_ms" in a for a in armed), (
+            "poll_kalshi must carry a lock budget so a DELETE blocked on a "
             "live-poller row lock fails fast instead of SIGKILLing"
         )
 

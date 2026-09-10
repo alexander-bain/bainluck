@@ -1645,13 +1645,18 @@ async def _refresh_stale_futures_prices(
         "served_unreachable": 0,
     }
 
-    async with get_task_session() as session:
-        # Bound the longest single uninterrupted DB op rather than the loop
-        # boundaries (gotcha: budget-guard-inner-op). A loop-boundary check
-        # cannot interrupt a statement already blocked on a row lock held by the
-        # live poller.
-        await session.execute(text("SET statement_timeout = '60s'"))
-        await session.execute(text("SET lock_timeout = '15s'"))
+    # Bound the longest single uninterrupted DB op rather than the loop
+    # boundaries (gotcha: budget-guard-inner-op). A loop-boundary check cannot
+    # interrupt a statement already blocked on a row lock held by the live
+    # poller.
+    #
+    # #4482: on the connection, not as a `SET` on the session. This body commits
+    # per item, every commit returns the connection to the pool, and a recycled
+    # or pre-ping-replaced connection would arrive with neither bound — 60 s
+    # becoming the resting 30 min and 15 s becoming unbounded, silently.
+    async with get_task_session(
+        statement_timeout_ms=60_000, lock_timeout_ms=15_000
+    ) as session:
 
         # THE IDENTITY ARMS FIRST, and on a shorter clock. Separate arms rather
         # than one loosened predicate: the class arm answers "is this valuable",

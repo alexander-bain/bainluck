@@ -158,7 +158,9 @@ async def _run_ingest(session, venue_event):
     service.close = AsyncMock()
 
     @asynccontextmanager
-    async def _session_cm():
+    async def _session_cm(**_budget):
+        # #4482: the per-job statement/lock budget is a kwarg on
+        # `get_task_session` now, not a `SET` executed on the session.
         yield session
 
     with ExitStack() as es:
@@ -230,7 +232,9 @@ async def _run_linked_book_refresh(session, raw_markets):
     service.close = AsyncMock()
 
     @asynccontextmanager
-    async def _session_cm():
+    async def _session_cm(**_budget):
+        # #4482: the per-job statement/lock budget is a kwarg on
+        # `get_task_session` now, not a `SET` executed on the session.
         yield session
 
     with ExitStack() as es:

@@ -939,22 +939,27 @@ async def _poll_kalshi_markets():
             time.monotonic() - _task_started >= _FETCH_DEADLINE_S
         )
 
-        async with get_task_session() as session:
+        # #995 attempt-4: bound the LONGEST single uninterrupted DB op
+        # (budget-guard-inner-op). poll_kalshi set NO timeouts, so the pre-loop
+        # orphan-cleanup DELETE below could hang on a row lock held by the live
+        # prediction-market poller (gotcha #6/#13 per-market commits) all the way
+        # to the 660s hard wall → SIGKILL before any market is created. A
+        # loop-boundary guard can't interrupt a hung statement; only a DB timeout
+        # can. Mirrors kalshi_settled's fix. statement_timeout raises → caught by
+        # the outer try → graceful return; the next run retries (orphan cleanup +
+        # upserts are idempotent).
+        #
+        # 🔴 #4482 — THIS LINE USED TO SAY "SET (not SET LOCAL) persists across
+        # the incremental commits on this one connection". True while it IS one
+        # connection, and nothing made it one: `commit()` returns the connection
+        # to the pool, and `pool_recycle=1800` / `pool_pre_ping` hand back a
+        # fresh, unarmed one. This task's own budget is what that costs — 90 s
+        # reverting to the resting 30 min and 20 s of lock wait to unbounded,
+        # with no error and no log line. Armed on the connection instead.
+        async with get_task_session(
+            statement_timeout_ms=90_000, lock_timeout_ms=20_000
+        ) as session:
             now = datetime.now(timezone.utc)
-
-            # #995 attempt-4: bound the LONGEST single uninterrupted DB op
-            # (budget-guard-inner-op). poll_kalshi set NO timeouts, so the
-            # pre-loop orphan-cleanup DELETE below could hang on a row lock held
-            # by the live prediction-market poller (gotcha #6/#13 per-market
-            # commits) all the way to the 660s hard wall → SIGKILL before any
-            # market is created. A loop-boundary guard can't interrupt a hung
-            # statement; only a DB timeout can. Mirrors kalshi_settled's fix.
-            # statement_timeout raises → caught by the outer try → graceful
-            # return; the next run retries (orphan cleanup + upserts are
-            # idempotent). SET (not SET LOCAL) persists across the incremental
-            # commits on this one connection.
-            await session.execute(text("SET statement_timeout = '90s'"))
-            await session.execute(text("SET lock_timeout = '20s'"))
 
             _mark_phase("orphan_cleanup")
             # One-time bulk cleanup: delete ALL orphan outcomes with NULL
@@ -4779,24 +4784,26 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
 
         service = KalshiAPIService()
         try:
-            async with get_task_session() as session:
+            # #969-Q109b: bound the longest single uninterrupted DB op. The
+            # _MAX_SECONDS loop guard + the get_events deadline were NOT enough —
+            # the task still busted the 900s wall in the trigger test (run
+            # b03a6be8 SoftTimeLimit @ 18:17Z). Fetches are capped at the 30s HTTP
+            # timeout, so the only thing that can run uninterrupted for the
+            # observed ~285-480s past the guard is a single SQL statement/commit
+            # blocking on a lock held by the live Kalshi poller (gotcha #6/#13:
+            # per-market commits to dodge deadlocks). A loop-boundary guard cannot
+            # interrupt a hung DB op; only a DB timeout can. statement_timeout
+            # caps any single statement and lock_timeout fails a blocked commit
+            # fast, so the work stays under the loop guard instead of into the
+            # soft wall. A timeout raises -> caught below -> graceful return +
+            # cursor resume.
+            #
+            # #4482: on the connection, so the per-market commits below cannot
+            # lose it — this is the task whose measured overrun was 285-480s.
+            async with get_task_session(
+                statement_timeout_ms=90_000, lock_timeout_ms=20_000
+            ) as session:
                 total_snapshots = 0
-
-                # #969-Q109b: bound the longest single uninterrupted DB op. The
-                # _MAX_SECONDS loop guard + the get_events deadline were NOT
-                # enough — the task still busted the 900s wall in the trigger test
-                # (run b03a6be8 SoftTimeLimit @ 18:17Z). Fetches are capped at the
-                # 30s HTTP timeout, so the only thing that can run uninterrupted
-                # for the observed ~285-480s past the guard is a single SQL
-                # statement/commit blocking on a lock held by the live Kalshi
-                # poller (gotcha #6/#13: per-market commits to dodge deadlocks).
-                # A loop-boundary guard cannot interrupt a hung DB op; only a DB
-                # timeout can. statement_timeout caps any single statement and
-                # lock_timeout fails a blocked commit fast, so the work stays
-                # under the loop guard instead of into the soft wall. A timeout
-                # raises -> caught below -> graceful return + cursor resume.
-                await session.execute(text("SET statement_timeout = '90s'"))
-                await session.execute(text("SET lock_timeout = '20s'"))
 
                 # Process priority series first, then rotate through all others
                 # using a Redis-persisted cursor (full coverage every ~38 runs).
@@ -5518,9 +5525,10 @@ async def _backfill_settled_gap_creation(
 
     service = KalshiAPIService()
     try:
-        async with get_task_session() as session:
-            await session.execute(text("SET statement_timeout = '60s'"))
-            await session.execute(text("SET lock_timeout = '15s'"))
+        # #4482: on the connection — the series loop below commits as it creates.
+        async with get_task_session(
+            statement_timeout_ms=60_000, lock_timeout_ms=15_000
+        ) as session:
 
             for series in check_list:
                 if (_time.monotonic() - _start) > _MAX_SECONDS:

@@ -673,7 +673,18 @@ def test_a_build_gets_its_own_engine_so_the_pool_size_is_not_the_bound():
     """
     base = import_module("app.tasks.base")
     session_src = textwrap.dedent(inspect.getsource(base.get_task_session))
-    assert "_get_task_engine()" in session_src, (
+    # Asserted on the parsed call, not the literal `_get_task_engine()`: #4482
+    # gave the factory keyword arguments (the per-job query budget), so the
+    # zero-argument spelling stopped existing while the mechanism this guard
+    # protects — one engine per session, built inside the context manager — did
+    # not change at all.
+    import ast
+
+    tree = ast.parse(session_src)
+    assert any(
+        isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_get_task_engine"
+        for n in ast.walk(tree)
+    ), (
         "get_task_session no longer builds its own engine. If the engine is now "
         "shared, concurrent builds DO contend for one pool and "
         "FEED_LIVE_REPUBLISH_CONCURRENCY must be re-derived against pool_size + "

@@ -174,7 +174,11 @@ def _install_fakes(
                 "session": session}
 
     @contextlib.asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(**budget):
+        # #4482: the per-job query budget is a kwarg on `get_task_session` now,
+        # not a `SET` executed on the session. Recorded rather than ignored so a
+        # caller that stops arming one is visible here too.
+        captured.setdefault("budgets", []).append(budget)
         yield session
 
     def _load_state():
