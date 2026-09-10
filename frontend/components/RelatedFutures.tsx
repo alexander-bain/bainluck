@@ -1051,7 +1051,32 @@ function StatPropsSection({
                         : hasLiveData
                           ? `1px solid ${teamColor}25`
                           : `1px solid ${teamColor}15`,
-                      width: 110,
+                      // #2788 leftover: the tile grows into free space, but never
+                      // past its own content and never below the width it has today.
+                      //
+                      // `width: 110` was a constant that ignored its container. A
+                      // group holding one tile printed `Alexander Zv…` — clipped by
+                      // 7px — in a row with 264px unused at 390px, and the SAME 7px
+                      // in a row with 874px unused at 1024px. The name did not fit a
+                      // width nothing was competing for.
+                      //
+                      // The floor is `minWidth`/`flexBasis`, both still 110, so the
+                      // arm that overflows and scrolls (three or more tiles at phone
+                      // width) is unchanged. The cap is `max-content`: the tile stops
+                      // growing the moment its widest child fits, so a lone tile
+                      // widens by the 7.5px its name needs (110 → 117.5, measured)
+                      // instead of stretching into a banner across an empty row.
+                      // No chosen pixel constant — whatever the name measures is
+                      // the cap.
+                      //
+                      // ORDER MATTERS: for the score tiles max-content (~68px) is
+                      // NARROWER than the floor, and a bare `maxWidth: max-content`
+                      // would SHRINK them. CSS resolves min-width over max-width when
+                      // they conflict, which is what keeps those tiles at 110.
+                      flexGrow: 1,
+                      flexBasis: 110,
+                      minWidth: 110,
+                      maxWidth: "max-content",
                     }}
                   >
                     {/* Player headshot — small */}

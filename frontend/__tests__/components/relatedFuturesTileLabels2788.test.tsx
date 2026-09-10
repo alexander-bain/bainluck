@@ -105,9 +105,32 @@ function tileLabels(html: string): string[] {
   ).map((m) => m[1]);
 }
 
-/** What the 110px tile actually shows before the ellipsis. */
+/**
+ * What the tile shows before the ellipsis at its NARROWEST — 110px, the floor.
+ *
+ * The tile may now grow past that when its row has space (see the sizing
+ * describe below), but the disambiguation gate is deliberately keyed to the
+ * floor: stripping a shared prefix that WOULD have been distinguishable in a
+ * wider tile costs the reader a little context, while failing to strip one that
+ * is indistinguishable at 110px is #2788 itself.
+ */
 function asRendered(label: string): string {
   return label.slice(0, DEFAULT_VISIBLE_CHARS);
+}
+
+/** The inline `style` of every prop tile, parsed into declarations. */
+function tileStyles(html: string): Array<Record<string, string>> {
+  return Array.from(html.matchAll(/<a href="\/futures\/[^"]*"[^>]*style="([^"]*)"/g)).map((m) =>
+    Object.fromEntries(
+      m[1]
+        .split(";")
+        .filter(Boolean)
+        .map((d) => {
+          const i = d.indexOf(":");
+          return [d.slice(0, i).trim(), d.slice(i + 1).trim()];
+        }),
+    ),
+  );
 }
 
 describe("the OTHER prop tiles do not print one string for two questions", () => {
@@ -157,6 +180,72 @@ describe("the OTHER prop tiles do not print one string for two questions", () =>
     expect(titles).toHaveLength(2);
     expect(titles).toContain(QUARTERS.replace(/'/g, "&#x27;"));
     expect(titles).toContain(SEMIS.replace(/'/g, "&#x27;"));
+  });
+});
+
+describe("the tile is sized by its row and its own content, never by a constant", () => {
+  // THE LEFTOVER HALF OF #2788, filed again as the truncation note on #3417.
+  //
+  // Disambiguation above stops two tiles printing ONE string. It cannot help a
+  // group holding a SINGLE tile: `width: 110` clipped "Alexander Zverev" to
+  // "Alexander Zv…" by 7px on `/events/15309061`, in a row with 264px unused at
+  // 390px — and the SAME 7px in a row with 874px unused at 1024px. Measured with
+  // `tools/prop-tile-fit-2788.mjs` against production, 2026-09-10.
+  //
+  // jsdom cannot lay out flexbox, so these grade the STYLE CONTRACT that the
+  // browser measurement confirmed, not the pixels. The pixel proof is the
+  // before/after differential in the PR.
+  beforeEach(() => {
+    setPayload([prop(QUARTERS, QUARTERS, 0.785, 1), prop(SEMIS, SEMIS, 0.55, 2)]);
+  });
+
+  it("renders tiles at all (the control the assertions below depend on)", () => {
+    expect(tileStyles(render()).length).toBeGreaterThan(0);
+  });
+
+  it("pins no fixed width on the tile", () => {
+    // The defect's exact shape. Matched as a standalone declaration so that
+    // `min-width`/`max-width` — which both contain the word — cannot satisfy it.
+    for (const style of tileStyles(render())) {
+      expect(Object.keys(style)).not.toContain("width");
+    }
+  });
+
+  it("lets the tile grow into free space", () => {
+    // Without a positive grow factor the cap and the floor are both inert and
+    // the tile stays 110px forever: the fix would ship as dead style.
+    for (const style of tileStyles(render())) {
+      expect(Number(style["flex-grow"])).toBeGreaterThan(0);
+    }
+  });
+
+  it("caps the tile at its own content, so a lone tile is not a banner", () => {
+    for (const style of tileStyles(render())) {
+      expect(style["max-width"]).toBe("max-content");
+    }
+  });
+
+  it("keeps a 110px floor so the scrolling arm cannot regress", () => {
+    // Three tiles at phone width overflow and scroll. That arm measured
+    // identical before and after precisely because the floor did not move.
+    for (const style of tileStyles(render())) {
+      expect(style["min-width"]).toBe("110px");
+      expect(style["flex-basis"]).toBe("110px");
+    }
+  });
+
+  it("never caps without a floor — the pair, in both directions", () => {
+    // NOT a restatement of the two cases above. `max-content` is NARROWER than
+    // 110px for the score tiles, whose widest child is a 48px gauge, so a cap
+    // shipped WITHOUT the floor would silently shrink them from 110px to ~68px
+    // at every width. CSS resolves min-width over max-width when they conflict,
+    // and that resolution is the only reason those tiles hold still.
+    for (const style of tileStyles(render())) {
+      const capped = style["max-width"] === "max-content";
+      const floor = parseFloat(style["min-width"] ?? "");
+      expect(capped).toBe(true);
+      expect(floor).toBeGreaterThanOrEqual(parseFloat(style["flex-basis"]));
+    }
   });
 });
 
