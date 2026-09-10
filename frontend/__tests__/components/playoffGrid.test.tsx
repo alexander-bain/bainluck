@@ -24,6 +24,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import PlayoffGrid, {
   GRID_COL_TRACK_FIXED,
   GRID_COL_TRACK_FLEX,
+  GRID_NAME_TRACK,
   GRID_SCROLL_SNAP,
   GRID_STICKY_NAME,
   gridTemplate,
@@ -772,14 +773,96 @@ describe("#3087 — a scrolled grid keeps the name beside the number", () => {
     expect(html).not.toContain("snap-start");
   });
 
-  it("leaves the name's own content alone — face, name, seed, truncation", () => {
+  it("leaves the name's own content alone — face, name, seed", () => {
     const five = grid({ columns: COLUMNS.slice(0, 5) });
     const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
     // Ruling 8's avatar and the seed badge are inside the sticky box, so they
     // travel with the name rather than being left behind with the numbers.
     expect(html).toContain("flex min-w-0 items-baseline");
-    expect(html).toContain("truncate");
     expect(html).toContain("Carlos Alcaraz");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4558 — the phone's name track stops drinking the scroll floor, and a name
+// that does not fit takes a second line instead of an ellipsis
+// ---------------------------------------------------------------------------
+
+describe("#4558 — three names were clipped and three rows' columns were 6px out", () => {
+  it("THE DEFECT: a growable name track on a phone eats the floor and still clips", () => {
+    /* Measured on production, `/tournaments/us-open`, 390px, 2026-09-09 19:20
+     * PT, with `tools/grid-name-fit-4558.mjs` — which reads the resolved
+     * `gridTemplateColumns` and each name cell's own rects, never a screenshot
+     * and never the `.truncate` class (a probe keyed on the defect can only
+     * ever express the FAIL — ux/1165's `a2c32f61`):
+     *
+     *   header template        118px 54px 54px 54px 54px 54px
+     *   Alexander Zverev       name cell 144px  text 102/114  → `Alexander Zv…`
+     *   Ben Shelton            name cell 138px  text  79/79
+     *   Karen Khachanov        name cell 144px  text 102/114  → `Karen Khach…`
+     *   Lorenzo Musetti        name cell 144px  text 102/105  → `Lorenzo Mus…`
+     *
+     * Two facts in one measurement. The 6px spread is `gridScrollFloorPx(5)`
+     * pinning 452px over a 446px row: free space, handed by "maximize tracks"
+     * to the only growable track in the row — and each `<li>` is its OWN grid
+     * container, so it is handed out per row, which is why three rows' value
+     * columns start 6px right of the other two. And it bought nothing: 102px
+     * of name where 114px was wanted still prints an ellipsis.
+     */
+    expect(gridScrollFloorPx(5) - gridWidthPx(5)).toBe(6);
+  });
+
+  it("the phone track is a fixed length, so every row's columns start together", () => {
+    const five = grid({ columns: COLUMNS.slice(0, 5) });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
+    // The template consumes the variable…
+    expect(gridTemplate(5)).toBe("var(--grid-name-track) repeat(5, var(--grid-col-track))");
+    expect(html).toContain("grid-template-columns:var(--grid-name-track) repeat(5,");
+    // …and the variable is a bare length below `sm`. No `max-content`, no `1fr`,
+    // nothing the floor can be poured into.
+    const base = GRID_NAME_TRACK.split(" ").filter((c) => !/^(sm|md|lg):/.test(c));
+    expect(base).toEqual(["[--grid-name-track:var(--grid-name-w)]"]);
+    expect(base.join(" ")).not.toContain("max-content");
+    expect(base.join(" ")).not.toContain("1fr");
+    // The plant: the class is on the rendered scroller, not merely exported.
+    for (const c of GRID_NAME_TRACK.split(" ")) expect(html).toContain(c);
+  });
+
+  it("keeps UX-P147 where Alex measured it — the growth limit returns at sm", () => {
+    // "Player names truncate too early when the window is not super wide."
+    // 560–1024px is a real window with real free space and the names still get
+    // first claim on it; the phone's 6px was a rounded-up scroll floor wearing
+    // the same shape. Deleting the `sm:` half restores his complaint.
+    expect(GRID_NAME_TRACK).toContain(
+      "sm:[--grid-name-track:minmax(var(--grid-name-w),max-content)]"
+    );
+  });
+
+  it("A NAME THAT DOES NOT FIT WRAPS — it does not answer WHO with an ellipsis", () => {
+    // The same decision #4538 took on this page's other list the day before,
+    // and for Alex's own reason: the row exists to say who. `break-words` is
+    // the safety net for a name with no space in it.
+    const five = grid({ columns: COLUMNS.slice(0, 5) });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
+    const nameSpan = /class="([^"]*)"[^>]*>Carlos Alcaraz</.exec(html);
+    expect(nameSpan).not.toBeNull();
+    expect(nameSpan![1]).toContain("break-words");
+    expect(nameSpan![1]).not.toContain("truncate");
+    // …and the box it wraps inside can still shrink, or a flex item's automatic
+    // minimum size silently restores the overflow this fixes.
+    expect(html).toContain("flex min-w-0");
+  });
+
+  it("the sticky box is 138px on EVERY row again, which is what the snap line says", () => {
+    // `scroll-pl-[138px]` is transcribed from padding + name track + gap. With
+    // a per-row track it was true of the short-name rows and 6px wrong on the
+    // long-name ones, so a snapped column rested under the name on those rows
+    // and nowhere else. A fixed track makes the transcription true everywhere.
+    const padding = /scroll-pl-\[(\d+)px\]/.exec(GRID_SCROLL_SNAP);
+    expect(Number(padding![1])).toBe(GRID_ROW_PADDING_PX + GRID_NAME_WIDTH_PX + GRID_GAP_PX);
+    // The floor's own invariant, restored: the rounded-up pixels are gutter.
+    expect(gridScrollFloorPx(5)).toBeGreaterThan(gridWidthPx(5));
+    expect(gridWidthPx(5)).toBe(2 * GRID_ROW_PADDING_PX + GRID_NAME_WIDTH_PX + 5 * (GRID_COLUMN_WIDTH_PX + GRID_GAP_PX));
   });
 });
 

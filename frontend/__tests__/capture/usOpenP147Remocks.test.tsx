@@ -89,14 +89,16 @@ const GRID_TEMPLATE_BEFORE = (columns: number) =>
   `var(--grid-name-w) repeat(${columns}, minmax(var(--grid-col-w), 1fr))`;
 
 /**
- * Today's template. The value track moved behind `--grid-col-track` in #3087's
- * third pass (a scrolling phone pins it so the scroll floor is not absorbed into
- * the columns; `lg` still resolves it to `minmax(84px, 1fr)`), so the AFTER side
- * of this rig follows it. The BEFORE side is a historical quote and does not
- * move.
+ * Today's template. Both tracks are behind variables now: the value track moved
+ * in #3087's third pass (a scrolling phone pins it so the scroll floor is not
+ * absorbed into the columns; `lg` still resolves it to `minmax(84px, 1fr)`) and
+ * the name track in #4558 (the growth limit is real free space at `sm` and up,
+ * and a rounded-up scroll floor below it, so it expires on the phone). The
+ * AFTER side of this rig follows the shipped template; the BEFORE side is a
+ * historical quote and does not move.
  */
 const GRID_TEMPLATE_AFTER = (columns: number) =>
-  `minmax(var(--grid-name-w), max-content) repeat(${columns}, var(--grid-col-track))`;
+  `var(--grid-name-track) repeat(${columns}, var(--grid-col-track))`;
 
 /** UX-P146's interior-tick rule, quoted so the BEFORE panel is the real one. */
 const INTERIOR_TICK_EDGE_MARGIN_BEFORE = 0.18;

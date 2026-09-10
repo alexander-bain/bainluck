@@ -137,6 +137,57 @@ export const GRID_COL_TRACK_FIXED =
   "[--grid-col-track:54px] lg:[--grid-col-track:minmax(84px,1fr)]";
 
 /**
+ * ═══ #4558: THE NAME TRACK HAD THE SAME LEAK, AND IT COST THE PHONE BOTH ═══
+ * ═══ ITS COLUMN ALIGNMENT AND THE END OF THREE PLAYERS' NAMES.            ═══
+ *
+ * `GRID_COL_TRACK_FIXED` above closed the leak for the VALUE tracks: a scroll
+ * floor above the natural width is free space, and free space goes into any
+ * track that can grow. The name track was `minmax(var(--grid-name-w),
+ * max-content)` and can grow, so it kept drinking from the same puddle. Two
+ * claims in `gridTemplate`'s note were true when they were written and are
+ * false now; both are corrected there, and both were measured on production
+ * (`tools/grid-name-fit-4558.mjs`, `/tournaments/us-open`, 390px, 2026-09-09
+ * 19:20 PT, the men's five-column grid):
+ *
+ *   header template          118px 54px 54px 54px 54px 54px
+ *   row 1 (Alexander Zverev) name cell 144px   first value cell at 144
+ *   row 2 (Ben Shelton)      name cell 138px   first value cell at 138
+ *   row 5 (Lorenzo Musetti)  name cell 144px   first value cell at 144
+ *
+ * 1. *"The phone is untouched — at 390px there is no free space."* There is:
+ *    `gridScrollFloorPx(5)` pins 452px over a 446px row, and those 6px went
+ *    into the name track.
+ * 2. *"`max-content` measures the longest name in the WHOLE table, because
+ *    grid tracks are shared."* They are not shared here. The header and every
+ *    `<li>` are each their OWN grid container, so the track resolves per row —
+ *    118px on a row whose name fits, 124px on one whose name does not. The
+ *    numbers below each other therefore sit 6px out of column, and the sticky
+ *    box that `scroll-pl-[138px]` is transcribed from is 144px wide on exactly
+ *    the rows with the long names, so a snapped column rests 6px under the
+ *    name on those rows and nowhere else.
+ *
+ * The 6px also bought nothing: 102px of name where 114px was wanted still
+ * printed `Alexander Zv…`. So below `sm` the name track is a FIXED length —
+ * the floor stays in the gutter where #3087 assumed it was, every row's tracks
+ * are identical, `138` is once again the true width of every sticky box, and
+ * the name answers a track it cannot widen by wrapping (see the name span in
+ * the row, and #4538, which took the same decision on this page's other list
+ * the day before: *"an ellipsis answers that by hiding the one fact the row
+ * exists to state"*).
+ *
+ * At `sm` and above the free space is REAL — a 560–1024px window is genuinely
+ * wider than the floor — and UX-P147's ordering is exactly what Alex asked for
+ * there, so the growable track comes back at `sm`. That is the whole range his
+ * *"not super wide"* complaint was about; the phone was never in it.
+ *
+ * ⚠️ A LITERAL, for the JIT reason `GRID_SIZING` documents, and pinned by
+ * `playoffGrid.test.tsx` against `gridTemplate` and the two width constants.
+ */
+export const GRID_NAME_TRACK =
+  "[--grid-name-track:var(--grid-name-w)] " +
+  "sm:[--grid-name-track:minmax(var(--grid-name-w),max-content)]";
+
+/**
  * ═══ THE NAME TRACK STAYS WHEN THE GRID SCROLLS (#3087) ═══
  *
  * #3072 made the Title column REACHABLE — 74px of scroll where there had been
@@ -376,11 +427,17 @@ function Cell({
  * compress to `var(--grid-col-w)` — a floor wide enough for `100%` — after
  * which the grid scrolls rather than crushing them, exactly as ruling 5 says.
  *
- * ⚠️ THE PHONE IS UNTOUCHED, and this is the property to keep. At 390px there
- * is no free space, step 2 distributes nothing, and the name track sits at its
- * 118px minimum truncating precisely as before. `max-content` cannot widen a
- * track past the space available — it is a *growth limit*, not a minimum — so
- * it cannot overflow a narrow window either.
+ * ⚠️ THE PHONE WAS NOT UNTOUCHED, AND THIS PARAGRAPH USED TO SAY IT WAS
+ * (corrected #4558). It read: *"At 390px there is no free space, step 2
+ * distributes nothing, and the name track sits at its 118px minimum."* That
+ * was true on the day it was written and stopped being true when #3087's
+ * scroll floor shipped a `min-width` of 452 over a 446px row — 6px of free
+ * space, which step 2 handed to the name track on the rows with long names and
+ * to nobody on the rest. Below `sm` the name track is therefore a fixed length
+ * now (`GRID_NAME_TRACK`), and the growable one starts at `sm`, where the free
+ * space is a real window rather than a rounded-up floor. `max-content` still
+ * cannot widen a track past the space available — it is a *growth limit*, not
+ * a minimum — so it cannot overflow a narrow window either.
  *
  * ⚠️ AND `lg` AND ABOVE IS UNTOUCHED TOO, for the mirror reason. There the
  * minimum is already 236px, which was measured as "the widest real name plus a
@@ -391,10 +448,20 @@ function Cell({
  * was verdicted against is byte-identical. The change bites in exactly the
  * range Alex named — 560px to 1024px — and nowhere else.
  *
- * A NOTE ON WHAT `max-content` MEASURES. It is the longest name in the WHOLE
- * table, not per row, because grid tracks are shared. That is the correct
- * reading of "names get priority": a column sized to its longest entry is a
- * column where no name is cut while another row has slack.
+ * A NOTE ON WHAT `max-content` MEASURES — AND THE CLAIM HERE WAS WRONG
+ * (corrected #4558). It said: *"the longest name in the WHOLE table, not per
+ * row, because grid tracks are shared."* Tracks are shared inside ONE grid
+ * container, and this component renders the header and every `<li>` as its own
+ * container, so above `sm` each row still sizes its own name track and the
+ * value columns stagger by however much the names differ. Measured on
+ * production at 768px, five rows, first value cell at
+ * `138 / 138.2 / 147.2 / 155.8 / 156.1` — an 18px stagger in a table whose
+ * whole claim is that a column is a column. That is #4593 and it wants
+ * `subgrid` (one container, tracks genuinely shared, and then this paragraph's
+ * original sentence becomes true); it is NOT fixed here. What is fixed here is
+ * the phone, where the same mechanism drank 6px of rounded-up scroll floor,
+ * moved three rows' columns 6px right of the other two, and still left three
+ * names clipped. Both states measured in `GRID_NAME_TRACK`.
  *
  * ═══ AND WHY THE VALUE TRACK IS NOW A VARIABLE (#3087, third pass) ═══
  *
@@ -407,7 +474,7 @@ function Cell({
  * the name still grows before the bars do.
  */
 export function gridTemplate(columnCount: number): string {
-  return `minmax(var(--grid-name-w), max-content) repeat(${columnCount}, var(--grid-col-track))`;
+  return `var(--grid-name-track) repeat(${columnCount}, var(--grid-col-track))`;
 }
 
 /**
@@ -615,7 +682,7 @@ export default function PlayoffGrid({
           clamped to the HEADER ROW's measured height and never covers a bar. */}
       <div className="relative">
       <div
-        className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${
+        className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${GRID_NAME_TRACK} ${
           scrolls ? GRID_COL_TRACK_FIXED : GRID_COL_TRACK_FLEX
         } ${scrolls ? `overflow-x-auto lg:overflow-x-visible ${GRID_SCROLL_SNAP}` : ""}`}
         data-testid="grid-scroller"
@@ -690,7 +757,19 @@ export default function PlayoffGrid({
                       desktop name box is 236px — the crop was never the reason
                       names truncated up there, the 118px box was. */}
                   <PlayerAvatar name={row.displayName} image={row.image} size={18} />
-                  <span className="ml-1 self-center truncate text-[13.5px] font-semibold text-text-primary lg:text-[15px]">
+                  {/* #4558: THE NAME WRAPS, IT DOES NOT TRUNCATE — the same
+                      decision #4538 took on this page's other list the day
+                      before, for the same reason in Alex's own words: a row
+                      whose job is to say WHO must not answer with
+                      `Alexander Zv…`. Below `sm` the track is fixed
+                      (`GRID_NAME_TRACK`) at 118px, of which 96 reach the text
+                      after the 18px face and its 4px gap, so `Alexander
+                      Zverev` (114px), `Karen Khachanov` (114) and `Lorenzo
+                      Musetti` (105) each take a second line and cost that row
+                      ~17px of height. `break-words` is the safety net for a
+                      name with no space in it and does nothing to a name that
+                      has one. */}
+                  <span className="ml-1 self-center break-words text-[13.5px] font-semibold text-text-primary lg:text-[15px]">
                     {row.displayName}
                   </span>
                   {row.seed !== null && (

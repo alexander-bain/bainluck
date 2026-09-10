@@ -37,6 +37,7 @@ import path from "node:path";
 import PlayoffGrid, {
   GRID_COL_TRACK_FIXED,
   GRID_COL_TRACK_FLEX,
+  GRID_NAME_TRACK,
   GRID_SIZING,
   gridTemplate,
 } from "@/components/tournament/PlayoffGrid";
@@ -241,17 +242,34 @@ describe("UX-P145: the desktop layout exists", () => {
     it("gives the NAME track the growth limit and the bars the leftovers", () => {
       const grid = loadGrid();
       const html = renderToStaticMarkup(<PlayoffGrid grid={grid} initialExpanded />);
+      // #4558 moved the growth limit behind its own variable so it can expire
+      // below `sm`, where the "free space" is a rounded-up scroll floor rather
+      // than a window. The template is the variable; the RULE is the variant.
       expect(html).toContain(
-        `minmax(var(--grid-name-w), max-content) repeat(${grid.columns.length}, var(--grid-col-track))`
+        `var(--grid-name-track) repeat(${grid.columns.length}, var(--grid-col-track))`
+      );
+      expect(gridTemplate(4)).toBe(
+        "var(--grid-name-track) repeat(4, var(--grid-col-track))"
+      );
+      // The growth limit itself, which is what this test is actually about, and
+      // it must be present at `sm` and up — that is the 560–1024px band Alex's
+      // "not super wide" names truncate in.
+      expect(html).toContain(GRID_NAME_TRACK);
+      expect(GRID_NAME_TRACK).toContain(
+        "sm:[--grid-name-track:minmax(var(--grid-name-w),max-content)]"
       );
       // The old template, which must not come back: a bare `var()` name track
-      // takes no free space at all.
+      // takes no free space at all, at any width.
       expect(html).not.toContain(
         `columns:var(--grid-name-w) repeat(${grid.columns.length}`
       );
-      expect(gridTemplate(4)).toBe(
-        "minmax(var(--grid-name-w), max-content) repeat(4, var(--grid-col-track))"
-      );
+      const base = GRID_NAME_TRACK.split(" ").filter((c) => !/^(sm|md|lg):/.test(c));
+      // …and below `sm` it is a bare length ON PURPOSE (#4558): each `<li>` is
+      // its own grid container, so a growable track resolved per row, put three
+      // of five rows' value columns 6px right of the other two, and still left
+      // `Alexander Zv…` clipped. The phone pays the 6px into the gutter the
+      // scroll floor was rounding up for, and long names take a second line.
+      expect(base).toEqual(["[--grid-name-track:var(--grid-name-w)]"]);
       // The growth-limit argument is unchanged, but half of it now lives in the
       // track variable, so read it there too: at `lg` — the width this test is
       // about — the bars are still the flexible half that compresses first,
