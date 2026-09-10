@@ -400,6 +400,55 @@ async def test_a_standing_sport_with_a_dark_standby_is_uncovered_at_the_actor(
 
 
 @pytest.mark.asyncio
+async def test_the_actor_asks_the_decision_not_the_code_set(monkeypatch):
+    """**Found by mutation — M8, the one survivor of the first sweep.**
+
+    Reverting the actor's `is_unserved(decision)` to the old
+    `decision.code in BLANK_CODES` left every other test in this file green,
+    because the severity divergence was pinned at the pure function and nowhere
+    at the call site. So a flipped sport StatPal publishes no board for — soccer
+    or tennis, the two this is permanently true of — would go back to logging an
+    INFO and counting nothing, which is the exact shape of the #4434 defect one
+    layer up.
+
+    This is the paired actor assertion for
+    `test_no_schedule_board_is_a_fault_for_a_standing_sport_and_benign_otherwise`.
+    """
+    import app.tasks.statpal_sync as statpal_sync
+    from app.tasks.espn_sync import _act_on_failovers
+
+    calls: list[str] = []
+
+    async def _schedules(sport_key):
+        calls.append(f"schedule:{sport_key}")
+        return {"ok": True}
+
+    async def _livescores():
+        calls.append("live")
+        return {"ok": True}
+
+    monkeypatch.setattr(statpal_sync, "_sync_statpal_schedules", _schedules)
+    monkeypatch.setattr(statpal_sync, "_sync_statpal_livescores", _livescores)
+
+    decision = _standing(espn=DARK, statpal=NO_SCHEDULE_BOARD, statpal_live=EMPTY)
+    assert decision.code not in BLANK_CODES, (
+        "the premise moved: this test only has teeth while the code is OUTSIDE "
+        "`BLANK_CODES`, which is what makes the actor's question observable"
+    )
+
+    stats: dict = {"errors": []}
+    await _act_on_failovers({NFL: decision}, stats)
+
+    assert calls == [], "nothing may be dispatched to a standby with no board"
+    assert stats["failover_uncovered"] == 1, (
+        "the actor fell back to a code-level set: a flipped sport whose source "
+        "of record publishes no board for its window is unserved, and this is "
+        "the pass on which nobody notices"
+    )
+    assert stats.get("standing_serving", 0) == 0
+
+
+@pytest.mark.asyncio
 async def test_the_caller_reads_the_standby_for_a_flipped_sport(monkeypatch):
     """End to end through `_decide_failovers`, with the switch really flipped.
 
