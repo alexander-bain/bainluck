@@ -32,6 +32,8 @@ Three defect classes, each with its own band below:
 
 from itertools import combinations
 
+import pytest
+
 from app.config import authority_by_sport as abs_module
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
@@ -76,17 +78,36 @@ from app.utils.authority_streak import REQUIRED_STREAK_DAYS
 #: prove something about seven days. That silent pass is why the specimen is a
 #: named constant now instead of six string literals.
 #:
-#: NHL is next under #2867. When it ships there is no unruled shadow-stamped
-#: sport left that refuses on the CLOCK — `baseball_mlb` refuses one branch
-#: earlier on its missing governing number (D63, #4436) — so that release must
-#: give these tests a synthetic sport rather than move this line again.
-#:
-#: **That synthetic sport now exists: `tests/authority_specimens.register_specimen`
-#: (#4564).** A default specimen is exactly this state — shadow-stamped,
-#: discoverable, governed and unruled — so the NHL release replaces this constant
-#: with a call rather than hunting for another real sport. The D63 branch below
-#: has already moved; these clock tests are the remaining borrowers.
-UNRULED_STREAK_SPECIMEN = "icehockey_nhl"
+#: It was `icehockey_nhl` until #4588. The NHL is the third release under #2867,
+#: and when it ships no real sport reaches the CLOCK at all — `baseball_mlb`
+#: refuses one branch earlier on its missing governing number (D63, #4436). The
+#: instruction that stood here said that release "must give these tests a
+#: synthetic sport rather than move this line again". This is that sport, moved
+#: before the release instead of during it, so the constant is now a CONSTRUCTED
+#: key and there is no next borrow to hunt for.
+UNRULED_STREAK_SPECIMEN = "flipgate_unruled_streak_specimen"
+
+
+@pytest.fixture
+def unruled_streak_specimen(monkeypatch):
+    """Register `UNRULED_STREAK_SPECIMEN` for one test, and hand back its key.
+
+    Requested per-test rather than autouse, for visibility: a test that consults
+    the specimen says so in its signature.
+
+    It is NOT because autouse would break this file's config censuses. That was
+    the reason first written here and it is wrong: a mutant that made this
+    fixture autouse left all 36 tests green, including the
+    `DISCOVERY_SCHEDULED_SPORTS` reconciliation and the walk over every
+    `AUTHORITY_BY_SPORT` entry. `register_specimen` only rebinds modules whose
+    name starts with `app.`, and those censuses read this TEST module's own
+    module-level import, which the helper never touches.
+
+    The corollary is the useful half: a census in this file cannot see a
+    specimen at all. One written to expect it would silently measure the real
+    config — which is the trap the helper's own docstring describes, one level up.
+    """
+    return register_specimen(monkeypatch, UNRULED_STREAK_SPECIMEN)
 
 
 def _day(day: str, state: str) -> dict:
@@ -397,36 +418,40 @@ def test_baseball_mlb_is_the_real_sport_in_that_state_today():
     assert not GOVERNING_IDENTITY_NUMBERS.get("baseball_mlb")
 
 
-def test_a_sport_with_no_ledger_is_refused_as_not_measured():
+def test_a_sport_with_no_ledger_is_refused_as_not_measured(unruled_streak_specimen):
     """An empty ledger has never been held to the bar.
 
     `compute_streak` returns `None` here, deliberately, and reporting that as
     "0/7 consecutive days" would describe a sport that FAILED a bar nobody ever
     applied to it. Gotcha #53 at the flip gate.
     """
-    permitted, why = flip_permitted(UNRULED_STREAK_SPECIMEN, [])
+    permitted, why = flip_permitted(unruled_streak_specimen, [])
     assert not permitted
     assert "not measured" in why
     assert "0/" not in why
 
 
-def test_a_short_streak_is_refused_as_a_wait_and_says_how_far_along():
-    permitted, why = flip_permitted(UNRULED_STREAK_SPECIMEN, _run_of(6, GATE_MEETS))
+def test_a_short_streak_is_refused_as_a_wait_and_says_how_far_along(
+    unruled_streak_specimen,
+):
+    permitted, why = flip_permitted(unruled_streak_specimen, _run_of(6, GATE_MEETS))
     assert not permitted
     assert f"6/{REQUIRED_STREAK_DAYS}" in why
     assert "not a defect" in why
 
 
-def test_seven_days_permits_the_measured_half_and_says_the_other_half_is_alex():
+def test_seven_days_permits_the_measured_half_and_says_the_other_half_is_alex(
+    unruled_streak_specimen,
+):
     permitted, why = flip_permitted(
-        UNRULED_STREAK_SPECIMEN, _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
+        unruled_streak_specimen, _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
     )
     assert permitted
     assert "YOUR-TURN" in why
     assert str(FLIP_BAR_PCT) in why
 
 
-def test_seven_days_of_too_few_does_not_permit_a_flip():
+def test_seven_days_of_too_few_does_not_permit_a_flip(unruled_streak_specimen):
     """The two halves of this ship meeting: a week of 1-game days is not a week.
 
     Each of these days would have read `MEETS(covers=100.0%)` before the floor
@@ -434,11 +459,11 @@ def test_seven_days_of_too_few_does_not_permit_a_flip():
     the end-to-end statement — the gate refuses the day, and the counter refuses
     to build a streak out of days it refused.
     """
-    day = governing_identity(UNRULED_STREAK_SPECIMEN, _identity(both=1))["gate"]
+    day = governing_identity(unruled_streak_specimen, _identity(both=1))["gate"]
     assert day == GATE_TOO_FEW
 
     permitted, why = flip_permitted(
-        UNRULED_STREAK_SPECIMEN, _run_of(REQUIRED_STREAK_DAYS, day)
+        unruled_streak_specimen, _run_of(REQUIRED_STREAK_DAYS, day)
     )
     assert not permitted
     assert f"0/{REQUIRED_STREAK_DAYS}" in why
@@ -1007,15 +1032,19 @@ def test_the_idless_refusal_names_the_parser_rather_than_asking_for_a_beat(
     assert "This is a build step (a `sync_statpal_schedules` beat)" not in why
 
 
-def test_a_discoverable_sport_is_unaffected_and_still_permits_at_seven():
+def test_a_discoverable_sport_is_unaffected_and_still_permits_at_seven(
+    unruled_streak_specimen,
+):
     """The blast radius, from the other side: the specimen's answer is byte-for-byte its old one.
 
     Read `UNRULED_STREAK_SPECIMEN` before editing this. It said "NBA" until the
     NBA was ruled under #4493, at which point this test kept passing while no
     longer proving anything about seven days — the specimen must stay unruled.
+    Since #4588 it is constructed unruled rather than borrowed unruled, so no
+    future D104 ruling can quietly take that property away again.
     """
     permitted, why = flip_permitted(
-        UNRULED_STREAK_SPECIMEN, _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
+        unruled_streak_specimen, _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
     )
     assert permitted
     assert "discovery" not in why
