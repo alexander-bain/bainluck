@@ -133,6 +133,28 @@ class TestAFailedReadIsNotAnEmptySchedule:
         assert result.is_alarm is False
 
     @pytest.mark.asyncio
+    async def test_a_falsy_but_real_payload_is_empty_not_failed(
+        self, service, monkeypatch
+    ):
+        """`_get` signals failure with `None` and ONLY `None`. A 200 carrying a
+        bare `{}` is a real answer meaning "nothing here", so the failure test
+        has to be `is None` — `if not data` would report it as an outage.
+
+        Added because a mutant flipping exactly that survived the first sweep:
+        every other test in this class uses a truthy payload, so nothing pinned
+        the distinction, and the false-alarm direction is the one this whole
+        ship is trying not to introduce.
+        """
+        async def fake_http_get(url, params=None):
+            return _resp(200, url, json_body={})
+
+        monkeypatch.setattr(service.client, "get", fake_http_get)
+        result = await service.get_fixtures_result("nfl")
+
+        assert result.reason == "empty"
+        assert result.is_alarm is False
+
+    @pytest.mark.asyncio
     async def test_the_list_wrapper_still_returns_a_list(self, service, monkeypatch):
         """`get_fixtures` keeps its signature and its type, so none of its four
         live callers changes — `statpal_sync:253`, `admin_providers:2410` and
