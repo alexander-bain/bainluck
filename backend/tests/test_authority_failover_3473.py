@@ -41,6 +41,7 @@ from app.config.authority_by_sport import (
     flip_permitted,
 )
 from app.utils.authority_agreement import SHADOW_STAMPERS
+from tests.authority_specimens import register_specimen
 from app.utils.authority_failover import (
     BOTH_QUIET,
     DARK,
@@ -109,23 +110,66 @@ def _open_gate() -> tuple[bool, str]:
 #: `basketball_nba`, and moved AGAIN to `icehockey_nhl` when the NBA shipped as
 #: the second ruled release (#4493) and stopped being refused.
 #:
-#: The specimen is expected to keep moving — that is what "one release each"
-#: means — and the last unruled sport leaving `SHADOW_STAMPERS` is the day this
-#: control has to become something other than a real sport. NHL is refused on its
-#: clock and is not ruled: the same *kind* of refusal NFL and the NBA used to give.
+#: The specimen kept moving — that is what "one release each" means — and #4588
+#: stopped it moving, because the NHL is the last unruled sport in
+#: `SHADOW_STAMPERS` and the release after it would have left this control with
+#: no real sport to borrow. It is now CONSTRUCTED: refused on its clock and not
+#: ruled, the same *kind* of refusal NFL and the NBA used to give.
 #:
 #: Still driven through the real `flip_permitted` rather than hand-writing
 #: `(False, "...")`: a control that cannot notice the gate changing under it is
 #: not a control, which is exactly how this helper caught D104 in the first place
-#: and how it caught #4493 today.
-STILL_GATED = "icehockey_nhl"
+#: and how it caught #4493. A constructed specimen keeps that property — the gate
+#: is still the real one; only the sport it is asked about is built to order.
+STILL_GATED = "flipgate_still_gated_specimen"
 
 
-def _shut_gate() -> tuple[bool, str]:
-    gate = flip_permitted(STILL_GATED, [])
+@pytest.fixture
+def still_gated(monkeypatch):
+    """Register `STILL_GATED` for one test, and hand back its key.
+
+    Per-test rather than autouse, for visibility: a test that consults the
+    specimen says so in its signature.
+
+    It is NOT because autouse would break this file's config censuses — that was
+    the reason first written here and it is wrong, disproved by a mutant that
+    made this fixture autouse and left all 80 tests green. `register_specimen`
+    only rebinds modules whose name starts with `app.`, and the censuses
+    (`test_only_the_ruled_sports_can_fail_over_today`, which walks every key in
+    `SHADOW_STAMPERS`, and the `set(AUTHORITY_BY_SPORT.values()) == {ESPN}`
+    assertion) read this TEST module's own import, which the helper never
+    touches. So they cannot see a specimen either way.
+
+    Worth knowing in both directions: a census here can never observe a
+    specimen, so do not try to write one that does.
+    """
+    return register_specimen(monkeypatch, STILL_GATED)
+
+
+def _shut_gate(sport_key: str) -> tuple[bool, str]:
+    """The real gate's refusal for `sport_key`, asserted to be the RIGHT refusal.
+
+    Takes the key rather than reading `STILL_GATED` directly, because since
+    #4588 the specimen only exists while the `still_gated` fixture is active.
+
+    The second assertion is the one with teeth, and it was added because a
+    mutant survived without it. `still_gated` is also the name of the fixture
+    FUNCTION at module scope, so a test that drops the parameter does not raise
+    `NameError` — it silently passes the function object here, `flip_permitted`
+    refuses it as an unknown sport, and a bare `is False` check is satisfied by
+    that. The control would then be refusing because its sport does not exist
+    rather than because its clock has not run: green, and vacuous. Pinning the
+    reason to the clock branch is what makes forgetting the fixture loud.
+    """
+    gate = flip_permitted(sport_key, [])
     assert gate[0] is False, (
         "the control is broken: every sport now opens the real gate, so the "
         f"paired refusal assertions below are vacuous. {gate[1]}"
+    )
+    assert "not measured" in gate[1], (
+        "the control is refusing for the WRONG reason — it should be refused on "
+        "its clock (no ledger yet), not because the gate has never heard of it. "
+        f"Did this test forget the `still_gated` fixture? Got: {gate[1]}"
     )
     return gate
 
@@ -223,10 +267,10 @@ def test_every_outcome_under_an_open_gate(
     assert decision.why, "every outcome states its reason; that is the point of the type"
 
 
-def test_a_flipped_sport_is_standing_not_failed_over():
+def test_a_flipped_sport_is_standing_not_failed_over(still_gated):
     """`STANDING_STATPAL` is a flip, not an outage override, and counting it as
     a failover would report a sport as degraded for as long as it was flipped."""
-    decision = decide(NFL, espn=FIXTURES, gate=_shut_gate(), standing=STATPAL)
+    decision = decide(NFL, espn=FIXTURES, gate=_shut_gate(still_gated), standing=STATPAL)
     assert decision.code == STANDING_STATPAL
     assert decision.serving == STATPAL
     assert decision.failed_over is False
@@ -235,10 +279,13 @@ def test_a_flipped_sport_is_standing_not_failed_over():
     # It outranks ESPN's reading: a flipped sport does not revert because ESPN
     # happened to answer this pass.
     for reading in (DARK, EMPTY, FIXTURES):
-        assert decide(NFL, espn=reading, gate=_shut_gate(), standing=STATPAL).serving == STATPAL
+        assert (
+            decide(NFL, espn=reading, gate=_shut_gate(still_gated), standing=STATPAL).serving
+            == STATPAL
+        )
 
 
-def test_the_gate_is_asked_before_the_standby_is_read():
+def test_the_gate_is_asked_before_the_standby_is_read(still_gated):
     """The ordering the caller depends on to avoid a network call.
 
     `_decide_failovers` reads StatPal only when `decide` tells it the standby
@@ -246,7 +293,7 @@ def test_the_gate_is_asked_before_the_standby_is_read():
     caller would start making a StatPal call on every dark sport on every pass
     while still being unable to act on the answer.
     """
-    ungated = decide(NFL, espn=DARK, gate=_shut_gate())
+    ungated = decide(NFL, espn=DARK, gate=_shut_gate(still_gated))
     assert ungated.code == NOT_GATED, (
         "the shut gate must refuse BEFORE the missing standby is noticed; "
         f"got {ungated.code}"
@@ -318,7 +365,7 @@ def test_nothing_has_flipped_so_no_sport_is_standing_on_statpal():
     assert set(AUTHORITY_BY_SPORT.values()) == {ESPN}
 
 
-def test_the_disclosure_cannot_disagree_with_the_decision():
+def test_the_disclosure_cannot_disagree_with_the_decision(still_gated):
     """`would_fail_over_now` re-uses `decide` rather than re-deriving its rules.
 
     A disclosure that reimplements its subject is one that drifts from it. Here
@@ -326,7 +373,7 @@ def test_the_disclosure_cannot_disagree_with_the_decision():
     coincidence — over an open gate AND a shut one, because a disclosure that
     agreed only in the refusing case would be the easy half.
     """
-    for gate in (_shut_gate(), _open_gate()):
+    for gate in (_shut_gate(still_gated), _open_gate()):
         assert would_fail_over_now(NFL, gate) == decide(
             NFL, espn=DARK, statpal=FIXTURES, statpal_live=FIXTURES, gate=gate
         )
@@ -632,7 +679,7 @@ async def test_a_sport_with_no_shadow_stamper_costs_no_durable_read(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_ledger_refuses_rather_than_permits(monkeypatch):
+async def test_an_unreadable_ledger_refuses_rather_than_permits(monkeypatch, still_gated):
     """A snapshot-store outage must never be able to OPEN this gate.
 
     `read_ledger_days` returns `None` for "could not be trusted", distinct from
@@ -657,7 +704,7 @@ async def test_an_unreadable_ledger_refuses_rather_than_permits(monkeypatch):
     """
     from app.tasks.espn_sync import _decide_failovers
 
-    _shut_gate()
+    _shut_gate(still_gated)
     _no_ledger(monkeypatch, days=None, why="durable-read-CORRUPT: bad envelope")
     decisions = await _decide_failovers({}, {STILL_GATED}, {"errors": []})
 
@@ -668,7 +715,7 @@ async def test_an_unreadable_ledger_refuses_rather_than_permits(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_today_nothing_is_dispatched_and_a_receipt_is_still_written(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, still_gated
 ):
     """A GATED sport records its outage and takes no action, at the actor.
 
@@ -1205,7 +1252,6 @@ async def test_only_future_statpal_fixtures_do_not_dispatch_but_a_started_one_do
     the real `_statpal_standby_reading`.
     """
     import app.services.statpal_api as statpal_api
-    import app.tasks.espn_sync as espn_sync
 
     from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
 
@@ -1808,7 +1854,7 @@ async def test_a_stateless_live_row_advances_nothing_through_the_real_writer(
     assert live_row_bears_state(_live(now)) is True
 
 
-def test_the_note_says_what_a_flip_does_NOT_do(monkeypatch):
+def test_the_note_says_what_a_flip_does_NOT_do(monkeypatch, still_gated):
     """CERT-2040's other finding: the disclosure over-claimed.
 
     The first cut's note said flipping "changes what serves it", which an
@@ -1833,7 +1879,7 @@ def test_the_note_says_what_a_flip_does_NOT_do(monkeypatch):
 
     # And the decision's own reason carries the same caveat, so a reader of the
     # receipt is not left with a `serving: statpal` they will over-read.
-    standing = decide(NFL, espn=DARK, gate=_shut_gate(), standing=STATPAL)
+    standing = decide(NFL, espn=DARK, gate=_shut_gate(still_gated), standing=STATPAL)
     assert "NOTE THE LIMIT" in standing.why
 
 
@@ -2184,7 +2230,10 @@ async def test_no_sport_served_means_the_live_writer_is_never_called(
     gated_only = THREE_DARK - set(FLIP_RULED_WITHOUT_STREAK)
     assert gated_only, (
         "every sport in THREE_DARK is now ruled, so there is no unserved pass "
-        "left to test — rewrite this against a sport that is still gated"
+        "left to test — rewrite this against a sport that is still gated. "
+        "There may no longer be a real one: since #4588 the way to get a gated "
+        "sport is tests/authority_specimens.register_specimen(...), and this "
+        "test also needs _three_dark_sports_wiring to wire the key it returns."
     )
 
     calls = _three_dark_sports_wiring(monkeypatch)
