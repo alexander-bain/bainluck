@@ -233,6 +233,79 @@ _CONCEPT_FUTURES_SEEDS = [
 ]
 
 
+# --------------------------------------------------------------------------
+# #4723 — the /typeahead POOL, which is a different thing from /search's page
+# --------------------------------------------------------------------------
+#
+# These rows exist to make the POOL CUT decide the answer, because that is the
+# only state in which the defect is reachable. `_TYPEAHEAD_FUTURES_POOL` is 20
+# and `_rerank_search_futures` runs AFTER it, so with a handful of candidates
+# the reranker decides everything and the ORDER BY under test is invisible. A
+# seed of five markets would go green against the very code that shipped the
+# defect. So the collision classes are seeded 22 deep, on purpose.
+#
+# Production, `GET /api/events/typeahead?q=nfl`, 2026-09-10 08:45Z: 18 of the 20
+# pool slots were i-**nfl**-ation markets and the dropdown offered four of them,
+# while 181 genuine NFL futures sat below the cut (open markets whose NAME
+# whole-lexeme-matches `nfl`, counted on production the same morning).
+#
+# THE THREE CLASSES, and each one is load-bearing:
+#
+#   name                       word   prefix   tier  volume   what it proves
+#   -----------------------------------------------------------------------
+#   NFL Playoff Qualifiers…    yes    yes        5      900   the answer
+#   NFLX closing value…        no     yes        1    100..   prefix ALONE is
+#                                                             not enough
+#   How high will inflation…   no     no         1  10000..   the filed defect
+#
+# The tier/volume shape is what makes the test DISCRIMINATE rather than merely
+# pass. The answer is the WORST row by both priors — tier 5, and out-traded 11x
+# — so it can only reach the pool on a query-relevance key:
+#
+#   tier, volume (live before #4723)  -> 20 inflation rows.       answer absent
+#   prefix, tier, volume (#4723 as    -> 20 NFLX rows (tier 1).   answer absent
+#     filed: one key)
+#   word, prefix, tier, volume        -> answer at slot 0.        PASSES
+#
+# The middle line is the measurement that changed the fix. On production `fed`
+# (73 log hits) the one-key form is WORSE THAN LIVE — `fed:*` prefixes `feder`,
+# so slots 0-3 become "Next German federal election winner?" / "Brazil Federal
+# District Governor winner?", the Con-fed-eration class `_expanded_tsquery`
+# documents. NFLX is that class made reproducible: a genuine prefix that is not
+# the answer.
+#
+# Names are checked against every other query this file asserts on, so the rows
+# join no other candidate set: none contains `re`, `us`, `nba`, `mvp`, `fed`,
+# `sun`, `yank`, `laker`, `celtic`, `masters`, `clark` or `d'or`.
+_TYPEAHEAD_POOL_DEPTH = 22
+_TYPEAHEAD_POOL_ANSWER = "NFL Playoff Qualifiers 2027"
+
+
+def _typeahead_pool_seeds():
+    """(external_id, name, market_tier, volume) for the #4723 pool cases."""
+    rows = [
+        ("kalshi-nfl-playoff-qual-2027", _TYPEAHEAD_POOL_ANSWER, 5, 900),
+        # The RECALL control, copied from the production dropdown rather than
+        # invented: `pats` reaches this row by interior substring only — no
+        # whole-word arm and no prefix arm touches it — so it is exactly the
+        # row that vanishes if the #4723 keys ever become a filter.
+        ("kalshi-korpatsch-doubles", "Doubles: Huergo/Korpatsch vs Chan/Joint", 5, 3),
+    ]
+    for i in range(_TYPEAHEAD_POOL_DEPTH):
+        rows.append(
+            (f"kalshi-nflx-{i}", f"NFLX closing value above ${i}00?", 1, 100 + i)
+        )
+        rows.append(
+            (
+                f"kalshi-inflation-{i}",
+                f"How high will inflation go by month {i}?",
+                1,
+                10000 + i,
+            )
+        )
+    return rows
+
+
 async def _seed(session):
     from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team
 
@@ -357,6 +430,21 @@ async def _seed(session):
                     name=outcome_name,
                 )
             )
+
+    # #4723: the pool-cut corpus. No outcomes — these rows are reached by NAME,
+    # and an outcome would put them in a second arm and blur what is being read.
+    for external_id, name, market_tier, volume in _typeahead_pool_seeds():
+        session.add(
+            FuturesMarket(
+                source="kalshi",
+                external_id=external_id,
+                name=name,
+                status="open",
+                market_tier=market_tier,
+                volume=volume,
+                resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
+            )
+        )
 
     await session.commit()
 
@@ -931,6 +1019,105 @@ async def test_the_prefix_key_did_not_buy_its_ordering_with_recall(search):
     assert _YANK_NOISE in names, (
         f"the substring match was REMOVED from the bucket, not just demoted: "
         f"{names!r}. #4572 is a ranking fix — recall must not move."
+    )
+
+
+# --------------------------------------------------------------------------
+# #4723 — the same defect one surface over, where the POOL CUT is the mechanism
+# --------------------------------------------------------------------------
+async def test_the_typeahead_pool_is_chosen_by_the_query_not_by_volume(typeahead):
+    """🔴 #4723: the dropdown must offer the NFL market, not i-**nfl**-ation.
+
+    Measured on production 2026-09-10 08:45Z, `q=nfl` offered five futures and
+    FOUR were inflation markets. The cause is not the reranker — it runs on the
+    20 rows SQL already chose, and 18 of those 20 were imposters. Until #4723
+    the typeahead futures ORDER BY was `market_tier, volume`: a market-QUALITY
+    prior and a popularity prior, neither of which is about what was typed.
+
+    The seed makes the answer the WORST row by both of those priors (tier 5,
+    out-traded 11x by the collisions), so it can reach the pool only on a
+    query-relevance key. See `_typeahead_pool_seeds` for the three classes and
+    the three orderings they separate.
+
+    This test can only run here: which 20 rows a LIMIT returns under an ORDER BY
+    over `to_tsvector`/`to_tsquery` is Postgres semantics end to end.
+    """
+    texts = _typeahead_texts(await typeahead("nfl"))
+    assert _TYPEAHEAD_POOL_ANSWER in texts, (
+        f"the dropdown still cannot see the NFL market: {texts!r}. It is tier 5 "
+        "and out-traded, so it reaches the 20-row pool only if the ORDER BY "
+        "leads with a query-relevance key — check that the #4723 keys are still "
+        "ahead of `market_tier`/`volume` in the typeahead futures query."
+    )
+
+
+async def test_a_genuine_prefix_that_is_not_the_answer_does_not_take_the_pool(
+    typeahead,
+):
+    """🔴 WHY THE WORD KEY SITS ABOVE THE PREFIX KEY, and #4723's own proposal
+    would have failed this.
+
+    The issue proposed a single key: the #4572 prefix test. Measured on
+    production it is not enough and on one real query it is worse than live —
+    `fed:*` prefixes `feder`, handing `fed` (73 log hits) to "Next German
+    federal election winner?" and "Brazil Federal District Governor winner?".
+
+    `NFLX` is that class, reproducible: 22 rows that genuinely DO prefix-match
+    `nfl`, sit at tier 1, and would fill all 20 pool slots under a prefix-only
+    ordering — pushing the whole-word answer out exactly as inflation does
+    today. A fix that ships the one key passes the test above only if it also
+    fails this one.
+
+    PRESENCE is the discriminator here, and deliberately so. Under a
+    prefix-only ordering the 22 tier-1 NFLX rows fill all twenty pool slots and
+    the answer never reaches `_rerank_search_futures` at all — verified against
+    a real Postgres over these exact rows (`answer_in_pool`: tier/volume False,
+    prefix/tier/volume False, word/prefix/tier/volume True). Asserting a
+    POSITION instead would couple this to the suggestion scorer that runs after
+    the reranker, which #4723 does not touch and must not be pinned by it.
+    """
+    texts = _typeahead_texts(await typeahead("nfl"))
+    assert _TYPEAHEAD_POOL_ANSWER in texts, (
+        f"the whole-word NFL market lost the pool to rows that merely PREFIX "
+        f"the query: {texts!r}. A prefix key alone reproduces the defect with a "
+        "better-looking cast — see the `fed` table in "
+        "`tests/test_typeahead_futures_pool_ordering_4723.py`."
+    )
+    assert any(t.startswith("NFLX ") for t in texts), (
+        f"the prefix-matching rows were REMOVED rather than outranked: "
+        f"{texts!r}. They are legitimate substring recall; #4723 reorders."
+    )
+
+
+async def test_the_typeahead_pool_keys_did_not_buy_their_ordering_with_recall(
+    typeahead,
+):
+    """🔴 THE CONTROL, and it is the important one.
+
+    #4723 is ORDERING-ONLY: `ta_futures_where`, the UNION arms and
+    `_ta_candidate_filter` are byte-identical, so a row that reached the
+    dropdown before must still reach it. A change that filtered the collisions
+    out would satisfy both tests above and would be the LAT-P002 revert shape —
+    a recall change wearing a ranking change's clothes — against the refusal
+    LAT-P037 states in capitals.
+
+    `pats` is the case, and it is REAL rather than constructed: on production
+    the dropdown offers five Huergo/Kor**patsch** doubles rows for a query that
+    means the Patriots. #4723 cannot fix that, and this test does not pretend it
+    can — measured 2026-09-10, 53 open Patriots futures exist and ZERO contain
+    the substring `pats`, while `websearch_to_tsquery('pats')` is the lexeme
+    `pat` and "Patriots" stems to `patriot`, so no whole-word arm reaches them
+    either. They are not in the candidate set at all, which makes it a RECALL
+    gap (its own issue) and not something an ORDER BY can reach.
+
+    What this asserts is the half #4723 owns: the interior match is still
+    SERVED. If it disappears, the keys became a filter.
+    """
+    texts = _typeahead_texts(await typeahead("pats"))
+    assert any("Korpatsch" in t for t in texts), (
+        f"the interior substring match was REMOVED, not merely reordered: "
+        f"{texts!r}. #4723 adds ORDER BY keys and nothing else — recall must "
+        "not move."
     )
 
 
