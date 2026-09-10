@@ -12,7 +12,10 @@ import re
 from typing import Any
 
 from app.utils.market_grouping import extract_threshold
-from app.utils.outcome_display import incoherent_ladder_indexes
+from app.utils.outcome_display import (
+    LADDER_MIN_DRAWN_RUNGS,
+    incoherent_ladder_indexes,
+)
 from app.utils.outcome_display_names import display_outcome_names
 
 _IPO_RE = re.compile(r"\b(ipo|initial public offering|market cap|valuation)\b", re.I)
@@ -585,6 +588,22 @@ def classify_discover_card_archetype(
     ):
         suggested_format = "threshold_heatmap"
         reasons.append("threshold_values")
+    elif ladder_treatment_refused and len(distribution_outcomes) >= LADDER_MIN_DRAWN_RUNGS:
+        # CERT-2456 — REFUSING THE TREATMENT IS NOT THE SAME AS SERVING THE FIELD.
+        # Skipping the heatmap above only says what this card is NOT. On the
+        # grader's specimen (`Above 10` .20 / `Above 20` .90 / `Above 30` .95)
+        # nothing is dropped, so `count` is 3 — one short of the `>= 4` branch
+        # below — and the cascade fell to `binary_probability`, whose hero prints
+        # the leader ALONE. Same field hidden, different fallback hiding it.
+        #
+        # A refused ladder is precisely the market whose outcomes ARE the answer:
+        # we are declining to say which rung is wrong, so the reader gets all of
+        # them and can see the contradiction that we could not attribute. The
+        # `>= 4` bar below is about when a field becomes more interesting than a
+        # leader; it has nothing to say about a ladder we have just refused to
+        # rank, so it does not get to gate it.
+        suggested_format = "outcome_distribution"
+        reasons.append("refused_ladder_field")
     elif count >= 4:
         suggested_format = "outcome_distribution"
         reasons.append("multi_outcome_distribution")
@@ -615,6 +634,15 @@ def classify_discover_card_archetype(
         "bundle_candidate": bundle_candidate,
         "comparison_theme": comparison_theme,
         "threshold_points": threshold_points[:12],
+        # CERT-2456 — TRAVELS TO THE RENDERER, because the renderer is where the
+        # refusal is finally honoured or lost. `FuturesCard.tsx` draws the
+        # distribution only at four rows; a refused three-rung ladder classified
+        # `outcome_distribution` and then dropped by that gate lands on the plain
+        # leader hero, which is the same hidden field one component further on.
+        # Gating the widened leaf on THIS rather than lowering the bar for every
+        # `outcome_distribution` card keeps the change to the population the
+        # BLOCK is about.
+        "ladder_treatment_refused": ladder_treatment_refused,
         "distribution_outcomes": distribution_outcomes,
         "remaining_outcome_count": max(0, count - len(distribution_outcomes)),
         "qa_signals": qa_signals,

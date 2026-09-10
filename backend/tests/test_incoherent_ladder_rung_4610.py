@@ -183,6 +183,19 @@ NETFLIX_COHERENT = [
     (name, 0.78 if name == "Above 67" else probability) for name, probability in NETFLIX
 ]
 
+# THE COLLAPSE SPECIMEN (CERT-2451, then CERT-2456). Every rung contradicts every
+# other one — no two of these three can both be true of a cumulative ladder — so
+# the longest coherent run is ONE rung and there is no answer to "which rung is
+# the wrong one". Nothing is dropped and the ladder TREATMENT is refused.
+#
+# These are the numbers, not the BLOCK's literal `.20 / .90 / .95`: a leader at
+# .95 never reaches a card at all. Measured on this harness at HEAD and on the
+# parent commit alike, `.95` returns no card while `.94` returns one, so that
+# specimen is filtered by an eligibility gate upstream of anything #4610 touches
+# and would have tested the gate rather than the fix. `.20 / .55 / .70` is the
+# same collapse, reachable — and is the specimen the grader's own probe ran.
+THREE_RUNG_REFUSED = [("Above 10", 0.20), ("Above 20", 0.55), ("Above 30", 0.70)]
+
 
 class TestWhichRungIsTheWrongOne:
     def test_the_netflix_specimen_names_above_67_and_nothing_else(self):
@@ -593,3 +606,143 @@ class TestTheRefusalSurvivesFeedComposition:
         assert card["discover_card"]["suggested_format"] == "threshold_heatmap"
         labels = [p["label"] for p in card["discover_card"]["threshold_points"]]
         assert labels == ["Above 10", "Above 20"]
+
+
+class TestTheRefusedLadderStillRendersItsField:
+    """CERT-2456 — refusing the treatment is not the same as serving the field.
+
+    CERT-2451's repair stopped the one-point heatmap, and the grader confirmed
+    that half. But the card it left behind was `binary_probability`, whose hero
+    prints the LEADER ALONE — so the reader still met one number where three
+    rungs had been, and the UX-P008 failure survived its second fix. The bar the
+    field fell through was `count >= 4`: with nothing dropped the specimen has
+    exactly three rungs, one short.
+
+    The `>= 4` bar answers "is this field more interesting than its leader?".
+    A refused ladder is not asking that question — we have just declined to say
+    which rung is wrong, so the reader is owed all of them and the right to see
+    the contradiction we could not attribute.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_refused_three_rung_ladder_is_served_as_a_field(self):
+        card = await _serve_one_futures_card(
+            _ladder_market(
+                90006,
+                "Netflix App Downloads in September",
+                THREE_RUNG_REFUSED,
+                group_id="kalshi:netflix-downloads",
+            )
+        )
+        assert card is not None
+        discover_card = card["discover_card"]
+        assert discover_card["suggested_format"] == "outcome_distribution"
+        assert "refused_ladder_field" in discover_card["reasons"]
+        assert discover_card["threshold_points"] == []
+        assert [row["label"] for row in discover_card["distribution_outcomes"]] == [
+            "Above 30",
+            "Above 20",
+            "Above 10",
+        ]
+        # The reader is never told rungs are missing when none are: the drop was
+        # refused, so every rung is on the card and the "+N more" count is zero.
+        assert discover_card["remaining_outcome_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_the_refusal_travels_to_the_renderer(self):
+        # `FuturesCard.tsx` draws the distribution at four rows. A three-row
+        # refused ladder is only drawn because this flag reaches the leaf gate,
+        # so a payload that classifies the field and then drops the flag hides
+        # it one component later — the same defect, one layer on.
+        card = await _serve_one_futures_card(
+            _ladder_market(
+                90007,
+                "Netflix App Downloads in September",
+                THREE_RUNG_REFUSED,
+                group_id="kalshi:netflix-downloads",
+            )
+        )
+        assert card is not None
+        assert card["discover_card"]["ladder_treatment_refused"] is True
+
+    @pytest.mark.asyncio
+    async def test_CONTROL_an_unrefused_three_outcome_market_is_unchanged(self):
+        # The widening is gated on the REFUSAL, not on the row count. A plain
+        # three-outcome market — no ladder, nothing refused — keeps whatever the
+        # cascade always gave it, so no card that renders correctly today moves.
+        card = await _serve_one_futures_card(
+            _ladder_market(
+                90008,
+                "Who wins the leadership race?",
+                [("Alice", 0.50), ("Bob", 0.30), ("Carol", 0.20)],
+                group_id="kalshi:race",
+            )
+        )
+        assert card is not None
+        assert card["discover_card"]["ladder_treatment_refused"] is False
+        assert card["discover_card"]["suggested_format"] != "outcome_distribution"
+
+    def test_the_classifier_needs_enough_rows_to_BE_a_field(self):
+        # The refusal alone is not a licence to call one row a distribution.
+        # Driven at the classifier because the serializer cannot reach this
+        # state — the drop is refused, so the rows are always the whole ladder —
+        # and the guard exists for the next caller, which may filter first.
+        lone = classify_discover_card_archetype(
+            name="Netflix App Downloads in September",
+            category="economics",
+            outcomes=[{"name": "Above 10", "probability": 0.20}],
+            outcome_count=1,
+            group_id="kalshi:netflix-downloads",
+            ladder_treatment_refused=True,
+        )
+        assert lone["suggested_format"] != "outcome_distribution"
+        assert lone["threshold_points"] == []
+
+
+class TestTheFrontendFixtureIsStillWhatWeServe:
+    """The seam `test_playoff_degraded_contract.py` established, for the same
+    reason: nothing imports across Python and TypeScript, so the jest test that
+    proves the reader SEES three rungs asserts against a checked-in payload. A
+    fixture nobody regenerates stays green while the producer stops producing
+    it, which is the exact drift CERT-433 caught.
+
+    Regenerate (from `backend/`) after a deliberate change:
+
+        PYTHONPATH=. python3 -c "
+        import asyncio,json,sys; sys.path.insert(0,'tests')
+        from test_incoherent_ladder_rung_4610 import (
+            _serve_one_futures_card, _ladder_market, THREE_RUNG_REFUSED)
+        card = asyncio.run(_serve_one_futures_card(_ladder_market(
+            60481162, 'Netflix App Downloads in September',
+            THREE_RUNG_REFUSED, group_id='kalshi:netflix-downloads')))
+        json.dump(card, open(
+            '../frontend/__tests__/fixtures/refusedLadderField4610.json','w'),
+            indent=2, default=str, sort_keys=True)"
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_fixture_is_byte_for_byte_what_the_serializer_produces(self):
+        import json
+
+        fixture_path = (
+            Path(__file__).resolve().parents[2]
+            / "frontend"
+            / "__tests__"
+            / "fixtures"
+            / "refusedLadderField4610.json"
+        )
+        card = await _serve_one_futures_card(
+            _ladder_market(
+                60481162,
+                "Netflix App Downloads in September",
+                THREE_RUNG_REFUSED,
+                group_id="kalshi:netflix-downloads",
+            )
+        )
+        assert card is not None
+        served = json.loads(json.dumps(card, default=str, sort_keys=True))
+        assert served == json.loads(fixture_path.read_text()), (
+            "the frontend fixture no longer matches the serializer — regenerate "
+            "it with the command in this class's docstring, then re-read the "
+            "jest test that renders it"
+        )

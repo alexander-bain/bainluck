@@ -489,12 +489,18 @@ def incoherent_ladder_indexes(
     return incoherent_ladder_verdict(items, name_of, prob_of)[0]
 
 
-# How many rungs the reader's ladder needs to BE a ladder. Not a display taste:
-# `FuturesCard.tsx` draws the heatmap only on `heatmapRows.length >= 2` and falls
-# through past the distribution branch to a plain leader card below it, so a
-# one-rung "ladder" is not a smaller ladder — it is a card with its field
-# deleted (the UX-P008 failure).
-_LADDER_MIN_DRAWN_RUNGS = 2
+# How many rows the reader's card needs to show a FIELD rather than an answer.
+# Not a display taste: `FuturesCard.tsx` draws the heatmap only on
+# `heatmapRows.length >= 2` and falls through past the distribution branch to a
+# plain leader card below it, so a one-rung "ladder" is not a smaller ladder —
+# it is a card with its field deleted (the UX-P008 failure).
+#
+# PUBLIC because it is the same number at three sites and they must not drift
+# (CERT-2456): the refusal here, the classifier's decision to serve the refused
+# ladder as `outcome_distribution` instead, and that format's leaf gate in
+# `FuturesCard.tsx`. A refusal that the renderer will not honour hides the field
+# just as completely as the heatmap it refused.
+LADDER_MIN_DRAWN_RUNGS = 2
 
 
 def ladder_treatment_collapsed(
@@ -519,7 +525,7 @@ def ladder_treatment_collapsed(
     incoherent, priced_rungs = incoherent_ladder_verdict(items, name_of, prob_of)
     if not incoherent:
         return False
-    return priced_rungs - len(incoherent) < _LADDER_MIN_DRAWN_RUNGS
+    return priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS
 
 
 def drop_incoherent_ladder_outcomes(
@@ -557,7 +563,7 @@ def drop_incoherent_ladder_outcomes(
     incoherent, priced_rungs = incoherent_ladder_verdict(items, name_of, prob_of)
     if not incoherent:
         return list(items)
-    if priced_rungs - len(incoherent) < _LADDER_MIN_DRAWN_RUNGS:
+    if priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS:
         return list(items)
     kept = [item for index, item in enumerate(items) if index not in incoherent]
     return kept if kept else list(items)
