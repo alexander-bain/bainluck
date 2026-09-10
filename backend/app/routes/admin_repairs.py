@@ -28,7 +28,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | polymarket-sport-category-census | polymarket-sport-category
              | polymarket-senate-category | kalshi-nhl-prop-category
              | polymarket-leg-label-census | polymarket-leg-label
-             | authority-id-collisions | weather-shelf-disease }
+             | authority-id-collisions | weather-shelf-disease
+             | futures-person-seed-purge }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -52,7 +53,12 @@ transactional session and RETURNS its own before/after census in the response bo
      the commit that registered it. Re-synced again 2026-09-09, lane1b/106,
      adding polymarket-senate-category in the commit that registered it.
      Re-synced again 2026-09-09, lane1b/109, adding kalshi-nhl-prop-category in
-     the commit that registered it.)
+     the commit that registered it. Re-synced again 2026-09-09, lane1b/116b,
+     adding futures-person-seed-purge — NOT in the commit that registered it,
+     which is the whole point: the focused D40 gates for #4578 were green and
+     the two registry guards live in files that change was nowhere near, so CI
+     is what caught it. The comment above is not decoration and the guard is not
+     either.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -65,8 +71,8 @@ and puts its rows back. It exists because Alex's D51 lets a lane apply a data
 repair unattended *provided* it backs up first and ships a one-command restore:
 the restore has to be a real, runnable thing, so it is a parameter on the same
 rail with the same auth rather than a paragraph in a handoff note. Dry-run
-unless ``apply=true``. ``authority-id-collisions``, ``statpal-blank-ids`` and
-``statpal-fabricated-ids`` declare it today.
+unless ``apply=true``. ``authority-id-collisions``, ``statpal-blank-ids``,
+``statpal-fabricated-ids`` and ``futures-person-seed-purge`` declare it today.
 
 ``probe`` (queue 375) records ONE identity observation of a reviewed population
 and returns, for rails that must PROVE stillness before they may census — ruling
@@ -688,6 +694,29 @@ _REPAIRS = {
     # state, not a standing job.
     "polymarket-leg-label": (
         "app.tasks.repair_polymarket_leg_label",
+        "repair",
+    ),
+    # #4578 (lane1b/116): the BACKWARD half of #4458. Deletes the market legs
+    # `seed_persons_from_futures_fields` minted as `kind='person'` — margin
+    # ladders ("1+ strokes"), head-to-head legs ("Jon Rahm beats McIlroy and
+    # Spieth"), scoring placeholders — 4,913 of 7,471 measured 2026-09-10. The
+    # reader harm is alias collapse: 1,450 share the derived alias `strokes`
+    # and 1,124 share `round`, and `resolve_alias` picks one arbitrarily.
+    # Membership is decided by the SHIPPED `is_plausible_person_name`, imported
+    # from `entity_registry`, never by SQL restating its rules — the filing's
+    # SQL proxy says 65.8% and the predicate says 67.2%, and a repair that
+    # deletes a different set than the guard refuses is one nobody can restore
+    # confidently. Two-call: ?apply=false returns a census and a plan_hash;
+    # ?apply=true&plan_hash= consumes THAT plan and refuses a stale one.
+    # D51: the undo receipt carries every deleted `entities` row, every
+    # `entity_aliases` row CASCADE would take, and every `event_participants`
+    # .entity_id cleared — staged in the SAME transaction as the delete.
+    # Restore with `?undo_identity=<id>&apply=true`; every apply prints the
+    # command. Capped at 1,500 rows per call and keyset-paged on entities.id —
+    # read `scan_exhausted`, not a remaining count. ATTENDED ONLY: never wire
+    # this to a beat — it is a drain with an end state.
+    "futures-person-seed-purge": (
+        "app.tasks.repair_futures_person_seed",
         "repair",
     ),
 }
