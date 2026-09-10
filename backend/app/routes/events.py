@@ -37,7 +37,7 @@ from app.utils.event_rails import (
     live_first_order,
     live_scheduled_settled_order,
 )
-from app.utils.lifecycle import served_event_status
+from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
 # ONE definition of the state vocabulary (live/048) — imported, not spelled, so
 # that widening it is a rename here rather than a literal this route quietly
 # stops matching. CERT-786 is what that quiet stop looks like from a user's side.
@@ -2676,6 +2676,57 @@ _EVENT_DETAIL_SETTLED_TTL = 3600
 #: The cost is bounded to rows that settled in the last ten minutes: those pay
 #: the live TTL, which is what they would have paid one minute earlier anyway.
 _EVENT_DETAIL_FRESHLY_SETTLED_WINDOW = 600
+#: How far past its OWN kickoff a `scheduled` entry may keep saying "not started"
+#: — live/127, #4582. The THIRD exception to a flat TTL, and the mirror image of
+#: the one above: that one is about a settlement that might be undone, this one
+#: about a start that has definitely happened.
+#:
+#: A `scheduled` payload is an assertion with a known expiry printed on it. The
+#: `else` branch below used to hand it :data:`_EVENT_DETAIL_DEFAULT_TTL` flat,
+#: so a payload built at 00:20:03Z kept telling readers the game had not started
+#: until 00:25:03Z — and because each uvicorn worker holds its own
+#: `_event_detail_cache` (`WEB_CONCURRENCY=2` on production), the two workers'
+#: entries expire at different moments and a reader refreshing the page watches
+#: the card go live, then Upcoming, then live again.
+#:
+#: MEASURED, production 2026-09-10, the NFL opener (event 14780138, commence
+#: 00:20:00Z). The bus sampled served `GET /api/events/14780138` every two
+#: minutes: `live` at 00:21:02Z, **`scheduled` at 00:23:02Z**, `live` again at
+#: 00:25:03Z — 00:20:03 + 300 to the second. The status COLUMN never moved: no
+#: writer in the codebase can put `scheduled` on a `live` row (the only two are
+#: `espn_sync._transition_event_statuses_impl`'s repair arms, both of which
+#: require the row to already be `completed`/`closed`/`suspended`). The flap was
+#: this lease, not a second writer.
+#:
+#: THE LEASE CAUGHT IN THE ACT the same evening, event 15298741 (LAFC at NY Red
+#: Bulls), served payload and `events.status` read side by side every four
+#: seconds. One cache entry, written 02:30:50Z while the row still read
+#: `scheduled`, was served unchanged until 02:34:41Z — **231 seconds on a single
+#: lease, spanning the column's promotion to `live` at 02:32:07Z.** That entry
+#: outliving that promotion is this defect, directly observed.
+#:
+#: What that specimen does NOT prove, and the reason the constant is anchored on
+#: the opener instead: 15298741's `commence_time` was itself moved forward to
+#: 02:36:00Z at some point in the window, so from then on `served_event_status`
+#: had its own correct reason to say `scheduled` and the reader-visible duration
+#: cannot be attributed to the lease alone. The opener is the clean specimen —
+#: its `commence_time` was 00:20:00Z when the bus sampled it and is 00:20:00Z
+#: still, so nothing but this lease can have produced 00:23:02Z's `scheduled`.
+#:
+#: The per-worker divergence has its own clean reading, on the opener at
+#: 02:25:22–02:26:50Z: two byte-distinct payloads for the one event alternating
+#: three seconds apart, the same `hero_probability` pair (0.2601 / 0.2475)
+#: recurring in both directions. A number cannot move back and forth in six
+#: seconds; two caches can.
+#:
+#: Set to :data:`_EVENT_DETAIL_LIVE_TTL` rather than to zero because the row is
+#: not promoted AT the whistle: `transition-event-statuses` runs every 60s, so
+#: for up to a minute after kickoff `scheduled` is still the true reading and an
+#: entry holding it should re-check at the live cadence, not go uncached. It is
+#: a FLOOR as well as a ceiling for that reason — the bound never shortens an
+#: entry below the live TTL, so a wall of simultaneous kickoffs (fourteen at
+#: 17:00Z on an NFL Sunday) cannot turn into a wall of uncached recomputes.
+_EVENT_DETAIL_UNSTARTED_GRACE = _EVENT_DETAIL_LIVE_TTL
 _EVENT_DETAIL_MAX_SIZE = 50
 
 
@@ -9464,6 +9515,60 @@ def _settled_within_reversal_window(cached_resp: dict, cached_at: float) -> bool
     return cached_at - settled.timestamp() < _EVENT_DETAIL_FRESHLY_SETTLED_WINDOW
 
 
+def _unstarted_entry_ttl(cached_resp: dict, cached_at: float) -> float:
+    """How long may an entry that says "this game has not started" be served?
+
+    :data:`_EVENT_DETAIL_DEFAULT_TTL`, except that it may never claim a game is
+    unstarted more than :data:`_EVENT_DETAIL_UNSTARTED_GRACE` past the start the
+    payload itself names — live/127, #4582. The constant carries the measurement.
+
+    A `scheduled` payload is the one cached answer with an expiry date written on
+    its face, and this is the function that reads it. Everything else the cache
+    holds goes stale for reasons it cannot see coming; this goes stale at a time
+    the entry is literally carrying around in its own `commence_time` field.
+
+    Reads that field off the CACHED RESPONSE, exactly as
+    :func:`_settled_within_reversal_window` reads `completed_at` — same tuple,
+    same write site, same accept-both-shapes tolerance for a serializer that
+    stops isoformatting.
+
+    ── THE ABSTENTION FALLS THE OTHER WAY FROM ITS TWIN, ON PURPOSE ──
+
+    **No usable `commence_time` ⇒ the full default TTL**, i.e. this function
+    declines to shorten anything. Its twin abstains toward the SHORTER lease
+    because a missing `completed_at` describes 98% of `closed` rows and the hour
+    is the thing worth protecting there. Here the shortening is the intervention,
+    and a row with no parseable start time is a row whose kickoff this function
+    cannot locate — narrowing its lease on a guess would spend latency on every
+    start-less row in the table to fix a boundary none of them has. A check that
+    could not run is not a check that passed, and it is not a licence to act
+    either.
+
+    The bound is `max(seconds_to_start, 0) + grace` rather than
+    `seconds_to_start`, so the floor holds on both sides of the whistle: an entry
+    written two seconds before kickoff still gets a 30-second lease rather than a
+    two-second one, and the last half-minute before every start does not become
+    an uncached band.
+    """
+    raw = cached_resp.get("commence_time")
+    if isinstance(raw, datetime):
+        commence = raw
+    elif isinstance(raw, str):
+        try:
+            commence = datetime.fromisoformat(raw)
+        except ValueError:
+            return _EVENT_DETAIL_DEFAULT_TTL
+    else:
+        return _EVENT_DETAIL_DEFAULT_TTL
+    if commence.tzinfo is None:
+        commence = commence.replace(tzinfo=timezone.utc)
+    seconds_to_start = commence.timestamp() - cached_at
+    return min(
+        _EVENT_DETAIL_DEFAULT_TTL,
+        max(seconds_to_start, 0) + _EVENT_DETAIL_UNSTARTED_GRACE,
+    )
+
+
 def _cached_detail_payload(event_id: int, now: float) -> dict | None:
     """The detail payload `get_event` would serve RIGHT NOW, or ``None``.
 
@@ -9499,6 +9604,13 @@ def _cached_detail_payload(event_id: int, now: float) -> dict | None:
             if _settled_within_reversal_window(cached_resp, cached_at)
             else _EVENT_DETAIL_SETTLED_TTL
         )
+    elif cached_status == EVENT_NOT_STARTED:
+        # #4582: the one entry whose expiry is printed on its own face. Scoped to
+        # `scheduled` and not to the whole `else` branch, which also holds
+        # `suspended` — a suspended row makes no claim about not having started,
+        # so this rule has nothing to say about it and does not get to change its
+        # lease on the way past (live/048 owns that question).
+        ttl = _unstarted_entry_ttl(cached_resp, cached_at)
     else:
         ttl = _EVENT_DETAIL_DEFAULT_TTL
     if now - cached_at >= ttl:
