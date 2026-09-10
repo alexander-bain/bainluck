@@ -57,6 +57,10 @@ def _outcome(
         opening_probability=None,
         opening_american_odds=None,
         is_winner=None,
+        # #4788: the detail payload serves this beside `is_winner`, because
+        # `is_winner` alone cannot say whether anyone graded the row (the column
+        # defaults to `false`, so an omitted write reads as a graded LOSS).
+        resolution_source=None,
         last_updated=None,
     )
 

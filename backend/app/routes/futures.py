@@ -4609,6 +4609,17 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
             "opening_probability": float(o.opening_probability) if o.opening_probability else None,
             "opening_american_odds": o.opening_american_odds,
             "is_winner": o.is_winner,
+            # #4788/#4783: `is_winner` ALONE cannot say whether anyone graded this
+            # row. The column is `boolean NULL DEFAULT false`, so an INSERT that
+            # merely omits it stores an affirmative graded LOSS (CAL-P1004R) on a
+            # leg nobody called — three of four Polymarket outcome INSERTs do
+            # exactly that. `resolution_source` is the field that discriminates
+            # "graded a loser" from "never graded", and without it on the wire the
+            # client cannot tell them apart and prints a red `Lost` on both.
+            #
+            # Additive and read-only. The renderer's rule is in
+            # `OutcomeRow.outcomeRowVerdict`: NULL source ⇒ ungraded ⇒ no verdict.
+            "resolution_source": o.resolution_source,
             "last_updated": o.last_updated.isoformat() if o.last_updated else None,
         }
         for o in sorted_outcomes
