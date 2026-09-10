@@ -136,9 +136,44 @@ EOF
 echo "[bus] measurement bus up. missions: $MISSIONS (+AUTHORITY daily ≥14Z)"
 echo "[bus] artifacts: $H/ARTIFACT-M-R-<NAME>-<bucket>.md   logs: $LOG_DIR/"
 
+# Notice 38's hourly BOARD lint gets one more line (Fable-5 → desk, 9/10 07:25 PT).
+# `tools/runner-text-drift.sh` (#4777) asks the question a runner cannot ask about
+# itself: did you start before your own script last changed? It is deliberately
+# out of process, so running it from HERE reports on runners that have not
+# restarted — no restart of anything is needed for the check to work.
+#
+# It reports, it never gates: the bus's job is measurement, and a launcher that
+# needs restarting is Alex's action, not a reason to stop banking artifacts.
+# Exit 1 is a RESULT (something is stale), exit 2 is a story about the harness
+# (gotcha #124) — the script draws that line on purpose, so this prints them
+# differently instead of collapsing both into "failed".
+#
+# ONE LINE, not a banner, and the reason is #4820: the check tests mtime against
+# process start, so ANY rewrite with identical bytes — a `git checkout`/`restore`
+# in the shared tree, routine here — reports the whole fleet STALE when nothing
+# changed. Measured 9/10 16:52Z: 10 of 10 lane runners STALE, content byte-
+# identical to master, last real content change 8h before they started. A
+# five-line "RESTART EVERYTHING" banner that is wrong most hours is how a true
+# positive stops being read. Make this louder once #4820 lands.
+drift_line () {
+  [ -x tools/runner-text-drift.sh ] || return 0   # not on master yet / old checkout
+  local out rc
+  out=$(tools/runner-text-drift.sh --quiet 2>&1); rc=$?
+  case "$rc" in
+    0) : ;;
+    1) echo "[bus] drift: $(echo "$out" | tail -1 | sed 's/^runner-text-drift: //') — restart those launchers if their script really moved (#4820: a touch alone reports STALE)" ;;
+    *) echo "[bus] drift: CHECK DID NOT RUN (exit $rc) — a harness story, not a verdict: $(echo "$out" | tail -1)" ;;
+  esac
+}
+
+DRIFT_BUCKET=""
+
 while true; do
   B=$(bucket)
   WANT=$(missing "$B")
+
+  # Once per bucket, whether or not the hour has missions left to bank.
+  if [ "$DRIFT_BUCKET" != "$B" ]; then DRIFT_BUCKET="$B"; drift_line; fi
 
   if [ -z "$WANT" ]; then
     # Drained. Sleep to the top of the next hour rather than re-polling: there is
