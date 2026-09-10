@@ -53,9 +53,17 @@ const out = await page.evaluate(() => {
       return { tag: el.tagName.toLowerCase(), left: r2(b.left), right: r2(b.right), w: r2(b.width) };
     });
 
-    // The truncating node is the `.truncate` div holding the name.
+    // The name cell, selected STRUCTURALLY and never by `.truncate`.
+    //
+    // The first version of this probe found it with `.querySelector('.truncate')`,
+    // which is the DEFECT'S OWN CLASS. That reads correctly against the broken arm
+    // and returns null against the fixed one, so the after-check reported
+    // `clipped: null` rather than `false` — the pass condition the probe existed to
+    // check became unreachable the moment the repair landed. A probe keyed on the
+    // bug can only ever express the FAIL. Position 2 of the row grid is the name
+    // cell on both arms.
     const nameCell = li.children[2];
-    const clip = nameCell?.querySelector('.truncate');
+    const clip = nameCell?.firstElementChild;
     const nameSpan = clip?.querySelector('span');
 
     // The number's own ink, independent of its track.
