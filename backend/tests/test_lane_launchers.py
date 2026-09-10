@@ -29,6 +29,7 @@ Terminal window, kills a process, or writes into the live handoff tree.
 
 import os
 import re
+import shutil
 import signal
 import subprocess
 import time
@@ -1252,3 +1253,213 @@ def test_the_post_session_sweep_only_touches_this_sessions_own_leftovers(tmp_pat
         "the sweep retired a marker that predates the session — that is a "
         f"sibling runner's live directive: {[p.name for p in inbox.iterdir()]}"
     )
+
+
+# ------------------------------------------- notice 39 rung 2: the agent tag ----
+#
+# WHAT THESE GUARD, AND WHY THEY ARE HERE RATHER THAN BESIDE THE HELPER
+# ---------------------------------------------------------------------
+# `test_agent_origin_outbound_tag.py` proves the tag is BUILT correctly. Nothing
+# proved it was ever INSTALLED in the shell that types the curl, and that is the
+# half that failed: notice 39 specifies rung 2 as "ONE line in lane-runner.sh
+# that ... sources latency's curl shadow", which cannot work (#4662). Every Bash
+# tool call in a lane session is a fresh shell exec'd from the profile, and a
+# shell FUNCTION does not survive exec. Sourced in the runner it would merge,
+# pass every gate, be recorded done, and tag nothing — #4632's shape exactly
+# (D70: merged, tested, ruled, inert for four days).
+#
+# So these tests deliberately do not call the helper. They run a real login shell
+# the way the runner spawns one and read the argv it would have put on the wire.
+#
+# The third test is the one with teeth. Redirecting ZDOTDIR does not ADD a
+# startup file, it MOVES zsh's whole search: point it at a directory lacking
+# `.zprofile` and `~/.zprofile` silently stops being read in every lane shell.
+# Measured: HOMEBREW_PREFIX empties, so brew and its PATH vanish fleet-wide. That
+# regression is far larger than the one rung 2 fixes and it is completely silent,
+# so it gets a test with its own negative control.
+
+ZSH = shutil.which("zsh")
+needs_zsh = pytest.mark.skipif(ZSH is None, reason="the lane shell is zsh; none installed here")
+
+ZDOTDIR_DIR = REPO / "tools" / "lane-zdotdir"
+SHADOW = REPO / "tools" / "bl-agent-curl.sh"
+
+
+def _tag_block():
+    """The runner's own tag-gating code, lifted out and made callable.
+
+    Extracted rather than reimplemented so the test exercises the shipped text.
+    Asserted non-empty: an extraction that silently matches nothing would make
+    every assertion below vacuously pass (the blind-zero class, gotcha #53).
+    """
+    src = RUNNER.read_text()
+    start = src.index("BL_REPO=")
+    end = src.index("\n}\n", src.index("bl_tag_lane()", start)) + 3
+    block = src[start:end]
+    assert "bl_tag_lane" in block and "ZDOTDIR" in block, block
+    return block
+
+
+def _lane_shell(script, env=None, home=None):
+    """Run `script` in a login zsh, as `lane-runner.sh` spawns one.
+
+    `env -i`-equivalent: the environment is built from nothing, so anything the
+    assertions read can only have come from a startup file that actually ran.
+    An inherited value would make the chain test pass without a chain.
+    """
+    base = {"HOME": str(home or Path.home()), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+    base.update(env or {})
+    p = subprocess.run(
+        [ZSH, "-l", "-c", script], capture_output=True, text=True, env=base, timeout=60
+    )
+    return p.returncode, p.stdout + p.stderr
+
+
+def test_the_runner_gates_the_tag_on_the_lane_name():
+    """One lane first (notice 39 guard 3): a lane not on the list gets nothing."""
+    block = _tag_block()
+    for lanes, lane, want in [
+        ("latency", "latency", 0), ("latency", "ux", 1),
+        ("all", "ux", 0), ("latency ux", "ux", 0), ("latency ux", "live", 1),
+    ]:
+        p = subprocess.run(
+            ["bash", "-c", f'set -u; BL_TAG_LANES={lanes!r}\n{block}\nbl_tag_lane {lane!r}'],
+            capture_output=True, text=True, cwd=str(REPO), timeout=30,
+        )
+        assert p.returncode == want, f"BL_TAG_LANES={lanes} lane={lane}: {p.returncode} {p.stderr}"
+
+
+def test_the_runner_refuses_to_point_zdotdir_at_a_checkout_without_the_chain(tmp_path):
+    """Notice 39 guard 1, in its dangerous direction.
+
+    A missing shadow must degrade to plain curl. Exporting ZDOTDIR anyway would
+    not merely skip the tag, it would break the shell — and this is not
+    hypothetical: on 2026-09-09 `~/bainluck/tools/bl-agent-curl.sh` did not exist
+    on disk (that tree was stale at 8991f1a6; the shadow merged later at
+    8c37c7f0), which is the exact path the shadow's docstring tells agents to use.
+    """
+    block = _tag_block().replace('BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"',
+                                 f'BL_REPO="{tmp_path}"')
+    assert str(tmp_path) in block, "the BL_REPO override did not apply"
+
+    def gate():
+        return subprocess.run(
+            ["bash", "-c", f"set -u; BL_TAG_LANES=all\n{block}\nbl_tag_lane latency"],
+            capture_output=True, text=True, timeout=30,
+        ).returncode
+
+    assert gate() == 1, "an empty checkout was accepted as a tag carrier"
+    (tmp_path / "tools" / "lane-zdotdir").mkdir(parents=True)
+    (tmp_path / "tools" / "lane-zdotdir" / ".zshenv").write_text("")
+    assert gate() == 1, "a chain dir with no shadow beside it was accepted"
+    # Positive control: with both present it must say yes, or the two refusals
+    # above prove nothing about the shadow and everything about a broken path.
+    (tmp_path / "tools" / "bl-agent-curl.sh").write_text("")
+    assert gate() == 0, "the gate refuses even a complete checkout — it tags nobody"
+
+
+@needs_zsh
+def test_a_lane_shell_carries_the_tag_to_our_hosts_and_nowhere_else():
+    """The end of the wire. Not the helper — the shell the lane actually types in."""
+    env = {"ZDOTDIR": str(ZDOTDIR_DIR), "BL_AGENT": "latency", "BL_CURL_PRINT": "1"}
+
+    rc, ours = _lane_shell('curl -s "https://api.bainluck.com/api/events/search?q=x"', env)
+    assert rc == 0, ours
+    assert "x-bainluck-origin: latency" in ours, f"a lane's own read went out untagged:\n{ours}"
+    assert "BainLuckBot/1.0 (latency)" in ours, ours
+
+    # An internal header naming our lanes has no business on a third party's wire.
+    rc, theirs = _lane_shell('curl -s "https://api.kalshi.com/trade-api/v2/events"', env)
+    assert rc == 0, theirs
+    assert "x-bainluck-origin" not in theirs, f"tagged a third party:\n{theirs}"
+
+    # Guard 1 at the shell level: unnamed passes through as plain curl.
+    rc, unnamed = _lane_shell(
+        'curl -s "https://api.bainluck.com/api/events/search?q=x"',
+        {"ZDOTDIR": str(ZDOTDIR_DIR), "BL_CURL_PRINT": "1"},
+    )
+    assert rc == 0, unnamed
+    assert "x-bainluck-origin" not in unnamed, (
+        "an unnamed caller was given a substituted tag; any non-'user' value "
+        f"SUPPRESSES the search-log row, so this deletes it from the table:\n{unnamed}"
+    )
+
+
+@needs_zsh
+def test_the_zdotdir_chain_does_not_drop_the_users_own_startup_files(tmp_path):
+    """Redirecting ZDOTDIR moves the search; each name here must chain the real one.
+
+    Hermetic: a synthetic HOME whose markers exist nowhere else, so a marker in
+    the output can only mean that file was sourced.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    for name in (".zshenv", ".zprofile", ".zlogin"):
+        (home / name).write_text(f'export MARK_{name[1:].upper()}=yes\n')
+
+    probe = 'echo "env=$MARK_ZSHENV prof=$MARK_ZPROFILE login=$MARK_ZLOGIN"'
+
+    # Negative control FIRST. Without it, a pass below could just mean zsh never
+    # honoured ZDOTDIR at all and read $HOME the whole time.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    rc, out = _lane_shell(probe, {"ZDOTDIR": str(bare)}, home=home)
+    assert "env= prof= login=" in out, (
+        f"expected an empty ZDOTDIR to drop all three user files; got {out!r} — "
+        "zsh is not honouring ZDOTDIR here, so the real assertion proves nothing"
+    )
+
+    rc, out = _lane_shell(probe, {"ZDOTDIR": str(ZDOTDIR_DIR)}, home=home)
+    assert rc == 0, out
+    assert "env=yes prof=yes login=yes" in out, (
+        f"the chain dropped a user startup file: {out!r}. Every lane shell would "
+        "silently lose whatever ~/.zprofile sets — on the lane machine that is "
+        "brew's shellenv, i.e. HOMEBREW_PREFIX and half of PATH."
+    )
+
+
+def test_the_session_launch_actually_consults_the_gate():
+    """The wiring, not just the parts.
+
+    A perfect gate and a perfect chain still tag nothing if the launch line never
+    calls one. Asserted on the shipped text because the alternative — starting a
+    real lane session — is not something a test may do.
+    """
+    src = RUNNER.read_text()
+    launch = src.index("timeout \"$SESSION_TIMEOUT\" claude")
+    window = src[launch - 500:launch]
+    assert "bl_tag_lane" in window, (
+        "the session launch does not consult bl_tag_lane; the tag is inert"
+    )
+    assert 'export BL_AGENT="$L" ZDOTDIR=' in window, (
+        "the launch exports something other than both halves of the tag"
+    )
+
+
+@needs_zsh
+def test_a_chain_without_its_shadow_degrades_to_plain_curl_and_stays_quiet(tmp_path):
+    """Notice 39 guard 1: an absent shadow file falls through to PLAIN curl.
+
+    `lane-runner.sh` already refuses to point ZDOTDIR at such a checkout, so this
+    is the second layer — a runner started before the tree moved, or ZDOTDIR set
+    by hand. The unguarded source is not merely untagged: `.zshenv` runs for every
+    zsh there is, so a failing `.` would print an error on the stderr of every
+    command every lane runs, fleet-wide.
+
+    Added because the mutation that deletes the presence guard survived the first
+    five tests here — all of them happen to run with the shadow present.
+    """
+    chain = tmp_path / "tools" / "lane-zdotdir"
+    chain.mkdir(parents=True)
+    for f in ZDOTDIR_DIR.iterdir():
+        shutil.copy(f, chain / f.name)
+    assert not (tmp_path / "tools" / "bl-agent-curl.sh").exists()
+
+    rc, out = _lane_shell('echo "curl -> $(type curl)"', {"ZDOTDIR": str(chain)})
+    assert rc == 0, out
+    assert "shell function" not in out, f"installed a shadow that is not there:\n{out}"
+    assert "curl -> curl is /usr/bin/curl" in out, out
+    for noise in ("no such file", "not found", "No such file"):
+        assert noise not in out, (
+            f"an absent shadow made noise on every shell's stderr: {out!r}"
+        )

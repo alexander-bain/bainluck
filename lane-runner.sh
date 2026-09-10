@@ -52,6 +52,48 @@ LOGDIR="$HANDOFF/runner-logs"
 # No log dir for a rehearsal: --dry-run writes nothing at all, anywhere.
 [ "$DRYRUN" -eq 1 ] || mkdir -p "$LOGDIR"
 
+# --- NOTICE 39 RUNG 2: a lane's production reads say which lane made them ------
+#
+# `search_query_logs` cannot tell a lane from a person, so the warmer spends real
+# work warming our own probe specimens. Rung 1 shipped the tag; this is the wiring
+# that makes every lane carry it without any lane changing a command.
+#
+# WHY ZDOTDIR AND NOT THE LINE THE NOTICE SPECIFIES. Notice 39 says "ONE line ...
+# that exports BL_AGENT=<lane> and sources latency's curl shadow". The export half
+# works. The sourcing half CANNOT (#4662): every Bash tool call in a lane session
+# is a fresh shell exec'd from the profile, and the shadow installs a shell
+# FUNCTION, which is not inherited across exec. Sourced here it would die with
+# this shell, before the lane's first command — merging, passing every gate, being
+# recorded done, and tagging nothing. That is #4632's shape (D70: merged, tested,
+# ruled, inert four days). ZDOTDIR is an ordinary env var, so it does cross the
+# exec; see tools/lane-zdotdir/.zshenv for the measurement.
+#
+# Resolved from THIS SCRIPT's own directory, never from $HOME/bainluck. The two
+# are not the same thing: on 2026-09-09 that tree was stale at 8991f1a6 and did
+# not contain tools/bl-agent-curl.sh at all. Deriving from $0 means the chain
+# files always come from the same checkout as the runner reading them.
+BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"
+BL_ZDOTDIR="$BL_REPO/tools/lane-zdotdir"
+# ONE LANE FIRST (notice 39 guard 3). Widen by adding names, or BL_TAG_LANES=all,
+# once a tagged lane's rows are proven server-side — the same way rung 1 went out.
+BL_TAG_LANES="${BL_TAG_LANES:-latency}"
+
+# 0 = tag this lane's session. Fails CLOSED to plain, untagged curl, which is
+# notice 39 guard 1: an absent shadow file must degrade to no tag, never to a
+# broken shell. Pointing ZDOTDIR at a directory with no .zshenv would not merely
+# skip the tag — it would move zsh's whole startup search off $HOME and silently
+# drop ~/.zprofile from every lane shell (measured: HOMEBREW_PREFIX empties, so
+# brew and its PATH vanish). Hence the presence test, not a bare export.
+bl_tag_lane() {
+  [ -f "$BL_ZDOTDIR/.zshenv" ] || return 1
+  [ -f "$BL_REPO/tools/bl-agent-curl.sh" ] || return 1
+  case " $BL_TAG_LANES " in
+    *" all "*) return 0 ;;
+    *" $1 "*)  return 0 ;;
+    *)         return 1 ;;
+  esac
+}
+
 # Ownership record for the orphan reaper in start-lanes.sh. Sessions spawned by
 # this runner inherit its process group, and re-parenting to launchd changes
 # ppid but never pgid — so the pgid is a durable "this runner started it" handle
@@ -506,7 +548,11 @@ while true; do
     echo "[runner:$L] $TS taking $(basename "$Q") → log $(basename "$LOG")"
     # Fresh headless session per queue. Timeout guards a hung session; state is
     # in handoff files, so a killed session resumes via its own report + re-stage.
-    ( timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
+    # Notice 39 rung 2. Inside the subshell so the runner's own environment is
+    # never touched: the exports reach `claude` and everything it spawns, and
+    # nothing else. PIPESTATUS below still reads the pipeline, not this `if`.
+    ( if bl_tag_lane "$L"; then export BL_AGENT="$L" ZDOTDIR="$BL_ZDOTDIR"; fi
+      timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
         --output-format stream-json -p "$(cat "$HANDOFF/STANDING-NOTICES.md" 2>/dev/null; echo; cat "$RUN")" \
         2>&1 | python3 -u -c "$FMT" | tee -a "$LOG"
       # PIPESTATUS MUST be read inside the subshell. Read outside it, the array
