@@ -476,7 +476,9 @@ struct NativeEventDiscoverCard: View {
             awayColor: awayColor,
             status: event.status,
             homeScore: event.homeScore,
-            awayScore: event.awayScore
+            awayScore: event.awayScore,
+            // #4044 — the same reading this card's own `isSuspended` uses above.
+            commenceTime: event.commenceTime?.asDate
         )
     }
 

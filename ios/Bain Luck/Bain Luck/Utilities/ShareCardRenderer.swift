@@ -227,15 +227,59 @@ struct ShareableEventCardView: View {
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
+    /// #4044 — the clock this view did not have.
+    ///
+    /// `suspended` is a status, not a phase: event 416569 (Ohio State @ Texas)
+    /// carried it four days BEFORE kick-off. Every other iOS surface has asked the
+    /// clock since #4021; this one could not, because there was no `commenceTime`
+    /// on the view to ask with, and it was pinned as an explicit carve-out in
+    /// `eventStatusSingleSource.test.ts` rather than left to be rediscovered.
+    let commenceTime: Date?
 
     private var eyebrow: String {
+        Self.eyebrow(status: status, sportName: sportName, commenceTime: commenceTime)
+    }
+
+    /// The eyebrow word, as a function of the values that decide it.
+    ///
+    /// Static rather than a `private var` on the view so the suite runs the
+    /// PRODUCTION path — `@testable import` does not reach `private`, and this
+    /// band is the copy we have the least ability to correct once an image has
+    /// left the app. `now` is injected so the clock arm is pinned at a fixed
+    /// instant rather than tested against whatever time CI runs at.
+    static func eyebrow(
+        status: String?, sportName: String, commenceTime: Date?, now: Date = Date()
+    ) -> String {
         if status == "live" { return "LIVE" }
         if EventState.isFinished(status) { return "FINAL" }
         // live/048 — a shared share card must not print "FINAL" or fall silently
         // back to the sport name on a match with no reported result. This one
         // leaves the app and is screenshotted, so it is the copy of the claim we
         // have the least ability to correct later.
-        if EventState.isSuspended(status) { return "PAUSED" }
+        //
+        // #4044, TWO changes, both deliberate.
+        //
+        // 1. THE CLOCK. `isSuspended` alone rendered the settled treatment over a
+        //    game nobody had started — the denylist shape `isSuspendedAndStarted`
+        //    exists to stop. On an image that leaves the app, a future fixture
+        //    labelled as stopped is the least correctable copy we ship.
+        //
+        // 2. THE WORD. It printed its own literal "PAUSED", the #4002 root cause
+        //    in miniature. The register is genuinely shorter and reads well on an
+        //    image, and #4044 asked for the call to be made rather than delegated
+        //    for consistency's sake — so: "PAUSED" is WRONG, on this file's own
+        //    published reasoning. `suspendedLabel`'s doc comment says why the
+        //    badge is not the bare word "Suspended": the same state covers a
+        //    rain-delayed match AND a fixture whose only source went dark, and
+        //    telling a reader the latter is paused invents a stoppage nobody
+        //    reported. That argument does not weaken on a share card; it is
+        //    strongest there, because the image outlives our ability to correct
+        //    it. At 11pt over a 375pt card with 22pt padding the longer string
+        //    occupies roughly 140 of 331 available points, so nothing is traded
+        //    for it but brevity.
+        if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now) {
+            return EventState.suspendedLabel.uppercased()
+        }
         return sportName.uppercased()
     }
 
@@ -407,7 +451,10 @@ enum ShareCardRenderer {
         awayColor: Color,
         status: String?,
         homeScore: Int?,
-        awayScore: Int?
+        awayScore: Int?,
+        // #4044 — no default. A caller that forgets it would silently restore the
+        // clockless behaviour on the one surface whose output leaves the app.
+        commenceTime: Date?
     ) -> PlatformImage? {
         let view = ShareableEventCardView(
             homeTeam: homeTeam,
@@ -419,7 +466,8 @@ enum ShareCardRenderer {
             awayColor: awayColor,
             status: status,
             homeScore: homeScore,
-            awayScore: awayScore
+            awayScore: awayScore,
+            commenceTime: commenceTime
         )
         let renderer = ImageRenderer(content: view)
         #if canImport(UIKit)
