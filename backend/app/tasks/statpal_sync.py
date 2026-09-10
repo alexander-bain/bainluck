@@ -768,8 +768,22 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # A pass where every venue answered is `complete` HOWEVER FEW ROWS IT WROTE:
     # 374 fetched and 0 created is what a season already complete from ESPN/The
     # Odds API looks like, and it must stay green or the alarm stops being read.
+    #
+    # And a pass that asked NOBODY is `no_work`, never `complete`. The `else`
+    # below used to swallow it: `sports_asked == 0` means every sport this call
+    # named was dropped before the fetch — today only at `sport_not_found` — so
+    # nothing was read, nothing was written, and the summary said the same word
+    # as a healthy quiet pass. That is this issue's own defect one layer above
+    # the venue, and it is not hypothetical: `golf_pga` is in
+    # `STATPAL_SPORT_MAPPING` and has no `sports` row in production (13 of 14
+    # mapped keys resolve, measured 2026-09-09), so the single-sport form of
+    # this call returns zero-asked today. `no_work` is authoritative UNKNOWN in
+    # `task_verdict` — not a failure, because nothing upstream is broken, and
+    # emphatically not a success.
     total_failures = sum(1 for f in fetch_failures if f["reason"] == "fetch_failed")
-    if sports_asked and total_failures == sports_asked:
+    if not sports_asked:
+        terminal = "no_work"
+    elif total_failures == sports_asked:
         terminal = "failed"
     elif fetch_failures:
         terminal = "partial"

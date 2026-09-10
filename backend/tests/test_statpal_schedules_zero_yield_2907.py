@@ -504,3 +504,122 @@ class TestTheRealPassEmitsTheTerminal:
         result = await _sync_statpal_schedules("quidditch_premier")
 
         assert result["terminal"] == "skipped"
+
+
+# =============================================================================
+# 6. A pass that asked NOBODY is not a pass that heard from everybody.
+#
+#    The gap the rest of this file left open. Sections 1-5 all reason about what
+#    the VENUE said; this one is about the pass never reaching the venue at all.
+#    `sports_asked` was already carried as the denominator and its docstring
+#    already said this sentence — but the terminal fell through to the `else`,
+#    so zero-asked landed on `complete`: the one word this whole issue exists to
+#    stop a silent pass from saying.
+#
+#    `golf_pga` is not a hypothetical. It is in `STATPAL_SPORT_MAPPING` and it
+#    has NO `sports` row in production (measured 2026-09-09 via db-query: 13 of
+#    the 14 mapped keys resolve, golf_pga is the one that does not), so the
+#    single-sport call skips it at `sport_not_found` before the fetch. No beat
+#    passes it today — the four `sync-statpal-schedules-*` entries are
+#    nba/nhl/mlb/nfl — so this is reachable through the admin trigger and
+#    through any future per-sport caller, including the #4434 failover path
+#    that calls `_sync_statpal_schedules(sport_key)` in-line.
+# =============================================================================
+
+
+def _wire_tables_without(monkeypatch, absent_key):
+    """The same rail as `_wire_one_sport`, with the asked sport ABSENT.
+
+    A different sport row is present, so the failure under test is "this sport
+    has no row", not "the table is empty" — the pass must be seen to look and
+    come back with nobody, rather than to have had nowhere to look.
+    """
+    session = _wire_one_sport(monkeypatch, sport_key="basketball_nba")
+    from app.models.models import Sport
+
+    assert (
+        session.query(Sport).filter_by(key=absent_key).one_or_none() is None
+    ), f"rail is wrong: {absent_key} must be absent for this test to mean anything"
+    return session
+
+
+class TestAPassThatAskedNobodyDoesNotReportSuccess:
+
+    @pytest.fixture(autouse=True)
+    def _no_pacing(self, monkeypatch):
+        async def _sleep(_s):
+            return None
+
+        monkeypatch.setattr("app.tasks.statpal_sync.asyncio.sleep", _sleep)
+
+    @pytest.mark.asyncio
+    async def test_a_mapped_sport_with_no_row_is_no_work_not_complete(
+        self, monkeypatch
+    ):
+        """The production specimen. Zero sports asked, zero rows written, and
+        before this the summary said `complete` — a green row for a pass that
+        did nothing, which is gotcha #53 one layer above the venue."""
+        from app.tasks.statpal_sync import _sync_statpal_schedules
+
+        _wire_tables_without(monkeypatch, "golf_pga")
+        _stub_venue(monkeypatch, "ok")
+
+        result = await _sync_statpal_schedules("golf_pga")
+
+        assert result["sports_asked"] == 0
+        assert result["terminal"] == "no_work"
+        assert result["fetch_failures"] == []
+        # `no_work` is authoritative UNKNOWN, exactly like `skipped`: this pass
+        # is not a failure — nothing is broken upstream — but it is emphatically
+        # not a success either, and the point is that it can no longer be read
+        # as one.
+        verdict = verdict_for("statpal_schedules", result)
+        assert verdict.verdict == UNKNOWN
+        assert verdict.authoritative is True
+
+    @pytest.mark.asyncio
+    async def test_the_skipped_sport_is_named_not_merely_uncounted(
+        self, monkeypatch
+    ):
+        """A terminal that says "nothing happened" is only useful if the summary
+        also says WHICH sport went unasked."""
+        from app.tasks.statpal_sync import _sync_statpal_schedules
+
+        _wire_tables_without(monkeypatch, "golf_pga")
+        _stub_venue(monkeypatch, "ok")
+
+        result = await _sync_statpal_schedules("golf_pga")
+
+        # The per-sport diagnostics travel under `sports`, not `details` — the
+        # local list is named `details` inside the pass and renamed on the way
+        # out, which is worth pinning so a future reader does not go looking for
+        # a key that is not there.
+        assert {"sport": "golf_pga", "status": "sport_not_found"} in result["sports"]
+
+    @pytest.mark.asyncio
+    async def test_a_sport_that_was_asked_still_grades_on_what_it_heard(
+        self, monkeypatch
+    ):
+        """The control that stops the fix over-firing, and the reason
+        `sports_asked` is the denominator rather than `len(sport_keys)`.
+
+        A sweep in which one sport is unrowed and another is genuinely dark must
+        report `failed` — the unasked sport must neither dilute the failure into
+        `partial` nor be counted as a venue that answered.
+        """
+        from app.tasks.statpal_sync import _sync_statpal_schedules
+
+        _wire_tables_without(monkeypatch, "golf_pga")
+        _stub_venue(monkeypatch, "fetch_failed")
+
+        monkeypatch.setattr(
+            "app.tasks.statpal_sync.STATPAL_SPORT_MAPPING",
+            {"golf_pga": "pga", "basketball_nba": "nba"},
+        )
+
+        result = await _sync_statpal_schedules()
+
+        assert result["sports_asked"] == 1
+        assert [f["sport"] for f in result["fetch_failures"]] == ["basketball_nba"]
+        assert result["terminal"] == "failed"
+        assert verdict_for("statpal_schedules", result).verdict == FAILED
