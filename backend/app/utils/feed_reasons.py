@@ -906,6 +906,57 @@ def generate_event_reason(
     return ""
 
 
+# ── Subject-verb agreement for the leader templates (#4700) ───────────────────
+#
+# "Los Angeles Dodgers leads at 30%" was slots 1 and 2 of the morning page. A
+# plural team name takes a plural verb; the templates hard-coded the singular.
+#
+# DO NOT DECIDE THIS ON SPELLING. The census on #4700 shows the orthographic
+# rule ("ends in s -> plural") wrong in BOTH directions on lines we serve today:
+#
+#   `Layne Riggs leads at 29%`                          a person; singular is RIGHT
+#   `No new Director of Legislative Affairs leads ...`  an abstract; singular is RIGHT
+#   `Miami Heat` / `Utah Jazz` / `Tampa Bay Lightning`  teams; singular is RIGHT
+#
+# So spelling is consulted ONLY once the caller has told us the subject is a
+# team, on data (`FuturesOutcome.team_id`) rather than on the string. Within
+# team names the orthography is then safe and correct: the singular-verb
+# nicknames (Heat, Jazz, Magic, Wild, Lightning, Thunder, Avalanche) are exactly
+# the ones that do not end in "s".
+#
+# FAIL SINGULAR. `leader_is_team` defaults to False, so any caller that cannot
+# prove team-ness keeps today's wording verbatim. That is deliberate: `team_id`
+# is populated on only 3 of 45 served leader outcomes (measured on #4700), so
+# the unknown case is the COMMON one and it must not become a guess.
+
+#: Plural team nicknames that do not end in "s". `Sox` is the whole set in the
+#: leagues we carry (Red Sox, White Sox).
+_PLURAL_TEAM_NICKNAMES_WITHOUT_S = ("sox",)
+
+
+def leader_agreement_verb(
+    leader_name: Optional[str], leader_is_team: bool = False
+) -> str:
+    """"lead" or "leads" for `{leader_name} <verb> at {pct}%` (#4700).
+
+    Returns the singular unless the caller has PROVEN the subject is a team and
+    the team's nickname is plural. See the block comment above for why spelling
+    alone is not consulted.
+    """
+    if not leader_is_team or not leader_name:
+        return "leads"
+    tokens = leader_name.split()
+    if not tokens:
+        return "leads"
+    nickname = tokens[-1].lower()
+    if nickname in _PLURAL_TEAM_NICKNAMES_WITHOUT_S:
+        return "lead"
+    # "ss" guards a hypothetical singular nickname; "s" alone is the plural.
+    if nickname.endswith("s") and not nickname.endswith("ss"):
+        return "lead"
+    return "leads"
+
+
 def generate_futures_reason(
     market_name: str,
     highlight_reasons: list[str],
@@ -916,6 +967,9 @@ def generate_futures_reason(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     rendered_leader_percent: Optional[int] = None,
+    # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
+    # Defaults False so an uninformed caller keeps the singular verbatim.
+    leader_is_team: bool = False,
     source_count: int = 1,
     affirmative_probability: Optional[float] = None,
     rendered_affirmative_percent: Optional[int] = None,
@@ -928,6 +982,9 @@ def generate_futures_reason(
     Returns a human-readable reason string for the feed card.
     """
     reasons = set(highlight_reasons)
+    # #4700: resolved once, above every branch, so no template can disagree with
+    # another about the same subject.
+    _verb = leader_agreement_verb(leader_name, leader_is_team)
 
     # A yes/no question never reaches the field templates below — it has no
     # field. See `compose_binary_card_copy`.
@@ -958,7 +1015,7 @@ def generate_futures_reason(
     if "leader_change" in reasons:
         if leader_name and leader_probability is not None:
             pct = _display_pct(leader_probability, rendered_leader_percent)
-            return f"New favorite: {leader_name} ({pct}%) now leads {market_name}"
+            return f"New favorite: {leader_name} ({pct}%) now {_verb} {market_name}"
         return f"New favorite in {market_name}"
 
     # (No `source_divergence` branch. Removed with the rest of DIAGNOSTIC_PHRASES
@@ -998,14 +1055,14 @@ def generate_futures_reason(
             if _weak_outcome_label(leader_name):
                 return f"{market_name} resolving this week"
             pct = _display_pct(leader_probability, rendered_leader_percent)
-            return f"{market_name} resolving soon, {leader_name} leads at {pct}%"
+            return f"{market_name} resolving soon, {leader_name} {_verb} at {pct}%"
         return f"{market_name} resolving this week"
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name):
                 return f"{market_name} resolves this month"
             pct = _display_pct(leader_probability, rendered_leader_percent)
-            return f"{market_name} resolves this month, {leader_name} leads at {pct}%"
+            return f"{market_name} resolves this month, {leader_name} {_verb} at {pct}%"
         return f"{market_name} resolving this month"
 
     # Lifetime move, DATED and DEMOTED (D1 clause a, #4066).
@@ -1055,7 +1112,7 @@ def generate_futures_reason(
         if _weak_outcome_label(leader_name):
             return ""
         pct = _display_pct(leader_probability, rendered_leader_percent)
-        return f"{leader_name} ({pct}%) leads {market_name}"
+        return f"{leader_name} ({pct}%) {_verb} {market_name}"
 
     return ""
 
@@ -1069,6 +1126,9 @@ def generate_futures_headline(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     rendered_leader_percent: Optional[int] = None,
+    # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
+    # Defaults False so an uninformed caller keeps the singular verbatim.
+    leader_is_team: bool = False,
     source_count: int = 1,
     market_name: Optional[str] = None,
     affirmative_probability: Optional[float] = None,
@@ -1078,6 +1138,8 @@ def generate_futures_headline(
 ) -> str:
     """Generate compact, specific card text for futures Discover cards."""
     reasons = set(highlight_reasons)
+    # #4700: resolved once, above every branch (see `generate_futures_reason`).
+    _verb = leader_agreement_verb(leader_name, leader_is_team)
 
     if affirmative_probability is not None:
         return compose_binary_card_copy(
@@ -1134,14 +1196,14 @@ def generate_futures_headline(
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name) and market_name:
                 return f"{_short_market_name(market_name)} resolving soon"
-            return f"Resolving soon: {leader_name} leads at {_display_pct(leader_probability, rendered_leader_percent)}%"
+            return f"Resolving soon: {leader_name} {_verb} at {_display_pct(leader_probability, rendered_leader_percent)}%"
         return "Resolving soon"
 
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name) and market_name:
                 return f"{_short_market_name(market_name)} resolves this month"
-            return f"{leader_name} leads; resolves this month"
+            return f"{leader_name} {_verb}; resolves this month"
         return "Resolving this month"
 
     # Lifetime move — same demotion and same dating rule as
@@ -1175,7 +1237,7 @@ def generate_futures_headline(
             # this one had no clause. Falls through to the empty terminal below, and
             # from there to `primary_reason` in `routes/feed.py`.
             return ""
-        return f"{leader_name} leads at {_display_pct(leader_probability, rendered_leader_percent)}%"
+        return f"{leader_name} {_verb} at {_display_pct(leader_probability, rendered_leader_percent)}%"
 
     return ""
 
@@ -1188,6 +1250,8 @@ def generate_futures_context_summary(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     rendered_leader_percent: Optional[int] = None,
+    # #4700: see `generate_futures_reason`. Defaults False -> singular verbatim.
+    leader_is_team: bool = False,
     source_count: int = 1,
     affirmative_probability: Optional[float] = None,
     rendered_affirmative_percent: Optional[int] = None,
@@ -1204,6 +1268,8 @@ def generate_futures_context_summary(
     """
     headline = (headline or "").strip()
     reasons = set(highlight_reasons)
+    # #4700: resolved once, above every branch (see `generate_futures_reason`).
+    _verb = leader_agreement_verb(leader_name, leader_is_team)
 
     # This is the string the web card prints under its title, so it is where the
     # binary-as-race defect was actually READ ("China invade Taiwan by end of
@@ -1234,7 +1300,7 @@ def generate_futures_context_summary(
         if _weak_outcome_label(leader_name):
             return ""
         if leader_name and leader_probability is not None:
-            return f"{leader_name} leads at {_display_pct(leader_probability, rendered_leader_percent)}%"
+            return f"{leader_name} {_verb} at {_display_pct(leader_probability, rendered_leader_percent)}%"
         return ""
 
     leader = leader_clause()

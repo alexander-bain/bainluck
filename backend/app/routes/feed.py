@@ -4965,6 +4965,21 @@ def _printed_affirmative_percent(
     return None
 
 
+def _leader_outcome_is_team(outcomes_data: list[dict]) -> bool:
+    """#4700: is the card's LEADER a linked team, rather than a person?
+
+    `outcomes_data[0]` IS the leader everywhere this is called: all three
+    builders append from the same `sorted_outcomes` sequence the leader is taken
+    from (`leader = sorted_outcomes[0]`), in order.
+
+    Answers on `FuturesOutcome.team_id` and never on the string, because the
+    orthographic rule is wrong in both directions on lines we serve today —
+    `Layne Riggs` is a person and `Miami Heat` is a team. Unknown reads False,
+    so the copy is unchanged unless team-ness is proven.
+    """
+    return bool(outcomes_data) and outcomes_data[0].get("team_id") is not None
+
+
 def _top_outcomes_for_trace(
     market: FuturesMarket,
 ) -> tuple[list[dict], str | None, float | None]:
@@ -4983,6 +4998,9 @@ def _top_outcomes_for_trace(
         outcomes_data.append(
             {
                 "name": outcome.name,
+                # #4700: the leader's subject-verb agreement is decided on THIS,
+                # not on the spelling of the name. See `_leader_outcome_is_team`.
+                "team_id": getattr(outcome, "team_id", None),
                 "probability": (
                     float(outcome.current_probability)
                     if outcome.current_probability is not None
@@ -5496,6 +5514,7 @@ def _score_market_trace(
             top_surprise_name=top_surprise_name,
             top_surprise_change=top_surprise_change,
             leader_name=leader_name,
+            leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_probability=leader_prob,
             source_count=source_count,
             market_name=market.name,
@@ -5510,6 +5529,7 @@ def _score_market_trace(
         highlight_reasons=highlight_result.reasons,
         market_name=market.name,
         leader_name=leader_name,
+        leader_is_team=_leader_outcome_is_team(outcomes_data),
         leader_probability=leader_prob,
         source_count=source_count,
         affirmative_probability=affirmative_probability,
@@ -5655,6 +5675,7 @@ def _score_market_trace(
                 top_surprise_name=top_surprise_name,
                 top_surprise_change=top_surprise_change,
                 leader_name=leader_name,
+                leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_probability=leader_prob,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
@@ -7735,6 +7756,8 @@ async def _score_sports_mode_futures(
             outcomes_data.append(
                 {
                     "name": o.name,
+                    # #4700 — see `_leader_outcome_is_team`.
+                    "team_id": getattr(o, "team_id", None),
                     "probability": prob,
                     "probability_change_24h": change,
                     "rank": o.rank,
@@ -8007,6 +8030,7 @@ async def _score_sports_mode_futures(
                 top_surprise_name=_h_surprise,
                 top_surprise_change=top_surprise_change,
                 leader_name=_h_leader,
+                leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 source_count=source_count,
@@ -8023,6 +8047,7 @@ async def _score_sports_mode_futures(
             highlight_reasons=highlight_result.reasons,
             market_name=market.name,
             leader_name=_h_leader,
+            leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
             source_count=source_count,
@@ -8100,6 +8125,7 @@ async def _score_sports_mode_futures(
             top_surprise_name=_h_surprise,
             top_surprise_change=top_surprise_change,
             leader_name=_h_leader,
+            leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
             source_count=source_count,
@@ -9140,6 +9166,8 @@ async def _score_futures(
                 outcomes_data.append(
                     {
                         "name": o.name,
+                        # #4700 — see `_leader_outcome_is_team`.
+                        "team_id": getattr(o, "team_id", None),
                         "probability": prob,
                         "probability_change_24h": change,
                         "rank": o.rank,
@@ -9367,6 +9395,7 @@ async def _score_futures(
                     top_surprise_name=_h_surprise,
                     top_surprise_change=top_surprise_change,
                     leader_name=_h_leader,
+                    leader_is_team=_leader_outcome_is_team(outcomes_data),
                     leader_probability=display_leader_prob,
                     rendered_leader_percent=_printed_leader,
                     source_count=source_count,
@@ -9383,6 +9412,7 @@ async def _score_futures(
                 highlight_reasons=highlight_result.reasons,
                 market_name=market.name,
                 leader_name=_h_leader,
+                leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 source_count=source_count,
@@ -9723,6 +9753,7 @@ async def _score_futures(
                 top_surprise_name=_h_surprise,
                 top_surprise_change=top_surprise_change,
                 leader_name=_h_leader,
+                leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 source_count=source_count,
