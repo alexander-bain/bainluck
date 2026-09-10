@@ -6640,6 +6640,51 @@ def _clear_backfill_running_phase() -> None:
         pass
 
 
+#: #4740: WHAT EACH GUARDED PHASE COSTS, for the guards that admit it.
+#:
+#: `_backfill_all_winners`' admission test used to ask "is at least
+#: `_BUDGET_MARGIN_S` (300s) left" before every guarded phase. That is a sound
+#: question only about a phase costing LESS than the margin, and every guarded
+#: phase satisfies it except `prob_and_datagolf` — measured 383.3s on the
+#: 2026-09-10 03:45Z cycle, and independently ~320s in #2348. So the guard
+#: could admit a phase it could not afford, and the task then died at the 840s
+#: wall instead of returning.
+#:
+#: 2026-09-10 09:45Z is the case in point, read from
+#: `bainluck:backfill_phase_timing` at the moment of death: score_resolution
+#: 52.6 + kalshi_api 97.8 + kalshi_markets_api 11.4 + polymarket_api 366.3 =
+#: cum 528.1, so the guard saw 311.8s left, cleared 300 BY 11.8 SECONDS,
+#: admitted a ~383s phase and SoftTimeLimitExceeded'd at 09:59:01Z.
+#: `polymarket_api` was not faulty — it honoured its own 540s absolute deadline,
+#: stopping at 528.1s. Sentry BAINLUCK-M4 counts 16 such deaths between
+#: 2026-08-27 and 2026-09-10.
+#:
+#: Losing the cycle also loses every counter, which is the whole of #4658's
+#: ship: a throw returns NO result, so the four phases that HAD completed
+#: reported nothing — `kalshi_api`'s `no_result` / `ungradeable_result` (#4604)
+#: among them.
+#:
+#: A phase absent from this table keeps the plain margin, so the other ten
+#: guard sites are unchanged by construction rather than by inspection. Same
+#: single-table discipline #4658 applied to the phase stats, for the same
+#: reason: the cost of a phase lives in exactly one place.
+#:
+#: These are floors under an OBSERVED cost, not budgets to tune. Re-measure via
+#: `/api/admin/celery/dashboard` → `backfill_phase_timing`.
+_PHASE_ADMISSION_COST_S = {
+    "prob_and_datagolf": 400.0,  # measured 383.3s (2026-09-10 03:45Z) + headroom
+}
+
+
+def _phase_admission_floor(phase: str, margin_s: float) -> float:
+    """The budget `phase` must have left before a guard may admit it.
+
+    Never below `margin_s`: pricing a phase raises its bar, it never lowers the
+    protection the plain margin already gave.
+    """
+    return max(margin_s, _PHASE_ADMISSION_COST_S.get(phase, 0.0))
+
+
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
     import time as _t
@@ -6743,6 +6788,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
 
     def _budget_left():
         return _SOFT_LIMIT_S - (_t.monotonic() - _pipeline_start)
+
+    def _cannot_afford(phase):
+        """True when `phase` cannot be admitted on the remaining budget.
+
+        #4740. The name passed here is the same name handed to
+        `_partial_result`, so the phase a guard PRICES can never drift from the
+        phase it REPORTS. The pricing rule itself is
+        `_phase_admission_floor` at module scope — this closure only supplies
+        the budget.
+        """
+        return _budget_left() < _phase_admission_floor(phase, _BUDGET_MARGIN_S)
 
     # #4658: THE TWO RETURN PATHS NOW SHARE ONE TABLE, because they used to
     # share nothing. `_partial_result` carried status/stopped_before/elapsed/
@@ -6934,12 +6990,12 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Guard the heavy backlog drainers so a slow one can't overrun the 840s wall
     # before the drain guards below ever get a turn (early-return; idempotent
     # phases resume next cycle).
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("kalshi_markets_api"):
         return _partial_result("kalshi_markets_api")
     _start_phase("kalshi_markets_api")
     kalshi_markets_stats = await _backfill_kalshi_winners_via_markets(limit=20000)
     _end_phase("kalshi_markets_api")
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("polymarket_api"):
         return _partial_result("polymarket_api")
     _start_phase("polymarket_api")
     # Queue 357: the five consecutive SoftTimeLimitExceeded happened HERE, and
@@ -6979,7 +7035,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # INVISIBLE to the exact instrument #898 built to locate a death. Naming it
     # is what makes the deadline fix above falsifiable: sum(phase_times) should
     # now approximate pipeline_elapsed_s instead of trailing it by 40%.
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("prob_and_datagolf"):
         return _partial_result("prob_and_datagolf")
     _start_phase("prob_and_datagolf")
     dg_early_stats = await _backfill_datagolf_winners()
@@ -7093,7 +7149,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # cycles and never updated cal_prob (kalshi MCE actively worsened 2.02→3.10).
     # Running the drain first guarantees it executes every cycle; candlestick now
     # enriches snapshots for the NEXT cycle's drain (eventually consistent).
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("bookmaker_closing"):
         return _partial_result("bookmaker_closing")
     _mark("bookmaker_closing")
     # Pass the PIPELINE's wall, not this function's own. Its standalone budget
@@ -7106,7 +7162,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     )
     closing_stats = await _backfill_closing_lines()
 
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("calibration_prices"):
         return _partial_result("calibration_prices")
     _mark("calibration_prices")
     cal_price_stats = await _compute_calibration_prices()
@@ -7131,7 +7187,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     date_passed_stats = await _grade_date_passed_binaries()
     bywhen_collapse_stats = await _collapse_bywhen_ladder_winners()
 
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("candlestick_trades"):
         return _partial_result("candlestick_trades")
     _mark("candlestick_trades")
     # Phase 0-candlestick: Backfill hourly snapshots from Kalshi for sparse outcomes.
@@ -7157,7 +7213,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # #898 (Queue #94): re-check the budget after candlestick ran — the trade
     # history backfill is the other half of the wall-busting block. Early-return
     # here too rather than entering it with no headroom.
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("trades"):
         return _partial_result("trades")
     # Phase 0-trades: Backfill snapshots from Kalshi trade history for outcomes
     # missing calibration_probability. Creates real traded-price snapshots that
@@ -7335,13 +7391,13 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # FIRST every cycle — even when candlestick later exhausts the budget. (Old
     # position here starved the drain on heavy cycles → kalshi MCE worsened.)
 
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("polymarket_group_api"):
         return _partial_result("polymarket_group_api")
     _mark("polymarket_group_api")
     # Phase 0f: Backfill group_id from Polymarket Gamma API (resolved events)
     api_group_stats = await _backfill_polymarket_group_ids_from_api()
 
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("datagolf_settlement"):
         return _partial_result("datagolf_settlement")
     _mark("datagolf_settlement")
     # Phase 0g-settlement: Resolve DataGolf outcomes from historical outrights
@@ -7498,7 +7554,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # remaining resolution passes (#899).
     gc.collect()
 
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("datagolf_winners"):
         return _partial_result("datagolf_winners")
     _mark("datagolf_winners")
     # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
@@ -7515,7 +7571,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # leaderboard position inference. Must run AFTER Phase 0h so leaderboard-
     # based resolution handles winner/top_N/make_cut first, and this handles
     # the 386 remaining H2H/3-ball markets.
-    if _budget_left() < _BUDGET_MARGIN_S:
+    if _cannot_afford("golf_matchups"):
         return _partial_result("golf_matchups")
     _mark("golf_matchups")
     golf_matchup_stats = await _resolve_golf_matchups_from_datagolf()
