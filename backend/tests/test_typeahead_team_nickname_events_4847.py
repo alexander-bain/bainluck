@@ -304,6 +304,31 @@ def test_the_admission_test_reads_the_shared_rewrites_with_the_rows_sport() -> N
     )
 
 
+def test_the_fuzzy_corrector_cannot_fire_for_a_curated_nickname() -> None:
+    """Why this ship has no analogue of #4809's second half.
+
+    #4809 needed TWO halves: the recall arm, and `and not _event_nickname_arms`
+    on the fuzzy "did you mean" fallback — because on `/search` an empty game
+    rail sent `niners` to the trigram corrector, which answered `UTEP Miners`.
+    This surface cannot reach that state: its corrector is gated on
+    `not team_pool`, and for every curated nickname the team row is already
+    there (#4728 put it there — it is the `team = 1` column of #4847's own
+    before-table).
+
+    So a suppression clause here would guard an unreachable branch. That is only
+    true while the trigger keeps its `not team_pool` term, which is what this
+    pins — loosen it to "few results" and `niners` can be corrected to a
+    spelling neighbour again, on the dropdown this time.
+    """
+
+    source = inspect.getsource(typeahead_search)
+    assert "if not team_pool and not event_pool and len(futures_pool) < 2:" in source, (
+        "the typeahead fuzzy corrector's trigger changed. If it can now fire "
+        "while a team row exists, a curated nickname can be 'corrected' to a "
+        "spelling neighbour and #4809's suppression clause is owed here too"
+    )
+
+
 def test_both_event_pools_eagerly_load_the_sport_they_are_now_read_for() -> None:
     """🔴 `ev.sport` on a lazily-loaded row is a 500 on a per-keystroke path.
 
