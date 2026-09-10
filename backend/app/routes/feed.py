@@ -129,6 +129,7 @@ from app.utils.feed_market_quality import (
     diversify_quality_families,
     editorial_archetype,
     enforce_first_page_quality_floor,
+    FIRST_PAGE_WHY_NOW_WINDOW,
     has_no_real_price,
     is_locked_near_certain,
 )
@@ -1678,8 +1679,14 @@ def apply_discover_display_chain(
     # card is itself the offender.
     first_page_floor_meta = None
     if discover_mode:
+        # The why-now window is passed EXPLICITLY rather than inherited from
+        # `first_page_size`. Clause (d) governs the first ten slots; screening it
+        # over twenty turns page one into a futures monoculture (see
+        # `FIRST_PAGE_WHY_NOW_WINDOW`). Two windows, two numbers, both stated.
         items, first_page_floor_meta = enforce_first_page_quality_floor(
-            items, first_page_size=min(20, limit)
+            items,
+            first_page_size=min(20, limit),
+            why_now_window=FIRST_PAGE_WHY_NOW_WINDOW,
         )
         if first_page_floor_meta["unreplaced"]:
             # Not a silent cap: the page kept a boring card because the pool had

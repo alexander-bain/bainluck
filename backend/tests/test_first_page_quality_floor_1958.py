@@ -31,6 +31,7 @@ import pytest
 from app.utils.feed_market_quality import (
     classify_market_quality,
     enforce_first_page_quality_floor,
+    FIRST_PAGE_WHY_NOW_WINDOW,
     is_first_page_quality_offender,
 )
 
@@ -256,6 +257,13 @@ class TestItRefusesToEmptyTheSurface:
             # declines to judge it (#4695). If that guard ever broke, all 49
             # cards would read as silent and this stays the test that says so.
             "silent_in_window": 0,
+            # The same statement for clause (d) (#4080). `lacks_a_why_now` runs
+            # the identical absence-of-capture guard, so a corpus carrying no
+            # text doors is not judged reasonless either. If THAT guard broke,
+            # every card in the window would be an offender and the floor would
+            # have nothing clean to swap in — the failure this zero forbids.
+            "no_why_now_in_window": 0,
+            "why_now_window": FIRST_PAGE_WHY_NOW_WINDOW,
         }
 
     def test_an_empty_feed_does_not_raise(self):
