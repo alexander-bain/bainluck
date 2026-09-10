@@ -134,6 +134,29 @@ TIGHTEST_OFFSEASON_GAP = timedelta(days=97)
 #: bound derived from one we do hold beats a bound named after one we do not.
 MEASUREMENT_HORIZON = timedelta(days=40)
 
+#: How far past the write window our copy of a fixture at its EDGE may sit.
+#:
+#: #4825. A fixture nobody has scheduled yet still has to be published with some
+#: kickoff, and the two sides do not choose the same one: for NFL Week 18 StatPal
+#: writes midnight UTC and ESPN writes midnight Eastern — one fixture, five hours
+#: apart. The write window is StatPal's own span plus the stamper's 1h slack, so
+#: StatPal's copy is inside it and ours is not; ours is never selected, cannot
+#: pair, and StatPal's is reported as a game we lack. Measured on production
+#: 2026-09-10: the NFL row read 95.02% (16 misses) while all 16 sat in `events`
+#: five hours later with sequential ESPN ids — 16/16 paired by team key,
+#: `inside_our_span` 0, `ours_covered_pct` 100.0. The same artifact as #3644, one
+#: span edge over: the two sides were read over different windows.
+#:
+#: A DAY, because a placeholder is a day marker and the disagreement between two
+#: of them is a day boundary — never a different fixture. The nearest real pair
+#: this could reach is the next matchday, and no league this module serves plays
+#: the same fixture twice inside 24h.
+#:
+#: It pads the WRITE WINDOW, before the union with ``now ± horizon`` — so a sport
+#: whose bound already comes from the horizon (MLB's rolling ~17-day span) is not
+#: moved at all, and no running seven-day clock has its denominator redefined.
+PLACEHOLDER_KICKOFF_SLACK = timedelta(hours=24)
+
 #: Team-name tokens that name no franchise. A StatPal playoff bracket carries
 #: these until the seeding is known; there is nothing for us to disagree with,
 #: so they leave the denominator by name and are counted where they went.
@@ -1340,11 +1363,21 @@ def measurement_bounds(
         population and lands in ``ours_only_by_horizon.beyond_statpal_last``
         instead of never being read at all.
 
+      * **It reaches our copy of a fixture sitting AT the edge** (#4825). The
+        write window is one side's clock, and at a placeholder kickoff the two
+        sides disagree about it by hours — so the same fixture straddles the
+        bound and our half is dropped. ``PLACEHOLDER_KICKOFF_SLACK`` pads the
+        write window before the union, which is why this cannot move a sport
+        whose bound already comes from the horizon.
+
     `now` is passed, never called for: a bound that reads the clock itself cannot
     be pinned by a test at a fixed date (gotcha #44).
     """
     start, end = write_window
-    return (min(start, now - horizon), max(end, now + horizon))
+    return (
+        min(start - PLACEHOLDER_KICKOFF_SLACK, now - horizon),
+        max(end + PLACEHOLDER_KICKOFF_SLACK, now + horizon),
+    )
 
 
 def timed_span(

@@ -1188,6 +1188,53 @@ class TestMeasurementBounds:
         later = measurement_bounds(window, now=self.NOW + timedelta(days=30))
         assert later[1] > once[1]
 
+    def test_it_reaches_our_counterpart_of_a_placeholder_kickoff_at_the_span_edge(self):
+        """#4825. The NFL row read 95.02% while we held every game it called missing.
+
+        Both providers publish a PLACEHOLDER kickoff for a Week 18 nobody has
+        scheduled yet, and they do not use the same one: StatPal writes midnight
+        UTC, ESPN writes midnight Eastern — the same fixture, five hours apart.
+        The write window is StatPal's own span plus the stamper's 1h slack, so
+        StatPal's 00:00Z copy is inside it and OUR 05:00Z copy is not. Our row is
+        never selected, cannot pair, and StatPal's is reported `statpal_only`.
+
+        Measured on production 2026-09-10: all 16 misses were Week 18, all at
+        StatPal's 2027-01-10T00:00Z, and all 16 sat in `events` at
+        2027-01-10T05:00Z with sequential ESPN ids 401873172–401873187 — 16/16
+        paired by team key. `inside_our_span` was 0 and `ours_covered_pct` 100.0,
+        which is the tell: nothing was missing, the two sides were read over
+        different windows (the #3644 artifact, one span edge over).
+
+        NFL is the only sport whose `governing.numbers` includes `pct`, so this
+        is the one sport where the artifact reaches a gate.
+        """
+        # StatPal's span for the 2026 season, plus the stamper's 1h MATCH_WINDOW.
+        season = (
+            datetime(2026, 8, 6, 23, 0, tzinfo=timezone.utc),
+            datetime(2027, 1, 10, 1, 0, tzinfo=timezone.utc),
+        )
+        start, end = measurement_bounds(season, now=self.NOW)
+        our_week_18 = datetime(2027, 1, 10, 5, 0, tzinfo=timezone.utc)
+        assert start <= our_week_18 <= end
+
+    def test_the_placeholder_reach_stops_well_short_of_the_next_fixture(self):
+        """The positive control for the test above — it must not pass by being wide.
+
+        A bound that simply grew until everything fell inside would satisfy the
+        assertion above and destroy the property `test_it_never_narrows...` is
+        guarding. The reach exists to cover two providers disagreeing about a
+        placeholder for ONE fixture; the widest such disagreement is a midnight
+        convention (UTC against UTC−14), never a different game. So a game a week
+        past the span's end is still outside, and the offseason ceiling still holds.
+        """
+        season = (
+            datetime(2026, 8, 6, 23, 0, tzinfo=timezone.utc),
+            datetime(2027, 1, 10, 1, 0, tzinfo=timezone.utc),
+        )
+        _, end = measurement_bounds(season, now=self.NOW)
+        a_week_later = datetime(2027, 1, 17, 1, 0, tzinfo=timezone.utc)
+        assert end < a_week_later
+
     def test_the_row_publishes_the_span_it_was_measured_over(self):
         """`window` and `measurement_window` are no longer the same span, and a
         reader cannot tell which produced a denominator by looking at the number.
