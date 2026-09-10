@@ -849,11 +849,21 @@ enum MarketMapRail {
     /// - Parameter density: the array `buildDensityFromSpreads` just returned —
     ///   the heights that will actually be drawn, post-normalisation.
     static func marginRailHasDistribution(density: [Double]) -> Bool {
-        // Exact equality, deliberately. Every height is `(binSum / peak) * 96`
-        // evaluated by one expression over sums of the same served prices, so
-        // bins that agree agree bit-for-bit — that is why the flat card above
-        // reads as five exact `96.0`s. A tolerance here would be a magic number
-        // guarding against data no venue produces.
+        densityVaries(density)
+    }
+
+    /// Whether an array of drawn bar heights asserts a shape.
+    ///
+    /// Lifted out of ``marginRailHasDistribution`` by #4671 so the rail's
+    /// *existence* rule and its *subtitle* rule cannot drift apart — the body is
+    /// unchanged and that function's whole census still measures it.
+    ///
+    /// Exact equality, deliberately. Every height is `(binSum / peak) * 96`
+    /// evaluated by one expression over sums of the same served prices, so bins
+    /// that agree agree bit-for-bit — that is why the flat card above reads as
+    /// five exact `96.0`s. A tolerance here would be a magic number guarding
+    /// against data no venue produces.
+    static func densityVaries(_ density: [Double]) -> Bool {
         var firstPositive: Double?
         for height in density where height > 0 {
             guard let first = firstPositive else {
@@ -863,6 +873,49 @@ enum MarketMapRail {
             if height != first { return true }
         }
         return false
+    }
+
+    // MARK: - Whether a rail is worth drawing at all
+
+    /// True when a map's rail and its axis would draw nothing a reader can read.
+    ///
+    /// #4671, and it is the layer under #4018. That ship correctly stopped an
+    /// ABANDONED game forecasting its own final, which removed the `PROJECTION`
+    /// tile and its dot. On NPB 15307717 (Marines v Golden Eagles, `suspended`,
+    /// both scores null) **that dot was the only thing ever on the rail**, so
+    /// what survived was a decorative capsule and a `0 · 10 · 21+` axis under
+    /// the caption "Projected total runs" — photographed by native/091 in
+    /// `artifacts-native-091/after4018-master-npb-s1600.png`. A reader sees a
+    /// chart-shaped hole and reads "this failed to load", not "we are
+    /// deliberately not forecasting a game that will never be played".
+    ///
+    /// This is the trap native/090b already named once — *gating the entry point
+    /// is not the same as gating the feature* — one layer up: the tile was
+    /// gated, the frame it sat in was not.
+    ///
+    /// **Why it reads the DENSITY and not `drawsDistribution`.** The card's own
+    /// `hasDistribution` flag comes from ``totalRailHasDistribution``, which asks
+    /// the THRESHOLDS whether they are distinct. This specimen's four lines
+    /// (5.5 / 7.5 / 9.5 / 11.5) are distinct, so that flag is **true** — and yet
+    /// `buildDensityFromThresholds` returned fourteen zeros, because all four are
+    /// served at `p = 0.99` and every `dp` is therefore 0. The rail rendered one
+    /// uniform `alpha 0.15` lavender block, which is what the photograph shows.
+    /// A gate on the flag would have merged green and changed nothing on the
+    /// card it was filed for; asking what was actually drawn is the only question
+    /// that sees this. (That the flag itself asks the wrong side of the builder
+    /// is real and is #4692 — 210 settled cards print "distribution" over a flat
+    /// block — but it flips 111 two-line cards' shading and is its own ship.)
+    ///
+    /// A marker is content, so any marker keeps the rail: the FINAL tile on a
+    /// settled game and the PROJECTION tile on a scheduled one both still draw
+    /// over an unshaded track, which is #2086's rule — declare, don't delete.
+    ///
+    /// - Parameters:
+    ///   - density: the heights the rail is about to draw, post-normalisation.
+    ///   - markerCount: how many marker dots will sit on it.
+    static func railDrawsNothing(density: [Double], markerCount: Int) -> Bool {
+        guard markerCount == 0 else { return false }
+        return !densityVaries(density)
     }
 
     /// The subtitle a FULL-GAME margin map may print.
