@@ -43,6 +43,7 @@ from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     ESPN,
     FLIP_RULED_WITHOUT_STREAK,
+    SWITCH_ACTOR_SERVES,
     SWITCH_CONSUMERS,
     SWITCH_IS_WIRED,
     SWITCH_REPORTERS,
@@ -52,6 +53,18 @@ from app.config.authority_by_sport import (
 )
 
 APP = Path(__file__).resolve().parent.parent / "app"
+
+#: The task that acts on the switch, and the function inside it that decides
+#: what a flipped sport gets. Named here rather than inline so the walk below
+#: fails loudly if either is renamed, instead of finding nothing and passing.
+ACTOR_PATH = APP / "tasks" / "espn_sync.py"
+ACTOR_FUNCTION = "_act_on_failovers"
+
+#: The prefix every StatPal-serving helper in `espn_sync` shares
+#: (`_serve_schedule_from_statpal`, `_serve_live_from_statpal`). A prefix rather
+#: than the two names, so adding a third writer to the branch keeps reading as
+#: serving without anyone having to update this file.
+WRITER_PREFIX = "_serve_"
 
 CONFIG_MODULE = "app.config.authority_by_sport"
 
@@ -83,6 +96,66 @@ def _reads_the_switch(tree: ast.AST) -> bool:
             # `import app.config.authority_by_sport` — reaches every name.
             if any(alias.name == CONFIG_MODULE for alias in node.names):
                 return True
+    return False
+
+
+def _tests_standing_statpal(test: ast.AST) -> bool:
+    """Is this `if`/`elif` the branch for an already-flipped sport?
+
+    Matches `decision.code == STANDING_STATPAL` written either way round, and
+    an `in {STANDING_STATPAL, ...}` form, because which of those the author
+    picks is a style choice and none of them changes what the branch means.
+    """
+    if not isinstance(test, ast.Compare):
+        return False
+    for node in [test.left, *test.comparators]:
+        for name in ast.walk(node):
+            if isinstance(name, ast.Name) and name.id == "STANDING_STATPAL":
+                return True
+    return False
+
+
+def _dispatches_a_writer(body: list[ast.stmt]) -> bool:
+    """Does this branch body call one of the StatPal-serving helpers?
+
+    Takes the branch's `body` alone. An `elif` is a nested `If` in the previous
+    branch's `orelse`, so the standing branch's own `orelse` holds everything
+    that comes AFTER it in the chain — the uncovered arm and the final `else`.
+    Walking the `If` node instead of its body would count a writer called in
+    one of those as if the standing branch had called it, which is the reading
+    that lets this guard pass while a flipped sport is served by nothing.
+    """
+    for statement in body:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.id if isinstance(func, ast.Name)
+                else func.attr if isinstance(func, ast.Attribute)
+                else ""
+            )
+            if name.startswith(WRITER_PREFIX):
+                return True
+    return False
+
+
+def _standing_branch_serves(tree: ast.AST) -> bool:
+    """Does the actor's standing-sport branch run a writer? (#4947)
+
+    The question `SWITCH_CONSUMERS` cannot ask. That set is built from imports,
+    so it answers the same before and after #4434 — what moved was the body of
+    one `elif`, and an import walk is blind to a body.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != ACTOR_FUNCTION:
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.If) and _tests_standing_statpal(sub.test):
+                if _dispatches_a_writer(sub.body):
+                    return True
     return False
 
 
@@ -180,6 +253,136 @@ def test_the_note_no_longer_says_inert_because_the_switch_is_wired():
     assert "event_registry" in SWITCH_WIRING_NOTE
 
 
+def test_the_standing_branch_serves_and_the_note_says_so():
+    """The #4947 guard: the declared fact, the tree, and the served sentence.
+
+    `SWITCH_CONSUMERS`' walk asks whether anything READS the switch and could
+    not catch #4434, which changed what the reader DOES. For a day the row told
+    an operator that a flip only moved a counter, while a flipped sport's
+    schedule and livescore writers were running on every ESPN-dark pass.
+
+    Both directions, because the sentence is wrong either way round: strip the
+    dispatch out of the standing branch and a note promising writers is a lie;
+    add one and a note omitting it is the lie we actually shipped.
+    """
+    serves_in_tree = _standing_branch_serves(
+        ast.parse(ACTOR_PATH.read_text(), filename=str(ACTOR_PATH))
+    )
+
+    assert serves_in_tree is SWITCH_ACTOR_SERVES, (
+        f"`{ACTOR_FUNCTION}`'s STANDING_STATPAL branch "
+        f"{'dispatches' if serves_in_tree else 'does not dispatch'} a "
+        f"`{WRITER_PREFIX}*` writer, but `SWITCH_ACTOR_SERVES` is "
+        f"{SWITCH_ACTOR_SERVES}. Update the declaration and the served "
+        "`switch_note` together — an operator reads that sentence immediately "
+        "before flipping a sport (#4947)"
+    )
+
+    if SWITCH_ACTOR_SERVES:
+        # The two facts the accounting-only sentence omitted, and the reason
+        # they matter: a flip changes what is WRITTEN, and a flip that cannot
+        # be covered is not quietly reported as covered.
+        assert "SERVES" in SWITCH_WIRING_NOTE
+        assert "writers RUN" in SWITCH_WIRING_NOTE
+        assert "UNCOVERED" in SWITCH_WIRING_NOTE
+        assert "ONE thing changes" not in SWITCH_WIRING_NOTE
+    else:
+        assert "writers RUN" not in SWITCH_WIRING_NOTE
+
+
+def test_the_serving_walk_can_tell_a_dispatch_from_a_log_line():
+    """The positive control, without which the guard above passes vacuously.
+
+    A walk that returned True for any standing branch — or False because it
+    never found the function — would agree with today's answer for the wrong
+    reason. Both arms are synthetic, so this stays honest when the real file
+    changes shape.
+    """
+    dispatching = (
+        "async def _act_on_failovers(decisions, stats):\n"
+        "    for k in decisions:\n"
+        "        if decision.code in FAILOVER_CODES:\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+        "        elif decision.code == STANDING_STATPAL:\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+    )
+    assert _standing_branch_serves(ast.parse(dispatching)) is True
+
+    # The pre-#4434 shape: the branch exists and only accounts. The FAILOVER
+    # branch above it still calls the writer, so a walk that read the whole
+    # if/elif chain as one body would call this serving. It is not.
+    accounting_only = (
+        "async def _act_on_failovers(decisions, stats):\n"
+        "    for k in decisions:\n"
+        "        if decision.code in FAILOVER_CODES:\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+        "        elif decision.code == STANDING_STATPAL:\n"
+        "            stats['standing_serving'] = 1\n"
+        "            logger.info('standing')\n"
+    )
+    assert _standing_branch_serves(ast.parse(accounting_only)) is False
+
+    # The branch accounts, and a LATER arm serves. An `elif` lives in the
+    # previous branch's `orelse`, so everything below the standing branch is
+    # inside its subtree — a walk of the `If` node rather than its `body` reads
+    # this as serving, and would bless a note promising writers to a flipped
+    # sport that gets none.
+    served_by_a_later_arm = (
+        "async def _act_on_failovers(decisions, stats):\n"
+        "    for k in decisions:\n"
+        "        if decision.code in FAILOVER_CODES:\n"
+        "            stats['failover_serving'] = 1\n"
+        "        elif decision.code == STANDING_STATPAL:\n"
+        "            stats['standing_serving'] = 1\n"
+        "        else:\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+    )
+    assert _standing_branch_serves(ast.parse(served_by_a_later_arm)) is False
+
+    # And a tree with no such branch at all — the #3473 state — is not serving.
+    no_branch = (
+        "async def _act_on_failovers(decisions, stats):\n"
+        "    for k in decisions:\n"
+        "        if decision.code in FAILOVER_CODES:\n"
+        "            await _serve_schedule_from_statpal(k, stats)\n"
+    )
+    assert _standing_branch_serves(ast.parse(no_branch)) is False
+
+    # A renamed actor must read as not-serving rather than silently passing:
+    # that is the failure mode where the guard finds nothing and says nothing.
+    renamed = dispatching.replace(ACTOR_FUNCTION, "_act_on_failovers_v2")
+    assert _standing_branch_serves(ast.parse(renamed)) is False
+
+
+def test_the_note_has_three_states_and_the_middle_one_is_still_reachable():
+    """The accounting-only sentence is not deleted, it is demoted.
+
+    It was true for a day and it is the honest answer for any future actor that
+    reads the switch without acting on it — so the function must still be able
+    to produce it. A two-state function would force the next person into the
+    same choice that produced #4947: overstate, or say nothing.
+    """
+    dark = switch_wiring_note(False, False)
+    accounting = switch_wiring_note(True, False)
+    serving = switch_wiring_note(True, True)
+
+    assert "INERT" in dark
+    assert "ONE thing changes" in accounting and "writers RUN" not in accounting
+    assert "writers RUN" in serving
+    assert len({dark, accounting, serving}) == 3
+
+    # `serves` cannot manufacture a wiring that is not there: an unwired switch
+    # is dark whatever an actor would have done with it.
+    assert switch_wiring_note(False, True) == dark
+
+    # All three keep the caveat, which is the half a flipping operator is most
+    # likely to get wrong.
+    for note in (dark, accounting, serving):
+        assert "not" in note.lower()
+    for note in (accounting, serving):
+        assert "event_registry" in note
+
+
 def test_the_note_would_go_back_to_inert_if_the_actor_were_removed():
     """The disclosure is a function of the derived fact in BOTH directions.
 
@@ -191,8 +394,12 @@ def test_the_note_would_go_back_to_inert_if_the_actor_were_removed():
     """
     unwired = switch_is_wired({"app.routes.admin_providers"})
     assert unwired is False
-    assert "INERT" in switch_wiring_note(unwired)
-    assert "step 7" in switch_wiring_note(unwired)
+    # Asked with `serves=True` as well as False (#4947): a switch nothing reads
+    # is dark no matter what an actor would have done with the answer, and the
+    # three-state note must not let the second flag smuggle in a claim.
+    assert "INERT" in switch_wiring_note(unwired, SWITCH_ACTOR_SERVES)
+    assert "INERT" in switch_wiring_note(unwired, False)
+    assert "step 7" in switch_wiring_note(unwired, SWITCH_ACTOR_SERVES)
 
     # And the control, so the assertion above cannot pass because the function
     # returns False for everything.
