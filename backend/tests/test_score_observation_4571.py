@@ -630,3 +630,86 @@ def test_a_refused_id_never_reaches_the_stamp():
         "the stale-id refusal must short-circuit BEFORE the stamp; a refused "
         "write that still stamps dates a score it did not make"
     )
+
+
+# ── The straggler settle door (#4652) also signs its reads ───────────────────
+#
+# #4652 landed on master while this branch waited for a merge slot, adding a
+# SECOND writer into the same settle door: `_settle_authority_stragglers` ends
+# a match the authority finished on a board day the ordinary pass never asks
+# about. It called `update_event_fields_from_espn` without `observed_at`, and
+# the stamp helper returns False on a None clock rather than raising — so that
+# path wrote scores with no age, silently, on exactly the rows a reader is most
+# likely to be looking at (a match that has just been settled).
+#
+# The AST guard above proves the keyword is TYPED at every call site. This one
+# proves a real clock travels through the door and lands on the row.
+
+def _straggler_harness():
+    """The captured #4652 fixtures, reused rather than re-invented.
+
+    Loaded by PATH, not by module name: `tests/` is not a package and is not on
+    `sys.path` under every pytest rootdir, so a plain import passes here and
+    ImportErrors in CI.
+    """
+    import importlib.util
+
+    path = Path(__file__).with_name("test_authority_straggler_board_day_4652.py")
+    spec = importlib.util.spec_from_file_location("_straggler_4652", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.asyncio
+async def test_a_straggler_settled_off_a_prior_day_board_carries_a_stamp():
+    s = _straggler_harness()
+    rows = s._suspended_specimens()
+
+    await s._run(rows, s.BOARD_0909)
+
+    assert [e.status for e in rows] == ["completed", "completed"], (
+        "precondition: #4652's pass must still settle these two rows"
+    )
+    for event in rows:
+        assert getattr(event, "score_observed_at", None) is not None, (
+            f"event {event.id} was settled off the prior-day board with no "
+            "observation stamp — the page would print a corrected score whose "
+            "age is unknown (#4571 + #4652)"
+        )
+        assert event.score_source == "espn"
+
+
+@pytest.mark.asyncio
+async def test_the_straggler_stamp_is_the_board_read_not_the_pass_clock():
+    """Each group is its own fetch, so each carries its own read moment.
+
+    `now` is the pass's entry clock and can be arbitrarily older than the
+    board request that actually produced these scores; stamping with it would
+    report the score as older than it is.
+    """
+    s = _straggler_harness()
+    rows = s._suspended_specimens()
+
+    await s._run(rows, s.BOARD_0909, now=s.NOW)
+
+    for event in rows:
+        assert event.score_observed_at != s.NOW, (
+            "the straggler stamp reused the pass-entry clock instead of the "
+            "moment its own board was read"
+        )
+        assert event.score_observed_at.tzinfo is not None, "stamp must be aware"
+
+
+@pytest.mark.asyncio
+async def test_an_authority_dark_straggler_board_stamps_nothing():
+    """No board, no read, no age. An absence must not be dated (#3473)."""
+    s = _straggler_harness()
+    rows = s._suspended_specimens()
+
+    await s._run(rows, s.BOARD_0909, dark=True)
+
+    for event in rows:
+        assert getattr(event, "score_observed_at", None) is None, (
+            "a dark board settled nothing, so it must not have stamped a score"
+        )

@@ -909,6 +909,13 @@ async def _settle_authority_stragglers(session, espn, now, stats, update_fields_
         # for every other sport (gotcha #42).
         try:
             board = await espn.get_scoreboard(sport_key, date=board_date)
+            # The observation clock for every score THIS board writes (#4571).
+            # One value per payload, taken at the read, for the same reason the
+            # ordinary pass takes one: every row settled below came off this
+            # single response, so stamping per row would call the last straggler
+            # fresher than the first. Each group is its own fetch, so each group
+            # gets its own stamp rather than sharing the pass-level `now`.
+            board_observed_at = datetime.now(timezone.utc)
         except Exception as e:
             stats["errors"].append(
                 f"straggler_fetch_{sport_key}_{board_date}: {str(e)}"
@@ -936,7 +943,8 @@ async def _settle_authority_stragglers(session, espn, now, stats, update_fields_
             was = event.status
             try:
                 await update_fields_fn(
-                    session, event, matched, claimed_espn_ids, stats
+                    session, event, matched, claimed_espn_ids, stats,
+                    observed_at=board_observed_at,
                 )
             except Exception as e:
                 stats["errors"].append(f"straggler_update_{event.id}: {str(e)}")

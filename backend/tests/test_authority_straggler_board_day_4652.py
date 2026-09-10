@@ -378,12 +378,16 @@ async def test_one_bad_row_does_not_wipe_the_pass(monkeypatch):
 
     calls = {"n": 0}
 
-    async def _explode_once(session, event, ee, claimed, stats):
+    # Mirrors the real settle door's signature including `observed_at` (#4571).
+    # It must: the pass's try/except turns a TypeError from a stale double into
+    # a `straggler_update_` error and a skipped row, so a signature drift here
+    # reads as "the row was bad", not as "the test double is wrong".
+    async def _explode_once(session, event, ee, claimed, stats, *, observed_at=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
         return await update_event_fields_from_espn(
-            session, event, ee, claimed, stats
+            session, event, ee, claimed, stats, observed_at=observed_at
         )
 
     session = _FakeSession(rows)
