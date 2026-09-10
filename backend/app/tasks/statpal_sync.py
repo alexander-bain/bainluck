@@ -183,7 +183,20 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
 
     service = StatPalAPIService()
     total_updated = 0
-    total_fixtures = 0
+    # #4775. TWO counts, and they are not the same quantity. `fixtures_served`
+    # is what the venue handed us; `fixtures_in_window` is the subset inside the
+    # `-1d/+7d` filter below. Until now only the second one existed and it was
+    # published as `total_fixtures_fetched`, standing in one payload beside a
+    # per-sport `fixtures_fetched` that meant the other thing — 16 against 374
+    # for the same NFL pass on 2026-09-10, with `live_games` also 16 so the
+    # wrong reading looked corroborated. Both names now say which pool they
+    # counted.
+    #
+    # The served total is DERIVED from `details` at the return rather than
+    # carried in its own counter, so the two can never drift: a sport whose loop
+    # exits early adds nothing to either side of the reconciliation, and there
+    # is no second place to forget to increment.
+    fixtures_in_window = 0
     details = []
 
     total_created = 0
@@ -379,7 +392,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         if fixture.start_time < window_start or fixture.start_time > window_end:
                             continue
 
-                    total_fixtures += 1
+                    # #4775. Counted INSIDE the window filter, which is exactly
+                    # why it may not be published under a name reading "fetched".
+                    fixtures_in_window += 1
 
                     # Dedup: skip if this StatPal fixture was already processed
                     # in a prior sport key iteration (e.g., soccer_epl and soccer_usa_mls
@@ -885,7 +900,21 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         "sports_unasked": sports_unasked,
         "events_updated": total_updated,
         "events_created": total_created,
-        "total_fixtures_fetched": total_fixtures,
+        # #4775. `total_fixtures_fetched` is now what the venue actually served
+        # — the sum of the per-sport `fixtures_fetched` rows below, so an
+        # operator reading the top line and an operator reading the sport rows
+        # cannot reach different conclusions about the same pass. The filtered
+        # count keeps its own key and names the pool it counted.
+        #
+        # `.get(..., 0)`, not `[...]`: `details` also carries the #4710
+        # `sport_not_found` rows, which have no `fixtures_fetched` because
+        # nothing was ever asked for them. A strict read here raised `KeyError`
+        # and took the whole all-sports pass down with it — the one form of this
+        # task that reaches that arm.
+        "total_fixtures_fetched": sum(
+            d.get("fixtures_fetched", 0) for d in details
+        ),
+        "total_fixtures_in_window": fixtures_in_window,
         "sports": details,
         # Always present, and 0 is the meaningful reading — an absent key would make
         # "the guard found nothing" indistinguishable from "the guard did not run".
