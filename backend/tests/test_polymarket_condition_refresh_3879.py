@@ -426,9 +426,69 @@ class TestTheOrderingIsAcceptanceOneMadeMechanical:
 
     def test_priority_leads_and_the_stalest_of_a_class_is_next(self):
         """Within a class it is stalest-first, which is what stops a member of
-        that class being passed over twice for the same reason."""
+        that class being passed over twice for the same reason.
+
+        #4896 put one key in front of this and changed nothing else: the tail of
+        the ORDER BY is asserted whole, so a change to either surviving key
+        still fails here.
+        """
         sql = " ".join(rail._CANDIDATE_SQL.split())
-        assert "ORDER BY p.priority DESC, s.stalest ASC" in sql
+        assert "p.priority DESC, s.stalest ASC" in sql
+
+    def test_a_game_about_to_be_played_leads_even_that(self):
+        """#4896: staleness cannot express urgency.
+
+        A 90-day-old election price is always "staler" than a game starting in
+        two hours, so under a budget the game is a permanent loss. Measured
+        2026-09-10 20:5xZ: `Pegula vs Sabalenka` (on court 23:00Z) ranked 7,947
+        of 10,675 and `Rybakina vs Gauff` 10,667, both below `CANDIDATE_LIMIT`
+        3,600 — unselectable, not merely starved, because a Polymarket game
+        market carries tier 5 and a `resolution_date` a WEEK after the fixture
+        so neither arm of `priority` fires.
+
+        That the key SORTS correctly is proved against real Postgres in
+        `tests/integration/test_polymarket_kickoff_ordering_pg.py`; this is the
+        guard that stops it being deleted.
+        """
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert (
+            "ORDER BY p.kickoff ASC NULLS LAST, p.priority DESC, s.stalest ASC" in sql
+        )
+
+    def test_the_kickoff_key_reads_the_event_clock_not_the_market_one(self):
+        """The whole point: `resolution_date` is a padded venue window for a
+        game market, and the event row already knows when the game starts."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert " ".join(rail._KICKOFF_SQL.split()) in sql
+        assert "e.commence_time" in sql
+        assert "e.completed_at IS NULL" in sql
+        assert f"make_interval(hours => {rail.KICKOFF_LEAD_HOURS})" in sql
+        assert f"make_interval(hours => {rail.KICKOFF_TAIL_HOURS})" in sql
+
+    def test_the_events_join_cannot_shrink_the_pool(self):
+        """6,337 of the pool are futures with no event at all. An inner join
+        would drop every one of them and the census would report the loss as a
+        healthy smaller number."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "LEFT JOIN events e ON e.id = fm.event_id" in sql
+
+    def test_the_kickoff_class_cannot_swallow_the_run(self):
+        """The lead is a BUDGET claim, so it is asserted as one — and here,
+        where it runs without a database, rather than beside the behavioural
+        gate where it would only run in `search-recall`.
+
+        MEASURED, production 2026-09-10 21:0xZ: the whole 24h+6h window is 72
+        markets / 277 condition ids, ranks 1-72 — 27.7% of one run's
+        `CONDITION_BUDGET`, so the class is swept whole every hour and ~723 ids
+        still drain the backlog behind it. At a 48-hour lead the same window
+        measured 570 markets / 1,753 ids, which exceeds the budget outright and
+        converts this key from "the games go first" into "the drain stops".
+        """
+        assert rail.KICKOFF_LEAD_HOURS <= 24, (
+            "a 48h lead was measured at 1,753 ids against a 1,000-id budget — "
+            "re-measure the window against production before widening it"
+        )
+        assert 0 < rail.KICKOFF_TAIL_HOURS <= rail.KICKOFF_LEAD_HOURS
 
     def test_the_budget_and_the_window_are_one_sizing(self):
         """1,200 x 12 = 14,400 against the 13,746 served markets measured on

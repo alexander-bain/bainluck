@@ -253,6 +253,27 @@ CONDITION_BUDGET = 1_000
 #: 9,281 legs sit in the ≤2d bucket (#3879's own table).
 IMMINENT_DAYS = 2
 
+#: How far ahead of a linked event's own START this rail treats its markets as
+#: the most urgent thing in the pool. See :data:`_KICKOFF_SQL` for why the
+#: market's ``resolution_date`` cannot answer this question.
+#:
+#: MEASURED, production 2026-09-10 21:0xZ, against the live candidate pool: the
+#: whole window holds **73 markets / 278 condition ids across 19 events** —
+#: 27.8% of one run's :data:`CONDITION_BUDGET`, so the imminent class is swept
+#: WHOLE every hour and the remaining ~722 ids still drain the backlog. That
+#: headroom is the reason for the constant's value, not a preference: at 48
+#: hours the same window measures 570 markets / **1,753 ids**, which exceeds the
+#: budget outright and would convert this key from "the games go first" into
+#: "the drain stops".
+KICKOFF_LEAD_HOURS = 24
+
+#: How long AFTER its start an uncompleted event stays in that class. A game in
+#: progress is the single most-read blend on the site, and ``completed_at`` is
+#: the primary exit — this bound only stops a row whose ``completed_at`` never
+#: arrives from claiming the head of the queue forever, the same fixed point
+#: :data:`_ATTEMPT_TTL_SECONDS` exists to break.
+KICKOFF_TAIL_HOURS = 6
+
 #: Wall budget for the fetch/write loop, checked BETWEEN batches so a run always
 #: stops on a whole market (see the unit-of-work note in the module docstring).
 #: Well under the task's 300s soft limit, leaving room for the selector.
@@ -338,10 +359,43 @@ _ADDRESSABLE_LEG_SQL = f"""
               )
 """
 
+#: THE EVENT'S OWN CLOCK, because the market's does not answer this question.
+#:
+#: ``priority`` above asks the MARKET when it resolves. For a Polymarket game
+#: market that field is a padded venue window, not the fixture: measured
+#: 2026-09-10 20:5xZ, ``Pegula vs Sabalenka`` (US Open semi-final, court
+#: 23:00Z that night) carried ``resolution_date`` 2026-09-17, ``Rybakina vs
+#: Gauff`` (02:00Z) carried 2026-09-18, and ``Rockies @ Yankees`` (23:05Z)
+#: carried 2026-09-16 — all a full WEEK late, all ``market_tier`` 5, so every
+#: arm of ``priority`` read false for a game about to be played. They ranked
+#: 7,947 / 10,667 / 7,670 of 10,675 stale candidates, below ``CANDIDATE_LIMIT``
+#: 3,600 — not merely starved but never selectable at all. The event row knew
+#: the right time the whole while.
+#:
+#: So the key is the LINKED EVENT's ``commence_time`` and it is NULL for every
+#: row that is not a game about to be played, which is what lets it sit in front
+#: of the existing ordering without disturbing it: ``ASC NULLS LAST`` puts the
+#: 73 imminent markets first, soonest kickoff first, and ties every other row at
+#: NULL so they fall through to ``priority DESC, stalest ASC`` exactly as before.
+#:
+#: ``completed_at IS NULL`` is the primary exit and :data:`KICKOFF_TAIL_HOURS`
+#: the backstop. A market with no event (``event_id IS NULL`` — 6,337 of the
+#: pool, the futures) LEFT JOINs to NULL and is untouched by this.
+_KICKOFF_SQL = f"""
+               CASE
+                 WHEN e.commence_time IS NOT NULL
+                  AND e.completed_at IS NULL
+                  AND e.commence_time <= NOW() + make_interval(hours => {KICKOFF_LEAD_HOURS})
+                  AND e.commence_time >  NOW() - make_interval(hours => {KICKOFF_TAIL_HOURS})
+                 THEN e.commence_time
+               END
+"""
+
 _CANDIDATE_SQL = f"""
     WITH pool AS MATERIALIZED (
         SELECT fm.id,
                fm.external_id,
+               {_KICKOFF_SQL.strip()} AS kickoff,
                (
                     fm.market_tier IN (1, 2)
                  OR (
@@ -350,6 +404,7 @@ _CANDIDATE_SQL = f"""
                     )
                ) AS priority
           FROM futures_markets fm
+          LEFT JOIN events e ON e.id = fm.event_id
          WHERE fm.source = 'polymarket'
            AND {_ADDRESSABLE_LEG_SQL.strip()}
            AND {LIVE_MARKET_SQL}
@@ -374,7 +429,7 @@ _CANDIDATE_SQL = f"""
            ) s ON TRUE
      WHERE s.stalest < NOW() - make_interval(hours => :stale_hours)
        AND COALESCE(ARRAY_LENGTH(s.request_ids, 1), 0) > 0
-     ORDER BY p.priority DESC, s.stalest ASC
+     ORDER BY p.kickoff ASC NULLS LAST, p.priority DESC, s.stalest ASC
      LIMIT :limit
 """
 
@@ -463,9 +518,18 @@ async def _select_stale_conditions(
 ) -> tuple[list[tuple[int, list[str]]], int, int]:
     """``([(market_id, [condition_id, …]), …], stale_markets, served_markets)``.
 
-    Ordered priority-first and then stalest-first, which is the whole starvation
-    argument: within a class the row that has waited longest is always next, so
-    no member of a class can be passed over twice for the same reason.
+    Ordered kickoff-first, then priority-first, then stalest-first, which is the
+    whole starvation argument: within a class the row that has waited longest is
+    always next, so no member of a class can be passed over twice for the same
+    reason.
+
+    #4896 put the kickoff key in front of that, and it is the only key here that
+    is not about waiting. Staleness cannot express urgency — a 90-day-old
+    election price is always "staler" than a game starting in two hours, and
+    under a budget that is a permanent loss for the game. The kickoff key is
+    NULL for everything that is not a linked event about to be played
+    (:data:`_KICKOFF_SQL`), so it re-orders 73 rows and leaves the argument
+    above governing the other ~10,600.
 
     #4827: the second element is a LIST because a ladder is addressed by its
     legs. It holds exactly one id for every row this rail swept before the
