@@ -121,24 +121,74 @@ export interface FinishedSection {
 }
 
 /**
+ * When did this card's game END? D109 (#4676).
+ *
+ * `ended_at` when the payload carries one, `commence_time` otherwise. The
+ * fallback is not defensive padding — it is load-bearing twice over: the field
+ * is absent on any row the backend has no end time for, and a cached feed
+ * response can predate the deploy that added it.
+ */
+function finishedAtTime(data: FeedEventData): string {
+  return data.ended_at || data.commence_time;
+}
+
+/**
  * Order the settled cards and cut them to one screen.
  *
- * ORDER: day ascending (today, then yesterday), then most recent first inside a
- * day. The feed's own order is by SCORE, which is the right answer to "which
- * game is interesting" and the wrong one to "what just happened" — a results
- * list is read from the top for the most recent thing, which is the same rule
- * `sortedResults` applies on the tournament hub.
+ * ORDER: day ascending (today, then yesterday), then **most recently ENDED**
+ * first inside a day, ties broken by the later kickoff. The feed's own order is
+ * by SCORE, which is the right answer to "which game is interesting" and the
+ * wrong one to "what just happened".
+ *
+ * ═══ WHY THE END AND NOT THE START (D109, #4676) ═══
+ *
+ * This sorted on `commence_time` until the backend began sending `ended_at`,
+ * because the start was the only time it had. At T+30 on the NFL season opener
+ * (03:56Z) that put the biggest final of the night off the page entirely:
+ *
+ *   by end                          by start (what shipped)
+ *   1 Seahawks   ended 03:26:32Z    1 Chicago Fire     began 00:30Z
+ *   2 Royals     ended 03:03:05Z    2 Houston Dynamo   began 00:30Z
+ *   3 White Sox  ended 02:44:04Z    3 Austin FC        began 00:30Z
+ *   4 Chi Fire   ended 02:39:07Z    4 Minnesota Utd    began 00:30Z
+ *                                   6 Seahawks         began 00:20Z  <- cut
+ *
+ * An NFL game runs 3h+, so it started before fixtures that finished long before
+ * it. With `FINISHED_SECTION_CAP = 4`, "6th" is "missing".
+ *
+ * ═══ WHY THE TIE-BREAK IS NOT DECORATION ═══
+ *
+ * `ended_at` falls back to `completed_at`, a backend processing timestamp that
+ * is sometimes written in BATCHES — three MLS rows on 2026-09-10 share
+ * `04:45:41.647571` to the microsecond, one sweep closing several games. Equal
+ * ends are therefore common and real, and a sort that stops there orders a
+ * batch arbitrarily. Kickoff descending decides them, which is the best
+ * available proxy for which of a simultaneously-closed group finished last.
+ *
+ * NOT by the ranker's rank, deliberately (measured, 2026-09-10): the ranker
+ * scores an MLS regular-season match 98 and the NFL season opener 70, and tags
+ * a US Open match `tier:2 class:other`. Ranking the window would bury both the
+ * final and the Slam — and #4454 pins the Slam at the top for that exact
+ * reason.
  */
 export function buildFinishedSection(
   finished: FeedItem[],
   now: number = Date.now(),
 ): FinishedSection {
   const dropped: { item: FeedItem; reason: FinishedDropReason }[] = [];
-  const dated: { item: FeedItem; day: number; at: number }[] = [];
+  const dated: {
+    item: FeedItem;
+    day: number;
+    at: number;
+    began: number;
+  }[] = [];
 
   for (const item of finished) {
     const data = item.data as FeedEventData;
-    const day = finishedDayOffset(data.commence_time, now);
+    // The DAY is the day it ENDED, not the day it started — a game that kicks
+    // off at 9pm and ends after midnight belongs under the day a reader would
+    // look for its result.
+    const day = finishedDayOffset(finishedAtTime(data), now);
     if (day === null) {
       // The card cannot say WHEN it finished, so it cannot be filed under a day.
       // Same three cases `formatFinishedGameLabel` renders no date for, and the
@@ -151,10 +201,20 @@ export function buildFinishedSection(
       dropped.push({ item, reason: "finished_older_than_yesterday" });
       continue;
     }
-    dated.push({ item, day, at: new Date(data.commence_time).getTime() });
+    dated.push({
+      item,
+      day,
+      at: new Date(finishedAtTime(data)).getTime(),
+      began: new Date(data.commence_time).getTime(),
+    });
   }
 
-  dated.sort((a, b) => (a.day !== b.day ? a.day - b.day : b.at - a.at));
+  dated.sort((a, b) => {
+    if (a.day !== b.day) return a.day - b.day;
+    if (a.at !== b.at) return b.at - a.at;
+    // Equal ends are a BATCH, not a coincidence — see the docblock.
+    return b.began - a.began;
+  });
 
   const shown = dated.slice(0, FINISHED_SECTION_CAP).map((e) => e.item);
   const overflow = dated.slice(FINISHED_SECTION_CAP);

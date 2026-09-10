@@ -379,3 +379,154 @@ describe("#4454 — a long marquee match is still findable the morning after", (
     expect(section.shown[0]).toBe(marquee);
   });
 });
+
+describe("#4676 / D109 — the section orders by when games ENDED", () => {
+  // The production T+30 board, 2026-09-10 03:56Z. Real ids, real clocks.
+  // Local components so the day arithmetic holds in every timezone.
+  const T_PLUS_30 = new Date(2026, 8, 9, 20, 56, 0).getTime();
+
+  function at(hh: number, mm: number, ss = 0) {
+    return new Date(2026, 8, 9, hh, mm, ss).toISOString();
+  }
+
+  // began 17:20 local, ENDED 20:26 — the most recently finished game on the
+  // board, and the 6th-most recently STARTED.
+  const nflOpener = eventItem({
+    id: 14780138,
+    sport: "americanfootball_nfl",
+    commence_time: at(17, 20),
+    ended_at: at(20, 26, 32),
+  });
+  const royals = eventItem({
+    id: 15308323,
+    commence_time: at(16, 40),
+    ended_at: at(20, 3, 5),
+  });
+  const whiteSox = eventItem({
+    id: 15308302,
+    commence_time: at(16, 40),
+    ended_at: at(19, 44, 4),
+  });
+  const chicagoFire = eventItem({
+    id: 15298466,
+    sport: "soccer_usa_mls",
+    commence_time: at(17, 30),
+    ended_at: at(19, 39, 7),
+  });
+  const houstonDynamo = eventItem({
+    id: 15298467,
+    sport: "soccer_usa_mls",
+    commence_time: at(17, 30),
+    ended_at: at(19, 38, 7),
+  });
+
+  // The three that complete the board. Without them the opener is only 3rd by
+  // start and the cap does not bite — the control below would pass vacuously.
+  const atleticoGoianiense = eventItem({
+    id: 15301241,
+    sport: "soccer_brazil_serie_b",
+    commence_time: at(17, 29),
+    ended_at: at(19, 37, 55),
+  });
+  const austinFc = eventItem({
+    id: 15298430,
+    sport: "soccer_usa_mls",
+    commence_time: at(17, 30),
+    ended_at: at(19, 37, 5),
+  });
+  const minnesotaUnited = eventItem({
+    id: 15298473,
+    sport: "soccer_usa_mls",
+    commence_time: at(17, 30),
+    ended_at: at(19, 36, 6),
+  });
+
+  // All eight, in the order the feed delivered them (by SCORE), so the
+  // sectioner is never handed a list already sorted the way it must produce.
+  const BOARD = [
+    nflOpener,
+    royals,
+    whiteSox,
+    chicagoFire,
+    houstonDynamo,
+    atleticoGoianiense,
+    austinFc,
+    minnesotaUnited,
+  ];
+
+  test("THE CONTROL — by START the opener is 6th, which the cap of 4 turns into missing", () => {
+    // Not a re-implementation of the old sort for its own sake: without this,
+    // the assertion below passes just as well against a board where the two
+    // orderings happen to agree, and proves nothing.
+    const byStart = [...BOARD].sort(
+      (a, b) =>
+        new Date((b.data as FeedItem["data"] & { commence_time: string }).commence_time).getTime() -
+        new Date((a.data as FeedItem["data"] & { commence_time: string }).commence_time).getTime(),
+    );
+    expect(byStart.slice(0, FINISHED_SECTION_CAP)).not.toContain(nflOpener);
+  });
+
+  test("test_finished_section_uses_delivered_end_time_for_day_order_and_cap", () => {
+    const { finished } = partitionFinishedGames(BOARD);
+    const section = buildFinishedSection(finished, T_PLUS_30);
+
+    // Through the REAL sectioner, not a local copy of its rule.
+    expect(section.shown[0]).toBe(nflOpener);
+    expect(section.shown.slice(0, 4)).toEqual([
+      nflOpener,
+      royals,
+      whiteSox,
+      chicagoFire,
+    ]);
+    expect(section.shown).toHaveLength(FINISHED_SECTION_CAP);
+    expect(section.cappedMore).toBe(true);
+  });
+
+  test("a card with no ended_at still sorts, on its kickoff", () => {
+    // The field is present-only and a cached payload can predate the deploy
+    // that added it. An unstamped card must not vanish or NaN to the top.
+    const unstamped = eventItem({ id: 999, commence_time: at(20, 40) });
+    const { finished } = partitionFinishedGames([nflOpener, unstamped]);
+    const section = buildFinishedSection(finished, T_PLUS_30);
+
+    expect(section.shown).toHaveLength(2);
+    // 20:40 kickoff reads as later than the opener's 20:26 finish.
+    expect(section.shown[0]).toBe(unstamped);
+  });
+
+  test("a BATCHED end time is broken by the later kickoff, not left arbitrary", () => {
+    // Three MLS rows shared completed_at 04:45:41.647571 to the microsecond on
+    // 2026-09-10 — one sweep closing several games at once.
+    const batched = at(19, 45, 41);
+    const early = eventItem({ id: 501, commence_time: at(17, 0), ended_at: batched });
+    const late = eventItem({ id: 502, commence_time: at(17, 30), ended_at: batched });
+
+    const { finished } = partitionFinishedGames([early, late]);
+    const section = buildFinishedSection(finished, T_PLUS_30);
+
+    expect(section.shown).toEqual([late, early]);
+  });
+
+  test("the day bucket is the day it ENDED, and that decides whether it survives the window", () => {
+    // Kicks off 10:30pm on the 8th, ends 1:15am on the 9th; read on the 10th.
+    // By its START it is TWO days old and falls outside
+    // FINISHED_SECTION_MAX_DAY_OFFSET, so it would be dropped as
+    // `finished_older_than_yesterday`. By its END it is yesterday, and stays.
+    //
+    // Deliberately chosen to straddle the window boundary rather than merely to
+    // reorder: an assertion about position would pass either way here, which is
+    // the trap the rest of this describe block had to be checked against.
+    const lateNight = eventItem({
+      id: 601,
+      commence_time: new Date(2026, 8, 8, 22, 30).toISOString(),
+      ended_at: new Date(2026, 8, 9, 1, 15).toISOString(),
+    });
+    const twoDaysOn = new Date(2026, 8, 10, 9, 0).getTime();
+
+    const { finished } = partitionFinishedGames([lateNight]);
+    const section = buildFinishedSection(finished, twoDaysOn);
+
+    expect(section.shown).toContain(lateNight);
+    expect(section.dropped).toEqual([]);
+  });
+});
