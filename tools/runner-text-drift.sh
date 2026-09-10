@@ -59,6 +59,35 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# 🔴 EVERY BSD/GNU PROBE GOES THROUGH THIS. The obvious dialect chain —
+#
+#     stat -f %m "$1" 2>/dev/null && return 0    # BSD
+#     stat -c %Y "$1" 2>/dev/null && return 0    # GNU
+#
+# is broken, and it broke this tool on Linux for three CI runs while every arm
+# passed on macOS. GNU `stat -f` is not "unknown flag", it is *filesystem status*:
+# it PRINTS a multi-line block about the filesystem, then exits non-zero because
+# `%m` was taken as a filename. The `&&` correctly declines to return, but the
+# block has already gone to stdout, so `mtime=$(file_mtime_epoch …)` captures the
+# garbage AND the real answer. `[ "$mtime" -ge "$start" ]` then errors on a
+# non-integer, the `if` takes its else branch, and every launcher on Linux reports
+# **current** — a false CLEAN fleet, silently, in the one direction that matters.
+#
+# So: capture, then accept ONLY a pure integer. A probe that fails is not allowed
+# to contribute a single byte to the answer.
+first_integer_of() {
+  local out
+  while [ $# -gt 0 ]; do
+    out=$(eval "$1" 2>/dev/null)
+    case "$out" in
+      "" | *[!0-9]* ) ;;                 # empty, or carries anything non-digit
+      * ) printf '%s\n' "$out"; return 0 ;;
+    esac
+    shift
+  done
+  return 1
+}
+
 # Epoch of a process's start. `ps -o etimes=` would be one call, but it is
 # procps-only and this machine's BSD ps rejects it, so parse lstart and accept
 # either date dialect — the guard tests run on Linux CI, the fleet runs on macOS.
@@ -69,15 +98,13 @@ pid_start_epoch() {
   # per call site — and the two places that skipped it both shipped a bug.
   ls=$(ps -ww -o lstart= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   [ -n "$ls" ] || return 1
-  date -j -f "%a %b %d %T %Y" "$ls" +%s 2>/dev/null && return 0   # BSD
-  date -d "$ls" +%s 2>/dev/null && return 0                        # GNU
-  return 1
+  BL_LS="$ls" first_integer_of \
+    'date -j -f "%a %b %d %T %Y" "$BL_LS" +%s' \
+    'date -d "$BL_LS" +%s'
 }
 
 file_mtime_epoch() {
-  stat -f %m "$1" 2>/dev/null && return 0   # BSD
-  stat -c %Y "$1" 2>/dev/null && return 0   # GNU
-  return 1
+  BL_F="$1" first_integer_of 'stat -f %m "$BL_F"' 'stat -c %Y "$BL_F"'
 }
 
 # The script a process is running, taken from its own argv rather than guessed

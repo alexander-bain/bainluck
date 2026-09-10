@@ -306,6 +306,60 @@ def test_no_matching_process_says_so_and_exits_clean():
     assert p.returncode == 0
 
 
+def test_it_still_detects_staleness_under_gnu_stat_and_date(launcher, tmp_path):
+    """The Linux defect, made reproducible on macOS.
+
+    The tool probes BSD flags first and falls back to GNU. GNU `stat -f` is not
+    "unknown flag" — it is *filesystem status*: it prints a multi-line block and
+    then exits non-zero because `%m` was read as a filename. The `&&` chain
+    correctly declines to return, but the block is already on stdout, so the
+    caller captures garbage plus the real answer, the numeric comparison errors,
+    and EVERY launcher reports `current`. Three CI runs died on this while every
+    arm passed locally, because macOS takes the BSD branch and never sees it.
+
+    These shims give macOS GNU's dialect, so the false-clean is catchable here.
+    """
+    bindir = tmp_path / "gnubin"
+    bindir.mkdir()
+    (bindir / "stat").write_text(
+        "#!/bin/bash\n"
+        # GNU: -c FMT file works; -f is filesystem status, prints, then fails.
+        'if [ "$1" = "-c" ] && [ "$2" = "%Y" ]; then exec /usr/bin/stat -f %m "$3"; fi\n'
+        'if [ "$1" = "-f" ]; then\n'
+        '  echo "  File: \\"$3\\""\n'
+        '  echo "    ID: 0 Namelen: 255 Type: apfs"\n'
+        '  echo "Block size: 4096"\n'
+        "  exit 1\n"
+        "fi\n"
+        "exit 1\n"
+    )
+    (bindir / "date").write_text(
+        "#!/bin/bash\n"
+        # GNU: no -j; -d parses a human string.
+        'if [ "$1" = "-j" ]; then echo "date: invalid option -- j" >&2; exit 1; fi\n'
+        'if [ "$1" = "-d" ]; then exec /bin/date -j -f "%a %b %d %T %Y" "$2" "$3"; fi\n'
+        'exec /bin/date "$@"\n'
+    )
+    for f in ("stat", "date"):
+        (bindir / f).chmod(0o755)
+
+    script, proc, _ = launcher()
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+
+    p = subprocess.run(
+        ["bash", str(TOOL), "--pattern", script.name],
+        capture_output=True, text=True, env=env, timeout=60,
+    )
+
+    assert "STALE" in p.stdout, (
+        "under GNU's stat/date dialect the tool failed to see a stale launcher — "
+        f"a failed dialect probe is leaking into the answer. got: {p.stdout!r}"
+    )
+    assert "0 current, 1 stale, 0 unknown" in p.stdout, p.stdout
+    assert p.returncode == 1
+
+
 def test_an_unreadable_process_table_is_never_reported_as_a_clean_fleet(tmp_path):
     """The flake that found this: a `ps` that returns nothing must not read as "all current".
 
