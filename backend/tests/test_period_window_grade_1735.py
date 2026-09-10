@@ -762,3 +762,116 @@ async def test_the_mid_band_arm_is_unchanged_by_the_carve_out(finished_client):
     rows = [r for r in (payload.get("props_script") or []) if r["label"] == WINNER]
     assert len(rows) == 1, f"the mid-band winner row appears {len(rows)}× in WHAT HIT"
     assert rows[0]["graded_label"] == "1–0 — hit"
+
+
+# ---------------------------------------------------------------------------
+# #4844 — the graded rows read in window order
+# ---------------------------------------------------------------------------
+
+M = "Tampa Bay vs Atlanta: "
+
+
+def test_the_graded_windows_come_back_in_window_order():
+    """#4844: the innings read 1 → 9, and a market's outcomes stay together.
+
+    The input is the order production actually served on the finished specimen —
+    `5th → 4th → 2nd → 1st → 7th Total → 3rd → 9th → 8th → 6th`, Winner and Total
+    interleaved — because `closed_items` arrives in market-table order from two
+    paths that never meet. Every verdict was right and the block was not legible.
+
+    The two cumulative-window markets ("First 3/5/7 Innings") are in the fixture
+    for the second half of the key: they all START at inning 1, so start-then-
+    length is what keeps them together instead of scattering them between the
+    per-inning rows.
+    """
+    from app.routes.events import _grade_closed_windows
+
+    event = _make_event(
+        id=EVENT_ID, home_team="Atlanta Braves", away_team="Tampa Bay Rays",
+        status="completed", sport_key="baseball_mlb", home_score=2, away_score=7,
+    )
+    event.llm_league = "MLB"
+    event.box_score_data = {
+        "players": {},
+        "home_period_scores": HOME_PERIODS,
+        "away_period_scores": AWAY_PERIODS,
+    }
+    served = [
+        (f"{M}5th Inning Winner", "Tie 5th inning"),
+        (f"{M}4th Inning Total", "Over 1.5 runs in the 4th inning"),
+        (f"{M}4th Inning Winner", "Tampa Bay wins 4th inning"),
+        (f"{M}2nd Inning Winner", "Tampa Bay wins 2nd inning"),
+        (f"{M}1st Inning Winner", "Tie 1st inning"),
+        (f"{M}7th Inning Total", "Over 0.5 runs in the 7th inning"),
+        (f"{M}First 7 Innings", "Tampa Bay wins first 7 innings"),
+        (f"{M}First 5 Innings", "Tampa Bay wins first 5 innings"),
+        (f"{M}3rd Inning Winner", "Tie 3rd inning"),
+        (f"{M}9th Inning Winner", "Tie 9th inning"),
+        (f"{M}First 5 Spread", "Tampa Bay -1.5 first 5 innings"),
+        (f"{M}8th Inning Winner", "Tie 8th inning"),
+        (f"{M}First 3 Innings", "Tampa Bay wins first 3 innings"),
+        (f"{M}6th Inning Winner", "Atlanta wins 6th inning"),
+        (f"{M}4th Inning Total", "Over 0.5 runs in the 4th inning"),
+        (f"{M}7th Inning Winner", "Tampa Bay wins 7th inning"),
+    ]
+    items = [
+        {"market_name": name, "outcome_name": outcome, "_market_id": 1000 + i}
+        for i, (name, outcome) in enumerate(served)
+    ]
+
+    graded = _grade_closed_windows(items, event, {})
+    assert len(graded) == len(served), (
+        f"the sort dropped or duplicated a verdict: {len(graded)} of {len(served)}"
+    )
+
+    names = [g["market_name"] for g in graded]
+    assert names == [
+        f"{M}1st Inning Winner",
+        f"{M}First 3 Innings",
+        f"{M}First 5 Innings",
+        f"{M}First 5 Spread",
+        f"{M}First 7 Innings",
+        f"{M}2nd Inning Winner",
+        f"{M}3rd Inning Winner",
+        f"{M}4th Inning Total",
+        f"{M}4th Inning Total",
+        f"{M}4th Inning Winner",
+        f"{M}5th Inning Winner",
+        f"{M}6th Inning Winner",
+        f"{M}7th Inning Total",
+        f"{M}7th Inning Winner",
+        f"{M}8th Inning Winner",
+        f"{M}9th Inning Winner",
+    ], f"served order: {names}"
+
+    # A group's outcomes are adjacent, not merely present — the second half of
+    # the defect was the Winner and Total groups interleaving.
+    runs = [n for i, n in enumerate(names) if i == 0 or names[i - 1] != n]
+    assert len(runs) == len(set(runs)), f"a market's rows are split apart: {names}"
+
+    # The sort is stable, so within one market the venue's own leg order stands:
+    # "Over 1.5" was listed before "Over 0.5" and still is.
+    fourth = [g["outcome_name"] for g in graded
+              if g["market_name"] == f"{M}4th Inning Total"]
+    assert fourth == ["Over 1.5 runs in the 4th inning",
+                      "Over 0.5 runs in the 4th inning"], fourth
+
+
+@pytest.mark.asyncio
+async def test_the_window_order_survives_to_the_served_payload(finished_client):
+    """#4844 read off the route, not the helper.
+
+    The fixture's two window markets reach `_window_closed_items` through
+    different filters — the sixth-inning legs from `player_props`, the first-five
+    spread from `spreads`, ~10 lines apart — so the collection order is the
+    filters' order and the reader saw the sixth inning before the first five.
+    Window order puts the first five back on top, and `_build_props_script` must
+    not reshuffle it on the way out.
+    """
+    payload = (await finished_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+    script = payload.get("props_script") or []
+    graded_labels = [r["label"] for r in script if r["graded_label"]]
+    assert SPREAD in graded_labels and WINNER in graded_labels, graded_labels
+    assert graded_labels.index(SPREAD) < graded_labels.index(WINNER), (
+        f"the first five innings render after the sixth: {graded_labels}"
+    )
