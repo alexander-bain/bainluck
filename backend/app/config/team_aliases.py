@@ -82,6 +82,14 @@ def team_nickname_search_expansions() -> dict[str, tuple[str, str]]:
     production — `?q=9ers` returns 10 real 49ers markets today, while `?q=niners`
     returns 0). An arm for them would be duplicate work for zero extra recall, the
     same reasoning `_phrase_alias_alternatives` applies to identical alternatives.
+
+    **The skip is correct HERE and wrong in the event sibling — do not harmonise
+    them.** It is sound only because this rail's matcher is a plain ILIKE.
+    :func:`team_nickname_event_expansions` matches with `_event_name_match`, which
+    AND-s an FTS whole-word test onto the ILIKE, and `9ers` is not a lexeme of
+    `San Francisco 49ers`; copying this skip there returned zero game cards for
+    `9ers` and was the repair CERT-2527 required. That function's docstring carries
+    the measurement.
     """
 
     from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
@@ -100,4 +108,80 @@ def team_nickname_search_expansions() -> dict[str, tuple[str, str]]:
             if alias in token.lower():
                 continue
             expansions[alias] = (token, category)
+    return expansions
+
+
+def team_nickname_event_expansions() -> dict[str, tuple[str, str]]:
+    """`alias -> (canonical team token, sport_key)` for GAME-CARD recall (#4809).
+
+    The third consumer of the map above, and the one that needed no new data at
+    all — only the key this file has been carrying since it was written.
+
+    #4728 gave the nickname the TEAMS rail (via `teams.alternate_names`) and the
+    FUTURES rail (via :func:`team_nickname_search_expansions`). It could not give
+    it the game-card rail, because that rail matches the DENORMALISED
+    `Event.home_team_name`/`away_team_name` text and never joins `teams`, so an
+    alias living on the team row is invisible to it. Measured on production
+    2026-09-10, after #4728 was live::
+
+        query     team row   futures   GAME CARDS
+        pats      ✓          10        0
+        revs      ✓          10        0
+        niners    ✓          10        2   <- both are UTEP MINERS
+
+    `niners` is the sharpest of the three: the empty game rail sent the query to
+    the fuzzy "did you mean" fallback, which corrected it to the nearest team
+    NAME by trigram similarity — `UTEP Miners` — and filled the rail with two
+    college football games that have nothing to do with San Francisco.
+
+    **The scope is a `sport_key`, not an `llm_sport_category`, and that is the
+    only difference from the sibling.** Events carry no category column; they
+    reach their sport through `sport_id -> sports.key`, which the search query
+    already joins. `CURATED_TEAM_ALIASES` is keyed by the sport key directly, so
+    this needs no inversion of `SPORT_PREFIX_TO_LLM_CATEGORY` and cannot drift
+    from it.
+
+    **The scope is not optional here either, and for a sharper reason than on the
+    futures side.** Event team names are the same words venues print, so the bare
+    token `Patriots` reaches `St Kitts & Nevis Patriots` — a Caribbean Premier
+    League cricket side that is a genuine whole-word match and a wrong answer to
+    `pats`. `Sport.key == 'americanfootball_nfl'` takes that to zero without
+    touching what the literal query `patriots` returns.
+
+    **NO SUBSTRING SKIP, and this is the one place the two siblings genuinely
+    differ.** :func:`team_nickname_search_expansions` skips an alias that is
+    already spelled inside its token — `9ers` inside `49ers` — because the futures
+    rail's matcher is a plain ILIKE (`_build_expanded_ilike` on
+    `FuturesMarket.name`), so `%9ers%` reaches those rows unaided and an arm would
+    be duplicate work.
+
+    That reasoning does not survive the trip to the event rail, because the event
+    matcher is not an ILIKE. :func:`app.routes.events._event_name_match` is
+    ``ILIKE AND (no-lexemes OR FTS word match)`` — LAT-P034's judgment that a query
+    is about an event when it names a WHOLE WORD of a team, not when it happens to
+    be spelled inside one. For `9ers` the two arms disagree::
+
+        ILIKE  '%9ers%'  vs 'San Francisco 49ers'   -> TRUE
+        FTS    to_tsvector('San Francisco 49ers')   -> 'san' 'francisco' '49ers'
+               plainto_tsquery('9ers')              -> '9ers'   -> FALSE
+
+    AND-ed, that is FALSE, so the substring the futures rail relies on buys exactly
+    nothing here. Measured on production 2026-09-10 with the first cut of #4809
+    live: `?q=9ers` returned the 49ers team row and 10 correct 49ers markets and
+    **zero game cards** — the same hole this issue was filed to close, surviving in
+    the fix for it, for the one alias the skip removed.
+
+    Expanding it to the whole token `49ers` makes both arms agree and inherits the
+    NFL scope like every other alias. `9ers` is the only entry in
+    `CURATED_TEAM_ALIASES` the skip ever removed (`pats` is not inside `Patriots`,
+    `bucs` not inside `Buccaneers`, `sixers` not inside `76ers`, `niners` not
+    inside `49ers`), so dropping it here changes exactly one alias's behaviour and
+    leaves the sibling's optimisation intact where it is still true.
+    """
+
+    expansions: dict[str, tuple[str, str]] = {}
+    for (sport_key, team_name), aliases in CURATED_TEAM_ALIASES.items():
+        token = _canonical_market_token(team_name)
+        for alias in aliases:
+            expansions[alias.lower()] = (token, sport_key)
     return expansions
