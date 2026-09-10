@@ -45,6 +45,52 @@ DIAGNOSTIC_PHRASE_RE = re.compile(
 )
 
 
+# ── A DURATION IS NOT A CALENDAR WORD (D1 clause a, #4805) ───────────────────
+#
+# The two resolution rungs used to render as "resolves this week" and "resolves
+# this month". Their predicate is a DURATION — `days_until <= 7` and
+# `<= 30` in `futures_highlights.py` — so a calendar word was right only for the
+# cards whose window happened not to cross a boundary. Measured on the served
+# `GET /api/feed?limit=250`, 2026-09-10 14:39Z, over every card that fired a
+# clause, classified in the reader's own zone (America/New_York and
+# America/Los_Angeles agree):
+#
+#   - "resolves this month": 16 cards, 6 resolve in OCTOBER. "Online Sportsbook
+#     Ad Spend in September … resolves this month" is the sharpest: the title
+#     names one month and the caption means another.
+#   - "resolves this week": 8 cards, 7 resolve NEXT week. Read on a Thursday,
+#     five Netflix questions closing the following Tuesday all claimed this one.
+#
+# THE DATE IS NOT NAMED HERE, AND THAT IS THE OLDER RULING, NOT A SHORTCUT. The
+# comment above `BinaryCardCopy` states it: the card already prints its own
+# "Resolves <date>" chip, the chip renders the instant in the READER's timezone,
+# and this module only has UTC. The BEFORE LOOK for #4805 is that comment coming
+# true — the Brazil card's chip read "Resolves Oct 3, 2026" while the wire
+# carried `2026-10-04T00:00Z`, so a date emitted here would have sat two lines
+# above the chip and disagreed with it by a day.
+#
+# Making the PREDICATE match the words was refused for the same reason: a
+# calendar boundary is a fact about the reader's zone, not ours. `Anthropic
+# market share this week` closes `2026-09-14T03:59Z` — Monday in UTC, Sunday
+# ("Closes Sep 13", its own chip) for every US reader. Whichever way this module
+# computed the boundary it would be wrong for somebody.
+#
+# So the words are made to match the predicate, which is the one statement that
+# is true in every timezone at every hour: a duration. The chip still owns the
+# date, and these two strings no longer contradict it.
+#
+#: The 30d headline is a THREE-WAY handshake, not a literal: it is compared by
+#: `generate_futures_context_summary` below, it is duplicated by
+#: `futures_highlights.PRIMARY_REASON_LABELS` (whose value reaches the same
+#: parameter via `headline or primary_reason` in `routes/feed.py`), and it is a
+#: member of `feed_market_quality._GENERIC_HEADLINES`. All three import or are
+#: tested against these names — `test_resolution_copy_is_a_duration_4805.py`
+#: asserts the join, because a producer and a consumer that agree on a
+#: vocabulary with nothing testing it is exactly how #4695 happened.
+RESOLVING_WITHIN_WEEK_HEADLINE = "Resolving within a week"
+RESOLVING_WITHIN_MONTH_HEADLINE = "Resolving within a month"
+
+
 def contains_diagnostic_phrase(text: str | None) -> bool:
     """True when a served string talks about our pipeline instead of the world."""
     lowered = (text or "").lower()
@@ -732,9 +778,13 @@ def compose_binary_card_copy(
         )
 
     if "resolving_soon_7d" in reasons:
-        return composed("Resolving this week", f"{answer}, resolving this week")
+        return composed(
+            RESOLVING_WITHIN_WEEK_HEADLINE, f"{answer}, resolving within a week"
+        )
     if "resolving_soon_30d" in reasons:
-        return composed("Resolves this month", f"{answer}, resolves this month")
+        return composed(
+            RESOLVING_WITHIN_MONTH_HEADLINE, f"{answer}, resolves within a month"
+        )
 
     since = format_baseline_date(top_surprise_opened_at, now=now)
     if since and top_surprise_change is not None:
@@ -1053,17 +1103,20 @@ def generate_futures_reason(
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name):
-                return f"{market_name} resolving this week"
+                return f"{market_name} resolving within a week"
             pct = _display_pct(leader_probability, rendered_leader_percent)
             return f"{market_name} resolving soon, {leader_name} {_verb} at {pct}%"
-        return f"{market_name} resolving this week"
+        return f"{market_name} resolving within a week"
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name):
-                return f"{market_name} resolves this month"
+                return f"{market_name} resolves within a month"
             pct = _display_pct(leader_probability, rendered_leader_percent)
-            return f"{market_name} resolves this month, {leader_name} {_verb} at {pct}%"
-        return f"{market_name} resolving this month"
+            return (
+                f"{market_name} resolves within a month, "
+                f"{leader_name} {_verb} at {pct}%"
+            )
+        return f"{market_name} resolving within a month"
 
     # Lifetime move, DATED and DEMOTED (D1 clause a, #4066).
     #
@@ -1202,9 +1255,9 @@ def generate_futures_headline(
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
             if _weak_outcome_label(leader_name) and market_name:
-                return f"{_short_market_name(market_name)} resolves this month"
-            return f"{leader_name} {_verb}; resolves this month"
-        return "Resolving this month"
+                return f"{_short_market_name(market_name)} resolves within a month"
+            return f"{leader_name} {_verb}; resolves within a month"
+        return RESOLVING_WITHIN_MONTH_HEADLINE
 
     # Lifetime move — same demotion and same dating rule as
     # `generate_futures_reason`; see the comment there.
@@ -1307,15 +1360,18 @@ def generate_futures_context_summary(
 
     if "resolving_soon_7d" in reasons:
         return (
-            f"{leader}; resolves this week"
+            f"{leader}; resolves within a week"
             if leader
-            else "Resolution window is this week"
+            else "Resolves within a week"
         )
-    if "resolving_soon_30d" in reasons and headline == "Resolving this month":
+    if (
+        "resolving_soon_30d" in reasons
+        and headline == RESOLVING_WITHIN_MONTH_HEADLINE
+    ):
         return (
-            f"{leader}; resolves this month"
+            f"{leader}; resolves within a month"
             if leader
-            else "Resolution window is this month"
+            else "Resolves within a month"
         )
     # (No `multi_source` clause. The headline it keyed on — `startswith("Tracked
     # by")` — is no longer emitted, and " across N sources" is the same inventory
@@ -1327,9 +1383,9 @@ def generate_futures_context_summary(
             # only restates the question, the honest answer is the leader or the
             # resolution window, never a number about our own rows.)
             if "resolving_soon_7d" in reasons:
-                return "Resolution window is this week"
+                return "Resolves within a week"
             if "resolving_soon_30d" in reasons:
-                return "Resolution window is this month"
+                return "Resolves within a month"
             if leader:
                 return leader
         if leader and len(headline) < 80:

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from app.utils.card_integrity import is_anonymized_market
+from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
 
 # #921: a market needs a real, showable price to earn a Discover card. Below
 # this floor the top outcome rounds to 0% in the UI — the "0% probability on
@@ -1077,7 +1078,16 @@ _GENERIC_HEADLINES = {
     "Big shift from opening",
     "New favorite",
     "Resolving soon",
-    "Resolving this month",
+    # #4805: the 30d headline is imported, not spelled — see the note beside its
+    # definition. The set MEMBERSHIP is unchanged by that ship: the string this
+    # entry names is the same headline it named before, under its new wording.
+    #
+    # DELIBERATELY NOT ADDED: `RESOLVING_WITHIN_WEEK_HEADLINE`. The 7d headline
+    # was never a member either, and adding it would newly mark a class of cards
+    # generic — a ranking change riding a copy fix, which is the one thing that
+    # makes the copy fix's own acceptance unmeasurable. Filed as the #4805
+    # follow-up instead.
+    RESOLVING_WITHIN_MONTH_HEADLINE,
     "Multi-source",
 }
 

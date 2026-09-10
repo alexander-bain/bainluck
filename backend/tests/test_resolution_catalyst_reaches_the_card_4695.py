@@ -77,10 +77,20 @@ def _resolution_codes(result):
         (1, []),
         # 7d interval: both edges.
         (2, ["resolving_soon_7d"]),
-        (7, ["resolving_soon_7d"]),
+        (6, ["resolving_soon_7d"]),
+        # …and the `hours=1` padding below is why 7 sits HERE and not above.
+        # #4805 / CERT-2513: the codes are classified off the real duration, not
+        # off `timedelta.days`, which floors. `days=7, hours=1` is 7d01h — eight
+        # days by any honest reading — and it used to floor to 7 and print
+        # "resolves within a week". The padding was added to dodge an exact
+        # boundary and it was landing a full hour into the wrong rung.
+        (7, ["resolving_soon_30d"]),
         # 30d interval: both edges, including the day after the 7d boundary.
         (8, ["resolving_soon_30d"]),
-        (30, ["resolving_soon_30d"]),
+        (29, ["resolving_soon_30d"]),
+        # Same story at the far edge: 30d01h is past thirty days and claims
+        # nothing, where the floored test called it "within a month".
+        (30, []),
         # Beyond the horizon nothing is claimed. A card with no time-bound
         # signal must NOT be handed a manufactured one (#4080 clause (d) is the
         # answer for those cards, and it is a ranking change, not a copy one).
@@ -93,11 +103,23 @@ def test_resolution_proximity_emits_its_display_code(days_until, expected):
     assert _resolution_codes(result) == expected
 
 
-def test_the_specimens_own_resolution_date_emits_the_seven_day_code():
-    """The real row, at the real horizon, not a synthetic offset."""
+def test_the_specimens_own_resolution_date_emits_a_resolution_code():
+    """The real row, at the real horizon, not a synthetic offset.
+
+    #4695's ship is that the card gets a resolution sentence at all — it was
+    served with reason, headline, hook_description and card_sum_reason ALL empty.
+    That still holds.
+
+    Which RUNG it gets moved with #4805 / CERT-2513, and this specimen is why the
+    BLOCK was right: Kyiv resolves 2026-09-17T20:59Z against a `NOW` of
+    2026-09-10T07:12Z — **7 days 13 hours 47 minutes**. `timedelta.days` floored
+    that to 7 and the card told a reader it was "resolving this week". It is the
+    month rung, and the month rung is true.
+    """
     result = _highlight(KYIV_RESOLUTION)
-    assert "resolving_soon_7d" in result.reasons
-    assert result.primary_reason == "Resolving soon"
+    assert "resolving_soon_30d" in result.reasons
+    assert "resolving_soon_7d" not in result.reasons
+    assert result.primary_reason == "Resolving within a month"
 
 
 # ── 2. Restored WITHOUT the score — #141 was right about that half ──────────
@@ -110,7 +132,7 @@ def test_emitting_the_code_moves_no_score():
     reason code and by nothing in the score. If a future edit reattaches an
     additive term to this branch, this fails.
     """
-    near = _highlight(NOW + timedelta(days=7, hours=1))
+    near = _highlight(NOW + timedelta(days=6, hours=1))
     far = _highlight(NOW + timedelta(days=112, hours=1))
 
     assert "resolving_soon_7d" in near.reasons
@@ -218,7 +240,10 @@ def test_the_silent_specimen_gains_a_true_sentence():
 
     assert copy.reason.strip()
     assert copy.headline.strip()
-    assert "resolving this week" in copy.context_summary.lower()
+    # #4805 / CERT-2513: the month rung, because the specimen is 7d13h out. See
+    # `test_the_specimens_own_resolution_date_emits_a_resolution_code`. #4695's
+    # ship — that this card says ANYTHING — is what the two asserts above pin.
+    assert "resolves within a month" in copy.context_summary.lower()
     # The catalyst is the news; the bare probability alone was #4056's defect.
     assert copy.context_summary != f"{KYIV_RENDERED_PERCENT}% chance"
 

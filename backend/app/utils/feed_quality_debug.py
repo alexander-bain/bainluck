@@ -977,10 +977,15 @@ WHY_NOW_MARKERS = (
     # leaderboard, so the metric was crediting a card for a string notice 34
     # forbids from being on the screen at all.)
     "resolving soon",
-    "resolving this week",
-    "resolves this week",
-    "resolving this month",
-    "resolves this month",
+    # #4805 — the calendar words these four replace ("resolving/resolves this
+    # week/month") went out with the branches that emitted them, on the same
+    # rule this list's own docstring states. A duration is what the rungs now
+    # say, and it is what earns the why-now credit: both are anchored to a time
+    # a reader can act on, so the metric reads exactly the cards it read before.
+    "resolving within a week",
+    "resolves within a week",
+    "resolving within a month",
+    "resolves within a month",
     "moved most today",
     "markets moving today",
     "trading surge",

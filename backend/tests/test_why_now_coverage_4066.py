@@ -195,7 +195,7 @@ def test_a_catalyst_inside_the_week_counts():
         [
             {
                 "type": "futures",
-                "context_summary": "59% chance, resolving this week",
+                "context_summary": "59% chance, resolving within a week",
                 "data": {"name": "x"},
             }
         ],
