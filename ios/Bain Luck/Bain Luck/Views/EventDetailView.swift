@@ -635,7 +635,11 @@ struct EventDetailView: View {
                         url: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
                         teamName: event.awayTeam,
                         color: colors.away,
-                        size: logoSize
+                        size: logoSize,
+                        // #4720 — the hero draws BOTH circles, so the badge is
+                        // resolved against the other side and cannot print the
+                        // word the two clubs share.
+                        opponentName: event.homeTeam
                     )
                     Text(event.awayTeam)
                         .font(.caption2)
@@ -846,7 +850,8 @@ struct EventDetailView: View {
                         url: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                         teamName: event.homeTeam,
                         color: colors.home,
-                        size: logoSize
+                        size: logoSize,
+                        opponentName: event.awayTeam
                     )
                     Text(event.homeTeam)
                         .font(.caption2)

@@ -14,6 +14,11 @@ struct TeamLogoView: View {
     /// becomes a letterboxed sliver, so it fills and is cropped square. Defaults
     /// to false, which is every existing call site unchanged.
     var isPhotograph: Bool = false
+    /// The OTHER competitor of this matchup, where the caller draws both circles
+    /// at once (#4720). Supplying it is what lets the badge grow off a word the
+    /// two sides share — see `badge(teamName:opponentName:)`. Defaults to nil,
+    /// which is every one-circle surface unchanged.
+    var opponentName: String? = nil
 
     @State private var image: PlatformImage?
     @State private var loadFailed = false
@@ -75,12 +80,67 @@ struct TeamLogoView: View {
         }
     }
 
+    /// The letters this circle falls back to when no logo, flag or portrait
+    /// exists.
+    ///
+    /// #4720. This view drew `String(teamName.prefix(1))` — ONE character of the
+    /// RAW name, never routed through `TeamShortName`. It was a fourth hand-rolled
+    /// spelling of the shorten-a-name rule on this target, the class #3374 removed
+    /// and `teamShortNameSingleSource.test.ts` exists to discover; it was not
+    /// discovered because that guard looked for re-implementations of the LAST-WORD
+    /// rule and this one is a first-character rule. The guard now looks for both.
+    ///
+    /// Measured over the COMPLETE population of distinct (away, home) name pairs on
+    /// events in the last 45 days — 24,066 pairs, 14,025 distinct names, pulled in
+    /// hash chunks past the 1,000-row cap and reconciled against its own `COUNT(*)`
+    /// (2026-09-10) — one character is not a name:
+    ///
+    ///     both circles draw the SAME glyph   2,238 pairs (9.3%)  ->  67 (0.3%)
+    ///     first glyph is not even a LETTER      42 names         ->  28
+    ///     name opens with a club designator    716 names, 657 of which move off it
+    ///
+    /// "1. FC Heidenheim 1846" drew **`1`**, "FC Schalke 04" drew **`F`**, and the
+    /// doubles pair "Behar / Romboli" drew **`B`** on the event hero — a page whose
+    /// job is to tell two competitors apart (#3430's complaint, one component over).
+    /// They now draw `HEI`, `SCH` and `BEH`.
+    ///
+    /// WHY THE OPPONENT IS AN ARGUMENT. `abbreviation` alone judges one name in
+    /// isolation, and #3430's whole finding is that the failure is collision INSIDE
+    /// one matchup: on the same population the solo rule leaves 120 colliding pairs
+    /// and, worse, BREAKS 75 that discriminate today — "Clemson Tigers v LSU Tigers"
+    /// draws `C`/`L` now and would draw `TIG`/`TIG`. Handing in the other side routes
+    /// through `abbreviationPair`, whose growth repairs exactly that: 120 -> 67
+    /// collisions and 75 -> 31 broken. The 31 that remain are esports sides whose
+    /// distinctive token is the word "Esports" ("DMG Esports" v "Volda E-Sport" ->
+    /// `ESP`/`ESP`); that is a pre-existing weakness of `abbreviationPair` which the
+    /// Discover card already draws today, so this view adopting the same rule makes
+    /// the app agree with itself rather than introducing it. Filed as #4756.
+    ///
+    /// Static, and not a `private var` on the view, so the suite can run the
+    /// PRODUCTION path rather than a paraphrase of it — `@testable import` does not
+    /// reach `private`, and a rule restated in a test is the second copy this file
+    /// was just cured of.
+    static func badge(teamName: String, opponentName: String?) -> String {
+        guard let opponentName, !opponentName.isEmpty, opponentName != teamName else {
+            return TeamShortName.abbreviation(teamName)
+        }
+        return TeamShortName.abbreviationPair(away: teamName, home: opponentName).away
+    }
+
     private var initialsFallback: some View {
         ZStack {
             Circle()
                 .fill(color.opacity(0.2))
-            Text(String(teamName.prefix(1)).uppercased())
-                .font(.system(size: size * 0.45, weight: .bold))
+            // Three glyphs where one used to sit, at every size this view is drawn
+            // (18 on a leaderboard row, 80 on the iPad hero). The width frame is the
+            // chord the circle can actually hold, so `minimumScaleFactor` shrinks a
+            // wide trio to fit instead of truncating it to "BE…" — a badge that
+            // ellipsises is worse than the letter it replaced.
+            Text(Self.badge(teamName: teamName, opponentName: opponentName))
+                .font(.system(size: size * 0.40, weight: .bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.45)
+                .frame(width: size * 0.82)
                 .foregroundStyle(color)
         }
         .frame(width: size, height: size)

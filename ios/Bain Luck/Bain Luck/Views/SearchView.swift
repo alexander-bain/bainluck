@@ -1005,7 +1005,8 @@ struct SearchView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.secondary.opacity(0.2))
                     .frame(width: 32, height: 32)
-                    .overlay(Text(team.abbreviation ?? String(team.name.prefix(1))).font(.caption2).bold())
+                    // #4720 — same served-first fallback as TeamDetailView.
+                    .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.caption2).bold())
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(team.name).font(.subheadline).fontWeight(.medium)

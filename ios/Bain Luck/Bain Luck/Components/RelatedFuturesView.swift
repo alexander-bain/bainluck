@@ -2153,8 +2153,14 @@ private struct PlayerHeadshotView: View {
                     .font(.system(size: size * 0.4))
                     .foregroundStyle(teamColor.opacity(0.6))
             } else {
-                Text(String(name.prefix(1)))
+                // #4720 — was `String(name.prefix(1))`, one character of the raw
+                // name. Same defect and same cure as `TeamLogoView`: the app's own
+                // badge, not a fourth spelling of the rule.
+                Text(TeamShortName.abbreviation(name))
                     .font(.system(size: size * 0.35, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+                    .frame(width: size * 0.82)
                     .foregroundStyle(teamColor)
             }
         }

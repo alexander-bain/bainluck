@@ -45,6 +45,25 @@ function stripComments(source: string): string {
 const REIMPLEMENTATION_TELLS: Array<[string, RegExp]> = [
   ["takes the last space-separated word", /\.split\(separator: " "\)\s*\.last/],
   ["takes the last word via components()", /\.components\(separatedBy: " "\)\s*\.last/],
+  // #4720 — the FIRST-CHARACTER rule, which this scan could not see.
+  //
+  // `TeamLogoView` drew `String(teamName.prefix(1))` and three more views drew
+  // the same thing, for four years' worth of surfaces, while every assertion
+  // here passed: the tells above look for re-implementations of the LAST-WORD
+  // rule, and a badge built from the first character of the raw name is a
+  // different rule producing the same class of defect. On the complete 45-day
+  // population (24,066 distinct pairs) it drew ONE letter for a doubles pair,
+  // `1` for "1. FC Heidenheim 1846", `F` for "FC Schalke 04", and the same glyph
+  // for BOTH sides of 2,238 matchups.
+  //
+  // Deliberately `String(...)`-anchored so it reads a badge and not the
+  // capitalisation idiom `lower.prefix(1).uppercased() + lower.dropFirst()`
+  // (TextFormatting, SportVocab) or the array slice `Array(x.prefix(1))`
+  // (PlayerPropsCardView), none of which render a name. One level of nesting is
+  // allowed inside the parentheses so a coalesced expression cannot slip
+  // through — which is why the signed-in user's own avatar needs an entry in
+  // NOT_TEAM_LABELS below rather than escaping the scan by accident.
+  ["takes the first character of a name", /String\((?:[^()]|\([^()]*\))*\.prefix\(1\)\)/],
 ];
 
 /**
@@ -63,6 +82,15 @@ const NOT_TEAM_LABELS = new Map<string, Array<[string, string]>>([
       [
         "let boxLastName = name.split",
         "the other half of that same player-surname comparison",
+      ],
+    ],
+  ],
+  [
+    join(IOS_ROOT, "Views/PreferencesView.swift"),
+    [
+      [
+        "authManager.user?.displayName ?? authManager.user?.email",
+        "#4720 — the SIGNED-IN USER's own account avatar, not a competitor. A person's own initial is what every account circle draws, and `TeamShortName` would badge an email address",
       ],
     ],
   ],
@@ -176,6 +204,45 @@ d("iOS team short names have exactly one implementation", () => {
       const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(stripComments(line)));
       expect(hits.length).toBeGreaterThan(0);
     }
+  });
+
+  it("the first-character tell fires on the REAL pre-fix source, all four views", () => {
+    // #4720. Copied verbatim from origin/master at 6abf4292 — the four badges
+    // that drew one raw character. A tell proven only against a synthetic is a
+    // tell proven against its own author.
+    const preFix = [
+      `            Text(String(teamName.prefix(1)).uppercased())`,
+      `                Text(String(name.prefix(1)))`,
+      `                                .overlay(Text(team.abbreviation ?? String(team.name.prefix(1))).font(.title2).bold().foregroundStyle(.white))`,
+      `                    .overlay(Text(team.abbreviation ?? String(team.name.prefix(1))).font(.caption2).bold())`,
+    ];
+    for (const line of preFix) {
+      const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(stripComments(line)));
+      expect(hits.map(([why]) => why)).toContain("takes the first character of a name");
+    }
+  });
+
+  it("the first-character tell does NOT fire on the idioms that are not badges", () => {
+    // The other direction, and the reason the tell is `String(...)`-anchored.
+    // If any of these start matching, the scan stops being runnable and the
+    // next real offender arrives behind a wall of false positives.
+    const innocent = [
+      `            return lower.prefix(1).uppercased() + lower.dropFirst()`,
+      `        return quoted.prefix(1).uppercased() + quoted.dropFirst() + " map"`,
+      `            let defaultGroups = pointsGroups.isEmpty ? Array(card.statGroups.prefix(1)) : pointsGroups`,
+    ];
+    for (const line of innocent) {
+      const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(stripComments(line)));
+      expect(hits.map(([why]) => why)).not.toContain("takes the first character of a name");
+    }
+  });
+
+  it("the coalesced form cannot slip past the tell", () => {
+    // One level of nesting, which is how the user-avatar line is written and
+    // how a future badge would most plausibly be written too.
+    const nested = `Text(String((team.nickname ?? team.name).prefix(1)).uppercased())`;
+    const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(stripComments(nested)));
+    expect(hits.map(([why]) => why)).toContain("takes the first character of a name");
   });
 
   it("stripping comments does not blind the scan to real code", () => {
@@ -405,5 +472,51 @@ d("iOS team short names have exactly one implementation", () => {
     expect(abbreviation("Baltimore Orioles")).toBe("ORI");
     // Every token is a designator — skipping them all would read `CLU`.
     expect(abbreviation("Athletic Club")).toBe("ATH");
+  });
+
+  /**
+   * #4720 — the WIRING, which the behaviour tests cannot see.
+   *
+   * `TeamLogoView.badge` grows a badge off a word two clubs share only when the
+   * caller hands in the other side. A correct rule that a view does not call is
+   * invisible from the outside — the shape #2977 actually was — and the cost
+   * here is measured: 75 pairs that discriminate today collapse onto one badge
+   * if the opponent is dropped, "Clemson Tigers" v "LSU Tigers" among them.
+   *
+   * Discovered rather than listed: a view that names BOTH sides of a matchup is
+   * a view that draws both circles, so it has an opponent to pass and must pass
+   * one. Today that finds exactly EventDetailView and EventCardView; a third
+   * such view added later is caught on arrival, which an allowlist of two file
+   * names would not do.
+   */
+  it("a view that draws both sides' circles passes the opponent — discovered, not listed", () => {
+    const offenders: string[] = [];
+
+    for (const path of swiftFiles(IOS_ROOT)) {
+      const code = stripComments(readFileSync(path, "utf8"));
+      if (!code.includes("TeamLogoView(")) continue;
+      // Both sides named in the same file: this view knows the matchup.
+      if (!code.includes("awayTeam") || !code.includes("homeTeam")) continue;
+      if (!code.includes("opponentName:")) {
+        offenders.push(path.slice(IOS_ROOT.length + 1));
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("the wiring scan is actually reaching the two-sided views", () => {
+    // The unrunnable-check failure mode: a scan whose filter matches nothing
+    // passes forever. Name the views it must be finding, so a rename or a move
+    // reds here instead of silently emptying the guard above.
+    const twoSided = swiftFiles(IOS_ROOT).filter((path) => {
+      const code = stripComments(readFileSync(path, "utf8"));
+      return code.includes("TeamLogoView(") && code.includes("awayTeam") && code.includes("homeTeam");
+    });
+
+    expect(twoSided.map((p) => p.slice(IOS_ROOT.length + 1)).sort()).toEqual([
+      "Components/EventCardView.swift",
+      "Views/EventDetailView.swift",
+    ]);
   });
 });
