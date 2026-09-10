@@ -22,6 +22,17 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+# notice 39 / #4706: every outbound call goes through the carrier. Both call
+# sites here are third-party (GitHub, Sentry), so `is_our_host` makes the tag a
+# runtime no-op — the point is that the static rule stays "every site, no
+# per-site judgment", which is what keeps a future our-host call from being
+# added untagged. `sys.path` is bootstrapped rather than the by-path load used
+# for the taxonomy below because the carrier imports only the standard library;
+# `test_the_bare_runner_scripts_import_with_no_site_packages` holds that.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+
+from app.utils.agent_origin import tagged  # noqa: E402
+
 # --- Canonical taxonomy -------------------------------------------------------
 # This script runs on a bare GitHub Actions runner (`python3 scripts/alert_intake.py`
 # after a plain checkout — see .github/workflows/alert-intake.yml). Nothing is pip
@@ -125,7 +136,7 @@ def _github_request(
     if data is not None:
         body = json.dumps(data).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    request = urllib.request.Request(url, data=body, headers=tagged(url, headers), method=method)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             if response.status == 204:
@@ -253,7 +264,9 @@ def _sentry_request(path: str, *, params: dict[str, str]) -> Any:
         raise RuntimeError("SENTRY_AUTH_TOKEN is required for Sentry intake")
     query = urllib.parse.urlencode(params)
     url = f"{base_url.rstrip('/')}{path}?{query}"
-    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    request = urllib.request.Request(
+        url, headers=tagged(url, {"Authorization": f"Bearer {token}"})
+    )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))

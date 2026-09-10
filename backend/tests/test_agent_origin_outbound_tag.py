@@ -295,7 +295,14 @@ def _http_gate_scripts():
 # call goes through the carrier — and third-party hosts cost nothing because the
 # carrier returns empty for them.
 
-ALL_SCRIPTS = sorted(BACKEND.glob("scripts/*.py"))
+# The fleet keeps its probe tooling in TWO directories, and #4642 only swept one
+# (#4706). The repo-root `scripts/` holds the runbook and audit tooling —
+# `daily_health_check.py`'s generic fetcher carries the `api.bainluck.com` reads,
+# and three audits curl `$BAINLUCK_API` through a subprocess — so leaving it out
+# left a second door open on the same rail.
+BACKEND_SCRIPTS = sorted(BACKEND.glob("scripts/*.py"))
+ROOT_SCRIPTS = sorted((BACKEND.parent / "scripts").glob("*.py"))
+ALL_SCRIPTS = BACKEND_SCRIPTS + ROOT_SCRIPTS
 
 #: Attribute names that build an outbound request, by rail.
 _URLLIB = "Request"
@@ -394,26 +401,39 @@ def test_the_script_population_is_big_enough_to_be_a_real_check():
     tautology. The count is deliberately a FLOOR well under today's ~276: this
     asserts the glob works, not that the directory never shrinks.
     """
-    assert len(ALL_SCRIPTS) >= 150, len(ALL_SCRIPTS)
+    assert len(BACKEND_SCRIPTS) >= 150, len(BACKEND_SCRIPTS)
     carriers = [p for p in ALL_SCRIPTS if "agent_origin" in p.read_text()]
     assert len(carriers) >= 60, (
         f"only {len(carriers)} scripts import the carrier — the sweep regressed"
     )
 
 
-def test_no_backend_script_makes_an_untagged_outbound_call():
-    """#4642 done-when 3: the count of untagged callers is 0, for the DIRECTORY.
+def test_the_repo_root_script_population_is_asserted_separately():
+    """#4706: the second directory needs its OWN denominator, not a shared one.
+
+    The floor above is 150 and `backend/scripts/` alone carries ~276, so a
+    repo-root glob that silently returned nothing would clear it untouched and
+    make the offender assertion a tautology for that half — the exact failure
+    the shared floor exists to catch, reintroduced by widening the population
+    without widening the guard. Floor well under today's 16.
+    """
+    assert len(ROOT_SCRIPTS) >= 10, [p.name for p in ROOT_SCRIPTS]
+    assert not set(BACKEND_SCRIPTS) & set(ROOT_SCRIPTS), "the two globs overlap"
+
+
+def test_no_script_makes_an_untagged_outbound_call():
+    """#4642 done-when 3 / #4706: untagged callers are 0, for BOTH directories.
 
     Asserted on the AST, so a commented-out call cannot pass and a new script
     cannot silently reintroduce one. The failure names every offending site.
     """
     offenders = [site for path in ALL_SCRIPTS for site in _untagged_sites(path)]
     assert offenders == [], (
-        f"{len(offenders)} untagged outbound call site(s) under backend/scripts/. "
-        "Each one writes a row to search_query_logs if it reaches /api/events/search, "
-        "and CASTS A TRENDING VOTE the head warmer then spends real work on. "
-        "Route it through app.utils.agent_origin.tagged() / curl_args():\n  "
-        + "\n  ".join(offenders)
+        f"{len(offenders)} untagged outbound call site(s) under backend/scripts/ "
+        "or scripts/. Each one writes a row to search_query_logs if it reaches "
+        "/api/events/search, and CASTS A TRENDING VOTE the head warmer then spends "
+        "real work on. Route it through app.utils.agent_origin.tagged() / "
+        "curl_args():\n  " + "\n  ".join(offenders)
     )
 
 
@@ -453,6 +473,47 @@ def test_the_carrier_is_reached_by_the_search_touching_probes():
         "a search/typeahead probe declares itself machine traffic but still has "
         "an untagged call site — the file passes the class guard while the "
         "request votes:\n  " + "\n  ".join(leaky)
+    )
+
+
+#: Repo-root scripts whose own docstrings say they run on a bare GitHub Actions
+#: runner — `actions/checkout@v4` then `python3 scripts/<name>.py`, with no
+#: `pip install` and no `setup-python` step (see `.github/workflows/`).
+BARE_RUNNER_SCRIPTS = ("alert_intake.py", "daily_health_check.py")
+
+
+@pytest.mark.parametrize("name", BARE_RUNNER_SCRIPTS)
+def test_the_bare_runner_scripts_import_with_no_site_packages(name):
+    """#4706: tagging these must not cost them their stdlib-only property.
+
+    Both run on a bare runner with nothing pip installed, and `alert_intake.py`
+    loads the issue taxonomy BY PATH rather than importing it precisely because
+    `app/utils/__init__.py` eagerly re-exports the whole utility surface. Adding
+    `from app.utils.agent_origin import tagged` therefore looks like the same
+    mistake — it is safe only because that surface happens to be stdlib-only
+    today, and nothing was holding it that way.
+
+    So this executes the real prologue under `-S` (no site-packages), which is
+    what a bare runner is. The failure it exists to catch is silent in every
+    other gate: CI installs requirements, so a dependency creeping into
+    `app/utils/__init__.py` would go green here and break the production alert
+    and health rails the next time Actions ran them — for a tag that, on these
+    two scripts, is a runtime no-op anyway.
+    """
+    script = BACKEND.parent / "scripts" / name
+    assert script.exists(), script
+    proc = subprocess.run(
+        [sys.executable, "-S", "-c",
+         f"import runpy,sys; sys.argv=[{name!r},'--help']\n"
+         f"try: runpy.run_path({str(script)!r}, run_name='__main__')\n"
+         f"except SystemExit: pass"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, (
+        f"{name} does not import without site-packages — the bare Actions runner "
+        f"it ships on would fail:\n{proc.stderr[-2000:]}"
     )
 
 

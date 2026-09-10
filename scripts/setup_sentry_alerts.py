@@ -33,6 +33,13 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+# notice 39 / #4706: every outbound call goes through the carrier. `is_our_host`
+# decides at RUNTIME, so a third-party call like Sentry's costs nothing and the
+# static rule the guard enforces stays the simple one.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+
+from app.utils.agent_origin import tagged  # noqa: E402
+
 SENTRY_BASE = "https://us.sentry.io/api/0"
 
 # ---------------------------------------------------------------------------
@@ -134,7 +141,7 @@ def _sentry_request(
     }
     if data is not None:
         body = json.dumps(data).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    req = urllib.request.Request(url, data=body, headers=tagged(url, headers), method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8"))

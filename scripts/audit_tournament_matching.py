@@ -24,6 +24,12 @@ import subprocess
 import sys
 from collections import Counter
 
+# notice 39 / #4706: name this probe on the wire. subprocess runs the curl
+# BINARY, so rung 1's shell function cannot reach it.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+
+from app.utils.agent_origin import curl_args  # noqa: E402
+
 _SNAPSHOT = os.path.join(os.path.dirname(__file__), ".audit_tournament_matching.json")
 
 # Event rows to track. `candidate_sql` is a domain heuristic ceiling (source
@@ -95,7 +101,7 @@ def _api() -> str:
 
 
 def _curl_json(url: str, headers=None, method="GET", body=None):
-    cmd = ["curl", "-s", "-X", method, url]
+    cmd = ["curl", *curl_args(url), "-s", "-X", method, url]
     for h in headers or []:
         cmd += ["-H", h]
     if body is not None:

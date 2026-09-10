@@ -24,6 +24,16 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+# notice 39 / #4706: name this rail on the wire. `_fetch_json` below is the
+# generic fetcher and carries the API_BASE reads, so it is a real our-host site,
+# not a formality. The carrier is stdlib-only, which is load-bearing here: this
+# script runs on a bare Actions runner with nothing pip installed (see the
+# docstring above), and `test_the_bare_runner_scripts_import_with_no_site_packages`
+# executes this prologue under `python3 -S` to keep it that way.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+
+from app.utils.agent_origin import tagged  # noqa: E402
+
 API_BASE = "https://api.bainluck.com"
 SENTRY_API = "https://us.sentry.io/api/0"
 
@@ -144,7 +154,7 @@ def _fetch_json(
     merged = dict(headers or {})
     if bearer_token:
         merged["Authorization"] = f"Bearer {bearer_token}"
-    req = urllib.request.Request(url, headers=merged)
+    req = urllib.request.Request(url, headers=tagged(url, merged))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode()), ""
@@ -422,7 +432,7 @@ def _github_request(method: str, path: str, *, data: dict = None, token: str) ->
     body = json.dumps(data).encode() if data else None
     if body:
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    req = urllib.request.Request(url, data=body, headers=tagged(url, headers), method=method)
     with urllib.request.urlopen(req, timeout=30) as resp:
         text = resp.read().decode()
         return json.loads(text) if text else None
