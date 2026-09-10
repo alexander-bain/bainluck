@@ -124,14 +124,25 @@ async def pg_engine():
 
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
+        # 🔴 BEFORE `drop_all`, NOT AFTER, and the real server is the only thing
+        # that can tell you so. `bak_create` is
+        # `CREATE TABLE ... (LIKE futures_markets INCLUDING DEFAULTS)`, and
+        # INCLUDING DEFAULTS copies `id`'s `nextval('futures_markets_id_seq')`
+        # — so the backup table holds a dependency on a sequence OWNED BY
+        # `futures_markets`, and dropping that table raises
+        # `DependentObjectsStillExistError`. Neither table is in `Base.metadata`,
+        # so `drop_all` never removes them itself and the SECOND test in this
+        # file inherits the first one's leftovers.
+        #
+        # Measured, first CI execution of this file: test 1 passed and tests
+        # 2-5 all ERRORed at setup with "cannot drop table futures_markets
+        # because other objects depend on it / default value for column id of
+        # table bak_4586_futures_markets depends on sequence
+        # futures_markets_id_seq". No sqlite replay can reproduce it.
+        for tbl in (repair.BAK_TABLE, repair.MANIFEST_TABLE):
+            await conn.execute(text(f"DROP TABLE IF EXISTS {tbl}"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(
-            text(f"DROP TABLE IF EXISTS {repair.BAK_TABLE}")
-        )
-        await conn.execute(
-            text(f"DROP TABLE IF EXISTS {repair.MANIFEST_TABLE}")
-        )
 
     yield engine
 
