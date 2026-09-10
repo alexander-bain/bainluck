@@ -507,7 +507,12 @@ struct ScoreDifferentialChartView: View {
 
     /// Delegates to `PeriodLabel.normalize` — the single implementation (#1831).
     /// This file used to carry its own copy; the two had drifted.
+    ///
+    /// `sportKey` is passed for #4888, for a BARE period number only — see the
+    /// twin note in `OddsChartView`. Both charts stack on one event page, so a
+    /// sport threaded into one and not the other is exactly the drift #1831
+    /// deleted the copies to prevent.
     private func normalizePeriodLabel(_ raw: String) -> String {
-        PeriodLabel.normalize(raw)
+        PeriodLabel.normalize(raw, sport: sportKey)
     }
 }

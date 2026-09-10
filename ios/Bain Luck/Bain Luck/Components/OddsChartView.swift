@@ -1993,7 +1993,12 @@ struct OddsChartView: View {
     /// Matches web's normalizePeriodLabel() in periodMarkers.ts
     /// Delegates to `PeriodLabel.normalize` — the single implementation (#1831).
     /// This file used to carry its own copy; the two had drifted.
+    ///
+    /// `sportKey` is passed for #4888: it is consulted for a BARE period number
+    /// and nothing else, because that is the one period string carrying no unit
+    /// noun of its own. Every verbose period this chart actually receives today
+    /// is still read from its noun.
     private func normalizePeriodLabel(_ raw: String) -> String {
-        PeriodLabel.normalize(raw)
+        PeriodLabel.normalize(raw, sport: sportKey)
     }
 }

@@ -28,7 +28,14 @@ enum PeriodLabel {
     ///
     /// Returns `""` for anything that is not a period the reader should see —
     /// callers treat empty as "no chip".
-    static func normalize(_ raw: String) -> String {
+    ///
+    /// - Parameter sport: the event's sport key (`americanfootball_nfl`, …),
+    ///   used for one thing only — completing a BARE period number, which is the
+    ///   one input that does not name its own unit. See ``barePeriodUnit``.
+    ///   Optional and backward-compatible: without it a bare number renders
+    ///   exactly as it did before, so no existing caller changes behaviour by
+    ///   not passing one.
+    static func normalize(_ raw: String, sport: String? = nil) -> String {
         var s = raw.trimmingCharacters(in: .whitespaces)
 
         // Reject pre-game date strings like "Wed, March 25th at 10:00 PM EDT".
@@ -111,7 +118,7 @@ enum PeriodLabel {
             return s.uppercased()
         }
         if s.range(of: #"^\d+$"#, options: .regularExpression) != nil {
-            return inning(s)
+            return barePeriod(s, sport: sport)
         }
 
         // Intermission
@@ -192,6 +199,72 @@ enum PeriodLabel {
         }
 
         return normalize(body)
+    }
+
+    // MARK: - A bare period number (#4888)
+
+    /// What a BARE period digit means, by sport, and how far the numbering runs.
+    ///
+    /// #4888, handed to us by ux/1184 after Alex's 2026-09-09 iPad pass (item 6):
+    /// the web's win-probability chart drew dashed rules captioned bare `3` and
+    /// `4` and a reader had no way to learn they meant quarters.
+    ///
+    /// `"3"` alone is genuinely ambiguous — Q3 in football, P3 in hockey, the 3rd
+    /// inning in baseball — so the unit cannot be recovered from the string. The
+    /// caller knows the sport; this table is what that buys. Everything ELSE
+    /// `normalize` handles carries its own noun (`"3rd Quarter"`, `"1st Period"`)
+    /// and is read from the noun, never from here — that is why this is the only
+    /// place `sport` is consulted, and why `columnLabel`'s "deliberately takes no
+    /// sport key" note is untouched by this: its argument is that the noun beats
+    /// the sport key wherever a noun exists (`basketball_ncaab` plays halves,
+    /// `basketball_wncaab` plays quarters). A bare digit is the one case with no
+    /// noun to prefer.
+    ///
+    /// **`regulation` is not decoration — it is what stops the table lying.**
+    /// A sport's numbering runs past its regulation periods into overtime, and
+    /// completing those with the regulation unit invents a period that does not
+    /// exist: soccer has no `3H`, football no `Q5`. Beyond `regulation` we fall
+    /// through to the ordinal, which is vague but true. (The web twin, PR #4916,
+    /// has no such bound and can currently emit `3H`; reported to ux, theirs to
+    /// take or leave.)
+    ///
+    /// **Prefix-matched and ORDER-SENSITIVE**, so `basketball_ncaab` — men's
+    /// college, which plays two halves — is tested before the `basketball_` row
+    /// that gives everyone else quarters. Prefixes, not substrings: as a prefix
+    /// `basketball_ncaab` does not match `basketball_wncaab`, which plays
+    /// quarters and must keep them.
+    ///
+    /// **BASEBALL IS DELIBERATELY ABSENT**, and so is every sport nobody has
+    /// declared. A bare inning number cannot be completed honestly — `T3` and
+    /// `B3` are different moments and the digit does not say which — so baseball
+    /// keeps the self-explaining ordinal `inning()` already gives it rather than
+    /// gaining a fabricated half. Same rule as `HalvesFromGap.sportPlaysInHalves`
+    /// and `SportVocab`: a number in the wrong unit is worse than a vague one
+    /// *because it looks sourced*.
+    static let barePeriodUnit: [(prefix: String, regulation: Int, label: (Int) -> String)] = [
+        ("americanfootball_", 4, { "Q\($0)" }),
+        ("icehockey_", 3, { "P\($0)" }),
+        ("soccer_", 2, { "\($0)H" }),
+        ("basketball_ncaab", 2, { "\($0)H" }),
+        ("basketball_", 4, { "Q\($0)" }),
+    ]
+
+    /// The sport-aware reading of a bare period number.
+    ///
+    /// Falls back to ``inning(_:)`` — the behaviour before #4888 — for baseball,
+    /// for an unknown or absent sport, and for a number past the sport's
+    /// regulation periods. That fallback is the direction worth guarding: a
+    /// helper that hardcoded `Q` would pass any test that only checked
+    /// `"3"` → `"Q3"`, and would relabel every NHL and MLB chart.
+    static func barePeriod<S: StringProtocol>(_ digits: S, sport: String?) -> String {
+        let fallback = inning(digits)
+        guard let key = sport?.lowercased(), !key.isEmpty,
+              let n = Int(digits), n > 0
+        else { return fallback }
+        for entry in barePeriodUnit where key.hasPrefix(entry.prefix) {
+            return n <= entry.regulation ? entry.label(n) : fallback
+        }
+        return fallback
     }
 
     /// Render an inning number as a self-explaining ordinal. A non-positive or
