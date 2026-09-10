@@ -1541,6 +1541,14 @@ class SearchQueryLog(Base):
     #: attestation from a side effect of client code, and LAT-P102 measured the
     #: consequence at 13 attested rows out of 4,257.
     origin: Mapped[Optional[str]] = mapped_column(String(64))
+    #: #4836 (latency's ask, folded into #1916's migration so one attended DDL slot
+    #: covers both): which SECTION `top_result_id` came out of — `'event'`, `'team'`,
+    #: `'futures'` or `'event_concept'`. `top_result_id` alone is ambiguous across
+    #: tables, so LAT-P117 deliberately left it NULL whenever a search was led by
+    #: anything but an event; that is 556 of 1,261 answered searches (44%) over 7
+    #: days. NULL here keeps meaning "not recorded", never "led by an event".
+    #: Nothing writes it in this commit — the write site is latency's follow-up.
+    top_result_kind: Mapped[Optional[str]] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
