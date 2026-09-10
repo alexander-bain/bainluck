@@ -160,6 +160,35 @@ export default function QuantityGroup({
   const longestLabelChars = ordered.reduce((m, r) => Math.max(m, r.label.length), 0);
   const roomyNumericTrack = !wideLabels && longestLabelChars > NUMERIC_TRACK_CH;
 
+  // #4644 — the SAME property as the comment above, one column further right.
+  // The movement badge was a `shrink-0` sibling rendered ONLY on rungs that
+  // moved, so it took its width (and its flex gap) out of the `flex-1` track
+  // beside it: a rung carrying "▲48.0" measured its bar against a materially
+  // shorter track than a rung with no badge. On the production "Netflix App
+  // Downloads in September" card at 390px that inverted the ladder — 94% drew
+  // a SHORTER bar than 88%, and the two longest bars belonged to the two
+  // smallest numbers. #1574 acceptance (c) is the invariant: one track width
+  // per ladder, so equal percentages draw equal bars.
+  //
+  // The slot is therefore reserved on EVERY row of a ladder that has a mover,
+  // sized once from the longest badge THIS ladder prints (the same "measure the
+  // ink you actually render" approach as the label track), so the bar starts at
+  // the same x whether or not the rung moved. A ladder where nothing moved
+  // renders no slot at all and is byte-for-byte what it was.
+  const movementBadgeText = (movement: number | null | undefined): string =>
+    `${(movement ?? 0) > 0 ? "▲" : "▼"}${formatMovementPoints(movement)}`;
+  const movementSlotChars = ordered.reduce(
+    (m, r) => (isRenderedMove(r.movement) ? Math.max(m, movementBadgeText(r.movement).length) : m),
+    0,
+  );
+  // The arrow is the one glyph in the badge that may fall back out of the mono
+  // face, so its advance can exceed 1ch; the half-rem of slack absorbs that
+  // rather than clipping a badge, and is the same on every row either way.
+  const movementSlotStyle =
+    movementSlotChars > 0
+      ? { width: `calc(${movementSlotChars}ch + 0.5rem)` }
+      : undefined;
+
   const inner = (
     <>
       {(title || headerHint) && (
@@ -218,19 +247,27 @@ export default function QuantityGroup({
               >
                 {rung.label}
               </span>
-              {/* UX-1052 item 4 — "the mover marked". Rendered only when the
-                  movement actually PRINTS as a move, so a rounding residue
-                  cannot become an arrow (UX-P275). */}
-              {isRenderedMove(rung.movement) && (
+              {/* UX-1052 item 4 — "the mover marked". The BADGE still prints
+                  only when the movement actually PRINTS as a move, so a
+                  rounding residue cannot become an arrow (UX-P275); the SLOT
+                  holding it is reserved on every row so the bar beside it is
+                  measured against the same track (#4644). */}
+              {movementSlotStyle && (
                 <span
-                  className={[
-                    "shrink-0 font-mono text-[11px] font-bold tabular-nums",
-                    (rung.movement ?? 0) > 0 ? "text-accent-brand" : "text-text-secondary",
-                  ].join(" ")}
-                  aria-label={`${(rung.movement ?? 0) > 0 ? "up" : "down"} ${formatMovementPoints(rung.movement)} points`}
+                  style={movementSlotStyle}
+                  aria-hidden={isRenderedMove(rung.movement) ? undefined : true}
+                  className="shrink-0 whitespace-nowrap text-right font-mono text-[11px] font-bold tabular-nums"
                 >
-                  {(rung.movement ?? 0) > 0 ? "▲" : "▼"}
-                  {formatMovementPoints(rung.movement)}
+                  {isRenderedMove(rung.movement) && (
+                    <span
+                      className={
+                        (rung.movement ?? 0) > 0 ? "text-accent-brand" : "text-text-secondary"
+                      }
+                      aria-label={`${(rung.movement ?? 0) > 0 ? "up" : "down"} ${formatMovementPoints(rung.movement)} points`}
+                    >
+                      {movementBadgeText(rung.movement)}
+                    </span>
+                  )}
                 </span>
               )}
               <span className="flex-1 h-[18px] rounded-md bg-surface-elevated overflow-hidden">
