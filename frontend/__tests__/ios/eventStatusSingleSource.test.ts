@@ -267,8 +267,8 @@ d("iOS reads one event-status vocabulary", () => {
       }
 
       // An exact-set PIN, not an allowlist: a new offender fails this, and so
-      // does removing one of these without editing the list. Two lines survive,
-      // each for a stated reason.
+      // does removing one of these without editing the list. ONE line survives,
+      // for a stated reason.
       //
       // THE PIN IS FILE + CODE AND DELIBERATELY CARRIES NO LINE NUMBER (changed
       // by #3978, which broke this test without changing any of the code it is
@@ -281,14 +281,13 @@ d("iOS reads one event-status vocabulary", () => {
       // Nothing is lost: the offending line's own text is in the message, so
       // locating a genuine new offender is one grep.
       //
-      // 1. `ShareCardRenderer` is a real per-item claim, left DELIBERATELY:
-      //    `ShareableEventCardView` has no `commenceTime` property, so gating it
-      //    means threading a new one through a renderer API and every
-      //    construction site — a different change from this ship's one-line
-      //    predicate swaps. It also draws its own private word ("PAUSED") rather
-      //    than `EventState.suspendedLabel`, a second and smaller drift.
-      //    Filed as #4044, which cites this pin: fixing it means editing this
-      //    list, so the carve-out cannot be quietly forgotten.
+      // 1. `ShareCardRenderer` WAS the second entry and is GONE — #4044, closed
+      //    2026-09-10. It now reads `isSuspendedAndStarted` off a `commenceTime`
+      //    threaded through `renderEventCard` (one construction site, not the
+      //    "every construction site" the carve-out feared), and it prints
+      //    `EventState.suspendedLabel.uppercased()` instead of its own "PAUSED".
+      //    The carve-out worked exactly as designed: the pin made the debt
+      //    un-forgettable, and paying it required editing this list.
       //
       // 2. `showsScore` is NOT the suspended treatment — it is the opposite. The
       //    treatment claims no result arrived; this draws a score we actually
@@ -296,8 +295,42 @@ d("iOS reads one event-status vocabulary", () => {
       //    clock because the scores ARE the evidence the game started: a fixture
       //    four days out has none, so the future-dated row cannot reach it.
       expect(offenders).toEqual([
-        'Utilities/ShareCardRenderer.swift — if EventState.isSuspended(status) { return "PAUSED" }',
         'Views/EventDetailView.swift — return status == "live" || EventState.isFinished(status) || EventState.isSuspended(status)',
+      ]);
+    });
+
+    it("every renderEventCard call site hands it a commenceTime", () => {
+      // #4044. `commenceTime` has no default on `renderEventCard`, so Swift
+      // already refuses a caller that omits it — but CI compiles no Swift
+      // (#4302), so that refusal is not a gate here. A caller passing a literal
+      // `nil` compiles fine and silently restores the clockless behaviour on the
+      // one surface whose output leaves the app, which is what this catches.
+      const offenders: string[] = [];
+
+      for (const path of swiftFiles(IOS_ROOT)) {
+        const code = stripComments(readFileSync(path, "utf8"));
+        const idx = code.indexOf("ShareCardRenderer.renderEventCard(");
+        if (idx === -1) continue;
+        const call = code.slice(idx, idx + 900);
+        // Written as two POSITIVE tests, not as `commenceTime:\s*[^n]`. That
+        // form looks like "an argument that is not nil" and matches
+        // `commenceTime: nil` anyway: `\s*` backtracks to zero characters and
+        // `[^n]` then happily eats the SPACE. The mutant that passes a literal
+        // nil survived it, which is the only reason this comment exists.
+        if (!/commenceTime:/.test(call)) {
+          offenders.push(`${path.slice(IOS_ROOT.length + 1)} — renderEventCard with no commenceTime at all`);
+        } else if (/commenceTime:\s*nil\b/.test(call)) {
+          offenders.push(`${path.slice(IOS_ROOT.length + 1)} — renderEventCard hands commenceTime a literal nil`);
+        }
+      }
+
+      expect(offenders).toEqual([]);
+      // The scan must be finding the one caller — an empty filter passes forever.
+      const callers = swiftFiles(IOS_ROOT).filter((p) =>
+        stripComments(readFileSync(p, "utf8")).includes("ShareCardRenderer.renderEventCard(")
+      );
+      expect(callers.map((p) => p.slice(IOS_ROOT.length + 1))).toEqual([
+        "Components/DiscoverEventCard.swift",
       ]);
     });
 
