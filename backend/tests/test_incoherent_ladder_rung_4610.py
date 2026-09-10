@@ -270,6 +270,25 @@ class TestTheLadderIsNotDrawnWithAnImpossibleBar:
         assert card["suggested_format"] == "threshold_heatmap"
         assert len(card["threshold_points"]) == len(NETFLIX) - 1
 
+    def test_a_ladder_filtered_to_one_rung_is_not_handed_on_as_a_ladder(self):
+        # UX-P008 from a new direction: a single surviving rung still classifies
+        # as `threshold_heatmap` when the market carries a group key, the
+        # frontend needs two rows to draw one, and the card falls through to the
+        # plain leader — the whole field disappears. Refuse the treatment.
+        card = classify_discover_card_archetype(
+            name="Thin ladder",
+            category="economics",
+            outcomes=[
+                {"name": "Above 10", "probability": 0.20},
+                {"name": "Above 20", "probability": 0.90},
+                {"name": "Above 30", "probability": 0.95},
+            ],
+            outcome_count=3,
+            group_id="kalshi:thin",
+        )
+        assert card["threshold_points"] == []
+        assert card["suggested_format"] != "threshold_heatmap"
+
     def test_a_coherent_ladder_keeps_all_of_its_rungs(self):
         card = classify_discover_card_archetype(
             name="Netflix App Downloads in September",

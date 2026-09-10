@@ -374,17 +374,30 @@ def _threshold_points(
     # of 30). Callers that own an outcome list filter it upstream as well; this
     # is the display primitive's own guard, for the admin/debug and native
     # callers that do not.
+    rejected_incoherent = False
     incoherent = incoherent_ladder_indexes(
         points,
         lambda p: p.get("label"),
         lambda p: p.get("probability"),
     )
     if incoherent:
-        points = [p for n, p in enumerate(points) if n not in incoherent]
+        survivors = [p for n, p in enumerate(points) if n not in incoherent]
+        if len(survivors) >= 2:
+            points = survivors
+        else:
+            # A ladder filtered down to ONE rung must not be handed on as a
+            # ladder. The classifier below will still call it `threshold_heatmap`
+            # when the market carries a group or canonical key, the frontend
+            # needs >= 2 rows to draw a heatmap, finds one, and falls through
+            # PAST the distribution branch to the plain leader card — the whole
+            # field disappears. That is the UX-P008 failure documented below,
+            # reached from a new direction, so it gets the same answer the scale
+            # guard gives: refuse the treatment outright.
+            points = []
+            rejected_incoherent = True
 
     # Mixed scales mean the labels were never one ladder — drop the threshold
     # treatment entirely rather than render self-contradicting bars.
-    rejected_incoherent = False
     if not _ladder_is_scale_coherent(points):
         points = []
         rejected_incoherent = True
