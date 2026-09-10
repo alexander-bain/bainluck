@@ -1444,7 +1444,9 @@ def refresh_registered_tournament_prices(self):
 
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
                  name="app.tasks.refresh_stale_polymarket_conditions")
-def refresh_stale_polymarket_conditions(self, budget: int = 0):
+def refresh_stale_polymarket_conditions(
+    self, budget: int = 0, condition_budget: int = 0
+):
     """Re-price the served Polymarket markets the other three rails cannot reach (#3879).
 
     The discovery scan rotates a 20-page window under Gamma's offset-2000 cap,
@@ -1460,13 +1462,20 @@ def refresh_stale_polymarket_conditions(self, budget: int = 0):
     prices, grades; it never creates a market or an outcome. Full mechanism and
     the blast radius: ``app/tasks/polymarket_condition_refresh``.
 
-    ``budget`` is a manual-run override for the per-run market cap.
+    ``budget`` is a manual-run override for the per-run market cap;
+    ``condition_budget`` overrides the per-run CONDITION-ID cap, which is the one
+    sized against the wall since #4827 widened the pool to ladders addressed by
+    their legs. Both default to 0, meaning "use the module's own sizing".
     """
     from app.tasks.polymarket_condition_refresh import (
         _refresh_stale_polymarket_conditions,
     )
 
-    kwargs = {"budget": budget} if budget else {}
+    kwargs: dict[str, int] = {}
+    if budget:
+        kwargs["budget"] = budget
+    if condition_budget:
+        kwargs["condition_budget"] = condition_budget
     return _tracked_run(
         "polymarket_condition_refresh",
         _refresh_stale_polymarket_conditions(**kwargs),
