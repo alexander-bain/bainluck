@@ -337,8 +337,17 @@ export default function EventConceptPage() {
   else if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
   // L2-148: golf's per-round Top-N props surface in a secondary EventProps section
   // ALONGSIDE the props-script — give it its own nav anchor when both render.
+  //
+  // #4897 / D111: these words used to be "More props", which is now the label of
+  // THE SCRIPT's own fold inside PropsSection. On a concept page where both
+  // render (golf: a props-script AND section-grouped round Top-N children) that
+  // put "More props" on this nav pill, this section heading AND the fold toggle
+  // — three controls, one name, two destinations. Alex ruled the FOLD's wording,
+  // so this is the one that moves. "Other markets" is honest about what it holds:
+  // whole markets grouped under their backend labels (Round Top N …), not the
+  // script's leftover rows.
   if (hasPropsScript && propChildren.length > 0)
-    nav.push({ id: "more-props", label: "More props" });
+    nav.push({ id: "other-markets", label: "Other markets" });
   if (hasScoringRecords) nav.push({ id: "scoring-records", label: "Scoring" });
   if (isSettled && evolutionId) nav.push({ id: "path", label: "Path" });
 
@@ -467,8 +476,8 @@ export default function EventConceptPage() {
       <EventProps
         items={propChildren}
         sections={data.sections}
-        title={hasPropsScript ? "More props" : undefined}
-        anchorId={hasPropsScript ? "more-props" : undefined}
+        title={hasPropsScript ? "Other markets" : undefined}
+        anchorId={hasPropsScript ? "other-markets" : undefined}
         domain={event.domain}
       />
 
