@@ -24,12 +24,20 @@ Five outcomes on three markets, each paired with the defect it catches.
   before commence (0.99 at open, **0.07** last). Must read back **0.07**. This
   is the production specimen: twenty-three golfers at 0.99 in one round-leader
   market while the venue's own last pre-round quote said 7 cents.
-* **the ruling-103 control** (``LATE_OUTCOME``) — the only snapshot that differs
-  from the stamp was captured AFTER ``commence_time``. Must be refused
-  ``no_pre_commence_snapshot`` and keep its stamp. A price captured after the
-  answer is not a price; a selector that dropped the ``<`` bound would "repair"
-  this row with a partly-known result and every other test here would still
-  pass.
+* **the ruling-103 control** (``LATE_OUTCOME``) — its ONLY two quotes sit
+  **exactly at** ``commence_time`` and two hours after it. Must be refused
+  ``no_pre_commence_snapshot`` and keep its stamp. A price captured once the
+  round is under way is a partly-known result, not a forecast.
+
+  🔴 **CI wrote this arm's final shape, and the first version was the wrong
+  test.** As first seeded, the late outcome ALSO carried an early snapshot at
+  the stamp value, so the selector found a legitimate pre-commence quote that
+  happened to equal the opening and refused the row as
+  ``closing_equals_opening``. The rail was right; the assertion was measuring
+  the wrong refusal, and it would have gone on passing as a ruling-103 guard
+  while proving nothing about the ``<`` bound. The at-commence snapshot is the
+  repair: it is the one value that discriminates ``<`` from ``<=``, so relaxing
+  that bound now fails HERE and not only in the source scan.
 * **the already-priced control** (``PRICED_OUTCOME``) — ``calibration_probability
   <> opening_probability``, i.e. a row Part A2 already repriced. Must not be
   examined at all. This is the guard against the rail widening from "the stamp
@@ -165,8 +173,10 @@ async def _seed(session):
         # The subject: opens at the stamp, last pre-commence quote is the truth.
         (SUBJECT_OUTCOME, STAMP, timedelta(hours=-8)),
         (SUBJECT_OUTCOME, TRUE_CLOSING, timedelta(hours=-2)),
-        # Ruling 103: the only differing quote lands AFTER the round begins.
-        (LATE_OUTCOME, STAMP, timedelta(hours=-8)),
+        # Ruling 103: NO quote before the round begins. The first lands exactly
+        # AT commence_time — the one value that tells `<` apart from `<=` — and
+        # the second two hours into the round.
+        (LATE_OUTCOME, TRUE_CLOSING, timedelta(0)),
         (LATE_OUTCOME, TRUE_CLOSING, timedelta(hours=+2)),
         # Already repriced by Part A2 — must never be examined.
         (PRICED_OUTCOME, 0.35, timedelta(hours=-2)),
@@ -268,7 +278,12 @@ async def test_a_dry_run_moves_nothing_and_still_carries_the_restore(session):
 @needs_postgres
 @pytest.mark.asyncio
 async def test_a_quote_after_the_round_begins_is_refused(session):
-    """Ruling 103, with a specimen rather than a source scan."""
+    """Ruling 103, with a specimen rather than a source scan.
+
+    The refusal REASON is asserted, not merely the unchanged price: a row can be
+    left alone for several reasons and only one of them means the ``<`` bound
+    held. That distinction is what CI found wrong here the first time.
+    """
     from app.tasks.repair_golf_round_closing_line import repair
 
     await _seed(session)
@@ -277,6 +292,38 @@ async def test_a_quote_after_the_round_begins_is_refused(session):
     assert await _price(session, LATE_OUTCOME) == STAMP
     refusals = {r["outcome_id"]: r["reason"] for r in result["refused"]}
     assert refusals[LATE_OUTCOME] == "no_pre_commence_snapshot"
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_quote_exactly_at_commence_cannot_pass_this(session):
+    """RED-FIRST for the ``<`` bound: relaxing it to ``<=`` must break something.
+
+    Runs the mutated selector — ``captured_at <= commence_time`` — over the same
+    seeded corpus and requires it to find the at-commence quote the shipped
+    selector refuses. Without this, ``test_a_quote_after_the_round_begins_is_
+    refused`` passes under both versions of the bound (a +2h snapshot is
+    excluded either way) and the ruling-103 guard is decoration.
+    """
+    from sqlalchemy import text
+
+    await _seed(session)
+    picked = (
+        await session.execute(
+            text(
+                "SELECT probability FROM futures_odds_snapshots "
+                "WHERE outcome_id = :oid AND captured_at <= :commence "
+                "  AND probability > 0 AND probability < 1 "
+                "ORDER BY captured_at DESC LIMIT 1"
+            ),
+            {"oid": LATE_OUTCOME, "commence": COMMENCE},
+        )
+    ).scalar_one_or_none()
+
+    assert picked is not None and float(picked) == TRUE_CLOSING, (
+        "premise: the relaxed bound DOES reach a quote here, so the shipped "
+        "bound refusing it is a real decision and not a vacuous one"
+    )
 
 
 @needs_postgres
