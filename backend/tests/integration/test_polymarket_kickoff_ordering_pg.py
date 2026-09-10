@@ -28,7 +28,7 @@ The rows, and why each is here:
 
     m_live          started 1h ago, not completed   FIRST  — a game in progress
     m_soon          starts in 2h                    SECOND — the ordinary case
-    m_later         starts in 10h, inside the lead  THIRD
+    m_later         starts in 20h, inside the 24h lead  THIRD
     m_ancient       no event, tier 1, 90d stale     after all three, and it is
                                                     still ahead of everything
                                                     below it — the old ordering
@@ -125,7 +125,7 @@ async def _seed(session) -> dict[str, int]:
     events = {
         "m_live": _event(-1),
         "m_soon": _event(2),
-        "m_later": _event(10),
+        "m_later": _event(20),
         "m_completed": _event(2, completed=True),
         "m_past_tail": _event(-12),
     }
@@ -178,7 +178,7 @@ async def _seed(session) -> dict[str, int]:
 
 
 async def _seed_warm(session) -> dict[str, int]:
-    """Three rows, all refreshed 50 MINUTES ago. Returns `{label: market_id}`.
+    """Four rows, all refreshed 50 MINUTES ago. Returns `{label: market_id}`.
 
     50 minutes is chosen to sit in the gap the repair opens: past
     `KICKOFF_STALE_MINUTES` (45) and far short of `SERVED_STALE_HOURS` (12), so
@@ -203,7 +203,7 @@ async def _seed_warm(session) -> dict[str, int]:
         session.add(e)
         return e
 
-    game, done = _event(2), _event(2, completed=True)
+    game, far, done = _event(2), _event(20), _event(2, completed=True)
     await session.flush()
 
     def _market(label, event):
@@ -223,6 +223,10 @@ async def _seed_warm(session) -> dict[str, int]:
 
     markets = {
         "warm_game": _market("game", game),
+        # CERT-2549: the far edge of the 24h horizon. A cut of this ship narrowed
+        # the lead to 12h, which left exactly this row on the ordinary 12-hour
+        # window while every assertion about the 2h row still passed.
+        "warm_game_20h": _market("game20h", far),
         "warm_completed": _market("completed", done),
         "warm_futures": _market("futures", None),
     }
@@ -362,6 +366,29 @@ class TestAnImminentGameReentersEachHourlyBeat:
             "an ordinary futures market refreshed 50 minutes ago became due — "
             "the kickoff window is leaking onto the whole pool and every "
             f"non-game row will now churn hourly. order={order} ids={ids}"
+        )
+
+    async def test_game_twenty_hours_from_kickoff_reenters_on_the_next_hourly_beat(
+        self, pg_session
+    ):
+        """CERT-2549: the horizon is 24 hours, not "as much of it as fits".
+
+        A cut of this ship narrowed `KICKOFF_LEAD_HOURS` to 12 because the 24h
+        class costs 656 ids a beat against a 1,000-id budget. Every assertion
+        about the 2h row still passed, and games 12-24h out silently went back
+        onto the ordinary 12-hour window — #4896's acceptance names 24h
+        explicitly. This is the row that catches that narrowing, and it is
+        separate from the 2h row precisely because the 2h row cannot see it.
+        """
+        from app.tasks import polymarket_condition_refresh as rail
+
+        ids = await _seed_warm(pg_session)
+        order = await _order(pg_session, rail._CANDIDATE_SQL)
+
+        assert ids["warm_game_20h"] in order, (
+            "a game 20h from kickoff, refreshed 50 minutes ago, is NOT due on "
+            "this beat — the kickoff horizon has been narrowed below the 24h "
+            f"#4896 requires. order={order} ids={ids}"
         )
 
     async def test_a_warm_completed_game_is_not_due_either(self, pg_session):

@@ -257,24 +257,36 @@ IMMINENT_DAYS = 2
 #: the most urgent thing in the pool. See :data:`_KICKOFF_SQL` for why the
 #: market's ``resolution_date`` cannot answer this question.
 #:
-#: MEASURED against the live candidate pool, production 2026-09-10 22:1xZ, with
-#: :data:`KICKOFF_STALE_MINUTES` in force — so these are STEADY-STATE costs, what
-#: the class spends on EVERY beat, not what it costs once:
+#: 24 BECAUSE #4896's ACCEPTANCE SAYS 24 — "for every event kicking off within
+#: 24h ... no ungraded leg older than the game's own refresh cadence (target
+#: <1h, matching Kalshi)". A previous cut of this constant read 12, which met
+#: that bar for the last half-day before kickoff and left games 12-24h out on
+#: the ordinary 12-hour window. CERT-2549 blocked it, correctly: narrowing the
+#: horizon to fit the budget is amending the acceptance, not meeting it.
+#:
+#: WHAT IT COSTS, MEASURED rather than assumed, production 2026-09-10 22:1xZ,
+#: with :data:`KICKOFF_STALE_MINUTES` in force — STEADY-STATE per-beat cost,
+#: what the class spends on EVERY beat:
 #:
 #:      lead    markets   ids/beat   % of CONDITION_BUDGET   left for the drain
 #:       6 h      130        341            34.1%                   659
 #:      12 h      137        348            34.8%                   652
 #:      24 h      230        656            65.6%                   344
 #:
-#: 12 is the inflection and that is the whole argument for it. Widening 6 -> 12
-#: costs SEVEN ids a beat and doubles the horizon; widening 12 -> 24 costs 308
-#: and takes two thirds of the budget, which would halve the backlog drain
-#: #4827 exists to run. A rail that keeps tonight's games fresh by starving the
-#: 54,000-id rotation has moved the defect rather than fixed it.
+#: THE ABSOLUTE FIGURE MOVES and is quoted as a range rather than a point: the
+#: same 24h class read 656 ids at 22:1xZ and 539 at 22:2xZ, because games leave
+#: through :data:`KICKOFF_TAIL_HOURS` as the window slides. The lead comparison
+#: above is a single-moment comparison, which is what makes it a fair one; the
+#: standing cost is ~540-660 ids a beat.
 #:
-#: It also lands on :data:`SERVED_STALE_HOURS`, which is the honest way to say
-#: what this class is: the games that start within one producer window.
-KICKOFF_LEAD_HOURS = 12
+#: So this is not free and the number is stated rather than buried: the kickoff
+#: class takes roughly two thirds of each run and #4827's backlog rotation keeps
+#: the remaining ~340-460 ids an hour. That rotation is a TRANSIENT catch-up over a
+#: ~54,000-id population while this class is permanent, so the trade is "the
+#: backlog drains slower for a few days, and no game a reader can open is ever
+#: stale". The drain rate is its own follow-up; it is not solved by shortening
+#: the horizon, which is what the blocked cut tried.
+KICKOFF_LEAD_HOURS = 24
 
 #: How long AFTER its start an uncompleted event stays in that class. A game in
 #: progress is the single most-read blend on the site, and ``completed_at`` is

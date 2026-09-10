@@ -567,26 +567,46 @@ class TestTheOrderingIsAcceptanceOneMadeMechanical:
         sql = " ".join(rail._CANDIDATE_SQL.split())
         assert "LEFT JOIN events e ON e.id = fm.event_id" in sql
 
-    def test_the_kickoff_class_cannot_swallow_the_run(self):
-        """The lead is a BUDGET claim, so it is asserted as one — and here,
-        where it runs without a database, rather than beside the behavioural
-        gate where it would only run in `search-recall`.
+    def test_the_horizon_is_the_full_twenty_four_hours_the_issue_names(self):
+        """CERT-2549's guard: the lead may not be narrowed to fit the budget.
 
-        MEASURED on the live pool, production 2026-09-10 22:1xZ, with
-        `KICKOFF_STALE_MINUTES` in force, so these are per-BEAT costs:
-
-             6h -> 130 markets / 341 ids     12h -> 137 / 348     24h -> 230 / 656
-
-        12 is the inflection: 6 -> 12 costs seven ids a beat, 12 -> 24 costs 308
-        and takes two thirds of the 1,000-id `CONDITION_BUDGET`, halving the
-        backlog drain #4827 exists to run. A rail that keeps tonight's games
-        fresh by starving the 54,000-id rotation has moved the defect.
+        #4896's acceptance is "every event kicking off within 24h". A cut of
+        this ship set 12 because the 24h class costs 656 ids a beat of a
+        1,000-id `CONDITION_BUDGET` — which met the bar for the last half-day
+        and quietly dropped games 12-24h out back onto the ordinary 12-hour
+        window. Narrowing the horizon to fit the budget is amending the
+        acceptance, not meeting it, so the floor is asserted here and the far
+        edge is exercised behaviourally by
+        `test_game_twenty_hours_from_kickoff_reenters_on_the_next_hourly_beat`.
         """
-        assert rail.KICKOFF_LEAD_HOURS <= 12, (
-            "a 24h lead was measured at 656 ids/beat of a 1,000-id budget, "
-            "leaving 344 for the drain — re-measure before widening it"
+        assert rail.KICKOFF_LEAD_HOURS >= 24, (
+            "#4896 requires every game inside 24h to hold the game cadence; a "
+            "shorter lead leaves the 12-24h band on the ordinary window"
         )
         assert 0 < rail.KICKOFF_TAIL_HOURS <= rail.KICKOFF_LEAD_HOURS
+
+    def test_the_kickoff_class_still_fits_inside_one_run(self):
+        """The cost of that horizon, stated as a bound rather than buried.
+
+        MEASURED on the live pool, production 2026-09-10 22:1xZ, per BEAT with
+        `KICKOFF_STALE_MINUTES` in force:
+
+             6h -> 130 markets / 341 ids   12h -> 137 / 348   24h -> 230 / 656
+
+        656 of 1,000 is two thirds of every run, leaving ~344 for #4827's
+        backlog rotation. That is the accepted trade — the rotation is a
+        transient catch-up and the kickoff class is permanent — but it only
+        holds while the class still FITS. The eligibility window is what sets
+        the class's per-beat size, so it is the thing guarded: shortening it
+        further multiplies the cost, and at some point the drain reaches zero
+        and this rail does nothing but re-read tonight's games.
+        """
+        assert rail.KICKOFF_STALE_MINUTES >= 45, (
+            "a shorter kickoff window re-admits the class more often than "
+            "hourly and eats the backlog drain; 45 min already re-admits it "
+            "on every beat, which is all the acceptance asks for"
+        )
+        assert rail.KICKOFF_STALE_MINUTES < 60
 
     def test_the_budget_and_the_window_are_one_sizing(self):
         """1,200 x 12 = 14,400 against the 13,746 served markets measured on
