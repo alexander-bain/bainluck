@@ -157,6 +157,40 @@ RECENT_FINAL_SELECT_SQL = """
 """
 
 
+def default_session_maker():
+    """The session factory both entry points fall back to when none is injected.
+
+    #4699 — THIS MUST BE LOOP-SCOPED, AND IT USED TO BE THE APP'S GLOBAL ENGINE.
+
+    Both entry points are driven by `_tracked_run` -> `run_async` ->
+    `asyncio.run(coro)`, which builds a fresh event loop per invocation and
+    CLOSES it on return. The module-level `async_session_maker` keeps its pool
+    across invocations, so on the second run its pooled connections are bound to
+    the first run's dead loop; `pool_pre_ping=True` then pings one on the new
+    loop and raises `RuntimeError`.
+
+    Measured on production the night #4655 shipped: `settle_kalshi_recent_finals`
+    succeeded on the 07:10Z run — the first after v4395 cycled the dynos, when
+    the global pool was empty — and then failed on 07:20Z (80 ms) and 07:30Z
+    (8 ms), 0 successes against 3 starts. `app/tasks/base.py` says exactly this
+    in `_get_task_engine`'s docstring: it exists for "avoiding the 'attached to a
+    different loop' errors when reusing the module-level engine across Celery
+    task invocations". The new arm simply did not use it.
+
+    `get_task_session` builds an engine bound to the current loop and disposes
+    it in a `finally`. It is called in three bounded places per run — the two
+    reads and the one batched write — never per market, so an engine per call is
+    cheap at this cadence.
+
+    ONE function rather than the same fallback expression at each call site: the
+    two entry points had identical defaults and only one of them was reachable
+    often enough to reveal the bug.
+    """
+    from app.tasks.base import get_task_session
+
+    return get_task_session
+
+
 @dataclass
 class _Leg:
     close_time: Optional[datetime]
@@ -949,8 +983,6 @@ async def run_sweep(
     necessary — without it this beat writes zero rows every night, forever, and
     looks healthy doing it.
     """
-    from app.services.database import async_session_maker
-
     if offset is None:
         start, scanned = await _read_cursor()
     else:
@@ -960,7 +992,7 @@ async def run_sweep(
         start, scanned = max(0, int(offset)), 0
 
     report = await run_backfill(
-        session_maker=session_maker or async_session_maker,
+        session_maker=session_maker or default_session_maker(),
         client_factory=client_factory or KalshiAPIService,
         limit=limit,
         offset=start,
@@ -1067,11 +1099,9 @@ async def run_recent_finals(
     because it belongs to the shared write (``UPDATE_SQL``) rather than to any
     one caller. This arm changes only WHICH rows reach that write and HOW SOON.
     """
-    from app.services.database import async_session_maker
-
     now = now or datetime.now(timezone.utc)
     final_floor = now - timedelta(hours=window_hours)
-    maker = session_maker or async_session_maker
+    maker = session_maker or default_session_maker()
 
     async with maker() as session:
         rows = (
