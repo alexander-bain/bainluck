@@ -13,6 +13,7 @@ from typing import Callable, Dict, Optional, Sequence
 import httpx
 
 from app.services.base_api import BaseAPIClient
+from app.utils.kalshi_candle_price import candle_yes_price
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -1176,16 +1177,21 @@ class KalshiAPIService(BaseAPIClient):
         Uses the batch endpoint GET /markets/candlesticks (the old per-market
         endpoint /markets/{ticker}/candlesticks was deprecated).
 
-        KNOWN FLAW, DELIBERATELY NOT FIXED HERE (live/035). The reduction below
-        falls back to the ASK when there is no bid, and at settlement a losing
-        market's book is bid 0.00 / ask 1.00 — so the LOSER's final candle
-        normalizes to **1.0**. Measured 2026-09-02 on
-        ``KXATPMATCH-26AUG30VALMON-VAL`` (Vallejo lost; last real trade 0.01;
-        this returns 1.0). It is left alone because its two consumers
+        THE FLAW live/035 NAMED HERE IS FIXED (CAL-P1084, #4730). The old
+        reduction was ``(bid+ask)/2`` falling back to whichever side was
+        non-zero, and it never read the trade price sitting in the same candle:
+        at settlement a losing market's book is bid 0.00 / ask 1.00, so a loser
+        normalized to the ask. live/035 left it because its two consumers
         (``kalshi_cliff``, ``_backfill_kalshi_price_history``) fill calibration
-        buckets whose behaviour is not this queue's to change. Anything drawing a
-        USER-FACING curve must use :meth:`get_market_candlesticks_raw` and decide
-        for itself — see ``app/tasks/event_chart_backfill.normalize_candle``.
+        buckets that were not that queue's to change; the calibration lane
+        measured the cost and changed them. On Kalshi's own candles for
+        ``KXPGAR2TOP10-TOC26`` the old rule published Sam Burns (lost) at 0.88
+        against a 0.05 trade and Matt Fitzpatrick (won) at 0.535 against 0.95.
+
+        The reduction now lives in :mod:`app.utils.kalshi_candle_price`, which
+        carries the policy and the evidence. A caller that wants the whole
+        candle — both sides of the book AND the trade — still uses
+        :meth:`get_market_candlesticks_raw`.
 
         Args:
             ticker: Market ticker
@@ -1225,20 +1231,8 @@ class KalshiAPIService(BaseAPIClient):
                 ts = c.get("end_period_ts")
                 if ts is None:
                     continue
-                yes_bid = c.get("yes_bid", {})
-                yes_ask = c.get("yes_ask", {})
-                try:
-                    bid = float(yes_bid.get("close_dollars") or 0)
-                    ask = float(yes_ask.get("close_dollars") or 0)
-                except (ValueError, TypeError):
-                    continue
-                if bid > 0 and ask > 0:
-                    price = (bid + ask) / 2
-                elif ask > 0:
-                    price = ask
-                elif bid > 0:
-                    price = bid
-                else:
+                price = candle_yes_price(c)
+                if price is None:
                     continue
                 normalized.append({"t": ts, "yes_price": price})
             return normalized
@@ -1280,6 +1274,14 @@ class KalshiAPIService(BaseAPIClient):
         """Get candlestick data for multiple markets in one API call.
 
         Returns dict of ticker → normalized candle list.
+
+        Reduces each candle through the SAME
+        :func:`app.utils.kalshi_candle_price.candle_yes_price` as
+        :meth:`get_market_candlesticks`. It carried its own copy of the old
+        ``(bid+ask)/2``-or-either-side rule until CAL-P1084; nothing calls this
+        method today, which is exactly why the copy survived the fix to its
+        singular twin and why it is converged rather than left as the trap the
+        next caller falls into.
         """
         import time as _time
         if start_ts is None:
@@ -1308,20 +1310,8 @@ class KalshiAPIService(BaseAPIClient):
                     ts = c.get("end_period_ts")
                     if ts is None:
                         continue
-                    yes_bid = c.get("yes_bid", {})
-                    yes_ask = c.get("yes_ask", {})
-                    try:
-                        bid = float(yes_bid.get("close_dollars") or 0)
-                        ask = float(yes_ask.get("close_dollars") or 0)
-                    except (ValueError, TypeError):
-                        continue
-                    if bid > 0 and ask > 0:
-                        price = (bid + ask) / 2
-                    elif ask > 0:
-                        price = ask
-                    elif bid > 0:
-                        price = bid
-                    else:
+                    price = candle_yes_price(c)
+                    if price is None:
                         continue
                     normalized.append({"t": ts, "yes_price": price})
                 results[ticker] = normalized
