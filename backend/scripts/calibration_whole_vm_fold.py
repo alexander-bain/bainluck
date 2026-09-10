@@ -470,6 +470,7 @@ def _read_hash_chunk(source: str, category: str, n: int, k: int,
     class would have been faster.
     """
     sql = stage_a_sql(source, category, n, k)
+    r = None
     for attempt in range(1, STAGE_A_TIMEOUT_RETRIES + 1):
         try:
             r = cce.db_query(sql, limit=cce.ROW_CAP)
@@ -488,6 +489,18 @@ def _read_hash_chunk(source: str, category: str, n: int, k: int,
                 log(f"      re-asking {k} mod {n} — statement timeout at ~10 s "
                     f"is load, not width ({attempt}/{STAGE_A_TIMEOUT_RETRIES})")
             time.sleep(STAGE_A_TIMEOUT_PAUSE_S)
+
+    if r is None:
+        # Unreachable with a budget >= 1: the final attempt either breaks with a
+        # reply or raises above. It becomes reachable the moment someone sets the
+        # budget to 0, and then ``range(1, 1)`` is empty and the read never runs
+        # at all. Say which knob is wrong; the bare read below would raise
+        # UnboundLocalError from a line that has nothing to do with the cause.
+        raise RuntimeError(
+            f"Stage A residue {k} mod {n} was never asked: "
+            f"STAGE_A_TIMEOUT_RETRIES is {STAGE_A_TIMEOUT_RETRIES}, which "
+            f"skips the read loop entirely. It must be >= 1."
+        )
 
     truncated = bool(r.get("truncated")) or r["row_count"] >= cce.ROW_CAP
     if not truncated:

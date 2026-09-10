@@ -928,6 +928,30 @@ def test_a_stage_a_class_that_never_lands_says_LOAD_not_width(monkeypatch):
     assert "irreducible" not in msg
 
 
+def test_a_zero_retry_budget_names_the_knob_instead_of_UnboundLocalError(monkeypatch):
+    """CodeQL's `r` may be used before it is initialized, made executable.
+
+    A budget of 0 makes ``range(1, 1)`` empty, so the read loop never runs and
+    no reply is ever bound. The old shape then raised ``UnboundLocalError`` from
+    the truncation line — a traceback that points at the row cap while the fault
+    is a constant 40 lines up (Hot List gotcha #7). The rail must name the knob.
+    """
+    seen = _fake_db(monkeypatch, [{"row_count": 0, "rows": []}])
+    monkeypatch.setattr(wvf, "STAGE_A_TIMEOUT_RETRIES", 0)
+
+    with pytest.raises(RuntimeError) as e:
+        wvf._read_hash_chunk("polymarket", "hockey", 64, 0)
+
+    assert seen == [], "a zero budget still reached the database"
+    msg = str(e.value)
+    assert "STAGE_A_TIMEOUT_RETRIES" in msg, (
+        "the give-up message does not name the constant that is actually wrong"
+    )
+    assert "LOAD, not width" not in msg, (
+        "a never-asked class was reported as the load story — it never ran"
+    )
+
+
 def test_truncation_still_splits_because_that_one_really_is_the_class(monkeypatch):
     """The other half of the distinction, and the reason the arms cannot be
     merged in either direction. A reply AT the row cap is a statement about
