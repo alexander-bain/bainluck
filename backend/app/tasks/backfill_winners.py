@@ -6801,6 +6801,27 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         ("kalshi_markets_api", lambda: kalshi_markets_stats),
         ("polymarket_api", lambda: poly_api_stats),
         ("bookmaker_calibration", lambda: bookmaker_stats),
+        # CERT-2465's required repair,
+        # `4658-EVERY-COMPLETED-PHASE-STAT-REACHES-THE-PARTIAL-RESULT`. The first
+        # version of this table was the 33 keys the FULL return happened to name,
+        # which is a different set from "every phase that completed" — #4658's
+        # actual acceptance. Seven producers run, finish, and were reported by
+        # neither return. `total_bases_stats` is the sharpest case: it completes
+        # inside `score_resolution`, BEFORE the very first guard, so the one exit
+        # production takes most often dropped it.
+        #
+        # Four of these were already being flagged by Ruff as assigned-and-never-
+        # used (`total_bases_stats`, `dg_early_stats`, `date_passed_stats`,
+        # `bywhen_collapse_stats`) — the linter had been saying for some time that
+        # these phases' results go nowhere, and the full return's key list was the
+        # reason nobody read it as a finding.
+        ("kalshi_total_bases", lambda: total_bases_stats),
+        ("datagolf_early", lambda: dg_early_stats),
+        ("date_passed_binaries", lambda: date_passed_stats),
+        ("bywhen_ladder_collapse", lambda: bywhen_collapse_stats),
+        ("candlestick_snapshots", lambda: candlestick_stats),
+        ("trade_history", lambda: trade_stats),
+        ("datagolf_makecut_fix", lambda: dg_makecut_fix_stats),
     )
 
     def _phase_stats():
