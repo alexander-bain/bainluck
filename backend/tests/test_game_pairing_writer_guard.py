@@ -102,6 +102,80 @@ class TestPairVerdictOnProductionSpecimens:
         assert pair_verdict(a, b) is pair_verdict(b, a)
 
 
+class TestTheConstantIsPinnedToTheMeasuredPopulation:
+    """The 12h constant is safe because of a MEASURED gap, not a round number.
+
+    The tests above pin the constant against illustrative numbers — 6h for a
+    doubleheader, 24h for the next day's game. Both are true and neither is
+    measured. `SAME_GAME_MAX_SEPARATION` lives in the empty band between them,
+    so what actually bounds it is the CLOSEST REAL PAIR of distinct games we
+    carry, and until now nothing in this suite named that number.
+
+    Measurement (authority/094, 2026-09-09, D106 R4 — over the window the
+    events table could still be read): every same-UTC-day same-team-pair group
+    in that window, 19 of them (18 MLB, 1 NHL, 0 NBA), fell between 17.4h and
+    23.1h apart, and NONE was doubleheader-shaped — they are consecutive games
+    of a series that the UTC calendar happens to fold onto one date.
+
+    That is a dated census, not a standing fact. It expires when the sports mix
+    changes: a league with a genuine sub-17h same-pair turnaround (a tournament
+    playing two rounds in a day, a doubleheader that lands in the readable
+    window) lowers the ceiling and this class must be re-measured, not relaxed.
+    """
+
+    #: The closest real pair of DISTINCT games in the measured window.
+    MEASURED_MIN_REAL_SERIES_GAP = timedelta(hours=17, minutes=24)  # 17.4h
+    #: The widest, i.e. an ordinary next-evening series game.
+    MEASURED_MAX_REAL_SERIES_GAP = timedelta(hours=23, minutes=6)  # 23.1h
+    #: MLB day/night (~3-5h) through a split doubleheader (~7h).
+    DOUBLEHEADER_BAND = (timedelta(hours=3), timedelta(hours=7))
+
+    @pytest.mark.parametrize(
+        "gap",
+        [
+            timedelta(hours=17, minutes=24),
+            timedelta(hours=20),
+            timedelta(hours=23, minutes=6),
+        ],
+    )
+    def test_every_measured_real_pair_stays_two_games(self, gap):
+        base = _dt(2026, 8, 17, 17, 5)
+        assert pair_verdict(base, base + gap) is Pairing.DIFFERENT, gap
+
+    def test_the_constant_is_sandwiched_by_both_measured_bounds(self):
+        """The one assertion this class exists for.
+
+        Below: a doubleheader must still pair, so the constant cannot fall under
+        7h. Above: widening it past 17.4h folds the closest measured real pair
+        into a single game, and each fold LOSES a genuine fixture — the #1947
+        failure mode, arrived at from the other direction.
+        """
+        _, split_doubleheader = self.DOUBLEHEADER_BAND
+        assert split_doubleheader < SAME_GAME_MAX_SEPARATION, (
+            f"{SAME_GAME_MAX_SEPARATION} would split a real doubleheader"
+        )
+        assert SAME_GAME_MAX_SEPARATION < self.MEASURED_MIN_REAL_SERIES_GAP, (
+            f"{SAME_GAME_MAX_SEPARATION} would fold real series games into one "
+            f"(closest measured pair: {self.MEASURED_MIN_REAL_SERIES_GAP})"
+        )
+
+    def test_a_real_doubleheader_cannot_be_split_anywhere_in_the_band(self):
+        """Stated, not asserted away: `pair_verdict` CANNOT tell a doubleheader
+        from one game, and that is the deliberate direction of the trade.
+
+        Merging two halves of a doubleheader costs one card; splitting a series
+        game stamps a live final onto a fixture that has not started (#1947).
+        The predicate is built to never do the second, which means it can do the
+        first. The measurement above says the readable window held no
+        doubleheader-shaped group, so nothing observed exercises this — but MLB
+        does schedule them, so this is a known limit, not a proof of absence.
+        """
+        low, high = self.DOUBLEHEADER_BAND
+        base = _dt(2026, 8, 17, 17, 5)
+        assert pair_verdict(base, base + low) is Pairing.SAME
+        assert pair_verdict(base, base + high) is Pairing.SAME
+
+
 class TestCouldNotCheckIsNotSame:
     """Doctrine: could-not-check never renders as nothing-to-report."""
 
