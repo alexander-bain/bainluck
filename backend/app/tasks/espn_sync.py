@@ -661,6 +661,31 @@ async def _sync_espn_live_events():
             # ── Discover which sports need ESPN data ──────────────
             live_sport_keys, scheduled_sport_keys = await _find_sport_keys_to_sync(session)
 
+            # ── Ask the authority about the day the match is filed under ──
+            #
+            # BEFORE the no-live-games return, deliberately. A straggler is
+            # precisely a row nothing is live for any more, so gating this pass
+            # on today's slate would skip exactly the population it exists to
+            # reach — and `_find_sport_keys_to_sync` has no `suspended` arm, so
+            # a sport whose only unsettled row is suspended contributes nothing
+            # to `live_sport_keys` at all.
+            straggler_espn = ESPNAPIService()
+            try:
+                await _settle_authority_stragglers(
+                    session,
+                    straggler_espn,
+                    datetime.now(timezone.utc),
+                    stats,
+                    update_event_fields_from_espn,
+                )
+            except Exception as e:
+                stats["errors"].append(f"authority_stragglers: {str(e)}")
+                logger.warning(
+                    "Authority straggler pass failed: %s", e, exc_info=True
+                )
+            finally:
+                await straggler_espn.close()
+
             if not live_sport_keys:
                 return {"status": "no_live_games", **stats}
 
@@ -791,6 +816,136 @@ async def _sync_espn_live_events():
         logger.warning("ESPN sync task error: %s", e, exc_info=True)
 
     return stats
+
+
+#: How far back a straggler is worth asking about. Deliberately the same 48h as
+#: :data:`SUSPENDED_RESUME_WINDOW` — the two arms reach the same rows from
+#: opposite directions (that one puts a suspended match back on court, this one
+#: ends it) and a row either arm can reach should not depend on which asked.
+AUTHORITY_STRAGGLER_LOOKBACK = timedelta(hours=48)
+
+#: A match is a straggler only once it has had time to be one. Two hours past
+#: its own kickoff is comfortably inside every sport's minimum duration, so this
+#: never races a genuinely live game to the settle door — and the door itself
+#: refuses anything ESPN has not marked ``completed`` regardless.
+AUTHORITY_STRAGGLER_MIN_AGE = timedelta(hours=2)
+
+
+async def _settle_authority_stragglers(session, espn, now, stats, update_fields_fn):
+    """End a match the authority finished on a board day we never asked about.
+
+    #4652. The mechanism, the measurement and why widening the status filters
+    alone is inert are all in
+    :func:`~app.utils.event_completion.authority_board_day_has_rolled`. This is
+    the pass that acts on it.
+
+    ── MATCHED ON ``espn_id`` ONLY, WHICH IS THE WHOLE SAFETY CASE ──
+
+    The obvious implementation is to merge the prior day's board into
+    ``espn_data[sport_key]`` and let the existing pass run. That is the one
+    thing this must not do. ``match_event_to_espn`` falls back to NAME matching
+    with no time guard at all (``espn_helpers`` says so in its own header), and
+    yesterday's finished LAFC fixture and today's scheduled LAFC fixture are the
+    same two names — so merging the boards would let a finished game's score and
+    a Final settle onto a match that has not kicked off. That is gotcha #32's
+    class and CERT-752's failure mode in one step.
+
+    So this pass never matches by name. It looks each candidate up by its own
+    ``espn_id`` in the board for its own day, and a board that does not contain
+    that id is a no-op. Asking the wrong day therefore costs a request and
+    changes nothing, which is what makes the date arithmetic safe to be wrong.
+
+    Nothing here decides that a match is over: :func:`update_fields_fn` settles
+    only on ``state="post"`` **and** ``completed=True``
+    (``espn_terminal_state``), so a postponed or abandoned fixture — event
+    15291065, FC Cincinnati v D.C. United, is in this very candidate set at 0-0
+    — reaches the door and is correctly refused.
+    """
+    from app.utils.event_completion import (
+        EVENT_SUSPENDED,
+        authority_board_day_has_rolled,
+        espn_board_date,
+    )
+
+    stats["straggler_candidates"] = 0
+    stats["straggler_boards_fetched"] = 0
+    stats["straggler_settled"] = 0
+
+    result = await session.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            # The two states an authority may still end (`authority_may_settle`
+            # admits exactly these). A settled row is left alone — re-ending it
+            # rewrites history for no reader.
+            Event.status.in_(["live", EVENT_SUSPENDED]),
+            Event.espn_id.isnot(None),
+            Event.commence_time >= now - AUTHORITY_STRAGGLER_LOOKBACK,
+            Event.commence_time <= now - AUTHORITY_STRAGGLER_MIN_AGE,
+        )
+    )
+
+    groups: dict[tuple[str, str], list] = {}
+    for event in result.scalars().all():
+        # A row whose board day is still today is already reachable by the
+        # ordinary pass; asking again would just spend a request to agree.
+        if not authority_board_day_has_rolled(event.commence_time, now):
+            continue
+        sport_key = event.sport.key if event.sport else ""
+        if sport_key not in ESPN_SPORT_MAPPING:
+            continue
+        groups.setdefault(
+            (sport_key, espn_board_date(event.commence_time)), []
+        ).append(event)
+
+    stats["straggler_candidates"] = sum(len(v) for v in groups.values())
+
+    for (sport_key, board_date), events in sorted(groups.items()):
+        # Per-group, so one sport's dark board or bad row cannot wipe the pass
+        # for every other sport (gotcha #42).
+        try:
+            board = await espn.get_scoreboard(sport_key, date=board_date)
+        except Exception as e:
+            stats["errors"].append(
+                f"straggler_fetch_{sport_key}_{board_date}: {str(e)}"
+            )
+            continue
+
+        if board is None:
+            # AUTHORITY DARK — ESPN did not answer. An absence from a board
+            # nobody served proves nothing (#3473), so nothing is settled.
+            stats["authority_dark_sports"] += 1
+            logger.warning(
+                "ESPN board %s authority dark for %s — %d straggler(s) left "
+                "as they are", board_date, sport_key, len(events),
+            )
+            continue
+
+        stats["straggler_boards_fetched"] += 1
+        by_id = {ee.espn_id: ee for ee in board if ee.espn_id}
+        claimed_espn_ids = {e.espn_id for e in events if e.espn_id}
+
+        for event in events:
+            matched = by_id.get(event.espn_id)
+            if matched is None:
+                continue
+            was = event.status
+            try:
+                await update_fields_fn(
+                    session, event, matched, claimed_espn_ids, stats
+                )
+            except Exception as e:
+                stats["errors"].append(f"straggler_update_{event.id}: {str(e)}")
+                continue
+            if event.status != was:
+                stats["straggler_settled"] += 1
+                logger.info(
+                    "#4652 straggler: event %d (%s vs %s, %s) %s → %s from the "
+                    "%s board — the day it was filed under, not the day we "
+                    "were asking about.",
+                    event.id, event.home_team_name, event.away_team_name,
+                    sport_key, was, event.status, board_date,
+                )
 
 
 async def _find_sport_keys_to_sync(session):
