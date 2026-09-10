@@ -37,6 +37,7 @@ dates ten days apart, and it must not try: that is the events layer's fix.
 
 from __future__ import annotations
 
+import itertools
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -259,9 +260,25 @@ class _FakeDB:
         return _FakeResult(self._events)
 
 
-def _bout(home, away, when):
+_BOUT_IDS = itertools.count(1)
+
+
+def _bout(home, away, when, event_id=None):
+    """An Event row for one fight.
+
+    `id` is not decoration: `bout_order_key` (#4555) orders a card's bouts by
+    `(commence_time, id)` because commence alone is not a total order — 7 of 18
+    combat cards measured on production 2026-09-10 have two or more bouts at
+    their latest commence, and `event:ufc:26sep10` has ten. A stub without a PK
+    is not shaped like the row it stands in for, so these get one; the counter
+    keeps declaration order, which is what every fixture below reads as the
+    card's order anyway.
+    """
     return SimpleNamespace(
-        home_team_name=home, away_team_name=away, commence_time=when
+        id=event_id if event_id is not None else next(_BOUT_IDS),
+        home_team_name=home,
+        away_team_name=away,
+        commence_time=when,
     )
 
 
