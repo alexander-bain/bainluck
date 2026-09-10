@@ -16,8 +16,6 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-
 from app.routes.feed import PersonalizationContext, apply_discover_display_chain
 from app.utils.sports_first_page_rails import (
     FINISHED_RAIL_FIRST_PAGE_CAP,
