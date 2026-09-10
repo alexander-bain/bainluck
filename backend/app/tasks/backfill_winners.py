@@ -8954,12 +8954,47 @@ async def _compute_calibration_prices():
             if reset_a2_total > 0:
                 logger.info("Calibration Part A2 reset: %d outcomes", reset_a2_total)
 
+            # #4688 THE STUCK HEAD. This loop used to select the newest 20,000
+            # NULL rows by `commence_time DESC` with no cursor, and break on
+            # `rowcount == 0` — a window it re-selected identically every
+            # iteration, because the UPDATE's own `COALESCE(...) IS NOT NULL`
+            # guard discarded most of what the window handed it and those rows
+            # stayed NULL. Measured on the 2026-09-10 20:10Z beat (terminal
+            # `complete`, `stopped_at: None`, 82s of budget unspent — this was
+            # never a starvation): the reset nulled 9,801 rows and this refill
+            # re-priced 3,126. One unfillable head window permanently blocked
+            # everything behind it, and the population behind it is not small —
+            # 1,035,350 NULL rows in this scope, of which 969,290 have no
+            # opening_probability at all and 912k of those have no pre-commence
+            # snapshot either, so they can never be filled and were re-scanned
+            # forever while the fillable tail was never reached.
+            #
+            # Two changes, and they are the idiom Part A-repair and Part B in
+            # this same function already use:
+            #
+            # 1. The window carries the UPDATE's own fillability test, so every
+            #    row selected is a row that will be written. That is what makes
+            #    the `scanned == 0` break sound: it now means "no fillable rows
+            #    remain past the cursor", where `rowcount == 0` meant "this one
+            #    window happened to be unfillable" and stopped the whole part.
+            # 2. A keyset cursor on `fo.id`. Not needed for correctness once (1)
+            #    holds — filled rows leave the set on their own — but needed for
+            #    COST: without it every batch re-scans from the top of a 1M-row
+            #    population to find its 20,000, paying the EXISTS seek again each
+            #    time. With it the whole run costs ONE pass over the id range.
+            #
+            # The fillability disjunct is exact, not a proxy: `opening IS NOT
+            # NULL` alone would drop the 6.1% of opening-less rows (~57,000
+            # measured) that a pre-commence snapshot can still price, which this
+            # loop fills today. The EXISTS mirrors the LATERAL below it exactly;
+            # if one moves the other must move with it.
             part_a2_total = 0
+            part_a2_cursor = 0
             for _ in range(400):
                 if _cal_remaining() <= 0:
                     stats["stopped_at"] = stats["stopped_at"] or "part_a2"
                     break
-                result_a2 = await session.execute(text("""
+                result_a2 = await _run_bounded(session, text("""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, fm.commence_time,
                                    fo.opening_probability
@@ -8969,36 +9004,61 @@ async def _compute_calibration_prices():
                               AND fo.calibration_probability IS NULL
                               AND fm.commence_time IS NOT NULL
                               AND (fm.event_id IS NULL)
-                            ORDER BY fm.commence_time DESC
-                            LIMIT 20000
+                              AND fo.id > :cursor
+                              AND (
+                                  fo.opening_probability IS NOT NULL
+                                  OR EXISTS (
+                                      SELECT 1
+                                      FROM futures_odds_snapshots fos
+                                      WHERE fos.outcome_id = fo.id
+                                        AND fos.captured_at < fm.commence_time
+                                        AND fos.probability > 0
+                                        AND fos.probability < 1
+                                  )
+                              )
+                            ORDER BY fo.id
+                            LIMIT :batch
+                        ), upd AS (
+                            UPDATE futures_outcomes fo
+                            SET calibration_probability = COALESCE(
+                                closing.probability, nc.opening_probability
+                            )
+                            FROM needs_cal nc
+                            LEFT JOIN LATERAL (
+                                SELECT fos.probability
+                                FROM futures_odds_snapshots fos
+                                WHERE fos.outcome_id = nc.outcome_id
+                                  AND fos.captured_at < nc.commence_time
+                                  AND fos.probability > 0 AND fos.probability < 1
+                                ORDER BY fos.captured_at DESC
+                                LIMIT 1
+                            ) closing ON true
+                            WHERE fo.id = nc.outcome_id
+                              AND COALESCE(closing.probability, nc.opening_probability) IS NOT NULL
+                            RETURNING fo.id
                         )
-                        UPDATE futures_outcomes fo
-                        SET calibration_probability = COALESCE(
-                            closing.probability, nc.opening_probability
-                        )
-                        FROM needs_cal nc
-                        LEFT JOIN LATERAL (
-                            SELECT fos.probability
-                            FROM futures_odds_snapshots fos
-                            WHERE fos.outcome_id = nc.outcome_id
-                              AND fos.captured_at < nc.commence_time
-                              AND fos.probability > 0 AND fos.probability < 1
-                            ORDER BY fos.captured_at DESC
-                            LIMIT 1
-                        ) closing ON true
-                        WHERE fo.id = nc.outcome_id
-                          AND COALESCE(closing.probability, nc.opening_probability) IS NOT NULL
-                    """))
-                await session.commit()
-                part_a2_total += result_a2.rowcount
-                if result_a2.rowcount == 0:
+                        SELECT (SELECT COUNT(*) FROM upd) AS updated,
+                               (SELECT COUNT(*) FROM needs_cal) AS scanned,
+                               (SELECT MAX(outcome_id) FROM needs_cal) AS max_id
+                    """), {"cursor": part_a2_cursor, "batch": _CAL_BATCH}, "part_a2")
+                if result_a2 is None:
                     break
+                row_a2 = result_a2.mappings().first()
+                await session.commit()
+                scanned_a2 = int(row_a2["scanned"] or 0)
+                part_a2_total += int(row_a2["updated"] or 0)
+                if scanned_a2 == 0:
+                    break
+                part_a2_cursor = int(row_a2["max_id"] or part_a2_cursor)
                 logger.info(
-                    "Calibration Part A2: batch processed %d (total %d)",
-                    result_a2.rowcount,
+                    "Calibration Part A2: scanned %d, priced %d (total %d, cursor %d)",
+                    scanned_a2,
+                    int(row_a2["updated"] or 0),
                     part_a2_total,
+                    part_a2_cursor,
                 )
             stats["with_market_commence"] = part_a2_total
+            stats["part_a2_cursor"] = part_a2_cursor
 
             # Part A-sanity: Revert calibration_probability to opening_probability
             # when the computed value diverges too far from opening, indicating
@@ -9042,6 +9102,35 @@ async def _compute_calibration_prices():
                             WHERE fm.status = 'resolved'
                               AND fo.calibration_probability IS NULL
                               AND (fm.event_id IS NULL OR e.commence_time IS NULL)
+                              -- #4688 D1: this Part is documented as the one for
+                              -- non-event markets WITHOUT a commence_time, but
+                              -- that half of the contract was never in the SQL.
+                              -- The disjunct above tests the EVENT's boundary
+                              -- (`e.commence_time`); every Part A2 market has
+                              -- `fm.event_id IS NULL`, so the first arm fires and
+                              -- Part B admitted A2's entire population whatever
+                              -- the MARKET's own commence_time said. It then
+                              -- priced those rows off `opening_captured_at + 1h`
+                              -- — the opening-day price — which is the exact
+                              -- symptom #4688 is named for: A2 nulls a row so it
+                              -- can be repriced to its real pre-commence closing
+                              -- line, A2's refill does not reach it, Part B
+                              -- stamps the opening back on, and the next beat
+                              -- nulls it again. A closed loop, ~6,700 rows a run.
+                              -- The stuck-head fix above is what drains A2's own
+                              -- rows; this is what stops the loop re-forming if
+                              -- A2 is ever cut short by budget mid-sweep, which
+                              -- is the one case where Part B could still see them.
+                              -- Excludes EXACTLY A2's refill scope and nothing
+                              -- else: event-linked rows are untouched, and the
+                              -- unpriceable remainder (no opening, no snapshot)
+                              -- was already dropped by this Part's own
+                              -- `IS NOT NULL` write guard, so no row loses a
+                              -- price it was getting.
+                              AND NOT (
+                                  fm.event_id IS NULL
+                                  AND fm.commence_time IS NOT NULL
+                              )
                               AND fo.id > :cursor
                             ORDER BY fo.id
                             LIMIT :batch
