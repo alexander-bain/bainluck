@@ -111,7 +111,12 @@ final class TeamShortNameTests: XCTestCase {
         XCTAssertEqual(TeamShortName.abbreviation("Charlotte FC"), "CHA")
         XCTAssertEqual(TeamShortName.abbreviation("Toronto FC"), "TOR")
         XCTAssertEqual(TeamShortName.abbreviation("Baltimore Orioles"), "ORI")
-        XCTAssertEqual(TeamShortName.abbreviation("Boston Red Sox"), "SOX")
+        // #4539 — three distinctive words, so the badge is their initials. `SOX`
+        // was this row until the initials fork landed; the browser has printed
+        // `BRS` since #4466 and the two clients now agree. Pinned as the accepted
+        // cost it is: familiarity traded for a badge that cannot be the White Sox
+        // too. The two-part names above are deliberately untouched by the fork.
+        XCTAssertEqual(TeamShortName.abbreviation("Boston Red Sox"), "BRS")
         // Before #3374 all four FC clubs drew the same two letters.
         XCTAssertNotEqual(TeamShortName.abbreviation("Charlotte FC"),
                           TeamShortName.abbreviation("Toronto FC"))

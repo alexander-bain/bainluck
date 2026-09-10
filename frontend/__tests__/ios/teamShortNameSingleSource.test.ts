@@ -105,9 +105,19 @@ d("iOS team short names have exactly one implementation", () => {
     // could badge a label it had just widened. The property is unchanged and
     // still asserted: `abbreviation` starts from `short`, never from its own
     // split of the raw name.
-    expect(canonical).toMatch(/static func abbreviation\(_ name: String\) -> String \{\s*glyphs\(ofLabel: short\(name\)\)/);
+    //
+    // #4539 added ONE branch above that: a name whose distinctive part is three
+    // or more words takes their initials, so PSG stops being "GER". The shipped
+    // rule is still what every other name gets, and this pins that it is reached
+    // by delegation rather than re-derived — an `abbreviation` that split the raw
+    // name itself would be the re-implementation this whole file exists to catch.
+    expect(canonical).toMatch(/let shipped = glyphs\(ofLabel: short\(name\)\)/);
+    expect(canonical).toMatch(/return shipped/);
     expect(canonical).toMatch(/label\.split\(separator: " "\)/);
     expect(canonical).toMatch(/\.uppercased\(\)/);
+    // The fork reads the name once, through the shared token filter, and never
+    // takes a last word of its own.
+    expect(canonical).not.toMatch(/abbreviation[\s\S]{0,400}?parts\.last/);
   });
 
   it("the badge skips a LEADING designator, but never down to nothing", () => {

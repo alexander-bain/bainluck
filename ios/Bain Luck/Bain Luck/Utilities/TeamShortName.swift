@@ -89,6 +89,26 @@ enum TeamShortName {
         "jr", "sr",
     ]
 
+    /// Three-glyph strings that may never appear on a crest, whatever produces
+    /// them.
+    ///
+    /// #4539 — a BACKSTOP, not the fix. The structural cases are removed by
+    /// filtering non-distinctive tokens out before counting them (see
+    /// `distinctiveTokens`); this catches what is left when three genuinely
+    /// distinctive words happen to spell something. Kept explicit and short: a
+    /// badge is three uppercase letters, so a substring matcher would be all
+    /// false positives.
+    ///
+    /// This is the browser's `UNSHIPPABLE_BADGES` (`frontend/lib/teamShortName.ts`)
+    /// and the two are compared out of source by
+    /// `frontend/__tests__/teamDesignatorParityAcrossClients.test.ts`, exactly
+    /// as the designator set above is — a transcribed copy that nothing checks
+    /// is the third implementation this file exists to prevent.
+    private static let unshippableBadges: Set<String> = [
+        "ass", "fag", "fuc", "fuk", "cum", "coc", "cok", "cnt", "kkk",
+        "nig", "sht", "tit", "twa", "wtf", "jiz", "pis", "sex", "hoe",
+    ]
+
     /// A founding year ("1. FC Heidenheim 1846") names a team no better than
     /// "FC" does, and the shipped rule printed it as the whole label.
     ///
@@ -137,8 +157,121 @@ enum TeamShortName {
     ///
     /// Together these take unusable badges — those that cannot fill three glyphs
     /// — from 371 on the pre-#3374 rule to 56, and regress none.
+    ///
+    /// 3. **#4539 — a name whose distinctive part is three or more words takes
+    ///    their INITIALS.** Both refinements above operate on the label `short`
+    ///    hands back, and `short` has already chosen the last word by then, so
+    ///    neither can help when the last word is a fragment of a compound rather
+    ///    than a name anybody uses: **"Paris Saint Germain" → "Germain" → `GER`**,
+    ///    photographed on the browser's Discover card 2026-09-09 12:40 PT (#4466)
+    ///    and reached by this function through exactly the same route. The stored
+    ///    spelling is an INPUT and both are live, so the second spelling drew a
+    ///    second wrong badge an hour later: "Paris Saint-Germain" → "Saint-Germain"
+    ///    → `SAI`. Splitting hyphens like spaces is what makes the two agree.
+    ///
+    /// See `distinctiveTokens` for why this is not a bare word count.
     static func abbreviation(_ name: String) -> String {
-        glyphs(ofLabel: short(name))
+        // The shipped rule, still the answer for every two-part name — and the
+        // fallback whenever the fork below declines. "Ipswich Town" is `IPS`,
+        // "Boston Celtics" is `CEL`, "Altrincham FC" is `ALT`.
+        let shipped = glyphs(ofLabel: short(name))
+        // #3110 pinned the doubles tile at three glyphs of the FIRST surname, and
+        // that decision is not this function's to reopen — a pair is not a
+        // compound name, it is two names. `short` returns a pair unchanged, so
+        // routing it through the fork would badge "Siniakova / Townsend" as `ST`
+        // off two "distinctive" tokens.
+        if name.contains(" / ") { return shipped }
+        let distinctive = distinctiveTokens(name)
+        guard distinctive.count >= 3 else { return shipped }
+        // The initial is the token's first GLYPH, not its first character. A
+        // token can open with punctuation the split does not separate on, and
+        // `charAt(0)` then puts it on the badge: "Atalanta (1st Leg)" draws
+        // **`A(L`** on the browser, which is a bracket on a crest and breaks
+        // this file's own three-real-glyphs invariant
+        // (`testTheBadgeIsAlwaysThreeRealGlyphs`). Measured 2026-09-09 over the
+        // whole production population: 33 distinct names draw a browser badge
+        // carrying a character that is neither a letter nor a digit, including
+        // the real clubs "Bradford (Park Avenue) AFC" (`B(A`) and "Loyola (Chi)
+        // Ramblers" (`L(R`). The browser is wrong here and is deliberately not
+        // copied — filed as #4625.
+        let initials = String(
+            distinctive.compactMap { $0.first(where: { $0.isLetter || $0.isNumber }) }.prefix(3)
+        ).uppercased()
+        // The residue the token filter cannot reach: a three-part PERSON name is
+        // all-distinctive by construction ("Ana Sofia Sanchez" → `ASS`), and no
+        // filter that keeps "Paris Saint Germain" working can tell the two apart
+        // from the string alone. The surname is the right badge for a person
+        // anyway, so reverting to the shipped value is the correct answer rather
+        // than a censor. The test is "do not INTRODUCE one", not "never emit
+        // one" — names that already paint one by the untouched last-word rule
+        // are #4537's, on the browser's evidence, and are not silently
+        // re-lettered here.
+        if unshippableBadges.contains(initials.lowercased()),
+           !unshippableBadges.contains(shipped.lowercased()) {
+            return shipped
+        }
+        return initials
+    }
+
+    /// The tokens of a name that identify the CLUB, in order.
+    ///
+    /// #4539. IT IS NOT A BARE WORD COUNT, AND THAT IS THE WHOLE DESIGN. The
+    /// browser measured a first version of this fork that took initials of every
+    /// token once a name had three parts, over the whole production population
+    /// (19,675 distinct multi-part `events` team names, 2026-09-09): it
+    /// introduced 33 badges that were not there before and that nobody may ship
+    /// — "Warrington Town FC" → `WTF` and eleven more `<W> Town FC`, "FC Akhmat
+    /// Grozny" → `FAG`, "Al Sadd SC" → `ASS`. Every one is a club-type or article
+    /// token being counted as if it identified somebody, and filtering them out
+    /// FIRST removes the whole class structurally rather than by blocklist:
+    /// "Warrington Town FC" keeps `WAR`, "Al Sadd SC" keeps `SAD`, while "Paris
+    /// Saint Germain" — three tokens that all identify the club — becomes `PSG`.
+    ///
+    /// THE PREDICATE IS THE BROWSER'S, REACHED THROUGH THIS FILE'S OWN SET. The
+    /// browser's `isNonDistinctiveTrailingWord` is `length <= 2`, its
+    /// `CLUB_TYPE_SUFFIXES`, a squad marker, a bare number or a roman numeral.
+    /// The clauses below are those, with `designators` standing in for
+    /// `CLUB_TYPE_SUFFIXES` — which is sound, and checked, because
+    /// `teamDesignatorParityAcrossClients.test.ts` already asserts containment
+    /// BOTH ways: every browser suffix is in `designators`, and every member of
+    /// `designators` satisfies the browser's predicate. Transcribing the
+    /// browser's set into Swift would be a third implementation; borrowing this
+    /// file's own set makes the two agree by the guard that already exists.
+    ///
+    /// Alphanumerics are ASCII-only, matching the browser's `[^A-Za-z0-9]` strip,
+    /// so a three-character token carrying two accents counts as short on both
+    /// clients rather than on one.
+    private static func distinctiveTokens(_ name: String) -> [String] {
+        name.components(separatedBy: tokenSeparators)
+            .filter { !$0.isEmpty && !isNonDistinctiveToken($0) }
+    }
+
+    /// Whitespace plus every dash, so that "Paris Saint-Germain" and "Paris
+    /// Saint Germain" — both live on production the same afternoon — split into
+    /// the same three tokens and paint the same badge.
+    private static let tokenSeparators: CharacterSet = {
+        var set = CharacterSet.whitespacesAndNewlines
+        set.insert(charactersIn: "-")                                     // U+002D
+        set.insert(charactersIn: Unicode.Scalar(0x2010)!...Unicode.Scalar(0x2015)!)
+        return set
+    }()
+
+    /// Is this token incapable of identifying the club on its own?
+    ///
+    /// Distinct from `isDesignator`, which asks whether a TRAILING word may be a
+    /// label all by itself. This one is the browser's rule and is used only by
+    /// the badge fork — widening `isDesignator` instead would move `short`, and
+    /// the name a reader sees is not what #4539 is about.
+    private static func isNonDistinctiveToken<S: StringProtocol>(_ token: S) -> Bool {
+        let bare = String(token.filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
+        if bare.count <= 2 { return true }
+        let lower = bare.lowercased()
+        if designators.contains(lower) { return true }
+        if lower.allSatisfy(\.isNumber) { return true }                   // 1846
+        if lower.first == "u", lower.count == 3,
+           lower.dropFirst().allSatisfy(\.isNumber) { return true }       // U20
+        if lower.allSatisfy({ $0 == "i" }) { return true }                // III
+        return false
     }
 
     /// The three glyphs of a label that is ALREADY final.
@@ -234,15 +367,44 @@ enum TeamShortName {
     }
 
     /// Three-glyph badges for the two competitors of one matchup.
+    ///
+    /// #4539 — WHY THE LABELS DECIDE THIS AND NOT ONLY THE BADGES. Growing on
+    /// "the two badges are equal" was sufficient while both sides ran one rule.
+    /// The initials fork breaks that, because it can move ONE side of a derby off
+    /// the word the two clubs share while the other side keeps it — and two
+    /// badges that now differ are never grown, so the collision stops being
+    /// detected instead of being repaired:
+    ///
+    ///     FK Septemvri Sofia v PFC Levski Sofia               SEP/LEV → SOF/PLS
+    ///     FK Partizan Belgrade v FK Crvena Zvezda Belgrade    PAR/ZVE → BEL/CZB
+    ///     Chartres Metropole Handball v Montpellier Handball  MET/MON → CMH/HAN
+    ///     AD San Carlos v Inter San Carlos                    SAN/INT → CAR/ISC
+    ///
+    /// The away side of each keeps a badge naming the CITY — or, worse, the SPORT
+    /// — that both sides share, which is #3430's photographed defect surviving in
+    /// exactly the derbies #3430 was filed about. `TeamShortNamePairTests` caught
+    /// it: 79 of its rows moved when the fork went in on the badges alone.
+    ///
+    /// The signal was never the badges. It is that `short` returns the same LABEL
+    /// for both names, which is what says the two clubs share their distinctive
+    /// tail; the badges were only ever a proxy for it, and the fork is what pulled
+    /// the proxy off the thing it proxied. Testing the labels directly restores
+    /// all 114 of #3430's rescues byte-identical and leaves the fork to the pairs
+    /// whose labels already differ — which is every pair the fork exists for.
     static func abbreviationPair(
         away: String,
         home: String,
         awayServed: String? = nil,
         homeServed: String? = nil
     ) -> (away: String, home: String) {
-        let a = served(awayServed) ?? abbreviation(away)
-        let h = served(homeServed) ?? abbreviation(home)
-        guard a == h else { return (a, h) }
+        let awayAbbr = served(awayServed)
+        let homeAbbr = served(homeServed)
+        let a = awayAbbr ?? abbreviation(away)
+        let h = homeAbbr ?? abbreviation(home)
+        // A served pair still wins wherever it discriminates, exactly as before:
+        // growth is only ever reached for labels we derived ourselves.
+        let derived = awayAbbr == nil && homeAbbr == nil
+        guard a == h || (derived && short(away) == short(home)) else { return (a, h) }
         let widened = grown(away: away, home: home)
         return (glyphs(ofLabel: widened.away), glyphs(ofLabel: widened.home))
     }
