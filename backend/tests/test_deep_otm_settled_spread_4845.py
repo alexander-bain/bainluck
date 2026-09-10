@@ -222,9 +222,18 @@ async def test_a_full_game_rung_at_the_same_price_stays_dropped(finished_client)
     """The control: "settled window", not "cheap rung", is what recovers a row.
 
     `Atlanta -8.5` is the same 0.01 on the same finished event. Its window is
-    the whole game, `prop_window_closed` cannot prove a window that is not
-    window-bounded, and #921's floor is still the right answer for it. If this
+    the whole game, so #921's floor is still the right answer for it. If this
     ever appears, the carve-out has become "publish everything the floor drops".
+
+    HONEST ABOUT WHAT THIS PINS. It pins the READER's outcome, which is what the
+    issue is about — and it does NOT pin the `_window_is_closed` call, because
+    two barriers stand between this row and the page: the carve-out's test, and
+    `prop_window_span` refusing a name that carries no window at all. Deleting
+    the call leaves this test green (mutation run, survived, stated in the cert).
+    The call stays because `_window_closed_items` is documented as holding rows
+    whose window has been PROVED over, and feeding it unproven rows would make
+    that invariant false for the next reader of the collection rather than for
+    this one.
     """
     payload = (await finished_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
 
