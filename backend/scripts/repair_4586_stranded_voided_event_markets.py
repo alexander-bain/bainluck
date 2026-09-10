@@ -192,6 +192,12 @@ SQL = {
     "bak_missing": f"SELECT count(*) FROM futures_markets s "
                    f"WHERE s.id = ANY(CAST(:ids AS int[])) "
                    f"AND NOT EXISTS (SELECT 1 FROM {BAK_TABLE} b WHERE b.id = s.id)",
+    # `bak_missing` names {BAK_TABLE} in a subquery, so it raises UndefinedTable
+    # on any database that has never been backed up — which is every database on
+    # its first run, i.e. exactly the documented plan-only invocation (#4669).
+    # Asked before, never instead: a missing table still yields an empty
+    # reconciliation, which `backup_is_exact` refuses (gotcha #53).
+    "bak_exists": f"SELECT to_regclass('{BAK_TABLE}') IS NOT NULL",
     # Driven by the plan's own ids. `event_id = :old` is a compare-and-swap: if
     # anything moved the market between the plan and the write, this no-ops
     # rather than overwriting a fresher decision with a stale one.
@@ -262,6 +268,19 @@ async def backup(session, market_ids):
     await session.commit()
 
 
+async def backup_table_exists(session) -> bool:
+    """Has anything ever been backed up?
+
+    `backup()` is the only caller of `bak_create`, so without `--backup` the
+    table does not exist and `reconcile_backup` raises. The traceback then
+    replaces the four summary lines the dry run exists to print, and a plan-only
+    run — the documented FIRST step — reads as a broken repair (#4669).
+    """
+    from sqlalchemy import text
+
+    return bool((await session.execute(text(SQL["bak_exists"]))).scalar_one())
+
+
 async def reconcile_backup(session, market_ids) -> dict:
     from sqlalchemy import text
 
@@ -317,10 +336,19 @@ async def run(args) -> None:
                   f"into {BAK_TABLE} ===")
             await backup(s, market_ids)
 
-        recon = await reconcile_backup(s, market_ids)
-        print("\n=== backup reconciliation (in-scope rows with no backup row) ===")
-        for tbl, n in recon.items():
-            print(f"  {tbl}: {n}")
+        if await backup_table_exists(s):
+            recon = await reconcile_backup(s, market_ids)
+            print("\n=== backup reconciliation (in-scope rows with no backup row) ===")
+            for tbl, n in recon.items():
+                print(f"  {tbl}: {n}")
+        else:
+            # Not an error, and deliberately not a refusal here: a plan-only run
+            # is supposed to work before any backup exists. The empty mapping
+            # carries the fact forward, and `backup_is_exact({})` is False, so
+            # `--apply` still refuses below exactly as it did when this raised.
+            recon = {}
+            print(f"\n=== backup reconciliation: {BAK_TABLE} does not exist yet ===")
+            print("  nothing has been backed up, so there is nothing to reconcile.")
         clean = backup_is_exact(recon)
 
         if not args.apply:

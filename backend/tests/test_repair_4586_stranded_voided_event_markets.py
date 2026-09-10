@@ -20,6 +20,7 @@ import inspect
 import pathlib
 
 import pytest
+from sqlalchemy import exc as sqlalchemy_exc
 
 _SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 
@@ -342,8 +343,13 @@ class _Result:
 class _FakeSession:
     """Answers by statement shape. Records every repoint it was asked for."""
 
-    def __init__(self, plan, *, rowcounts=None, missing=0):
+    def __init__(self, plan, *, rowcounts=None, missing=0, has_backup_table=True):
         self.plan, self.missing = plan, missing
+        #: #4669. Until this existed the fake answered `bak_missing` with a count
+        #: unconditionally, so the suite could not express the one state
+        #: production is always in on a first run — the backup table absent —
+        #: and stayed green while the documented dry run raised UndefinedTable.
+        self.has_backup_table = has_backup_table
         self.rowcounts = rowcounts or {}
         self.repoints, self.commits = [], 0
         #: CERT-2439. Recorded separately from `repoints` because the whole
@@ -363,7 +369,15 @@ class _FakeSession:
                 "no_resolution_date": 0})())
         if "HAVING count(*) = 1" in sql:
             return _Result(rows=self.plan)
+        if "to_regclass" in sql:
+            return _Result(one=self.has_backup_table)
         if sql.startswith("SELECT count(*) FROM futures_markets s"):
+            if not self.has_backup_table:
+                # What Postgres actually does, not a stand-in: the statement
+                # names the backup table in a NOT EXISTS subquery.
+                raise sqlalchemy_exc.ProgrammingError(
+                    sql, {}, Exception(
+                        'relation "bak_4586_futures_markets" does not exist'))
             return _Result(one=self.missing)
         if sql.startswith(f"INSERT INTO {repair.MANIFEST_TABLE}"):
             self.manifested.append(params)
@@ -404,6 +418,71 @@ def test_a_dry_run_writes_nothing(monkeypatch):
     s = _FakeSession([_Row(1, 10, 20)])
     written = _run(s, monkeypatch)
     assert s.repoints == [] and written == []
+
+
+def test_a_dry_run_survives_a_database_that_has_never_been_backed_up(monkeypatch, capsys):
+    """#4669: the documented FIRST step, on the state every DB starts in.
+
+    `--backup` is what CREATEs the backup table, so a plan-only run has none.
+    The reconciliation query names that table in a subquery, so before the fix
+    this raised UndefinedTable *after* the plan had printed but *before* the
+    four summary lines the step exists to produce — the operator saw a traceback
+    where the numbers they were told to check should have been, which reads as
+    "the repair is broken" rather than "now pass --backup".
+    """
+    s = _FakeSession([_Row(1, 10, 20)], has_backup_table=False)
+
+    written = _run(s, monkeypatch)
+
+    out = capsys.readouterr().out
+    assert "stranded open markets in total" in out, "the summary never printed"
+    assert "re-pointable with proof" in out
+    assert "DRY-RUN" in out, "the dry run did not reach its own closing line"
+    assert repair.BAK_TABLE in out, "silent about WHY there was nothing to reconcile"
+    assert s.repoints == [] and written == []
+
+
+def test_apply_still_refuses_when_the_backup_table_does_not_exist(monkeypatch):
+    """The crash was load-bearing by accident; the fix must not spend that.
+
+    An absent table yields an empty reconciliation, and `backup_is_exact({})` is
+    False — so `--apply` refuses for the same reason it always did (no undo, no
+    apply). Asserted directly because "it used to raise here" is not a guarantee
+    anyone can rely on once it no longer raises.
+    """
+    s = _FakeSession([_Row(1, 10, 20)], has_backup_table=False)
+
+    written = _run(s, monkeypatch, apply=True)
+
+    assert s.repoints == [], "applied with no backup table at all"
+    assert written == []
+
+
+def test_the_existence_probe_is_asked_before_the_reconciliation_not_instead(monkeypatch):
+    """Guards the shape, not just the outcome.
+
+    Moving the reconciliation below the dry-run return would also stop the
+    crash, but it would silently drop the check from the `--backup`-without
+    `--apply` step whose entire purpose is to prove the backup is exact. So when
+    the table IS present the reconciliation must still run.
+    """
+    asked = []
+    s = _FakeSession([_Row(1, 10, 20)])
+    inner = s.execute
+
+    async def _spy(stmt, params=None, *a, **kw):
+        sql = " ".join(str(stmt).split())
+        if "to_regclass" in sql:
+            asked.append("exists")
+        elif sql.startswith("SELECT count(*) FROM futures_markets s"):
+            asked.append("reconcile")
+        return await inner(stmt, params, *a, **kw)
+
+    s.execute = _spy
+    _run(s, monkeypatch)
+
+    assert asked == ["exists", "reconcile"], (
+        f"probe/reconcile order or presence changed: {asked}")
 
 
 def test_apply_refuses_when_the_backup_is_incomplete(monkeypatch):
