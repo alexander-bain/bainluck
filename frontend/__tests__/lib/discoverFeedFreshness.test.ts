@@ -29,7 +29,11 @@ function futures(opts: {
   } as unknown as FeedItem;
 }
 
-function event(opts: { status?: string; commence_time: string }): FeedItem {
+function event(opts: {
+  status?: string;
+  commence_time: string;
+  ended_at?: string | null;
+}): FeedItem {
   return {
     type: "event",
     data: {
@@ -38,9 +42,12 @@ function event(opts: { status?: string; commence_time: string }): FeedItem {
       away_team: "Away",
       status: opts.status ?? "scheduled",
       commence_time: opts.commence_time,
+      ...(opts.ended_at !== undefined ? { ended_at: opts.ended_at } : {}),
     },
   } as unknown as FeedItem;
 }
+
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3600 * 1000).toISOString();
 
 describe("discover client freshness — authoritative only (L2-214)", () => {
   it("active_known_future: open + future resolution surfaces", () => {
@@ -92,5 +99,80 @@ describe("discover client freshness — authoritative only (L2-214)", () => {
 
   it("scheduled future event surfaces", () => {
     expect(isStale(event({ status: "scheduled", commence_time: FUTURE }))).toBe(false);
+  });
+});
+
+// #4776 — the eight hours are counted from the WHISTLE, not the kickoff.
+//
+// This is the client half of the rule; `backend/tests/test_client_deletion_
+// mirror_3836.py` pins the server's copy and reads this file to check the two
+// have not drifted. Both halves are needed: the backend spends a first-page
+// slot on the prediction that the browser will paint the card, and it is THIS
+// function that decides whether it does.
+describe("discover client freshness — a finished game ages from its end (#4776)", () => {
+  it("keeps the NFL opener at the hour the kickoff clock deleted it", () => {
+    // Real production row: event 14780138, SEA 13-10 NE. 3.11h long. Read at
+    // 8.67h past kickoff / 5.56h past the whistle — the state in which the old
+    // rule dropped it, which on the night was 1:20AM Pacific.
+    expect(
+      isStale(
+        event({
+          status: "completed",
+          commence_time: hoursAgo(8.67),
+          ended_at: hoursAgo(5.56),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("still deletes it once eight hours have passed since the end", () => {
+    expect(
+      isStale(
+        event({
+          status: "completed",
+          commence_time: hoursAgo(11.2),
+          ended_at: hoursAgo(8.1),
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("falls back to commence_time when ended_at is absent", () => {
+    // D109/#4676 requires the stamp stay OPTIONAL: it is absent on unsettled
+    // rows and on any payload cached before the backend that added it. An
+    // unstamped row must give exactly today's answer, both ways.
+    expect(isStale(event({ status: "completed", commence_time: PAST }))).toBe(true);
+    expect(
+      isStale(event({ status: "completed", commence_time: hoursAgo(2) })),
+    ).toBe(false);
+  });
+
+  it("falls back when ended_at is null or empty rather than reading it", () => {
+    for (const blank of [null, ""] as (string | null)[]) {
+      expect(
+        isStale(event({ status: "completed", commence_time: PAST, ended_at: blank })),
+      ).toBe(true);
+    }
+  });
+
+  it("keeps a card whose ended_at is unreadable instead of ageing it out", () => {
+    // `new Date("not a date")` is NaN and `NaN > 8` is false. Unknown age has
+    // always meant "render it" here — inferring "old" from an unparseable stamp
+    // would delete a card the reader was about to see.
+    expect(
+      isStale(
+        event({
+          status: "completed",
+          commence_time: PAST,
+          ended_at: "not a date",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not touch a live game however long ago it started", () => {
+    expect(
+      isStale(event({ status: "live", commence_time: PAST, ended_at: PAST })),
+    ).toBe(false);
   });
 });

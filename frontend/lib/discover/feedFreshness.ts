@@ -18,6 +18,35 @@ import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 /** Hours a completed/closed linked event may still show before it is aged out. */
 export const COMPLETED_EVENT_MAX_AGE_HOURS = 8;
 
+/**
+ * When the clock on those hours starts (#4776).
+ *
+ * A completed event's age starts when it FINISHES. Ageing from `commence_time`
+ * charged every finished card for its own duration: measured over the 39
+ * finished games served at 2026-09-10T12:19Z, the median gap between kickoff
+ * and `ended_at` is 2.26h — 2.78h for MLB and 3.11h for NFL — so the eight
+ * hours the constant above promises were really 5.7, and 4.9 for an NFL game.
+ * The season opener (SEA 13-10 NE, ended 8:26PM PT) left Discover at 1:20AM PT,
+ * which is why #4681's marquee-final arm had no morning on which it could fire:
+ * 0 of 20 tier-1 finals were in window aged from kickoff, 1 aged from the end.
+ *
+ * `ended_at` is D109/#4676's stamp and its two constraints come with it. It is
+ * OPTIONAL — absent on every unsettled row, and a cached payload can predate
+ * the backend that added it — so an absent stamp falls back to `commence_time`
+ * and behaves exactly as before. And it is NOT FOR DISPLAY: it is
+ * `completed_at` when StatPal reported no end, which runs later than the true
+ * whistle by a variable margin. That margin is fine here and is fine in the
+ * safe direction — it retains a card marginally longer, the opposite of the
+ * 2.26h it stops losing — but it must never be printed as "ended at".
+ *
+ * The backend mirrors this choice in `client_deletes_finished_card`, and
+ * `backend/tests/test_client_deletion_mirror_3836.py` reads THIS FILE and fails
+ * if the two sides ever come to age on different fields.
+ */
+export function finishedEventAgeAnchor(ed: FeedEventData): string | null {
+  return ed.ended_at || ed.commence_time || null;
+}
+
 export function isStale(item: FeedItem): boolean {
   if (item.type === "futures") {
     const fd = item.data as FeedFuturesData;
@@ -30,8 +59,13 @@ export function isStale(item: FeedItem): boolean {
     const ed = item.data as FeedEventData;
     // Authoritative lifecycle + deterministic age policy.
     if (ed.status === "completed" || ed.status === "closed") {
+      // #4776 — from the whistle, not the kickoff. `finishedEventAgeAnchor`
+      // says why, and falls back to `commence_time` when `ended_at` is absent.
+      // An unreadable anchor still yields NaN, and `NaN > 8` is false, so the
+      // card is KEPT: unknown age has never meant "old" here.
+      const anchor = finishedEventAgeAnchor(ed);
       const hoursAgo =
-        (Date.now() - new Date(ed.commence_time).getTime()) / (1000 * 60 * 60);
+        (Date.now() - new Date(anchor as string).getTime()) / (1000 * 60 * 60);
       if (hoursAgo > COMPLETED_EVENT_MAX_AGE_HOURS) return true;
     }
   }
