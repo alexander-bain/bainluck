@@ -1532,6 +1532,15 @@ class SearchQueryLog(Base):
     query: Mapped[str] = mapped_column(String(300), nullable=False)
     result_count: Mapped[Optional[int]] = mapped_column(Integer)
     top_result_id: Mapped[Optional[int]] = mapped_column(Integer)
+    #: #1916: provenance recorded AT WRITE TIME — the verbatim `x-bainluck-origin`
+    #: header, lowercased and truncated to 64. NULL means "no stamp", never "human":
+    #: rows written before the stamp shipped, and writers that do not stamp, are
+    #: unknown and must read as unknown (gotcha #53). `'user'` is stored as a literal
+    #: string so humanity is assertable POSITIVELY, which the existing
+    #: `session_id IS NOT NULL` proxy in `_USER_HEAD_SQL` cannot do — that infers
+    #: attestation from a side effect of client code, and LAT-P102 measured the
+    #: consequence at 13 attested rows out of 4,257.
+    origin: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
