@@ -1294,10 +1294,56 @@ def _tag_block():
     """
     src = RUNNER.read_text()
     start = src.index("BL_REPO=")
-    end = src.index("\n}\n", src.index("bl_tag_lane()", start)) + 3
+    end = src.index("\n}\n", src.index("bl_warn_if_runner_is_stale()", start)) + 3
     block = src[start:end]
-    assert "bl_tag_lane" in block and "ZDOTDIR" in block, block
+    for name in ("bl_tag_lane", "bl_carrier_zdotdir", "bl_warn_if_runner_is_stale"):
+        assert f"{name}()" in block, f"extraction lost {name}:\n{block}"
     return block
+
+
+def _bundle_repo(root, *, chain=True, shadow=True, in_working_tree=True):
+    """A throwaway git repo carrying (or missing) the carrier bundle.
+
+    `in_working_tree=False` deletes the files from the CHECKOUT after committing
+    them. That is the whole point of #4685: the fleet runs `$HOME/bainluck`,
+    whose checkout lags master by a merge cycle and can hold uncommitted edits,
+    so delivery must read the committed ref and never the working tree.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    git = ["git", "-C", str(root)]
+    subprocess.run(git[:1] + ["init", "-q", str(root)], check=True)
+    (root / "lane-runner.sh").write_text("#!/bin/bash\n# stand-in\n")
+    if chain:
+        (root / "tools" / "lane-zdotdir").mkdir(parents=True)
+        for name in (".zshenv", ".zprofile", ".zshrc", ".zlogin"):
+            shutil.copy(ZDOTDIR_DIR / name, root / "tools" / "lane-zdotdir" / name)
+    if shadow:
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        shutil.copy(SHADOW, root / "tools" / "bl-agent-curl.sh")
+    subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        git + ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "bundle"],
+        check=True, capture_output=True,
+    )
+    if not in_working_tree:
+        shutil.rmtree(root / "tools", ignore_errors=True)
+        assert not (root / "tools").exists()
+    return root
+
+
+def _resolve_carrier(repo, cache, ref="HEAD", extra=None):
+    """Run the shipped `bl_carrier_zdotdir` against `repo`. Returns (rc, stdout)."""
+    block = _tag_block().replace(
+        'BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"', f'BL_REPO="{repo}"'
+    )
+    assert str(repo) in block, "the BL_REPO override did not apply"
+    env = dict(os.environ, BL_CARRIER_REF=ref, BL_CARRIER_ROOT=str(cache))
+    env.update(extra or {})
+    p = subprocess.run(
+        ["bash", "-c", f"set -u\n{block}\nbl_carrier_zdotdir"],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    return p.returncode, p.stdout.strip()
 
 
 def _lane_shell(script, env=None, home=None):
@@ -1338,24 +1384,151 @@ def test_the_runner_refuses_to_point_zdotdir_at_a_checkout_without_the_chain(tmp
     on disk (that tree was stale at 8991f1a6; the shadow merged later at
     8c37c7f0), which is the exact path the shadow's docstring tells agents to use.
     """
-    block = _tag_block().replace('BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"',
-                                 f'BL_REPO="{tmp_path}"')
-    assert str(tmp_path) in block, "the BL_REPO override did not apply"
+    cache = tmp_path / "cache"
 
-    def gate():
-        return subprocess.run(
-            ["bash", "-c", f"set -u; BL_TAG_LANES=all\n{block}\nbl_tag_lane latency"],
-            capture_output=True, text=True, timeout=30,
-        ).returncode
+    rc, out = _resolve_carrier(_bundle_repo(tmp_path / "empty", chain=False, shadow=False), cache)
+    assert rc != 0 and out == "", f"a ref with no bundle was accepted: {out!r}"
 
-    assert gate() == 1, "an empty checkout was accepted as a tag carrier"
-    (tmp_path / "tools" / "lane-zdotdir").mkdir(parents=True)
-    (tmp_path / "tools" / "lane-zdotdir" / ".zshenv").write_text("")
-    assert gate() == 1, "a chain dir with no shadow beside it was accepted"
-    # Positive control: with both present it must say yes, or the two refusals
-    # above prove nothing about the shadow and everything about a broken path.
-    (tmp_path / "tools" / "bl-agent-curl.sh").write_text("")
-    assert gate() == 0, "the gate refuses even a complete checkout — it tags nobody"
+    rc, out = _resolve_carrier(_bundle_repo(tmp_path / "nochain", chain=False), cache)
+    assert rc != 0 and out == "", f"a shadow with no chain beside it was accepted: {out!r}"
+
+    rc, out = _resolve_carrier(_bundle_repo(tmp_path / "noshadow", shadow=False), cache)
+    assert rc != 0 and out == "", f"a chain with no shadow beside it was accepted: {out!r}"
+
+    # Positive control: with both committed it must say yes, or the three
+    # refusals above prove nothing about the bundle and everything about a
+    # broken path (gotcha #53 — a refusal that refuses everything is not a guard).
+    rc, out = _resolve_carrier(_bundle_repo(tmp_path / "whole"), cache)
+    assert rc == 0 and out.endswith("/tools/lane-zdotdir"), (
+        f"the resolver refuses even a complete bundle — it tags nobody: {out!r}"
+    )
+    assert (Path(out) / ".zshenv").is_file(), out
+
+
+def test_runner_delivery_installs_the_complete_carrier_bundle(tmp_path):
+    """CERT-2461's required repair: delivery is to the RUNTIME, not to a checkout.
+
+    The BLOCK was not about the carrier being wrong — it was that the ship was
+    inert at its delivery boundary. `lanes.conf` runs `$HOME/bainluck/lane-runner.sh`,
+    and on 2026-09-09 that tree held neither `tools/lane-zdotdir/` nor
+    `tools/bl-agent-curl.sh` on disk, so the presence guard fell through and every
+    lane ran untagged while every gate read GREEN.
+
+    So the bundle is resolved from a COMMITTED REF and materialized into a cache
+    the runner owns. This asserts the whole bundle arrives — not just the one file
+    the guard happens to test — from a repo whose WORKING TREE has none of it.
+    """
+    repo = _bundle_repo(tmp_path / "stale", in_working_tree=False)
+    cache = tmp_path / "cache"
+
+    rc, out = _resolve_carrier(repo, cache)
+    assert rc == 0, f"delivery refused a repo that has the bundle committed: {out!r}"
+
+    zdot = Path(out)
+    for name in (".zshenv", ".zprofile", ".zshrc", ".zlogin"):
+        assert (zdot / name).is_file(), f"{name} was not delivered into {zdot}"
+    shadow = zdot.parent / "bl-agent-curl.sh"
+    assert shadow.is_file(), f"the shadow was not delivered beside the chain: {zdot}"
+
+    # Byte-identical to what is committed, or it is a different carrier.
+    assert (zdot / ".zshenv").read_text() == (ZDOTDIR_DIR / ".zshenv").read_text()
+    assert shadow.read_text() == SHADOW.read_text()
+
+    # Content-addressed and idempotent: asking twice yields the same directory
+    # and does not republish. Two runners start within seconds of each other.
+    rc2, out2 = _resolve_carrier(repo, cache)
+    assert (rc2, out2) == (rc, out), f"delivery is not idempotent: {out!r} vs {out2!r}"
+    assert len(list(cache.iterdir())) == 1, f"delivery left litter: {list(cache.iterdir())}"
+
+    # Nothing half-written is ever visible: no staging directory survives.
+    assert not [p for p in cache.iterdir() if p.name.startswith(".staging")], list(cache.iterdir())
+
+
+def test_a_delivery_that_cannot_be_written_refuses_instead_of_naming_a_path(tmp_path):
+    """The worst failure this code can have, and the one four other tests missed.
+
+    Every other test here runs where materialization succeeds, so none of them
+    can see the final presence check deleted — that mutation survived them all.
+    It is the load-bearing one: if the cache cannot be written and the resolver
+    still echoes a path, `lane-runner.sh` exports ZDOTDIR to a directory that does
+    not exist. That does not merely skip the tag. It moves zsh's whole startup
+    search off $HOME, so `~/.zprofile` stops being read in every lane shell,
+    fleet-wide — measured: HOMEBREW_PREFIX empties and brew leaves PATH.
+
+    Refusing must therefore survive a cache that cannot be created, not just a
+    ref that has nothing in it.
+    """
+    repo = _bundle_repo(tmp_path / "repo")
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("a regular file, so mkdir -p beneath it cannot succeed\n")
+
+    rc, out = _resolve_carrier(repo, blocker / "cache")
+    assert out == "", (
+        f"named a carrier directory it could not create: {out!r} — exporting this "
+        "as ZDOTDIR drops ~/.zprofile from every lane shell"
+    )
+    assert rc != 0, "an unwritable cache reported success"
+
+
+def test_delivery_never_reads_the_working_tree(tmp_path):
+    """The mutation that would silently restore #4685.
+
+    A resolver that fell back to `$BL_REPO/tools/...` would pass every test above
+    — they all run where the committed content and the checkout agree. Here they
+    DISAGREE: the checkout carries a decoy chain that must never be delivered.
+    """
+    repo = _bundle_repo(tmp_path / "repo", in_working_tree=False)
+    decoy = repo / "tools" / "lane-zdotdir"
+    decoy.mkdir(parents=True)
+    (decoy / ".zshenv").write_text("# DECOY — the working tree's copy\n")
+    (repo / "tools" / "bl-agent-curl.sh").write_text("# DECOY shadow\n")
+
+    rc, out = _resolve_carrier(repo, tmp_path / "cache")
+    assert rc == 0, out
+    assert "DECOY" not in (Path(out) / ".zshenv").read_text(), (
+        f"delivery served the working tree instead of the committed ref: {out}"
+    )
+    assert "DECOY" not in (Path(out).parent / "bl-agent-curl.sh").read_text(), out
+
+
+def test_the_runner_says_so_when_it_is_not_the_committed_runner(tmp_path):
+    """#4689: drift must be loud.
+
+    A tooling ship that merges green and changes nothing is this repo's recurring
+    failure (#4632: D70 merged, tested, ruled, inert four days; CERT-2461 the
+    same shape). A lane cannot tell that the runner executing it is not the one
+    on master, so it says so itself — on stderr, once, never fatally.
+    """
+    repo = _bundle_repo(tmp_path / "repo")
+    block = _tag_block().replace(
+        'BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"', f'BL_REPO="{repo}"'
+    )
+    env = dict(os.environ, BL_CARRIER_REF="HEAD", BL_CARRIER_ROOT=str(tmp_path / "c"))
+
+    # `$0` inside `bash -c` is the argument after the command string, so the
+    # runner under test is named there rather than by editing the block.
+    committed = repo / "lane-runner.sh"
+    p = subprocess.run(
+        ["bash", "-c", f'set -u\n{block}\nbl_warn_if_runner_is_stale lane', str(committed)],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    assert p.returncode == 0, p.stderr
+    assert "WARNING" not in p.stderr, (
+        f"warned about a runner that IS the committed one — the warning is noise:\n{p.stderr}"
+    )
+
+    drifted = tmp_path / "drifted-lane-runner.sh"
+    drifted.write_text(committed.read_text() + "\n# an edit that never merged\n")
+    p = subprocess.run(
+        ["bash", "-c", f'set -u\n{block}\nbl_warn_if_runner_is_stale lane', str(drifted)],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    assert p.returncode == 0, "the drift warning must never be fatal — a lane that " \
+        "cannot run is worse than one running a stale runner"
+    assert "WARNING" in p.stderr and "#4685" in p.stderr, (
+        f"a runner that is not on master said nothing:\n{p.stderr!r}"
+    )
+    assert p.stdout == "", f"the warning belongs on stderr, not in the log stream: {p.stdout!r}"
 
 
 @needs_zsh
@@ -1431,8 +1604,17 @@ def test_the_session_launch_actually_consults_the_gate():
     assert "bl_tag_lane" in window, (
         "the session launch does not consult bl_tag_lane; the tag is inert"
     )
+    assert "bl_carrier_zdotdir" in window, (
+        "the launch does not resolve the carrier from the committed ref; it is "
+        "back to trusting whatever the checkout happens to hold (#4685)"
+    )
     assert 'export BL_AGENT="$L" ZDOTDIR=' in window, (
         "the launch exports something other than both halves of the tag"
+    )
+    # The export must be reached ONLY when the resolver succeeded, or a refused
+    # delivery still points ZDOTDIR somewhere and breaks every lane shell.
+    assert 'ZDOTDIR="$BL_ZD"' in window, (
+        "ZDOTDIR is exported from something other than the resolver's own answer"
     )
 
 

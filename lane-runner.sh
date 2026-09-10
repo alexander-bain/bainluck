@@ -68,30 +68,83 @@ LOGDIR="$HANDOFF/runner-logs"
 # ruled, inert four days). ZDOTDIR is an ordinary env var, so it does cross the
 # exec; see tools/lane-zdotdir/.zshenv for the measurement.
 #
-# Resolved from THIS SCRIPT's own directory, never from $HOME/bainluck. The two
-# are not the same thing: on 2026-09-09 that tree was stale at 8991f1a6 and did
-# not contain tools/bl-agent-curl.sh at all. Deriving from $0 means the chain
-# files always come from the same checkout as the runner reading them.
+# A CHECKOUT IS NOT A DELIVERY BOUNDARY (#4685; CERT-2461's required repair).
+# The first draft of this block resolved the chain from this script's own
+# directory, and that is exactly where the ship went inert. `lanes.conf` runs
+# `$HOME/bainluck/lane-runner.sh`, and that tree is the INTEGRATOR'S WORKSPACE,
+# not a deployment: it fast-forwards to origin/master several times a day
+# (measured from its reflog — 23/31/4/18 HEAD movements Sep 5/6/7/8), so it is
+# never far behind for long, but between fast-forwards it lags by a whole merge
+# cycle, and it can carry the integrator's uncommitted edits (28 tracked files
+# differed from master on 2026-09-09). Reading tooling out of it means the fleet
+# executes whatever one workspace held at that moment — which is how every gate
+# read GREEN while nothing was tagged.
+#
+# So the carrier is resolved from a COMMITTED REF and materialized into a cache
+# this runner owns. Content-addressed by the chain's tree sha and the shadow's
+# blob sha, so re-materializing is a no-op and two runners cannot disagree; and
+# published by rename, so a half-written bundle is never visible to a lane shell.
+# Every worktree shares one object store, so the ref reads identically from any
+# of them no matter what that worktree has checked out.
 BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"
-BL_ZDOTDIR="$BL_REPO/tools/lane-zdotdir"
+BL_CARRIER_REF="${BL_CARRIER_REF:-origin/master}"
+BL_CARRIER_ROOT="${BL_CARRIER_ROOT:-$HOME/.cache/bainluck-lane-carrier}"
 # ONE LANE FIRST (notice 39 guard 3). Widen by adding names, or BL_TAG_LANES=all,
 # once a tagged lane's rows are proven server-side — the same way rung 1 went out.
 BL_TAG_LANES="${BL_TAG_LANES:-latency}"
 
-# 0 = tag this lane's session. Fails CLOSED to plain, untagged curl, which is
-# notice 39 guard 1: an absent shadow file must degrade to no tag, never to a
-# broken shell. Pointing ZDOTDIR at a directory with no .zshenv would not merely
-# skip the tag — it would move zsh's whole startup search off $HOME and silently
-# drop ~/.zprofile from every lane shell (measured: HOMEBREW_PREFIX empties, so
-# brew and its PATH vanish). Hence the presence test, not a bare export.
+# Echo the ZDOTDIR to export, or echo nothing and return non-zero. Nothing means
+# NO TAG, which is notice 39 guard 1: an incomplete carrier must degrade to
+# plain, untagged curl and never to a broken shell. Pointing ZDOTDIR at a
+# directory missing .zshenv would not merely skip the tag — it moves zsh's whole
+# startup search off $HOME and silently drops ~/.zprofile from every lane shell
+# (measured: HOMEBREW_PREFIX empties, so brew and half of PATH vanish). Hence
+# every exit path here is "verified complete, or nothing".
+bl_carrier_zdotdir() {
+  bl_chain=$(git -C "$BL_REPO" rev-parse --verify -q "$BL_CARRIER_REF:tools/lane-zdotdir" 2>/dev/null) || return 1
+  bl_shadow=$(git -C "$BL_REPO" rev-parse --verify -q "$BL_CARRIER_REF:tools/bl-agent-curl.sh" 2>/dev/null) || return 1
+  [ -n "$bl_chain" ] && [ -n "$bl_shadow" ] || return 1
+  bl_dest="$BL_CARRIER_ROOT/$bl_chain-$bl_shadow"
+
+  if [ ! -f "$bl_dest/tools/lane-zdotdir/.zshenv" ] || [ ! -f "$bl_dest/tools/bl-agent-curl.sh" ]; then
+    bl_tmp="$BL_CARRIER_ROOT/.staging.$$"
+    rm -rf "$bl_tmp"
+    if mkdir -p "$bl_tmp" 2>/dev/null &&
+       git -C "$BL_REPO" archive --format=tar "$BL_CARRIER_REF" \
+           tools/lane-zdotdir tools/bl-agent-curl.sh 2>/dev/null | tar -xf - -C "$bl_tmp" 2>/dev/null &&
+       [ -f "$bl_tmp/tools/lane-zdotdir/.zshenv" ] && [ -f "$bl_tmp/tools/bl-agent-curl.sh" ]; then
+      # `mv` ONTO an existing directory moves the source INSIDE it rather than
+      # replacing it, so a lost race would bury the bundle a level down and the
+      # presence test below would fail closed for no reason. Check first, and
+      # treat a lost race as success: the name IS the content, so whoever won
+      # published byte-identical files.
+      [ -d "$bl_dest" ] || mv "$bl_tmp" "$bl_dest" 2>/dev/null
+    fi
+    rm -rf "$bl_tmp"
+  fi
+
+  [ -f "$bl_dest/tools/lane-zdotdir/.zshenv" ] || return 1
+  [ -f "$bl_dest/tools/bl-agent-curl.sh" ] || return 1
+  echo "$bl_dest/tools/lane-zdotdir"
+}
+
 bl_tag_lane() {
-  [ -f "$BL_ZDOTDIR/.zshenv" ] || return 1
-  [ -f "$BL_REPO/tools/bl-agent-curl.sh" ] || return 1
   case " $BL_TAG_LANES " in
     *" all "*) return 0 ;;
     *" $1 "*)  return 0 ;;
     *)         return 1 ;;
   esac
+}
+
+# #4689: say so, once per runner, when the script EXECUTING this lane is not the
+# committed one. Silent drift is how a tooling ship merges green and does nothing
+# for four days (#4632's shape, and CERT-2461's). Advisory only — never fatal,
+# never blocks a session, because a lane that cannot run is worse than a stale one.
+bl_warn_if_runner_is_stale() {
+  bl_live=$(git -C "$BL_REPO" hash-object "$0" 2>/dev/null) || return 0
+  bl_head=$(git -C "$BL_REPO" rev-parse --verify -q "$BL_CARRIER_REF:lane-runner.sh" 2>/dev/null) || return 0
+  [ -n "$bl_live" ] && [ -n "$bl_head" ] && [ "$bl_live" != "$bl_head" ] || return 0
+  echo "[runner:$1] WARNING: $0 differs from $BL_CARRIER_REF:lane-runner.sh — this lane is executing tooling that is not on master (#4685)" >&2
 }
 
 # Ownership record for the orphan reaper in start-lanes.sh. Sessions spawned by
@@ -131,6 +184,10 @@ RUNNER_PGID=$(ps -o pgid= -p $$ | tr -d ' ')
 echo "$RUNNER_PGID" > "$PIDDIR/runner-$$.pgid"
 fi
 for L in "${LANES[@]}"; do
+  # Once per runner, before any session: is the script we are executing the one
+  # that is on master? A rehearsal says so too — that is the invocation someone
+  # runs when they are asking this very question.
+  bl_warn_if_runner_is_stale "$L"
   # A rehearsal does not conjure an inbox either — maybe_restock reports a
   # missing one, which is the honest answer for a lane that has no inbox.
   [ "$DRYRUN" -eq 1 ] || mkdir -p "$HANDOFF/runner-inbox/$L"
@@ -551,7 +608,9 @@ while true; do
     # Notice 39 rung 2. Inside the subshell so the runner's own environment is
     # never touched: the exports reach `claude` and everything it spawns, and
     # nothing else. PIPESTATUS below still reads the pipeline, not this `if`.
-    ( if bl_tag_lane "$L"; then export BL_AGENT="$L" ZDOTDIR="$BL_ZDOTDIR"; fi
+    ( if bl_tag_lane "$L" && BL_ZD=$(bl_carrier_zdotdir); then
+        export BL_AGENT="$L" ZDOTDIR="$BL_ZD"
+      fi
       timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
         --output-format stream-json -p "$(cat "$HANDOFF/STANDING-NOTICES.md" 2>/dev/null; echo; cat "$RUN")" \
         2>&1 | python3 -u -c "$FMT" | tee -a "$LOG"
