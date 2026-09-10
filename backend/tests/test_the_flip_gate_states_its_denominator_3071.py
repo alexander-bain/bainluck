@@ -84,6 +84,11 @@ COMPLETE = "icehockey_nhl"
 #: will need a synthetic sport registered into the config for the duration of the
 #: test. Do not discover this at merge time — see `UNRULED_STREAK_SPECIMEN` in
 #: `test_authority_flip_switch.py`, which carries the same warning.
+#:
+#: **BUILT (#4564): `tests/authority_specimens.register_specimen`.** A default
+#: specimen reaches this branch, and `governing=` / `stamper=` / `discovery=` /
+#: `ruled=` select the others. The warning above stands — it just no longer
+#: describes something that has to be invented first.
 
 
 def _days(both, denominator, *, n=REQUIRED_STREAK_DAYS, state="MEETS", fields=True):

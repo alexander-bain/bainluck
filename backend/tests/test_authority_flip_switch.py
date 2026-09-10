@@ -46,6 +46,8 @@ from app.config.authority_by_sport import (
     authority_for,
     flip_permitted,
 )
+from tests.authority_specimens import register_specimen
+
 from app.utils.authority_agreement import (
     FLIP_BAR_PCT,
     GATE_BELOW,
@@ -78,6 +80,12 @@ from app.utils.authority_streak import REQUIRED_STREAK_DAYS
 #: sport left that refuses on the CLOCK — `baseball_mlb` refuses one branch
 #: earlier on its missing governing number (D63, #4436) — so that release must
 #: give these tests a synthetic sport rather than move this line again.
+#:
+#: **That synthetic sport now exists: `tests/authority_specimens.register_specimen`
+#: (#4564).** A default specimen is exactly this state — shadow-stamped,
+#: discoverable, governed and unruled — so the NHL release replaces this constant
+#: with a call rather than hunting for another real sport. The D63 branch below
+#: has already moved; these clock tests are the remaining borrowers.
 UNRULED_STREAK_SPECIMEN = "icehockey_nhl"
 
 
@@ -355,15 +363,38 @@ def test_a_sport_with_no_shadow_stamper_is_refused_as_a_build_not_a_wait():
     assert "not a wait" in why
 
 
-def test_a_sport_with_no_governing_number_is_refused_as_a_ruling_not_a_wait():
-    """MLB, today. Ten perfect days would not move it, and the reason must say so."""
-    assert "baseball_mlb" in SHADOW_STAMPERS
-    assert not GOVERNING_IDENTITY_NUMBERS.get("baseball_mlb")
+def test_a_sport_with_no_governing_number_is_refused_as_a_ruling_not_a_wait(
+    monkeypatch,
+):
+    """Ten perfect days must not move it, and the reason must say so.
 
-    permitted, why = flip_permitted("baseball_mlb", _run_of(10, GATE_MEETS))
+    On a CONSTRUCTED sport (#4564), not on `baseball_mlb`. #4436 is about to give
+    MLB the ruling that makes it permit, and this branch would have gone with it:
+    the test turns red, and its tempting one-line "fix" is to flip the
+    expectation — which deletes the only proof that step 4 refuses at all.
+
+    WHICH real sport is in this state today is a separate fact, asserted below.
+    """
+    specimen = register_specimen(
+        monkeypatch, "specimen_no_governing_number", governing=None
+    )
+
+    permitted, why = flip_permitted(specimen, _run_of(10, GATE_MEETS))
     assert not permitted
     assert "governing identity number" in why
     assert "not more days" in why
+
+
+def test_baseball_mlb_is_the_real_sport_in_that_state_today():
+    """A dated fact about the CONFIG, not about the gate — and #4436 changes it.
+
+    Kept deliberately apart from the branch test above so the ruling updates one
+    obvious line here instead of silently emptying a negative control. If this
+    fails after #4436 lands, that is correct and expected: update this test, and
+    leave the branch test alone.
+    """
+    assert "baseball_mlb" in SHADOW_STAMPERS
+    assert not GOVERNING_IDENTITY_NUMBERS.get("baseball_mlb")
 
 
 def test_a_sport_with_no_ledger_is_refused_as_not_measured():
