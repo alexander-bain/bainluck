@@ -44,6 +44,23 @@ naming-only scan, and keep fabricating losses at 100% — which is precisely the
 outcome this file exists to make impossible. `test_orm_constructor_rejects_none`
 below pins the semantics so the rule is demonstrated, not asserted.
 
+THE RECOGNISER RESOLVES THE MODEL, IT DOES NOT MATCH A SPELLING (#4819). The
+first version of this file asked whether a call's `func` was an `ast.Name` whose
+`id` was literally `"FuturesOutcome"`. A class guard with a spelling-dependent
+blind spot is the failure mode it was written to end — it is exactly why
+`test_futures_outcome_insert_grade_p1004r.py` could not see two of the three
+venues. Every one of `models.FuturesOutcome(...)`, `m.FuturesOutcome(...)`,
+`FuturesOutcome as FO` then `FO(...)`, `pg_insert(models.FuturesOutcome)` and
+`sa.insert(...)` is the same INSERT and the same fabricated verdict, and every
+one of them walked straight past. Local aliases are now read from the module's
+own imports and the qualified forms are accepted on the attribute; the
+`sa.insert(...)` case additionally needed `_chain_root`'s stop condition fixed,
+which had been losing such sites entirely rather than mis-filing them.
+
+Measured when the widening landed: the site set over `app/` is UNCHANGED —
+9 Core + 2 ORM, the same eleven lines before and after — so this closes a blind
+spot rather than repairing a live defect, which is the right time to close one.
+
 WHAT THIS DOES NOT DO. It is static: it proves the column is named, not that the
 value written is the right one for the row. It says nothing about the ~10,337
 already-resolved fabricated legs (the stock repair, #4788 piece 3), nor about
@@ -80,16 +97,100 @@ def _rel(path):
     return path.relative_to(APP_ROOT.parent)
 
 
-def _chain_root(node):
+def _module_aliases(tree):
+    """Local names in this module that bind to `FuturesOutcome`.
+
+    #4819. The first version of this guard matched the model by SPELLING — an
+    `ast.Name` whose `id` was literally `"FuturesOutcome"` — so a writer that
+    imported it under any other local name was invisible to a scan whose entire
+    purpose is to be class-wide. `from app.models.models import FuturesOutcome
+    as FO` then `FO(...)` is the same INSERT and the same fabricated verdict.
+
+    Aliases are read from the module's own imports rather than guessed, and
+    `MODEL` itself is always in the set: a file that never imports the name
+    cannot construct it, and including the bare spelling keeps the recogniser
+    honest on the (common) unaliased case even if an import walk ever misses.
+    """
+    aliases = {MODEL}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == MODEL:
+                    aliases.add(alias.asname or alias.name)
+    return aliases
+
+
+def _insert_aliases(tree):
+    """Local names bound to an INSERT builder (`insert`, `pg_insert`, aliases).
+
+    #4819, the same defect one level over: `from sqlalchemy import insert as
+    ins` was unreadable, and so was every dialect import under a fresh name.
+    """
+    aliases = set(INSERT_FUNCS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in INSERT_FUNCS:
+                    aliases.add(alias.asname or alias.name)
+    return aliases
+
+
+def _is_model_ref(node, model_aliases):
+    """Does this expression name the model, however it is spelled?
+
+    Two arms, and the second is deliberately broad. A bare `ast.Name` must be a
+    known local alias, because `FuturesOutcome` is the only thing that binding
+    can be. An `ast.Attribute` is accepted on its `attr` alone — ANY
+    `<something>.FuturesOutcome` — rather than by resolving `<something>` back
+    to `app.models.models`.
+
+    That is the safe direction on purpose. Resolving the module would mean
+    enumerating the spellings that reach it (`import app.models.models as m`,
+    `from app.models import models`, `from app import models`, plain
+    `import app.models.models` used as a four-dot path…), and every spelling
+    missed is a writer the guard cannot see — the exact failure #4819 exists to
+    end. The cost of the broad rule is a false POSITIVE: some unrelated
+    `foo.FuturesOutcome(...)` would be scanned and required to name `is_winner`.
+    There is no such object, and if one ever appears the guard demanding one
+    extra keyword is a far better outcome than a fabricated loss shipping.
+    """
+    if isinstance(node, ast.Name):
+        return node.id in model_aliases
+    if isinstance(node, ast.Attribute):
+        return node.attr == MODEL
+    return False
+
+
+def _is_insert_func(func, insert_aliases):
+    """`insert` / `pg_insert` / an alias of either / `sa.insert` / `pg.insert`."""
+    if isinstance(func, ast.Name):
+        return func.id in insert_aliases
+    if isinstance(func, ast.Attribute):
+        return func.attr in INSERT_FUNCS
+    return False
+
+
+def _chain_root(node, insert_aliases):
     """Return the base call of a chained builder expression.
 
     `pg_insert(X).values(...).on_conflict_do_update(...).returning(...)` is a
     tree of `Call(func=Attribute(value=<inner call>))`; the base is the
-    innermost `Call` whose `func` is a plain `Name`.
+    innermost builder call.
+
+    🔴 #4819: THE STOP CONDITION CANNOT BE "func is a plain Name". It was, and
+    that silently broke the module-qualified form: for `sa.insert(X).values(...)`
+    the walk descends through `.values` to the `sa.insert(X)` call, sees an
+    `ast.Attribute` func, keeps descending — past the call it was looking for —
+    and returns the bare `Name("sa")`. The `.values()` mapping then finds no
+    base and the site vanishes from the scan entirely. So the walk stops when it
+    reaches a call that IS an insert builder, whichever way that builder is
+    spelled.
     """
     current = node
     while True:
         if isinstance(current, ast.Call):
+            if _is_insert_func(current.func, insert_aliases):
+                return current
             if isinstance(current.func, ast.Attribute):
                 current = current.func.value
                 continue
@@ -100,23 +201,17 @@ def _chain_root(node):
         return current
 
 
-def _is_model_insert_base(node):
+def _is_model_insert_base(node, model_aliases, insert_aliases):
     return (
         isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in INSERT_FUNCS
-        and node.args
-        and isinstance(node.args[0], ast.Name)
-        and node.args[0].id == MODEL
+        and _is_insert_func(node.func, insert_aliases)
+        and bool(node.args)
+        and _is_model_ref(node.args[0], model_aliases)
     )
 
 
-def _is_model_constructor(node):
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == MODEL
-    )
+def _is_model_constructor(node, model_aliases):
+    return isinstance(node, ast.Call) and _is_model_ref(node.func, model_aliases)
 
 
 def _keyword(call, name):
@@ -142,6 +237,51 @@ def _is_sql_null(node):
     return False
 
 
+def _collect_sites_in_tree(path, tree):
+    """The three site lists for ONE parsed module.
+
+    Split out from :func:`_collect_sites` for #4819 so the recogniser can be
+    exercised against a snippet rather than only against whatever spellings
+    `app/` happens to contain today. A guard whose only test data is the code it
+    already passes on cannot be shown to catch a spelling nobody has written
+    yet, which is the whole subject of this issue.
+    """
+    model_aliases = _module_aliases(tree)
+    insert_aliases = _insert_aliases(tree)
+
+    core_sites = []
+    orm_sites = []
+    unrecognised = []
+
+    # Map each `pg_insert(FuturesOutcome)` base to the `.values()` call
+    # that carries its columns.
+    values_by_base = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "values"
+        ):
+            base = _chain_root(node, insert_aliases)
+            if _is_model_insert_base(base, model_aliases, insert_aliases):
+                values_by_base[id(base)] = node
+
+    for node in ast.walk(tree):
+        if _is_model_insert_base(node, model_aliases, insert_aliases):
+            values_call = values_by_base.get(id(node))
+            if values_call is None:
+                # An insert against this model that never calls `.values()`
+                # (e.g. `.from_select`) is a shape this guard cannot read.
+                # Fail loudly rather than pass silently.
+                unrecognised.append((path, node.lineno, node))
+            else:
+                core_sites.append((path, node.lineno, values_call))
+        elif _is_model_constructor(node, model_aliases):
+            orm_sites.append((path, node.lineno, node))
+
+    return core_sites, orm_sites, unrecognised
+
+
 def _collect_sites():
     """Every place in `app/` that creates a `futures_outcomes` row.
 
@@ -153,31 +293,10 @@ def _collect_sites():
     unrecognised = []
 
     for path, tree in _python_sources():
-        # Map each `pg_insert(FuturesOutcome)` base to the `.values()` call
-        # that carries its columns.
-        values_by_base = {}
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "values"
-            ):
-                base = _chain_root(node)
-                if _is_model_insert_base(base):
-                    values_by_base[id(base)] = node
-
-        for node in ast.walk(tree):
-            if _is_model_insert_base(node):
-                values_call = values_by_base.get(id(node))
-                if values_call is None:
-                    # An insert against this model that never calls `.values()`
-                    # (e.g. `.from_select`) is a shape this guard cannot read.
-                    # Fail loudly rather than pass silently.
-                    unrecognised.append((path, node.lineno, node))
-                else:
-                    core_sites.append((path, node.lineno, values_call))
-            elif _is_model_constructor(node):
-                orm_sites.append((path, node.lineno, node))
+        core, orm, unknown = _collect_sites_in_tree(path, tree)
+        core_sites.extend(core)
+        orm_sites.extend(orm)
+        unrecognised.extend(unknown)
 
     return core_sites, orm_sites, unrecognised
 
@@ -238,6 +357,129 @@ def test_orm_constructor_sites_use_sql_null_not_python_none():
         "— the row still stores a graded LOSS. Use `null()`:\n  "
         + "\n  ".join(inert)
     )
+
+
+def _scan(source):
+    """Run the recogniser over a snippet. `(core, orm, unrecognised)` counts."""
+    tree = ast.parse(source)
+    core, orm, unknown = _collect_sites_in_tree(Path("snippet.py"), tree)
+    return core, orm, unknown
+
+
+def _omits_graded_column(sites):
+    return [s for s in sites if _keyword(s[2], GRADED_COLUMN) is None]
+
+
+class TestTheScanResolvesTheModelByNameNotBySpelling:
+    """#4819. The guard above is a CLASS guard, and until this class existed it
+    recognised its own subject only when spelled `FuturesOutcome(...)` with a
+    bare name. Every spelling below is the same INSERT and the same fabricated
+    verdict, and every one of them used to walk straight past.
+
+    None of these is a live defect: all seven current writer sites in `app/` use
+    the bare name, which is why CERT-2514 graded GREEN. That is exactly the
+    condition under which a blind spot is worth closing — before the eighth site
+    is written by someone who happened to type `models.FuturesOutcome`.
+    """
+
+    def test_a_module_qualified_constructor_is_seen(self):
+        core, orm, _ = _scan(
+            "from app.models import models\n"
+            "models.FuturesOutcome(market_id=1, name='x')\n"
+        )
+        assert len(orm) == 1
+        assert _omits_graded_column(orm), "and it must be reported as an offender"
+
+    def test_an_aliased_module_constructor_is_seen(self):
+        _, orm, _ = _scan(
+            "import app.models.models as m\n"
+            "m.FuturesOutcome(market_id=1, name='x')\n"
+        )
+        assert len(orm) == 1
+
+    def test_an_aliased_import_constructor_is_seen(self):
+        """`ast.Name`, right node type, wrong `id` — the arm a spelling check
+        cannot reach without reading the module's imports."""
+        _, orm, _ = _scan(
+            "from app.models.models import FuturesOutcome as FO\n"
+            "FO(market_id=1, name='x')\n"
+        )
+        assert len(orm) == 1
+
+    def test_a_qualified_model_inside_pg_insert_is_seen(self):
+        core, _, _ = _scan(
+            "from sqlalchemy.dialects.postgresql import insert as pg_insert\n"
+            "from app.models import models\n"
+            "pg_insert(models.FuturesOutcome).values(market_id=1)\n"
+        )
+        assert len(core) == 1
+        assert _omits_graded_column(core)
+
+    def test_a_module_qualified_insert_builder_is_seen(self):
+        """`sa.insert(...)` — and this one also proves `_chain_root`'s stop
+        condition, which used to walk past the builder to the bare `Name('sa')`
+        and lose the site entirely rather than merely mis-file it."""
+        core, _, unknown = _scan(
+            "import sqlalchemy as sa\n"
+            "from app.models.models import FuturesOutcome\n"
+            "sa.insert(FuturesOutcome).values(market_id=1)\n"
+        )
+        assert len(core) == 1
+        assert not unknown, "it must be a readable Core site, not an unrecognised one"
+
+    def test_an_aliased_insert_function_is_seen(self):
+        core, _, _ = _scan(
+            "from sqlalchemy import insert as ins\n"
+            "from app.models.models import FuturesOutcome\n"
+            "ins(FuturesOutcome).values(market_id=1)\n"
+        )
+        assert len(core) == 1
+
+    def test_the_chain_still_resolves_through_on_conflict_and_returning(self):
+        """The shape `kalshi.py` actually writes, module-qualified, so the fix
+        is not only true of the two-node case."""
+        core, _, unknown = _scan(
+            "import sqlalchemy as sa\n"
+            "from app.models import models\n"
+            "sa.insert(models.FuturesOutcome)"
+            ".values(market_id=1, is_winner=None)"
+            ".on_conflict_do_update(index_elements=['id'], set_={})"
+            ".returning(1)\n"
+        )
+        assert len(core) == 1
+        assert not unknown
+        assert not _omits_graded_column(core), "this one DOES name the column"
+
+    def test_a_qualified_write_that_names_the_column_is_not_an_offender(self):
+        """The recogniser widened; the verdict did not. A correctly written
+        module-qualified site must stay silent, or the guard becomes noise and
+        the next person deletes it."""
+        _, orm, _ = _scan(
+            "import sqlalchemy as sa\n"
+            "from app.models import models\n"
+            "models.FuturesOutcome(market_id=1, name='x', is_winner=sa.null())\n"
+        )
+        assert len(orm) == 1
+        assert not _omits_graded_column(orm)
+
+    def test_an_unrelated_call_is_not_a_site(self):
+        """The broad `attr == MODEL` arm must not swallow the whole file."""
+        core, orm, unknown = _scan(
+            "import sqlalchemy as sa\n"
+            "from app.models.models import FuturesMarket\n"
+            "FuturesMarket(id=1)\n"
+            "sa.insert(FuturesMarket).values(id=1)\n"
+            "session.add(thing)\n"
+            "obj.futures_outcome(1)\n"
+        )
+        assert (core, orm, unknown) == ([], [], [])
+
+    def test_the_alias_sets_always_contain_the_bare_spellings(self):
+        """A file that imports nothing still gets the unaliased recogniser, so
+        widening the scan can never narrow it."""
+        empty = ast.parse("")
+        assert MODEL in _module_aliases(empty)
+        assert INSERT_FUNCS <= _insert_aliases(empty)
 
 
 def _sqlite_engine():
