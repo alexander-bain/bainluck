@@ -75,9 +75,11 @@ class FakeTeam:
     """Every column `_snapshot_team` reads. Deliberately not an ORM object —
     the point of `TeamSnapshot` (#2107) is that nothing downstream needs one."""
 
-    def __init__(self, tid, name, alternate_names=None, sport_id=1):
+    def __init__(self, tid, name, alternate_names=None, sport_id=1,
+                 sport_key="basketball_nba"):
         self.id = tid
         self.name = name
+        self.sport_key = sport_key
         self.slug = name.lower().replace(" ", "-")
         self.alternate_names = alternate_names or []
         self.sport_id = sport_id
@@ -89,6 +91,13 @@ class FakeTeam:
         self.current_record = None
         self.standings_data = None
         self.season_stats = None
+
+
+def _team_rows(*teams):
+    """`_enriched_teams_stmt` selects `(Team, sports.key)` pairs, not bare rows
+    — the ambiguity guard needs a league, and a `sport_id` is not one (#4945).
+    """
+    return [(t, t.sport_key) for t in teams]
 
 
 EI_ROWS = [("nfl", 50, 1.5), ("nfl", 90, 4.0), ("nba", 50, 2.0)]
@@ -164,7 +173,7 @@ class TestTheUserStopsPayingForTheRebuild:
 
     @pytest.mark.asyncio
     async def test_expired_team_cache_is_served_without_a_query_on_the_request(self, monkeypatch):
-        teams = [FakeTeam(1, "Celtics"), FakeTeam(2, "Lakers")]
+        teams = _team_rows(FakeTeam(1, "Celtics"), FakeTeam(2, "Lakers"))
         db = FakeSession(teams)
         first = await ev._build_team_lookup(db, ["Celtics"])
         assert db.executes == 1
@@ -236,7 +245,7 @@ class TestBothPathsShapeTheDataIdentically:
 
     @pytest.mark.asyncio
     async def test_refreshed_team_value_equals_a_cold_blocking_build(self, monkeypatch):
-        teams = [FakeTeam(1, "Celtics", ["Boston Celtics"]), FakeTeam(2, "Lakers")]
+        teams = _team_rows(FakeTeam(1, "Celtics", ["Boston Celtics"]), FakeTeam(2, "Lakers"))
         await ev._build_team_lookup(FakeSession(teams), ["Celtics"])
         cold = dict(ev._team_cache)
 
@@ -287,7 +296,7 @@ class TestFailClosed:
         assert db.executes == 1, "an empty cache must BUILD, not serve {} fast"
         assert out, "an empty cache must not be 'served stale' as {}"
 
-        tdb = FakeSession([FakeTeam(1, "Celtics")])
+        tdb = FakeSession(_team_rows(FakeTeam(1, "Celtics")))
         ev._team_cache = {}
         ev._team_cache_time = _t.monotonic()
         tout = await ev._build_team_lookup(tdb, ["Celtics"])
