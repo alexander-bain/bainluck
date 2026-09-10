@@ -30,6 +30,7 @@ from app.services.anchor_channel import (
     is_drain_candidate_row,
     resolve_market_born_duplicate,
 )
+from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.prop_window import prop_window_closed
@@ -3859,8 +3860,13 @@ async def _log_search_query(
 #: honoured explicitly so an internal caller CAN assert humanity positively; that
 #: assertion is not yet recorded anywhere, because recording it needs the `origin`
 #: column #1916 asks for and this ship carries no DDL. Parked P118-1.
-_ORIGIN_HEADER = "x-bainluck-origin"
-_ORIGIN_USER = "user"
+#: Imported, not re-spelled: `utils/agent_origin.py` is the single definition of
+#: the wire name, and our own Python probes build their headers from it. A sender
+#: and a reader that drift by one character raise nothing anywhere — every probe
+#: looks tagged and every row is still written — so the shared constant is the
+#: only guard that fails loudly (an ImportError) instead of silently.
+_ORIGIN_HEADER = ORIGIN_HEADER
+_ORIGIN_USER = ORIGIN_USER
 
 
 def _request_is_automation(request: Optional[Request]) -> bool:

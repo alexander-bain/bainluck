@@ -218,6 +218,8 @@ sys.path.insert(0, HERE)
 
 import explain_search_arm as ESA  # noqa: E402  (needs the sys.path above)
 
+from app.utils.agent_origin import tagged  # noqa: E402  (needs the sys.path above)
+
 API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
 
 #: The one index the attended DDL creates.
@@ -305,10 +307,13 @@ def _post(sql: str, *, analyze: bool, timeout_ms: int = 25000, fatal: bool = Tru
     request = urllib.request.Request(
         f"{API}/api/admin/db-query",
         data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
+        headers=tagged(
+            API,
+            {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        ),
         method="POST",
     )
     try:

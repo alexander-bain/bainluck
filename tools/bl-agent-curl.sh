@@ -32,9 +32,23 @@
 #   * `BL_AGENT=user` is honoured POSITIVELY and keeps the row. Use it when you mean
 #     to measure as a person; it is the only value that does not suppress.
 #   * Tagging a call that goes somewhere OTHER than the search route is inert today
-#     (nothing else reads the header yet). It is still correct to send: rung 4 keys
-#     the rate-limit allowlist on this header, and a carrier retro-fitted later is a
-#     carrier that was missing in every measurement taken in between.
+#     (nothing else reads the header yet). It is still correct to send: a carrier
+#     retro-fitted later is a carrier that was missing in every measurement taken
+#     in between, and the per-agent counts rung 5 asks for can only ever be as good
+#     as the tagging that was running while the traffic happened.
+#
+#     🔴 It is inert for ATTRIBUTION, and that is the only thing it should ever buy.
+#     An earlier draft of this comment justified the tag by saying rung 4 would key
+#     the rate-limit allowlist on this header. Do not build that. The value is
+#     caller-supplied and forgeable by anyone on the internet, which is precisely
+#     what `_router_peer_ip` exists to avoid; `utils/rate_limit.py` says "CEILING,
+#     NEVER EXEMPTION" twice in capitals for the same reason. The problem rung 4
+#     aimed at was the fleet sharing one 60/min anonymous bucket, and that is
+#     already solved by the D70 trusted-ADDRESS ceiling — measured in force on
+#     `/api/events/search` on 2026-09-10 (160 requests across two single-window
+#     bursts, 0 x 429, confirmed server-side in the router log). A guard test
+#     (`test_rate_limiter_does_not_read_the_origin_header`) now fails if anyone
+#     wires this header into the limiter.
 #
 # ## Two things it deliberately refuses to do
 #
@@ -70,11 +84,18 @@
 # bookkept by the CALLER: this function runs inside `$( )`, and a flag set in a command
 # substitution dies with its subshell — which is how the first draft warned every time.
 _bl_curl_agent() {
-    if [ -n "${BL_AGENT:-}" ]; then
-        printf '%s' "$BL_AGENT"
-    else
-        printf '%s' "agent-unnamed"
+    # Empty output means "nobody named themselves"; `bl_curl` then adds NOTHING.
+    #
+    # A BLANK-BUT-SET value normalises to empty, matching `app/utils/agent_origin.py`.
+    # Without this, `BL_AGENT="  "` would put `x-bainluck-origin:   ` on the wire, and
+    # the backend does NOT read that as absent: `if not raw` passes (the string is
+    # truthy), then `raw.strip() != "user"` is true, so the row is suppressed. A value
+    # nobody typed on purpose would silently delete the call from the table.
+    _bl_v=${BL_AGENT:-}
+    if [ -z "$(printf '%s' "$_bl_v" | tr -d '[:space:]')" ]; then
+        _bl_v=''
     fi
+    printf '%s' "$_bl_v"
 }
 
 # Host of a URL-shaped argument, or empty for anything else.
@@ -117,12 +138,24 @@ bl_curl() {
         esac
     done
 
-    if [ "$_bl_ours" = 1 ] && [ "$_bl_tagged" = 0 ]; then
-        _bl_who=$(_bl_curl_agent)
-        if [ -z "${BL_AGENT:-}" ] && [ -z "${_BL_CURL_WARNED:-}" ]; then
+    _bl_who=$(_bl_curl_agent)
+    if [ "$_bl_ours" = 1 ] && [ "$_bl_tagged" = 0 ] && [ -z "$_bl_who" ]; then
+        # NOTICE 39 GUARD 1: unnamed passes through as PLAIN curl. An earlier
+        # draft substituted `agent-unnamed` here, reasoning that being unnamed is
+        # not evidence of humanity. True about the world, wrong about the
+        # direction of the failure — and the direction is what a default is FOR.
+        # Any non-"user" value SUPPRESSES the search-log row server-side, so a
+        # substituted default silently deletes every un-configured caller from
+        # the table this exists to clean, leaving nothing behind to notice. Not
+        # tagging leaves a row we can see and count. `_request_is_automation`
+        # picks the same direction for the same reason: it FAILS TOWARD LOGGING.
+        if [ -z "${_BL_CURL_WARNED:-}" ]; then
             _BL_CURL_WARNED=1
-            printf '%s\n' "bl-agent-curl: BL_AGENT unset, tagging as '$_bl_who'; set BL_AGENT=<lane-or-mission> to attribute your traffic (BL_AGENT=user to measure as a person)." >&2
+            printf '%s\n' "bl-agent-curl: BL_AGENT unset, sending this UNTAGGED; set BL_AGENT=<lane-or-mission> to attribute your traffic (BL_AGENT=user to measure as a person)." >&2
         fi
+    fi
+
+    if [ "$_bl_ours" = 1 ] && [ "$_bl_tagged" = 0 ] && [ -n "$_bl_who" ]; then
         # Ours go FIRST so a caller's own later -H/-A still wins: curl takes the last
         # User-Agent, and an explicit header from the caller is an explicit intent.
         set -- -H "x-bainluck-origin: $_bl_who" \
