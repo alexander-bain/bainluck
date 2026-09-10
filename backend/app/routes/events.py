@@ -12138,6 +12138,9 @@ async def _build_game_markets(
     period_markets: list[dict] = []
     matchups: list[dict] = []
     other_markets: list[dict] = []
+    # Spread rungs the deep-OTM floor drops, held for the window carve-out
+    # ~370 lines below (#4845) — never for a price bucket.
+    _deep_otm_spreads: list[dict] = []
 
     # Group outcomes by market
     from collections import defaultdict
@@ -12329,12 +12332,7 @@ async def _build_game_markets(
             for o in market_outcomes:
                 threshold = _extract_threshold(o.name)
                 prob = float(o.current_probability) if o.current_probability is not None else None
-                # #921 residual: drop deep-OTM alternate spread rungs (cover prob
-                # below the floor) so the section shows meaningful lines, not the
-                # full ladder. Near-the-money alts + the main line stay.
-                if prob is not None and prob < _SPREAD_DEEP_OTM_FLOOR:
-                    continue
-                spreads.append({
+                row = {
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "threshold": threshold,
@@ -12342,7 +12340,33 @@ async def _build_game_markets(
                     "source": market.source,
                     **_settled_grade_fields(market, o),
                     "_market_id": market.id,
-                })
+                }
+                # #921 residual: drop deep-OTM alternate spread rungs (cover prob
+                # below the floor) so the section shows meaningful lines, not the
+                # full ladder. Near-the-money alts + the main line stay.
+                if prob is not None and prob < _SPREAD_DEEP_OTM_FLOOR:
+                    # …BUT A SETTLED WINDOW IS NOT A DEEP-OTM RUNG (#4845).
+                    #
+                    # This is CERT-2502's finding one bucket over. That one was
+                    # about step 9's 0.05–0.95 band eating settled player props;
+                    # this floor runs ~300 lines EARLIER, at bucket-build time,
+                    # and it does not move a row aside — it drops it, so the row
+                    # reaches no payload bucket at all and neither the #1588
+                    # suppression filter nor #1735's grader ever learns it
+                    # existed. On the finished specimen (15308050) that is
+                    # exactly why "Atlanta -1.5 first 5 innings" is absent from
+                    # a page carrying its sibling "Tampa Bay -1.5": one side of
+                    # the same question, at 0.01, silently gone.
+                    #
+                    # The rung is still not a price — it does not re-enter
+                    # `spreads`, and #1735 publishes these rows verdict-only. It
+                    # is held here because the window classifier is not defined
+                    # until step 9's carve-out ~370 lines below; the row joins
+                    # `_window_closed_items` there if, and only if, its window
+                    # is provably over.
+                    _deep_otm_spreads.append(row)
+                    continue
+                spreads.append(row)
 
         elif market_type in ("half_spread", "quarter_spread", "half_winner", "quarter_winner"):
             for o in market_outcomes:
@@ -12704,6 +12728,27 @@ async def _build_game_markets(
     # gone. A guard on this list cannot see the other list. The dedupe therefore
     # lives at the single point where every path has arrived: `_grade_closed_windows`.
     _window_closed_items.extend(_boring_closed_windows)
+
+    # THE THIRD PATH: the rungs the deep-OTM floor dropped at bucket-build (#4845).
+    #
+    # Same test as the carve-out above, asked of rows that never reached a
+    # bucket. `_window_is_closed` is fail-safe — it proves the window is over or
+    # says no — so a live game's deep-OTM ladder is untouched and the #921
+    # behaviour this floor exists for is unchanged in every state but "settled".
+    #
+    # These rows join the collection and take the same route as every other
+    # member: `_grade_closed_windows` grades what it can and refuses the rest,
+    # the CERT-2505 dedupe sees them alongside both other paths, and nothing
+    # publishes their price. A rung it refuses is exactly as invisible as it is
+    # today, so the floor's worst case after this change is the status quo.
+    #
+    # MEASURED before building: 247 outcome rows on 90 finished MLB events of
+    # the trailing week are dropped here, "Atlanta -1.5 first 5 innings" (0.01,
+    # first five 1–6) among them — the missing half of a question whose other
+    # half, "Tampa Bay -1.5" at 0.99, the same page already grades.
+    for _otm_row in _deep_otm_spreads:
+        if _window_is_closed(_otm_row):
+            _window_closed_items.append(_otm_row)
 
     # 9b. Cross-source dedup: when Kalshi and Polymarket both have the same
     # player+stat+threshold, merge into one entry with averaged probability
