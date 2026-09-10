@@ -229,6 +229,95 @@ class TestTheSurvivalControls:
         assert order[0] == "NBA MVP Winner", order
 
 
+# --- D107's two orderings, as two NAMED fixtures ----------------------------
+#
+# The ruling is one sentence with two halves — "when the query IS a team or
+# player name the ENTITY leads … ruling 041/Q325's `market > event > team` order
+# still governs queries that are NOT an entity name" — and a suite that only
+# ever exercises the first half cannot tell a scoped promotion from a wholesale
+# reversal of the ratified relation. Both are pinned, both are named, and the
+# pair is the test: either one alone passes under the flip that breaks the other.
+#
+# Ranked through `_ranked`, which applies the REAL `query_names_participant`.
+# The TEAM half of D107 (`entity_team`, #4551) lives at the route seam and is
+# owned by `test_typeahead_the_team_name_leads_4551.py`; the team rows here are
+# unpromoted, which is why the entity fixture leads on MC0 rather than on kind.
+
+#: HALF ONE — the query IS an entity name. `red sox` is the specimen because it
+#: is the one Alex typed that has all three kinds present at once.
+ENTITY_NAME_FIXTURE = ("red sox", [
+    _cand("Boston Red Sox - Player Props", "futures"),
+    _cand("New York Yankees at Boston Red Sox", "event",
+          ["Boston Red Sox", "New York Yankees"]),
+    _cand("Boston Red Sox", "team", None, ["Red Sox"]),
+], ["Boston Red Sox",
+    "New York Yankees at Boston Red Sox",
+    "Boston Red Sox - Player Props"])
+
+#: HALF TWO — the query is a MARKET PHRASE naming no entity. Synthetic in its
+#: assembly, honest in every row: `basketball` is a whole token of all three
+#: names, so all three are MC1 and nothing but `KIND_ORDER` can separate them.
+#: That is the point — it is the fixture with no class term to hide behind.
+#: "Basketball Löwen Braunschweig" is a real BBL club and is here because the
+#: word has to appear in a TEAM name for the third slot to exist at all; the
+#: query is not that club's name, so #4551 does not promote it either.
+MARKET_PHRASE_FIXTURE = ("basketball", [
+    _cand("Basketball: NBA MVP Winner", "futures"),
+    _cand("Basketball: Boston Celtics at Los Angeles Lakers", "event",
+          ["Boston Celtics", "Los Angeles Lakers"]),
+    _cand("Basketball Löwen Braunschweig", "team", None, ["Löwen"]),
+], ["Basketball: NBA MVP Winner",
+    "Basketball: Boston Celtics at Los Angeles Lakers",
+    "Basketball Löwen Braunschweig"])
+
+
+class TestD107sTwoOrderings:
+    """`team, event, futures` for a name; `futures, event, team` for a phrase."""
+
+    def test_an_entity_name_leads_with_the_entity(self):
+        q, rows, expected = ENTITY_NAME_FIXTURE
+        assert _ranked(q, rows) == expected, _ranked(q, rows)
+
+    def test_a_market_phrase_keeps_the_ratified_order(self):
+        """Ruling 041 / Q325, untouched, on the fixture that can prove it.
+
+        Every candidate is MC1, so the class term is constant and `KIND_ORDER`
+        decides alone. A promotion that fired on anything but an entity name
+        would reorder this and nothing else in the suite would notice.
+        """
+        q, rows, expected = MARKET_PHRASE_FIXTURE
+        assert _ranked(q, rows) == expected, _ranked(q, rows)
+
+    def test_the_two_fixtures_really_are_the_same_shape(self):
+        """Both fixtures hold one of each kind, so the pair isolates the ORDER.
+
+        Without this, the market-phrase half could quietly lose its team row to
+        an edit and go on passing as a two-kind assertion — and the control
+        would stop controlling for the thing it was built for.
+        """
+        for _, rows, expected in (ENTITY_NAME_FIXTURE, MARKET_PHRASE_FIXTURE):
+            assert sorted(k for _, k, *_ in rows) == ["event", "futures", "team"]
+            assert sorted(expected) == sorted(n for n, *_ in rows)
+
+    def test_neither_fixture_wins_on_a_class_the_other_lacks(self):
+        """The entity half leads on MC0; the phrase half has no MC0 anywhere.
+
+        Stated so the asymmetry is a recorded fact rather than a surprise: `red
+        sox` beats its own game and props by MATCHING BETTER (ruling 041's team
+        floor is only reached on a tie), which is why the #4551 promotion is a
+        no-op on it. `basketball` ties everywhere and is decided by kind alone.
+        """
+        from app.utils.search_match_class import MC0_EXACT, Evidence, match_class
+
+        assert match_class("red sox", Evidence(name="Boston Red Sox",
+                                               aliases=("Red Sox",))) == MC0_EXACT
+        _, rows, _ = MARKET_PHRASE_FIXTURE
+        for name, _kind, _p, aliases, outcomes in rows:
+            ev = Evidence(name=name, aliases=tuple(aliases),
+                          outcomes=tuple(outcomes))
+            assert match_class("basketball", ev) != MC0_EXACT, name
+
+
 class TestTheParticipantRule:
     """`query_names_participant` — what may and may not be promoted."""
 

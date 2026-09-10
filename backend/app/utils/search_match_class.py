@@ -150,15 +150,19 @@ UNRANKABLE = None
 #: The numbers below moved (market 2 -> 3, event 3 -> 4, team 4 -> 5) purely to
 #: open slot 2. Every PAIRWISE relation that existed before is identical; only
 #: the new kind is interleaved. Nothing may read these as absolute values.
+#: #4551/D107 inserted `entity_team` at slot 2 by the same method — every kind
+#: below it moved down one and NO pairwise relation changed. Same warning: these
+#: are positions in an order, never values to assert.
 KIND_ORDER: dict[str, int] = {
     "event_concept": 0,
     "concept": 0,
     "hub": 1,
-    "entity_event": 2,
-    "futures": 3,
-    "market": 3,
-    "event": 4,
-    "team": 5,
+    "entity_team": 2,
+    "entity_event": 3,
+    "futures": 4,
+    "market": 4,
+    "event": 5,
+    "team": 6,
 }
 _KIND_ORDER_FALLBACK = 9
 
@@ -167,6 +171,14 @@ _KIND_ORDER_FALLBACK = 9
 #: cannot drift from the dict above by a typo — an unknown kind would silently
 #: take `_KIND_ORDER_FALLBACK` and sort last, which is the opposite of the ship.
 ENTITY_EVENT_KIND = "entity_event"
+
+#: #4551/D107. The kind a `team` is promoted to when the query IS that team's
+#: name. Above `entity_event` because Alex's sentence orders the two: "the ENTITY
+#: leads — the team card / the player's next-or-last match — then its games".
+#: When a team row exists the card is the entity and its game is the game; when
+#: the query is a PLAYER there is no team row and the match is the entity, which
+#: is why #4411's promotion had to exist separately rather than as this one.
+ENTITY_TEAM_KIND = "entity_team"
 
 # --- the knobs -------------------------------------------------------------
 # FIVE knobs, against a ratified ceiling of eight. Every default here is
@@ -302,8 +314,16 @@ def _name_tokens(text: str) -> tuple[str, ...]:
     The cost is that a singular query for a plural nickname (`yankee` against
     "New York Yankees") no longer promotes that team's game. That is the same
     shape as the Sinners case and cannot be told apart from it without knowing
-    which strings are people; the team's own card still answers such a query on
-    MC0, and the game still ranks exactly where it did before #4411.
+    which strings are people, so the game still ranks exactly where it did
+    before #4411.
+
+    CORRECTED 2026-09-09 (#4551, D107). This paragraph used to end "the team's
+    own card still answers such a query on MC0", and that sentence was FALSE:
+    `_exact_key("yankee")` is `"yankee"` against the alias `"yankees"`, so there
+    is no MC0 and nothing caught the row. Production served `yankee` five inning
+    props and no team row at all. The card is answered instead by
+    `query_is_entity_name` — which DOES fold the plural, and read that function
+    for why doing so here would break Sinners while doing it there does not.
     """
     lowered = unicodedata.normalize("NFKD", (text or "").casefold())
     lowered = "".join(c for c in lowered if not unicodedata.combining(c))
@@ -539,6 +559,64 @@ def query_names_participant(query: str, participants: Iterable[str | None]) -> b
     if not owned:
         return False
     return all(t in owned for t in q_tokens)
+
+
+def query_is_entity_name(query: str, names: Iterable[str | None]) -> bool:
+    """Is `query` one of these names, rather than a word appearing inside one?
+
+    The test for promoting a `team` to `ENTITY_TEAM_KIND` (#4551, D107). True
+    when the query's folded token tuple EQUALS the folded token tuple of some
+    whole name the candidate owns — its display name, an `alternate_names`
+    entry, or its abbreviation.
+
+    WHY EQUALITY AND NOT `query_names_participant`'s SUBSET. The two predicates
+    answer the same question about different shapes, and the shape decides the
+    form. `participants` is a UNION of two people's full names, so subset is the
+    only thing expressible there — nobody types "Ben Shelton Carlos Alcaraz" and
+    the union has no member the query could equal. A team owns a SET OF WHOLE
+    ALIASES, one of which is the short form a reader actually types, so equality
+    against a whole alias is available; and it has to be used, because subset is
+    measurably too loose here:
+
+        query   subset against "New York Yankees" + ("New York", "Yankees")
+        new     TRUE  — and `new` is not a team name, it is a token inside two
+        york    TRUE  — of them. Promoting on either reverses ruling 041 for a
+                        query Alex's rule never covered.
+        yankee  TRUE  } equality also TRUE — the query IS the alias "Yankees",
+        yankees TRUE  } one keystroke short of the plural in the first case.
+
+    `test_a_complete_word_still_beats_an_unfinished_one` (#4519) is the guard
+    that fails if this is ever loosened to subset: it pins `new` answering with
+    the market, which is the ratified relation and not a bug.
+
+    WHY THE PLURAL IS FOLDED HERE AND NOT IN `query_names_participant`. `tokens`
+    strips one trailing plural, so `yankee` and `Yankees` are one token and the
+    equality holds — which is the entire point of #4551, since `yankee` is the
+    keystroke that reaches no MC0. The Sinner/Sinners entity boundary that made
+    `_name_tokens` necessary for participants is NOT reintroduced by this,
+    because the plural-namesake rule in `rank` is a property of the RESULT SET
+    and fires independently of kind:
+
+    * `yankee`: no candidate carries `yankee` unfolded, so the gate is CLOSED,
+      no penalty is applied to anything, and the promotion decides. Correct.
+    * `sinner` with a Counter-Strike roster called "Sinners": the outcome
+      "Jannik Sinner" carries the token unfolded, so the gate is OPEN, the
+      roster lands ONLY by the plural fold, and it takes the namesake penalty —
+      which sorts ahead of `mc` in the key and therefore outranks this
+      promotion. The roster is promoted and still loses, which is the design.
+
+    Read the block above `_owned_text` for that gate; it was built for exactly
+    this pair and names `yankee` as the case it must keep working.
+
+    Case and accents fold (`tokens`), so `Real Sociedad` answers `real sociedad`
+    and `koln` answers `Köln`. Whitespace and punctuation are not compared at
+    all — the comparison is on TOKENS, so `red sox` equals "Red Sox" and
+    `sao paulo` equals "São Paulo".
+    """
+    q_tokens = tokens(query)
+    if not q_tokens:
+        return False
+    return any(name and tokens(name) == q_tokens for name in names)
 
 
 # --- the plural namesake rule (#4411, CERT-2399) ----------------------------
