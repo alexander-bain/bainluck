@@ -432,3 +432,86 @@ class TestAbsorbedAndAmplified:
         assert out["stage"] == "ranked"
         for k in ("served_slates", "served_comparison", "interleave_effect", "events_pool"):
             assert k not in out
+
+
+def _scheduled_event(i: int, score: float) -> dict:
+    """An event with nothing live about it.
+
+    `_event` builds a LIVE card, which `hoist_live_events_into_first_page` then
+    moves. That stage takes `min(20, limit)` already, so it cannot break the
+    invariant below — but a test about ONE stage should not have a second one
+    reordering underneath it.
+    """
+    item = _event(i, score)
+    item["data"]["status"] = "scheduled"
+    return item
+
+
+class TestRankDoesNotDependOnPageSize:
+    """#4921 — a card's rank must not be a function of the page size asked for.
+
+    `_ensure_feed_diversity` scales BOTH its event quota
+    (`min_event_slots = max(3, int(target_size * event_pct))`) and the span it
+    rebuilds by interleaving (`for slot in range(min(target_size, ...))`) from
+    the number it is handed. It was the last stage in the chain still handed the
+    caller's raw `limit`; every other stage takes `min(20, limit)`. Measured on
+    production 2026-09-10: `limit=40` and `limit=250` agreed on **2 of 40**
+    ranks, max move +87, with **0** cards carrying a different score — the order
+    moved, the scoring did not.
+
+    The reader's page one is 20 (`FEED_PAGE_LIMIT`), so 20 is the window a
+    diversity guarantee is about. These assert the invariant directly rather
+    than the constant, so they still hold if the window is re-derived.
+    """
+
+    # Futures sweep the top on score, so the stage MUST promote events —
+    # `events_in_top >= min_event_slots` has to be false or the function returns
+    # `items` untouched and the test proves nothing at any limit.
+    POOL = [_futures(i, 100.0 - i) for i in range(40)] + [
+        _scheduled_event(1000 + i, 60.0 - i) for i in range(40)
+    ]
+
+    def _order(self, limit: int) -> list[tuple[str, int]]:
+        items, _meta = apply_discover_display_chain(
+            list(self.POOL),
+            limit=limit,
+            ctx=PersonalizationContext(),
+            event_pct=0.6,
+        )
+        return [(i["type"], i["data"]["id"]) for i in items]
+
+    def test_the_served_order_is_identical_at_every_page_size(self):
+        at20, at40, at250 = self._order(20), self._order(40), self._order(250)
+        assert at20 == at40, "limit=40 composed a different order than limit=20"
+        assert at40 == at250, "limit=250 composed a different order than limit=40"
+
+    def test_page_one_is_a_prefix_at_every_page_size(self):
+        # The weaker, reader-facing half of the same contract, asserted
+        # separately so a future change that legitimately reshapes the TAIL
+        # cannot silently take page one with it.
+        at20, at40, at250 = self._order(20), self._order(40), self._order(250)
+        assert at20[:20] == at40[:20] == at250[:20]
+
+    def test_the_diversity_guarantee_still_holds_on_page_one(self):
+        # The fix must not buy limit-independence by turning the stage off: the
+        # pool leads with 40 futures on score, and page one still has to carry
+        # its event quota (0.6 of 20 = 12).
+        page_one = self._order(20)[:20]
+        events = sum(1 for kind, _ in page_one if kind == "event")
+        assert events >= 12, f"page one carried only {events} events"
+
+    def test_a_caller_asking_for_less_than_a_page_keeps_its_narrower_window(self):
+        # `min(20, limit)` must not WIDEN a small caller's window, only cap a
+        # large one. The discriminator is where the interleave STOPS: a limit=10
+        # caller rebuilds ten slots and score order resumes at slot 11, so
+        # ranks 11-20 are the futures that swept the top on score. Under a
+        # 20-wide window those same ranks would still be interleaved.
+        beyond_the_window = self._order(10)[10:20]
+        assert all(kind == "futures" for kind, _ in beyond_the_window), (
+            "slots past a limit=10 caller's window were still interleaved: "
+            f"{beyond_the_window}"
+        )
+        # And the same ranks under a 20-wide window are NOT all futures, which
+        # is what makes the assertion above a discriminator rather than a
+        # restatement of the pool.
+        assert not all(kind == "futures" for kind, _ in self._order(20)[10:20])
