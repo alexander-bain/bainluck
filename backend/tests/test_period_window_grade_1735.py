@@ -303,7 +303,8 @@ BORING_PROP = "1+ hits"
 BORING_PROP_MARKET = "Ronald Acuña Jr. Hits"
 
 
-def _rays_at_braves_finished(*, box_score_data=..., winner_prices=None):
+def _rays_at_braves_finished(*, box_score_data=..., winner_prices=None,
+                             cross_source_copy=False):
     event = _make_event(
         id=EVENT_ID,
         home_team="Atlanta Braves",
@@ -362,7 +363,23 @@ def _rays_at_braves_finished(*, box_score_data=..., winner_prices=None):
         _make_outcome(id=9301, market_id=903, name=FULL_GAME, probability=0.99),
         _make_outcome(id=9401, market_id=904, name=BORING_PROP, probability=0.98),
     ]
-    return event, [winner, spread, full_game, boring], outcomes
+    futures = [winner, spread, full_game, boring]
+
+    if cross_source_copy:
+        # The SAME sixth inning, from the other venue, MID-BAND — so it takes the
+        # other path into the closed collection (CERT-2505). Polymarket spells the
+        # market its own way, which is why the input key alone cannot catch it.
+        pm = _make_futures_market(
+            id=905, name="Rays vs Braves", source="polymarket"
+        )
+        pm.status = "open"
+        pm.event_id = EVENT_ID
+        futures.append(pm)
+        outcomes.append(
+            _make_outcome(id=9501, market_id=905, name=WINNER, probability=0.30)
+        )
+
+    return event, futures, outcomes
 
 
 async def _client(**kwargs):
@@ -407,6 +424,23 @@ async def settled_price_client():
     `finished_client`, so the only variable between the two arms is the price.
     """
     app, cache = await _client(winner_prices=(0.99, 0.01, 0.01))
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            yield ac
+    cache.clear()
+
+
+@pytest.fixture
+async def mixed_source_client():
+    """One sixth inning, two venues, one on each side of the interest band.
+
+    Kalshi 0.99 leaves through the step 9 carve-out; Polymarket 0.30 stays in
+    `player_props` and joins the same collection ~180 lines later through
+    `_window_open`. The two paths never meet, which is CERT-2505's finding.
+    """
+    app, cache = await _client(winner_prices=(0.99, 0.01, 0.01), cross_source_copy=True)
     with patch("app.main.init_db", new_callable=AsyncMock):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -600,6 +634,70 @@ async def test_the_extreme_priced_control_keeps_its_price(settled_price_client):
     payload = (await settled_price_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
     assert FULL_GAME in _all_served_outcome_names(payload)
     assert FULL_GAME not in _script_by_label(payload)
+
+
+@pytest.mark.asyncio
+async def test_mixed_source_prices_produce_one_price_free_verdict(mixed_source_client):
+    """CERT-2505: the two price paths feed one collection, so they need one dedupe.
+
+    Kalshi has the sixth inning at 0.99 and Polymarket at 0.30. One leaves through
+    the step 9 carve-out, the other through `_window_open`, and before this repair
+    the reader got `1–0 — hit` twice — a set living inside either path is blind to
+    the other.
+    """
+    payload = (await mixed_source_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
+
+    rows = [r for r in (payload.get("props_script") or []) if r["label"] == WINNER]
+    assert len(rows) == 1, (
+        f"the same sixth inning produced {len(rows)} WHAT HIT rows — the dedupe "
+        "does not span both price paths"
+    )
+    assert rows[0]["graded_result"] == "hit"
+    assert rows[0]["graded_label"] == "1–0 — hit"
+
+    # And neither copy came back as a price, from either venue or either path.
+    assert WINNER not in _all_served_outcome_names(payload)
+    assert rows[0]["pregame_mark"] is None
+    assert rows[0]["current"] is None
+
+
+def test_one_label_bounded_to_two_windows_stays_two_verdicts():
+    """The safety direction of CERT-2505's dedupe: it must not over-merge.
+
+    "Over 4.5" is a bare outcome whose window lives in the MARKET name, so the
+    same label legitimately binds two different questions — innings 1–5 and the
+    first inning alone. They are not duplicates and both are owed a verdict. This
+    is why the key is the SPAN plus the outcome and not the outcome alone; drop
+    the span from the key and this test is what fails.
+    """
+    from app.routes.events import _grade_closed_windows
+
+    event = _make_event(
+        id=EVENT_ID, home_team="Atlanta Braves", away_team="Tampa Bay Rays",
+        status="completed", sport_key="baseball_mlb", home_score=2, away_score=7,
+    )
+    event.llm_league = "MLB"
+    event.box_score_data = {
+        "players": {},
+        "home_period_scores": HOME_PERIODS,
+        "away_period_scores": AWAY_PERIODS,
+    }
+    items = [
+        {"market_name": "Tampa Bay vs Atlanta: First 5 Innings Total",
+         "outcome_name": "Over 4.5", "_market_id": 801},
+        {"market_name": "Tampa Bay vs Atlanta: 1st Inning Total",
+         "outcome_name": "Over 4.5", "_market_id": 802},
+    ]
+    graded = _grade_closed_windows(items, event, {})
+
+    assert len(graded) == 2, (
+        "two windows sharing one label were merged into one verdict; "
+        f"graded={graded}"
+    )
+    # Innings 1–5 scored 7 combined (over 4.5); the first inning scored 0 (under).
+    by_market = {g["market_name"]: g for g in graded}
+    assert by_market["Tampa Bay vs Atlanta: First 5 Innings Total"]["hit"] is True
+    assert by_market["Tampa Bay vs Atlanta: 1st Inning Total"]["hit"] is False
 
 
 @pytest.mark.asyncio

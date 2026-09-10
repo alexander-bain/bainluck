@@ -11496,6 +11496,32 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
     away_name = event.__dict__.get("away_team_name")
 
     graded: list[dict] = []
+    # ONE VERDICT PER QUESTION, AND THE DEDUPE HAS TO LIVE HERE (CERT-2505).
+    #
+    # `closed_items` is fed by two paths that never meet: the step 9 carve-out
+    # (a settled leg outside the interest band) and `_window_open` (everything
+    # else), ~180 lines apart. The same sixth inning arrives from Kalshi at 0.99
+    # and Polymarket at 0.30 and takes one path each, so a set inside either path
+    # is blind to the other and the reader gets "1–0 — hit" twice. The endpoint's
+    # own cross-source dedupe (9b) cannot help: by the time it runs, one of the
+    # pair has already left `player_props`.
+    #
+    # This function is the single point every path has arrived at, which is the
+    # only place a dedupe is not a guess about who else might append.
+    #
+    # THE KEY IS THE SPAN AND THE OUTCOME, WHICH IS THE QUESTION ITSELF.
+    #
+    # Not the market name: the two venues spell the same market differently
+    # ("Tampa Bay vs Atlanta: 6th Inning Winner" against "Rays vs Braves"), so a
+    # name-bearing key does not see a cross-source pair at all. Not the outcome
+    # alone either: "Over 4.5" bounded to the first five innings and "Over 4.5"
+    # bounded to the whole game are two questions that share a label, and merging
+    # them would delete a real row.
+    #
+    # The span is what makes them the same question, and `prop_window_span` has
+    # just returned it — so this runs BEFORE `grade_period_window`, and a
+    # duplicate costs no grading work.
+    _seen_questions: set = set()
     for item in closed_items:
         # gotcha #42 — one unclassifiable row must never cost the whole pass.
         try:
@@ -11512,6 +11538,10 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
             if not span:
                 continue
             unit, first_period, last_period = span
+            question_key = (unit, first_period, last_period, outcome_name)
+            if question_key in _seen_questions:
+                continue
+            _seen_questions.add(question_key)
             verdict = grade_period_window(
                 unit,
                 first_period,
@@ -12555,18 +12585,15 @@ async def _build_game_markets(
         elif _window_is_closed(p):
             _boring_closed_windows.append(p)
     player_props = _interesting_props
-    # Deduped on identity, not on price: the same settled inning can arrive from
-    # Kalshi and Polymarket, and 9b — the pass that would have merged them — is
-    # below this line and no longer sees them. Two identical "1–0 — hit" rows in
-    # WHAT HIT is not a false statement, but it is not one settled vocabulary
-    # either (#1650).
-    _seen_closed: set = set()
-    for p in _boring_closed_windows:
-        key = (p.get("market_name"), p.get("outcome_name"))
-        if key in _seen_closed:
-            continue
-        _seen_closed.add(key)
-        _window_closed_items.append(p)
+    # Deduping these against each other HERE would be a set that spans one path
+    # and calls itself the rule (CERT-2505). The same settled inning can arrive
+    # from Kalshi at 0.99 and Polymarket at 0.30: the extreme copy leaves through
+    # this carve-out, the mid-band copy stays in `player_props` and joins the same
+    # collection ~180 lines below through `_window_open`, and 9b — the pass that
+    # would have merged them — never sees the pair because one of them is already
+    # gone. A guard on this list cannot see the other list. The dedupe therefore
+    # lives at the single point where every path has arrived: `_grade_closed_windows`.
+    _window_closed_items.extend(_boring_closed_windows)
 
     # 9b. Cross-source dedup: when Kalshi and Polymarket both have the same
     # player+stat+threshold, merge into one entry with averaged probability
