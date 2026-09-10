@@ -393,6 +393,47 @@ def _wire_one_sport(monkeypatch, sport_key="americanfootball_nfl"):
     return session
 
 
+def _wire_sports(monkeypatch, *sport_keys):
+    """`_wire_one_sport` with more than one row, for the mixed control.
+
+    The mixed case cannot be built from one sport by construction: it needs a
+    sport that IS asked standing beside one that is not.
+    """
+    session = _wire_one_sport(monkeypatch, sport_key=sport_keys[0])
+    from app.models.models import Sport
+
+    for key in sport_keys[1:]:
+        session.add(Sport(key=key, name=key))
+    session.commit()
+    return session
+
+
+def _stub_venue_by_sport(monkeypatch, reason_by_statpal_sport):
+    """A StatPal whose reason depends on WHICH sport is asked.
+
+    Keyed on the StatPal identifier (`nfl`, `soccer`), not on our key, because
+    that is what the pass passes to the client — and it is the reason the
+    day-board sports are nine of our keys but only two of theirs.
+    """
+    class _Service:
+        async def get_fixtures_result(self, sport, *a, **k):
+            return statpal_api.StatPalFixtureFetch(
+                [], reason_by_statpal_sport[sport], sport, "season-schedule"
+            )
+
+        async def get_fixtures(self, *a, **k):
+            return (await self.get_fixtures_result(*a, **k)).fixtures
+
+        async def get_live_scores(self, sport):
+            return []
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+
 def _stub_venue(monkeypatch, reason):
     """A StatPal whose schedule read lands on `reason` for every sport."""
     class _Service:
@@ -623,3 +664,131 @@ class TestAPassThatAskedNobodyDoesNotReportSuccess:
         assert [f["sport"] for f in result["fetch_failures"]] == ["basketball_nba"]
         assert result["terminal"] == "failed"
         assert verdict_for("statpal_schedules", result).verdict == FAILED
+
+
+# =============================================================================
+# 7. A sport we LOOPED OVER is not a sport we ASKED — repair
+#    `2907-NO-DAY-TOKEN-IS-NOT-A-SUCCESS` (CERT-2467).
+#
+#    Section 6 caught the sports dropped BEFORE the fetch (`sport_not_found`).
+#    It missed the ones the fetch itself declines to ask about. A day-board
+#    sport is mapped, rowed, and reached — and `get_fixtures_result` hands back
+#    `no_day_token` without an HTTP request, because its schedule is served one
+#    calendar board at a time and this method has no offset argument.
+#
+#    `no_day_token` is correctly NOT an alarm (it is a permanent property of
+#    StatPal's product, not an outage), and `sports_asked += 1` sat one line
+#    under a result object carrying `asked` for exactly this question. So the
+#    counter counted it, and the terminal called the pass `complete`.
+#
+#    This is the bigger half of the issue by population: NINE of the thirteen
+#    mapped keys are day-board — soccer ×7, tennis ×2 — so the all-sports form
+#    of this call has nine unasked sports on EVERY run, where `sport_not_found`
+#    had one and now has none.
+# =============================================================================
+
+
+class TestASportWeLoopedOverIsNotASportWeAsked:
+
+    @pytest.fixture(autouse=True)
+    def _no_pacing(self, monkeypatch):
+        async def _sleep(_s):
+            return None
+
+        monkeypatch.setattr("app.tasks.statpal_sync.asyncio.sleep", _sleep)
+
+    @pytest.mark.asyncio
+    async def test_mapped_day_board_pass_that_asks_nobody_cannot_complete(
+        self, monkeypatch
+    ):
+        """The repair's named test. Every sport mapped, rowed, reached — and
+        none of them asked, because all of them are day-board.
+
+        `sports_asked` has to read 0 and not 2. The sports were looped over and
+        the loop is not the question; a schedule sync that made no schedule
+        request banked a green row, which is gotcha #53 wearing its third face
+        in this one task.
+        """
+        from app.tasks.statpal_sync import _sync_statpal_schedules
+
+        _wire_sports(monkeypatch, "soccer_epl", "tennis_atp")
+        monkeypatch.setattr(
+            "app.tasks.statpal_sync.STATPAL_SPORT_MAPPING",
+            {"soccer_epl": "soccer", "tennis_atp": "tennis"},
+        )
+        _stub_venue_by_sport(
+            monkeypatch, {"soccer": "no_day_token", "tennis": "no_day_token"}
+        )
+
+        result = await _sync_statpal_schedules()
+
+        assert result["sports_asked"] == 0
+        assert result["terminal"] == "no_work"
+        # Not an alarm, and must not be laundered into one: `no_day_token` is
+        # StatPal's product, not StatPal being down.
+        assert result["fetch_failures"] == []
+
+        # Named, not merely uncounted.
+        assert sorted(u["sport"] for u in result["sports_unasked"]) == [
+            "soccer_epl",
+            "tennis_atp",
+        ]
+        assert {u["reason"] for u in result["sports_unasked"]} == {"no_day_token"}
+
+        verdict = verdict_for("statpal_schedules", result)
+        assert verdict.verdict == UNKNOWN
+        assert verdict.authoritative is True
+
+    @pytest.mark.asyncio
+    async def test_a_mixed_pass_is_partial_not_complete(self, monkeypatch):
+        """The mixed control, and the one that decides the repair's shape.
+
+        Four sports read and nine never spoken to is a real pass — not `failed`,
+        not `no_work` — but it is not `complete` either, because `complete` says
+        the sync covered the sports it names. Here NFL answers and soccer is
+        never asked.
+
+        Both arms are asserted. A repair that made every mixed pass `no_work`
+        would pass the test above and throw away the four sports that DID read,
+        so the NFL side is checked as read, not merely as present.
+        """
+        from app.tasks.statpal_sync import _sync_statpal_schedules
+
+        _wire_sports(monkeypatch, "americanfootball_nfl", "soccer_epl")
+        monkeypatch.setattr(
+            "app.tasks.statpal_sync.STATPAL_SPORT_MAPPING",
+            {"americanfootball_nfl": "nfl", "soccer_epl": "soccer"},
+        )
+        _stub_venue_by_sport(monkeypatch, {"nfl": "ok", "soccer": "no_day_token"})
+
+        result = await _sync_statpal_schedules()
+
+        assert result["sports_asked"] == 1
+        assert result["terminal"] == "partial"
+        assert result["fetch_failures"] == []
+        assert [u["sport"] for u in result["sports_unasked"]] == ["soccer_epl"]
+
+    @pytest.mark.asyncio
+    async def test_an_all_asked_pass_is_still_complete(self, monkeypatch):
+        """The over-fire control.
+
+        `partial` on any unasked sport is only correct if a pass with NO unasked
+        sports still reads green. Without this, widening the gate to fire on
+        every pass would satisfy both tests above and take the terminal's one
+        success value out of use — the same failure the `374 fetched, 0 created`
+        note in the task guards against.
+        """
+        from app.tasks.statpal_sync import _sync_statpal_schedules
+
+        _wire_sports(monkeypatch, "americanfootball_nfl", "basketball_nba")
+        monkeypatch.setattr(
+            "app.tasks.statpal_sync.STATPAL_SPORT_MAPPING",
+            {"americanfootball_nfl": "nfl", "basketball_nba": "nba"},
+        )
+        _stub_venue_by_sport(monkeypatch, {"nfl": "ok", "nba": "empty"})
+
+        result = await _sync_statpal_schedules()
+
+        assert result["sports_asked"] == 2
+        assert result["sports_unasked"] == []
+        assert result["terminal"] == "complete"

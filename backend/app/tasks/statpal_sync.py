@@ -232,8 +232,15 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # bank as a success. Always present; `[]` is the reading (gotcha #53).
     fetch_failures: list[dict] = []
     #: Denominator for the terminal below: a pass that asked nobody is not a
-    #: pass that heard from everybody.
+    #: pass that heard from everybody. Counts sports actually ASKED, not sports
+    #: looped over — see the `fetch.asked` gate below.
     sports_asked = 0
+    #: Mapped sports this pass named and could not ask, with the reason. Named
+    #: rather than merely uncounted: a terminal that says "nothing happened" is
+    #: only useful if the summary also says WHICH sports went unasked, and the
+    #: difference between `sports_asked` and `len(sport_keys)` is otherwise a
+    #: subtraction the reader has to do and cannot attribute.
+    sports_unasked: list[dict] = []
 
     # Track StatPal fixture IDs already processed in this run
     # to prevent duplicates across soccer league iterations
@@ -300,6 +307,37 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         "StatPal schedules %s: %s — not an empty schedule (#2907)",
                         our_key, fetch.reason,
                     )
+
+                # #2907 repair `2907-NO-DAY-TOKEN-IS-NOT-A-SUCCESS`. This counter
+                # used to increment here unconditionally, one line below a result
+                # object carrying `asked` for precisely this question.
+                #
+                # `no_day_token` is not an alarm and must not be — it is a
+                # permanent property of StatPal's product, not an outage, and
+                # `is_alarm` is right to exclude it. But "not an alarm" is not
+                # "asked". The day-board sports cannot be reached through this
+                # method at all, so counting them here made `sports_asked` a
+                # count of sports we LOOPED OVER, and the terminal that reads it
+                # then called a pass complete on the strength of sports nobody
+                # spoke to. That is this issue's own defect a third time: first
+                # `[]` for a dark venue, then `complete` for a pass that asked
+                # nobody, now `complete` for a pass that asked nobody it named.
+                #
+                # NINE of the thirteen mapped keys are day-board (soccer ×7,
+                # tennis ×2), so the all-sports form of this call reaches here
+                # unasked far more often than it ever reached `sport_not_found`.
+                if not fetch.asked:
+                    sports_unasked.append({
+                        "sport": our_key,
+                        "statpal_sport": statpal_sport,
+                        "reason": fetch.reason,
+                    })
+                    logger.info(
+                        "StatPal schedules %s: %s — not asked, not a schedule (#2907)",
+                        our_key, fetch.reason,
+                    )
+                    continue
+
                 sports_asked += 1
 
                 # Also fetch live scores to get current game state
@@ -770,22 +808,40 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # Odds API looks like, and it must stay green or the alarm stops being read.
     #
     # And a pass that asked NOBODY is `no_work`, never `complete`. The `else`
-    # below used to swallow it: `sports_asked == 0` means every sport this call
-    # named was dropped before the fetch — today only at `sport_not_found` — so
-    # nothing was read, nothing was written, and the summary said the same word
-    # as a healthy quiet pass. That is this issue's own defect one layer above
-    # the venue, and it is not hypothetical: `golf_pga` is in
-    # `STATPAL_SPORT_MAPPING` and has no `sports` row in production (13 of 14
-    # mapped keys resolve, measured 2026-09-09), so the single-sport form of
-    # this call returns zero-asked today. `no_work` is authoritative UNKNOWN in
-    # `task_verdict` — not a failure, because nothing upstream is broken, and
-    # emphatically not a success.
+    # below used to swallow it: `sports_asked == 0` means nothing was read and
+    # nothing was written, while the summary said the same word as a healthy
+    # quiet pass. That is this issue's own defect one layer above the venue.
+    #
+    # A sport reaches "unasked" two ways, and BOTH are counted here:
+    #
+    #   `sport_not_found`  the key resolves to no `sports` row, so the loop drops
+    #                      it before the fetch. `golf_pga` was the production
+    #                      specimen until #4691 retired the key.
+    #   `no_day_token`     the sport IS rowed and IS mapped, but its schedule is
+    #                      served one calendar board at a time and cannot be
+    #                      reached through this method at all. NINE of the
+    #                      thirteen mapped keys — soccer ×7, tennis ×2.
+    #
+    # The second is the repair `2907-NO-DAY-TOKEN-IS-NOT-A-SUCCESS`. It is much
+    # the larger of the two: the all-sports form of this call has nine unasked
+    # sports on every single run, and before the gate above it counted all nine
+    # towards `sports_asked` and then reported `complete`.
+    #
+    # A MIXED pass is `partial`, not `complete`. Four sports read and nine never
+    # spoken to is a real, useful pass — it is not `failed` and it is not
+    # `no_work` — but calling it `complete` says the schedule sync covered the
+    # sports it names, and it did not. `partial` is already this task's word for
+    # "something real happened and something is missing", and an operator who
+    # sees it can read `sports_unasked` for which sports and why.
+    #
+    # `no_work` is authoritative UNKNOWN in `task_verdict` — not a failure,
+    # because nothing upstream is broken, and emphatically not a success.
     total_failures = sum(1 for f in fetch_failures if f["reason"] == "fetch_failed")
     if not sports_asked:
         terminal = "no_work"
     elif total_failures == sports_asked:
         terminal = "failed"
-    elif fetch_failures:
+    elif fetch_failures or sports_unasked:
         terminal = "partial"
     else:
         terminal = "complete"
@@ -795,6 +851,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         # Always present; `[]` is the reading, not an absence.
         "fetch_failures": fetch_failures,
         "sports_asked": sports_asked,
+        # Always present; `[]` is the reading, not an absence — same rule as
+        # `fetch_failures`, and for the same reason.
+        "sports_unasked": sports_unasked,
         "events_updated": total_updated,
         "events_created": total_created,
         "total_fixtures_fetched": total_fixtures,
