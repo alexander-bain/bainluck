@@ -1339,6 +1339,60 @@ CASE WHEN COALESCE(fo14.calibration_probability, fo14.opening_probability) >= 1.
                ELSE 'from_calibration' END
 """
 
+#: CAL-P1078 — the FLAT-FILL band crossed with the QUESTION FAMILY, for
+#: `kalshi/golf` (rank 1 live, excess 28,443).
+#:
+#: WHAT IT ASKS. ARTIFACT-M-20260909-SUBCOHORT-kalshi-golf-field names one
+#: mechanism: *flat near-1 fill on per-golfer legs of round-leader / cut /
+#: top-finish markets* — every golfer in "Hainan To Make the Cut" carrying
+#: 0.990, "Valero Round 2 Leader" legs at 0.97-0.98 in a 165-golfer field. On
+#: the truth-eligible SUPERSET that is 3,579 legs priced >= 0.93 winning 40.9%.
+#: The artifact's own confidence line says "medium on transfer to the published
+#: 21k subset", and this dimension is how that transfer is measured rather than
+#: assumed.
+#:
+#: WHY 0.93 AND NOT ``pubband``'s 0.99. ``pubband`` was built for
+#: `polymarket/hockey`, where the mechanism was legs at EXACTLY 1.0000, so its
+#: shoulder sits at 0.99. Golf's fill sits at 0.97-0.99, which ``pubband`` would
+#: fold into ``z_pub_ordinary`` alongside genuine 0.60 favourites — the arm
+#: under test would be diluted by the control. The cut named here is the
+#: artifact's own (>= 0.93), and ``b_shoulder_90_93`` says whether the defect is
+#: the cut or the band.
+#:
+#: WHY THE FAMILY CROSS IS NOT DECORATION. The published payload already answers
+#: the band question on its own grain: bucket 9 (0.90-1.00) of the published
+#: `kalshi/golf` cell holds 416 legs at mean 0.9693 winning 64.4%, and removing
+#: it moves the cell 4.34 -> 3.78. What the payload CANNOT say is which of those
+#: 416 are the named family, and an exclusion is only as big as its predicate.
+#: ``lead`` / ``topn`` / ``cut`` are the three the artifact names, read off the
+#: venue's own ticker vocabulary (`KXPGAR2LEAD`, `KXPGATOP10`, `KXPGAMAKECUT`
+#: and their LPGA/DP-World/LIV/Champions twins). ``tour`` is the outright-winner
+#: field market — the same shape, NOT named by the artifact, and therefore the
+#: negative control that says whether the fill is a property of the three
+#: families or of every large golf field. ``z_ordinary`` is the arm doctrine 18
+#: grades a row-dropping fix on.
+#:
+#: ``fm15`` / ``fo15`` are this dimension's own aliases; it deliberately does
+#: NOT borrow ``SERIES_JOIN``'s ``fm2`` the way ``golfround`` does, so that the
+#: p131 collision guard stays a real test rather than one with an exception.
+GOLFFILL_JOIN = """
+LEFT JOIN futures_markets fm15 ON fm15.id = d.market_id
+LEFT JOIN futures_outcomes fo15 ON fo15.id = d.outcome_id
+"""
+GOLFFILL_EXPR = """
+CASE WHEN COALESCE(fo15.calibration_probability, fo15.opening_probability) >= 0.93
+          THEN 'a_fill_ge93'
+     WHEN COALESCE(fo15.calibration_probability, fo15.opening_probability) >= 0.90
+          THEN 'b_shoulder_90_93'
+     ELSE 'z_ordinary' END
+|| '|' ||
+CASE WHEN SPLIT_PART(fm15.external_id, '-', 1) ~ 'LEAD$'      THEN 'lead'
+     WHEN SPLIT_PART(fm15.external_id, '-', 1) ~ 'TOP[0-9]+$' THEN 'topn'
+     WHEN SPLIT_PART(fm15.external_id, '-', 1) ~ 'MAKECUT$'   THEN 'cut'
+     WHEN SPLIT_PART(fm15.external_id, '-', 1) ~ 'TOUR$'      THEN 'tour'
+     ELSE 'other' END
+"""
+
 #: Dimensions whose expression depends on the chunk, and therefore cannot live
 #: in the static table below.
 PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim, "truth": truth_dim}
@@ -1371,6 +1425,7 @@ DIMENSIONS = {
     "ouside": (OUSIDE_EXPR, OUSIDE_JOIN, ""),
     "loneclaim": (LONECLAIM_EXPR, LONECLAIM_JOIN, ""),
     "pubband": (PUBBAND_EXPR, PUBBAND_JOIN, ""),
+    "golffill": (GOLFFILL_EXPR, GOLFFILL_JOIN, ""),
 }
 
 

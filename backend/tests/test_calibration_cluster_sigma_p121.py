@@ -220,6 +220,12 @@ SHIPPED_DIMENSIONS = {
     # change it is guarding is how a guard stops guarding.
     "loneclaim": ("LONECLAIM_EXPR", "LONECLAIM_JOIN", ""),
     "pubband": ("PUBBAND_EXPR", "PUBBAND_JOIN", ""),
+    # SEVENTH TIME (CAL-P1078, `golffill`) — and the first one written BEFORE the
+    # guard went red, by following the sixth note's own instruction
+    # (`grep -rl DIMENSIONS tests/`) instead of the neighbouring files. Still a
+    # data point on #2779, not an eighth paragraph.
+    # `calibration_cluster_sigma` still contributes exactly `marketid`.
+    "golffill": ("GOLFFILL_EXPR", "GOLFFILL_JOIN", ""),
 }
 
 
