@@ -73,6 +73,11 @@ COVERED = (
     "test_null_statpal_live_space_3094_real_postgres.py",
     "test_repair_3672_bind_contract.py",
     "test_rekey_statpal_anchors_real_postgres.py",
+    # #4788 (CAL-P1088). Seeds `futures_outcomes` by raw INSERT and names
+    # `is_winner` on EVERY row, including the NULL ones — omitting it would let
+    # the server default `false` seed this gate's own cohort by accident, so the
+    # gate would find the defect it manufactured.
+    "test_repair_pm_ungraded_loss_4788_pg.py",
     "test_restore_4586_manifest_cas_pg.py",
     "test_restore_3026_jsonb_roundtrip_pg.py",
     "test_soccer_statpal_manifest_restore_pg.py",

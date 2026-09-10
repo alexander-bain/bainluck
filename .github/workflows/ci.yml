@@ -592,6 +592,32 @@ jobs:
             exit 1
           fi
 
+      - name: "#4788 ungraded-loss withdrawal (real Postgres)"
+        # CAL-P1088. 574,832 legs across 277,519 resolved Polymarket markets carry
+        # `is_winner = false` with `resolution_source IS NULL` — the column
+        # DEFAULT, not a verdict — and the reader is shown a red `Lost`. The
+        # `pm-ungraded-loss` rail withdraws the verdict.
+        #
+        # Real Postgres because the three questions that decide whether it is
+        # safe on 574,832 rows are all about what a SERVER does: does the
+        # market-level anti-join EXCLUDE the 854 markets whose winner is crowned
+        # (a source scan can only prove the clause is present); does
+        # `pm-never-graded` (#1912) still select a withdrawn market, which turns
+        # on `bool_or(NULL) IS NOT TRUE`; and is a withdrawn row a fixed point of
+        # its own bound, without which the D51 undo silently becomes a no-op.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_pm_ungraded_loss_4788_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/pm_ungraded_loss.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pm_ungraded_loss.txt; then
+            echo "::error::#4788 ungraded-loss withdrawal gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening
