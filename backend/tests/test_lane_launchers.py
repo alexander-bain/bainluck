@@ -29,8 +29,10 @@ Terminal window, kills a process, or writes into the live handoff tree.
 
 import os
 import re
+import shutil
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -1105,8 +1107,11 @@ def test_restock_once_does_not_requeue_a_running_directive(tmp_path):
 # itself. `LANE_IDLE_SLEEP` exists so they can.
 
 
-def _run_loop(tmp_path, handoff, fake_claude, seconds=3.0, after_start=None, **env):
-    """Run the real serve loop for a moment, then kill it, and return its output.
+def _run_loop(
+    tmp_path, handoff, fake_claude, seconds=3.0, after_start=None,
+    until=None, ceiling=45.0, **env,
+):
+    """Run the real serve loop until its pass condition appears, then kill it.
 
     SIGKILL to the whole process group, and `start_new_session=True` so that
     group is never pytest's: the runner traps INT/TERM/HUP and answers with
@@ -1116,6 +1121,27 @@ def _run_loop(tmp_path, handoff, fake_claude, seconds=3.0, after_start=None, **e
     WORKDIR is tmp_path, not REPO: the runner seeds a cross-root settings.json
     into whatever workdir it is handed, and a test has no business writing that
     into the checkout.
+
+    🔴 `seconds=` USED TO BE A DURATION, AND THAT MADE THESE TESTS A STOPWATCH
+    ----------------------------------------------------------------------------
+    The old shape slept a fixed budget, killed the runner, and asserted ONCE on
+    whatever had been printed by then. That budget was not a property of the
+    thing under test — it was a guess about how fast this machine boots a bash
+    runner, and it silently became the assertion. integrator-288 measured the
+    consequence: composed into a 149-file band, two of these went red (a
+    different subset each run, so a flake, not order pollution) while passing
+    66/66 when the file runs alone. `lane-runner.sh` had gained a few `git`
+    subprocesses on the startup path, the runner reached `idle - no queued work`
+    a second later than before, and the reaping iteration never ran inside the
+    budget. Nothing about the behaviour under test had changed.
+
+    So `until=` is the acceptance's OWN condition and the wait is a DEADLINE:
+    poll the runner's output until that string appears, or until a generous
+    ceiling elapses. A slow machine now costs seconds, not a red — and a genuine
+    regression still fails, because the string never arrives.
+
+    `seconds=` is kept for the callers that assert on an ABSENCE, where there is
+    no string to wait for and a fixed observation window is the correct shape.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -1135,20 +1161,95 @@ def _run_loop(tmp_path, handoff, fake_claude, seconds=3.0, after_start=None, **e
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         cwd=str(REPO), env=e, start_new_session=True,
     )
+    # Drain stdout on a thread. The deadline below has to READ the output while
+    # the runner is still alive, and a pipe that nobody drains can also fill and
+    # block the runner mid-startup — which would look exactly like the slowness
+    # this deadline exists to tolerate.
+    chunks: list[str] = []
+    reader = threading.Thread(
+        target=lambda: chunks.extend(iter(p.stdout.readline, "")), daemon=True
+    )
+    reader.start()
+
+    def _wait_for(cond, limit):
+        """Poll until `cond` holds. A string is matched against the runner's
+        output; a callable receives that output and returns the test's own
+        acceptance.
+
+        🔴 THE PASS CONDITION IS WHATEVER THE TEST ASSERTS — ALL OF IT. This
+        took two wrong turns, and both are the same mistake from opposite ends:
+
+          * Waiting on `"was renamed by the session itself"` fired one line too
+            EARLY: the runner prints it *before* calling `sweep_session_running`,
+            so the SIGKILL landed before the sweep ran and the tests went red on
+            their filesystem assertion having "reached" their condition.
+          * Waiting on the retired file appearing on disk fired one line too
+            LATE-in-the-wrong-way: `retire_running_marker` does `mv` and THEN
+            echoes, so the predicate went true between the two and the kill ate
+            the log line the test also asserts on.
+
+        A test that asserts on output AND on disk has a conjunction for a pass
+        condition, so the predicate is that conjunction. Anything narrower grades
+        something the test does not.
+        """
+        stop = time.monotonic() + limit
+        while time.monotonic() < stop:
+            out_so_far = "".join(chunks)
+            if cond(out_so_far) if callable(cond) else cond in out_so_far:
+                return True
+            time.sleep(0.05)
+        return False
+
     try:
         if after_start is not None:
             # The point of the idle-loop test: this state must appear AFTER the
             # runner has started, or startup crash-recovery reaches it first and
             # the loop's own reaper is never the thing under test.
-            time.sleep(1.0)
+            #
+            # 🔴 THIS WAS `time.sleep(1.0)`, AND THAT IS THE OTHER HALF OF THE
+            # FLAKE. One second was a guess at how long the runner takes to
+            # finish its ONE-SHOT crash-recovery pass. When `lane-runner.sh`
+            # gained a few `git` subprocesses on the startup path, the guess
+            # stopped holding under band load: `after_start` fired FIRST, so
+            # crash recovery — which is not bounded by SESSION_START — retired
+            # the sibling marker the test requires to survive, and the test read
+            # as a broken SINCE bound. Waiting for the runner's own "serving
+            # lanes" line makes the ordering an INVARIANT rather than a race:
+            # that line is printed after the recovery pass, so once it appears
+            # the pass is provably done however slow the machine is.
+            assert _wait_for("[runner] serving lanes:", ceiling), (
+                "the runner never finished its startup pass within "
+                f"{ceiling}s:\n{''.join(chunks)}"
+            )
             after_start()
-        time.sleep(seconds)
+        if until is None:
+            time.sleep(seconds)
+        else:
+            _wait_for(until, ceiling)
     finally:
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
-    return p.communicate(timeout=30)[0]
+
+    reader.join(timeout=30)
+    try:
+        p.stdout.close()
+    except OSError:
+        # Already closed by the reader thread reaching EOF after the SIGKILL.
+        # Nothing to clean up and nothing to report: the output we came for is
+        # in `chunks`, and a teardown that raises here would mask the real
+        # assertion below it.
+        pass
+    try:
+        p.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        # Reaped for exit status only. The process group has already taken a
+        # SIGKILL, so a wait that somehow times out cannot change the outcome
+        # of this test — and raising would replace a readable assertion failure
+        # with a teardown error.
+        pass
+    return "".join(chunks)
 
 
 def test_idle_loop_reaps_a_marker_orphaned_after_the_runner_started(tmp_path):
@@ -1163,7 +1264,14 @@ def test_idle_loop_reaps_a_marker_orphaned_after_the_runner_started(tmp_path):
     inbox = handoff / "runner-inbox" / "demo"
 
     out = _run_loop(
-        tmp_path, handoff, "#!/bin/bash\nexit 0\n", seconds=4.0,
+        tmp_path, handoff, "#!/bin/bash\nexit 0\n",
+        # The deadline's condition IS the assertion below. Anything else and the
+        # wait grades something the test does not.
+        until=lambda out: (
+            "retired orphaned marker" in out
+            and list(inbox.glob("047-orphan.md.stale-*"))
+            and not list(inbox.glob("*.md.running"))
+        ),
         LANE_SESSION_TIMEOUT="1", LANE_STALE_RUNNING_GRACE="0",
         after_start=lambda: (inbox / "047-orphan.md.running").write_text("orphaned\n"),
     )
@@ -1199,7 +1307,15 @@ def test_a_session_that_renames_its_own_marker_does_not_wedge_the_lane(tmp_path)
         ': > "$INBOX/047-self-written.md.running"\n'
         "exit 0\n"
     )
-    out = _run_loop(tmp_path, handoff, fake, seconds=3.0)
+    # The acceptance is output AND disk, so the wait condition is both.
+    out = _run_loop(
+        tmp_path, handoff, fake,
+        until=lambda out: (
+            "was renamed by the session itself" in out
+            and list(inbox.glob("047-self-written.md.stale-*"))
+            and not list(inbox.glob("*.md.running"))
+        ),
+    )
 
     assert "was renamed by the session itself" in out, out
     assert not list(inbox.glob("*.md.running")), (
@@ -1242,7 +1358,13 @@ def test_the_post_session_sweep_only_touches_this_sessions_own_leftovers(tmp_pat
     )
     # Default 7200s cap throughout, so the idle reaper is not what spares
     # `other` — only the sweep's SINCE bound can.
-    out = _run_loop(tmp_path, handoff, fake, seconds=4.0, after_start=stage)
+    out = _run_loop(
+        tmp_path, handoff, fake, after_start=stage,
+        until=lambda out: (
+            "was renamed by the session itself" in out
+            and list(inbox.glob("047-self-written.md.stale-*"))
+        ),
+    )
 
     assert "was renamed by the session itself" in out, out
     assert list(inbox.glob("047-self-written.md.stale-*")), (
@@ -1252,3 +1374,395 @@ def test_the_post_session_sweep_only_touches_this_sessions_own_leftovers(tmp_pat
         "the sweep retired a marker that predates the session — that is a "
         f"sibling runner's live directive: {[p.name for p in inbox.iterdir()]}"
     )
+
+
+# ------------------------------------------- notice 39 rung 2: the agent tag ----
+#
+# WHAT THESE GUARD, AND WHY THEY ARE HERE RATHER THAN BESIDE THE HELPER
+# ---------------------------------------------------------------------
+# `test_agent_origin_outbound_tag.py` proves the tag is BUILT correctly. Nothing
+# proved it was ever INSTALLED in the shell that types the curl, and that is the
+# half that failed: notice 39 specifies rung 2 as "ONE line in lane-runner.sh
+# that ... sources latency's curl shadow", which cannot work (#4662). Every Bash
+# tool call in a lane session is a fresh shell exec'd from the profile, and a
+# shell FUNCTION does not survive exec. Sourced in the runner it would merge,
+# pass every gate, be recorded done, and tag nothing — #4632's shape exactly
+# (D70: merged, tested, ruled, inert for four days).
+#
+# So these tests deliberately do not call the helper. They run a real login shell
+# the way the runner spawns one and read the argv it would have put on the wire.
+#
+# The third test is the one with teeth. Redirecting ZDOTDIR does not ADD a
+# startup file, it MOVES zsh's whole search: point it at a directory lacking
+# `.zprofile` and `~/.zprofile` silently stops being read in every lane shell.
+# Measured: HOMEBREW_PREFIX empties, so brew and its PATH vanish fleet-wide. That
+# regression is far larger than the one rung 2 fixes and it is completely silent,
+# so it gets a test with its own negative control.
+
+ZSH = shutil.which("zsh")
+needs_zsh = pytest.mark.skipif(ZSH is None, reason="the lane shell is zsh; none installed here")
+
+ZDOTDIR_DIR = REPO / "tools" / "lane-zdotdir"
+SHADOW = REPO / "tools" / "bl-agent-curl.sh"
+
+
+def _tag_block():
+    """The runner's own tag-gating code, lifted out and made callable.
+
+    Extracted rather than reimplemented so the test exercises the shipped text.
+    Asserted non-empty: an extraction that silently matches nothing would make
+    every assertion below vacuously pass (the blind-zero class, gotcha #53).
+    """
+    src = RUNNER.read_text()
+    start = src.index("BL_REPO=")
+    end = src.index("\n}\n", src.index("bl_warn_if_runner_is_stale()", start)) + 3
+    block = src[start:end]
+    for name in ("bl_tag_lane", "bl_carrier_zdotdir", "bl_warn_if_runner_is_stale"):
+        assert f"{name}()" in block, f"extraction lost {name}:\n{block}"
+    return block
+
+
+def _bundle_repo(root, *, chain=True, shadow=True, in_working_tree=True):
+    """A throwaway git repo carrying (or missing) the carrier bundle.
+
+    `in_working_tree=False` deletes the files from the CHECKOUT after committing
+    them. That is the whole point of #4685: the fleet runs `$HOME/bainluck`,
+    whose checkout lags master by a merge cycle and can hold uncommitted edits,
+    so delivery must read the committed ref and never the working tree.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    git = ["git", "-C", str(root)]
+    subprocess.run(git[:1] + ["init", "-q", str(root)], check=True)
+    (root / "lane-runner.sh").write_text("#!/bin/bash\n# stand-in\n")
+    if chain:
+        (root / "tools" / "lane-zdotdir").mkdir(parents=True)
+        for name in (".zshenv", ".zprofile", ".zshrc", ".zlogin"):
+            shutil.copy(ZDOTDIR_DIR / name, root / "tools" / "lane-zdotdir" / name)
+    if shadow:
+        (root / "tools").mkdir(parents=True, exist_ok=True)
+        shutil.copy(SHADOW, root / "tools" / "bl-agent-curl.sh")
+    subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        git + ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "bundle"],
+        check=True, capture_output=True,
+    )
+    if not in_working_tree:
+        shutil.rmtree(root / "tools", ignore_errors=True)
+        assert not (root / "tools").exists()
+    return root
+
+
+def _resolve_carrier(repo, cache, ref="HEAD", extra=None):
+    """Run the shipped `bl_carrier_zdotdir` against `repo`. Returns (rc, stdout)."""
+    block = _tag_block().replace(
+        'BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"', f'BL_REPO="{repo}"'
+    )
+    assert str(repo) in block, "the BL_REPO override did not apply"
+    env = dict(os.environ, BL_CARRIER_REF=ref, BL_CARRIER_ROOT=str(cache))
+    env.update(extra or {})
+    p = subprocess.run(
+        ["bash", "-c", f"set -u\n{block}\nbl_carrier_zdotdir"],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    return p.returncode, p.stdout.strip()
+
+
+def _lane_shell(script, env=None, home=None):
+    """Run `script` in a login zsh, as `lane-runner.sh` spawns one.
+
+    `env -i`-equivalent: the environment is built from nothing, so anything the
+    assertions read can only have come from a startup file that actually ran.
+    An inherited value would make the chain test pass without a chain.
+    """
+    base = {"HOME": str(home or Path.home()), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+    base.update(env or {})
+    p = subprocess.run(
+        [ZSH, "-l", "-c", script], capture_output=True, text=True, env=base, timeout=60
+    )
+    return p.returncode, p.stdout + p.stderr
+
+
+def test_the_runner_gates_the_tag_on_the_lane_name():
+    """One lane first (notice 39 guard 3): a lane not on the list gets nothing."""
+    block = _tag_block()
+    for lanes, lane, want in [
+        ("latency", "latency", 0), ("latency", "ux", 1),
+        ("all", "ux", 0), ("latency ux", "ux", 0), ("latency ux", "live", 1),
+    ]:
+        p = subprocess.run(
+            ["bash", "-c", f'set -u; BL_TAG_LANES={lanes!r}\n{block}\nbl_tag_lane {lane!r}'],
+            capture_output=True, text=True, cwd=str(REPO), timeout=30,
+        )
+        assert p.returncode == want, f"BL_TAG_LANES={lanes} lane={lane}: {p.returncode} {p.stderr}"
+
+
+def test_the_runner_refuses_to_point_zdotdir_at_a_checkout_without_the_chain(tmp_path):
+    """Notice 39 guard 1, in its dangerous direction.
+
+    A missing shadow must degrade to plain curl. Exporting ZDOTDIR anyway would
+    not merely skip the tag, it would break the shell — and this is not
+    hypothetical: on 2026-09-09 `~/bainluck/tools/bl-agent-curl.sh` did not exist
+    on disk (that tree was stale at 8991f1a6; the shadow merged later at
+    8c37c7f0), which is the exact path the shadow's docstring tells agents to use.
+    """
+    cache = tmp_path / "cache"
+
+    rc, out = _resolve_carrier(_bundle_repo(tmp_path / "empty", chain=False, shadow=False), cache)
+    assert rc != 0 and out == "", f"a ref with no bundle was accepted: {out!r}"
+
+    rc, out = _resolve_carrier(_bundle_repo(tmp_path / "nochain", chain=False), cache)
+    assert rc != 0 and out == "", f"a shadow with no chain beside it was accepted: {out!r}"
+
+    rc, out = _resolve_carrier(_bundle_repo(tmp_path / "noshadow", shadow=False), cache)
+    assert rc != 0 and out == "", f"a chain with no shadow beside it was accepted: {out!r}"
+
+    # Positive control: with both committed it must say yes, or the three
+    # refusals above prove nothing about the bundle and everything about a
+    # broken path (gotcha #53 — a refusal that refuses everything is not a guard).
+    rc, out = _resolve_carrier(_bundle_repo(tmp_path / "whole"), cache)
+    assert rc == 0 and out.endswith("/tools/lane-zdotdir"), (
+        f"the resolver refuses even a complete bundle — it tags nobody: {out!r}"
+    )
+    assert (Path(out) / ".zshenv").is_file(), out
+
+
+def test_runner_delivery_installs_the_complete_carrier_bundle(tmp_path):
+    """CERT-2461's required repair: delivery is to the RUNTIME, not to a checkout.
+
+    The BLOCK was not about the carrier being wrong — it was that the ship was
+    inert at its delivery boundary. `lanes.conf` runs `$HOME/bainluck/lane-runner.sh`,
+    and on 2026-09-09 that tree held neither `tools/lane-zdotdir/` nor
+    `tools/bl-agent-curl.sh` on disk, so the presence guard fell through and every
+    lane ran untagged while every gate read GREEN.
+
+    So the bundle is resolved from a COMMITTED REF and materialized into a cache
+    the runner owns. This asserts the whole bundle arrives — not just the one file
+    the guard happens to test — from a repo whose WORKING TREE has none of it.
+    """
+    repo = _bundle_repo(tmp_path / "stale", in_working_tree=False)
+    cache = tmp_path / "cache"
+
+    rc, out = _resolve_carrier(repo, cache)
+    assert rc == 0, f"delivery refused a repo that has the bundle committed: {out!r}"
+
+    zdot = Path(out)
+    for name in (".zshenv", ".zprofile", ".zshrc", ".zlogin"):
+        assert (zdot / name).is_file(), f"{name} was not delivered into {zdot}"
+    shadow = zdot.parent / "bl-agent-curl.sh"
+    assert shadow.is_file(), f"the shadow was not delivered beside the chain: {zdot}"
+
+    # Byte-identical to what is committed, or it is a different carrier.
+    assert (zdot / ".zshenv").read_text() == (ZDOTDIR_DIR / ".zshenv").read_text()
+    assert shadow.read_text() == SHADOW.read_text()
+
+    # Content-addressed and idempotent: asking twice yields the same directory
+    # and does not republish. Two runners start within seconds of each other.
+    rc2, out2 = _resolve_carrier(repo, cache)
+    assert (rc2, out2) == (rc, out), f"delivery is not idempotent: {out!r} vs {out2!r}"
+    assert len(list(cache.iterdir())) == 1, f"delivery left litter: {list(cache.iterdir())}"
+
+    # Nothing half-written is ever visible: no staging directory survives.
+    assert not [p for p in cache.iterdir() if p.name.startswith(".staging")], list(cache.iterdir())
+
+
+def test_a_delivery_that_cannot_be_written_refuses_instead_of_naming_a_path(tmp_path):
+    """The worst failure this code can have, and the one four other tests missed.
+
+    Every other test here runs where materialization succeeds, so none of them
+    can see the final presence check deleted — that mutation survived them all.
+    It is the load-bearing one: if the cache cannot be written and the resolver
+    still echoes a path, `lane-runner.sh` exports ZDOTDIR to a directory that does
+    not exist. That does not merely skip the tag. It moves zsh's whole startup
+    search off $HOME, so `~/.zprofile` stops being read in every lane shell,
+    fleet-wide — measured: HOMEBREW_PREFIX empties and brew leaves PATH.
+
+    Refusing must therefore survive a cache that cannot be created, not just a
+    ref that has nothing in it.
+    """
+    repo = _bundle_repo(tmp_path / "repo")
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("a regular file, so mkdir -p beneath it cannot succeed\n")
+
+    rc, out = _resolve_carrier(repo, blocker / "cache")
+    assert out == "", (
+        f"named a carrier directory it could not create: {out!r} — exporting this "
+        "as ZDOTDIR drops ~/.zprofile from every lane shell"
+    )
+    assert rc != 0, "an unwritable cache reported success"
+
+
+def test_delivery_never_reads_the_working_tree(tmp_path):
+    """The mutation that would silently restore #4685.
+
+    A resolver that fell back to `$BL_REPO/tools/...` would pass every test above
+    — they all run where the committed content and the checkout agree. Here they
+    DISAGREE: the checkout carries a decoy chain that must never be delivered.
+    """
+    repo = _bundle_repo(tmp_path / "repo", in_working_tree=False)
+    decoy = repo / "tools" / "lane-zdotdir"
+    decoy.mkdir(parents=True)
+    (decoy / ".zshenv").write_text("# DECOY — the working tree's copy\n")
+    (repo / "tools" / "bl-agent-curl.sh").write_text("# DECOY shadow\n")
+
+    rc, out = _resolve_carrier(repo, tmp_path / "cache")
+    assert rc == 0, out
+    assert "DECOY" not in (Path(out) / ".zshenv").read_text(), (
+        f"delivery served the working tree instead of the committed ref: {out}"
+    )
+    assert "DECOY" not in (Path(out).parent / "bl-agent-curl.sh").read_text(), out
+
+
+def test_the_runner_says_so_when_it_is_not_the_committed_runner(tmp_path):
+    """#4689: drift must be loud.
+
+    A tooling ship that merges green and changes nothing is this repo's recurring
+    failure (#4632: D70 merged, tested, ruled, inert four days; CERT-2461 the
+    same shape). A lane cannot tell that the runner executing it is not the one
+    on master, so it says so itself — on stderr, once, never fatally.
+    """
+    repo = _bundle_repo(tmp_path / "repo")
+    block = _tag_block().replace(
+        'BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"', f'BL_REPO="{repo}"'
+    )
+    env = dict(os.environ, BL_CARRIER_REF="HEAD", BL_CARRIER_ROOT=str(tmp_path / "c"))
+
+    # `$0` inside `bash -c` is the argument after the command string, so the
+    # runner under test is named there rather than by editing the block.
+    committed = repo / "lane-runner.sh"
+    p = subprocess.run(
+        ["bash", "-c", f'set -u\n{block}\nbl_warn_if_runner_is_stale lane', str(committed)],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    assert p.returncode == 0, p.stderr
+    assert "WARNING" not in p.stderr, (
+        f"warned about a runner that IS the committed one — the warning is noise:\n{p.stderr}"
+    )
+
+    drifted = tmp_path / "drifted-lane-runner.sh"
+    drifted.write_text(committed.read_text() + "\n# an edit that never merged\n")
+    p = subprocess.run(
+        ["bash", "-c", f'set -u\n{block}\nbl_warn_if_runner_is_stale lane', str(drifted)],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    assert p.returncode == 0, "the drift warning must never be fatal — a lane that " \
+        "cannot run is worse than one running a stale runner"
+    assert "WARNING" in p.stderr and "#4685" in p.stderr, (
+        f"a runner that is not on master said nothing:\n{p.stderr!r}"
+    )
+    assert p.stdout == "", f"the warning belongs on stderr, not in the log stream: {p.stdout!r}"
+
+
+@needs_zsh
+def test_a_lane_shell_carries_the_tag_to_our_hosts_and_nowhere_else():
+    """The end of the wire. Not the helper — the shell the lane actually types in."""
+    env = {"ZDOTDIR": str(ZDOTDIR_DIR), "BL_AGENT": "latency", "BL_CURL_PRINT": "1"}
+
+    rc, ours = _lane_shell('curl -s "https://api.bainluck.com/api/events/search?q=x"', env)
+    assert rc == 0, ours
+    assert "x-bainluck-origin: latency" in ours, f"a lane's own read went out untagged:\n{ours}"
+    assert "BainLuckBot/1.0 (latency)" in ours, ours
+
+    # An internal header naming our lanes has no business on a third party's wire.
+    rc, theirs = _lane_shell('curl -s "https://api.kalshi.com/trade-api/v2/events"', env)
+    assert rc == 0, theirs
+    assert "x-bainluck-origin" not in theirs, f"tagged a third party:\n{theirs}"
+
+    # Guard 1 at the shell level: unnamed passes through as plain curl.
+    rc, unnamed = _lane_shell(
+        'curl -s "https://api.bainluck.com/api/events/search?q=x"',
+        {"ZDOTDIR": str(ZDOTDIR_DIR), "BL_CURL_PRINT": "1"},
+    )
+    assert rc == 0, unnamed
+    assert "x-bainluck-origin" not in unnamed, (
+        "an unnamed caller was given a substituted tag; any non-'user' value "
+        f"SUPPRESSES the search-log row, so this deletes it from the table:\n{unnamed}"
+    )
+
+
+@needs_zsh
+def test_the_zdotdir_chain_does_not_drop_the_users_own_startup_files(tmp_path):
+    """Redirecting ZDOTDIR moves the search; each name here must chain the real one.
+
+    Hermetic: a synthetic HOME whose markers exist nowhere else, so a marker in
+    the output can only mean that file was sourced.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    for name in (".zshenv", ".zprofile", ".zlogin"):
+        (home / name).write_text(f'export MARK_{name[1:].upper()}=yes\n')
+
+    probe = 'echo "env=$MARK_ZSHENV prof=$MARK_ZPROFILE login=$MARK_ZLOGIN"'
+
+    # Negative control FIRST. Without it, a pass below could just mean zsh never
+    # honoured ZDOTDIR at all and read $HOME the whole time.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    rc, out = _lane_shell(probe, {"ZDOTDIR": str(bare)}, home=home)
+    assert "env= prof= login=" in out, (
+        f"expected an empty ZDOTDIR to drop all three user files; got {out!r} — "
+        "zsh is not honouring ZDOTDIR here, so the real assertion proves nothing"
+    )
+
+    rc, out = _lane_shell(probe, {"ZDOTDIR": str(ZDOTDIR_DIR)}, home=home)
+    assert rc == 0, out
+    assert "env=yes prof=yes login=yes" in out, (
+        f"the chain dropped a user startup file: {out!r}. Every lane shell would "
+        "silently lose whatever ~/.zprofile sets — on the lane machine that is "
+        "brew's shellenv, i.e. HOMEBREW_PREFIX and half of PATH."
+    )
+
+
+def test_the_session_launch_actually_consults_the_gate():
+    """The wiring, not just the parts.
+
+    A perfect gate and a perfect chain still tag nothing if the launch line never
+    calls one. Asserted on the shipped text because the alternative — starting a
+    real lane session — is not something a test may do.
+    """
+    src = RUNNER.read_text()
+    launch = src.index("timeout \"$SESSION_TIMEOUT\" claude")
+    window = src[launch - 500:launch]
+    assert "bl_tag_lane" in window, (
+        "the session launch does not consult bl_tag_lane; the tag is inert"
+    )
+    assert "bl_carrier_zdotdir" in window, (
+        "the launch does not resolve the carrier from the committed ref; it is "
+        "back to trusting whatever the checkout happens to hold (#4685)"
+    )
+    assert 'export BL_AGENT="$L" ZDOTDIR=' in window, (
+        "the launch exports something other than both halves of the tag"
+    )
+    # The export must be reached ONLY when the resolver succeeded, or a refused
+    # delivery still points ZDOTDIR somewhere and breaks every lane shell.
+    assert 'ZDOTDIR="$BL_ZD"' in window, (
+        "ZDOTDIR is exported from something other than the resolver's own answer"
+    )
+
+
+@needs_zsh
+def test_a_chain_without_its_shadow_degrades_to_plain_curl_and_stays_quiet(tmp_path):
+    """Notice 39 guard 1: an absent shadow file falls through to PLAIN curl.
+
+    `lane-runner.sh` already refuses to point ZDOTDIR at such a checkout, so this
+    is the second layer — a runner started before the tree moved, or ZDOTDIR set
+    by hand. The unguarded source is not merely untagged: `.zshenv` runs for every
+    zsh there is, so a failing `.` would print an error on the stderr of every
+    command every lane runs, fleet-wide.
+
+    Added because the mutation that deletes the presence guard survived the first
+    five tests here — all of them happen to run with the shadow present.
+    """
+    chain = tmp_path / "tools" / "lane-zdotdir"
+    chain.mkdir(parents=True)
+    for f in ZDOTDIR_DIR.iterdir():
+        shutil.copy(f, chain / f.name)
+    assert not (tmp_path / "tools" / "bl-agent-curl.sh").exists()
+
+    rc, out = _lane_shell('echo "curl -> $(type curl)"', {"ZDOTDIR": str(chain)})
+    assert rc == 0, out
+    assert "shell function" not in out, f"installed a shadow that is not there:\n{out}"
+    assert "curl -> curl is /usr/bin/curl" in out, out
+    for noise in ("no such file", "not found", "No such file"):
+        assert noise not in out, (
+            f"an absent shadow made noise on every shell's stderr: {out!r}"
+        )
