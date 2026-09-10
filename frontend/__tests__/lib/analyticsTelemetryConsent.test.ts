@@ -4,13 +4,17 @@
  * Covers the three C90 defects this queue closes:
  *   P1 — Vercel Analytics / Speed Insights ignored the consent choice entirely.
  *        Now every consent-gated provider reads `decideTelemetry`, so "Decline"
- *        really is zero consent-gated telemetry. LAT-P197 (Alex D30) later took
- *        Speed Insights back OUT of that set — deliberately, because it is
- *        strictly-necessary performance telemetry with no cookie, no storage
- *        read and no identifier, and gating it meant the site's speed was only
- *        ever measured on visitors who had answered a banner. It has no key in
- *        `TelemetryDecision` at all; the fixed-mount claim is pinned in
- *        `speedInsightsPreConsent.test.ts`, not here.
+ *        really is zero consent-gated telemetry. Both Vercel providers were
+ *        later taken back OUT of that set — deliberately, and each on the same
+ *        reasoning: they are cookieless (no cookie, no storage read, no
+ *        cross-site identifier), so gating them bought no privacy and cost the
+ *        measurement its subject. Speed Insights left under LAT-P197 / Alex D30
+ *        (the site's speed was only ever measured on visitors who had answered
+ *        a banner); Web Analytics left under Alex D96 / #4830 (a visitor count
+ *        that structurally could not contain a first-time visitor, since "no
+ *        choice yet" is a denial). Neither has a key in `TelemetryDecision`,
+ *        and the fixed-mount claims are pinned in `speedInsightsPreConsent`
+ *        and `vercelAnalyticsPreConsent`, not here.
  *   P3 — the first-time visitor's LANDING page view was dropped (emitted before
  *        the grant, discarded by the consent gate). It is now withheld and
  *        released exactly once on the grant — the current route, never a replay.
@@ -102,15 +106,13 @@ describe('decideTelemetry', () => {
     const h = setup();
     expect(h.consent.decideTelemetry(null, { gaConfigured: true })).toEqual({
       googleAnalytics: false,
-      vercelAnalytics: false,
       webVitals: false,
     });
   });
 
-  it('enables NOTHING on an explicit decline — including Vercel Analytics (C90 P1)', () => {
+  it('enables NOTHING on an explicit decline (C90 P1)', () => {
     const h = setup();
     const decision = h.consent.decideTelemetry('none', { gaConfigured: true });
-    expect(decision.vercelAnalytics).toBe(false);
     expect(decision.googleAnalytics).toBe(false);
     expect(decision.webVitals).toBe(false);
   });
@@ -138,7 +140,6 @@ describe('decideTelemetry', () => {
     for (const level of ['all', 'analytics'] as const) {
       expect(h.consent.decideTelemetry(level, { gaConfigured: true })).toEqual({
         googleAnalytics: true,
-        vercelAnalytics: true,
         webVitals: true,
       });
     }
@@ -151,13 +152,25 @@ describe('decideTelemetry', () => {
     );
   });
 
-  it('a missing GA measurement id disables the GA rail WITHOUT re-enabling Vercel', () => {
+  /**
+   * This used to also assert that a missing GA id did not silently turn the
+   * Vercel arm OFF — the two providers had different id requirements and the
+   * grant had to keep them apart. D96 (#4830) moved Vercel Web Analytics out of
+   * this authority entirely, so the id rule now governs the whole decision and
+   * there is no second arm to hold steady. What survives is the half that was
+   * always the real risk: a grant with no measurement id must not load gtag.js
+   * and send to whatever property it lands on.
+   */
+  it('a missing GA measurement id disables the whole decision, grant or not', () => {
     const h = setup({ configured: false });
     const decision = h.consent.decideTelemetry('all', { gaConfigured: false });
     expect(decision.googleAnalytics).toBe(false);
     expect(decision.webVitals).toBe(false);
-    // Vercel needs no id — a missing GA id must not silently turn it off either.
-    expect(decision.vercelAnalytics).toBe(true);
+    // Control: with an id, the same grant does enable it — so the assertions
+    // above are about the id and not about the grant being ignored.
+    expect(h.consent.decideTelemetry('all', { gaConfigured: true }).googleAnalytics).toBe(
+      true,
+    );
   });
 });
 
@@ -169,7 +182,7 @@ describe('consent store lifecycle', () => {
   it('first visit: no stored choice, nothing enabled, nothing persisted', () => {
     const h = setup();
     expect(h.consent.initTelemetryConsent()).toBeNull();
-    expect(h.consent.getTelemetryDecision().vercelAnalytics).toBe(false);
+    expect(h.consent.getTelemetryDecision().googleAnalytics).toBe(false);
     expect(h.store['bainluck_consent']).toBeUndefined();
   });
 
@@ -177,8 +190,8 @@ describe('consent store lifecycle', () => {
     const h = setup({ stored: 'analytics' });
     expect(h.consent.initTelemetryConsent()).toBe('analytics');
     const decision = h.consent.getTelemetryDecision();
-    expect(decision.vercelAnalytics).toBe(true);
     expect(decision.googleAnalytics).toBe(true);
+    expect(decision.webVitals).toBe(true);
     expect(h.core.isConsentGranted()).toBe(true);
   });
 
@@ -187,7 +200,6 @@ describe('consent store lifecycle', () => {
     expect(h.consent.initTelemetryConsent()).toBe('none');
     expect(h.consent.getTelemetryDecision()).toEqual({
       googleAnalytics: false,
-      vercelAnalytics: false,
       webVitals: false,
     });
     expect(h.core.isConsentGranted()).toBe(false);
@@ -215,7 +227,6 @@ describe('consent store lifecycle', () => {
     h.consent.initTelemetryConsent();
     expect(h.consent.getServerTelemetryDecision()).toEqual({
       googleAnalytics: false,
-      vercelAnalytics: false,
       webVitals: false,
     });
   });
@@ -241,10 +252,10 @@ describe('consent store lifecycle', () => {
   it('revoking a grant turns every provider back off', () => {
     const h = setup({ stored: 'all' });
     h.consent.initTelemetryConsent();
-    expect(h.consent.getTelemetryDecision().vercelAnalytics).toBe(true);
+    expect(h.consent.getTelemetryDecision().googleAnalytics).toBe(true);
 
     h.consent.setTelemetryConsent('none');
-    expect(h.consent.getTelemetryDecision().vercelAnalytics).toBe(false);
+    expect(h.consent.getTelemetryDecision().webVitals).toBe(false);
     expect(h.consent.getTelemetryDecision().googleAnalytics).toBe(false);
     expect(h.core.isConsentGranted()).toBe(false);
   });

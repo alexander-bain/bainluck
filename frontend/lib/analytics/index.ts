@@ -56,10 +56,10 @@ export {
 } from './core';
 
 // The single web telemetry consent authority — every consent-gated provider
-// (GA, Vercel Analytics, Web Vitals) reads its gate from here. Vercel Speed
-// Insights is deliberately NOT one of them: it is strictly-necessary
-// performance telemetry, mounted unconditionally in `app/layout.tsx` (LAT-P197,
-// Alex D30), so nothing here decides about it.
+// (GA, Web Vitals) reads its gate from here. NEITHER Vercel provider is one of
+// them: Speed Insights (LAT-P197, Alex D30) and Web Analytics (Alex D96, #4830)
+// are both cookieless, both mounted unconditionally in `app/layout.tsx`, and
+// nothing here decides about either.
 export {
   decideTelemetry,
   isAnalyticsGranted,

@@ -136,8 +136,14 @@ describe('Speed Insights is strictly-necessary and mounts pre-consent (D30)', ()
     // Presence control FIRST: if this file no longer mounts the providers it is
     // supposed to gate, the absence assertions below are trivially true and
     // this whole test means nothing.
-    expect(code).toContain('<Analytics');
-    expect(code).toContain('decision.vercelAnalytics');
+    //
+    // The control used to be Vercel Analytics. D96 (#4830) moved that provider
+    // out of the gate for the same reason D30 moved this one, so the control
+    // had to move to a provider that is still genuinely gated — otherwise this
+    // test would have started failing on a correct change, which is the other
+    // way a control can be wrong.
+    expect(code).toContain('<GoogleAnalytics');
+    expect(code).toContain('decision.googleAnalytics');
 
     expect(code).not.toContain(PACKAGE);
     expect(code).not.toContain(TAG);
@@ -156,8 +162,9 @@ describe('Speed Insights is strictly-necessary and mounts pre-consent (D30)', ()
       // same way to that matcher, and a present key is exactly what D30
       // forbids — it would imply the banner governs this provider.
       expect(Object.keys(decision)).not.toContain('speedInsights');
-      // Control: these are real decision objects, not empty ones.
-      expect(Object.keys(decision)).toContain('vercelAnalytics');
+      // Control: these are real decision objects, not empty ones. (Was
+      // `vercelAnalytics` until D96 removed that key for the same reason.)
+      expect(Object.keys(decision)).toContain('googleAnalytics');
     }
   });
 });

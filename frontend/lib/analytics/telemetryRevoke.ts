@@ -42,9 +42,17 @@ import {
   type TelemetryDecision,
 } from './telemetryConsent';
 
-/** Whether any consent-gated provider is permitted to run under a decision. */
+/**
+ * Whether any consent-gated provider is permitted to run under a decision.
+ *
+ * "Consent-gated" is the whole of the scope, and it narrowed under D96: the two
+ * cookieless Vercel providers mount outside this authority and are not part of
+ * this answer. That is correct for what this function drives — a reload exists
+ * to unload a script that is already running, and neither Vercel provider is
+ * ever unloaded, because neither is ever gated off.
+ */
 export function anyProviderEnabled(decision: TelemetryDecision): boolean {
-  return decision.googleAnalytics || decision.vercelAnalytics || decision.webVitals;
+  return decision.googleAnalytics || decision.webVitals;
 }
 
 export interface TelemetryChangePlan {

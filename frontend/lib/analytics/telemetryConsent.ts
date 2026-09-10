@@ -6,20 +6,24 @@
  * unconditionally in the root layout, so "Decline" could not stop them and the
  * banner overstated what the choice did (C90 P1).
  *
- * NOW: every non-essential web telemetry provider — GA, Vercel Analytics, and
- * the custom Web Vitals rail — reads its enablement from THIS module, and only
+ * NOW: every IDENTIFIED web telemetry provider — the GA rail and the custom Web
+ * Vitals rail that rides it — reads its enablement from THIS module, and only
  * this module writes the persisted choice. There is one decision function
  * (`decideTelemetry`) and one store; a provider cannot drift from the banner
  * because there is nowhere else to ask.
  *
- * SPEED INSIGHTS IS NOT IN THIS MODULE, AND THAT IS THE POINT (LAT-055, Alex
- * D30). `@vercel/speed-insights` is strictly-necessary performance telemetry:
- * it sets no cookie, reads no storage and carries no identifier — it reports
- * how fast the page rendered, for the visitor whose page it was. It therefore
- * needs no consent, and gating it produced a measurement that could only ever
- * describe the subset of visitors who had already answered a banner. It is
- * mounted unconditionally in `app/layout.tsx`. Nothing here decides about it;
- * an entry in `TelemetryDecision` would imply a choice that does not exist.
+ * NEITHER VERCEL PROVIDER IS IN THIS MODULE, AND THAT IS THE POINT (LAT-055,
+ * Alex D30 for Speed Insights; Alex D96 / #4830 for Web Analytics). Both are
+ * cookieless: no cookie, no storage read, no cross-site identifier. Speed
+ * Insights reports how fast the page rendered for the visitor whose page it
+ * was; Web Analytics contributes one anonymous count of a visit. Neither needs
+ * consent, and gating them produced measurements that could only ever describe
+ * the subset of visitors who had already answered a banner — which for a
+ * VISITOR COUNT is not a bias, it is the erasure of the entire subject, since
+ * `decideTelemetry` reads "no choice yet" as a denial and a stranger's first
+ * page view is always that. Both mount unconditionally in `app/layout.tsx`.
+ * Nothing here decides about either; an entry in `TelemetryDecision` would
+ * imply a choice that does not exist.
  *
  * Design notes:
  *  - The store is framework-free and synchronously readable so it can back
@@ -57,22 +61,25 @@ export type ConsentPersistence = 'unknown' | ConsentPersistResult;
 /**
  * Which non-essential telemetry providers may run. Strictly-necessary behavior
  * (the consent choice itself, auth, app functionality) is not represented here
- * — it is never gated. Neither is `@vercel/speed-insights`, which is
- * strictly-necessary performance telemetry and mounts unconditionally; see the
- * module comment.
+ * — it is never gated.
+ *
+ * Neither of Vercel's two COOKIELESS providers appears here, and their absence
+ * is load-bearing rather than an omission: `@vercel/speed-insights` (Alex D30)
+ * and `@vercel/analytics` (Alex D96, #4830) both mount unconditionally in
+ * `app/layout.tsx`. Each is deliberately ABSENT rather than present-and-always-
+ * true, because a key in this interface is a claim that the banner governs the
+ * provider — and recording a choice we then ignore is the C90 P1 defect (#1453)
+ * with the sign flipped.
  */
 export interface TelemetryDecision {
   /** Custom GA4 rail (gtag.js + `trackEvent`). */
   googleAnalytics: boolean;
-  /** `@vercel/analytics` — page/visitor counts sent to Vercel. */
-  vercelAnalytics: boolean;
   /** Custom Core Web Vitals events (ride the GA rail). */
   webVitals: boolean;
 }
 
 const NOTHING: TelemetryDecision = {
   googleAnalytics: false,
-  vercelAnalytics: false,
   webVitals: false,
 };
 
@@ -86,11 +93,13 @@ export function isAnalyticsGranted(consent: ConsentLevel): boolean {
 }
 
 /**
- * The pure decision. One grant governs every provider; the only asymmetry is
- * that the GA rail additionally requires a configured measurement id (without
- * one we never load gtag.js at all, rather than send to an unexpected
- * property). Vercel's providers need no id, so a missing GA id must not
- * silently re-enable them.
+ * The pure decision. Every provider this function speaks for rides the GA rail
+ * and therefore additionally requires a configured measurement id — without one
+ * we never load gtag.js at all, rather than send to an unexpected property.
+ *
+ * That used to be described as "the only asymmetry", against a Vercel arm that
+ * needed no id. Since D96 that arm is gone: both Vercel providers mount outside
+ * this authority entirely, so a grant here now governs exactly one rail.
  */
 export function decideTelemetry(
   consent: ConsentLevel,
@@ -100,7 +109,6 @@ export function decideTelemetry(
   const gaConfigured = opts.gaConfigured ?? isAnalyticsConfigured();
   return {
     googleAnalytics: gaConfigured,
-    vercelAnalytics: true,
     webVitals: gaConfigured,
   };
 }
@@ -269,8 +277,8 @@ export function handleExternalConsentChange(
   notify();
 
   const after = decideTelemetry(newValue, { gaConfigured });
-  const wasLive = before.googleAnalytics || before.vercelAnalytics || before.webVitals;
-  const nowLive = after.googleAnalytics || after.vercelAnalytics || after.webVitals;
+  const wasLive = before.googleAnalytics || before.webVitals;
+  const nowLive = after.googleAnalytics || after.webVitals;
   if (!(wasLive && !nowLive)) return 'applied';
 
   // Verify the denial is really what is stored before reloading on it.

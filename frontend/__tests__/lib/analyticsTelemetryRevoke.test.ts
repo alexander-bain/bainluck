@@ -152,12 +152,34 @@ describe('planTelemetryChange — when a reload is required', () => {
     ).toBe(false);
   });
 
-  it('still reloads on revoke with NO measurement id — Vercel Analytics was live', () => {
-    // Regression guard: keying the reload on the GA rail alone would leave
-    // Vercel Analytics running on a build with no GA id.
+  /**
+   * INVERTED BY D96 (#4830), deliberately, and kept rather than deleted because
+   * the inversion is the interesting fact.
+   *
+   * It used to assert `requiresReload === true` here: on a build with no GA
+   * measurement id, a grant lit Vercel Analytics and nothing else, so revoking
+   * had something running to unload and keying the reload on the GA rail alone
+   * would have left it running.
+   *
+   * Vercel Web Analytics is now mounted outside the consent authority. On a
+   * build with no GA id a grant therefore lights NOTHING, and a revoke has
+   * nothing to unload — so no reload, and a reload here would be a page the
+   * visitor did not ask for in exchange for no change at all. The reload
+   * remains exactly as narrow as its module comment says: something was live,
+   * nothing is permitted now.
+   */
+  it('does NOT reload on revoke with NO measurement id — nothing gated was live', () => {
     const h = setup({ configured: false });
     const plan = h.revoke.planTelemetryChange('analytics', 'none', { gaConfigured: false });
-    expect(plan.requiresReload).toBe(true);
+    expect(plan.requiresReload).toBe(false);
+    // The choice is still recorded; only the reload is unnecessary.
+    expect(plan.persist).toBe(true);
+    // Control: WITH an id the same revoke does reload, so the assertion above
+    // is about the empty provider set and not about revokes never reloading.
+    expect(
+      h.revoke.planTelemetryChange('analytics', 'none', { gaConfigured: true })
+        .requiresReload,
+    ).toBe(true);
   });
 });
 
@@ -167,15 +189,13 @@ describe('anyProviderEnabled', () => {
     expect(
       h.revoke.anyProviderEnabled({
         googleAnalytics: false,
-        vercelAnalytics: false,
         webVitals: false,
       }),
     ).toBe(false);
     expect(
       h.revoke.anyProviderEnabled({
         googleAnalytics: false,
-        vercelAnalytics: true,
-        webVitals: false,
+        webVitals: true,
       }),
     ).toBe(true);
   });
@@ -266,7 +286,6 @@ describe('applyTelemetryChange', () => {
     const after = h.consent.getTelemetryDecision();
     expect(after).toEqual({
       googleAnalytics: false,
-      vercelAnalytics: false,
       webVitals: false,
     });
   });
@@ -398,7 +417,6 @@ describe('reload / remount parity', () => {
     );
     expect(second.consent.getServerTelemetryDecision()).toEqual({
       googleAnalytics: false,
-      vercelAnalytics: false,
       webVitals: false,
     });
   });

@@ -84,9 +84,10 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
 
   // Mirror the ONE consent authority. This provider no longer reads or writes
   // the persisted choice itself — `lib/analytics/telemetryConsent` is the only
-  // writer, so the banner, the GA rail, and the Vercel providers cannot drift
-  // apart (C90 P1). Subscribing also keeps the banner correct when the choice
-  // is changed from somewhere else (e.g. a revoke in Preferences).
+  // writer, so the banner and the GA rail cannot drift apart (C90 P1). The two
+  // Vercel providers are outside that authority entirely (D30, D96) and so are
+  // outside this mirror. Subscribing also keeps the banner correct when the
+  // choice is changed from somewhere else (e.g. a revoke in Preferences).
   useEffect(() => {
     const sync = () => setConsentState(getTelemetryConsent());
     const unsubscribe = subscribeTelemetryConsent(sync);
