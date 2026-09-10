@@ -125,6 +125,23 @@ def _set_mtime(path, when):
     os.utime(path, (when, when))
 
 
+def _start_epoch(pid):
+    """The process's start time exactly as the tool computes it, from `ps lstart`.
+
+    The arms below must set mtimes relative to THIS, not to `time.time()` around
+    `Popen`. On an idle laptop the fork lands in the same second and the two agree;
+    on a loaded 4-shard CI runner the process can start a second or more later, so
+    "same second" and "60s after start" silently became "before start" and every
+    staleness arm read `current`. Anchoring on the tool's own clock removes the
+    machine's load from the assertion.
+    """
+    out = subprocess.run(
+        ["ps", "-ww", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True
+    ).stdout.strip()
+    assert out, f"ps gave no lstart for pid {pid}"
+    return time.mktime(time.strptime(" ".join(out.split()), "%a %b %d %H:%M:%S %Y"))
+
+
 def _run_seeing(script_name, proc, attempts=5):
     """Run the tool, retrying until it sees `proc`, and diagnose it if it never does.
 
@@ -165,7 +182,7 @@ def test_reports_current_when_the_file_predates_the_process(launcher):
     script, proc, started = launcher()
     # Unambiguously older than the process, without a sleep: lstart has one-second
     # granularity, so a 60s margin cannot be lost to truncation.
-    _set_mtime(script, started - 60)
+    _set_mtime(script, _start_epoch(proc.pid) - 60)
 
     p = _run_seeing(script.name, proc)
 
@@ -184,7 +201,7 @@ def test_reports_stale_when_the_file_changed_after_the_process_started(launcher)
     new.write_text(LOOP + "# text this running process cannot possibly hold\n")
     new.chmod(0o755)
     os.replace(new, script)
-    _set_mtime(script, started + 60)
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
 
     p = _run_seeing(script.name, proc)
 
@@ -203,7 +220,7 @@ def test_same_second_counts_as_stale(launcher):
     sits inert for four days.
     """
     script, proc, started = launcher()
-    _set_mtime(script, int(started))
+    _set_mtime(script, _start_epoch(proc.pid))
 
     p = _run_seeing(script.name, proc)
 
@@ -255,7 +272,7 @@ def test_a_session_subshell_is_not_reported_twice(launcher):
         "while true; do sleep 1; done\n"
     )
     script, proc, started = launcher(body=body)
-    _set_mtime(script, started + 60)
+    _set_mtime(script, _start_epoch(proc.pid) + 60)
 
     # PRECONDITION, asserted so this test cannot pass vacuously: if the subshell
     # does not actually show up in `ps` under the same argv, "reported exactly
@@ -264,7 +281,7 @@ def test_a_session_subshell_is_not_reported_twice(launcher):
     matching = []
     while time.time() < deadline:
         snap = subprocess.run(
-            ["ps", "-ax", "-o", "pid=,ppid=,command="], capture_output=True, text=True
+            ["ps", "-axww", "-o", "pid=,ppid=,command="], capture_output=True, text=True
         ).stdout.splitlines()
         matching = [ln for ln in snap if f"/{script.name}" in ln]
         if len(matching) >= 2:

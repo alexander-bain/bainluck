@@ -64,7 +64,10 @@ done
 # either date dialect — the guard tests run on Linux CI, the fleet runs on macOS.
 pid_start_epoch() {
   local ls
-  ls=$(ps -o lstart= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  # `-ww` on every ps read, without exception. lstart is a short fixed-width field
+  # so it is not at risk today, but the rule is cheaper to keep than to re-derive
+  # per call site — and the two places that skipped it both shipped a bug.
+  ls=$(ps -ww -o lstart= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   [ -n "$ls" ] || return 1
   date -j -f "%a %b %d %T %Y" "$ls" +%s 2>/dev/null && return 0   # BSD
   date -d "$ls" +%s 2>/dev/null && return 0                        # GNU
