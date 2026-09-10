@@ -342,22 +342,6 @@ class StatPalInjuryFetch:
         return self.reason == "fetch_failed"
 
 
-def _log_safe(value) -> str:
-    """A value from outside, made safe to put in a log line.
-
-    `sport` reaches this module from an admin `Query` parameter — see
-    `routes/admin_providers.py`, which passes the request's own string straight
-    into `get_fixtures(sport)`. Interpolating that raw into a log record is a
-    log-injection sink (flagged by CodeQL on #2907's first push): a CR/LF in the
-    value lets the caller forge additional log lines, which is exactly the kind
-    of thing that makes an outage log untrustworthy at the moment it matters.
-
-    Bounded as well as stripped — an unbounded value in a log line is its own
-    small denial of service.
-    """
-    return re.sub(r"[\r\n\t\x00-\x1f]", " ", str(value))[:64]
-
-
 @dataclass
 class StatPalFixtureFetch:
     """What one SCHEDULE fetch proves, not just what it returned (#2907).
@@ -653,14 +637,14 @@ class StatPalAPIService(BaseAPIClient):
                 logger.error(
                     "StatPal soccer/%s: every board failed (offsets %s) — this "
                     "is NOT an empty schedule (#2907)",
-                    _log_safe(endpoint), list(self._SOCCER_DISCOVERY_OFFSETS),
+                    endpoint, list(self._SOCCER_DISCOVERY_OFFSETS),
                 )
                 return StatPalFixtureFetch([], "fetch_failed", sport, endpoint)
             if failed:
                 logger.warning(
                     "StatPal soccer/%s: offset(s) %s failed, %d fixture(s) read "
                     "from the rest — a PARTIAL schedule (#2907)",
-                    _log_safe(endpoint), failed, len(results),
+                    endpoint, failed, len(results),
                 )
                 return StatPalFixtureFetch(results, "partial_fetch", sport, endpoint)
             return StatPalFixtureFetch(
@@ -669,9 +653,17 @@ class StatPalAPIService(BaseAPIClient):
 
         data = await self._get(sport, endpoint, params)
         if data is None:
+            # `sport` is UNTRUSTED here: `routes/admin_providers.py` passes the
+            # request's own `Query` string straight into `get_fixtures(sport)`.
+            # So log the key we MATCHED, never the caller's string — a value
+            # drawn from a closed set cannot carry a forged log record, which
+            # removes the injection sink by construction instead of scrubbing
+            # for it (CodeQL Log Injection, #2907). An unmapped sport is itself
+            # the interesting fact, and it is reported as one.
+            known_sport = sport if sport in self._SCHEDULE_ENDPOINTS else "unmapped"
             logger.error(
                 "StatPal %s/%s: read failed — this is NOT an empty schedule "
-                "(#2907)", _log_safe(sport), _log_safe(endpoint),
+                "(#2907)", known_sport, self._SCHEDULE_ENDPOINTS.get(known_sport),
             )
             return StatPalFixtureFetch([], "fetch_failed", sport, endpoint)
 
