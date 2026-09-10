@@ -329,6 +329,14 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
         "winners_set": 0,
         "losers_set": 0,
         "api_empty": 0,
+        # #4604. Declared up front, not `setdefault`-ed at the write site: an
+        # ungradeable venue state is a POPULATION this task must keep visible,
+        # and a counter that only exists once it fires reports nothing on the
+        # pass where it never fired — which reads identically to a pass that
+        # had none. `gradeable_winner` returning None is the whole reason this
+        # grader is safe now, so it is the one number worth always emitting.
+        "no_result": 0,
+        "ungradeable_result": 0,
         "errors": [],
     }
 
@@ -392,9 +400,31 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                 for mkt in markets:
                     ticker = mkt.get("ticker", "")
                     result_val = mkt.get("result")
-                    if not ticker or result_val is None:
+                    if not ticker:
                         continue
-                    if result_val == "yes":
+                    # #4604. The THIRD grader in this file, and the one CAL-P053
+                    # missed — `result_val is None` skips only a missing field,
+                    # and Kalshi sends the empty STRING for a market it has not
+                    # called, so `""` and `"scalar"` both reached the `else` and
+                    # were written as `is_winner=false / api_settlement`, the
+                    # rung `resolution_authority.is_downgrade` protects from any
+                    # later correction. Its two siblings above already defer;
+                    # this one asked the raw field instead of the judgment.
+                    #
+                    # Latent rather than leaking when found: the venue honours
+                    # this call's `status=settled` filter (read live 2026-09-09
+                    # against `KXIPOOPENAI` — 2 markets returned, both
+                    # `finalized`/`no`), so nothing ungradeable came back. The
+                    # write is permanent by construction, so "the filter has
+                    # always held" is not a reason to keep asking.
+                    won = kms.gradeable_winner(mkt.get("status"), result_val)
+                    if won is None:
+                        if result_val is None or str(result_val).strip() == "":
+                            stats["no_result"] += 1
+                        else:
+                            stats["ungradeable_result"] += 1
+                        continue
+                    if won:
                         yes_tickers.append(ticker)
                     else:
                         no_tickers.append(ticker)
