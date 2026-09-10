@@ -33,7 +33,8 @@ from app.services.anchor_channel import (
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prematch_reading import opening_consensus_has_frozen
-from app.utils.prop_window import prop_window_closed
+from app.utils.period_window_grade import grade_period_window
+from app.utils.prop_window import prop_window_closed, prop_window_span
 from app.utils.event_rails import (
     live_first_order,
     live_scheduled_settled_order,
@@ -11461,6 +11462,85 @@ def _build_props_script(player_props, event_is_finished):
     return script
 
 
+def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict]:
+    """#1735: pseudo-prop rows for closed-window outcomes the line score grades.
+
+    Takes the rows the #1588 filter has just SUPPRESSED and hands back the subset
+    a per-inning line score can settle, shaped as ``player_props`` entries so
+    they flow through :func:`_build_props_script` unchanged. That reuse is the
+    point and not a shortcut: it is the site's one settled vocabulary for this
+    slot, and #1650 exists because one backend state was already wearing three
+    phrasings. A fourth composed here — even a correct one — is the bug.
+
+    ** THE PRICE DOES NOT COME WITH THEM. ** These rows carry ``hit``/``actual``
+    and nothing else, so the script row's ``pregame_mark`` and ``current`` both
+    fall to ``None`` and the reader sees a verdict, never the number #1588
+    removed. Re-publishing "First 5 Spread 0.99" beside a green tick would be
+    the original bug wearing a rosette: the row is on the page to say the first
+    five innings finished 6–1, not to quote what it was worth.
+
+    Suppressed rows stay suppressed in their own buckets either way — this adds
+    to WHAT HIT, and takes nothing back out of the filter above.
+    """
+    box = getattr(event, "box_score_data", None)
+    if not isinstance(box, dict):
+        return []
+    home_periods = box.get("home_period_scores")
+    away_periods = box.get("away_period_scores")
+    if not home_periods or not away_periods:
+        return []
+
+    league = (event.__dict__.get("llm_league") or "").strip().upper()
+    sport_hint = "baseball_mlb" if league == "MLB" else (league.lower() or None)
+    home_name = event.__dict__.get("home_team_name")
+    away_name = event.__dict__.get("away_team_name")
+
+    graded: list[dict] = []
+    for item in closed_items:
+        # gotcha #42 — one unclassifiable row must never cost the whole pass.
+        try:
+            market_name = item.get("market_name")
+            outcome_name = item.get("outcome_name")
+            ticker = ticker_by_market_id.get(item.get("_market_id"))
+            # The SAME classifier that proved the window was over decides which
+            # window to grade. Re-deriving it from the name here is how the two
+            # would disagree the moment either pattern list changed — and the
+            # SPAN is what is read, not just its end: 51 of the 62 window rows a
+            # finished MLB page suppresses are "Nth Inning Winner", which is one
+            # inning and not the first N (see `prop_window_span`).
+            span = prop_window_span(market_name, ticker, sport_hint, outcome_name)
+            if not span:
+                continue
+            unit, first_period, last_period = span
+            verdict = grade_period_window(
+                unit,
+                first_period,
+                last_period,
+                market_name,
+                ticker,
+                outcome_name,
+                home_periods,
+                away_periods,
+                home_name,
+                away_name,
+            )
+            if verdict is None:
+                continue
+            graded.append({
+                "market_name": market_name,
+                "outcome_name": outcome_name,
+                "actual": verdict["actual"],
+                "hit": verdict["hit"],
+            })
+        except Exception:
+            logger.exception(
+                "Closed-window grade failed for event %s market %s",
+                getattr(event, "id", None),
+                item.get("market_name"),
+            )
+    return graded
+
+
 def _estimate_game_pace(
     home_score: Optional[int],
     away_score: Optional[int],
@@ -12588,6 +12668,17 @@ async def _build_game_markets(
     # attribute is read lazily here (gotcha #6).
     _ticker_by_market_id = {m.id: m.external_id for m in markets}
 
+    # #1735 — THE SUPPRESSED ROWS ARE EXACTLY THE ROWS OWED A RESULT.
+    #
+    # #1588's own acceptance criterion is "shows a graded result OR is
+    # suppressed"; the suppression above bought the honesty and left the result
+    # owed. A row this filter drops is, by construction, one whose window we
+    # PROVED is over — which is the same thing as saying its question has an
+    # answer. So they are collected here rather than re-derived later: any
+    # second pass would have to re-run the classifier and the two would drift
+    # (CERT-2486 is what that drift costs).
+    _window_closed_items: list[dict] = []
+
     def _window_open(item: dict) -> bool:
         # A GRADED ROW IS A RESULT, NOT A PRICE, SO IT SURVIVES. Two independent
         # kinds of grade reach this payload and both count, which a LOOK at the
@@ -12598,7 +12689,7 @@ async def _build_game_markets(
         # already showing the reader its result.
         if item.get("resolution_source") is not None or item.get("hit") is not None:
             return True
-        return not prop_window_closed(
+        if prop_window_closed(
             item.get("market_name"),
             _ticker_by_market_id.get(item.get("_market_id")),
             _sport_hint,
@@ -12606,7 +12697,10 @@ async def _build_game_markets(
             event.status,
             finished=event_is_finished,
             outcome=item.get("outcome_name"),
-        )
+        ):
+            _window_closed_items.append(item)
+            return False
+        return True
 
     game_totals = [m for m in game_totals if _window_open(m)]
     player_props = [m for m in player_props if _window_open(m)]
@@ -12696,7 +12790,17 @@ async def _build_game_markets(
         "other": sorted(other_markets, key=lambda x: (_extract_threshold(x.get("outcome_name", "")) or 0)),
         "pace": pace,
         # #195: PropsSection contract (THE SCRIPT / DIVERGENCE / WHAT HIT).
-        "props_script": _build_props_script(player_props, event_is_finished),
+        # #1735: WHAT HIT also carries the closed-window rows the line score can
+        # settle. They are appended rather than merged into `player_props`
+        # because they are not player props and must not reach the price
+        # buckets — the whole point is that their number stays gone and only
+        # their result arrives.
+        "props_script": _build_props_script(
+            player_props + _grade_closed_windows(
+                _window_closed_items, event, _ticker_by_market_id
+            ),
+            event_is_finished,
+        ),
     }
 
     # Caching is the caller's job now (`_publish_game_markets`), so that a build
