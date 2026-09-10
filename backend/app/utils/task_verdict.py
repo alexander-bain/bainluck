@@ -484,6 +484,19 @@ ENFORCED_TASKS = frozenset({
     # never re-enumerate one), so a permanently inert beat breaks nothing
     # visible and simply lets dead last-trade prices keep rendering as live.
     "kalshi_resolution_window",        # terminal + candidates + writes_applied
+    # #4655, the EVENT-DRIVEN arm of the same repair. Enrolled in the change that
+    # gives it a terminal, per the trap above.
+    #
+    # It needs enrolment more than its population sibling does, not less: its
+    # ordinary healthy return is ZERO WRITES, because most ten-minute windows
+    # contain no game that just finished. Unenrolled, "no game finished" and
+    # "every leg of the game that just finished errored at the venue" are the
+    # same returning invocation, and the surface that is supposed to prove a
+    # finished game gets reached within 30 minutes would read GREEN through an
+    # outage. `partial` is also load-bearing here and is NOT a failure: a game
+    # our authority called final that Kalshi has not finalized yet selects rows
+    # and writes none, every ten minutes, until the venue catches up.
+    "kalshi_recent_finals",            # terminal + candidates + writes_applied
     # #2907 (authority/049). Enrolled in the same change that gives it a
     # terminal, per the trap two entries up: enrolment without one buys nothing.
     #

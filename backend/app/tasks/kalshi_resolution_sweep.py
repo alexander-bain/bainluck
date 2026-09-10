@@ -87,6 +87,76 @@ SWEEP_CONCURRENCY = 6
 #: that could drift away from it.
 PAST_EVENT_BAND_DAYS = PROVABLY_PURGED_AGE_DAYS
 
+#: How far back the EVENT-DRIVEN arm looks for finished games — #4655.
+#:
+#: Six hours, and the number is a re-check budget rather than a reach. A game's
+#: legs are selected the moment our own event goes `completed` and stay selected
+#: until the venue finalizes them and the write drops them out, so the window is
+#: "how long do we keep asking", not "how far back do we sweep". Six hours
+#: covers the measured gap on the specimen (our final 03:26:32Z, Kalshi's
+#: settlement 03:28:38Z — two minutes) with three orders of magnitude of slack
+#: for a venue that settles late, and it bounds the population: measured on
+#: production 2026-09-10 05:35Z, 29 events / 603 open legs in six hours, against
+#: the 12,244 rows the population sweep is walking at 500 a night.
+RECENT_FINAL_WINDOW_HOURS = 6
+
+#: What ONE run of the event-driven arm may touch.
+#:
+#: 200 against a measured 603-leg six-hour population, ordered freshest-final
+#: first, so the newest finished game is always inside the first batch — which
+#: is the only ordering that can meet #4655's bar (a finished game's tickers
+#: reached within 30 minutes of the venue settling). It is deliberately NOT
+#: sized to drain the window in one run: the arm runs every 10 minutes, so the
+#: window drains at 1,200 legs/hour against a population that refills at the
+#: rate games finish.
+RECENT_FINAL_BATCH_LIMIT = 200
+
+#: The event-driven selection — #4655.
+#:
+#: WHY THIS EXISTS BESIDE `SELECT_SQL` RATHER THAN REPLACING IT. The population
+#: sweep asks "which rows have I not looked at recently"; this asks "which game
+#: just finished". They are different questions and the second one cannot be
+#: expressed as an ordering of the first: `updated_at ASC` puts the freshest
+#: final LAST, because a game that just finished was being polled until minutes
+#: ago and therefore carries the NEWEST stamp in the population. The opener's 61
+#: legs were frozen at `updated_at = 00:51:04Z` — newer than thousands of rows
+#: ahead of them in the sweep's queue — so no batch size of the population sweep
+#: reaches a fresh final in time. That is the whole defect (#4655): both existing
+#: arms are population sweeps, and neither is keyed on the event.
+#:
+#: THE KEY IS OUR OWN EVENT, not a ticker date. `events.completed_at` is the
+#: instant an authority told us the game was over, and the legs are already tied
+#: to it by `futures_markets.event_id` — verified on the specimen before this was
+#: built: all 61 of the opener's legs carry `event_id = 14780138`, whose
+#: `completed_at` is 2026-09-10 03:26:32Z. A ticker-date band cannot do this job
+#: (it resolves to a DAY, and a Sunday slate finishes across six hours), and
+#: `commence_time` cannot either — #2771's 4,954 sealed rows carry the poisoned
+#: future backstop there.
+#:
+#: `status = 'open'` IS THE DRAIN. A leg the venue confirms settled is written to
+#: `'resolved'` by `UPDATE_SQL`, so it leaves this select permanently on the run
+#: that fixes it. The window therefore self-drains and re-asking is free: a leg
+#: still selected an hour after its game ended is a leg the venue has not
+#: finalized yet, which is exactly the row we want to keep asking about.
+#:
+#: `LIKE 'KX%'` mirrors `SELECT_SQL`'s prefix for the same reason it does — the
+#: derivation downstream reads Kalshi event tickers and nothing else.
+RECENT_FINAL_SELECT_SQL = """
+    SELECT fm.id, fm.external_id, fm.resolution_date, fm.commence_time,
+           fm.market_tier
+    FROM futures_markets fm
+    JOIN events e ON e.id = fm.event_id
+    WHERE fm.source = 'kalshi'
+      AND fm.status = 'open'
+      AND fm.external_id LIKE 'KX%'
+      AND e.status = 'completed'
+      AND e.completed_at IS NOT NULL
+      AND e.completed_at >= :final_floor
+    ORDER BY e.completed_at DESC, fm.updated_at ASC
+    LIMIT :limit
+"""
+
+
 @dataclass
 class _Leg:
     close_time: Optional[datetime]
@@ -401,6 +471,7 @@ async def run_backfill(
     apply: bool = False,
     concurrency: int = 6,
     now: Optional[datetime] = None,
+    rows: Optional[list] = None,
 ) -> dict:
     """Select, derive and (optionally) write. Every dependency is a parameter.
 
@@ -409,31 +480,48 @@ async def run_backfill(
     derivation, and the two-column UPDATE — against a seeded table and a faked
     venue. `now` is a parameter for the same reason the derivation takes no clock
     (gotcha #44): the retention floor must not move under a test.
+
+    `rows` (#4655) SUPPLIES the batch instead of selecting it, and exists so the
+    event-driven arm can share this function's derivation and write byte for byte
+    rather than growing a second copy of them. The caller has already decided
+    WHICH rows; everything after that decision — the venue read, the settlement
+    read, the window derivation, `UPDATE_SQL` — is the same code on the same
+    tuple shape `(id, external_id, resolution_date, commence_time, market_tier)`.
+    The population counters are the one thing that cannot be shared, because
+    "how many rows are still eligible" is a question about the population sweep's
+    predicate and a targeted batch is not a page of it; they report `-1`, the
+    module's existing "not measured" value, rather than a number from the wrong
+    denominator.
     """
     now = now or datetime.now(timezone.utc)
     purge_floor = now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
     band_tokens = past_event_band_tokens(now)
 
-    async with session_maker() as session:
-        rows = (
-            await session.execute(
-                text(banded_select_sql(len(band_tokens))),
-                {
-                    "purge_floor": purge_floor,
-                    "limit": limit,
-                    "offset": offset,
-                    **band_bind_params(band_tokens),
-                },
-            )
-        ).all()
-        totals = (
-            await session.execute(text(COUNT_SQL), {"purge_floor": purge_floor})
-        ).first()
+    supplied = rows is not None
+    if supplied:
+        rows = list(rows)
+        eligible_total = excluded_purged = never_swept = provisional_recheck = -1
+    else:
+        async with session_maker() as session:
+            rows = (
+                await session.execute(
+                    text(banded_select_sql(len(band_tokens))),
+                    {
+                        "purge_floor": purge_floor,
+                        "limit": limit,
+                        "offset": offset,
+                        **band_bind_params(band_tokens),
+                    },
+                )
+            ).all()
+            totals = (
+                await session.execute(text(COUNT_SQL), {"purge_floor": purge_floor})
+            ).first()
 
-    eligible_total = int(totals[0]) if totals else -1
-    excluded_purged = int(totals[1]) if totals else -1
-    never_swept = int(totals[2]) if totals else -1
-    provisional_recheck = int(totals[3]) if totals else -1
+        eligible_total = int(totals[0]) if totals else -1
+        excluded_purged = int(totals[1]) if totals else -1
+        never_swept = int(totals[2]) if totals else -1
+        provisional_recheck = int(totals[3]) if totals else -1
 
     stats = {
         "eligible_total": eligible_total,
@@ -484,6 +572,11 @@ async def run_backfill(
             "purge_floor": purge_floor.isoformat(),
             "zero_yield": True,
             "zero_yield_reason": (
+                # #4655: a supplied batch has no offset and no population
+                # denominator, so the population sentence would be four numbers
+                # of `-1` dressed up as a diagnosis. Say the one true thing.
+                "no rows supplied: the caller's selection matched nothing"
+                if supplied else
                 f"no candidates at offset {offset}: {eligible_total} rows still "
                 f"eligible ({never_swept} never swept, {provisional_recheck} holding "
                 f"a provisional date), {excluded_purged} of them past the purge "
@@ -933,4 +1026,117 @@ async def run_sweep(
     # sweep can never be read as a finished one — the same reason `run_backfill`
     # reports `eligible_total` beside `candidates`.
     report["remaining_after_batch"] = max(0, eligible - applied)
+    return report
+
+
+async def run_recent_finals(
+    *,
+    limit: int = RECENT_FINAL_BATCH_LIMIT,
+    concurrency: int = SWEEP_CONCURRENCY,
+    apply: bool = True,
+    window_hours: int = RECENT_FINAL_WINDOW_HOURS,
+    session_maker: Optional[Callable] = None,
+    client_factory: Optional[Callable[[], object]] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    """The EVENT-DRIVEN arm — #4655. Reach a finished game's tickers in minutes.
+
+    THE DEFECT THIS EXISTS FOR, measured on production 2026-09-10. Kalshi
+    settled all 842 markets across the NFL opener's 61 event tickers at
+    03:28:38Z, two minutes after our own event went `completed` at 03:26:32Z.
+    Two hours later all 61 of our rows still read `status='open'` with
+    `settled_at` NULL, so a finished game kept serving a live-looking price.
+    Repo-wide at that moment: 1,181 Kalshi rows held `open` past a passed
+    `commence_time` over six hours, 737 over a day, 267 over a week.
+
+    WHY NEITHER EXISTING ARM REACHES THEM, and why this is not a tuning problem:
+
+    * ``backfill_kalshi_settled`` runs 4x daily on the ``background`` queue and
+      was hard-killed on its 05:00Z run (0 successes, ``health: critical``).
+    * ``sweep_kalshi_resolution_window`` is a POPULATION sweep — 500 rows a night
+      against 12,244 eligible, a ~24-night cycle. Worse than slow, it is ordered
+      ``updated_at ASC``, which puts a game that just finished LAST: it was being
+      polled until minutes ago, so it carries the newest stamp in the population.
+
+    Both are sweeps over a population. Neither is keyed on the event, so neither
+    can have a bound measured in minutes. This one is keyed on the event and its
+    bound is the beat period.
+
+    WHAT IT DOES NOT DO. It writes no grade — never ``is_winner``, never a price.
+    That constraint is CAL-P061's and #1852's and it is inherited unchanged,
+    because it belongs to the shared write (``UPDATE_SQL``) rather than to any
+    one caller. This arm changes only WHICH rows reach that write and HOW SOON.
+    """
+    from app.services.database import async_session_maker
+
+    now = now or datetime.now(timezone.utc)
+    final_floor = now - timedelta(hours=window_hours)
+    maker = session_maker or async_session_maker
+
+    async with maker() as session:
+        rows = (
+            await session.execute(
+                text(RECENT_FINAL_SELECT_SQL),
+                {"final_floor": final_floor, "limit": limit},
+            )
+        ).all()
+
+    report = await run_backfill(
+        session_maker=maker,
+        client_factory=client_factory or KalshiAPIService,
+        apply=apply,
+        concurrency=concurrency,
+        now=now,
+        rows=rows,
+    )
+
+    stats = report.get("stats") or {}
+    candidates = int(stats.get("candidates") or 0)
+    settled = int(stats.get("venue_settled") or 0)
+    errors = int(stats.get("errors") or 0)
+
+    report["selection"] = "recent_finals"
+    report["window_hours"] = window_hours
+    report["final_floor"] = final_floor.isoformat()
+    report["batch_limit"] = limit
+    # A full batch means finals are arriving faster than one run drains them, so
+    # the NEXT run still has a backlog and the 30-minute bar is at risk. Named on
+    # the summary rather than inferred, so it is visible without re-deriving it.
+    report["batch_saturated"] = candidates >= limit
+
+    # The terminal is the same three-way contract `run_sweep` uses (#1515) — an
+    # invocation that returned is not proof of work — but the SUCCESS SIGNAL is
+    # `venue_settled`, NOT `writes_applied`, and the difference is this arm's
+    # whole point.
+    #
+    # Found by running it. A leg whose game is over but whose venue has not
+    # finalized it still produces a write: the derivation re-derives the same
+    # backstop date off the venue's `close_time` and returns a row, so
+    # `writes_applied` reads 1 and the population sweep's rule would grade the
+    # run `complete`. It refreshed a date. The row is still `status='open'` and
+    # the reader is still looking at a live price on a finished game — the exact
+    # defect #4655 exists for, graded GREEN from inside the fix.
+    #
+    # For the population sweep a date write IS progress, so its rule is right
+    # for it. For this arm the job is closing the row, so `venue_settled == 0`
+    # over a non-empty batch is `partial`: honest, self-limiting (a leg leaves
+    # the six-hour window on its own), and exactly the signal that says "there
+    # are finished games we have not been able to close yet".
+    if candidates and errors >= candidates:
+        report["terminal"] = "failed"
+        report["terminal_reason"] = (
+            f"all {candidates} legs of recently-final events errored at the venue"
+        )
+    elif candidates and settled == 0:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"{candidates} legs of recently-final events selected, 0 confirmed "
+            f"settled at the venue ({stats.get('unresolvable_at_venue')} "
+            "unresolvable). Every one of them still reads `open`. Expected while "
+            "a game is over and the venue has not finalized it yet; the next run "
+            "re-asks, and a leg leaves this selection only when the venue "
+            "confirms it."
+        )
+    else:
+        report["terminal"] = "complete"
     return report
