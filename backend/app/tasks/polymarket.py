@@ -1408,6 +1408,12 @@ async def _process_event_batch(
                             opening_captured_at=sub_opening_at,
                             rank=1,
                             volume=sub_vol,
+                            # Explicit, and load-bearing: the column is
+                            # `boolean NULL DEFAULT false`, so an INSERT that
+                            # omits it stores an affirmative graded LOSS
+                            # (CAL-P1004R) on a leg nobody called. #4788.
+                            is_winner=None,
+                            resolution_source=None,
                         ).on_conflict_do_update(
                             index_elements=["market_id", "external_id"],
                             set_=over_update,
@@ -1524,6 +1530,13 @@ async def _process_event_batch(
                                 opening_captured_at=sub_under_opening_at,
                                 rank=2,
                                 volume=sub_vol,
+                                # Explicit, and load-bearing: the column is
+                                # `boolean NULL DEFAULT false`, so an INSERT
+                                # that omits it stores an affirmative graded
+                                # LOSS (CAL-P1004R) on a leg nobody called.
+                                # #4788.
+                                is_winner=None,
+                                resolution_source=None,
                             ).on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
                                 set_=under_update,
@@ -1671,6 +1684,12 @@ async def _process_event_batch(
                         opening_american_odds=opening_american,
                         opening_captured_at=opening_at,
                         rank=rank,
+                        # Explicit, and load-bearing: the column is
+                        # `boolean NULL DEFAULT false`, so an INSERT that omits
+                        # it stores an affirmative graded LOSS (CAL-P1004R) on
+                        # a leg nobody called. #4788.
+                        is_winner=None,
+                        resolution_source=None,
                     ).on_conflict_do_update(
                         index_elements=["market_id", "external_id"],
                         set_=update_set,

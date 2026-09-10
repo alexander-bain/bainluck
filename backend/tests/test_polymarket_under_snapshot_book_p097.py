@@ -364,31 +364,139 @@ class TestTheReleaseIsForwardOnly:
     def test_no_update_or_regrade_reaches_the_resolution_columns(self):
         """No historical row is rewritten and nothing is re-graded.
 
-        The staged spec's own release posture, and gotcha #21. Checked over the
-        Under block's source because this is a claim about what the code does
-        NOT contain — the one question source text is the right oracle for.
+        The staged spec's own release posture, and gotcha #21.
+
+        ARM-AWARE SINCE #4788, AND IT HAS TO BE. This began as a substring scan
+        over the whole Under block, which could not tell the upsert's two arms
+        apart — and the two arms have OPPOSITE correct answers:
+
+        * the `on_conflict_do_update(set_=...)` arm must NOT carry a resolution
+          column. That arm rewrites a row that already exists, so naming
+          `is_winner` there re-grades a settled leg on every poll. This is the
+          original claim and gotcha #21, and it is unchanged.
+        * the `pg_insert(...).values(...)` arm MUST name `is_winner`. That arm
+          builds a row being born, and the column is `boolean NULL DEFAULT
+          false` — so OMITTING it there does not leave the leg ungraded, it
+          declares the leg a LOSS (CAL-P1004R). #4788 measured 27,197 such
+          fabricated Polymarket legs, 3,308 of them on resolved markets
+          printing a red "Lost" no grader ever wrote.
+
+        The block-wide scan forbade both, so it required the birth arm to stay
+        broken in order to keep the update arm honest. Reading the arms
+        separately is what lets each one be right. `calibration_probability`
+        stays banned in both: it is neither a birth value nor a poll's business.
         """
+        import ast
         import inspect
 
         from app.tasks import polymarket
+
+        COLUMNS = ("is_winner", "resolution_source", "calibration_probability")
 
         # #3613: the old end-marker moved out with the parent-leg build. Bound
         # the slice by the poll's OWN source and the CAL-P006 guard that
         # genuinely follows the Under block (see the twin note in
         # tests/test_polymarket_under_leg_book.py).
         src = inspect.getsource(polymarket._process_event_batch)
-        start = src.index("# Create Under/No outcome if available")
-        end = src.index("# CAL-P006 (#1527)")
-        # COMMENTS STRIPPED FIRST. The block discusses all three columns at
-        # length — that prose is the reason the fix is scoped the way it is, and
-        # a check that cannot tell an explanation from a write would force the
-        # next author to delete the explanation to keep the test green.
-        block = "\n".join(
-            line.split("#", 1)[0] for line in src[start:end].splitlines()
+        start_line = src[: src.index("# Create Under/No outcome if available")].count("\n") + 1
+        end_line = src[: src.index("# CAL-P006 (#1527)")].count("\n") + 1
+
+        tree = ast.parse(src)
+
+        def in_block(node):
+            return start_line <= getattr(node, "lineno", -1) <= end_line
+
+        def chain_root(node):
+            cur = node
+            while True:
+                if isinstance(cur, ast.Call):
+                    if isinstance(cur.func, ast.Attribute):
+                        cur = cur.func.value
+                        continue
+                    return cur
+                if isinstance(cur, ast.Attribute):
+                    cur = cur.value
+                    continue
+                return cur
+
+        # ---- the UPDATE arm: the `under_update` dict and anything added to it.
+        update_keys = set()
+        for node in ast.walk(tree):
+            if not in_block(node):
+                continue
+            # `under_update: dict = {...}` / `under_update = {...}`
+            targets = []
+            if isinstance(node, ast.AnnAssign) and node.target is not None:
+                targets = [node.target]
+            elif isinstance(node, ast.Assign):
+                targets = node.targets
+            for tgt in targets:
+                if isinstance(tgt, ast.Name) and tgt.id == "under_update":
+                    if isinstance(node.value, ast.Dict):
+                        for k in node.value.keys:
+                            if isinstance(k, ast.Constant):
+                                update_keys.add(k.value)
+                # `under_update["opening_probability"] = ...`
+                if (
+                    isinstance(tgt, ast.Subscript)
+                    and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "under_update"
+                    and isinstance(tgt.slice, ast.Constant)
+                ):
+                    update_keys.add(tgt.slice.value)
+
+        assert update_keys, "found no `under_update` conflict arm — scan is blind"
+
+        for column in COLUMNS:
+            assert column not in update_keys, (
+                f"the Under writer's ON CONFLICT arm assigns {column!r} — that "
+                f"rewrites an EXISTING row and re-grades a settled leg "
+                f"(gotcha #21)"
+            )
+
+        # ---- the INSERT arm: `pg_insert(FuturesOutcome).values(...)`.
+        values_kwargs = {}
+        for node in ast.walk(tree):
+            if not in_block(node):
+                continue
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "values"
+            ):
+                continue
+            root = chain_root(node)
+            if not (
+                isinstance(root, ast.Call)
+                and isinstance(root.func, ast.Name)
+                and root.func.id == "pg_insert"
+                and root.args
+                and isinstance(root.args[0], ast.Name)
+                and root.args[0].id == "FuturesOutcome"
+            ):
+                continue
+            for kw in node.keywords:
+                if kw.arg:
+                    values_kwargs[kw.arg] = kw.value
+
+        assert values_kwargs, "found no Under `pg_insert(...).values()` — scan is blind"
+
+        assert "calibration_probability" not in values_kwargs, (
+            "the Under writer's INSERT arm assigns 'calibration_probability' — "
+            "a poll does not compute a calibration price"
         )
-        for column in ("is_winner", "resolution_source", "calibration_probability"):
-            for form in (f"{column}=", f'"{column}":', f"{column} ="):
-                assert form not in block, (
-                    f"the Under writer ASSIGNS {column!r} — this change is "
-                    f"capture-only and must never re-grade (gotcha #21)"
-                )
+
+        # A row being born must name the grade pair, and must name it as NULL:
+        # naming it with a real verdict would be the poll grading its own leg.
+        for column in ("is_winner", "resolution_source"):
+            assert column in values_kwargs, (
+                f"the Under writer's INSERT arm omits {column!r} — the column "
+                f"defaults to false, so an omitted grade is a FABRICATED LOSS "
+                f"on a leg nobody called (CAL-P1004R, #4788)"
+            )
+            value = values_kwargs[column]
+            assert isinstance(value, ast.Constant) and value.value is None, (
+                f"the Under writer's INSERT arm gives {column!r} a value other "
+                f"than None — a poll captures prices, it does not grade "
+                f"(gotcha #21)"
+            )
