@@ -55,6 +55,13 @@ const out = await page.evaluate(() => {
   const before = doc.scrollWidth;
   const overflow = before - client;
 
+  // A page with nothing to attribute must report nothing (ux/1169). The walk's test is
+  // "hiding this subtree brings scrollWidth back to `client`" — when there is no overflow that
+  // is already true of EVERY element, so the probe happily indicts the first thing it touches.
+  // The first sweep to use it named a cookie banner and a 🍀 in the logo as causes on two pages
+  // whose scrollWidth was exactly 390, which is a confident answer to a question nobody asked.
+  if (overflow <= 0) return { client, scrollWidth: before, overflow: 0, causes: [] };
+
   const label = (el) => {
     const cls = (el.getAttribute('class') || '').split(/\s+/).filter(Boolean).slice(0, 6).join('.');
     const id = el.id ? `#${el.id}` : '';
