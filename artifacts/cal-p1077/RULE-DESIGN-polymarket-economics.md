@@ -4,10 +4,17 @@
 a family of daily questions whose own answer is a coin flip.**
 
 Status: **mechanism CONFIRMED on the producer's own chain. Effect size WITHHELD —
-the arm is being written while it is folded. The one conclusion that survived three
-repetitions is that removing the arm leaves the cell OVER BAR. NO RULE SHIPPED:**
-both remedies touch Alex's D13 ruling and the truth authority.
-`git diff origin/master -- backend/app frontend` is empty on this branch.
+the arm was being written while it was folded. The one conclusion that survived
+three repetitions is that removing the arm leaves the cell OVER BAR, and it survived
+the CERT-2428 refold onto the whole-virtual-market rail too (§0b: 3.78 → 3.80
+against a 3.0 bar, twice, on a byte-identical roster). NO RULE SHIPPED:** both
+remedies touch Alex's D13 ruling and the truth authority.
+This subject writes no production code: `git diff origin/master -- backend/app
+frontend` is empty on this branch, whose commits touch only `backend/scripts`,
+`backend/tests` and `artifacts/`. CAL-P1078's frontend commit was SPLIT OFF onto
+its own branch off clean master under CERT-2436's required repair
+`1078-SPLIT-BLOCKED-P1077-FROM-READER-SHIP`, so the reader ship is not gated on
+this measurement.
 
 | | |
 |---|---|
@@ -55,6 +62,56 @@ visible rather than averaging it away.
 ones already there, which means at least part of the winner-selection below is a
 **grading LAG** — losses that have not been written yet — and not only a permanent
 censoring. That distinction decides the remedy, and it is why no rule ships tonight.
+
+---
+
+## 0b. 🔴 CERT-2428 REPAIR — re-folded on the whole-virtual-market rail. THE CONCLUSION HOLDS.
+
+Everything in §0 and below was measured with `calibration_cell_exact`'s `sweep()`,
+which partitions on raw `futures_markets.id` ranges and **re-derives
+`group_sizes` / `event_sizes` inside every slice**. CERT-2428 blocked this document
+for it, and correctly: that rail reproduced 8,426 of `polymarket/basketball`'s
+13,135 published rows (**−35.85%**), and it does not merely lose rows — it
+re-assigns markets between the very classes `loneclaim` names. Repeating a fold on
+that rail proves the returned partition is stable, not that it is the published one.
+
+Re-folded on `backend/scripts/calibration_whole_vm_fold.py`, which freezes the
+virtual-market generation ONCE for the whole cell and replays it through the
+producer's own `plan_units` so a `vm_id` is never split. **Twice, 21.7 minutes
+apart, on a roster that was byte-identical between the folds** (18,538 rows,
+sha256 `dbad1e24e2edfad8` both times, 0 markets entered, 0 left —
+`whole-vm-roster-identity.json`):
+
+| | whole-vm fold 1 | whole-vm fold 2 | id-range (blocked) | payload |
+|---|---|---|---|---|
+| replica | 10,090 / 3.81 / +0.51 | 10,090 / 3.81 / +0.51 | 9,965 / 4.10 / +0.05 | 9,779 / 4.28 / −0.35 |
+| vs payload | +3.18% | +3.18% | +1.90% | — |
+| **`z_not_lone`** | **9,262 / 3.80 / +1.56** | **9,262 / 3.80 / +1.56** | 9,224 / 3.78 / +1.55 | — |
+| `a_lone_api_settlement` | 828 / 11.44 / −11.31 | 828 / 11.44 / −11.31 | 741 / 18.68 / −18.59 | — |
+
+**The load-bearing number survives the rail change: 3.78 → 3.80, against a 3.0 bar.
+The cell still does not close, and Alex's lettered decision in §4 stands exactly as
+written.** The lone arm reads 828 / 11.44 on the correct rail, which is where the
+id-range rail's third run (827 / 11.55) had already arrived — so §0's "the arm is
+being written while it is folded" was a true reading of a backlog that has since
+drained: the roster no longer moves at all between folds.
+
+### What this does NOT license
+
+The two rails agreeing here is a measurement about these two cells, not a
+rehabilitation of the id-range rail. It is not even predictable from the shape of
+the cell. Reading the frozen rosters offline against `sweep()`'s own slices
+(width 1,000,000, origin `MIN(id)` per SOURCE — 112,847 for polymarket, 171 for
+kalshi), **112 of economics' 1,181 grouped virtual questions (9.5%), carrying 1,741
+of its 18,538 markets, straddle a slice boundary** and would have been re-derived
+under a different identity by the blocked rail — and hockey, where the two rails
+agree to within ONE row, straddles at **93.4%**. The exposure was real in both
+cells, largest in the cell that moved least, and the fold came back the same
+anyway. Nobody can know that in advance, which is the whole reason the refold was
+required rather than argued about. Banked as
+`id-range-rail-exposure.json`, which also reads **`kalshi/golf` at ZERO** — every
+one of its 3,450 markets sits in a group whose markets share a single slice, so
+CAL-P1078's golf arm table is not exposed to this defect at all.
 
 ---
 

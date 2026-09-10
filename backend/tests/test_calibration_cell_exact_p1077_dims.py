@@ -4,11 +4,21 @@ Both dimensions were built to answer a queued cell, and both returned a verdict
 that changed the queue rather than confirming it:
 
 * ``loneclaim`` on ``polymarket/economics`` found the named mechanism REAL but
-  measured its removal at **4.56 -> 3.78**, not the ~0.5-1.0 the superset fold
-  predicted. The cell does not close.
+  measured the cell at **3.80** with the whole arm removed, against a 3.0 bar —
+  not the ~0.5-1.0 the superset fold predicted. The cell does not close.
 * ``pubband`` on ``polymarket/hockey`` found the named mechanism **ABSENT** —
   the published cell contains ZERO legs at a certain price, because the
   admission gate already refuses them.
+
+CERT-2428 BLOCKED the first presentation of both, and not on the arithmetic: the
+evidence came from ``calibration_cell_exact``'s id-range ``sweep()``, which
+re-derives question identity inside each slice. Re-folded on
+``calibration_whole_vm_fold`` — twice each, 21.7 and 27.0 minutes apart, on a
+roster that was byte-identical between folds — **both conclusions held**
+(3.78 -> 3.80, and the certain arm still absent). The provenance guards at the
+bottom of this file exist so the next P1077 artifact cannot be banked off the
+blocked rail; the finding that it happened to agree here is a measurement about
+these two cells, not a licence.
 
 An absence is the most dangerous thing a fold can report, because a broken
 dimension reports the same shape as a clean cell (gotcha #53). Every test here
@@ -35,12 +45,20 @@ exists to make one specific way of being wrong loud:
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
+from collections import defaultdict
 from pathlib import Path
 
 from app.utils.resolution_authority import is_calibration_truth_eligible
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+REPO = Path(__file__).resolve().parents[2]
+
+#: Where this subject's folds are banked, and where the rail it was BLOCKED for
+#: using is kept so the differential below has a real specimen on both sides.
+P1077_ARTIFACTS = REPO / "artifacts" / "cal-p1077"
+SUPERSEDED_ARTIFACTS = P1077_ARTIFACTS / "superseded-id-range-rail"
 
 
 def _load(name: str):
@@ -229,3 +247,152 @@ def test_both_dimensions_compose_into_one_sendable_statement():
         assert len(sql) < cce.MAX_SQL_CHARS, f"{name} composes past the length cap"
         assert "FROM deduped d" in sql
         assert " AS k," in sql
+
+
+# --------------------------------------------------------------------------
+# CERT-2428 — the artifact must name the POPULATION it was folded on
+# --------------------------------------------------------------------------
+#
+# The dimensions above were correct and the arithmetic inside the first banked
+# artifacts was correct. The BLOCK was about neither: both files came from
+# ``calibration_cell_exact``'s ``sweep()``, which partitions on raw
+# ``futures_markets.id`` ranges and re-derives ``group_sizes``/``event_sizes``
+# inside every slice. That is the CAL-P124 defect — on ``polymarket/basketball``
+# it reproduced 8,426 of 13,135 published rows, -35.85% — and it does not just
+# lose rows, it re-assigns markets between the very classes a dimension names.
+# So a conclusion about the PUBLISHED cell cannot be read off it, however many
+# times the number repeats: repetition proves the partition is stable, not that
+# it is the published one.
+#
+# Nothing about that is visible in a fold's numbers. The two rails print the
+# same table with the same column headings, and the ID-range one is FASTER and
+# has no cache to warm — so the way a future session re-banks the wrong rail is
+# not stubbornness, it is convenience. These tests are the only thing standing
+# between that and a cert body.
+#
+# The check is deliberately on the ARTIFACTS rather than on a helper, because
+# the artifact is what a cert reads and what a later session quotes.
+
+
+def _banked_json() -> list[tuple[Path, dict]]:
+    """EVERY json banked for this subject, recursively, minus the negative
+    control — not a name-matched subset.
+
+    Globbing ``whole-vm-fold*.json``, or only the top level, would make the
+    guard below unfailable by the two routes that actually matter: an artifact
+    banked under a different name, or one dropped into a subdirectory.
+    """
+    return [(p, json.loads(p.read_text()))
+            for p in sorted(P1077_ARTIFACTS.rglob("*.json"))
+            if SUPERSEDED_ARTIFACTS not in p.parents]
+
+
+def _banked_folds() -> list[tuple[Path, dict]]:
+    """The subset that is a FOLD — it carries a replica result block.
+
+    Shape, not filename. A fold is the thing a cert quotes an arm out of, and it
+    is the only thing the rail distinction is ABOUT; a receipt (a roster hash, an
+    exposure count) is neither, and demanding it name a rail would either be
+    vacuous or push it into a lie.
+    """
+    return [(p, d) for p, d in _banked_json() if "exact" in d]
+
+
+def test_p1077_artifacts_name_the_whole_vm_rail():
+    """THE guard CERT-2428 required. Every banked P1077 fold is whole-VM.
+
+    Two independent markers, so neither rail can be mistaken for the other by
+    one key going missing: the whole-VM writer stamps ``rail`` and has no id
+    ranges at all, the ID-range writer stamps ``width`` and no ``rail``. The
+    ``width`` half is checked over EVERY banked json rather than only the folds,
+    because a file the fold-detector does not recognise is exactly how an
+    id-range artifact would get back in.
+    """
+    folds = _banked_folds()
+    assert folds, (
+        f"no fold artifacts under {P1077_ARTIFACTS} — this guard must never "
+        f"pass by having nothing to grade (gotcha #53)"
+    )
+    for path, doc in folds:
+        assert doc.get("rail") == "whole_vm", (
+            f"{path.name} does not name the whole-vm rail (rail="
+            f"{doc.get('rail')!r}). CERT-2428: a conclusion about the "
+            f"published cell may not be banked off the id-range rail."
+        )
+    for path, doc in _banked_json():
+        assert "width" not in doc, (
+            f"{path.name} carries an id-range width — it was written by "
+            f"calibration_cell_exact.sweep(), not by the whole-vm rail"
+        )
+
+
+def test_both_p1077_dimensions_are_banked_and_each_is_folded_twice():
+    """Fable's rule 1, made executable.
+
+    "Fold twice, at least twenty minutes apart; quote only what repeats" was
+    adopted as written because a SINGLE fold of a live population banked
+    ECE 39.0 as a mechanism's size and it was under 12 an hour later. A cert on
+    one fold is refused, so one fold must not be bankable either.
+    """
+    by_cell: dict[tuple, list[str]] = defaultdict(list)
+    for path, doc in _banked_folds():
+        by_cell[(doc["source"], doc["category"], doc["by"])].append(path.name)
+
+    dims = {cell[2] for cell in by_cell}
+    assert dims == {"loneclaim", "pubband"}, (
+        f"CERT-2428 required BOTH dimensions re-folded on the whole-vm rail; "
+        f"banked: {sorted(dims)}"
+    )
+    for cell, names in sorted(by_cell.items()):
+        assert len(names) >= 2, (
+            f"{cell[0]}/{cell[1]} --by {cell[2]} is banked from a single fold "
+            f"({names}) — the two-fold rule refuses it"
+        )
+
+
+def test_the_id_range_rail_really_does_leave_a_different_fingerprint():
+    """The differential, on real specimens of BOTH rails for the SAME cells.
+
+    Without this, the test above could be passing because ``rail`` is a key
+    every fold happens to carry. The superseded directory holds the exact two
+    files CERT-2428 blocked — same source, same category, same dimension — and
+    they must still read as the other rail, or the marker is not a marker.
+    """
+    old = sorted(SUPERSEDED_ARTIFACTS.glob("*.json"))
+    assert old, (
+        f"{SUPERSEDED_ARTIFACTS} is empty — the blocked artifacts are the "
+        f"negative control for this guard and are kept, not deleted"
+    )
+    new_cells = {(d["source"], d["category"], d["by"]) for _p, d in _banked_folds()}
+    for path in old:
+        doc = json.loads(path.read_text())
+        assert "rail" not in doc, f"{path.name} is not an id-range artifact"
+        assert "width" in doc, f"{path.name} is not an id-range artifact"
+        assert (doc["source"], doc["category"], doc["by"]) in new_cells, (
+            f"{path.name} grades a cell the whole-vm rail never re-folded, so "
+            f"it is not a control for anything"
+        )
+
+
+def test_only_the_whole_vm_writer_can_stamp_the_whole_vm_marker():
+    """A guard on an artifact key is worth exactly as much as the key's owner.
+
+    If ``calibration_cell_exact`` ever learns to write ``"rail"``, the artifact
+    check above becomes satisfiable from the blocked path and says nothing.
+    (If that script is genuinely moved onto the frozen roster one day, this
+    fails and that is the conversation, not a silent overlap — the same
+    contract ``test_the_id_range_rail_really_does_re_derive_them`` states in
+    ``test_calibration_whole_vm_fold_p125.py``.)
+    """
+    wvf_src = (SCRIPTS / "calibration_whole_vm_fold.py").read_text()
+    cce_src = (SCRIPTS / "calibration_cell_exact.py").read_text()
+    assert '"rail": "whole_vm"' in wvf_src
+    assert '"rail"' not in cce_src, (
+        "calibration_cell_exact now writes a rail marker; the P1077 artifact "
+        "provenance check can no longer tell the two rails apart"
+    )
+    assert '"width": args.width' in cce_src
+    assert '"width":' not in wvf_src.split("def main(")[-1], (
+        "the whole-vm rail has no id ranges; a width in its output means it "
+        "grew one"
+    )
