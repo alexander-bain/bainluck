@@ -178,12 +178,51 @@ def switch_is_wired(consumers: Iterable[str]) -> bool:
     return bool(frozenset(consumers) - SWITCH_REPORTERS)
 
 
-def switch_wiring_note(wired: bool) -> str:
+def switch_wiring_note(wired: bool, serves: bool) -> str:
     """What the agreement row says about the switch, in an operator's words.
 
-    A function of the derived fact, so the `INERT` sentence cannot outlive the
-    condition it describes: nobody has to remember to delete it.
+    A function of the derived facts, so neither sentence can outlive the
+    condition it describes: nobody has to remember to delete one.
+
+    **Three states, because the switch has had three lives and the middle one
+    is the trap (#4947).** Dark (nothing reads it), wired-but-accounting-only
+    (something reads it and the only difference is which counter moves), and
+    wired-and-serving (the actor dispatches writers on the strength of it).
+    The middle sentence was served for a day after it stopped being true: #4434
+    gave `_act_on_failovers` a `STANDING_STATPAL` branch that runs StatPal's own
+    schedule and livescore writers, and this note went on describing a flip as
+    bookkeeping. `SWITCH_CONSUMERS`' tree walk could not catch it — it asks
+    whether anything READS the switch, and the answer had not changed. What
+    moved was what the reader DOES, which is why `SWITCH_ACTOR_SERVES` is
+    declared beside it with a guard of its own.
     """
+    if wired and serves:
+        return (
+            "WIRED, AND IT SERVES — read all of this before flipping. "
+            "`utils/authority_failover` reads this switch (program step 7, "
+            "#3473) and `espn_sync._act_on_failovers` ACTS on it (#4434), so "
+            "TWO things change when a sport is set to `statpal`, on a pass "
+            "where ESPN is silent for it. First: StatPal's own schedule and "
+            "livescore writers RUN for that sport — the same two an outage "
+            "failover would have run — so the flip changes what is WRITTEN, "
+            "not only what is counted. Second: the sport is counted apart from "
+            "outage failovers rather than as one, because a sport served by "
+            "its own source of record is in its normal state and not in a "
+            "degradation. And if StatPal's standby cannot cover the sport on "
+            "that pass, it is counted UNCOVERED rather than served, so a flip "
+            "cannot quietly report coverage it does not have. "
+            "WHAT A FLIP DOES NOT DO, and this is the wrong conclusion to draw "
+            "from the word `statpal` appearing here: it does not suppress the "
+            "ESPN path. A flipped sport still takes its scores, clock, win "
+            "probability, stat model and box scores from ESPN on every pass "
+            "ESPN answers, because `_sync_espn_live_events` selects sports by "
+            "what ESPN returned and not by this switch. Serving a sport "
+            "entirely from StatPal is a further build step and is not this "
+            "one; it would remove an ESPN win-probability source from the "
+            "blend, which is a product decision (PRD: 'the blend is the "
+            "product') and not plumbing. Nor does a flip move the event graph "
+            "— `event_registry` and the matcher do not read this file."
+        )
     if wired:
         return (
             "WIRED, AND NARROWLY — read the second half before flipping. "
@@ -221,7 +260,31 @@ def switch_wiring_note(wired: bool) -> str:
 #: whether to flip is exactly the person who must not have to read this file.
 SWITCH_IS_WIRED: bool = switch_is_wired(SWITCH_CONSUMERS)
 
-SWITCH_WIRING_NOTE: str = switch_wiring_note(SWITCH_IS_WIRED)
+#: Does the actor that reads the switch SERVE a flipped sport, or only account
+#: for it differently? (#4947)
+#:
+#: **`SWITCH_IS_WIRED` cannot answer this, and that is why this exists.** That
+#: flag is derived from `SWITCH_CONSUMERS`, which is derived from a tree walk
+#: for *imports* — it says something reads `authority_for` and nothing about
+#: what the reader then does. Between #3473 and #4434 the honest answer here was
+#: `False`: the failover module read the switch, and a flip moved a sport from
+#: the failover column to a standing one and changed no write. #4434 gave
+#: `espn_sync._act_on_failovers` a `STANDING_STATPAL` branch that calls
+#: `_serve_schedule_from_statpal` and appends to `served` (hence
+#: `_serve_live_from_statpal`), so a flip now changes what is WRITTEN on an
+#: ESPN-dark pass. Every test stayed green while the served sentence went on
+#: calling a flip bookkeeping, because no guard was pointed at this question.
+#:
+#: Declared rather than computed at import, for the same reason
+#: `SWITCH_CONSUMERS` is: parsing another module's function body at startup to
+#: decide what an admin string says would make a config import depend on the
+#: shape of a task. The honesty comes from the guard, not from the literal —
+#: `test_the_standing_branch_serves_and_the_note_says_so` walks
+#: `_act_on_failovers` and fails in BOTH directions, so this line cannot
+#: disagree with the tree any longer than it takes CI to run.
+SWITCH_ACTOR_SERVES: bool = True
+
+SWITCH_WIRING_NOTE: str = switch_wiring_note(SWITCH_IS_WIRED, SWITCH_ACTOR_SERVES)
 
 #: The sports StatPal can DISCOVER a game in — not merely agree about one.
 #:

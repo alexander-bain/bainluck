@@ -1896,9 +1896,17 @@ def test_the_note_says_what_a_flip_does_NOT_do(monkeypatch, still_gated):
     STATED, which is what #3442 established as the standard — put the true
     sentence where the person deciding will read it.
     """
-    from app.config.authority_by_sport import SWITCH_WIRING_NOTE, switch_wiring_note
+    from app.config.authority_by_sport import (
+        SWITCH_ACTOR_SERVES,
+        SWITCH_WIRING_NOTE,
+        switch_wiring_note,
+    )
 
-    note = switch_wiring_note(True)
+    # #4947: the note takes both derived facts now — is the switch read, and
+    # does the reader serve on it. Passing the module's own `SWITCH_ACTOR_SERVES`
+    # rather than a literal keeps this assertion about "the note is derived, not
+    # written twice"; which state is current is `test_authority_switch_is_wired`'s.
+    note = switch_wiring_note(True, SWITCH_ACTOR_SERVES)
     assert note == SWITCH_WIRING_NOTE
     assert "DOES NOT" in note
     assert "does not suppress the ESPN path" in note
