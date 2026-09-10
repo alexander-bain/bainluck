@@ -147,21 +147,27 @@ final class CrestBadgeInitialsTests: XCTestCase {
     /// would badge `MVP`. These are the values the iPhone draws TODAY and they
     /// are pinned here unchanged, which is the whole point of the guard.
     ///
-    /// THEY ARE ALSO WRONG, and not in a way #4539 may repair. #3110 pinned this
-    /// tile at three glyphs of the FIRST surname and the browser obeys it (`SIN`,
-    /// `HUN`); the iPhone draws the SECOND, because `TeamShortName.short` has no
-    /// `isDoublesPair` guard at all and simply takes the last word. So the app
-    /// badges "Siniakova / Townsend" `TOW` against the site's `SIN`, and
-    /// "Milutinovic / Van de Peer" reads **`PEE`** — on the doubles surface, during
-    /// the US Open. That is a separate defect with its own decision to inherit;
-    /// filed as #4626. Changing it here would be #3110's call arriving through the
-    /// side door of a badge-parity port.
+    /// #4626 UPDATED THE EXPECTED VALUES, NOT THE RULE THIS TEST GUARDS. When
+    /// this test was written the three values below were `TOW`, `PEE` and `KRA`
+    /// — the SECOND surname — because `TeamShortName.short` had no
+    /// `isDoublesPair` guard and simply took the last word, while the browser
+    /// obeyed #3110 and drew the first. #4626 gave `short` the browser's guard,
+    /// so the pair now arrives here whole and `glyphs(ofLabel:)` takes the first
+    /// three of it: `SIN`, `MIL`, `HUN`, matching the site.
+    ///
+    /// What #4539's guard still does, and what this test is still for, is keep
+    /// the pair OUT of the initials fork. That is a different question from
+    /// which player the badge names, and it is the one that would silently
+    /// change if somebody deleted the `isDoublesPair(name)` line from
+    /// `abbreviation`: unguarded, "Milutinovic / Van de Peer" has three
+    /// surviving distinctive tokens and would badge `MVP`.
     func testADoublesPairIsNotReopened() {
-        XCTAssertEqual(TeamShortName.abbreviation("Siniakova / Townsend"), "TOW")
-        XCTAssertEqual(TeamShortName.abbreviation("Milutinovic / Van de Peer"), "PEE")
-        XCTAssertEqual(TeamShortName.abbreviation("Hunter / Krawczyk"), "KRA")
-        // The guard is what keeps these three glyphs rather than initials: each
-        // of these names has three or more distinctive tokens.
+        XCTAssertEqual(TeamShortName.abbreviation("Siniakova / Townsend"), "SIN")
+        XCTAssertEqual(TeamShortName.abbreviation("Milutinovic / Van de Peer"), "MIL")
+        XCTAssertEqual(TeamShortName.abbreviation("Hunter / Krawczyk"), "HUN")
+        // The guard is what keeps these three glyphs of ONE name rather than
+        // initials of three: each of these names has three or more distinctive
+        // tokens once the pair separator is not treated as a boundary.
         XCTAssertNotEqual(TeamShortName.abbreviation("Milutinovic / Van de Peer"), "MVP")
     }
 

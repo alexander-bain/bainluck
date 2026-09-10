@@ -267,6 +267,26 @@ final class TeamShortNamePairTests: XCTestCase {
     /// measured before it shipped: over the complete ±7d fixture window, 823
     /// team-sport fixtures improve against 93 individual-sport fixtures that
     /// regress, all 93 in `tennis_other`.
+    ///
+    /// **#4626 moved the four DOUBLES rows, labels and badges together**, and by
+    /// the same reasoning as #4271's three: the single-name rule moved underneath
+    /// them. `TeamShortName.short` now carries the browser's `isDoublesPair`
+    /// guard (#3110's decision, which had landed in one client only), so a pair
+    /// comes back whole and its badge is three glyphs of the FIRST surname:
+    ///
+    ///     Brunetti / Cox              "Cox"     / COX  ->  whole / BRU
+    ///     Krajicek / Mektic           "Mektic"  / MEK  ->  whole / KRA
+    ///     Arribage / Guinard          "Guinard" / GUI  ->  whole / ARR
+    ///     Axinie / Maria Tig          "Tig"     / TIG  ->  whole / AXI
+    ///     Iulia MARGINEAN / Markina   "Markina" / MAR  ->  whole / IUL
+    ///     Banthia / Kadhe             "Kadhe"   / KAD  ->  whole / BAN
+    ///     Kavcic / Purcell            "Purcell" / PUR  ->  whole / KAV
+    ///
+    /// (`Colombo / Gaines Jr` kept `COL` and its whole-name label: "Jr" is a
+    /// designator, so it was already returning the full name for the wrong
+    /// reason.) All eight values were read off the BROWSER — `teamShortName` and
+    /// `teamCrestBadge` in `frontend/lib/teamShortName.ts` — exactly as #4539's
+    /// twenty were, and not from the Swift under test.
     private static let clean: [(String, String, (String, String), (String, String))] = [
         ("Atletico Paranaense", "Corinthians", ("Paranaense", "Corinthians"), ("PAR", "COR")),
         ("FK Novi Pazar", "FK Mladost Lucani", ("Pazar", "Lucani"), ("PAZ", "LUC")),
@@ -282,12 +302,12 @@ final class TeamShortNamePairTests: XCTestCase {
         ("RB Leipzig", "Como 1907", ("Leipzig", "Como 1907"), ("LEI", "COM")),
         ("Nancy", "Nantes", ("Nancy", "Nantes"), ("NAN", "NAN")),
         ("Estoril Praia", "SC Braga", ("Praia", "Braga"), ("PRA", "BRA")),
-        ("Colombo / Gaines Jr", "Brunetti / Cox", ("Colombo / Gaines Jr", "Cox"), ("COL", "COX")),
+        ("Colombo / Gaines Jr", "Brunetti / Cox", ("Colombo / Gaines Jr", "Brunetti / Cox"), ("COL", "BRU")),
         ("Bristol City", "Swindon", ("Bristol City", "Swindon"), ("BRI", "SWI")),
         ("Yomiuri Giants", "Chunichi Dragons", ("Giants", "Dragons"), ("GIA", "DRA")),
         ("Tohoku Rakuten Golden Eagles", "Fukuoka SoftBank Hawks", ("Eagles", "Hawks"), ("TRG", "FSH")),
         ("Wang", "Tang", ("Wang", "Tang"), ("WAN", "TAN")),
-        ("Krajicek / Mektic", "Arribage / Guinard", ("Mektic", "Guinard"), ("MEK", "GUI")),
+        ("Krajicek / Mektic", "Arribage / Guinard", ("Krajicek / Mektic", "Arribage / Guinard"), ("KRA", "ARR")),
         ("Charleston", "Colorado Springs Sw.", ("Charleston", "Sw."), ("CHA", "SW")),
         ("Kocaelispor", "Basaksehir", ("Kocaelispor", "Basaksehir"), ("KOC", "BAS")),
         ("Damian Knyba", "Andy Ruiz Jr", ("Knyba", "Andy Ruiz Jr"), ("KNY", "AND")),
@@ -326,9 +346,9 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Venray", "Nijkerk", ("Venray", "Nijkerk"), ("VEN", "NIJ")),
         ("Sylwia Doligala", "Molly McCann", ("Doligala", "McCann"), ("DOL", "MCC")),
         ("Aguiard", "Gorzny", ("Aguiard", "Gorzny"), ("AGU", "GOR")),
-        ("Axinie / Maria Tig", "Iulia MARGINEAN / Markina", ("Tig", "Markina"), ("TIG", "MAR")),
+        ("Axinie / Maria Tig", "Iulia MARGINEAN / Markina", ("Axinie / Maria Tig", "Iulia MARGINEAN / Markina"), ("AXI", "IUL")),
         ("AD Ceuta FC", "RCD Mallorca", ("AD Ceuta FC", "Mallorca"), ("CEU", "MAL")),
-        ("Banthia / Kadhe", "Kavcic / Purcell", ("Kadhe", "Purcell"), ("KAD", "PUR")),
+        ("Banthia / Kadhe", "Kavcic / Purcell", ("Banthia / Kadhe", "Kavcic / Purcell"), ("BAN", "KAV")),
         ("France", "Nigeria", ("France", "Nigeria"), ("FRA", "NIG")),
         ("Passaro", "Kicker", ("Passaro", "Kicker"), ("PAS", "KIC")),
         ("Helsingborgs IF", "IFK Norrkoping", ("Helsingborgs IF", "Norrkoping"), ("HEL", "NOR")),
