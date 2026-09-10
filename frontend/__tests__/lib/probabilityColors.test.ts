@@ -37,14 +37,52 @@ describe("probabilityHeat token scale (L2-117)", () => {
     expect(probabilityTextClass(0.2999)).toBe("text-accent-danger");
   });
 
-  test("null / undefined probability degrades to unlikely, never throws", () => {
-    expect(probabilityTextClass(null)).toBe("text-accent-danger");
-    expect(probabilityTextClass(undefined)).toBe("text-accent-danger");
+  // #4660. This test used to read "degrades to unlikely, never throws" and
+  // asserted `text-accent-danger`. The property it was protecting is NEVER
+  // THROWS — the danger band was the incidental implementation, not a product
+  // decision, and it was a bug: it painted an unpriced rung red. The
+  // never-throws half is kept verbatim below; the band is now `unknown`.
+  test("null / undefined probability is UNKNOWN, not unlikely, and never throws", () => {
+    expect(() => probabilityTextClass(null)).not.toThrow();
+    expect(() => probabilityTextClass(undefined)).not.toThrow();
+    expect(probabilityTextClass(null)).toBe("text-text-muted");
+    expect(probabilityTextClass(undefined)).toBe("text-text-muted");
+    expect(probabilityHeat(null).known).toBe(false);
   });
 
-  test("only design-system accent tokens are ever emitted", () => {
-    const allowed = new Set(["accent-brand", "accent-warning", "accent-danger"]);
-    for (const p of [0, 0.1, 0.3, 0.5, 0.6, 0.9, 1]) {
+  // The assertion that reds on a revert (#4660 acceptance). "We have no price"
+  // and "we priced this at zero" are different facts and the scale must be able
+  // to tell them apart — collapsing them is the entire bug in one line.
+  test("probabilityHeat(null) and probabilityHeat(0) are DIFFERENT", () => {
+    const unknown = probabilityHeat(null);
+    const zero = probabilityHeat(0);
+    expect(unknown).not.toEqual(zero);
+    expect(unknown.bar).not.toBe(zero.bar);
+    expect(unknown.known).toBe(false);
+    expect(zero.known).toBe(true);
+    // A measured zero is still a real long shot and keeps the danger band.
+    expect(zero.text).toBe("text-accent-danger");
+  });
+
+  // NaN is not a probability. Every comparison against it is false, so before
+  // #4660 it fell through to the danger band exactly the way `null` did.
+  test("NaN is unknown, not unlikely", () => {
+    expect(probabilityHeat(Number.NaN).known).toBe(false);
+    expect(probabilityTextClass(Number.NaN)).toBe("text-text-muted");
+  });
+
+  test("only design-system tokens are ever emitted — including the unknown band", () => {
+    const allowed = new Set([
+      "accent-brand",
+      "accent-warning",
+      "accent-danger",
+      // The unknown band is deliberately NOT an accent: it is the absence of a
+      // claim, and an accent of any colour is a claim.
+      "text-muted",
+      "surface-elevated",
+      "surface-border",
+    ]);
+    for (const p of [0, 0.1, 0.3, 0.5, 0.6, 0.9, 1, null, undefined, Number.NaN]) {
       const h = probabilityHeat(p);
       for (const cls of [h.text, h.bg, h.bar]) {
         const token = cls.replace(/^(text|bg)-/, "").replace(/\/\d+$/, "");
