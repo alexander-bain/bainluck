@@ -117,6 +117,34 @@ def suspended_rows():
     return Event.status == EVENT_SUSPENDED
 
 
+def started_without_result_rows(now):
+    """``scheduled`` and its own kickoff is more than the grace behind us. #3211.
+
+    The SQL half of
+    :func:`~app.utils.event_completion.started_without_result`, in the same
+    order and with the same meaning, and NAMED for the reason
+    :data:`~app.utils.event_completion.UPCOMING_GRACE` is named: this clause was
+    written inline in :func:`unreported_rail_condition` and nowhere else, so the
+    ONE surface that needed to sort on it — search — could not spend it and
+    hand-rolled nothing at all. Two readings of "has this row's clock run out?"
+    is the drift :func:`started_live` refuses in its own docstring; one
+    definition is the only thing that keeps a rail's position agreeing with its
+    card's label.
+
+    🔴 IT IS A RAIL QUESTION, NOT AN OUTCOME ONE, and the predicate it mirrors
+    says so at length: this asks whether the row's own clock ran out, not
+    whether anybody played, scored or watched. That is why it is a bare
+    status × time pair and does NOT reach for
+    :func:`never_observed_columns` the way :func:`started_live_but_unobserved`
+    does — a ``scheduled`` row an hour past kickoff with a score on it is a
+    contradiction the matcher owns, not a fourth ordering class.
+    """
+    return and_(
+        Event.status == "scheduled",
+        Event.commence_time < now - UPCOMING_GRACE,
+    )
+
+
 def upcoming_rail_condition(now):
     """What is on now, or still to come — the status × time half of it.
 
@@ -390,10 +418,56 @@ def live_scheduled_settled_order(now):
     :func:`unreported_rail_condition` was cut for. Completed moves 2 → 3 to make
     room; nothing else about the ordering changes, and a premature-live row
     still reaches branch two in date order for the reason above.
+
+    ── 🔴 AND A FIFTH GROUP, **LAST**: #3211's ROWS, WHICH LED THE LIST (D107) ──
+
+    A row that still says ``scheduled`` a month past its own kickoff reached the
+    ``("live", "scheduled")`` arm and scored **1** — the UPCOMING tier — and
+    every caller pairs that tier with ``commence_time ASC``. So the staler the
+    row, the higher it sorted: the oldest wreck in the table led the list as
+    though it were the next fixture.
+
+    MEASURED on production 2026-09-10 through ``/api/events/search``, which is
+    the surface D107 is about ("the entity, then its NEXT-or-LAST game — next
+    before last when one exists"):
+
+        q=red sox   1  scheduled  Toronto @ Boston      2026-08-11   ← a MONTH old
+                    2  scheduled  Toronto @ Boston      2026-08-12
+                    3  scheduled  Pittsburgh @ Boston   2026-08-15
+                    …
+                    5  scheduled  Boston @ Kansas City  2026-09-11   ← the next game
+
+        q=alcaraz   1  scheduled  Wu v Alcaraz          2026-09-04   ← no result, ever
+                    2  completed  Shelton v Alcaraz     2026-09-09   ← the last match
+
+    Both queries answer the reader's question three rows below a row that
+    answers nothing. It is not a near-miss ordering: ``red sox`` spends its top
+    three slots on August.
+
+    🔴 **LAST, NOT SECOND**, and that is the half worth arguing. The tempting
+    place is beside branch two — same sentence, "started and nothing reported an
+    ending" — but branch two sits ABOVE the finished games, and on ``alcaraz``
+    that leaves the Sep-4 wreck still outranking the Sep-9 result, which is the
+    defect with one fewer row in front of it. Nor can these rows simply JOIN the
+    finished ones: :func:`unreported_rail_condition` measured what that does —
+    they carry the midnight-UTC stamp (gotcha #14) and sort above every real
+    Final. Below the settled rows is the only slot that satisfies D107 in both
+    directions, and it is #3211-safe here for the reason that issue's own trap
+    needs and search does not have: a shared CAP. This list is paginated, not
+    capped at eight, so nothing is starved by ranking it last — it is reachable,
+    just not first.
+
+    The card already agreed. ``EventCard`` renders this exact class through
+    ``eventState.hasNoReportedResult``, so all three August rows print **"No
+    result reported"** — at the top of a list whose first slot means "next".
+    This clause stops the page arguing with itself; it changes no label.
     """
     return case(
         (started_live_and_observed(now), 0),
         (started_live_but_unobserved(now), 2),
+        # BEFORE the ("live", "scheduled") arm: a stale `scheduled` row matches
+        # both and the first match wins — which is how it scored 1 and led.
+        (started_without_result_rows(now), 4),
         (Event.status.in_(("live", "scheduled")), 1),
         else_=3,
     )
@@ -477,10 +551,7 @@ def unreported_rail_condition(now, *, lookback: timedelta):
     return and_(
         Event.commence_time >= now - lookback,
         or_(
-            and_(
-                Event.status == "scheduled",
-                Event.commence_time < now - UPCOMING_GRACE,
-            ),
+            started_without_result_rows(now),
             # #3748. NO grace bound on this arm, and that asymmetry is the
             # point rather than an omission: the grace exists to let a
             # `scheduled` row that has not quite kicked off stay on the
