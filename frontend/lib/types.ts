@@ -1087,6 +1087,19 @@ export interface FeedEventData {
    * Fine for ordering, wrong to print as "ended at".
    */
   ended_at?: string | null;
+  /**
+   * True when Discover kept this finished game on purpose — one of at most two
+   * marquee finals selected by `_recent_marquee_final_ids` (#4681) — and so is
+   * owed `MARQUEE_FINAL_MAX_AGE_HOURS` rather than the ordinary eight (D118).
+   *
+   * Stamped by `/api/feed` in Discover mode on FINISHED event cards only, and
+   * stamped `false` as well as `true` so "not selected this request" and "no
+   * stamp at all" stay distinguishable. OPTIONAL for the second of those: a
+   * `/sports` payload never carries it, and neither does a cached Discover
+   * payload built before this shipped. Absent reads as the ordinary window —
+   * see `finishedEventMaxAgeHours` for why it must never read as the long one.
+   */
+  discover_marquee_final?: boolean | null;
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;

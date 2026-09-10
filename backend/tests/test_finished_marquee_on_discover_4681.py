@@ -63,7 +63,10 @@ from app.routes.feed import (
 )
 from app.utils.feed_market_quality import _DISCOVER_FIRST_PAGE_CATEGORY_CAPS
 from app.utils.feed_reasons import generate_event_reason
-from app.utils.sports_first_page_rails import CLIENT_COMPLETED_MAX_AGE_HOURS
+from app.utils.sports_first_page_rails import (
+    CLIENT_COMPLETED_MAX_AGE_HOURS,
+    CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
+)
 
 # Fixed anchor, and no branch on the clock anywhere below (gotcha #44): every
 # fixture offsets from this and the chain is handed it explicitly.
@@ -212,7 +215,7 @@ class TestTheScoreboardStaysOut:
         stale = _game(
             event_id=15308043,
             score=67,
-            hours_since_kickoff=CLIENT_COMPLETED_MAX_AGE_HOURS + 1,
+            hours_since_kickoff=CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS + 1,
         )
         assert _recent_marquee_final_ids([stale], NOW) == set()
 
@@ -223,9 +226,29 @@ class TestTheScoreboardStaysOut:
         edge = _game(
             event_id=15308044,
             score=67,
-            hours_since_kickoff=CLIENT_COMPLETED_MAX_AGE_HOURS,
+            hours_since_kickoff=CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
         )
         assert _recent_marquee_final_ids([edge], NOW) == {15308044}
+
+    def test_the_bound_is_the_MARQUEE_window_and_not_the_ordinary_one(self):
+        """D118 moved this arm off `CLIENT_COMPLETED_MAX_AGE_HOURS`, and the two
+        tests above now read the marquee constant — so nothing in THIS file
+        would notice the arm quietly reverting to eight hours while both of them
+        stayed green on a card that is inside either window.
+
+        A final an hour past the ordinary bound and well inside the marquee one
+        is the specimen that separates them, and it is the ship: the NFL opener
+        between 4:26am and 10:26am Pacific. Kept in #4681's own suite because
+        this is the assertion that makes the issue's acceptance 1 reachable, not
+        a detail of the constant that delivers it.
+        """
+        assert CLIENT_COMPLETED_MAX_AGE_HOURS < CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS
+        between = _game(
+            event_id=15308045,
+            score=67,
+            hours_since_kickoff=CLIENT_COMPLETED_MAX_AGE_HOURS + 1,
+        )
+        assert _recent_marquee_final_ids([between], NOW) == {15308045}
 
     def test_a_crestless_final_is_not_admitted(self):
         # Today's whole completed-MLB population. Kept out because it renders

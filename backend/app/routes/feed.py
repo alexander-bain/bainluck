@@ -69,6 +69,7 @@ from app.models.models import (
 from app.services import get_db, get_db_rw
 from app.utils.live_first_page import hoist_live_events_into_first_page
 from app.utils.sports_first_page_rails import (
+    CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
     FINISHED_STATUSES,
     cap_futures_on_games_led_first_page,
     cap_repeated_finished_rails,
@@ -1289,6 +1290,16 @@ def _recent_marquee_final_ids(
       spent past that bound is a slot the reader never sees. Borrowing the
       mirror (CI-guarded against the frontend constant) means this arm cannot
       drift from what the client will actually render.
+
+      The window asked for here is the MARQUEE one — fourteen hours, D118 = B,
+      Alex, 2026-09-10 — and it is passed explicitly because of a genuine
+      ordering problem, not for convenience: the flag the client reads to grant
+      those fourteen hours records the outcome of THIS function, so this
+      function cannot read it. :func:`_stamp_marquee_finals` writes it
+      immediately afterwards, and the two numbers meet in
+      ``finished_card_max_age_hours``. Eight hours is why the arm had never
+      fired on a reader: the opener retired at 4:26am Pacific even after #4776
+      moved the clock to the whistle.
     * **Has team media** — the same condition the live and suspended arms below
       apply, for the same reason: a crest-less card is not a game a reader
       recognises. NOT relied on to bound the population, though. Measured
@@ -1313,7 +1324,9 @@ def _recent_marquee_final_ids(
             continue
         if not (data.get("home_team_data") or data.get("away_team_data")):
             continue
-        if client_deletes_finished_card(item, now=now):
+        if client_deletes_finished_card(
+            item, now=now, max_age_hours=CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS
+        ):
             continue
         event_id = data.get("id")
         if event_id is None:
@@ -1328,6 +1341,37 @@ def _item_is_kept_final(item: dict, kept_final_ids: set[int]) -> bool:
     if not kept_final_ids or item.get("type") != "event":
         return False
     return (item.get("data") or {}).get("id") in kept_final_ids
+
+
+def _stamp_marquee_finals(feed_items: list[dict], kept_final_ids: set[int]) -> None:
+    """Tell the client which finished cards it must keep for fourteen hours.
+
+    D118. Selecting a marquee final and letting the browser delete it at eight
+    hours is the same nothing as never selecting it — #3836 is that lesson in
+    the other direction — so the decision has to travel in the payload. The
+    client reads ``discover_marquee_final`` in ``finishedEventMaxAgeHours``.
+
+    WRITTEN FOR EVERY FINISHED CARD, ``False`` INCLUDED. The alternative —
+    stamping only the winners — leaves a stale ``True`` reachable the moment a
+    ``data`` dict outlives its request, and this file already carries gotcha #6
+    for exactly that class of mistake. Writing both values makes the flag a
+    function of THIS request and nothing else, and keeps "not selected" (False)
+    distinguishable from "no such stamp" (absent) on the client, where absent
+    must read as the ordinary eight hours.
+
+    Unfinished cards are left alone: they never reach the arm the flag feeds,
+    and a scheduled game carrying a finished-card field is a payload lie a
+    future reader would have to disprove.
+    """
+    for item in feed_items:
+        if item.get("type") != "event":
+            continue
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
+        if (data.get("status") or "").strip().lower() not in FINISHED_STATUSES:
+            continue
+        data["discover_marquee_final"] = data.get("id") in kept_final_ids
 
 
 def _demote_non_exceptional_discover_events(
@@ -1584,6 +1628,9 @@ def apply_discover_display_chain(
         # would cap these to 35 and the noise filter would delete them, and a
         # card that survives only one of the two is still not on the page.
         kept_final_ids = _recent_marquee_final_ids(items, now)
+        # D118 — and handed to a THIRD consumer, the browser. Stamped before the
+        # noise filter runs so the flag rides the same dicts the filter keeps.
+        _stamp_marquee_finals(items, kept_final_ids)
         _demote_non_exceptional_discover_events(items, kept_final_ids)
         items = _filter_discover_event_noise(items, kept_final_ids)
         # Re-sort after demotion so demoted events fall below high-scoring futures

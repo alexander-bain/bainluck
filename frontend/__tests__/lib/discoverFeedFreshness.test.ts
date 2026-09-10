@@ -1,4 +1,8 @@
-import { isStale } from "@/lib/discover/feedFreshness";
+import {
+  COMPLETED_EVENT_MAX_AGE_HOURS,
+  MARQUEE_FINAL_MAX_AGE_HOURS,
+  isStale,
+} from "@/lib/discover/feedFreshness";
 import type { FeedItem } from "@/lib/types";
 
 // L2-214 Item 0/2 — the PRODUCTION client freshness gate the Discover page uses.
@@ -33,6 +37,7 @@ function event(opts: {
   status?: string;
   commence_time: string;
   ended_at?: string | null;
+  discover_marquee_final?: unknown;
 }): FeedItem {
   return {
     type: "event",
@@ -43,6 +48,9 @@ function event(opts: {
       status: opts.status ?? "scheduled",
       commence_time: opts.commence_time,
       ...(opts.ended_at !== undefined ? { ended_at: opts.ended_at } : {}),
+      ...(opts.discover_marquee_final !== undefined
+        ? { discover_marquee_final: opts.discover_marquee_final }
+        : {}),
     },
   } as unknown as FeedItem;
 }
@@ -173,6 +181,89 @@ describe("discover client freshness — a finished game ages from its end (#4776
   it("does not touch a live game however long ago it started", () => {
     expect(
       isStale(event({ status: "live", commence_time: PAST, ended_at: PAST })),
+    ).toBe(false);
+  });
+});
+
+// D118 (Alex, Thu 2026-09-10) — the one or two finished games Discover kept on
+// purpose live for FOURTEEN hours, everything else still for eight.
+//
+// This is the client half. `backend/tests/test_marquee_final_stays_fourteen_
+// hours_d118.py` holds the server's, and `test_client_deletion_mirror_3836.py`
+// reads this module's source so the two numbers and the field they key on
+// cannot drift. Both halves are load-bearing in opposite directions: the server
+// selecting a card this function then deletes is #4681 shipping to nobody for a
+// day, and this function keeping a card the server did not select is Discover
+// turning into a scoreboard.
+describe("discover client freshness — a kept marquee final gets fourteen hours (D118)", () => {
+  const marquee = (h: number, flag: unknown = true) =>
+    event({
+      status: "completed",
+      commence_time: hoursAgo(h + 3.11),
+      ended_at: hoursAgo(h),
+      discover_marquee_final: flag,
+    });
+
+  it("keeps the NFL opener at the hour the eight-hour window deleted it", () => {
+    // 13.56h past the whistle is 10:00am Pacific for an 8:26pm final — the
+    // reader with a coffee, and the whole point of the ruling.
+    expect(isStale(marquee(13.56))).toBe(false);
+  });
+
+  it("still deletes it once fourteen hours have passed", () => {
+    expect(isStale(marquee(MARQUEE_FINAL_MAX_AGE_HOURS + 0.1))).toBe(true);
+  });
+
+  it("renders it at exactly fourteen hours (the comparison is strict)", () => {
+    // Asserted on both sides of the boundary so the `>` cannot become `>=`
+    // unnoticed — the one error that costs the reader a card that was fine.
+    expect(isStale(marquee(MARQUEE_FINAL_MAX_AGE_HOURS - 0.01))).toBe(false);
+    expect(isStale(marquee(MARQUEE_FINAL_MAX_AGE_HOURS + 0.01))).toBe(true);
+  });
+
+  it("gives an unstamped finished card exactly the eight hours it had before", () => {
+    // A `/sports` payload carries no stamp, and neither does a Discover payload
+    // cached before this shipped. If either of these flips, a ruling about two
+    // cards a night has become the site's finished-card policy.
+    const unstamped = (h: number) =>
+      event({
+        status: "completed",
+        commence_time: hoursAgo(h + 3.11),
+        ended_at: hoursAgo(h),
+      });
+    expect(isStale(unstamped(COMPLETED_EVENT_MAX_AGE_HOURS - 0.1))).toBe(false);
+    expect(isStale(unstamped(COMPLETED_EVENT_MAX_AGE_HOURS + 0.1))).toBe(true);
+  });
+
+  it("treats an explicit false exactly as an absent stamp", () => {
+    // The backend writes `false` as well as `true` so a stale `true` cannot
+    // outlive the request that set it; `false` must mean the ordinary window,
+    // not "unknown, be generous".
+    expect(isStale(marquee(9, false))).toBe(true);
+    expect(isStale(marquee(7, false))).toBe(false);
+  });
+
+  it.each([1, "true", "yes", [], {}])(
+    "does not accept the truthy non-boolean %p as evidence of a marquee final",
+    (truthy) => {
+      // `=== true`, never truthiness. The expensive direction of this error is
+      // keeping a dead card on the page for six extra hours.
+      expect(isStale(marquee(9, truthy))).toBe(true);
+    },
+  );
+
+  it("does not extend a card that is not finished", () => {
+    // The flag is only ever read inside the completed/closed arm. A live game
+    // is never aged out here at all, and a stray flag must not change that.
+    expect(
+      isStale(
+        event({
+          status: "live",
+          commence_time: PAST,
+          ended_at: PAST,
+          discover_marquee_final: true,
+        }),
+      ),
     ).toBe(false);
   });
 });
