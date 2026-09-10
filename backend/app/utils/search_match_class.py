@@ -42,6 +42,8 @@ class  meaning
 MC0    exact full-alias equality, UNFOLDED (no stemming, no accent strip,
        no punctuation strip — see ``_exact_key``)
 MC1    every query token present in the entity's OWN name (fold allowed)
+MC1B   the query is a live PREFIX OF A WHOLE OWNED NAME — the unfinished
+       form of MC0 (``yank`` -> the alias "Yankees"). #4519
 MC2    prefix match on the last query token (the typeahead case: the user
        is still typing the final word)
 MC3    partial token match — some, not all, query tokens present
@@ -66,6 +68,45 @@ from dataclasses import dataclass, field
 
 MC0_EXACT = 0
 MC1_ALL_TOKENS = 1
+#: #4519. A HALF-STEP, and the fraction is deliberate — read this before
+#: "tidying" it into an integer.
+#:
+#: WHAT IT IS. MC0 says "the user typed this entity's name". MC1B says "the user
+#: is still typing it": the whole query, folded, is a prefix of a whole name the
+#: candidate OWNS. It is the unfinished form of MC0 and it sits exactly where
+#: the unfinished form of an exact match belongs — under MC1 (a complete word is
+#: worth more than an incomplete one) and over MC2.
+#:
+#: WHY IT HAD TO EXIST. MC2 could not tell these two apart, because both are a
+#: live prefix of *some* token:
+#:
+#:     q=yank   team  "New York Yankees"  alias "Yankees"          <- the entity
+#:     q=yank   mkt   "Colorado Rockies vs. New York Yankees
+#:                     - 5th Inning Winner"                        <- landed mid-name
+#:
+#: Same class, so `KIND_ORDER` alone decided, and ruling 041's team FLOOR then
+#: put the entity last: measured on production 2026-09-09 23:5xZ, `yank` served
+#: five inning props and two fixture rows and NO team row inside the 7 slots.
+#: One keystroke later `yankees` is MC0 on the alias and leads — so the whole
+#: defect was that MC0 vanishes a character early with nothing beneath it.
+#: #4461's own title is "typing 'yank' finds the Yankees".
+#:
+#: WHY IT IS NARROW, and this is the property that makes it safe: MC1 is checked
+#: first, so MC1B can only fire on a query that is not a COMPLETE token of any
+#: candidate's name. The moment the user finishes the word, every candidate
+#: carrying that word is MC1 and outranks every MC1B one. `new`, `sox`, `red`,
+#: `patriot`, `us open`, `nba mvp` are all complete tokens and are untouched.
+#:
+#: WHY 1.5 AND NOT A RENUMBER. Renumbering MC2..MC5 to open slot 2 — the shape
+#: `KIND_ORDER` used for `entity_event` — would falsify **105 written references
+#: to MC2/MC3/MC4/MC5** across 18 files, including `docs/rulings/041-…md` and
+#: `docs/rulings/060-…md`, which are ratified text this lane may not restate.
+#: Prose here cites the LABELS, so the labels must not move; the value only has
+#: to sort. A float sorts. `rank_key`'s tuple is compared, never stored,
+#: serialized or arithmetic'd (`evidence_to_wire` carries no class), so the
+#: fraction cannot leak anywhere. `test_p1_tier_order_is_inviolable` proves the
+#: ladder is still strictly increasing with it in place.
+MC1B_OWN_NAME_PREFIX = 1.5
 MC2_LAST_TOKEN_PREFIX = 2
 MC3_PARTIAL_TOKENS = 3
 MC4_OUTCOME_ONLY = 4
@@ -142,6 +183,16 @@ TRIGRAM_FLOOR = 0.30
 MIN_FRAGMENT_LEN = 3
 #: A last token shorter than this is too weak to carry MC2 on its own.
 PREFIX_MIN_LEN = 2
+#: #4519. A query shorter than this cannot carry MC1B, and the number is the one
+#: `MIN_FRAGMENT_LEN` already argues for ("two-character overlaps are noise and
+#: should not reorder anything") applied to the other end of the ladder.
+#:
+#: It is here specifically to keep the `ai` / `ipo` family closed. `ai` is a
+#: prefix of the whole name "Aizawl FC", so without a floor the two-character
+#: keystroke that this module's own docstring names as measured failure #2 would
+#: come back through a new door — a team promoted over every market, on two
+#: characters. `ipo` (3) is admitted and harmless: nothing is named "Ipo…".
+OWN_NAME_PREFIX_MIN_LEN = 3
 #: MC3 needs at least this fraction of the query's tokens present.
 PARTIAL_MIN_COVERAGE = 0.5
 #: Within a class and kind, a major professional league outranks the rest. This
@@ -302,8 +353,46 @@ class Evidence:
         return (self.name, *self.aliases)
 
 
-def match_class(query: str, ev: Evidence) -> int | None:
-    """The match class of `ev` against `query`, or None if it must not rank."""
+def _query_prefixes_an_owned_name(query: str, ev: Evidence) -> bool:
+    """Is the whole query a live prefix of a whole name this candidate owns?
+
+    The MC1B test (#4519). Folded on both sides via `_fold_text`, so it inherits
+    the accent symmetry #1881 measured — `koln` and `köln` are the same
+    keystrokes here, as they are everywhere below MC0.
+
+    THE WHOLE NAME, not a token inside it, and that asymmetry IS the class:
+
+        query   owned name                                      prefix?
+        yank    "Yankees"                        (team alias)     yes
+        yank    "New York Yankees"               (team name)      no
+        yank    "Colorado Rockies vs. New York
+                 Yankees - 5th Inning Winner"    (market name)    no
+
+    The team still wins, on the alias — which is the same mechanism ruling 041
+    already relies on for MC0 (`red sox`, `yankees`), and the reason the route
+    SELECTs `alternate_names` rather than only filtering on it. A candidate with
+    its aliases withheld simply does not reach this class, which is a recall
+    bug at the seam and `test_typeahead_evidence_boundary.py` owns it.
+
+    Equality is not special-cased: an exact folded hit is already MC0 (unfolded)
+    or MC1 (every token present) and returns before this is reached.
+    """
+    q_folded = _fold_text(query)
+    if len(q_folded) < OWN_NAME_PREFIX_MIN_LEN:
+        return False
+    return any(
+        _fold_text(own).startswith(q_folded)
+        for own in ev.owned_names()
+        if own
+    )
+
+
+def match_class(query: str, ev: Evidence) -> float | None:
+    """The match class of `ev` against `query`, or None if it must not rank.
+
+    Returns a number, not an int: MC1B is a half-step (see its definition). Read
+    the result against the `MCn` names and never against a literal.
+    """
     if ev.derived:
         # Owned-evidence-only. The entire Emmys family dies on this line.
         return UNRANKABLE
@@ -330,6 +419,14 @@ def match_class(query: str, ev: Evidence) -> int | None:
         present = [t for t in q_tokens if t in name_tokens]
         if len(present) == len(q_tokens):
             return MC1_ALL_TOKENS
+
+        # MC1B (#4519) — the query is a live prefix of a whole owned NAME, not
+        # merely of some token buried inside one. Checked AFTER MC1 on purpose:
+        # a finished word beats an unfinished one, which is what keeps `sao
+        # paulo` at MC1 (P3) and keeps this class off every query whose words
+        # are complete.
+        if _query_prefixes_an_owned_name(query, ev):
+            return MC1B_OWN_NAME_PREFIX
 
         # MC2 — all but the last matched, and the last is a live prefix.
         last = q_tokens[-1]
