@@ -12552,17 +12552,60 @@ async def _build_game_markets(
     # period or an unclassifiable market keeps its card. Lazy-loading
     # `event.sport` here would risk an async ORM crash, so the league comes off
     # the row itself via __dict__.
+    # AFTER FULL TIME TOO (#1588, Fable's "2nd Quarter 99%" card). The rule
+    # originally ran only while `event.status == "live"`, which left the worst
+    # version of the bug untouched: a window market on a game that has FINISHED,
+    # still quoting. Seven hours after full time this endpoint served "Tampa Bay
+    # vs Atlanta: First 5 Spread" at 0.99, ungraded. `event_is_finished` is the
+    # hardened verdict (`_event_is_really_finished`) and also refuses a row whose
+    # commence_time is still ahead of now, so a corrupt future-dated "completed"
+    # row does not get settled by this path.
+    #
+    # WHAT HIT SURVIVES, AND THAT IS WHY THE CARVE-OUT MOVED HERE. The original
+    # exemption for settled games was defending graded cards. It defended the
+    # ungraded ones too, which is the bug. The precise test is the one
+    # `_settled_grade_fields` already documents as load-bearing: an authoritative
+    # grade is the one carrying a `resolution_source`. `is_winner` alone cannot
+    # be used — it is a Boolean defaulting to False, so ungraded rows read as
+    # "lost" (that docstring measured 6,032 such rows), and keying on it would
+    # hand a live-looking price back to exactly the rows this rule must suppress.
     _league = (event.__dict__.get("llm_league") or "").strip().upper()
     _period_now = event.__dict__.get("period")
     _sport_hint = "baseball_mlb" if _league == "MLB" else (_league.lower() or None)
 
+    # WHAT IDENTIFIES THE WINDOW HAS TO REACH THIS FILTER (CERT-2486). The first
+    # cut passed `market_name` and a literal `None` ticker, and two provider
+    # shapes walked through it: a Kalshi row whose generic title says nothing but
+    # whose `KXMLBRFI…` TICKER encodes the first inning, and a Polymarket row
+    # whose generic matchup title puts `1st 5 Innings Spread -1.5` only in the
+    # OUTCOME name. `prop_window` accepted a ticker all along; nothing supplied
+    # one.
+    #
+    # The ticker is resolved through `_market_id`, which every item in all six
+    # buckets already carries, rather than by adding `_external_id` to the nine
+    # dict literals that build them — one map, and the payload's shape does not
+    # change. Built from the plain list, before any commit boundary, so no ORM
+    # attribute is read lazily here (gotcha #6).
+    _ticker_by_market_id = {m.id: m.external_id for m in markets}
+
     def _window_open(item: dict) -> bool:
+        # A GRADED ROW IS A RESULT, NOT A PRICE, SO IT SURVIVES. Two independent
+        # kinds of grade reach this payload and both count, which a LOOK at the
+        # finished specimen is what caught: the settled player props on
+        # `/events/15308050` render "1.0 — miss" from `_grade_settled_prop`'s
+        # BOX SCORE (`hit`), carrying no `resolution_source` at all. Testing only
+        # the venue grade would have suppressed a window-bounded prop that was
+        # already showing the reader its result.
+        if item.get("resolution_source") is not None or item.get("hit") is not None:
+            return True
         return not prop_window_closed(
             item.get("market_name"),
-            None,
+            _ticker_by_market_id.get(item.get("_market_id")),
             _sport_hint,
             _period_now,
             event.status,
+            finished=event_is_finished,
+            outcome=item.get("outcome_name"),
         )
 
     game_totals = [m for m in game_totals if _window_open(m)]
@@ -12570,6 +12613,10 @@ async def _build_game_markets(
     team_total_items = [m for m in team_total_items if _window_open(m)]
     period_markets = [m for m in period_markets if _window_open(m)]
     other_markets = [m for m in other_markets if _window_open(m)]
+    # `spreads` was missing from this list, so the rule never reached it in any
+    # game state — and "First 5 Spread" is a window-bounded prop that lands
+    # there, not in `period_markets`. It is the bucket the 0.99 above came from.
+    spreads = [m for m in spreads if _window_open(m)]
 
     # ── #4189 / CERT-2340 — the redundant parent leaves, judged on the payload ──
     #
