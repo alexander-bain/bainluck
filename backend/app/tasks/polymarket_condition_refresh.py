@@ -257,15 +257,24 @@ IMMINENT_DAYS = 2
 #: the most urgent thing in the pool. See :data:`_KICKOFF_SQL` for why the
 #: market's ``resolution_date`` cannot answer this question.
 #:
-#: MEASURED, production 2026-09-10 21:0xZ, against the live candidate pool: the
-#: whole window holds **73 markets / 278 condition ids across 19 events** —
-#: 27.8% of one run's :data:`CONDITION_BUDGET`, so the imminent class is swept
-#: WHOLE every hour and the remaining ~722 ids still drain the backlog. That
-#: headroom is the reason for the constant's value, not a preference: at 48
-#: hours the same window measures 570 markets / **1,753 ids**, which exceeds the
-#: budget outright and would convert this key from "the games go first" into
-#: "the drain stops".
-KICKOFF_LEAD_HOURS = 24
+#: MEASURED against the live candidate pool, production 2026-09-10 22:1xZ, with
+#: :data:`KICKOFF_STALE_MINUTES` in force — so these are STEADY-STATE costs, what
+#: the class spends on EVERY beat, not what it costs once:
+#:
+#:      lead    markets   ids/beat   % of CONDITION_BUDGET   left for the drain
+#:       6 h      130        341            34.1%                   659
+#:      12 h      137        348            34.8%                   652
+#:      24 h      230        656            65.6%                   344
+#:
+#: 12 is the inflection and that is the whole argument for it. Widening 6 -> 12
+#: costs SEVEN ids a beat and doubles the horizon; widening 12 -> 24 costs 308
+#: and takes two thirds of the budget, which would halve the backlog drain
+#: #4827 exists to run. A rail that keeps tonight's games fresh by starving the
+#: 54,000-id rotation has moved the defect rather than fixed it.
+#:
+#: It also lands on :data:`SERVED_STALE_HOURS`, which is the honest way to say
+#: what this class is: the games that start within one producer window.
+KICKOFF_LEAD_HOURS = 12
 
 #: How long AFTER its start an uncompleted event stays in that class. A game in
 #: progress is the single most-read blend on the site, and ``completed_at`` is
@@ -273,6 +282,33 @@ KICKOFF_LEAD_HOURS = 24
 #: arrives from claiming the head of the queue forever, the same fixed point
 #: :data:`_ATTEMPT_TTL_SECONDS` exists to break.
 KICKOFF_TAIL_HOURS = 6
+
+#: How stale a KICKOFF row may get before this rail re-reads it — the whole
+#: second half of #4896, and CERT-2546's required repair.
+#:
+#: 🔴 AN ORDERING KEY ALONE DOES NOT SET A CADENCE, and the first cut of #4896
+#: shipped believing it did. Leading the queue only decides who goes first among
+#: the rows that are ELIGIBLE, and both eligibility gates were sized for the
+#: 12-hour producer window: the selector's own ``stalest <`` test, and the
+#: attempt marker, which :data:`_ATTEMPT_TTL_SECONDS` pins to the same 12 hours.
+#: So a game reached once left the pool for eleven of the next twelve hourly
+#: beats and could be up to 12 hours stale at kickoff — against #4896's stated
+#: acceptance of under an hour, matching what Kalshi already does on the same
+#: events. Ordering fixed WHICH row is taken and left WHEN untouched.
+#:
+#: 45 minutes rather than 60 because the bound has to be strictly under the beat
+#: interval: at exactly 60 a row refreshed at :08 becomes eligible at :08, and
+#: whether the next beat sees it depends on which of the two fires first. 45
+#: leaves a quarter-hour of margin and still means every hourly beat re-admits
+#: the whole class.
+#:
+#: WHAT IT COSTS, MEASURED rather than assumed: the kickoff class is 72 markets
+#: / 277 condition ids, so re-admitting it EVERY beat spends 277 of the 1,000-id
+#: :data:`CONDITION_BUDGET` and leaves ~723 for the backlog drain. That is the
+#: same figure the ordering key was sized against — the class was always meant
+#: to be swept whole every hour, and until this constant existed it simply was
+#: not.
+KICKOFF_STALE_MINUTES = 45
 
 #: Wall budget for the fetch/write loop, checked BETWEEN batches so a run always
 #: stops on a whole market (see the unit-of-work note in the module docstring).
@@ -294,6 +330,20 @@ _ATTEMPT_KEY_PREFIX = "bainluck:polymarket_condition_refresh:attempted:"
 #: not that rail's: the two sweep overlapping rows on different budgets, and a
 #: shared marker would silently make each one's coverage depend on the other's.
 _ATTEMPT_TTL_SECONDS = SERVED_STALE_HOURS * 3600
+
+#: The same marker for a kickoff row, and it tracks
+#: :data:`KICKOFF_STALE_MINUTES` for the same reason the constant above tracks
+#: :data:`SERVED_STALE_HOURS`: a marker that outlives its own eligibility window
+#: IS the eligibility window, and then the shorter one is decoration. Both
+#: gates have to agree or the stricter one silently wins — which is exactly the
+#: half-leg gap #4840 closed one level down, in the same file.
+#:
+#: The starvation argument the marker exists for still holds, and is bounded
+#: rather than argued away: an imminent market the venue will not price does
+#: re-present every beat, but the whole class is 277 ids against a 1,000-id
+#: budget, so the worst case costs a quarter of a run and cannot hold the tail.
+#: Retrying a game that is about to start is the correct trade at that price.
+_KICKOFF_ATTEMPT_TTL_SECONDS = KICKOFF_STALE_MINUTES * 60
 
 
 def _attempt_key(market_id: int) -> str:
@@ -413,7 +463,8 @@ _CANDIDATE_SQL = f"""
            s.request_ids,
            p.priority,
            COUNT(*) OVER () AS stale_markets,
-           (SELECT COUNT(*) FROM pool) AS served_markets
+           (SELECT COUNT(*) FROM pool) AS served_markets,
+           (p.kickoff IS NOT NULL) AS imminent
       FROM pool p
       JOIN LATERAL (
             SELECT MIN(COALESCE(fo.last_updated, TIMESTAMP WITH TIME ZONE 'epoch')) AS stalest,
@@ -427,7 +478,11 @@ _CANDIDATE_SQL = f"""
              WHERE fo.market_id = p.id
                AND {writable_leg_sql("fo")}
            ) s ON TRUE
-     WHERE s.stalest < NOW() - make_interval(hours => :stale_hours)
+     WHERE s.stalest < NOW() - CASE
+                                 WHEN p.kickoff IS NOT NULL
+                                 THEN make_interval(mins => {KICKOFF_STALE_MINUTES})
+                                 ELSE make_interval(hours => :stale_hours)
+                               END
        AND COALESCE(ARRAY_LENGTH(s.request_ids, 1), 0) > 0
      ORDER BY p.kickoff ASC NULLS LAST, p.priority DESC, s.stalest ASC
      LIMIT :limit
@@ -462,17 +517,30 @@ def _load_attempt_skips(market_ids: list[int]) -> set[int]:
     return {mid for mid, val in zip(market_ids, values) if val}
 
 
-def _mark_attempted(market_ids: list[int]) -> None:
-    """Record an ATTEMPT, not a success — see ``_ATTEMPT_TTL_SECONDS``."""
+def _mark_attempted(market_ids: list[int], imminent: set[int] | None = None) -> None:
+    """Record an ATTEMPT, not a success — see ``_ATTEMPT_TTL_SECONDS``.
+
+    #4896 / CERT-2546: a kickoff row's marker expires on
+    :data:`_KICKOFF_ATTEMPT_TTL_SECONDS` instead, so it is eligible again on the
+    next hourly beat rather than the next half-day. The TTL is chosen per market
+    rather than per call because one batch legitimately mixes the two classes —
+    ``_pack_batches`` groups on id count, not on urgency.
+    """
     if not market_ids:
         return
+    imminent = imminent or set()
     try:
         from app.tasks.redis_state import get_redis_client
 
         rc = get_redis_client(socket_timeout=2.0, socket_connect_timeout=2.0)
         pipe = rc.pipeline()
         for mid in market_ids:
-            pipe.setex(_attempt_key(mid), _ATTEMPT_TTL_SECONDS, "1")
+            ttl = (
+                _KICKOFF_ATTEMPT_TTL_SECONDS
+                if mid in imminent
+                else _ATTEMPT_TTL_SECONDS
+            )
+            pipe.setex(_attempt_key(mid), ttl, "1")
         pipe.execute()
     except Exception:  # noqa: BLE001
         pass
@@ -515,8 +583,15 @@ def _pack_batches(
 
 async def _select_stale_conditions(
     *, stale_hours: int, limit: int
-) -> tuple[list[tuple[int, list[str]]], int, int]:
-    """``([(market_id, [condition_id, …]), …], stale_markets, served_markets)``.
+) -> tuple[list[tuple[int, list[str]]], int, int, set[int]]:
+    """``([(market_id, [cid, …]), …], stale_markets, served_markets, imminent)``.
+
+    #4896 / CERT-2546: the fourth element is the set of KICKOFF market ids, and
+    it travels because the attempt marker needs it — a kickoff row's marker must
+    expire inside its own 45-minute window or the marker becomes the eligibility
+    gate and the shorter window is decoration. Returned as a set rather than
+    folded into the tuples so ``_pack_batches`` and the admission loop keep the
+    two-element shape #4827 gave them.
 
     Ordered kickoff-first, then priority-first, then stalest-first, which is the
     whole starvation argument: within a class the row that has waited longest is
@@ -551,7 +626,7 @@ async def _select_stale_conditions(
         # the census must not silently read zero on a healthy run. Asked
         # separately only in this branch, where it is one cheap scan a run that
         # is otherwise doing no work at all.
-        return [], 0, await _served_market_count()
+        return [], 0, await _served_market_count(), set()
     return (
         # `list(r[1] or ())` — asyncpg hands an ARRAY back as a list already, but
         # the copy is what stops a driver-owned buffer travelling into the batch
@@ -560,6 +635,7 @@ async def _select_stale_conditions(
         [(r[0], list(r[1] or ())) for r in rows],
         int(rows[0][3]),
         int(rows[0][4]),
+        {r[0] for r in rows if r[5]},
     )
 
 
@@ -637,7 +713,12 @@ async def _refresh_stale_polymarket_conditions(
     }
 
     try:
-        candidates, stale_markets, served_markets = await _select_stale_conditions(
+        (
+            candidates,
+            stale_markets,
+            served_markets,
+            imminent_ids,
+        ) = await _select_stale_conditions(
             stale_hours=stale_hours, limit=min(CANDIDATE_LIMIT, max(budget, 1) * 3)
         )
     # (This comment is load bearing for `scan_mutation_residue.py` Pass B —
@@ -725,7 +806,7 @@ async def _refresh_stale_polymarket_conditions(
         # re-present at the head of a stalest-first ordering on the next run and
         # hold the tail behind them forever. An ATTEMPT is recorded because it
         # was attempted.
-        _mark_attempted([mid for mid, _ in batch])
+        _mark_attempted([mid for mid, _ in batch], imminent_ids)
         try:
             markets = await service.get_markets_by_conditions(
                 conditions,

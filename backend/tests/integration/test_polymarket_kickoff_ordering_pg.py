@@ -28,7 +28,7 @@ The rows, and why each is here:
 
     m_live          started 1h ago, not completed   FIRST  — a game in progress
     m_soon          starts in 2h                    SECOND — the ordinary case
-    m_later         starts in 20h, inside the lead  THIRD
+    m_later         starts in 10h, inside the lead  THIRD
     m_ancient       no event, tier 1, 90d stale     after all three, and it is
                                                     still ahead of everything
                                                     below it — the old ordering
@@ -125,7 +125,7 @@ async def _seed(session) -> dict[str, int]:
     events = {
         "m_live": _event(-1),
         "m_soon": _event(2),
-        "m_later": _event(20),
+        "m_later": _event(10),
         "m_completed": _event(2, completed=True),
         "m_past_tail": _event(-12),
     }
@@ -171,6 +171,74 @@ async def _seed(session) -> dict[str, int]:
                 last_updated=(
                     now - timedelta(days=90) if label == "m_ancient" else now - stale_by
                 ),
+            )
+        )
+    await session.commit()
+    return {label: m.id for label, m in markets.items()}
+
+
+async def _seed_warm(session) -> dict[str, int]:
+    """Three rows, all refreshed 50 MINUTES ago. Returns `{label: market_id}`.
+
+    50 minutes is chosen to sit in the gap the repair opens: past
+    `KICKOFF_STALE_MINUTES` (45) and far short of `SERVED_STALE_HOURS` (12), so
+    the two classes must answer differently or one of the assertions fails.
+    """
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+
+    now = datetime.now(UTC)
+    sport = Sport(key="americanfootball_nfl", name="NFL", group="Football")
+    session.add(sport)
+    await session.flush()
+
+    def _event(hours, *, completed=False):
+        e = Event(
+            sport_id=sport.id,
+            home_team_name="Rams",
+            away_team_name="49ers",
+            commence_time=now + timedelta(hours=hours),
+            status="scheduled",
+            completed_at=(now - timedelta(minutes=5)) if completed else None,
+        )
+        session.add(e)
+        return e
+
+    game, done = _event(2), _event(2, completed=True)
+    await session.flush()
+
+    def _market(label, event):
+        m = FuturesMarket(
+            source="polymarket",
+            external_id=f"warm-{label}",
+            name=f"warm {label}",
+            category="game",
+            market_tier=5,
+            status="open",
+            resolution_date=now + timedelta(days=7),
+            event_id=event.id if event is not None else None,
+            sport_id=sport.id,
+        )
+        session.add(m)
+        return m
+
+    markets = {
+        "warm_game": _market("game", game),
+        "warm_completed": _market("completed", done),
+        "warm_futures": _market("futures", None),
+    }
+    await session.flush()
+
+    for label, market in markets.items():
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=f"0x{label}",
+                name="Yes",
+                current_probability=0.5,
+                rank=1,
+                is_winner=False,
+                resolution_source=None,
+                last_updated=now - timedelta(minutes=50),
             )
         )
     await session.commit()
@@ -258,6 +326,59 @@ class TestAGameAboutToBePlayedLeadsTheQueue:
         assert order.index(ids["m_past_tail"]) > order.index(ids["m_ancient"]), (
             "a game that started beyond KICKOFF_TAIL_HOURS ago still led the "
             f"queue. order={order} ids={ids}"
+        )
+
+
+class TestAnImminentGameReentersEachHourlyBeat:
+    """CERT-2546's required repair, executed.
+
+    Leading the queue decides who goes first among rows that are ELIGIBLE. Both
+    eligibility gates were sized for the 12-hour producer window, so #4896's
+    first cut gave a game ONE refresh and then dropped it for eleven beats. The
+    `CASE` in the WHERE clause is what fixes it, and a `CASE` in a WHERE clause
+    is precisely what a string assertion cannot evaluate.
+    """
+
+    async def test_imminent_game_reenters_on_the_next_hourly_beat(self, pg_session):
+        """A warm imminent row is due again; an equally warm ordinary row is not.
+
+        Both legs are stamped 50 minutes ago — past `KICKOFF_STALE_MINUTES` (45)
+        and nowhere near `SERVED_STALE_HOURS` (12). One row is a game two hours
+        from kickoff and one is an ordinary futures market, and that is the ONLY
+        difference between them, so the assertion cannot pass for any other
+        reason.
+        """
+        from app.tasks import polymarket_condition_refresh as rail
+
+        ids = await _seed_warm(pg_session)
+        order = await _order(pg_session, rail._CANDIDATE_SQL)
+
+        assert ids["warm_game"] in order, (
+            "a game 2h from kickoff, refreshed 50 minutes ago, is NOT due on "
+            "this beat — leading the queue bought it one refresh and no "
+            f"cadence. order={order} ids={ids}"
+        )
+        assert ids["warm_futures"] not in order, (
+            "an ordinary futures market refreshed 50 minutes ago became due — "
+            "the kickoff window is leaking onto the whole pool and every "
+            f"non-game row will now churn hourly. order={order} ids={ids}"
+        )
+
+    async def test_a_warm_completed_game_is_not_due_either(self, pg_session):
+        """The short window must follow the kickoff CLASS, not the event link.
+
+        Without this, a finished game whose `completed_at` is set would still
+        re-enter every 45 minutes forever — the short window applied to a row
+        the ordering no longer promotes.
+        """
+        from app.tasks import polymarket_condition_refresh as rail
+
+        ids = await _seed_warm(pg_session)
+        order = await _order(pg_session, rail._CANDIDATE_SQL)
+
+        assert ids["warm_completed"] not in order, (
+            "a COMPLETED game refreshed 50 minutes ago is being re-read on the "
+            f"short kickoff cadence. order={order} ids={ids}"
         )
 
 

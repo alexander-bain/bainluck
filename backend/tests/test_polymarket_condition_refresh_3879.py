@@ -72,6 +72,7 @@ def _arm(
     writer=None,
     skips=None,
     marked=None,
+    imminent=None,
 ):
     """Point the rail at scripted collaborators. No DB, no network, no Redis."""
     import app.services.polymarket_api as poly
@@ -79,7 +80,7 @@ def _arm(
     async def _select(*, stale_hours, limit):
         if selector_raises is not None:
             raise selector_raises
-        return list(candidates or []), stale, served
+        return list(candidates or []), stale, served, set(imminent or ())
 
     monkeypatch.setattr(rail, "_select_stale_conditions", _select)
     monkeypatch.setattr(poly, "PolymarketAPIService", lambda *a, **k: service or _Service())
@@ -87,7 +88,13 @@ def _arm(
     # `marked is not None`, never `marked or []`: an empty list is falsy, and the
     # `or` form would quietly extend a throwaway list and report no marks at all.
     sink = marked if marked is not None else []
-    monkeypatch.setattr(rail, "_mark_attempted", lambda ids: sink.extend(ids))
+    # #4896: the real `_mark_attempted` takes the imminent set as a second
+    # argument so it can pick a TTL per market. The double records the ids the
+    # rail marked; which TTL each got is asserted directly against the real
+    # function in `TestAnImminentGameReentersEachBeat`.
+    monkeypatch.setattr(
+        rail, "_mark_attempted", lambda ids, imminent_ids=frozenset(): sink.extend(ids)
+    )
     if writer is not None:
         monkeypatch.setattr(tournament_rail, "_write_refreshed_prices", writer)
 
@@ -274,6 +281,94 @@ class TestOneBadBatchCannotWipeTheRun:
         assert any("deadlock detected" in e for e in stats["errors"])
         assert stats["snapshots_written"] > 0
         assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+
+class TestAnImminentGameReentersEachBeat:
+    """CERT-2546's required repair: an ordering key alone does not set a cadence.
+
+    #4896's first cut led the queue with imminent games and stopped there. But
+    leading only decides who goes first among rows that are ELIGIBLE, and both
+    eligibility gates were sized for the 12-hour producer window — the selector's
+    `stalest <` test and the attempt marker, which `_ATTEMPT_TTL_SECONDS` pins to
+    the same 12 hours. A game reached once therefore vanished for eleven of the
+    next twelve hourly beats and could be 12 hours stale at kickoff, against an
+    acceptance of under an hour.
+
+    Both halves are guarded here. The SQL half — a warm imminent row re-entering
+    while a warm ordinary row does not — is executed against real Postgres in
+    `tests/integration/test_polymarket_kickoff_ordering_pg.py`, because a CASE in
+    a WHERE clause is not something a string assertion can evaluate.
+    """
+
+    def test_imminent_game_reenters_on_the_next_hourly_beat(self):
+        """The eligibility window for a kickoff row is under the beat interval.
+
+        Asserted as the inequality rather than against the literal 45, because
+        the property that matters is "strictly less than an hour" — a bound set
+        to exactly 60 makes whether the next beat sees the row depend on which
+        of the two fires first.
+        """
+        assert rail.KICKOFF_STALE_MINUTES < 60, (
+            "a kickoff row must become eligible again INSIDE the hourly beat "
+            "interval, or leading the queue buys it one refresh and no cadence"
+        )
+        # And the marker cannot outlive that window, or the marker IS the
+        # window and the shorter one is decoration.
+        assert rail._KICKOFF_ATTEMPT_TTL_SECONDS <= rail.KICKOFF_STALE_MINUTES * 60
+        assert rail._KICKOFF_ATTEMPT_TTL_SECONDS < rail._ATTEMPT_TTL_SECONDS
+
+    def test_the_marker_ttl_is_chosen_per_market_not_per_call(self):
+        """A batch legitimately mixes the two classes — `_pack_batches` groups on
+        id count, not on urgency — so one TTL for the call would give whichever
+        class lost the coin toss the wrong cadence."""
+        seen: dict[int, int] = {}
+
+        class _Pipe:
+            def setex(self, key, ttl, _val):
+                seen[int(key.rsplit(":", 1)[1])] = ttl
+
+            def execute(self):
+                return None
+
+        class _RC:
+            def pipeline(self):
+                return _Pipe()
+
+        import app.tasks.redis_state as redis_state
+
+        original = redis_state.get_redis_client
+        redis_state.get_redis_client = lambda **kw: _RC()
+        try:
+            rail._mark_attempted([11, 22, 33], {22})
+        finally:
+            redis_state.get_redis_client = original
+
+        assert seen[22] == rail._KICKOFF_ATTEMPT_TTL_SECONDS, (
+            "the imminent market in a mixed batch did not get the short TTL"
+        )
+        assert seen[11] == rail._ATTEMPT_TTL_SECONDS
+        assert seen[33] == rail._ATTEMPT_TTL_SECONDS
+
+    def test_the_selector_gates_staleness_on_the_kickoff_class(self):
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert (
+            f"WHEN p.kickoff IS NOT NULL THEN make_interval(mins => "
+            f"{rail.KICKOFF_STALE_MINUTES})" in sql
+        ), "the staleness gate does not branch on the kickoff class"
+        assert "ELSE make_interval(hours => :stale_hours)" in sql, (
+            "the ordinary class must keep the 12-hour producer window"
+        )
+
+    def test_the_imminent_set_travels_to_the_marker(self):
+        """The flag is selected and carried, not recomputed downstream — two
+        answers to "is this row imminent" is how they come to disagree."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "(p.kickoff IS NOT NULL) AS imminent" in sql
+
+        import inspect
+
+        source = inspect.getsource(rail._refresh_stale_polymarket_conditions)
+        assert "_mark_attempted([mid for mid, _ in batch], imminent_ids)" in source
 
 
 class TestTheOrderingCannotStarveItsOwnTail:
@@ -477,16 +572,19 @@ class TestTheOrderingIsAcceptanceOneMadeMechanical:
         where it runs without a database, rather than beside the behavioural
         gate where it would only run in `search-recall`.
 
-        MEASURED, production 2026-09-10 21:0xZ: the whole 24h+6h window is 72
-        markets / 277 condition ids, ranks 1-72 — 27.7% of one run's
-        `CONDITION_BUDGET`, so the class is swept whole every hour and ~723 ids
-        still drain the backlog behind it. At a 48-hour lead the same window
-        measured 570 markets / 1,753 ids, which exceeds the budget outright and
-        converts this key from "the games go first" into "the drain stops".
+        MEASURED on the live pool, production 2026-09-10 22:1xZ, with
+        `KICKOFF_STALE_MINUTES` in force, so these are per-BEAT costs:
+
+             6h -> 130 markets / 341 ids     12h -> 137 / 348     24h -> 230 / 656
+
+        12 is the inflection: 6 -> 12 costs seven ids a beat, 12 -> 24 costs 308
+        and takes two thirds of the 1,000-id `CONDITION_BUDGET`, halving the
+        backlog drain #4827 exists to run. A rail that keeps tonight's games
+        fresh by starving the 54,000-id rotation has moved the defect.
         """
-        assert rail.KICKOFF_LEAD_HOURS <= 24, (
-            "a 48h lead was measured at 1,753 ids against a 1,000-id budget — "
-            "re-measure the window against production before widening it"
+        assert rail.KICKOFF_LEAD_HOURS <= 12, (
+            "a 24h lead was measured at 656 ids/beat of a 1,000-id budget, "
+            "leaving 344 for the drain — re-measure before widening it"
         )
         assert 0 < rail.KICKOFF_TAIL_HOURS <= rail.KICKOFF_LEAD_HOURS
 
