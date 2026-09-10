@@ -25,6 +25,7 @@ from app.utils.calibration_closing_line import (
     closing_line_boundary_sql,
     closing_line_lateral_sql,
 )
+from app.utils.kalshi_empty_book import lone_ask_on_empty_book_sql
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES_SQL,
     GUESS_FAMILY_SOURCES_SQL,
@@ -7426,12 +7427,21 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0c-repair: Restore opening_probability from first snapshot for
     # outcomes with null opening but real snapshot data. Uses DISTINCT ON
     # for bulk performance instead of correlated subqueries.
+    #
+    # #4745: the earliest snapshot is not automatically an honest one. A Kalshi
+    # book of bid 0.00 / ask 0.98 with no trade is an offer nobody took, not a
+    # 98% chance; the live poller has refused to WRITE those since 52eee9b6
+    # (2026-07-13) but this promotion kept copying the ones already stored into
+    # the published curve — 34,281 legs across every family, mean published
+    # 0.94, actually won ~14%. Skipping the row rather than the outcome means a
+    # leg that opened on an empty book and later traded still gets its opening
+    # from the first snapshot that was a real price.
     _mark("retro_repair_tagging")
     repair_stats = {"restored": 0, "errors": []}
     try:
         for _ in range(5):
             async with get_task_session() as session:
-                r = await session.execute(text("""
+                r = await session.execute(text(f"""
                         WITH first_snaps AS (
                             SELECT fo2.id AS outcome_id, snap.probability
                             FROM futures_outcomes fo2
@@ -7441,6 +7451,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                                 FROM futures_odds_snapshots fos
                                 WHERE fos.outcome_id = fo2.id
                                   AND fos.probability > 0 AND fos.probability < 1
+                                  AND NOT {lone_ask_on_empty_book_sql("fos")}
                                 ORDER BY fos.captured_at ASC
                                 LIMIT 1
                             ) snap
