@@ -6744,6 +6744,102 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     def _budget_left():
         return _SOFT_LIMIT_S - (_t.monotonic() - _pipeline_start)
 
+    # #4658: THE TWO RETURN PATHS NOW SHARE ONE TABLE, because they used to
+    # share nothing. `_partial_result` carried status/stopped_before/elapsed/
+    # phase_times and not one phase stats dict, while the full return at the
+    # bottom named all 33 by hand — so every counter this task collects was
+    # dropped on the guard exit.
+    #
+    # That exit is not the rare path, it is the ONLY path. `_SOFT_LIMIT_S -
+    # _BUDGET_MARGIN_S` gives the pipeline 540s, and the measured core phases
+    # alone are 757.5s (2026-09-10 03:45Z: score_resolution 41.5, kalshi_api
+    # 95.3, kalshi_markets_api 11.3, polymarket_api 184.6, prob_and_datagolf
+    # 383.3, link_props 41.5), so it returns `partial_budget_guard` every
+    # cycle. `kalshi_api` runs BEFORE that exit: its counters were incremented
+    # every run and discarded every run, which is how #4604's `no_result` /
+    # `ungradeable_result` came to be unobservable — neither grader logs them,
+    # and the only return that carried them is never reached.
+    #
+    # A phase's stats name is bound exactly where that phase assigns it, so an
+    # unbound free variable IS the statement "this phase did not run" — which
+    # is why absence is produced by catching NameError rather than by a flag or
+    # a sentinel. There is no second place to forget to update, and a phase
+    # that never ran reports nothing rather than an empty dict claiming it ran
+    # and found nothing. Both returns spread `_phase_stats()`, so the drift
+    # this fixes cannot reopen.
+    _PHASE_STATS = (
+        ("link_sports_props", lambda: link_props_stats),
+        ("ml_misresolution_repair", lambda: ml_repair_stats),
+        ("guess_upgrade", lambda: guess_upgrade_stats),
+        ("retro_tagging", lambda: retro_stats),
+        ("retro_guess_tagging", lambda: retro2_stats),
+        ("commence_time_fixes", lambda: commence_stats),
+        ("polymarket_group_id", lambda: group_stats),
+        ("kalshi_group_id", lambda: kalshi_group_stats),
+        ("null_untradeable", lambda: no_snap_stats),
+        ("opening_repair", lambda: repair_stats),
+        ("closing_lines", lambda: closing_stats),
+        ("calibration_prices", lambda: cal_price_stats),
+        ("poly_under_signflip", lambda: poly_under_stats),
+        ("datagolf_premature_unresolve", lambda: datagolf_premature_stats),
+        ("impossible_both_ones", lambda: both_ones_stats),
+        ("both_winner_guess_flip", lambda: both_winner_stats),
+        ("polymarket_api_group_id", lambda: api_group_stats),
+        ("datagolf_settlement", lambda: dg_settlement_stats),
+        ("datagolf_leaderboard_backfill", lambda: dg_leaderboard_stats),
+        ("datagolf", lambda: datagolf_stats),
+        ("golf_cross_reference", lambda: golf_cross_stats),
+        ("golf_matchup_resolution", lambda: golf_matchup_stats),
+        ("golf_settlement_sync", lambda: golf_sync_stats),
+        ("kalshi_score_resolution", lambda: score_stats),
+        ("kalshi_spread_total_resolution", lambda: spread_total_stats),
+        ("polymarket_total_score_resolution", lambda: poly_total_stats),
+        ("kalshi_player_props", lambda: player_prop_stats),
+        ("kalshi_period_props", lambda: period_prop_stats),
+        ("from_probability", lambda: prob_stats),
+        ("kalshi_api", lambda: kalshi_stats),
+        ("kalshi_markets_api", lambda: kalshi_markets_stats),
+        ("polymarket_api", lambda: poly_api_stats),
+        ("bookmaker_calibration", lambda: bookmaker_stats),
+        # CERT-2465's required repair,
+        # `4658-EVERY-COMPLETED-PHASE-STAT-REACHES-THE-PARTIAL-RESULT`. The first
+        # version of this table was the 33 keys the FULL return happened to name,
+        # which is a different set from "every phase that completed" — #4658's
+        # actual acceptance. Seven producers run, finish, and were reported by
+        # neither return. `total_bases_stats` is the sharpest case: it completes
+        # inside `score_resolution`, BEFORE the very first guard, so the one exit
+        # production takes most often dropped it.
+        #
+        # Four of these were already being flagged by Ruff as assigned-and-never-
+        # used (`total_bases_stats`, `dg_early_stats`, `date_passed_stats`,
+        # `bywhen_collapse_stats`) — the linter had been saying for some time that
+        # these phases' results go nowhere, and the full return's key list was the
+        # reason nobody read it as a finding.
+        ("kalshi_total_bases", lambda: total_bases_stats),
+        ("datagolf_early", lambda: dg_early_stats),
+        ("date_passed_binaries", lambda: date_passed_stats),
+        ("bywhen_ladder_collapse", lambda: bywhen_collapse_stats),
+        ("candlestick_snapshots", lambda: candlestick_stats),
+        ("trade_history", lambda: trade_stats),
+        ("datagolf_makecut_fix", lambda: dg_makecut_fix_stats),
+    )
+
+    def _phase_stats():
+        """Every phase stats dict whose phase has actually run, in table order.
+
+        Only NameError is swallowed, and only from the name lookup itself: any
+        other exception is a real fault in a stats dict and must not be turned
+        into a silently missing key by the thing whose whole job is to stop
+        counters going missing.
+        """
+        collected = {}
+        for key, read in _PHASE_STATS:
+            try:
+                collected[key] = read()
+            except NameError:
+                continue
+        return collected
+
     def _partial_result(stopped_before):
         logger.warning(
             "backfill TIME-BUDGET GUARD: returning partial result before %s "
@@ -6757,6 +6853,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
             "status": "partial_budget_guard",
             "stopped_before": stopped_before,
             "pipeline_elapsed_s": round(_t.monotonic() - _pipeline_start, 1),
+            # #4658: the phases that DID run before the guard fired. Spread
+            # first so a phase key can never shadow the guard's own fields.
+            **_phase_stats(),
             "phase_times": {
                 k: v for k, v in _phase_times.items()
                 if isinstance(v, (int, float)) and v < 100000
@@ -7543,39 +7642,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     _clear_backfill_running_phase()  # L2-105: full completion — clear the stale latch
 
     return {
-        "link_sports_props": link_props_stats,
-        "ml_misresolution_repair": ml_repair_stats,
-        "guess_upgrade": guess_upgrade_stats,
-        "retro_tagging": retro_stats,
-        "retro_guess_tagging": retro2_stats,
-        "commence_time_fixes": commence_stats,
-        "polymarket_group_id": group_stats,
-        "kalshi_group_id": kalshi_group_stats,
-        "null_untradeable": no_snap_stats,
-        "opening_repair": repair_stats,
-        "closing_lines": closing_stats,
-        "calibration_prices": cal_price_stats,
-        "poly_under_signflip": poly_under_stats,
-        "datagolf_premature_unresolve": datagolf_premature_stats,
-        "impossible_both_ones": both_ones_stats,
-        "both_winner_guess_flip": both_winner_stats,
-        "polymarket_api_group_id": api_group_stats,
-        "datagolf_settlement": dg_settlement_stats,
-        "datagolf_leaderboard_backfill": dg_leaderboard_stats,
-        "datagolf": datagolf_stats,
-        "golf_cross_reference": golf_cross_stats,
-        "golf_matchup_resolution": golf_matchup_stats,
-        "golf_settlement_sync": golf_sync_stats,
-        "kalshi_score_resolution": score_stats,
-        "kalshi_spread_total_resolution": spread_total_stats,
-        "polymarket_total_score_resolution": poly_total_stats,
-        "kalshi_player_props": player_prop_stats,
-        "kalshi_period_props": period_prop_stats,
-        "from_probability": prob_stats,
-        "kalshi_api": kalshi_stats,
-        "kalshi_markets_api": kalshi_markets_stats,
-        "polymarket_api": poly_api_stats,
-        "bookmaker_calibration": bookmaker_stats,
+        # #4658: the same table `_partial_result` reads, so the two
+        # return paths cannot drift apart again.
+        **_phase_stats(),
         "phase_times_seconds": {
             "pre_api_phases": _pre_api_elapsed,
             **{k: v for k, v in _phase_times.items() if isinstance(v, (int, float))},
