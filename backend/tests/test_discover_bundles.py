@@ -51,8 +51,9 @@ def test_assembles_safe_comparison_bundle_and_suppresses_members():
     assert bundle["data"]["comparison_theme"] == "ipo_valuation"
     assert bundle["data"]["member_ids"] == [1, 2]
     assert bundle["data"]["debug_bundles"]["grouped_by"] == (
-        "discover_card.comparison_theme"
+        "discover_card.comparison_theme+measure"
     )
+    assert bundle["data"]["debug_bundles"]["measure"] == "ipo_valuation"
     assert "_quality_family_key" not in bundle["data"]["items"][0]
 
 
@@ -106,6 +107,214 @@ def test_dedupes_same_entity_inside_bundle():
     assert result[0]["type"] == "bundle"
     assert result[0]["data"]["member_ids"] == [1, 3]
     assert result[1]["data"]["id"] == 2
+
+
+# ── A comparison bundle agrees on what it measures (#4785) ───────────────────
+#
+# The fixtures below are the markets Discover served on production at
+# 2026-09-10 05:50 PT, names and outcome labels verbatim off `/api/feed`. Four
+# of them (ids 1-4) were ONE card, under "How warm does it get in these cities?"
+# — a question true of none of them. Only the Celsius market is invented: Seoul
+# was live that morning but carried a single threshold point, so the bundler
+# already refused it for a different reason and it cannot prove this one.
+
+
+def _weather_item(
+    market_id: int,
+    name: str,
+    labels: list[str],
+    *,
+    score: float = 70,
+) -> dict:
+    return {
+        "type": "futures",
+        "score": score,
+        "reason": "reason",
+        "headline": name,
+        "data": {
+            "id": market_id,
+            "name": name,
+            "llm_sport_category": "weather",
+            "source": "kalshi",
+            "discover_card": {
+                "suggested_format": "threshold_heatmap",
+                "bundle_candidate": True,
+                "comparison_theme": "weather_distributions",
+                "threshold_points": [
+                    {"label": label, "value": float(index), "probability": 0.2}
+                    for index, label in enumerate(labels)
+                ],
+                "public_source_disagreement": False,
+            },
+        },
+        "_sort_time": 1000 + market_id,
+    }
+
+
+_HURRICANE = (
+    "Hurricane Zeke category?",
+    ["Category 1 or above", "Category 3 or above"],
+)
+_AUSTIN_STREAK = (
+    "Consecutive days of average temperature in Austin above 90°F - week of Sep 7, 2026",
+    ["2+ consecutive days", "3+ consecutive days"],
+)
+_SAN_DIEGO_STREAK = (
+    "Consecutive days of average temperature in San Diego above 90°F - week of Sep 7, 2026",
+    ["2+ consecutive days", "3+ consecutive days"],
+)
+_DC_LOW = (
+    "Lowest temperature in Washington DC on Sep 10, 2026?",
+    ["66° or below", "75° or above"],
+)
+_MIAMI_LOW = (
+    "Lowest temperature in Miami on Sep 10, 2026?",
+    ["74° or below", "83° or above"],
+)
+_SF_HIGH = (
+    "Highest temperature in San Francisco on Sep 10, 2026?",
+    ["75° or below", "84° or above"],
+)
+_SAN_ANTONIO_HIGH = (
+    "Highest temperature in San Antonio on Sep 10, 2026?",
+    ["94° or below", "103° or above"],
+)
+
+
+def test_the_four_markets_served_as_one_weather_card_are_never_one_card_again():
+    """The live specimen: a storm, two heat streaks and an overnight low.
+
+    Whatever the bundler does with these four, no card may claim a shared
+    question over a set that mixes them — that is the defect, in its own shape.
+    """
+    items = [
+        _weather_item(1, *_HURRICANE, score=70),
+        _weather_item(2, *_AUSTIN_STREAK, score=68),
+        _weather_item(3, *_SAN_DIEGO_STREAK, score=67),
+        _weather_item(4, *_DC_LOW, score=16),
+    ]
+
+    result = assemble_discover_comparison_bundles(items)
+
+    bundles = [item for item in result if item["type"] == "bundle"]
+    for bundle in bundles:
+        members = set(bundle["data"]["member_ids"])
+        assert members != {1, 2, 3, 4}
+        assert not (members & {1}) or members == {1}
+        assert not (members & {4}) or members <= {4}
+    # The two heat streaks are the one honest comparison in the set, and they
+    # are what the reader is given.
+    assert [b["data"]["member_ids"] for b in bundles] == [[2, 3]]
+    assert bundles[0]["data"]["shared_question"] == (
+        "How long does the hot stretch run in these cities?"
+    )
+    # The storm and the overnight low go back to competing on their own.
+    assert [item["data"]["id"] for item in result if item["type"] == "futures"] == [
+        1,
+        4,
+    ]
+
+
+def test_lowest_temperature_cities_ask_how_cold_not_how_warm():
+    items = [
+        _weather_item(1, *_DC_LOW),
+        _weather_item(2, *_MIAMI_LOW),
+    ]
+
+    bundle = assemble_discover_comparison_bundles(items)[0]
+
+    assert bundle["data"]["shared_question"] == "How cold does it get in these cities?"
+    assert bundle["reason"] == bundle["data"]["shared_question"]
+    assert bundle["data"]["debug_bundles"]["measure"] == "weather:temp_low:deg"
+
+
+def test_highest_temperature_cities_ask_how_hot():
+    items = [
+        _weather_item(1, *_SF_HIGH),
+        _weather_item(2, *_SAN_ANTONIO_HIGH),
+    ]
+
+    bundle = assemble_discover_comparison_bundles(items)[0]
+
+    assert bundle["data"]["shared_question"] == "How hot does it get in these cities?"
+
+
+def test_a_high_and_a_low_are_two_measures_and_do_not_compare():
+    items = [
+        _weather_item(1, *_SAN_ANTONIO_HIGH),
+        _weather_item(2, *_DC_LOW),
+    ]
+
+    assert assemble_discover_comparison_bundles(items) == items
+
+
+def test_celsius_and_fahrenheit_lows_do_not_share_a_heatmap():
+    """13 beside 66 is not a comparison, and the labels are the only unit we have.
+
+    Designed, not observed: the live Celsius market (Seoul) carried one
+    threshold point. Written because the bundler's own rule — group on what the
+    labels say — is what makes the case decidable at all.
+    """
+    items = [
+        _weather_item(1, *_DC_LOW),
+        _weather_item(
+            2,
+            "Lowest temperature in Seoul (Incheon) on September 12?",
+            ["13°C or below", "18°C or above"],
+        ),
+    ]
+
+    assert assemble_discover_comparison_bundles(items) == items
+
+
+def test_heat_streaks_over_different_thresholds_do_not_compare():
+    items = [
+        _weather_item(1, *_AUSTIN_STREAK),
+        _weather_item(
+            2,
+            "Consecutive days of average temperature in Phoenix above 100°F - week of Sep 7, 2026",
+            ["2+ consecutive days", "3+ consecutive days"],
+        ),
+    ]
+
+    assert assemble_discover_comparison_bundles(items) == items
+
+
+def test_a_weather_market_whose_measure_we_cannot_state_is_never_bundled():
+    """The safety net (#4147 option b): unstatable measure, no claiming group."""
+    items = [
+        _weather_item(
+            1, "Snowfall in Denver this winter?", ['0" to 12"', '12" to 24"']
+        ),
+        _weather_item(
+            2, "Snowfall in Chicago this winter?", ['0" to 12"', '12" to 24"']
+        ),
+    ]
+
+    assert assemble_discover_comparison_bundles(items) == items
+
+
+def test_one_bundle_per_theme_serves_the_best_scoring_measure():
+    items = [
+        _weather_item(1, *_DC_LOW, score=40),
+        _weather_item(2, *_MIAMI_LOW, score=39),
+        _weather_item(3, *_SF_HIGH, score=88),
+        _weather_item(4, *_SAN_ANTONIO_HIGH, score=87),
+    ]
+
+    result = assemble_discover_comparison_bundles(items)
+
+    bundles = [item for item in result if item["type"] == "bundle"]
+    assert len(bundles) == 1
+    assert bundles[0]["data"]["member_ids"] == [3, 4]
+    assert bundles[0]["data"]["shared_question"] == (
+        "How hot does it get in these cities?"
+    )
+    # The runner-up measure is not deleted — its members compete individually.
+    assert [item["data"]["id"] for item in result if item["type"] == "futures"] == [
+        1,
+        2,
+    ]
 
 
 # ── Geopolitics theme bundles (Phase 1, slice 1) ──────────────────────────────

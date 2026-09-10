@@ -274,6 +274,85 @@ def _market_entity_name(name: str, theme: str) -> str:
     return compact.strip() or name
 
 
+#: The three weather measures we can state a question about, and the shape that
+#: identifies each one. Read off the market NAME for the two temperature
+#: measures (the name is what says highest vs lowest) and off the OUTCOME LABELS
+#: for the other two (the labels are what say "3+ consecutive days" or
+#: "Category 4 or above").
+_WEATHER_HIGH_RE = re.compile(r"\bhighest\s+temperature\b", re.I)
+_WEATHER_LOW_RE = re.compile(r"\blowest\s+temperature\b", re.I)
+_WEATHER_STREAK_RE = re.compile(r"\bconsecutive\s+days?\b", re.I)
+_WEATHER_STORM_CATEGORY_RE = re.compile(r"\bcategory\s*\d", re.I)
+#: The threshold a heat streak counts days above ("… above 90°F …"). Two cities
+#: counting days over different temperatures are not one comparison.
+_WEATHER_STREAK_THRESHOLD_RE = re.compile(r"\babove\s*(\d+)\s*°?\s*([cf])?\b", re.I)
+
+
+def _threshold_labels(data: dict[str, Any]) -> list[str]:
+    points = _discover_card(data).get("threshold_points") or []
+    return [
+        str(point.get("label") or "") for point in points if isinstance(point, dict)
+    ]
+
+
+def _temperature_unit(labels: list[str]) -> str:
+    """The unit the OUTCOME LABELS state, never one inferred from them.
+
+    "13°C or below" (Seoul) and "66° or below" (Washington DC) are three keys,
+    not two: `°C`, `°F` and a bare degree sign. Reading the bare one as
+    Fahrenheit would be right for every US city on the board today and wrong the
+    first morning a venue lists an unqualified Celsius market — and the failure
+    would be a heatmap silently comparing 13 against 66.
+    """
+    joined = " ".join(labels).lower()
+    if "°c" in joined or "celsius" in joined:
+        return "°C"
+    if "°f" in joined or "fahrenheit" in joined:
+        return "°F"
+    if "°" in joined or "degree" in joined:
+        return "deg"
+    return "unitless"
+
+
+def _measure_key(theme: str, data: dict[str, Any]) -> str | None:
+    """What this market measures — the thing its bundle's question is about.
+
+    #4785. `comparison_theme` is a CATEGORY, not a measure: `weather_distributions`
+    is every weather market with two threshold points, and on production
+    2026-09-10 that let one card ask "How warm does it get in these cities?" over
+    a hurricane category, two counts of consecutive days above 90°F and one
+    overnight low — true of none of its four members. The theme cannot narrow it,
+    because the theme is exactly what those four have in common.
+
+    So the bundle groups on this instead: what is measured, and in what unit.
+    Returning None means we cannot state the measure, and a member we cannot
+    state does not join a card that claims a shared question — it competes on its
+    own, which is where it was before the bundler ran (#4147, option b).
+
+    The other three public themes are single-measure by construction (an IPO's
+    valuation, a commodity's price, a film's critic score), so they keep the
+    theme as their key and their behaviour is unchanged.
+    """
+    if theme != "weather_distributions":
+        return theme
+
+    name = str(data.get("name") or "")
+    labels = _threshold_labels(data)
+    if _WEATHER_HIGH_RE.search(name):
+        return f"weather:temp_high:{_temperature_unit(labels)}"
+    if _WEATHER_LOW_RE.search(name):
+        return f"weather:temp_low:{_temperature_unit(labels)}"
+    if any(_WEATHER_STREAK_RE.search(label) for label in labels):
+        match = _WEATHER_STREAK_THRESHOLD_RE.search(name)
+        threshold = (
+            f"{match.group(1)}{(match.group(2) or '').upper()}" if match else "unstated"
+        )
+        return f"weather:heat_streak_days:{threshold}"
+    if sum(bool(_WEATHER_STORM_CATEGORY_RE.search(label)) for label in labels) >= 2:
+        return "weather:storm_category"
+    return None
+
+
 def _item_id(item: dict[str, Any]) -> str:
     data = item.get("data") if isinstance(item.get("data"), dict) else {}
     return f"{item.get('type')}:{data.get('id')}"
@@ -284,7 +363,7 @@ def _bundle_id(theme: str, items: list[dict[str, Any]]) -> str:
     return f"comparison:{theme}:{ids}"
 
 
-def _bundle_subtitle(theme: str, count: int) -> str:
+def _bundle_subtitle(measure: str, count: int) -> str:
     """The comparison bundle's shared question (D1 clause c, #4066).
 
     These four themes already knew what their members had in common — the old
@@ -292,15 +371,28 @@ def _bundle_subtitle(theme: str, count: int) -> str:
     range"). Said as the question the members are answers to, the same fact
     tells a reader what they will learn by opening it. The count is not lost: it
     is the member list the card renders directly underneath.
+
+    #4785 — KEYED ON THE MEASURE, NOT THE THEME. A theme's question is only the
+    members' question when the theme has one measure in it. Three of the four do;
+    `weather_distributions` holds temperatures, durations and storm categories,
+    and its one authored sentence was false of all four members it shipped over.
+    Each weather measure now answers for itself, and the grouping in
+    :func:`_measure_key` is what makes each sentence true of every member under it.
     """
-    if theme == "ipo_valuation":
+    if measure == "ipo_valuation":
         return "Which of these companies is priced highest to list?"
-    if theme == "commodity_ranges":
+    if measure == "commodity_ranges":
         return "Where do these commodity prices land?"
-    if theme == "rotten_tomatoes_scores":
+    if measure == "rotten_tomatoes_scores":
         return "Which of these lands best with the critics?"
-    if theme == "weather_distributions":
-        return "How warm does it get in these cities?"
+    if measure.startswith("weather:temp_high:"):
+        return "How hot does it get in these cities?"
+    if measure.startswith("weather:temp_low:"):
+        return "How cold does it get in these cities?"
+    if measure.startswith("weather:heat_streak_days:"):
+        return "How long does the hot stretch run in these cities?"
+    if measure == "weather:storm_category":
+        return "How strong do these storms get?"
     return f"What do these {count} markets say together?"
 
 
@@ -320,7 +412,9 @@ def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _make_bundle_item(theme: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+def _make_bundle_item(
+    theme: str, measure: str, items: list[dict[str, Any]]
+) -> dict[str, Any]:
     score = max(float(item.get("score") or 0) for item in items)
     sort_time = max(float(item.get("_sort_time") or 0) for item in items)
     title = _THEME_TITLES.get(theme, "Comparable market ranges")
@@ -329,25 +423,27 @@ def _make_bundle_item(theme: str, items: list[dict[str, Any]]) -> dict[str, Any]
         _market_entity_name(str((_futures_data(item)).get("name") or ""), theme)
         for item in items
     ]
+    subtitle = _bundle_subtitle(measure, len(items))
     return {
         "type": "bundle",
         "score": score,
-        "reason": _bundle_subtitle(theme, len(items)),
+        "reason": subtitle,
         "headline": title,
         "context_summary": _THEME_REASONS.get(theme),
         "data": {
             "id": _bundle_id(theme, items),
             "title": title,
             "kind": "comparison",
-            "shared_question": _bundle_subtitle(theme, len(items)),
+            "shared_question": subtitle,
             "comparison_theme": theme,
             "item_count": len(items),
             "member_ids": member_ids,
             "items": [_public_member_item(item) for item in items],
             "entities": entities,
             "debug_bundles": {
-                "grouped_by": "discover_card.comparison_theme",
+                "grouped_by": "discover_card.comparison_theme+measure",
                 "theme": theme,
+                "measure": measure,
                 "member_ids": member_ids,
                 "member_names": [(_futures_data(item)).get("name") for item in items],
                 "public_source_disagreement": False,
@@ -370,34 +466,58 @@ def assemble_discover_comparison_bundles(
     at least two threshold points per represented market, and a public allowlisted
     comparison theme. Source disagreement remains QA-only and is never a public
     grouping theme.
+
+    #4785 — CANDIDATES ARE GROUPED BY (THEME, MEASURE), NOT BY THEME. A theme is a
+    category; the card's one sentence is about a measure, and where the two came
+    apart the sentence was false of every member (see :func:`_measure_key`). A
+    market whose measure cannot be stated is not a candidate at all. Still at most
+    one bundle per theme, so a theme holding several measures serves its
+    best-scoring one and the rest compete as individual cards.
     """
 
-    groups: dict[str, list[dict[str, Any]]] = {}
-    seen_entities: dict[str, set[str]] = {}
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    seen_entities: dict[tuple[str, str], set[str]] = {}
     for item in items:
         theme = _theme_for_item(item)
         if theme is None:
+            continue
+        measure = _measure_key(theme, _futures_data(item))
+        if measure is None:
             continue
         name = str(_futures_data(item).get("name") or "")
         entity = _market_entity_name(name, theme).lower()
         if not entity:
             continue
-        seen_entities.setdefault(theme, set())
-        if entity in seen_entities[theme]:
+        key = (theme, measure)
+        seen_entities.setdefault(key, set())
+        if entity in seen_entities[key]:
             continue
-        seen_entities[theme].add(entity)
-        groups.setdefault(theme, []).append(item)
+        seen_entities[key].add(entity)
+        groups.setdefault(key, []).append(item)
 
-    bundle_items_by_theme: dict[str, list[dict[str, Any]]] = {}
-    represented_ids: set[str] = set()
-    for theme, candidates in groups.items():
-        if len(candidates) < min_items:
-            continue
+    # One bundle per theme, chosen by the same yardstick the bundle competes on:
+    # its score (its best member), then its member count. Ties keep the group
+    # whose first member ranks earliest, because `groups` is in feed order.
+    best_by_theme: dict[str, tuple[tuple[float, int], list[dict[str, Any]], str]] = {}
+    for (theme, measure), candidates in groups.items():
         top_candidates = candidates[:max_items_per_bundle]
         if len(top_candidates) < min_items:
             continue
-        bundles = [_make_bundle_item(theme, top_candidates)]
+        rank = (
+            max(float(item.get("score") or 0) for item in top_candidates),
+            len(top_candidates),
+        )
+        incumbent = best_by_theme.get(theme)
+        if incumbent is None or rank > incumbent[0]:
+            best_by_theme[theme] = (rank, top_candidates, measure)
+
+    bundle_items_by_theme: dict[str, list[dict[str, Any]]] = {}
+    represented_ids: set[str] = set()
+    for theme, (_rank, top_candidates, measure) in best_by_theme.items():
+        bundles = [_make_bundle_item(theme, measure, top_candidates)]
         bundle_items_by_theme[theme] = bundles[:max_bundles_per_theme]
+        if not bundle_items_by_theme[theme]:
+            continue
         represented_ids.update(_item_id(item) for item in top_candidates)
 
     if not represented_ids:
