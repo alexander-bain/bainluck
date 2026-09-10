@@ -178,7 +178,13 @@ export default function QuantityGroup({
       <div className="flex flex-col gap-0.5">
         {ordered.map((rung) => {
           const heat = probabilityHeat(rung.probability);
-          const width = Math.max(2, Math.round((rung.probability ?? 0) * 100));
+          // #4660. The 2% floor exists so a genuine long shot still draws a
+          // sliver instead of nothing (#1574), and it must not be applied to a
+          // rung that has no price: that turned an absent number into a VISIBLE
+          // red claim of near-impossibility. An unpriced rung draws no fill —
+          // the track below stays, so the ladder keeps its shape and the `—`
+          // in the number cell is the only thing that speaks.
+          const width = heat.known ? Math.max(2, Math.round(rung.probability! * 100)) : 0;
           const RowTag = interactive ? "button" : "div";
           return (
             <RowTag

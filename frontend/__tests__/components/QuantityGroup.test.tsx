@@ -160,3 +160,77 @@ describe("buildThresholdRungs", () => {
     expect(html.indexOf("≥ 60")).toBeLessThan(html.indexOf("≥ 95"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// #4660 — "no price" must not render as "almost impossible".
+//
+// Production, 2026-09-09, Discover card "Netflix App Downloads in September" at
+// 390px: the rungs "Above 76" and "Above 82" printed `—` in the number cell and
+// a short RED bar beside it. Two coercions on one row produced it — the danger
+// band from `probabilityHeat(null)` supplied the colour, and this component's
+// `Math.max(2, …)` floor supplied a width big enough to see it.
+//
+// Both directions (gotcha #43): the floor is load-bearing for a genuine long
+// shot (#1574) and must survive. The fix removes it only where there is no
+// number at all.
+// ---------------------------------------------------------------------------
+describe("QuantityGroup — an unpriced rung (#4660)", () => {
+  const MIXED = [
+    { key: "p", label: "Above 70", probability: 0.64, value: 70 },
+    // A REAL long shot. Rounds to 2% and must keep drawing the red sliver.
+    { key: "q", label: "Above 74", probability: 0.02, value: 74 },
+    // No price at all — the two Netflix rungs.
+    { key: "r", label: "Above 76", probability: null, value: 76 },
+    { key: "s", label: "Above 82", probability: null, value: 82 },
+  ];
+
+  /** The fill widths, in DOM order, as the browser would paint them. */
+  const fills = (html: string) =>
+    Array.from(html.matchAll(/block h-full rounded-md ([a-z0-9-]+)"\s*style="width:(\d+)%"/g)).map(
+      (m) => ({ bar: m[1], width: Number(m[2]) }),
+    );
+
+  test("draws NO fill, while a priced 2% long shot still draws its red sliver", () => {
+    const html = renderToStaticMarkup(<QuantityGroup rungs={MIXED} />);
+    const drawn = fills(html);
+    expect(drawn).toHaveLength(4);
+
+    // Priced rungs are untouched — this is the both-directions half.
+    expect(drawn[0]).toEqual({ bar: "bg-accent-brand", width: 64 });
+    expect(drawn[1]).toEqual({ bar: "bg-accent-danger", width: 2 });
+
+    // Unpriced rungs paint nothing at all.
+    expect(drawn[2].width).toBe(0);
+    expect(drawn[3].width).toBe(0);
+  });
+
+  test("an unpriced rung is never painted in the danger band", () => {
+    const html = renderToStaticMarkup(
+      <QuantityGroup rungs={[{ key: "r", label: "Above 76", probability: null, value: 76 }]} />,
+    );
+    // The ONLY rung has no price, so no danger token may appear anywhere.
+    expect(html).not.toContain("bg-accent-danger");
+    expect(fills(html)).toEqual([{ bar: "bg-surface-border", width: 0 }]);
+  });
+
+  test("the track survives, so the ladder keeps its shape", () => {
+    const html = renderToStaticMarkup(
+      <QuantityGroup rungs={[{ key: "r", label: "Above 76", probability: null, value: 76 }]} />,
+    );
+    // The track is the OUTER span. Removing the fill must not remove it —
+    // a ladder that loses a row's rail reads as a missing row, not a blank one.
+    expect(html).toContain("flex-1 h-[18px] rounded-md bg-surface-elevated overflow-hidden");
+  });
+
+  test("the em-dash in the number cell is unchanged", () => {
+    const html = renderToStaticMarkup(
+      <QuantityGroup rungs={[{ key: "r", label: "Above 76", probability: null, value: 76 }]} />,
+    );
+    // Scoped to the NUMBER CELL, not the whole document: the fill legitimately
+    // carries `width:0%`, and asserting on the raw html would pass for the
+    // wrong reason (or fail for one, as it did first time round).
+    const cell = html.match(/<span class="w-10 shrink-0[^"]*">([^<]*)<\/span>/);
+    expect(cell?.[1]).toBe("—");
+    expect(html).toContain('aria-label="Above 76: —"');
+  });
+});

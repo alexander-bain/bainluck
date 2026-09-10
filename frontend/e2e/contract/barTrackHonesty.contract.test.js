@@ -63,15 +63,38 @@ describe("UX-P010 #1574(c) — bar tracks align and fills match printed values",
   it("QuantityGroup fill width and printed value come from the same probability", () => {
     const src = read(QUANTITY_GROUP);
 
-    // The rung fill is a plain percentage of the rung's own probability.
+    // The rung fill is a plain percentage of the rung's own probability, floored
+    // at 2% so a genuine long shot still draws a sliver (#1574(c)).
+    //
+    // This asserts the PROPERTY, not the literal expression. It used to pin the
+    // exact source text `Math.max(2, Math.round((rung.probability ?? 0) * 100))`,
+    // which meant it also pinned the `?? 0` — and that coercion was the #4660
+    // defect: it sorted an ABSENT probability into the same band as one measured
+    // at zero, and the floor then painted the result a visible red. A guard that
+    // hard-codes an implementation string fails the fix for the bug inside it.
     assert.ok(
-      /const width = Math\.max\(2, Math\.round\(\(rung\.probability \?\? 0\) \* 100\)\)/.test(src),
-      "rung fill must be `probability * 100` — anything relative (a max, a sum, " +
-        "a leader) decouples the bar from the number printed beside it",
+      /Math\.max\(2,\s*Math\.round\(rung\.probability!?\s*\*\s*100\)\)/.test(src),
+      "rung fill must be `probability * 100`, floored at 2% — anything relative " +
+        "(a max, a sum, a leader) decouples the bar from the number printed beside it",
     );
     assert.ok(
       !/rung\.probability\s*\/\s*max/i.test(src),
       "a leader/max-normalised rung fill contradicts its own printed percentage",
+    );
+
+    // #4660, the other half: the floor is for a long shot we HAVE priced, never
+    // for a rung with no price. Coercing the absent case to 0 puts it in the
+    // danger band and the floor makes that claim visible, so the width must be
+    // gated on the heat's `known` flag and must not re-introduce the coercion.
+    assert.ok(
+      /const width = heat\.known \?/.test(src),
+      "an unpriced rung must draw NO fill — gate the width on `heat.known` so the " +
+        "2% floor cannot paint a near-impossibility claim where there is no number",
+    );
+    assert.ok(
+      !/rung\.probability \?\? 0/.test(src),
+      "`rung.probability ?? 0` IS the #4660 defect: it makes an absent price " +
+        "indistinguishable from one measured at zero",
     );
   });
 
