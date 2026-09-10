@@ -30,6 +30,89 @@ import * as nodeFs from "fs";
 export const EXIT_USAGE = 2;
 export const EXIT_CLICK_FAILED = 3;
 export const EXIT_CAMERA = 1;
+export const EXIT_IMAGE_BLACKOUT = 5;
+
+/**
+ * Should the notice-39 agent tag ride THIS request? (#4903)
+ *
+ * It used to ride all of them. `shop-shot.mjs` set `x-bainluck-origin` as a
+ * context-wide `extraHTTPHeaders`, and Playwright puts those on every request
+ * the context makes — including the `<img>` loads Chromium issues in `no-cors`
+ * mode. A custom header on a no-cors image request makes Chromium fail the
+ * request outright, so from 2026-09-09 17:56 PT every LOOK in the fleet was a
+ * photograph of a page with no crests, no faces and no market art.
+ *
+ * Measured on `/sports/baseball_mlb` at 390px, one A/B with everything else
+ * held identical — same browser, args, viewport, DSF and waits:
+ *
+ * | arm | img elements | naturalWidth 0 | image responses | failures |
+ * |---|---|---|---|---|
+ * | with the header | 215 | 215 | none | 28 x net::ERR_FAILED |
+ * | without it | 215 | 2 | 28 x 200 | none |
+ *
+ * The tag exists so OUR backend can tell a lane from a person
+ * (`routes/events.py:_request_is_automation`). `a.espncdn.com` was never
+ * supposed to see it. So it rides our own origins and nothing else.
+ *
+ * Loopback is included deliberately: the local rail shoots the same app, and a
+ * tag that silently drops there would make the two rails disagree about what
+ * they are.
+ *
+ * @param {string} requestUrl
+ * @returns {boolean}
+ */
+export function agentHeaderApplies(requestUrl) {
+  let host;
+  try {
+    host = new URL(requestUrl).hostname;
+  } catch {
+    return false; // not addressable, so not ours
+  }
+  if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return true;
+  return host === "bainluck.com" || host.endsWith(".bainluck.com");
+}
+
+/**
+ * Did the camera, rather than the site, take the pictures out of the page?
+ *
+ * #3932 was a tap that never landed exiting 0. #4664 was a chart the capture
+ * path re-rendered away. This is the third of the same shape, and the shape is
+ * what matters: **the rig hands back a plausible screenshot of something other
+ * than the page, and exits 0.** Under standing notice 4 that PNG is the proof a
+ * rendered-surface change is done, so each time, the done-test became
+ * unfalsifiable in the failing direction — and this one is worse than a false
+ * positive, because an image ship now photographs identically before and after.
+ *
+ * The discriminator is deliberately narrow. `failed > 0 && responded === 0` says
+ * "every image request died at the network layer before the server answered" —
+ * which is the camera. A 404 or a 500 IS a response, so a genuinely broken image
+ * on the site still reaches the PNG and still reads as the defect it is. A page
+ * with no images at all (`failed === 0`) is not a blackout; it is a page with no
+ * images.
+ *
+ * @param {{responded?: number, failed?: number}} counts
+ * @returns {{line: string|null, blackout: boolean}}
+ */
+export function imageBlackoutReport({ responded = 0, failed = 0 } = {}) {
+  const blackout = failed > 0 && responded === 0;
+  if (blackout) {
+    return {
+      blackout: true,
+      line:
+        `IMAGE-BLACKOUT all ${failed} image request(s) failed at the network layer and none ` +
+        `was answered, so this PNG has NO images in it. That is the camera, not the page ` +
+        `(#4903): do not file a missing crest, a missing face or a missing image from it, and ` +
+        `do not accept it as proof that an image-bearing fix works.`,
+    };
+  }
+  if (failed > 0) {
+    return {
+      blackout: false,
+      line: `images=${responded + failed} answered=${responded} failed=${failed} — the failures are the page's, not the camera's.`,
+    };
+  }
+  return { blackout: false, line: null };
+}
 
 /**
  * Decide which click steps to run, and whether to warn about a conflict.

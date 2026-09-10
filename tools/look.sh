@@ -60,6 +60,16 @@
 # page under a filename that said otherwise, and the LOOK rule read it as a pass (ux/1052 lost one
 # that way). If you genuinely want "tap it if it's there", say so: SHOT_CLICK_OPTIONAL=1.
 #
+# 🔴 2026-09-10 (#4903): A SHOT WITH NO IMAGES IN IT EXITS 5, and it says IMAGE-BLACKOUT on stderr.
+# From 2026-09-09 17:56 PT to this fix, EVERY LOOK the fleet took was of a page with no crests, no
+# faces and no market art: notice 39's `x-bainluck-origin` tag was set as a context-wide header, and
+# Playwright puts those on every request — including the `<img>` loads Chromium issues in no-cors
+# mode, which it then fails outright. Measured on /sports/baseball_mlb at 390px, one A/B: with the
+# header 215/215 `img` at naturalWidth 0 and 28 x net::ERR_FAILED; without it, 28 x 200. The tag now
+# rides our own origins only. If you judged a missing image from a LOOK in that window, RE-SHOOT it.
+# Exit 5 is the backstop, not the fix: every image request failing at the network layer before the
+# server answered is the CAMERA. A 404 crest is a response, so a real broken image still reaches you.
+#
 # 2026-09-09 (#4408): the pointer is PARKED OFF-VIEWPORT before every shot, so no shot carries a
 # `:hover`. It used to be left wherever SHOT_CLICKS clicked, and SHOT_SCROLL then scrolled content
 # underneath it: `SHOT_CLICKS="Men's" SHOT_SCROLL=900` on /tournaments/us-open at 390px painted one

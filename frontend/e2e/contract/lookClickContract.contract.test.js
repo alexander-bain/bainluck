@@ -50,12 +50,34 @@ const LOOK_SH = path.join(TOOLS, "look.sh");
  *
  * Deliberately crude — it does not understand a `//` inside a string literal —
  * because the alternative is a parser, and every consumer here is asserting the
- * ABSENCE of a construct. A false strip can only ever hide code from the scan
- * in a file this suite also owns, and never invent a violation.
+ * ABSENCE of a construct.
+ *
+ * ## The claim that used to be here was wrong, and #4903 measured it
+ *
+ * It said a false strip "can only ever hide code from the scan … and never
+ * invent a violation". Both halves are true and the conclusion does not follow:
+ * every consumer asserts ABSENCE, so hiding code is exactly how this function
+ * invents a **pass**. That is the direction that matters, and it is silent.
+ *
+ * The trigger is one character sequence. A `**` glob — `page.route('**` + `/*',
+ * …)`, the ordinary way to match every request — contains the opener of a block
+ * comment inside a string literal, so the old non-greedy `/\*[\s\S]*?\*\/`
+ * swallowed the file from there to the next `*` + `/`. Measured on a three-line
+ * fixture: the glob line, a line reading `const secret = extraHTTPHeaders;`,
+ * and a later block comment reduced to `await page.route('**` — the forbidden
+ * construct on line 2 **deleted**, and its absence assertion green on a file
+ * that plainly contains it.
+ *
+ * So: a block comment is only stripped when it OPENS ITS OWN LINE. Every real
+ * block comment in `tools/` is a banner or JSDoc and does; a `/*` inside a
+ * string literal never is. The residue is trailing inline prose, which the
+ * consumers below tolerate because a scan reading one extra sentence can only
+ * cost a false FAILURE — loud, immediate, and fixed by rewording a comment.
+ * Prefer that over a silent pass every time.
  */
 function codeOnly(src) {
   return src
-    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, "")
     .split("\n")
     .filter((l) => !l.trim().startsWith("//"))
     .join("\n");
@@ -685,5 +707,185 @@ describe("#4664 — a whole-page capture must contain the chart", () => {
       "shop-shot.mjs writes its own capture-plan literal instead of using the " +
         "one chooseCapture() returned — the guarded decision is being bypassed",
     );
+  });
+});
+
+/**
+ * #4903 — the agent tag stops taking the images out of every LOOK.
+ *
+ * The third instance of this rail's one failure mode, and the reason these
+ * tests are worth their weight: #3932 was a tap that never landed exiting 0,
+ * #4664 was a chart the capture path re-rendered away, and this was **every
+ * image in the page**, for ~20 hours across nine lanes, because notice 39's
+ * `x-bainluck-origin` shipped as a context-wide `extraHTTPHeaders`. Playwright
+ * puts those on every request the context makes, including the `<img>` loads
+ * Chromium issues in no-cors mode — which it then fails outright.
+ *
+ * Measured A/B on `/sports/baseball_mlb` at 390px, everything else identical:
+ *
+ * | arm | img elements | naturalWidth 0 | image responses | failures |
+ * |---|---|---|---|---|
+ * | context-wide header | 215 | 215 | none | 28 x net::ERR_FAILED |
+ * | origin-scoped header | 215 | 2 | 28 x 200 | none |
+ *
+ * Each time, the rig produced a plausible screenshot of something other than
+ * the page and exited 0 — so under notice 4 the done-test was unfalsifiable in
+ * the failing direction. This one is the worst of the three: an image-bearing
+ * fix photographs IDENTICALLY before and after, so the LOOK passes on inert
+ * code.
+ */
+describe("#4903 the agent tag rides our origins only, and a blacked-out shot cannot exit 0", () => {
+  test("the tag reaches our own origins, including the www the apex redirects to", () => {
+    // #4608 is why `www` is called out by name: the retired `bl_agent` cookie
+    // was set on the APEX while every shot redirects to www, so it never once
+    // reached the page. A predicate that only knew `bainluck.com` would ship
+    // that same bug as a header.
+    for (const url of [
+      "https://bainluck.com/sports/baseball_mlb",
+      "https://www.bainluck.com/sports/baseball_mlb",
+      "https://api.bainluck.com/api/events/search?q=yank",
+      "http://localhost:3000/discover",
+      "http://127.0.0.1:8000/api/feed",
+    ]) {
+      assert.equal(
+        evalInModule(`m.agentHeaderApplies(${JSON.stringify(url)})`),
+        true,
+        `${url} is ours and must carry the tag — notice 39 exists so the backend can tell a lane from a person`,
+      );
+    }
+  });
+
+  test("the tag reaches nothing else, and a lookalike host is not ours", () => {
+    for (const url of [
+      // The actual carrier of the bug: team crests, on every sport page.
+      "https://a.espncdn.com/combiner/i?img=/i/teamlogos/mlb/500/12.png&w=40&h=40",
+      "https://images.pexels.com/photos/1.jpeg",
+      "https://vitals.vercel-insights.com/v1/vitals",
+      // Suffix matching without the dot would hand our header to whoever
+      // registers this, and a custom header is a fingerprint.
+      "https://evilbainluck.com/x.png",
+      "https://bainluck.com.attacker.example/x.png",
+      "not a url at all",
+      "",
+    ]) {
+      assert.equal(
+        evalInModule(`m.agentHeaderApplies(${JSON.stringify(url)})`),
+        false,
+        `${url} is not ours and must NOT be tagged`,
+      );
+    }
+  });
+
+  test("every image request dying at the network layer is the camera, and it is loud", () => {
+    const report = evalInModule("m.imageBlackoutReport({ responded: 0, failed: 28 })");
+    assert.equal(report.blackout, true);
+    assert.match(report.line, /IMAGE-BLACKOUT/);
+    assert.match(report.line, /28 image request/);
+    // The line has to tell the reader what NOT to do with the PNG, because the
+    // PNG is what they will look at, and it looks like a page.
+    assert.match(report.line, /do not file/i);
+  });
+
+  test("a 404 crest is the page's defect and must still reach the reader", () => {
+    // The narrow discriminator, and the whole reason it is narrow: a response —
+    // any response, including 404 and 500 — means the server answered, so a
+    // genuinely broken image on the site is NOT swallowed as a camera fault.
+    const report = evalInModule("m.imageBlackoutReport({ responded: 27, failed: 1 })");
+    assert.equal(report.blackout, false);
+    assert.match(report.line, /failed=1/);
+    assert.match(report.line, /not the camera/);
+  });
+
+  test("a page with no images at all is not a blackout", () => {
+    const report = evalInModule("m.imageBlackoutReport({ responded: 0, failed: 0 })");
+    assert.equal(report.blackout, false);
+    assert.equal(report.line, null);
+  });
+
+  test("the blackout has its own exit code, distinct from every other story", () => {
+    // Gotcha #124: the VALUE is the story. A shot that succeeded mechanically
+    // but came back empty is not a broken camera (1) and not a bad selector
+    // (3); flattening it into either sends the reader to the wrong place.
+    const codes = evalInModule(
+      "[m.EXIT_CAMERA, m.EXIT_USAGE, m.EXIT_CLICK_FAILED, m.EXIT_IMAGE_BLACKOUT]",
+    );
+    assert.deepEqual(codes, [1, 2, 3, 5]);
+    assert.equal(new Set(codes).size, codes.length, "two stories share one exit code");
+  });
+
+  test("shop-shot.mjs sets NO context-wide header — this is the defect itself", () => {
+    // THE ASSERTION THAT WOULD HAVE CAUGHT #4903, and it is deliberately a
+    // NEGATIVE one. `agentHeaderApplies` appearing in the source proves nothing:
+    // the regressed rail could call it and still hand Playwright a context-wide
+    // `extraHTTPHeaders` beside it, which is precisely the shape that shipped.
+    // Presence is not reach (see the chooseCapture scan above); absence of the
+    // construct is the only property this suite can actually hold.
+    const src = codeOnly(fs.readFileSync(SHOP_SHOT, "utf8"));
+    assert.ok(
+      !/extraHTTPHeaders/.test(src),
+      "shop-shot.mjs sets extraHTTPHeaders again — Playwright puts those on EVERY " +
+        "request including no-cors <img> loads, so every LOOK is a page with no " +
+        "images and #4903 is back",
+    );
+    assert.ok(
+      /agentHeaderApplies\(/.test(src),
+      "shop-shot.mjs no longer asks the guarded predicate which requests may carry the tag",
+    );
+    assert.ok(
+      /imageBlackoutReport\(/.test(src),
+      "shop-shot.mjs no longer asks whether the shot it just took has any images in it",
+    );
+    assert.ok(
+      /EXIT_IMAGE_BLACKOUT/.test(src),
+      "shop-shot.mjs computes the blackout and then exits 0 anyway — a pass-looking " +
+        "artifact of a page with no images is the whole bug",
+    );
+  });
+});
+
+/**
+ * #4903 — the source scans' own stripper, because a silent pass is the failure
+ * mode this whole suite exists to prevent.
+ *
+ * Every scan in this file asserts the ABSENCE of a construct. A stripper that
+ * over-deletes therefore does not fail loudly — it hands back a green.
+ */
+describe("#4903 codeOnly cannot delete the code the absence assertions are about", () => {
+  test("a ** glob in a string literal does not swallow the rest of the file", () => {
+    // The exact shape that shipped: the two characters that open a block
+    // comment, inside a route glob, above the construct a scan is hunting.
+    const fixture = [
+      "await page.route('**" + "/*', handler);",
+      "const forbidden = extraHTTPHeaders;",
+      "/* a perfectly ordinary banner comment, much later */",
+      "const alsoReal = EXIT_IMAGE_BLACKOUT;",
+    ].join("\n");
+    const scanned = codeOnly(fixture);
+    assert.match(
+      scanned,
+      /extraHTTPHeaders/,
+      "codeOnly deleted the construct an absence assertion is about — the scan now " +
+        "passes on a file that contains it",
+    );
+    assert.match(scanned, /EXIT_IMAGE_BLACKOUT/);
+  });
+
+  test("it still strips the banner and JSDoc comments it exists to strip", () => {
+    const fixture = [
+      "/**",
+      " * A JSDoc block naming extraHTTPHeaders in prose.",
+      " */",
+      "const real = 1;",
+      "  /* an indented block comment naming extraHTTPHeaders */",
+      "// a line comment naming extraHTTPHeaders",
+      "const alsoReal = 2;",
+    ].join("\n");
+    const scanned = codeOnly(fixture);
+    assert.ok(
+      !/extraHTTPHeaders/.test(scanned),
+      "codeOnly stopped stripping prose, so scans will fail on comments",
+    );
+    assert.match(scanned, /const real = 1;/);
+    assert.match(scanned, /const alsoReal = 2;/);
   });
 });

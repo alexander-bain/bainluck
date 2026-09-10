@@ -17,10 +17,13 @@ import { existsSync, readdirSync } from 'fs';
 import {
   EXIT_CAMERA,
   EXIT_CLICK_FAILED,
+  EXIT_IMAGE_BLACKOUT,
   EXIT_USAGE,
+  agentHeaderApplies,
   chooseCapture,
   clearStaleArtifact,
   clickFailHint,
+  imageBlackoutReport,
   parseClickSteps,
   parseScroll,
   pointerParkPoint,
@@ -66,7 +69,8 @@ if (!url || !out) {
 // halves of one rail disagreed; this is them agreeing.
 //
 // EXIT CODES ARE A STORY (gotcha #124): 2 usage, 3 a tap that did not land,
-// 1 anything else. `SHOT_CLICK_OPTIONAL=1` restores best-effort for a caller who
+// 5 a shot that came back with no images in it (#4903), 1 anything else.
+// `SHOT_CLICK_OPTIONAL=1` restores best-effort for a caller who
 // genuinely wants "tap it if it's there" — it is never the default, because the
 // default is what silently lied.
 const CLICK_OPTIONAL = process.env.SHOT_CLICK_OPTIONAL === '1';
@@ -87,6 +91,7 @@ if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>
 
 const browser = await chromium.launch({ args });
 let ok = false;
+let blackout = false;
 try {
   const W = parseInt(process.env.SHOT_W || '1280', 10);
   const H = parseInt(process.env.SHOT_H || '2200', 10);
@@ -130,10 +135,41 @@ try {
   // those two tells removed. Re-adding a cookie would be inert code carrying a live bug
   // (#4608: it was set on the APEX origin while the shot redirects to www, so it never
   // reached the page even once).
+  //
+  // 🔴 THE TAG RIDES OUR OWN ORIGINS ONLY, AND THAT IS NOT A TIDINESS PREFERENCE (#4903).
+  // It shipped as a context-wide `extraHTTPHeaders`, which Playwright puts on EVERY
+  // request the context makes — including the `<img>` loads Chromium issues in no-cors
+  // mode, which it then fails outright. Measured A/B on /sports/baseball_mlb at 390px,
+  // everything else identical: with the header 215/215 `img` at naturalWidth 0, zero
+  // image responses, 28 x net::ERR_FAILED; without it, 28 x 200 and 213/215 with pixels.
+  // So for ~20 hours every LOOK in the fleet photographed a page with no crests.
   const page = await browser.newPage({
     viewport: { width: W, height: H },
     deviceScaleFactor: 2,
-    extraHTTPHeaders: { 'x-bainluck-origin': AGENT },
+  });
+  // The URL-PREDICATE form, not a `**` glob, and both halves of that are deliberate.
+  // Routing on the guarded predicate means a third-party request is never intercepted
+  // at all — nothing to get wrong on the path that broke. And a bare glob literal in
+  // this file would contain the two characters that open a block comment, which is
+  // enough to blind the contract suite's source scan to everything after it (see
+  // `codeOnly` in lookClickContract.contract.test.js).
+  await page.route(
+    (requestUrl) => agentHeaderApplies(requestUrl.toString()),
+    async (route) => {
+      const request = route.request();
+      return route.continue({
+        headers: { ...request.headers(), 'x-bainluck-origin': AGENT },
+      });
+    },
+  );
+  // Counted so the rig can tell the reader when IT, not the page, emptied the PNG.
+  let imagesResponded = 0;
+  let imagesFailed = 0;
+  page.on('response', (response) => {
+    if (response.request().resourceType() === 'image') imagesResponded += 1;
+  });
+  page.on('requestfailed', (request) => {
+    if (request.resourceType() === 'image') imagesFailed += 1;
   });
   await page.goto(url, { waitUntil: 'load', timeout: 60000 });
   await page.waitForTimeout(7000);
@@ -327,6 +363,12 @@ try {
     console.error(scrollReachReport({ target: shot.y, finalY, docHeight, grewTo }).line);
   }
   if (capture !== null) console.error(`docHeight=${docHeight} mode=${capture}`);
+  // The backstop for the class, not just for #4903's cause. The PNG is still
+  // written and still named — it is the evidence OF the blackout — but the exit
+  // code stops any caller reading it as a page.
+  const images = imageBlackoutReport({ responded: imagesResponded, failed: imagesFailed });
+  if (images.line) console.error(images.line);
+  blackout = images.blackout;
   ok = true;
   console.log(out);
 } catch (e) {
@@ -340,4 +382,9 @@ try {
 // shared module and the third was typed here, which is exactly how a
 // vocabulary drifts: renumber `EXIT_CAMERA` and this line would have gone on
 // meaning the old thing while every reader of the constant meant the new one.
-process.exit(ok ? 0 : EXIT_CAMERA);
+// `EXIT_IMAGE_BLACKOUT` (5) is its own value for the same reason the other three
+// are: a shot that succeeded mechanically but came back with no images is not a
+// broken camera and not a bad selector, and flattening it into either would send
+// the reader looking in the wrong place.
+if (!ok) process.exit(EXIT_CAMERA);
+process.exit(blackout ? EXIT_IMAGE_BLACKOUT : 0);
