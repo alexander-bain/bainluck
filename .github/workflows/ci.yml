@@ -1475,6 +1475,39 @@ jobs:
             exit 1
           fi
 
+      - name: "#4586 restore compare-and-swap (real Postgres)"
+        # CERT-2439's required repair, `4586-RESTORE-CAS-PRESERVES-LATER-RELINKS`.
+        # The forward repair compare-and-swaps on the link it planned; its D51
+        # undo did not, and reverted every backed-up row whose live link merely
+        # DIFFERED from its backup. That is true for a row the repair moved and
+        # for a row the live matcher relinked afterwards — including the rows
+        # the forward CAS had correctly SKIPPED — so the one-command undo put
+        # markets the repair never touched back onto the voided phantom.
+        #
+        # Real Postgres because the claim is about a three-row population coming
+        # out right, and the parts that decide it are the server's: the
+        # manifest's `ON CONFLICT (market_id) DO UPDATE` on a real unique
+        # constraint, the plan/CAS pair agreeing about which rows exist, and
+        # `flush_receipts` appending a durable `market_link_changes` row (the
+        # old restore appended none and claimed a later matcher pass would —
+        # false under gotcha #15). The unit file asserts the clause is in the
+        # SQL text; that was green while the defect was live.
+        #
+        # The blocked predicate is executed verbatim against the same seed and
+        # required to get the row WRONG, so the required test cannot go green on
+        # a restore that does nothing.
+        #
+        # Same skip-detection as every gate in this job: adding the file is not
+        # adding the gate.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_restore_4586_manifest_cas_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/restore4586.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/restore4586.txt; then
+            echo "::error::#4586 restore-CAS gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
