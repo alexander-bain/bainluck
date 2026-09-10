@@ -35,7 +35,7 @@ START?* — because both nets measure elapsed time from ``commence_time`` and
 neither ever asked whether that field held a start anybody reported. See
 ``commence_time_is_a_reported_start``.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from app.utils.sport_keys import statpal_anchor_is_shadow
 
@@ -120,6 +120,78 @@ def commence_time_is_a_reported_start(commence_time_source) -> bool:
     error, and a far larger one.
     """
     return commence_time_source not in DERIVED_COMMENCE_SOURCES
+
+
+# ── WHEN DID THIS FINISHED GAME END? (D109) ──────────────────────────────────
+
+
+def statpal_end_time(event):
+    """StatPal's own observed end time, from the column or the JSONB mirror.
+
+    The only end time on an event that a source actually WATCHED, which is why
+    it outranks everything below it. Returns None when StatPal never reported
+    one — which, measured on production 2026-09-10, is every finished row we
+    have (see :func:`finished_event_end_time`).
+    """
+    column = getattr(event, "statpal_end_time", None)
+    if column:
+        return column
+    sources = getattr(event, "win_probability_sources", None) or {}
+    raw = sources.get("statpal_end_time")
+    if raw:
+        try:
+            return datetime.fromisoformat(raw)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def finished_event_end_time(event):
+    """The best available answer to *when did this game end*, or None.
+
+    ``statpal_end_time`` first — an observation — then ``completed_at``.
+
+    ═══ WHY THE FALLBACK EXISTS, MEASURED ═══
+
+    A results list is read from the top for the thing that JUST happened, so it
+    must be ordered by the END of a game. The /sports Finished section could not
+    be: the only end time in the feed payload came from StatPal, and on
+    production (2026-09-10, the 36 hours around the NFL opener) StatPal had
+    supplied one for **0 of 116** finished events, by column and by JSONB mirror
+    alike. So the key was absent on every finished card and the section fell back
+    to ordering by ``commence_time`` — the wrong end of the game.
+
+    What that cost, at T+30 on the NFL season opener (03:56Z): the final had
+    ENDED at 03:26:32Z, more recently than anything else on the board, but had
+    STARTED at 00:20Z, behind eight MLS/Copa fixtures that kicked off ten minutes
+    later and finished fifty minutes earlier. Ordered by start it was 6th; the
+    section's cap is 4, so the biggest final of the night was not on the page.
+    Ordered by end it is 1st. ``completed_at`` is present for **116 of 116** of
+    those rows, so the fallback is not a partial improvement — it is the whole
+    population.
+
+    ═══ AND WHY completed_at IS SECOND, NOT FIRST ═══
+
+    It is a backend processing timestamp, not a whistle (gotcha #22, and this
+    module's own opening docstring): it is wrong by however long the writer took
+    to notice. Two consequences a caller must plan for, neither of which is a
+    reason to prefer the start time:
+
+    * It can be BATCHED. Three MLS rows on 2026-09-10 share
+      ``04:45:41.647571`` to the microsecond — one sweep closing several games at
+      once — so ties are real and an order within a tie is arbitrary. Sort
+      callers should break ties on ``commence_time`` descending rather than let
+      the batch decide.
+    * It is LATER than the true finish, never earlier, and by a variable margin.
+      That is tolerable for ordering, where only the relative order matters, and
+      it is NOT tolerable for anything that renders the value as a time to a
+      reader. This function is for ordering; do not print its result as "ended
+      at" without saying which of the two it came from.
+    """
+    observed = statpal_end_time(event)
+    if observed:
+        return observed
+    return getattr(event, "completed_at", None)
 
 
 # ══ THE STATE LADDER (live/048 — EVENT-GRAPH-DOCTRINE §R) ════════════════════

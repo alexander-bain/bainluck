@@ -13,7 +13,10 @@ from sqlalchemy.orm import selectinload
 from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
-from app.utils.event_completion import venue_live_write_is_a_resurrection
+from app.utils.event_completion import (
+    statpal_end_time,
+    venue_live_write_is_a_resurrection,
+)
 from app.utils.game_pairing import IdCurrency, external_id_currency
 from app.utils.odds_math import moneyline_to_probability, project_scores
 from app.utils.polling_config import compute_effective_interval
@@ -91,18 +94,12 @@ def get_statpal_end_time(event) -> Optional[datetime]:
     falls back to JSONB win_probability_sources storage.
 
     Returns a timezone-aware datetime if found, else None.
+
+    ONE definition, in ``event_completion`` beside the rest of "when did this
+    game end" (D109). This name is kept because it is the one the staleness net
+    below and the tests call; it is an alias, not a second reading.
     """
-    statpal_end = getattr(event, "statpal_end_time", None)
-    if statpal_end:
-        return statpal_end
-    sources = getattr(event, "win_probability_sources", None) or {}
-    end_str = sources.get("statpal_end_time")
-    if end_str:
-        try:
-            return datetime.fromisoformat(end_str)
-        except (ValueError, TypeError):
-            pass
-    return None
+    return statpal_end_time(event)
 
 
 def get_max_duration_for_sport(sport_key: str) -> float:

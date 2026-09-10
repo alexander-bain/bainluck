@@ -1051,6 +1051,26 @@ export interface FeedEventData {
   home_team: string;
   away_team: string;
   commence_time: string;
+  /**
+   * D109 (#4676) — when the game ENDED, present-only, settled rows only.
+   *
+   * StatPal's observed end if it reported one, else `completed_at`. A results
+   * list is read from the top for the thing that just happened, so it must be
+   * ordered by the END; ordering by `commence_time` put the NFL season opener
+   * 6th at T+30 (it ENDED most recently and STARTED behind eight fixtures that
+   * kicked off ten minutes later and finished fifty minutes earlier) and the
+   * section's cap of 4 then cut it off the page.
+   *
+   * OPTIONAL and it must stay that way: it is absent on every unsettled row,
+   * and a cached payload can predate the backend that added it. Consumers fall
+   * back to `commence_time`.
+   *
+   * NOT for display. `completed_at` is a processing timestamp, not a whistle
+   * (gotcha #22) — later than the true finish by a variable margin, and
+   * sometimes BATCHED (three MLS rows shared one microsecond on 2026-09-10).
+   * Fine for ordering, wrong to print as "ended at".
+   */
+  ended_at?: string | null;
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;

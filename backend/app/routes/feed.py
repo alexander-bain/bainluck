@@ -50,7 +50,7 @@ from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenanc
 # The state vocabulary has ONE definition (live/048). Discovery imports the name
 # rather than spelling the literal so a widened vocabulary is a rename here, not
 # a string this route silently stops matching (CERT-786).
-from app.utils.event_completion import EVENT_SUSPENDED
+from app.utils.event_completion import EVENT_SUSPENDED, finished_event_end_time
 from app.utils.event_rails import started_live
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
@@ -7099,8 +7099,6 @@ async def _score_events(
         compute_base_score,
         format_event_data,
     )
-    from app.tasks.odds_polling import get_statpal_end_time
-
     # #4541: calendar-declared marquee FIXTURES. Loaded once per build, exactly as
     # the concept pin loads its entries, and best-effort — an unreadable calendar
     # means no pin, never a broken feed.
@@ -7404,7 +7402,7 @@ async def _score_events(
                     continue
 
             ended_at = (
-                get_statpal_end_time(event)
+                finished_event_end_time(event)
                 if event.status in ("completed", "closed")
                 else None
             )
