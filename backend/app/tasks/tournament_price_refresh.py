@@ -125,7 +125,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from app.utils.futures_liveness import LIVE_MARKET_SQL
+from app.utils.futures_liveness import LIVE_MARKET_SQL, writable_leg_sql
 
 logger = logging.getLogger(__name__)
 
@@ -653,8 +653,7 @@ async def _write_refreshed_prices(
                         SELECT fo.id, fo.name, fo.external_id
                           FROM futures_outcomes fo
                          WHERE fo.external_id IN (:cid, :cid_yes, :cid_no)
-                           AND fo.is_winner IS NOT TRUE
-                           AND COALESCE(fo.resolution_source, '') <> 'api_settlement'
+                           AND {writable_leg_sql("fo")}
                            AND {DUPLICATE_CONDITION_LEG_SQL}
                         """
                     ),

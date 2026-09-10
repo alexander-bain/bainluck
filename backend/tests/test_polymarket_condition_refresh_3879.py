@@ -747,6 +747,108 @@ class TestALadderIsAddressedByItsLegs:
         assert verdict_for("polymarket_condition_refresh", stats).is_green is False
 
 
+class TestTheSelectorAndTheWriterRefuseTheSameLeg:
+    """#4840. `futures_liveness` exists because "fix and guard cannot disagree
+    about what they cover", and it settled that argument for the MARKET bound.
+    The same disagreement then ran one level down, on the LEG:
+
+    * the writer refused `is_winner IS NOT TRUE` AND `resolution_source <>
+      'api_settlement'`;
+    * this selector refused only the first.
+
+    A leg with `is_winner = false` and `resolution_source = 'api_settlement'` was
+    therefore selectable and unwritable. Its `last_updated` can never advance, so
+    it is permanently the stalest thing in its class, and the ordering is
+    `stalest ASC` — it pinned its market to the head of the queue forever while
+    markets below the LIMIT were never reached.
+
+    Measured on production 2026-09-10, first 3,600 candidates: 365 carried such a
+    leg and **155 had no writable leg at all**. With the shared refusal composed
+    here, run from this module's own `_CANDIDATE_SQL`: fully-unwritable
+    **155 → 0** (19:13Z), and the statement got faster, 3,984 ms → 709 ms.
+
+    🔴 REACH, not just purity — the question a narrowing always has to answer is
+    what it dropped that it should have kept. Production 19:17Z, old probe AND
+    NOT new probe, over `LIVE_MARKET_SQL` × polymarket: **781 markets leave the
+    pool, and 0 of them have an ungraded, non-`api_settlement`, `0x`-keyed leg.**
+    Every row removed is one this rail could select and could never write.
+
+    These are COMPOSITION guards — they prove the two sites cannot state the
+    refusal differently, which is the drift that caused the defect. The
+    behavioural before/after is the production measurement above, recorded on
+    #4840; there is no local Postgres in this suite to re-run it against.
+    """
+
+    @staticmethod
+    def _norm(s: str) -> str:
+        return " ".join(s.split()).lower()
+
+    def test_both_leg_refusals_come_from_the_one_shared_definition(self):
+        """Acceptance 1: the selector's per-leg refusal and the writer's are the
+        same text, from one place."""
+        import inspect
+
+        from app.tasks import tournament_price_refresh
+        from app.utils.futures_liveness import writable_leg_sql
+
+        # The selector composes it — rendered, so a renamed helper that stopped
+        # being called would fail here rather than pass on the import alone.
+        assert self._norm(writable_leg_sql("fo")) in self._norm(rail._CANDIDATE_SQL)
+        assert self._norm(writable_leg_sql("fo_a")) in self._norm(
+            rail._ADDRESSABLE_LEG_SQL
+        )
+
+        # And so does the writer, at its own call site rather than anywhere in
+        # the module.
+        writer_source = inspect.getsource(
+            tournament_price_refresh._write_refreshed_prices
+        )
+        assert 'writable_leg_sql("fo")' in writer_source
+
+    def test_the_refusal_names_both_clauses(self):
+        """RED CONTROL. Narrowing the shared definition back to `is_winner`
+        alone — the exact regression #4840 describes — fails here, and fails at
+        every call site at once because they all render this one function."""
+        from app.utils.futures_liveness import writable_leg_sql
+
+        rendered = self._norm(writable_leg_sql("fo"))
+        assert "fo.is_winner is not true" in rendered
+        assert "coalesce(fo.resolution_source, '') <> 'api_settlement'" in rendered
+
+    def test_it_coalesces_because_resolution_source_is_nullable(self):
+        """`resolution_source` is NULL for the overwhelming majority of ungraded
+        legs. A bare `<> 'api_settlement'` is NULL for those rows — not TRUE —
+        so it would refuse every leg in the database and the rail would write
+        nothing. The COALESCE is the whole predicate's load-bearing half."""
+        from app.utils.futures_liveness import writable_leg_sql
+
+        rendered = self._norm(writable_leg_sql("fo"))
+        assert "coalesce(fo.resolution_source" in rendered
+        assert "fo.resolution_source <>" not in rendered
+
+    def test_the_alias_is_honoured_on_every_binding(self):
+        """Three call sites bind three aliases to `futures_outcomes`. A constant
+        that hard-coded `fo.` would have been hand-copied for `fo_a`, which is
+        how the fourth copy — and the next drift — gets typed."""
+        from app.utils.futures_liveness import writable_leg_sql
+
+        for alias in ("fo", "fo_a", "fo_w"):
+            rendered = writable_leg_sql(alias)
+            assert f"{alias}.is_winner" in rendered
+            assert f"{alias}.resolution_source" in rendered
+
+    def test_the_census_and_the_selector_still_agree(self):
+        """#4827's invariant, re-asserted because #4840 moves the shared
+        addressability probe: the census must not count a population the
+        selector refuses. Both compose `_ADDRESSABLE_LEG_SQL`, so the leg
+        refusal lands in both — production, 19:13Z, `served_markets` 16,755 →
+        15,954 in step."""
+        assert self._norm(rail._ADDRESSABLE_LEG_SQL) in self._norm(
+            rail._SERVED_COUNT_SQL
+        )
+        assert self._norm(rail._ADDRESSABLE_LEG_SQL) in self._norm(rail._CANDIDATE_SQL)
+
+
 def test_the_module_never_creates_a_market_or_an_outcome():
     """Stated as a test because it is the boundary between this rail and the
     discovery scan: it re-prices rows that exist and nothing else."""
