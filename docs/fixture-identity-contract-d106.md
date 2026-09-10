@@ -73,7 +73,7 @@ it is two keys added to a JSONB `claim_context` the writer already builds.
 
 ---
 
-## 3. The five rules the measurements force
+## 3. The six rules the measurements force
 
 These are not style preferences. Each one is a way the obvious implementation is wrong,
 demonstrated on today's data.
@@ -104,6 +104,20 @@ deliberately unanswered. **It is now answered: `stats_id` is not a game key.**
 
 A guard written against "midnight" without saying *which* midnight either misses the five
 real phantoms or deletes 671 real fixtures. Say the timezone, always.
+
+**AND THERE IS A THIRD CLASS THAT DOES NOT LOOK LIKE MIDNIGHT AT ALL.** lane1/221 (#4586)
+is repairing phantom rows carrying times like `2026-07-30 12:00:24+00` and
+`2026-09-04 23:20:59+00` — **ingest-clock fakes, uniformly distributed across the day**,
+written because `_create_event_from_prediction_market` stamps `now` when the market's own
+time disagrees with `now` by more than 30 days. Today that is **114 events and 304 open
+markets**.
+
+The consequence for anyone writing a guard from this document: **a fabricated start time does
+not have to look like a placeholder.** A guard that screens for suspicious *values* — round
+hours, midnights, sentinels — misses this entire class, because these timestamps are
+indistinguishable from real ones by inspection. The tell is not the clock face, it is that
+`|commence_time - created_at|` is small, which is the predicate #4242 already ships as
+`auto_create_time_is_invented`. Screen on the relationship, not on the value.
 
 ### R3 — UNKNOWN START IS TOLD BY THE PARTICIPANTS, NOT BY THE CLOCK
 
@@ -160,6 +174,25 @@ A true doubleheader is 3–5h apart, or ~7h for a split. So:
 There are no doubleheaders anywhere in the readable window today, which means any code that
 produces one is producing it from nothing.
 
+**R4 MUST NAME WHICH TIME FIELD IT GROUPS ON, PER PROVIDER.** lane1/221 measured this on
+production (2026-09-10 ~02:00Z) over Polymarket rows linked to ESPN-anchored events
+(n=25,347, 60 days):
+
+| field | within 60s of the real start |
+|---|---:|
+| `futures_markets.commence_time` | **0** |
+| `futures_markets.resolution_date` | 17,990 (71%) |
+
+`futures_markets.commence_time` for a Polymarket row is **the ingest clock** — for the three
+NFL opener markets it lands 15, 23 and 55 minutes before each row's own `created_at`. It is
+never the kickoff, not once in twenty-five thousand rows.
+
+So "group by the venue's local date" implemented against *the field that looks like a start
+time* will, for Polymarket, group by **the date we happened to poll** — which drifts across
+midnight for reasons that have nothing to do with the fixture, and manufactures precisely the
+artefact R4 exists to prevent. A guard written from this rule names its field per provider or
+it is worse than no guard. Worked specimen and full write-up: **#4590**.
+
 ### R5 — `commence_time_source` NAMES THE WRITER, NOT THE AUTHORITY
 
 Production distribution: `kalshi` 147,719 · `NULL` 30,414 · `polymarket` 24,791 ·
@@ -171,6 +204,42 @@ The largest bucket is a source whose timestamp is documented as a *close* time, 
 authoritative?" — it answers "who wrote it last". D106 asks for authoritative start
 provenance, so provenance has to carry a **grade** alongside the writer, and `unknown` has
 to be expressible rather than backfilled with a plausible-looking timestamp.
+
+### R6 — SIGNIFICANCE IS A NAMED BASIS FROM VENUE STRUCTURE, AND ITS ABSENCE MEANS UNKNOWN
+
+Added on Fable-5's ruling of 2026-09-09 7:05pm PT (option **A** of the 091 scope call),
+after live/125 measured the NFL season opener at **rank 43, score 58** forty-nine minutes
+before kickoff, behind two finished MLB games (#4541).
+
+The mechanism that made that possible: `_marquee_pin` is written at two sites only, both in
+`routes/feed.py` and both keyed on `majors_calendar.yaml` `concept_key`s. Those are
+**tournament concepts**, so no `type: "event"` card can carry one — the Vuelta pins, the NFL
+opener cannot. `significance` is the fixture-level fact that gap needs, and it belongs in
+`identity` because it is derived from venue structure exactly like `season` and `round`.
+
+Three constraints, all load-bearing:
+
+* **`basis` and `provenance` are required.** A bare `"marquee": true` is a claim with no
+  audit trail; a basis names *why* and can be re-derived.
+* **Absence means UNKNOWN, never "not marquee".** A consumer must not read a missing
+  `significance` as a demotion — most fixtures will never carry one.
+* **Only one basis is populatable today.** `season_opener` is real now: NFL `round_info` is
+  **321/321 populated**, and the earliest `Regular Season / Week 1` fixture is NE@SEA at
+  `2026-09-10T00:20Z` — live/125's exact specimen. That is deterministic venue structure, not
+  a title match, so it satisfies notice 40's membership doctrine.
+
+**`slam_semi_final` and `title_fight` are NOT shipping**, because there is no venue-structural
+signal for them in this source: `round` is **0% on NBA/NHL/MLB** and `season` is **0% on NFL**
+— exact mirrors — and tennis draw structure is a different, unmeasured endpoint. Each further
+basis is its own per-sport measurement and its own ship (tennis draw structure next, since the
+US Open is live); the number goes to `runner-inbox/fable` when it exists, not before.
+
+**Scope note, measured 2026-09-09 (093).** This is not the same question as #4500's off-court
+container membership, and the two do not share a predicate. #4500 asks *given a market, which
+container owns it* (entity resolution over venue structure); `significance` asks *given a
+fixture, how important is it* (a ranking signal). #4500 touches none of the `_marquee_pin`
+sites. Confirmed disjoint before either was built, so no duplicate marquee predicate is in
+flight.
 
 ---
 
@@ -195,6 +264,10 @@ not read `identity` behaves exactly as it does today.
     "at":         "2026-09-10T00:20:00Z", // null when unknown; NEVER a plausible substitute
     "provenance": "espn",                 // the writer  — R5
     "grade":      "authoritative"         // authoritative | derived | unknown  — R5
+  },
+  "significance": {                       // ABSENT means UNKNOWN, never "not marquee" — R6
+    "basis":      "season_opener",        // the named reason; never a bare boolean
+    "provenance": "statpal:round_info"    // the venue structure it was derived from
   }
 }
 ```
@@ -217,6 +290,7 @@ Field-by-field, and what a client may rely on:
 | `game_number` | present-or-null | null today everywhere; set only when R4's gap test fires |
 | `start.at` | **may be null** | R2/R3 — a null start is the honest answer and must render as "time TBC", never as a timestamp |
 | `start.grade` | **yes** | the only field that says whether `start.at` can be trusted; `unknown` ⇒ do not print a clock |
+| `significance` | present-or-**absent** | R6 — absent means UNKNOWN, **never** "not marquee". Only `basis: "season_opener"` exists today (NFL `round_info`, 321/321). Never a bare boolean; `basis` and `provenance` are both required when present. |
 | `lifecycle.state` | **yes** | superset of today's `status` |
 | `lifecycle.legacy_status` | deprecated on arrival | present for exactly one release so nobody has to cut over on the same day |
 
@@ -240,7 +314,13 @@ the mapping is `scheduled→scheduled`, `live→live`, `completed|closed→final
 * **lane1** — the registry and matcher side. R1 and R4 are matching invariants: an anchor
   keyed on a non-unique id, and a same-local-day pair, are the two shapes that produce a
   twin or a lost fixture. Nothing here asks lane1 to widen absorption — gotcha #32 and
-  ruling 048 are untouched.
+  ruling 048 are untouched. lane1/221 has agreed R1 and R4 as written and **asked for R4's
+  probes as invariants in their guard suite** rather than as prose here; they wire them under
+  #2693. R4's per-provider field rule and R2's third class are lane1's own measurements
+  (#4590, #4586), folded back in here.
+* **live** — `significance` (R6) is the field #4541 needs; live/126 is building against this
+  shape. It is a ranking input, not a badge: absence is UNKNOWN and must not render as a
+  negative claim.
 * **live** / **native** — read `identity` and `lifecycle` when they appear, ignore them when
   they do not. The one behaviour change that is not optional: **when `start.grade` is
   `unknown`, do not print a clock.** Notice 34 applies — "time TBC" is a label, not a
