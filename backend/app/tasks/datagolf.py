@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func as sa_func, select, and_, or_, update
+from sqlalchemy import func as sa_func, select, and_, null, or_, update
 
 from app.tasks.base import get_task_session
 from app.utils.market_settlement import settled_values
@@ -323,6 +323,29 @@ async def _poll_datagolf_markets() -> dict:
                                     name=player.player_name,
                                     current_probability=prob,
                                     opening_probability=prob,
+                                    # 🔴 `null()`, NOT `None`, AND THE
+                                    # DIFFERENCE IS THE WHOLE FIX (#4788).
+                                    # `is_winner` is `boolean NULL DEFAULT
+                                    # false` with a Python-side `default=False`
+                                    # as well (models.py:942). On this ORM
+                                    # constructor path SQLAlchemy applies that
+                                    # Python-side default to any value it reads
+                                    # as absent — and it reads an explicit
+                                    # `None` as absent — so `is_winner=None`
+                                    # here still stores an affirmative graded
+                                    # LOSS (CAL-P1004R) on a leg nobody called.
+                                    # The model's own annotation says so: the
+                                    # default "still fires, including when
+                                    # ``None`` is passed explicitly".
+                                    # `null()` is a SQL NULL literal, which the
+                                    # default cannot override.
+                                    # The `pg_insert(...).values()` sites in
+                                    # polymarket.py/kalshi.py are Core inserts,
+                                    # where `None` DOES mean NULL — do not
+                                    # copy this line's `null()` to those, or
+                                    # that one's `None` to here.
+                                    is_winner=null(),
+                                    resolution_source=null(),
                                 )
                                 session.add(outcome)
                                 await session.flush()
@@ -694,6 +717,12 @@ async def _poll_datagolf_live() -> dict:
                                     name=player.player_name,
                                     current_probability=prob,
                                     opening_probability=prob,
+                                    # `null()`, NOT `None` — an explicit `None`
+                                    # on this ORM path stores a graded LOSS.
+                                    # Full note at the outright-market creation
+                                    # site earlier in this file (#4788).
+                                    is_winner=null(),
+                                    resolution_source=null(),
                                 )
                                 session.add(outcome)
                                 await session.flush()

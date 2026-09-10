@@ -327,6 +327,15 @@ async def _poll_futures_odds():
                                 opening_american_odds=american,
                                 opening_captured_at=now,
                                 rank=rank,
+                                # Explicit, and load-bearing: the column is
+                                # `boolean NULL DEFAULT false`, so an INSERT
+                                # that omits it stores an affirmative graded
+                                # LOSS (CAL-P1004R) on a leg nobody called.
+                                # This path is dormant (no odds_api futures
+                                # since 2026-03-23) — named so the class is
+                                # closed, not because it is writing. #4788.
+                                is_winner=None,
+                                resolution_source=None,
                             ).on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
                                 set_={
