@@ -81,7 +81,12 @@ def _stale_hours() -> int:
 async def pg_session():
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    import app.models.models  # noqa: F401 — registers every table on Base
+    # Importing ANY name off the models module executes it, and executing it is
+    # what registers every table on `Base` — which `create_all` below needs. The
+    # `from` form rather than `import app.models.models` because `_seed` already
+    # imports from it that way, and mixing the two forms is `py/import-and-
+    # import-from` (CodeQL note-level, and the sibling gates carry it).
+    from app.models.models import Event  # noqa: F401
     from app.services.database import Base
 
     engine = create_async_engine(DB_URL)
