@@ -15,8 +15,8 @@ end to end against a fake session.
 """
 import argparse
 import asyncio
-import datetime as dt
 import importlib.util
+import inspect
 import pathlib
 
 import pytest
@@ -47,6 +47,8 @@ def test_every_statement_parses_as_postgres():
         repair.SQL["bak_index"],
         repair.SQL["bak_copy"],
         repair.SQL["bak_missing"],
+        repair.SQL["man_create"],
+        repair.SQL["man_record"],
         repair.SQL["repoint"],
         repair._PLAN_SQL,
         repair._RESIDUAL_SQL,
@@ -155,6 +157,139 @@ def test_the_repair_writes_no_column_the_undo_does_not_restore():
 
 
 # ---------------------------------------------------------------------------
+# CERT-2439's required repair: 4586-RESTORE-CAS-PRESERVES-LATER-RELINKS
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT, IN ONE SENTENCE: the forward write compare-and-swaps on the link
+# it planned, and the restore did not — it reverted every backed-up row whose
+# live link differed from its backup, which is true both for a row the repair
+# moved AND for a row the live matcher relinked afterwards. So the undo dragged
+# a market the repair had CORRECTLY SKIPPED back onto the voided phantom.
+#
+# Reproduced by the grader against the exact predicate: market 1 on target 20
+# (backup 10) and market 2 independently relinked to 30 (backup 11) restored to
+# `[(1, 10), (2, 11)]` where `[(1, 10), (2, 30)]` is required.
+#
+# The behavioural proof lives in
+# `tests/integration/test_restore_4586_manifest_cas_pg.py`, on a real server.
+# These are the cheap structural halves that fail in one second rather than one
+# CI job.
+
+
+def test_the_undo_compare_and_swaps_on_the_target_not_merely_on_difference():
+    """The clause the block was raised on.
+
+    `event_id = :target` is the whole repair. Restoring on "differs from the
+    backup" cannot tell a row this repair moved from a row something else moved,
+    and reverting the second is a destructive write the undo never earned.
+    """
+    sql = " ".join(restore._RESTORE_SQL.split()).lower()
+    assert "event_id = :target" in sql, (
+        "the restore no longer requires the row to be on the repair's target — "
+        "it can clobber a later, legitimate relink"
+    )
+    assert "is distinct from" not in sql, (
+        "the difference-based predicate is back; see CERT-2439"
+    )
+
+
+def test_the_undo_reads_the_manifest_and_not_only_the_row_snapshot():
+    """A backup records where a row CAME FROM; only a manifest records where
+    this repair PUT it, and the CAS above needs the second one.
+    """
+    assert repair.MANIFEST_TABLE == restore.MANIFEST_TABLE
+    assert repair.MANIFEST_TABLE not in ("futures_markets", repair.BAK_TABLE)
+    assert restore.MANIFEST_TABLE in restore._PLAN_SQL
+    assert "target_event_id" in restore._PLAN_SQL
+
+
+def test_the_manifest_records_the_move_that_is_currently_in_force():
+    """A market can be repaired, restored and repaired again.
+
+    `ON CONFLICT DO NOTHING` would leave the restore CASing against a target two
+    moves stale, which is the same class of defect one level down.
+    """
+    sql = " ".join(repair.SQL["man_record"].split()).lower()
+    assert "on conflict (market_id) do update" in sql, sql
+    assert "target_event_id = excluded.target_event_id" in sql
+
+
+def test_the_manifest_is_written_in_the_same_transaction_as_the_move():
+    """One commit, or the manifest can outlive a rolled-back write.
+
+    Asserted on the source rather than on behaviour because the property is
+    "there is no commit between them" — a fake session that counts commits
+    cannot see a `commit()` that was never added.
+    """
+    body = inspect.getsource(repair.run)
+    move = body.index('SQL["repoint"]')
+    record = body.index('SQL["man_record"]')
+    commit = body.index("await s.commit()")
+    assert move < record < commit, (
+        "the manifest is not written between the move and the single commit"
+    )
+    assert body.count("await s.commit()") == 1, (
+        "a second commit split the move from its manifest"
+    )
+
+
+def test_a_skipped_forward_move_is_never_manifested(monkeypatch):
+    """THE MUTANT THIS WHOLE REPAIR EXISTS FOR.
+
+    Manifesting a market whose CAS declined recreates the block exactly: the
+    restore would then revert a market this repair never moved. Same rule as the
+    receipt — a record of a write that did not land is worse than no record.
+    """
+    s = _FakeSession([_Row(1, 10, 20), _Row(2, 11, 20)], rowcounts={1: 0})
+    _run(s, monkeypatch, apply=True)
+
+    assert len(s.repoints) == 2, "the CAS must be attempted for both"
+    assert [p["mid"] for p in s.manifested] == [2], (
+        "manifested a move that no-oped — the restore will clobber market 1"
+    )
+
+
+def test_every_manifested_move_is_also_receipted(monkeypatch):
+    """The two records of the same act must not be able to disagree.
+
+    A manifest without a receipt is an undo nobody can audit; a receipt without
+    a manifest is an undo that cannot run. Both are written from the same
+    successful-CAS branch, and this is what pins them together.
+    """
+    s = _FakeSession([_Row(1, 10, 20), _Row(2, 11, 21), _Row(3, 12, 22)],
+                     rowcounts={2: 0})
+    written = _run(s, monkeypatch, apply=True)
+    assert [p["mid"] for p in s.manifested] == [r.market_id for r in written]
+
+
+def test_the_manifest_carries_both_ends_of_the_move(monkeypatch):
+    """`old` alone is the backup's job; the target is what the CAS needs."""
+    s = _FakeSession([_Row(7, 10, 20)])
+    _run(s, monkeypatch, apply=True)
+    assert s.manifested == [{"mid": 7, "old": 10, "new": 20,
+                             "now": s.manifested[0]["now"]}]
+
+
+def test_the_undo_receipts_only_the_rows_it_actually_moved():
+    """The reverse half of
+    `test_a_market_that_moved_since_the_plan_is_skipped_and_never_receipted`.
+
+    The forward direction was mutation-tested for this and the backward
+    direction was not written at all — CERT-2439 also found that the restore
+    appended NO receipt of any kind, and that its docstring's claim that "a
+    later matcher pass" would add one is false: gotcha #15 says an already-
+    linked market is never time-window re-matched, so no pass would ever visit
+    these rows.
+    """
+    body = inspect.getsource(restore.run)
+    skip = body.index('moved since the plan — skipped')
+    append = body.index("receipts.append(")
+    assert skip < append, "a skipped restore falls through into the receipt"
+    assert "continue" in body[skip:append], "the skip does not short-circuit"
+    assert "flush_receipts" in body, "the restore writes no receipt at all"
+
+
+# ---------------------------------------------------------------------------
 # the pure gates
 # ---------------------------------------------------------------------------
 
@@ -211,6 +346,10 @@ class _FakeSession:
         self.plan, self.missing = plan, missing
         self.rowcounts = rowcounts or {}
         self.repoints, self.commits = [], 0
+        #: CERT-2439. Recorded separately from `repoints` because the whole
+        #: finding is that the two can disagree: the CAS may decline while the
+        #: manifest still claims the move.
+        self.manifested = []
 
     async def execute(self, stmt, params=None, *_a, **_kw):
         sql = " ".join(str(stmt).split())
@@ -226,6 +365,9 @@ class _FakeSession:
             return _Result(rows=self.plan)
         if sql.startswith("SELECT count(*) FROM futures_markets s"):
             return _Result(one=self.missing)
+        if sql.startswith(f"INSERT INTO {repair.MANIFEST_TABLE}"):
+            self.manifested.append(params)
+            return _Result(rowcount=1)
         if sql.startswith("UPDATE futures_markets SET event_id"):
             self.repoints.append(params)
             return _Result(rowcount=self.rowcounts.get(params["mid"], 1))

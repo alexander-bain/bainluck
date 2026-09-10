@@ -106,6 +106,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BAK_TABLE = "bak_4586_futures_markets"
+#: What the repair DID, as opposed to what the rows WERE. See `SQL["man_create"]`.
+MANIFEST_TABLE = "bak_4586_repair_manifest"
 
 # The stranded population. Deliberately keyed on what makes the row unreachable
 # (`events.status = 'voided'`) AND on the phantom provenance (no external_id, no
@@ -195,6 +197,39 @@ SQL = {
     # rather than overwriting a fresher decision with a stale one.
     "repoint": "UPDATE futures_markets SET event_id = :new, updated_at = NOW() "
                "WHERE id = :mid AND event_id = :old",
+    # THE MANIFEST — CERT-2439's required repair,
+    # `4586-RESTORE-CAS-PRESERVES-LATER-RELINKS`.
+    #
+    # The backup table holds a full row snapshot, which records where each
+    # market CAME FROM. It cannot record where this repair PUT it, and the
+    # restore needs both: without the target it can only ask "does this row
+    # differ from its backup?", which is true both for a row this repair moved
+    # AND for a row the live matcher moved after the backup was taken. The
+    # restore then reverts the matcher's newer, legitimate decision back onto
+    # the voided phantom — an undo that stomps a write it never made.
+    #
+    # So the manifest is a statement about ACTIONS, not about rows: one entry
+    # per market whose forward compare-and-swap actually succeeded, written in
+    # the same transaction as the move itself. A market the CAS declined gets
+    # no entry and is therefore invisible to the restore, which is precisely
+    # the property the block was raised on. It also makes `--limit` exact for
+    # free: a partial run leaves a manifest describing only its own half.
+    "man_create": f"CREATE TABLE IF NOT EXISTS {MANIFEST_TABLE} ("
+                  f"  market_id        integer PRIMARY KEY,"
+                  f"  old_event_id     integer NOT NULL,"
+                  f"  target_event_id  integer NOT NULL,"
+                  f"  applied_at       timestamptz NOT NULL DEFAULT NOW())",
+    # A market can legitimately be repaired, restored and repaired again. The
+    # manifest describes the move that is currently in force, so the later row
+    # replaces the earlier one rather than being dropped — `DO NOTHING` would
+    # leave the restore CASing against a target that is two moves stale.
+    "man_record": f"INSERT INTO {MANIFEST_TABLE} "
+                  f"(market_id, old_event_id, target_event_id, applied_at) "
+                  f"VALUES (:mid, :old, :new, :now) "
+                  f"ON CONFLICT (market_id) DO UPDATE SET "
+                  f"  old_event_id = EXCLUDED.old_event_id,"
+                  f"  target_event_id = EXCLUDED.target_event_id,"
+                  f"  applied_at = EXCLUDED.applied_at",
 }
 
 
@@ -301,6 +336,12 @@ async def run(args) -> None:
         doable = rows[: args.limit] if args.limit else rows
         print(f"\n=== applying {len(doable)} of {len(rows)} ===")
 
+        # Same transaction as the moves below, so the manifest and the writes it
+        # describes commit together or not at all. A manifest that could survive
+        # a rolled-back move would send the restore CASing against a target
+        # nothing was ever put on.
+        await s.execute(text(SQL["man_create"]))
+
         now = datetime.now(timezone.utc)
         receipts, moved = [], 0
         for r in doable:
@@ -311,9 +352,17 @@ async def run(args) -> None:
             })
             if (res.rowcount or 0) == 0:
                 # The compare-and-swap declined: something moved the market
-                # between plan and write. Report it, never force it.
+                # between plan and write. Report it, never force it — and write
+                # NO manifest row, so the restore cannot later revert a move
+                # this repair did not make (CERT-2439).
                 print(f"  ⚠️  {r.market_id}: link moved since the plan — skipped")
                 continue
+            await s.execute(text(SQL["man_record"]), {
+                "mid": int(r.market_id),
+                "old": int(r.old_event_id),
+                "new": int(r.new_event_id),
+                "now": now,
+            })
             moved += 1
             receipts.append(
                 MatchReceipt(
@@ -334,7 +383,11 @@ async def run(args) -> None:
 
         written = await flush_receipts(s, receipts)
         await s.commit()
-        print(f"\nCOMMITTED: re-pointed {moved} markets, wrote {written} receipts.")
+        print(f"\nCOMMITTED: re-pointed {moved} markets, wrote {written} receipts, "
+              f"recorded {moved} manifest rows in {MANIFEST_TABLE}.")
+        print(f"Undo: restore_4586_stranded_voided_event_markets.py --apply "
+              f"(reverts only these {moved}, and only while they are still on "
+              f"the target this repair put them on).")
 
         after = (await s.execute(text(_RESIDUAL_SQL))).one()
         print(f"POST-REPAIR: {after.stranded_total} stranded open markets remain, "
