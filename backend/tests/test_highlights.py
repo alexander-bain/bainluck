@@ -542,7 +542,15 @@ class TestGetHighlightLabel:
         assert get_highlight_label(result) == "Recent upset"
 
     def test_live_favorite_switched(self):
-        result = HighlightResult(flags=EventFlags(is_live=True, favorite_switched=True))
+        # #4580 — the capsule names the scoreboard, so the fixture has to carry
+        # one. A switched favourite with the underdog NOT ahead says
+        # "Odds moved"; that case is covered in
+        # `test_live_reason_is_earned_4580.py`. This test is about priority.
+        result = HighlightResult(
+            flags=EventFlags(
+                is_live=True, favorite_switched=True, underdog_is_leading=True
+            )
+        )
         assert get_highlight_label(result) == "Upset brewing"
 
     def test_live_very_close(self):
@@ -554,7 +562,13 @@ class TestGetHighlightLabel:
         assert get_highlight_label(result) == "Close game"
 
     def test_live_momentum_shift(self):
-        result = HighlightResult(flags=EventFlags(is_live=True, probability_swing="major"))
+        # #4580 — momentum needs a move AND a score; a swing over a game where
+        # nobody is ahead says "Odds moved" instead.
+        result = HighlightResult(
+            flags=EventFlags(
+                is_live=True, probability_swing="major", someone_is_leading=True
+            )
+        )
         assert get_highlight_label(result) == "Momentum shift"
 
     def test_starting_very_soon_close(self):
@@ -903,6 +917,7 @@ class TestGetHighlightLabelPriority:
             is_live=True,
             favorite_switched=True,
             is_close_matchup=True,
+            underdog_is_leading=True,  # #4580 — the capsule names the scoreboard
         ))
         assert get_highlight_label(result) == "Upset brewing"
 
@@ -929,6 +944,7 @@ class TestGetHighlightLabelPriority:
         result = HighlightResult(flags=EventFlags(
             is_live=True,
             probability_swing="major",
+            someone_is_leading=True,  # #4580 — momentum needs a move AND a score
         ))
         assert get_highlight_label(result) == "Momentum shift"
 

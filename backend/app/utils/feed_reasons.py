@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import NamedTuple, Optional
 
 from app.utils.graded_card import rendered_percent
+from app.utils.highlights import underdog_leads
 from app.utils.outcome_display_names import (
     display_outcome_name,
     display_outcome_names,
@@ -789,14 +790,22 @@ def generate_event_reason(
 
     # ── Live events ──────────────────────────────────────────────
     if status == "live":
-        if "favorite_switched" in reasons:
-            if opening_home_prob is not None:
-                if opening_home_prob > 0.5:
-                    underdog = away_team
-                else:
-                    underdog = home_team
-                return f"{underdog} leading as underdog"
-            return "Underdog leading"
+        # #4580 — this sentence says *leading*, so the scoreboard decides it,
+        # not the price. It used to return on `favorite_switched` alone — a
+        # price-derived flag — while `home_score`/`away_score` sat unread in
+        # this very signature, and told a reader the underdog was leading the
+        # NFL opener at 0-0. Same determination as the capsule, one function.
+        #
+        # The old `return "Underdog leading"` fallback is deliberately gone: it
+        # fired when `opening_home_prob` was None, which is precisely when we
+        # cannot name an underdog OR check the field. Falling through reaches
+        # the price sentence below, which is true from what we do have.
+        if (
+            "favorite_switched" in reasons
+            and underdog_leads(opening_home_prob, home_score, away_score) is True
+        ):
+            underdog = away_team if opening_home_prob > 0.5 else home_team
+            return f"{underdog} leading as underdog"
 
         if "very_close" in reasons:
             return "Virtually even"

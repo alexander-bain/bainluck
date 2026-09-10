@@ -334,6 +334,58 @@ class EventFlags:
     is_volatile: bool = False
     has_lead_changes: bool = False
     has_recent_momentum: bool = False
+    # #4580 — the scoreboard, for sentences that name it. Tri-state: None means
+    # the row carries no score, which is never the same as "no".
+    underdog_is_leading: Optional[bool] = None
+    someone_is_leading: Optional[bool] = None
+
+
+def underdog_leads(
+    opening_home_prob: Optional[float],
+    home_score: Optional[int],
+    away_score: Optional[int],
+) -> Optional[bool]:
+    """Is the pre-game underdog ahead on the scoreboard right now?
+
+    THE ONE DETERMINATION behind every sentence that names the field (#4580).
+    The capsule ("Upset brewing") and the footer badge ("{team} leading as
+    underdog") are produced by two different modules; both call this, so they
+    cannot drift into disagreeing about the same card.
+
+    Tri-state, and the third state is load-bearing:
+
+    * ``True``  — the side that opened as the underdog is ahead.
+    * ``False`` — it is not: either the favourite leads, or the game is level.
+      0-0 is a *known* answer, not a missing one; nobody is leading.
+    * ``None``  — unanswerable. Measured on production 2026-09-10, **41 of 64
+      live events carry no score at all** (both columns NULL). Collapsing that
+      into ``False`` would read as "the underdog is not ahead" about 41 games we
+      cannot see, so callers must treat ``None`` as "say nothing about the
+      field" rather than as a denial.
+
+    A price-derived favourite switch is NOT an answer to this question, which is
+    the whole defect: it was standing in for one.
+    """
+    if opening_home_prob is None or home_score is None or away_score is None:
+        return None
+    if opening_home_prob == 0.5:
+        # No underdog for anyone to be.
+        return None
+    if home_score == away_score:
+        return False
+    home_is_underdog = opening_home_prob < 0.5
+    home_is_ahead = home_score > away_score
+    return home_is_ahead == home_is_underdog
+
+
+def score_is_decided(
+    home_score: Optional[int],
+    away_score: Optional[int],
+) -> Optional[bool]:
+    """Is anyone ahead on the scoreboard? Tri-state, for the same reason."""
+    if home_score is None or away_score is None:
+        return None
+    return home_score != away_score
 
 
 @dataclass
@@ -555,6 +607,10 @@ def compute_highlight(
     completed_at: Optional[datetime] = None,
     # Game progress (from ESPN period string, e.g. "Q4", "2nd Half", "OT")
     period: Optional[str] = None,
+    # The scoreboard (#4580). Optional because 41 of 64 live rows have no score;
+    # absent means "we cannot see the field", never "nothing has happened on it".
+    home_score: Optional[int] = None,
+    away_score: Optional[int] = None,
 ) -> HighlightResult:
     """
     Compute highlight score and flags for an event.
@@ -574,6 +630,11 @@ def compute_highlight(
 
     result = HighlightResult()
     flags = result.flags
+
+    # #4580 — read the scoreboard ONCE, here, so the capsule and the footer
+    # badge describe the same card.
+    flags.underdog_is_leading = underdog_leads(opening_home_prob, home_score, away_score)
+    flags.someone_is_leading = score_is_decided(home_score, away_score)
 
     # Ensure commence_time is timezone-aware
     if commence_time.tzinfo is None:
@@ -854,8 +915,18 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
         return "Recent upset"
     if flags.is_live and "overtime" in result.reasons:
         return "Overtime"
+    # #4580 — "Upset brewing" names the SCOREBOARD, so the scoreboard has to
+    # agree. `favorite_switched` is derived purely from price (see
+    # `compute_highlight`), and on 2026-09-09 it put "Upset brewing" on the NFL
+    # opener at 0-0 in Q1: the price had moved 0.62 → 0.44 and nothing at all
+    # had happened on the field.
+    #
+    # "Odds moved" is the sentence that IS earned in every other case, because
+    # a switched favourite is by definition a price event. That covers the
+    # unknown-score rows too (41 of 64 live rows have no score): it asserts only
+    # the thing we can actually see.
     if flags.is_live and flags.favorite_switched:
-        return "Upset brewing"
+        return "Upset brewing" if flags.underdog_is_leading is True else "Odds moved"
     if flags.is_live and flags.has_lead_changes:
         return "Lead change"
     if flags.is_live and flags.is_very_close:
@@ -866,8 +937,10 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
         return "Odds shifting fast"
     if flags.is_live and "momentum_accelerating" in result.reasons:
         return "Momentum surge"
+    # #4580 — "Momentum shift" needs a move AND a score. A major swing over a
+    # game where nobody has scored is a market event, not momentum; say so.
     if flags.is_live and flags.probability_swing == "major":
-        return "Momentum shift"
+        return "Momentum shift" if flags.someone_is_leading is True else "Odds moved"
     if flags.is_live and flags.is_volatile:
         return "Wild game"
     if flags.is_starting_very_soon and flags.is_close_matchup:
