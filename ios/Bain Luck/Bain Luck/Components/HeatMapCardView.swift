@@ -113,7 +113,21 @@ struct HeatMapCardView: View {
 
             HStack(spacing: 6) {
                 if let threshold = lastAbove50Label {
-                    Text("Above 50% through")
+                    // #4645 — the caption composes with the rung's own words
+                    // instead of prefixing them. "Above 50% through" was written
+                    // for the DATE ladder it shipped with, where the rung label
+                    // is a date and the sentence closes ("Above 50% through
+                    // Before 2027"). Every other ladder's label carries its own
+                    // comparator, so the line stacked two of them on two
+                    // unrelated quantities and stopped mid-sentence: the phone
+                    // printed "Above 50% through ≥$6.40"
+                    // (artifacts-native-091/before-ladder-s9000.png), the web
+                    // twin "Above 50% through Above 67" (#4645). The thing worth
+                    // saying is the same for both ladders — this is the furthest
+                    // rung the market still calls better than even — and saying
+                    // it this way needs no branch. Web says the same words
+                    // (FuturesCard.tsx, PR #4656): one card family, notice 35.
+                    Text("More likely than not:")
                         .font(.system(size: 12))
                         .foregroundStyle(DS.textSecondary)
                     Text(threshold)
