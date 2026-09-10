@@ -18,7 +18,6 @@ import sys
 import pytest
 
 from app.utils.agent_origin import (
-    DEFAULT_AGENT,
     ORIGIN_HEADER,
     ORIGIN_USER,
     is_our_host,
@@ -77,19 +76,45 @@ def test_agent_is_resolved_at_call_time_not_import_time(monkeypatch):
     assert resolve_agent() == "lane-two", "agent was captured, not re-read"
 
 
-@pytest.mark.parametrize("value", ["", "   "])
-def test_absent_or_blank_agent_still_tags(monkeypatch, value):
-    """Being unnamed is not evidence of humanity."""
-    monkeypatch.setenv("BL_AGENT", value)
-    assert resolve_agent() == DEFAULT_AGENT
-    headers = origin_headers("https://api.bainluck.com/api/x")
-    assert headers[ORIGIN_HEADER] == DEFAULT_AGENT
-    assert headers[ORIGIN_HEADER] != "", "an empty header reads as a PERSON server-side"
+@pytest.mark.parametrize("value", [None, "", "   ", "\t"])
+def test_absent_or_blank_agent_passes_through_untagged(monkeypatch, value):
+    """Notice 39 guard 1: an unnamed caller is left exactly as it was.
+
+    Both halves are asserted deliberately. A substituted default here does not
+    merely mislabel the call — any non-"user" value SUPPRESSES the search-log
+    row server-side, so an un-configured caller would silently vanish from the
+    table it exists to populate. And a bot User-Agent without the origin header
+    is the worst reading of all: automated in the router log, still voting in
+    the search head.
+    """
+    if value is None:
+        monkeypatch.delenv("BL_AGENT", raising=False)
+    else:
+        monkeypatch.setenv("BL_AGENT", value)
+
+    assert resolve_agent() is None
+    assert origin_headers("https://api.bainluck.com/api/x") == {}
+
+    original = {"Authorization": "Bearer t"}
+    assert tagged("https://api.bainluck.com/api/x", original) == original
+    assert (
+        "User-Agent" not in tagged("https://api.bainluck.com/api/x", {})
+    ), "a bot UA without the origin header is automated in the log and a person to the head"
 
 
-def test_unset_agent_still_tags(monkeypatch):
-    monkeypatch.delenv("BL_AGENT", raising=False)
-    assert origin_headers("https://api.bainluck.com/x")[ORIGIN_HEADER] == DEFAULT_AGENT
+def test_a_named_lane_is_still_tagged_through_every_builder(monkeypatch):
+    """The other side of the flip: naming yourself must still work everywhere.
+
+    Guards the repair against over-correcting into a no-op — the failure mode
+    where pass-through is achieved by tagging nothing at all.
+    """
+    monkeypatch.setenv("BL_AGENT", "latency")
+    url = "https://api.bainluck.com/api/x"
+
+    assert resolve_agent() == "latency"
+    assert origin_headers(url)[ORIGIN_HEADER] == "latency"
+    assert tagged(url, {})[ORIGIN_HEADER] == "latency"
+    assert tagged(url, {})["User-Agent"] == "BainLuckBot/1.0 (latency)"
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +132,11 @@ def test_unset_agent_still_tags(monkeypatch):
         "api.bainluck.com/api/feed",  # scheme-less, as a script may build it
     ],
 )
-def test_our_hosts_are_tagged(url):
+def test_our_hosts_are_tagged(url, monkeypatch):
+    # An explicit lane: since the guard-1 flip, an unnamed caller adds nothing,
+    # so without this the assertion below would pass or fail on the CI shell's
+    # environment rather than on the host rule it exists to test.
+    monkeypatch.setenv("BL_AGENT", "latency")
     assert is_our_host(url)
     assert ORIGIN_HEADER in origin_headers(url)
 
@@ -122,13 +151,18 @@ def test_our_hosts_are_tagged(url):
         "https://the-odds-api.com/v4/sports",
     ],
 )
-def test_third_party_hosts_are_never_tagged(url):
+def test_third_party_hosts_are_never_tagged(url, monkeypatch):
+    # A NAMED lane, or this asserts nothing: since the guard-1 flip an unnamed
+    # caller adds nothing to any host, so an unset BL_AGENT would satisfy the
+    # `== {}` below without the host rule ever being consulted.
+    monkeypatch.setenv("BL_AGENT", "latency")
     assert not is_our_host(url)
     assert origin_headers(url) == {}
 
 
-def test_lookalike_host_is_not_ours():
+def test_lookalike_host_is_not_ours(monkeypatch):
     """A substring test would tag this; the host is parsed instead."""
+    monkeypatch.setenv("BL_AGENT", "latency")  # see above: else `== {}` is vacuous
     assert not is_our_host("https://example.com/?ref=bainluck.com")
     assert not is_our_host("https://bainluck.com.evil.test/x")
     assert origin_headers("https://example.com/?ref=bainluck.com") == {}

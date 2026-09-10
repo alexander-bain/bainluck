@@ -87,16 +87,19 @@ for (const shell of ["bash", "sh"]) {
       assert.ok(args.includes("https://api.bainluck.com/api/events/search?q=Ajax"));
     });
 
-    test("BL_AGENT set as a prefix to the SOURCE still yields a non-empty tag", () => {
+    test("an origin header is NEVER sent empty — absent or named, never blank", () => {
       // 🔴 The regression that shipped in the first draft. An assignment prefixed to `.`
       // does not persist outside POSIX mode, so a source-time read baked in the EMPTY
-      // string — and an empty header is read by the backend as a person. The tag must
-      // therefore be resolved per call. Asserting "non-empty" is the whole point; the
-      // exact value here is deliberately not the interesting part.
-      const { args } = argv(`curl "https://api.bainluck.com/api/feed"`, { shell });
-      const origin = originOf(args);
-      assert.notEqual(origin, null, "no origin header was sent at all");
-      assert.notEqual(origin, "", "origin header was sent EMPTY — reads as a person");
+      // string — and an empty header is read by the backend as a PERSON, so the call
+      // votes in the search head while looking tagged. Since the guard-1 flip the
+      // correct answer for an unnamed caller is NO header, so this asserts the
+      // invariant that survives both defaults: the header is absent or it is real.
+      // Never the third state, which is the only one that lies.
+      for (const env of [{}, { BL_AGENT: "" }, { BL_AGENT: "   " }, { BL_AGENT: "lane-x" }]) {
+        const { args } = argv(`curl "https://api.bainluck.com/api/feed"`, { shell, env });
+        const origin = originOf(args);
+        assert.notEqual(origin, "", `origin header sent EMPTY for env ${JSON.stringify(env)}`);
+      }
     });
 
     test("BL_AGENT=user is honoured verbatim — the one value that keeps the row", () => {
@@ -159,16 +162,43 @@ for (const shell of ["bash", "sh"]) {
       );
     });
 
-    test("an unnamed agent is still tagged, and is told exactly once", () => {
-      const { args, stderr } = argv(
-        `curl "https://api.bainluck.com/api/feed" >/dev/null\n` +
+    test("an absent or blank agent passes through untagged, and is told exactly once", () => {
+      // NOTICE 39 GUARD 1. The direction matters more than the label: any non-"user"
+      // value SUPPRESSES the search-log row, so substituting a default here would
+      // silently delete every un-configured caller from the table this exists to
+      // clean. Untagged leaves a row we can still see and count.
+      for (const env of [{}, { BL_AGENT: "" }, { BL_AGENT: "   " }]) {
+        const { args, stderr } = argv(
           `curl "https://api.bainluck.com/api/feed" >/dev/null\n` +
-          `curl "https://api.bainluck.com/api/feed"`,
-        { shell },
-      );
-      assert.equal(originOf(args), "agent-unnamed", "unnamed is not evidence of humanity");
-      const warnings = stderr.split("\n").filter((l) => l.includes("BL_AGENT unset"));
-      assert.equal(warnings.length, 1, `expected one warning across three calls, got ${warnings.length}`);
+            `curl "https://api.bainluck.com/api/feed" >/dev/null\n` +
+            `curl "https://api.bainluck.com/api/feed"`,
+          { shell, env },
+        );
+        assert.equal(originOf(args), null, `tagged an unnamed caller: ${JSON.stringify(args)}`);
+        assert.deepEqual(args, ["https://api.bainluck.com/api/feed"], "argv was not passed through untouched");
+        const warnings = stderr.split("\n").filter((l) => l.includes("BL_AGENT unset"));
+        assert.equal(warnings.length, 1, `expected one warning across three calls, got ${warnings.length}`);
+      }
+    });
+
+    test("a GENUINELY ABSENT variable passes through, not merely a blank one", () => {
+      // `argv()` always puts BL_AGENT in the child env (as ""), so every case above
+      // tests set-but-empty. `${BL_AGENT:-}` and `${BL_AGENT-}` differ exactly here,
+      // and an `unset` in the snippet is the only way to reach the unset branch.
+      const { args } = argv(`unset BL_AGENT\ncurl "https://api.bainluck.com/api/feed"`, { shell });
+      assert.equal(originOf(args), null, `tagged an absent agent: ${JSON.stringify(args)}`);
+      assert.deepEqual(args, ["https://api.bainluck.com/api/feed"]);
+    });
+
+    test("a named lane is still tagged — the flip must not become a no-op", () => {
+      // The over-correction this guards: achieving "pass-through" by tagging nothing
+      // at all. Without this, deleting the whole tagging branch would go green.
+      const { args } = argv(`curl "https://api.bainluck.com/api/feed"`, {
+        shell,
+        env: { BL_AGENT: "latency" },
+      });
+      assert.equal(originOf(args), "latency");
+      assert.ok(args.some((a) => a === "BainLuckBot/1.0 (latency)"), JSON.stringify(args));
     });
   });
 }

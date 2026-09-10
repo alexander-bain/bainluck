@@ -46,15 +46,11 @@ ORIGIN_HEADER = "x-bainluck-origin"
 #: Use it when you mean to measure as a person.
 ORIGIN_USER = "user"
 
-#: Being unnamed is not evidence of humanity, so an unnamed agent is still
-#: tagged. Matches `tools/bl-agent-curl.sh`.
-DEFAULT_AGENT = "agent-unnamed"
-
 _OUR_HOSTS = ("bainluck.com", "localhost", "127.0.0.1")
 
 
-def resolve_agent() -> str:
-    """The agent name for THIS call, read from ``BL_AGENT`` at call time.
+def resolve_agent() -> Optional[str]:
+    """The agent name for THIS call, read from ``BL_AGENT`` at call time, or None.
 
     Read at call time, never captured at import time. The shell helper shipped
     with a comment about this because the obvious shape fails silently: a name
@@ -63,8 +59,25 @@ def resolve_agent() -> str:
     did untagged — while the author has every reason to believe it is tagged.
     A module-level constant here would reintroduce that for any script that sets
     ``BL_AGENT`` after import.
+
+    UNSET OR BLANK RETURNS None, AND THE CALLER THEN ADDS NOTHING (notice 39
+    guard 1). An earlier draft substituted ``agent-unnamed`` on the reasoning
+    that being unnamed is not evidence of humanity. That reasoning is right
+    about the WORLD and wrong about the DIRECTION of the failure, which is what
+    decides a default:
+
+      * Tagging an unnamed caller SUPPRESSES its search-log row
+        (`routes/events.py:_request_is_automation` treats any non-"user" value
+        as automation). So a default that tags makes every un-configured caller
+        — a human running a script by hand included — vanish from the table.
+        That drains the warm head silently and leaves nothing behind to notice.
+      * Not tagging leaves a row we can see, count and later attribute.
+
+    `_request_is_automation`'s own docstring picks the same direction for the
+    same reason: it FAILS TOWARD LOGGING. A default is a guess, and the only
+    safe guess is the one whose mistakes are visible.
     """
-    return (os.environ.get("BL_AGENT") or "").strip() or DEFAULT_AGENT
+    return (os.environ.get("BL_AGENT") or "").strip() or None
 
 
 def _host_of(url: str) -> str:
@@ -99,7 +112,8 @@ def origin_headers(
     """Headers to ADD so ``url`` says who sent it. Possibly empty.
 
     Returns a new dict; the caller merges it. Empty means "add nothing", which
-    is the correct answer for a third-party host or an already-tagged request.
+    is the correct answer for a third-party host, an already-tagged request, or
+    a caller who never named itself (see `resolve_agent`).
 
     An explicit header from the caller always wins. A request carrying two
     `x-bainluck-origin` values that disagree about whether its sender is a
@@ -115,6 +129,13 @@ def origin_headers(
         return {}
 
     who = resolve_agent()
+    if who is None:
+        # Pass through untouched: no origin header AND no bot User-Agent. Both
+        # halves matter — a `BainLuckBot/1.0` UA with no origin header is a
+        # request that looks automated in the router log while still voting in
+        # the search head, which is the worst of both readings.
+        return {}
+
     headers = {ORIGIN_HEADER: who}
     # The router log records the UA, which is what makes fleet traffic legible
     # in a log window without a database read. Never clobber a caller's own.
