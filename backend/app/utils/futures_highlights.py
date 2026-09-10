@@ -618,6 +618,20 @@ def compute_futures_highlight(
     if resolution_date is not None and resolution_date.tzinfo is None:
         resolution_date = resolution_date.replace(tzinfo=timezone.utc)
     days_until = (resolution_date - now).days if resolution_date is not None else None
+    # …and the SAME horizon unfloored, for the copy only (#4805, CERT-2513).
+    #
+    # `timedelta.days` truncates toward zero, so a market resolving in 7 days 23
+    # hours has `days_until == 7` and said "resolves within a week" — a sentence
+    # that is false by nearly a full day, which is exactly the class of lie #4805
+    # exists to end. `.days` is nonetheless the RIGHT number for every scoring
+    # term below (the postseason boost, the micro-bet suppression, the proximity
+    # ladder): moving those is a ranking change, and this is a copy fix. So the
+    # two numbers live side by side and each is used for one job.
+    days_until_exact = (
+        (resolution_date - now).total_seconds() / 86400.0
+        if resolution_date is not None
+        else None
+    )
 
     # === Category base score (calibrated against Polymarket ground truth) ===
     _market_name = market_name or ""
@@ -881,9 +895,23 @@ def compute_futures_highlight(
             # Restored WITHOUT the score, which is the half #141 was right about:
             # `result.score` is untouched here, so ordering is unchanged and the
             # double-count stays dead. This is a copy fix, not a ranking change.
-            result.reasons.append(
-                "resolving_soon_7d" if days_until <= 7 else "resolving_soon_30d"
-            )
+            #
+            # #4805 / CERT-2513: classified off the UNFLOORED horizon. `days_until`
+            # is 7 for anything from 7d00h00m00s to 7d23h59m59s, so the floored
+            # test emitted "resolves within a week" over a market eight days out,
+            # and the `<= 30` gate above lets a 30d23h market in here and called it
+            # "within a month". Both boundaries are now the real duration, and both
+            # are pinned by controls at 7d, 7d+1s, 30d and 30d+1s.
+            #
+            # The 30d+1s case emits NO resolving code rather than the wrong one.
+            # `flags.is_resolving_soon` and `result.score` are deliberately left on
+            # the floored number: they are ranking, and this is copy.
+            if days_until_exact is not None and days_until_exact <= 30.0:
+                result.reasons.append(
+                    "resolving_soon_7d"
+                    if days_until_exact <= 7.0
+                    else "resolving_soon_30d"
+                )
 
     # === Cross-source scoring ===
     if source_count >= 2:

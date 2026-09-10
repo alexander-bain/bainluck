@@ -276,8 +276,11 @@ def test_a_resolving_binary_still_gets_its_sentence():
         highlight_reasons=["resolving_soon_7d"],
         affirmative_probability=0.04,
     )
-    assert copy.headline == "Resolving this week"
-    assert copy.context_summary == "4% chance, resolving this week"
+    # #4805: the words are the predicate. `resolving_soon_7d` fires on a duration,
+    # not on a calendar week, so a card resolving on Monday could say "this week"
+    # on a Sunday. Flipped with the ship, not exempted from it.
+    assert copy.headline == "Resolving within a week"
+    assert copy.context_summary == "4% chance, resolving within a week"
 
 
 def test_the_title_is_still_used_as_a_SUBJECT_when_a_clause_follows_it():

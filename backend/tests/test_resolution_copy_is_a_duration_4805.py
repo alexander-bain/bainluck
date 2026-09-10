@@ -72,12 +72,25 @@ MONTH_CLASS_LYING = [
      datetime(2026, 10, 4, 0, 0, tzinfo=timezone.utc), "Flávio Bolsonaro", 0.48),
     ("Online Sportsbook Ad Spend in September",
      datetime(2026, 10, 6, 3, 59, tzinfo=timezone.utc), "Above 118", 0.60),
-    ("Presidents Cup Winner",
-     datetime(2026, 10, 11, 14, 0, tzinfo=timezone.utc), "Team USA", 0.80),
     ("Caribbean Premier League Champion",
      datetime(2026, 10, 5, 14, 0, tzinfo=timezone.utc), "Guyana Amazon Warriors", 0.46),
     ("StarLadder StarSeries Fall 2026: Winner",
      datetime(2026, 10, 5, 3, 59, tzinfo=timezone.utc), "Team Falcons", 0.11),
+]
+
+#: THE ROW THE FIRST CUT OF THIS SHIP GOT WRONG, and it is a served card, not a
+#: hypothetical. `Presidents Cup Winner` resolves 2026-10-11 14:00Z — **30 days
+#: 23 hours 21 minutes** after this file's `NOW`. `timedelta.days` floors that to
+#: 30, so the card entered the `<= 30` gate and page one told a reader it
+#: "resolves within a month" about something 31 days away. The first cut of the
+#: fix carried it in `MONTH_CLASS_LYING` and asserted the month sentence, which
+#: is how a copy fix reintroduces the lie it was written to end.
+#:
+#: Found by CERT-2513's BLOCK, which named the flooring at both boundaries. It
+#: now belongs to neither rung: the honest caption past thirty days is none.
+PAST_THIRTY_DAYS = [
+    ("Presidents Cup Winner",
+     datetime(2026, 10, 11, 14, 0, tzinfo=timezone.utc), "Team USA", 0.80),
 ]
 
 MONTH_CLASS_TRUE = [
@@ -235,7 +248,8 @@ def test_the_boundary_itself_depends_on_the_reader():
 @pytest.mark.parametrize("shape", sorted(LEADER_SHAPES))
 @pytest.mark.parametrize(
     "specimen",
-    MONTH_CLASS_LYING + MONTH_CLASS_TRUE + WEEK_CLASS_LYING + [ANTHROPIC],
+    MONTH_CLASS_LYING + MONTH_CLASS_TRUE + PAST_THIRTY_DAYS + WEEK_CLASS_LYING
+    + [ANTHROPIC],
     ids=lambda s: s[0][:40] if isinstance(s, tuple) else str(s),
 )
 def test_no_generator_serves_a_calendar_word(specimen, shape):
@@ -270,6 +284,39 @@ def test_the_month_rung_still_speaks(specimen, shape):
     leader, probability = LEADER_SHAPES[shape](leader, probability)
     served = _all_copy(name, resolution, leader, probability)
     assert any("within a month" in (s or "").lower() for s in served), served
+
+
+@pytest.mark.parametrize("shape", sorted(LEADER_SHAPES))
+@pytest.mark.parametrize(
+    "specimen", PAST_THIRTY_DAYS, ids=lambda s: s[0][:40] if isinstance(s, tuple) else str(s)
+)
+def test_a_card_past_thirty_days_says_neither(specimen, shape):
+    """The other half of "silence is not a fix": silence IS the fix past 30 days.
+
+    `Presidents Cup Winner` is 30d23h out. It must not say "within a month"
+    (false), must not say "within a week" (more false), and must not fall back to
+    a calendar word. Every leader arm, because the leaderless generator is where a
+    fallback would hide.
+    """
+    name, resolution, leader, probability = specimen
+    leader, probability = LEADER_SHAPES[shape](leader, probability)
+    served = _all_copy(name, resolution, leader, probability)
+    joined = " ".join((s or "").lower() for s in served)
+    assert "within a month" not in joined, served
+    assert "within a week" not in joined, served
+    assert "resolving soon" not in joined, served
+    # What is left depends on whether the card has anything else to say, and both
+    # answers are correct here.
+    if shape == "named":
+        # The served production row: a named leader carries the card on its own.
+        assert any((s or "").strip() for s in served), served
+        assert "team usa" in joined, served
+    else:
+        # No leader, and now no honest resolution clause either, so the generators
+        # produce nothing — which is the RIGHT outcome and not a hole. #4080's ship
+        # is that a card naming nothing yields its slot; an empty copy set is how it
+        # does that. The alternative on offer was a sentence that is false by a day.
+        assert joined.strip() == "", served
 
 
 @pytest.mark.parametrize("shape", sorted(LEADER_SHAPES))
@@ -312,6 +359,63 @@ def test_the_words_match_the_predicate_at_its_own_boundary(days, expected):
         assert "within a week" not in served
     else:
         assert "within a week" not in served and "within a month" not in served
+
+
+@pytest.mark.parametrize(
+    "delta,expected",
+    [
+        (timedelta(days=7), "week"),
+        (timedelta(days=7, seconds=1), "month"),
+        (timedelta(days=7, hours=23, minutes=59), "month"),
+        (timedelta(days=30), "month"),
+        (timedelta(days=30, seconds=1), None),
+        (timedelta(days=30, hours=23, minutes=59), None),
+    ],
+)
+def test_the_boundary_is_the_duration_and_not_the_floored_day(delta, expected):
+    """CERT-2513's BLOCK, as a test, and it is the whole repair.
+
+    `days_until` was `(resolution_date - now).days`, and `timedelta.days`
+    truncates toward zero: every instant from 7d00h00m00s to 7d23h59m59s floors
+    to 7, so the card said "resolves within a week" up to **23 hours 59 minutes**
+    after the week was over. The `<= 30` gate had the same shape at the other
+    end, letting a 30d23h market in and calling it "within a month".
+
+    So the sentence was false by nearly a day at both boundaries — the exact
+    class of lie this ship exists to end, reintroduced by the arithmetic under
+    it. `days_until` still floors, because every SCORING term reads it and moving
+    those is a ranking change; the copy reads an unfloored `days_until_exact`.
+
+    The +1s rows are the discriminator: a fix that merely narrowed the window,
+    or that rounded instead of comparing the real duration, passes the whole-day
+    controls above and fails here.
+    """
+    resolution = NOW + delta
+    served = " ".join(
+        s or "" for s in _all_copy("Some Championship Winner", resolution, "Team A", 0.4)
+    ).lower()
+    if expected == "week":
+        assert "within a week" in served or "resolving soon" in served
+        assert "within a month" not in served
+    elif expected == "month":
+        assert "within a month" in served
+        assert "within a week" not in served
+    else:
+        assert "within a week" not in served and "within a month" not in served
+
+
+def test_the_producer_emits_no_resolving_code_past_thirty_days():
+    """The 30d+1s case emits NO code rather than the wrong one — asserted on the
+    producer, because the copy generators can only be silent for many reasons and
+    silence alone would not tell them apart."""
+    assert "resolving_soon_30d" in _reasons_for(
+        NOW + timedelta(days=30), name="Some Championship Winner"
+    )
+    past = _reasons_for(NOW + timedelta(days=30, seconds=1), name="Some Championship Winner")
+    assert "resolving_soon_30d" not in past
+    assert "resolving_soon_7d" not in past
+    # And the floored number still drives ranking: the card is unchanged there.
+    assert "micro_bet" not in past
 
 
 def test_the_copy_survives_the_clock():
