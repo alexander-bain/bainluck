@@ -190,6 +190,11 @@ class _TaskRun:
         )
         self.kalshi = _FakeKalshi(answers or {})
         self.poly_closed = False
+        # The query budget the task armed, captured from get_task_session's
+        # kwargs. Recorded rather than swallowed: a double that accepts
+        # anything is what let #4482's signature change reach the desk as a
+        # composed-tree red instead of a red on this branch.
+        self.session_budget: dict | None = None
 
     def run(self, monkeypatch, *, key="test-key"):
         import contextlib
@@ -202,7 +207,16 @@ class _TaskRun:
             monkeypatch.setenv("KALSHI_API_KEY", key)
 
         @contextlib.asynccontextmanager
-        async def _session():
+        async def _session(
+            *, statement_timeout_ms: int | None = None,
+            lock_timeout_ms: int | None = None,
+        ):
+            # Mirrors app.tasks.base.get_task_session as #4482 left it. The
+            # kwargs are keyword-only there, so they are keyword-only here.
+            self.session_budget = {
+                "statement_timeout_ms": statement_timeout_ms,
+                "lock_timeout_ms": lock_timeout_ms,
+            }
             yield self.session
 
         outer = self
@@ -279,6 +293,31 @@ class TestTheArmRunsWhenTheStaleBatchIsEmpty:
     Without that the tests would pass on a run that quietly priced a Kalshi
     market, which is the shape they exist to rule out.
     """
+
+    def test_the_pass_arms_the_4482_query_budget(self, monkeypatch):
+        """The double must track `get_task_session`'s real signature.
+
+        Added after integrator-284 bounced `55f4a3f8`: calibration/1076
+        (#4482, `e3cd444a`) moved the budget from a bare `SET statement_timeout`
+        to keyword arguments on `get_task_session`, an hour after CERT-2424 was
+        banked. This file's double took no kwargs, so the composed tree went red
+        on six tests while both branches were independently green — a semantic
+        conflict a clean textual merge cannot see.
+
+        Asserting the VALUES, not just tolerating the kwargs, is the point: a
+        double that silently accepts anything is what let the drift through.
+        """
+        run = _TaskRun(
+            unreached=[(OPENAI, 1_083_106)],
+            candidates=[(OPENAI, DEAD[0])],
+            answers={CONTROL: True, DEAD[0]: False},
+        )
+        run.run(monkeypatch)
+
+        assert run.session_budget == {
+            "statement_timeout_ms": 60_000,
+            "lock_timeout_ms": 15_000,
+        }
 
     def test_a_wholly_empty_batch_still_sweeps(self, monkeypatch):
         run = _TaskRun(
