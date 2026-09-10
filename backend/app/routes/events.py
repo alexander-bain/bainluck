@@ -39,6 +39,7 @@ from app.utils.event_rails import (
     live_scheduled_settled_order,
 )
 from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
+from app.utils.score_observation import score_observation_fields
 # ONE definition of the state vocabulary (live/048) — imported, not spelled, so
 # that widening it is a rename here rather than a literal this route quietly
 # stops matching. CERT-786 is what that quiet stop looks like from a user's side.
@@ -12442,6 +12443,11 @@ async def _build_game_markets(
         "away_team": event.away_team_name,
         "home_score": event.home_score,
         "away_score": event.away_score,
+        # #4571 — this payload prints a score, so it can state that score's
+        # age. Same helper and same present-only contract as `_format_event`:
+        # a score that is ageable on one surface and not on the next is how
+        # the tennis games line ended up on one renderer.
+        **score_observation_fields(event),
         "status": served_event_status(
             event.status, event.commence_time, datetime.now(timezone.utc)
         ),
@@ -16351,6 +16357,22 @@ def _format_event(
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
+
+    # ── HOW OLD THE SCORE ABOVE IS, AND WHO READ IT (#4571) ────────────────
+    #
+    # Every price on this response already states its own observation clock;
+    # the score did not, so the `live · 8s ago` badge beside it has always been
+    # the age of a PRICE printed over a number of unknown age.
+    #
+    # PRESENT-ONLY, the same call the `linescore` block below makes and for the
+    # same reason: the answer exists only for rows a live writer has actually
+    # read, and this formatter feeds single-sport lists up to 500 rows where
+    # nearly every row is scheduled. Two null keys per row there are bytes on
+    # the wire that can never carry an answer. Within the population that has
+    # one, both keys are always present together — so absence means "no writer
+    # has read this row's score", which is a different statement from "we read
+    # it and it has no age", and neither is ever silently the other.
+    response.update(score_observation_fields(event))
 
     # ── THE PER-SET GAMES LINE, WHEN WE HOLD ONE (live/073) ────────────────
     #

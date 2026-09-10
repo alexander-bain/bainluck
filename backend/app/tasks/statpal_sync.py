@@ -26,6 +26,7 @@ from app.tasks.config import STATPAL_SPORT_MAPPING
 from app.utils.sport_keys import STATPAL_LIVE_ANCHOR_FIELD
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.game_pairing import Pairing, live_write_is_premature, pair_verdict
+from app.utils.score_observation import stamp_score_observation
 
 logger = logging.getLogger(__name__)
 
@@ -543,6 +544,16 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 event.home_score = live_data.home_score
                             if live_data.away_score is not None:
                                 event.away_score = live_data.away_score
+                            # #4571 — this branch has already cleared the
+                            # premature-live guard, so StatPal's read is one we
+                            # accept for this row; stamp it with the pass clock.
+                            if (
+                                live_data.home_score is not None
+                                or live_data.away_score is not None
+                            ):
+                                stamp_score_observation(
+                                    event, source="statpal", observed_at=now,
+                                )
                             updated = True
 
                     if updated:
@@ -685,6 +696,20 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 event.home_score = live_fix.home_score
                             if live_fix.away_score is not None:
                                 event.away_score = live_fix.away_score
+                            # #4571 — a row born live carries a score from its
+                            # first instant, so it carries an age from its first
+                            # instant too. Inside the `premature_create` guard
+                            # for the reason the comment above gives: where we
+                            # refuse the score we must refuse the stamp, or the
+                            # row claims an observation of a number it does not
+                            # hold.
+                            if (
+                                live_fix.home_score is not None
+                                or live_fix.away_score is not None
+                            ):
+                                stamp_score_observation(
+                                    event, source="statpal", observed_at=now,
+                                )
                         logger.info(
                             "Created event from live StatPal: %s vs %s (%s) as %s",
                             live_fix.away_team, live_fix.home_team, our_key,
@@ -1175,6 +1200,23 @@ async def _sync_statpal_livescores() -> dict:
                     if fixture.away_score is not None and fixture.away_score != event.away_score:
                         event.away_score = fixture.away_score
                         updated = True
+
+                    # THE OBSERVATION STAMP, OUTSIDE THE `!=` GUARDS (#4571).
+                    #
+                    # This is the 30-second writer, so on a low-scoring game it
+                    # confirms the same number sixty times in half an hour and
+                    # changes it never — and it is precisely that row whose age
+                    # the page cannot state today. Gated on StatPal having
+                    # stated a score, not on the score having moved.
+                    #
+                    # `updated` is deliberately left alone: the attribute is
+                    # dirty either way and `get_task_session` commits on exit,
+                    # so setting it would only inflate `events_updated` to "one
+                    # per live row per pass" and destroy that counter's meaning.
+                    if fixture.home_score is not None or fixture.away_score is not None:
+                        stamp_score_observation(
+                            event, source="statpal", observed_at=_now,
+                        )
 
                     # Write ScoreSnapshot for score enrichment (feeds Score Differential chart)
                     if updated and fixture.home_score is not None and fixture.away_score is not None:
