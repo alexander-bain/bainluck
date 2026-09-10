@@ -31,7 +31,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | authority-id-collisions | weather-shelf-disease
              | futures-person-seed-purge | golf-round-closing-line
              | kalshi-empty-book-openings
-             | kalshi-empty-book-openings-restore }
+             | kalshi-empty-book-openings-restore
+             | pm-ungraded-loss | pm-ungraded-loss-restore }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -66,7 +67,9 @@ transactional session and RETURNS its own before/after census in the response bo
      two kalshi-empty-book-openings entries in the commit that registered them;
      the restore is its own NAME rather than an `undo_identity` parameter
      because its backup is a table, not a dated receipt, so one call puts the
-     whole population back however many pages wrote it.)
+     whole population back however many pages wrote it. Re-synced again
+     2026-09-10, CAL-P1088, adding the two pm-ungraded-loss entries in the
+     commit that registered them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -802,6 +805,31 @@ _REPAIRS = {
     ),
     "kalshi-empty-book-openings-restore": (
         "app.tasks.repair_kalshi_empty_book_openings",
+        "restore",
+    ),
+    # CAL-P1088 (#4788): 574,832 legs across 277,519 resolved Polymarket markets
+    # carry `is_winner = false` with `resolution_source IS NULL` — the COLUMN
+    # DEFAULT, not a verdict — and `OutcomeRow.tsx` prints every one of them as
+    # a red `Lost · 0% · Settled`. This rail WITHDRAWS the verdict (sets NULL);
+    # it never crowns anybody, so it needs no venue call: "we never graded this"
+    # is a fact about our own row.
+    # GATED AT THE MARKET, WRITTEN AT THE LEG. A `false` leg on a market whose
+    # winner IS crowned genuinely lost and is merely un-badged; nulling it would
+    # manufacture the opposite defect. 854 such markets are excluded by an
+    # anti-join asserted equivalent to `pm-never-graded`'s cohort HAVING.
+    # Does NOT compete with `pm-never-graded` (#1912), which grades the same
+    # cohort from the CLOB venue at 40 markets/call: its cohort predicate and
+    # its compare-and-set both still match a withdrawn (NULL) leg, and a real-
+    # Postgres gate asserts it. Grading remains the durable fix; this stops the
+    # lie in the meantime.
+    # D51: backup + one-command restore. Keyset-paged on `after_id`.
+    # ATTENDED ONLY: never wire this to a beat.
+    "pm-ungraded-loss": (
+        "app.tasks.repair_pm_ungraded_loss",
+        "repair",
+    ),
+    "pm-ungraded-loss-restore": (
+        "app.tasks.repair_pm_ungraded_loss",
         "restore",
     ),
 }
