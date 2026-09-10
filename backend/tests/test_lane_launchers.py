@@ -1441,7 +1441,8 @@ def _tag_block():
     start = src.index("BL_REPO=")
     end = src.index("\n}\n", src.index("bl_warn_if_runner_is_stale()", start)) + 3
     block = src[start:end]
-    for name in ("bl_tag_lane", "bl_carrier_zdotdir", "bl_warn_if_runner_is_stale"):
+    for name in ("bl_tag_lane", "bl_carrier_zdotdir", "bl_tag_state",
+                 "bl_warn_if_runner_is_stale"):
         assert f"{name}()" in block, f"extraction lost {name}:\n{block}"
     return block
 
@@ -1715,6 +1716,212 @@ def test_the_runner_says_so_when_it_is_not_the_committed_runner(tmp_path):
         f"a runner that is not on master said nothing:\n{p.stderr!r}"
     )
     assert p.stdout == "", f"the warning belongs on stderr, not in the log stream: {p.stdout!r}"
+
+
+def _tag_state(lane, zdotdir, allowlist, extra_env=None):
+    """Call the shipped `bl_tag_state` and return its one line."""
+    block = _tag_block()
+    env = dict(os.environ, BL_CARRIER_REF="origin/master")
+    env.update(extra_env or {})
+    p = subprocess.run(
+        ["bash", "-c",
+         f"set -u\n{block}\nBL_TAG_LANES={allowlist!r}\n"
+         f"bl_tag_state {lane!r} {str(zdotdir)!r}"],
+        capture_output=True, text=True, timeout=120, env=env,
+    )
+    assert p.returncode == 0, (
+        "bl_tag_state must never be fatal — a lane that cannot start because its "
+        f"reads would be untagged is worse than an untagged lane:\n{p.stderr}"
+    )
+    return p.stdout.strip()
+
+
+def _carrier_bundle(root, *, shadow=True):
+    """A content-addressed carrier bundle laid out the way the runner delivers one.
+
+    Copied into tmp rather than pointed at `REPO/tools`, because a passing probe
+    stamps `.verified-tag` at the BUNDLE ROOT — against the real tree that would
+    drop an untracked file into the repo every time this test ran.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(ZDOTDIR_DIR, root / "tools" / "lane-zdotdir")
+    if shadow:
+        shutil.copy(REPO / "tools" / "bl-agent-curl.sh", root / "tools" / "bl-agent-curl.sh")
+    return root / "tools" / "lane-zdotdir"
+
+
+@needs_zsh
+def test_the_runner_says_which_of_the_three_tag_states_this_lane_is_in(tmp_path):
+    """#4689: end the silence, and distinguish 'deliberately off' from 'broken'.
+
+    THE MISS THIS GUARDS, measured 2026-09-10 by latency/316. The fleet restarted
+    at 13:25:02 and the checkout widening `BL_TAG_LANES` to `all` landed at
+    13:28:07 — three minutes later. Ten runners parsed the old `latency`-only
+    default, nine lanes ran untagged, and nothing said so; SIP blocks `ps -E`, so
+    from inside a session the state was unobservable, not merely unlogged.
+
+    All four arms are asserted. A test that only proved the happy line would pass
+    on a runner that says "TAG ON" unconditionally — which is the failure mode.
+    """
+    good = _carrier_bundle(tmp_path / "good")
+    blind = _carrier_bundle(tmp_path / "blind", shadow=False)
+
+    # 1. Not in the allowlist. Must name the allowlist's VALUE: that string is
+    #    the whole diagnosis on 9/10 ("why is ux off?" -> "because it says
+    #    latency"), and a bare "off" would have read as intentional.
+    off = _tag_state("ux", "", "latency")
+    assert "TAG OFF" in off and "by config" in off, off
+    assert "BL_TAG_LANES='latency'" in off, (
+        f"the OFF line does not name the allowlist it read, so a stale allowlist "
+        f"is indistinguishable from a deliberate one: {off!r}"
+    )
+
+    # 2. Allowlisted but no carrier delivered — a different fix from (1).
+    nocarrier = _tag_state("latency", "", "all")
+    assert "TAG BROKEN" in nocarrier, nocarrier
+    assert "by config" not in nocarrier, (
+        f"a failed delivery must not read as a config choice: {nocarrier!r}"
+    )
+
+    # 3. The happy path, proven END TO END — the shadow really installs in a
+    #    child shell and really adds the header. This is the assertion #4689 was
+    #    filed for: every other gate proves the mechanism GIVEN the files land.
+    on = _tag_state("latency", good, "all")
+    assert "TAG ON" in on and "BROKEN" not in on, on
+    assert "x-bainluck-origin: latency" in on, on
+
+    # 4. Carrier present, chain loads, shadow missing -> the shell does NOT tag.
+    #    Everything looks delivered and nothing is tagged: the exact shape of
+    #    #4632 and CERT-2461, and the one a presence check cannot catch.
+    broken = _tag_state("latency", blind, "all")
+    assert "TAG BROKEN" in broken, (
+        f"a carrier whose shell adds no header reported healthy: {broken!r}"
+    )
+
+
+@needs_zsh
+def test_the_end_to_end_probe_is_cached_per_bundle_but_never_caches_a_failure(tmp_path):
+    """#4714 is a live budget: startup git calls already flake this file.
+
+    So the probe may not be paid per session. The carrier dir is content-addressed,
+    so the verdict is a pure function of the bundle and is stamped beside it —
+    and a bundle whose content changes gets a new path, so the stamp cannot go
+    stale. A FAILING probe must not be stamped, or one bad delivery would be
+    cached as healthy for the life of the bundle.
+    """
+    good = _carrier_bundle(tmp_path / "good")
+    stamp = tmp_path / "good" / ".verified-tag"
+
+    assert not stamp.exists()
+    assert "TAG ON" in _tag_state("latency", good, "all")
+    assert stamp.exists(), "a verified bundle was not stamped; every session re-probes"
+
+    # Warm path must not depend on zsh at all: break the shell end and confirm
+    # the stamp alone still answers. That is what makes the steady-state cost a
+    # single `[ -f ]` rather than a process spawn.
+    (good.parent / "bl-agent-curl.sh").unlink()
+    assert "TAG ON" in _tag_state("latency", good, "all"), (
+        "the stamp was ignored, so the probe runs every session (#4714)"
+    )
+
+    blind = _carrier_bundle(tmp_path / "blind", shadow=False)
+    assert "TAG BROKEN" in _tag_state("latency", blind, "all")
+    assert not (tmp_path / "blind" / ".verified-tag").exists(), (
+        "a FAILED probe was stamped as verified — one bad delivery would then "
+        "report healthy forever"
+    )
+
+
+@needs_zsh
+def test_cached_tag_state_reports_off_when_shadow_is_disabled(tmp_path):
+    """CERT-2542: a cached probe may not answer a question the cache cannot see.
+
+    The stamp above is keyed on the carrier bundle's CONTENT, which is sound for
+    the question it was built to answer — "does this bundle's wiring add the
+    header?". `BL_CURL_NO_SHADOW=1` is the shadow's documented opt-out and is not
+    a property of the bundle at all: same files, same content hash, same healthy
+    stamp, and no `curl` wrapper installed in any shell. So the warm path printed
+    "TAG ON — reads carry x-bainluck-origin" into the session log of a lane whose
+    every read was plain curl.
+
+    A false ON is the worst possible failure for THIS ship specifically. #4689
+    exists because "deliberately off" and "broken" shared one silence; a state
+    line that can confidently report a state the session is not in replaces that
+    silence with something worse than silence.
+
+    OFF and not BROKEN, because an operator asked for it — the same shape as a
+    lane being off the allowlist, and the same reason the no-zsh arm reports
+    UNVERIFIED rather than manufacturing a defect (gotcha #53).
+    """
+    good = _carrier_bundle(tmp_path / "good")
+    stamp = tmp_path / "good" / ".verified-tag"
+
+    # Warm the cache exactly as a healthy session does. The bug needs the stamp
+    # in place; probing cold happens to be honest already.
+    assert "TAG ON" in _tag_state("latency", good, "all")
+    assert stamp.exists(), "the stamp never warmed, so this test proves nothing"
+
+    # GROUND TRUTH, measured in the same child shell the lane's reads run in, so
+    # this cannot pass by merely agreeing with whatever the line says. Positive
+    # control first: without the opt-out the wrapper really is installed here,
+    # otherwise the negative below would hold for an unrelated reason.
+    rc, on = _lane_shell('echo "curl -> $(type curl)"', {"ZDOTDIR": str(good)})
+    assert rc == 0 and "shell function" in on, (
+        f"no wrapper even without the opt-out; the control is broken:\n{on}"
+    )
+    rc, off = _lane_shell(
+        'echo "curl -> $(type curl)"',
+        {"ZDOTDIR": str(good), "BL_CURL_NO_SHADOW": "1"},
+    )
+    assert rc == 0, off
+    assert "shell function" not in off, (
+        f"BL_CURL_NO_SHADOW no longer disables the wrapper, so this guard is "
+        f"asserting against a control that has moved:\n{off}"
+    )
+
+    # The line must match that reality, from the WARM path.
+    line = _tag_state("latency", good, "all", {"BL_CURL_NO_SHADOW": "1"})
+    assert stamp.exists(), (
+        "the cache was discarded rather than out-ranked — #4714 caps this budget, "
+        "so the opt-out must be diagnosed without re-probing every session"
+    )
+    assert "TAG ON" not in line, (
+        f"false ON: the session's reads are plain curl and the log says they "
+        f"carry the tag: {line!r}"
+    )
+    assert "TAG OFF" in line and "by config" in line, (
+        f"a deliberate opt-out reported as a defect: {line!r}"
+    )
+    assert "BL_CURL_NO_SHADOW" in line, (
+        f"the OFF line does not name the control that turned tagging off, so the "
+        f"reader cannot tell it from a stale allowlist: {line!r}"
+    )
+
+
+def test_the_session_launch_reports_the_tag_state_into_the_session_log():
+    """Where the line goes is half the ship.
+
+    `bl_warn_if_runner_is_stale` already prints drift — to the runner's own
+    stderr, which is a scrollback nobody owns. #4878's correction says the same
+    of `runner-text-drift.sh`: a true positive with no owner reads as noise. The
+    only reader who can act is the next session, and it reads the LOG.
+    """
+    src = RUNNER.read_text()
+    launch = src.index('timeout "$SESSION_TIMEOUT" claude')
+    window = src[launch - 900:launch]
+    assert "bl_tag_state" in window, (
+        "the session launch never reports its tag state; the silence is back"
+    )
+    assert re.search(r'bl_tag_state "\$L" "\$BL_ZD"\s*\|\s*tee -a "\$LOG"', window), (
+        "the tag state is not tee'd into the session log — on the runner's "
+        "terminal alone it has no reader who can act on it"
+    )
+    # It must report the DECLINED case too, so it cannot sit inside the `if`.
+    gate = window[window.index("if bl_tag_lane"):]
+    assert gate.index("fi") < gate.index("bl_tag_state"), (
+        "bl_tag_state is inside the tag gate, so it can only ever say ON — the "
+        "untagged lane stays silent, which is the whole defect"
+    )
 
 
 @needs_zsh
