@@ -7080,6 +7080,10 @@ async def _score_events(
                 end_time=event.statpal_end_time,
                 completed_at=event.completed_at,
                 period=event.period,
+                # #4580 — the scoreboard, so a sentence that names the field can
+                # check it. This is the page-one path the opener was served on.
+                home_score=event.home_score,
+                away_score=event.away_score,
             )
 
             sport_key = event.sport.key if event.sport else None

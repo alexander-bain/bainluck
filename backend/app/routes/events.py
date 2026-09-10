@@ -16688,6 +16688,9 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
         opening_favorite=event.opening_favorite,
         time_series=time_series_metrics,
+        # #4580 — the scoreboard, so a sentence that names the field can check it.
+        home_score=event.home_score,
+        away_score=event.away_score,
     )
 
     response["highlight"] = {
