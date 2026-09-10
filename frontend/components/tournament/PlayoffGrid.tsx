@@ -681,8 +681,30 @@ export default function PlayoffGrid({
           `SparkBar` under every numeric cell for the same reason, so the cue is
           clamped to the HEADER ROW's measured height and never covers a bar. */}
       <div className="relative">
+      {/* #4631: `relative` here is NOT styling — it is the clip.
+
+          The page scrolled sideways 71px on a phone (390px viewport, 461px
+          document) and the grid looked guilty, because 68 elements inside it
+          report a right edge past the viewport. Every one of those is a false
+          lead: a rect ignores clipping, and this scroller already clips them
+          (`clientWidth` 332 against `scrollWidth` 452, `overflow-x:auto`).
+          Forcing `overflow-x:hidden` here changed the document width by zero.
+
+          What actually escaped is `sr-only`. Tailwind implements it as
+          `position:absolute`, and an absolutely-positioned element is clipped
+          by an ancestor's overflow ONLY if that ancestor is in its containing
+          block chain. This scroller was `position:static`, so all 30 of the
+          grid's screen-reader labels resolved their containing block to the
+          `relative` wrapper OUTSIDE the scroller and were never clipped by it
+          — each a 1px box parked at document x=461, which is the 71px exactly.
+
+          Making the scroller its own containing block brings them back inside
+          the clip. Measured on production before the change: document
+          `scrollWidth` 461 -> 390, `scrollTo(300,0)` reach 71 -> 0, while
+          `scrollWidth` 452 > `clientWidth` 332 still holds (ruling 5's swipe
+          survives) and the sticky name column still computes `sticky`. */}
       <div
-        className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${GRID_NAME_TRACK} ${
+        className={`relative overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${GRID_NAME_TRACK} ${
           scrolls ? GRID_COL_TRACK_FIXED : GRID_COL_TRACK_FLEX
         } ${scrolls ? `overflow-x-auto lg:overflow-x-visible ${GRID_SCROLL_SNAP}` : ""}`}
         data-testid="grid-scroller"
