@@ -1236,10 +1236,18 @@ def _run_loop(
     try:
         p.stdout.close()
     except OSError:
+        # Already closed by the reader thread reaching EOF after the SIGKILL.
+        # Nothing to clean up and nothing to report: the output we came for is
+        # in `chunks`, and a teardown that raises here would mask the real
+        # assertion below it.
         pass
     try:
         p.wait(timeout=30)
     except subprocess.TimeoutExpired:
+        # Reaped for exit status only. The process group has already taken a
+        # SIGKILL, so a wait that somehow times out cannot change the outcome
+        # of this test — and raising would replace a readable assertion failure
+        # with a teardown error.
         pass
     return "".join(chunks)
 
