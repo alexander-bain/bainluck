@@ -413,3 +413,146 @@ d("iOS reads one event-status vocabulary", () => {
     expect(existsSync(join(IOS_ROOT, "../BainLuckWatch Watch App/EventState.swift"))).toBe(false);
   });
 });
+
+/**
+ * #4018 — THE THREE MARKET CARDS ASKED "IS IT OVER?" WHERE THEY MEANT "CAN A
+ * FINAL STILL ARRIVE?".
+ *
+ * #4002 fixed that distinction for the HERO and this file's opening block guards
+ * it. One scroll below the hero, `MarketMapView`, `TotalPointsSpectrumView` and
+ * `PlayerPropsCardView` each carried their own `EventState.isFinished` copy — so
+ * on `15301312`, an NPB game abandoned four days earlier, the Runs map still read
+ * **`PROJECTION 4.8`**. 184 suspended games carried a projection over the 7 days
+ * to 2026-09-08.
+ *
+ * WHY THESE ASSERTIONS AND NOT SWIFT ONES, MEASURED RATHER THAN ASSUMED. The
+ * predicate and the rail gate are pure and are proved in
+ * `BainLuckTests/SuspendedProjectionTests.swift`. The WIRING is not: a mutation
+ * run on 2026-09-09 hardcoded `MarketMapView.canStillBeGraded` to `true` and
+ * removed `TotalPointsSpectrumView`'s strip gate, and **both mutants survived the
+ * entire 1,814-test Swift suite** — the same blindness this file's header
+ * describes for #4002, in the same place, one card lower. These two assertions
+ * are what kill them, and CI runs them.
+ */
+describe("#4018 — a card stops forecasting a game that can never be graded", () => {
+  const read = (rel: string) => stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
+
+  const MAP = "Components/MarketMapView.swift";
+  const SPECTRUM = "Components/TotalPointsSpectrumView.swift";
+  const DETAIL = "Views/EventDetailView.swift";
+
+  it("the predicate is reachable and is the shared one", () => {
+    // Reachability first: every assertion below is a regex over source, and a
+    // path typo would make all of them vacuous.
+    expect(read(MAP).length).toBeGreaterThan(1000);
+    expect(read(SPECTRUM).length).toBeGreaterThan(1000);
+    expect(stripComments(readFileSync(CANONICAL, "utf8"))).toMatch(
+      /static func canStillBeGraded\(/,
+    );
+  });
+
+  it.each([
+    ["MarketMapView", MAP],
+    ["TotalPointsSpectrumView", SPECTRUM],
+  ])("%s derives the gate from EventState, never from a literal", (_name, rel) => {
+    const code = read(rel);
+    // KILLS THE MUTANT: `private var canStillBeGraded: Bool { true }`.
+    expect(code).toMatch(
+      /private var canStillBeGraded: Bool \{\s*EventState\.canStillBeGraded\(eventStatus, commenceTime: commenceTime\)\s*\}/,
+    );
+    // …and the clock actually reaches it, rather than defaulting to nil forever.
+    expect(code).toMatch(/var commenceTime: Date\? = nil/);
+  });
+
+  it("every projection marker on the map reads the gate, and none reads isDone", () => {
+    const code = read(MAP);
+    const gated = code.match(/drawsPregameMarker\(canStillBeGraded: canStillBeGraded\)/g) ?? [];
+    expect(gated.length).toBeGreaterThanOrEqual(4);
+    // The old question, in the one place it was asked. `isDone` itself stays —
+    // it is the SETTLED test and #4018 deliberately does not touch it.
+    expect(code).not.toMatch(/drawsPregameMarker\(isDone:/);
+  });
+
+  it("the rail gate returns the answer it is given", () => {
+    // KILLS THE MUTANT: `-> Bool { true }`. Stated positively as well, because a
+    // ban-shaped assertion cannot see the gate being deleted outright.
+    const rail = stripComments(readFileSync(join(IOS_ROOT, "Utilities/MarketMapRail.swift"), "utf8"));
+    expect(rail).toMatch(
+      /static func drawsPregameMarker\(canStillBeGraded: Bool\) -> Bool \{\s*canStillBeGraded\s*\}/,
+    );
+  });
+
+  it("the spectrum's projection strip is gated, not just its layout flag", () => {
+    // KILLS THE MUTANT: `if isPre {`. The gate is deliberately NOT folded into
+    // `isPre`, which also picks minimal-vs-full layout — so the scan has to see
+    // the strip's own condition rather than the flag's definition.
+    expect(read(SPECTRUM)).toMatch(/if isPre, canStillBeGraded \{/);
+  });
+
+  it("the spectrum's LAYOUT CHOICE is gated too, or the strip gate is bypassed", () => {
+    // 🔴 THE HALF THAT WAS MISSING, AND THE AFTER-SCREENSHOT CAUGHT IT.
+    // `TotalPointsSpectrumView.body` picks `minimalView` on
+    // `thresholds.count < 5 && isPre`, and `isPre` is TRUE for an abandoned game
+    // — it is neither live nor finished. So a suspended match holding fewer than
+    // five rungs never reached `projectionStrip`'s gate at all: it drew
+    // `minimalView`, which is nothing but a pre-game forecast, and went on
+    // reading **`PRE-GAME LINE 5.5`** with a 99% clearance bar over an NPB game
+    // that started Sep 9 and was never graded
+    // (`artifacts-native-090/after4018-npb.png` — the frame is the fix's OWN
+    // after-shot, with the Runs-map tile correctly gone and this one still there).
+    //
+    // KILLS THE MUTANT: reverting to `thresholds.count < 5 && isPre`.
+    const code = read(SPECTRUM);
+    expect(code).toMatch(/else if thresholds\.count < 5, isPre, canStillBeGraded \{/);
+    // Steering to `fullView` is only honest if the ladder it lands on stops
+    // captioning every rung `PRE-GAME` — otherwise the fix trades one false
+    // pre-game line for four. Asserted here rather than in its own block because
+    // the two lines are one change: neither is correct without the other.
+    expect(code).toMatch(
+      /if canStillBeGraded \|\| isDone,\s*let caption = MarketMapRail\.spectrumRungCaption\(/,
+    );
+    // Stated as a ban as well: the `&&` form cannot come back by itself, and a
+    // positive-only assertion would still pass if someone added a second,
+    // ungated branch beside it.
+    expect(code).not.toMatch(/thresholds\.count < 5 && isPre/);
+  });
+
+  it("the event page hands both cards a commence time", () => {
+    // The wiring the two components cannot assert about themselves: a defaulted
+    // `commenceTime` of nil is treated as "started", so a call site that forgets
+    // it would suppress projections on unplayed fixtures instead of abandoned
+    // ones — the #4021 direction, and the expensive one.
+    const detail = read(DETAIL);
+    for (const component of ["MarketMapView", "TotalPointsSpectrumView"]) {
+      const call = detail.slice(detail.indexOf(`${component}(`));
+      expect(call.slice(0, 400)).toMatch(/commenceTime: event\.commenceTime\?\.asDate,/);
+    }
+  });
+
+  it("the hero and the cards share one definition", () => {
+    // #4002's helper is now a delegation. If someone re-inlines it, the hero and
+    // the cards can disagree about `suspended` again, which is the whole defect.
+    expect(read(DETAIL)).toMatch(
+      // NOTE the parameter list contains `Date()`, so a `[^)]*` span stops short
+      // of it and the assertion silently never matches. Non-greedy to `-> Bool`.
+      /static func showsProjection\([\s\S]*?\) -> Bool \{\s*EventState\.canStillBeGraded\(status, commenceTime: commenceTime, now: now\)\s*\}/,
+    );
+  });
+
+  it("PlayerPropsCardView is left alone ON PURPOSE, and that is recorded", () => {
+    // NOT AN OVERSIGHT. #4018 names three cards; two of them print a number the
+    // APP computes and labels as a forecast of the final, which is mechanically
+    // wrong once no final can arrive. The props card prints the MARKET's price
+    // for a prop — a real quote, not our projection — so suppressing it is a
+    // product decision about what an ungraded prop should look like, not a bug
+    // fix. Routed to Alex rather than guessed at, and the routing is a FILE so
+    // the claim can be checked:
+    // `alex-inbox/native-090b-2146PT-a-game-that-was-abandoned-still-shows-a-forecast-one-card-needs-your-call.md`
+    // (three options, recommending "chance of hitting" -> "last quoted chance",
+    // defaulting Fri 2026-09-11 9:00am PT). This assertion exists so the omission
+    // is visible to the next reader instead of looking like a miss.
+    expect(read("Components/PlayerPropsCardView.swift")).toMatch(
+      /private var isDone: Bool \{ EventState\.isFinished\(eventStatus\) \}/,
+    );
+  });
+});

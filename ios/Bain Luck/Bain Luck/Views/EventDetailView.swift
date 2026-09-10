@@ -322,6 +322,7 @@ struct EventDetailView: View {
                         MarketMapView(
                             gameMarkets: gameMarkets,
                             eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate,
                             homeTeam: event.homeTeam,
                             awayTeam: event.awayTeam,
                             homeAbbr: event.homeTeamData?.abbreviation,
@@ -342,6 +343,7 @@ struct EventDetailView: View {
                         TotalPointsSpectrumView(
                             gameMarkets: gameMarkets,
                             eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate,
                             homeTeam: event.homeTeam,
                             awayTeam: event.awayTeam,
                             homeColor: teamColors(event).home,
@@ -550,9 +552,13 @@ struct EventDetailView: View {
     /// against 1 live one. On every one of those the grey pair was the only
     /// numbers on a hero that carried no state label at all — a projected final
     /// for a match nobody will ever grade.
+    ///
+    /// #4018 — the rule moved to `EventState.canStillBeGraded`, unchanged, because
+    /// the three market cards one scroll below this hero needed the same answer
+    /// and were each carrying their own `isFinished` copy instead. This stays as
+    /// the hero's name for it; the logic has exactly one home.
     static func showsProjection(status: String?, commenceTime: Date?, now: Date = Date()) -> Bool {
-        !EventState.isFinished(status)
-            && !EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
+        EventState.canStillBeGraded(status, commenceTime: commenceTime, now: now)
     }
 
     /// #3014 — "Proj. 2-3" beside a LIVE badge on a game with no score reads as

@@ -5,6 +5,8 @@ import SwiftUI
 struct TotalPointsSpectrumView: View {
     let gameMarkets: GameMarketsResponse
     let eventStatus: String?
+    /// #4018 — the clock half of "can a final still arrive?"; see `MarketMapView`.
+    var commenceTime: Date? = nil
     let homeTeam: String
     let awayTeam: String
     let homeColor: Color
@@ -36,6 +38,18 @@ struct TotalPointsSpectrumView: View {
 
     private var isLive: Bool { eventStatus == "live" }
     private var isDone: Bool { EventState.isFinished(eventStatus) }
+
+    /// #4018 — see `EventState.canStillBeGraded`. Deliberately NOT folded into
+    /// `isPre` itself: that flag ALSO picks minimal-vs-full layout in `body`, and
+    /// the two uses need different answers. The projection strip is suppressed
+    /// for an abandoned game; the layout choice is *steered* for one, to
+    /// `fullView`, because `minimalView` is nothing BUT a pre-game forecast and
+    /// gating its contents would leave a card containing only its own heading.
+    /// Both call sites therefore name this flag explicitly rather than reading it
+    /// through `isPre`.
+    private var canStillBeGraded: Bool {
+        EventState.canStillBeGraded(eventStatus, commenceTime: commenceTime)
+    }
     private var isPre: Bool { !isLive && !isDone }
 
     /// The game-total rungs this ladder draws, ascending.
@@ -107,7 +121,21 @@ struct TotalPointsSpectrumView: View {
 
     var body: some View {
         if thresholds.isEmpty { EmptyView() }
-        else if thresholds.count < 5 && isPre {
+        // #4018 — `canStillBeGraded` GATES THE LAYOUT CHOICE, NOT JUST THE STRIP,
+        // and this line is the second half of the fix. `isPre` is TRUE for an
+        // abandoned game (it is neither live nor finished), so a suspended match
+        // holding fewer than five rungs was routed to `minimalView` and never
+        // reached the gate in `projectionStrip` at all: on the NPB specimen
+        // (Eagles v Marines, started Sep 9, no result) the card went on reading
+        // **`PRE-GAME LINE 5.5`** with a 99% clearance bar, under a "Projected
+        // scoring" heading, for a game nobody will grade.
+        //
+        // The remedy is to STEER rather than to blank. `minimalView` is nothing
+        // but a pre-game forecast, so suppressing its contents would leave a card
+        // that is only a heading; `fullView` already draws the honest version of
+        // this state — the strip suppressed, the threshold ladder kept — so an
+        // ungradeable game is sent there and the reader keeps the real prices.
+        else if thresholds.count < 5, isPre, canStillBeGraded {
             minimalView
         } else {
             fullView
@@ -218,7 +246,13 @@ struct TotalPointsSpectrumView: View {
     private var projectionStrip: some View {
         let ouLine = centerLine ?? 0
 
-        if isPre {
+        // #4018 — an abandoned game matches NONE of these three branches, and
+        // that is the intended outcome: it has no pre-game expectation worth
+        // stating in the present tense, no pace, and no final. The strip is
+        // absent rather than re-worded, which is the same trade
+        // `EventState.noGameMarketsLine` makes — drop the false promise and
+        // claim nothing in its place. The threshold ladder below is untouched.
+        if isPre, canStillBeGraded {
             preGameStrip(ouLine: ouLine)
         } else if isLive, countsTheUnit, let pace = gameMarkets.pace,
                   let paceTotal = pace.projectedTotal,
@@ -482,7 +516,29 @@ struct TotalPointsSpectrumView: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .frame(width: 50, alignment: .leading)
 
-                if let caption = MarketMapRail.spectrumRungCaption(
+                // #4018 — NO `PRE-GAME` CHIP ON A GAME THAT CAN NEVER BE GRADED.
+                // Steering an abandoned game to `fullView` (see `body`) is what
+                // makes this reachable: the ladder captions every rung from
+                // `SpectrumTense`, and that enum reads `isSettled: isDone` — "is
+                // it over?" — so a suspended match came out `.projected` and wore
+                // four `PRE-GAME` chips where the old layout wore one
+                // `PRE-GAME LINE`. Removing one falsehood must not quadruple its
+                // smaller sibling.
+                //
+                // The chip is suppressed rather than re-worded, and the tense
+                // enum is deliberately NOT given a fourth case here. Its
+                // `.settled` arm is the near miss — "over, but this card cannot
+                // grade" fits an abandoned game exactly — but the words it prints
+                // are "Settled scoring" / "SETTLED", and Alex's standing ruling is
+                // that settled means settled: a game with no result settled
+                // nothing. Naming that state is a copy decision, so the two
+                // remaining "Projected …" headings on this card (and the Runs
+                // map's identical subtitle one card up) are ROUTED, not guessed:
+                // alex-inbox/native-090b-2146PT-…-one-card-needs-your-call.md.
+                // A nil caption is an already-supported outcome — `.graded`
+                // returns one — so this draws a shape the ladder ships today.
+                if canStillBeGraded || isDone,
+                   let caption = MarketMapRail.spectrumRungCaption(
                     finalTotal: actualTotal, isSettled: isDone
                 ) {
                     Text(caption)

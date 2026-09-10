@@ -18,7 +18,7 @@ import SwiftUI
 /// served exactly two full-game spread rungs, quoted in the issue and re-read
 /// from production; the event row's own `opening_home_spread` / `opening_over_under`
 /// are `-1.5` / `8.5` and are NOT served to this client (see
-/// ``MarketMapRail/drawsPregameMarker(isDone:)``).
+/// ``MarketMapRail/drawsPregameMarker(canStillBeGraded:)``).
 final class MarketMapPregameMarkerTests: XCTestCase {
 
     // MARK: - The specimen, exactly as the venue priced it
@@ -100,9 +100,17 @@ final class MarketMapPregameMarkerTests: XCTestCase {
 
     // MARK: - The gate
 
+    // #4018 — THE PARAMETER CHANGED MEANING AND THESE ROWS DID NOT. `isDone: true`
+    // became `canStillBeGraded: false` and `isDone: false` became `true`, which is
+    // the same two facts about a settled and an unplayed map. What changed is that
+    // a THIRD state now exists between them — suspended — and it is asserted in
+    // `SuspendedProjectionTests` rather than here, because it is a property of the
+    // caller's predicate and not of this gate.
+
+
     func testASettledMapMayNotDrawThePregameTile() {
         XCTAssertFalse(
-            MarketMapRail.drawsPregameMarker(isDone: true),
+            MarketMapRail.drawsPregameMarker(canStillBeGraded: false),
             "once the game is over neither number the tile can reach is a pre-game number"
         )
     }
@@ -111,7 +119,7 @@ final class MarketMapPregameMarkerTests: XCTestCase {
     /// is untouched, which is what keeps the NFL projection marker pinned by
     /// `SpreadRungTests` from moving.
     func testALiveOrUnplayedMapIsUntouched() {
-        XCTAssertTrue(MarketMapRail.drawsPregameMarker(isDone: false))
+        XCTAssertTrue(MarketMapRail.drawsPregameMarker(canStillBeGraded: true))
 
         // The unsettled specimen control: before the off the same two rungs are
         // priced like a real question, and the tile is both wanted and honest.
@@ -147,7 +155,7 @@ final class MarketMapPregameMarkerTests: XCTestCase {
                         + "the old code could not fail to draw one, so nothing but a gate removes it"
                     )
                     XCTAssertFalse(
-                        MarketMapRail.drawsPregameMarker(isDone: true),
+                        MarketMapRail.drawsPregameMarker(canStillBeGraded: false),
                         "and the gate removes it in every one of those shapes"
                     )
                 }

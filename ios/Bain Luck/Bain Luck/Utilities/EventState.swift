@@ -82,6 +82,35 @@ enum EventState {
         isSuspended(status) && hasStarted(commenceTime: commenceTime, now: now)
     }
 
+    /// Whether a FINAL can still arrive for this event.
+    ///
+    /// #4018 — the question a forecast has to answer, and it is NOT "is the game
+    /// over?". `isFinished` is false for a suspended match, so every surface that
+    /// gated a projection on `!isFinished` went on offering one for a game nobody
+    /// will ever grade: on `15301312` (Chunichi Dragons v Tokyo Yakult Swallows,
+    /// abandoned 2026-09-04) the Runs map read **`PROJECTION 4.8`** four days
+    /// later. Measured on production over the 7 days to 2026-09-08: **184
+    /// suspended games carrying a projection** against 1 live one.
+    ///
+    /// #4002 drew exactly this distinction for the hero and PR #4016 photographed
+    /// it, but it stayed a private computed property on `EventDetailView` while
+    /// three market cards one scroll below kept their own `isFinished` copy. This
+    /// is that helper lifted to where the vocabulary lives, so there is one answer
+    /// to "can this still be graded?" rather than a fourth inline version of it.
+    ///
+    /// IT IS DELIBERATELY NOT `isDone`. Flipping the cards' settled flag would be
+    /// the easy change and it is wrong: those branches read `homeScore`/`homeTeam`
+    /// totals and label them **FINAL**, so a suspended game with a partial score
+    /// would have that partial published as the result. `suspendedSummary` above
+    /// calls the same number a "last score" for precisely this reason. A forecast
+    /// and a result are two questions and they get two predicates.
+    static func canStillBeGraded(
+        _ status: String?, commenceTime: Date?, now: Date = Date()
+    ) -> Bool {
+        !isFinished(status)
+            && !isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
+    }
+
     /// The short badge a suspended event wears.
     ///
     /// Deliberately NOT the bare word "Suspended": for a rain-delayed US Open

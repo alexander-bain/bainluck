@@ -950,8 +950,24 @@ enum MarketMapRail {
     /// card also captioning `currentOdds` "PRE-GAME" — is the one #3850
     /// deliberately left out, and is left out here too rather than fixed in
     /// passing on a state nobody has photographed.
-    static func drawsPregameMarker(isDone: Bool) -> Bool {
-        !isDone
+    ///
+    /// #4018 — THE PARAMETER IS NO LONGER `isDone`, AND THAT IS THE FIX. "Not
+    /// finished" is not the same question as "a final can still arrive", and a
+    /// SUSPENDED match is the whole gap between them: `isFinished` is false for
+    /// it, so this returned true and the map drew **`PROJECTION 4.8`** over
+    /// `15301312`, a game abandoned four days earlier. 184 suspended games
+    /// carried a projection over the 7 days to 2026-09-08.
+    ///
+    /// Four of the five projection markers in `MarketMapView` route through this
+    /// one function, which is why the repair is a parameter rename rather than
+    /// four gates. The fifth is inside the `isLive` branch and is unreachable for
+    /// a suspended game, because `isLive` tests the status directly.
+    ///
+    /// The caller now passes `EventState.canStillBeGraded`. Live and pre-game
+    /// maps are untouched — that predicate is true for both — so the NFL marker
+    /// pinned by `SpreadRungTests` still cannot move.
+    static func drawsPregameMarker(canStillBeGraded: Bool) -> Bool {
+        canStillBeGraded
     }
 
     // MARK: - Where the mid axis label goes
