@@ -82,7 +82,7 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -164,7 +164,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -234,7 +234,7 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -290,7 +290,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -1508,7 +1508,7 @@ jobs:
       #  test_the_producer_runs_without_our_third_party_requirements`
       # re-checks it under `-S` in the BACKEND suite, so a new import breaks
       # there, where the fix is, rather than here, where it isn't.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
