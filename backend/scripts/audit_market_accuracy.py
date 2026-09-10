@@ -17,14 +17,21 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+
+import os as _bl_os
+import sys as _bl_sys
+_bl_sys.path.insert(0, _bl_os.path.dirname(_bl_os.path.dirname(_bl_os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged
 
 API_BASE = "https://api.bainluck.com"
 
 
 def api_get(path: str) -> dict:
     url = f"{API_BASE}{path}"
-    with urlopen(url, timeout=30) as resp:
+    req = Request(url, headers=tagged(url))
+    with urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
 

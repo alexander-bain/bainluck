@@ -31,6 +31,13 @@ import urllib.parse
 import urllib.request
 from collections import Counter
 
+# `backend/`, two levels up from this file by construction — a path insert, not
+# an environment guess, so it cannot fail the way the deferred import in
+# `main()` is written to tolerate.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.utils.agent_origin import tagged  # noqa: E402
+
 BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 #: Event-listing statuses to sweep. Kalshi's EVENT status and its MARKET status
@@ -45,8 +52,10 @@ def _get(path: str, **params) -> tuple[int, dict | None]:
     url = BASE + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
+    # Kalshi is a third party: `tagged()` returns {} and the wire is unchanged.
+    req = urllib.request.Request(url, headers=tagged(url))
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return exc.code, None

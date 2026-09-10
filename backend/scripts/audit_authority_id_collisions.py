@@ -91,8 +91,12 @@ def fetch_authority(sport_key: str, authority_id: str) -> Optional[AuthorityReco
     if path is None:
         return None
     url = ESPN_SUMMARY.format(sport=path[0], league=path[1], eid=authority_id)
+    # ESPN is a third party, so `tagged()` returns {} and this goes out exactly
+    # as it did. Routed through the carrier anyway: the guard's rule is "every
+    # outbound call", precisely so no site needs a per-host judgment call.
+    req = urllib.request.Request(url, headers=tagged(url))
     try:
-        with urllib.request.urlopen(url, timeout=25) as response:
+        with urllib.request.urlopen(req, timeout=25) as response:
             payload = json.load(response)
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
         return None

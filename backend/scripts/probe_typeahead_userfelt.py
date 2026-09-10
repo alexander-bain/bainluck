@@ -102,6 +102,13 @@ DEFAULT_WARM_THRESHOLD_S = 0.150
 #: what it measures is transport rather than work, and (b) something we are
 #: already allowed to hammer. `/api/events/search/trending` is a single Redis
 #: read behind a public GET.
+#:
+#: Note for anyone auditing the tag (#4747): this is a `/api/events/search/*`
+#: path, so "this probe's floor pass does not touch search" is false. What IS
+#: true is narrower and is the reason the untagged years cost nothing —
+#: `GET /search/trending` never calls `_record_trending()`, so it writes no
+#: `search_query_logs` row and casts no trending vote. Only the two search
+#: HANDLERS do.
 CALIBRATION_URL_PATH = "/api/events/search/trending"
 CALIBRATION_SAMPLES = 8
 
@@ -139,7 +146,11 @@ def measure_transport_floor(base: str, timeout_s: float) -> dict:
     raw = []
     for _ in range(CALIBRATION_SAMPLES):
         started = time.time()
-        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
+        # Built once per sample rather than hoisted: the tag is resolved at CALL
+        # time by contract, and a Request hoisted out of the loop would freeze
+        # whatever `BL_AGENT` said when the loop started.
+        req = urllib.request.Request(url, headers=tagged(url))
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             resp.read()
             if resp.getcode() != 200:
                 raise RuntimeError(f"calibration endpoint returned {resp.getcode()}")
