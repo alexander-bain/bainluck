@@ -2044,19 +2044,32 @@ def is_first_page_quality_offender(item: dict) -> bool:
     return item.get("_quality_class") in ("low_quality", "suppress")
 
 
-#: Every place a Discover card can print a sentence. All five, because a card
-#: that speaks through ANY of them is not silent, and a definition that missed
-#: one would demote a card that the reader can in fact read.
+#: Every place a DISCOVER card can print a sentence — and nowhere else.
 #:
-#: `card_sum_reason` is the non-obvious one: it is a machine key
-#: (`independent_prices`), but `frontend/lib/cardSum.ts` maps it to a rendered
-#: sentence — "These two sides are quoted separately, so they do not add up to
-#: 100." Counting the four obvious doors and omitting it called one MORE card
-#: silent on the 2026-09-10 pool (slot 9, `Russia x Ukraine ceasefire`) than
-#: the cert bus's independent production read found, which is how the omission
-#: was caught.
+#: THE LIST IS THE RENDERER'S, NOT A GUESS AT IT. `feedContextSnippet` in
+#: `frontend/components/discover/utils.ts` is the caption chain every Discover
+#: futures card goes through, and its futures branch is exactly:
+#:
+#:     firstMeaningful([item.context_summary, item.headline, item.reason,
+#:                      data.hook_description])
+#:
+#: Four doors. `DiscoverCard.tsx` -> `discover/FuturesCard.tsx` reads no other
+#: text field, and iOS shares the chain (`DiscoverCaption.feedCaption`, #4265).
+#:
+#: WHY `card_sum_reason` IS NOT HERE (CERT-2473's BLOCK, and it was right).
+#: It IS rendered as a sentence by `frontend/lib/cardSum.ts` — but only through
+#: `FeedCard.tsx`, which serves `/sports`, `/my-stuff` and `/categories/[slug]`.
+#: **Discover does not use that component.** Counting it as speech spared
+#: `Russia x Ukraine ceasefire agreement by...?` at slot 9, whose
+#: headline/reason/context/hook are all empty and whose only text is the machine
+#: key `independent_prices` — a card that is silent to the reader on the page
+#: this floor governs. A door that opens on another surface is not a door here.
+#:
+#: So the rule this list encodes: **speech is what THIS surface renders.** If a
+#: fifth field ever reaches the Discover caption chain, it belongs here; a field
+#: that only some other surface prints never does.
 _CARD_TEXT_DOORS_TOP = ("headline", "reason", "context_summary")
-_CARD_TEXT_DOORS_DATA = ("hook_description", "card_sum_reason")
+_CARD_TEXT_DOORS_DATA = ("hook_description",)
 
 
 def is_wholly_silent_card(item: dict) -> bool:

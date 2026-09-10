@@ -23,6 +23,8 @@ the cert bus reproduced independently at positions 16 and 19.
 import pytest
 
 from app.utils.feed_market_quality import (
+    _CARD_TEXT_DOORS_DATA,
+    _CARD_TEXT_DOORS_TOP,
     enforce_first_page_quality_floor,
     is_wholly_silent_card,
 )
@@ -73,10 +75,18 @@ HOOK_ONLY = {
     },
 }
 
-#: The door that was nearly missed. `independent_prices` is a machine key, so a
-#: four-door definition read this card as silent — one more than the cert bus
-#: found on production, which is how the omission surfaced.
-#: `frontend/lib/cardSum.ts` renders it as a sentence the reader can read.
+#: THE DOOR THAT OPENS ON ANOTHER SURFACE (CERT-2473's BLOCK; the second
+#: presentation had this backwards and the BLOCK was right).
+#:
+#: `card_sum_reason` IS rendered as a sentence by `frontend/lib/cardSum.ts` —
+#: but only through `FeedCard.tsx`, which serves `/sports`, `/my-stuff` and
+#: `/categories/[slug]`. Discover renders through `DiscoverCard.tsx` ->
+#: `discover/FuturesCard.tsx`, whose caption chain (`feedContextSnippet`) reads
+#: context_summary / headline / reason / hook_description and NOTHING else.
+#:
+#: So on the page this floor governs, this card prints a percentage, a question,
+#: and not one word. It is SILENT, and it must yield its slot. This is the
+#: production specimen the cert bus found still on page one.
 SUM_REASON_ONLY = {
     "type": "futures",
     "score": 85,
@@ -120,7 +130,6 @@ class TestWhatCountsAsSilent:
         "card,door",
         [
             (HOOK_ONLY, "hook_description"),
-            (SUM_REASON_ONLY, "card_sum_reason"),
             (SPEAKING_TAIL_CARD, "headline/reason/context"),
         ],
     )
@@ -128,6 +137,33 @@ class TestWhatCountsAsSilent:
         """One sentence anywhere is enough. Demoting a card the reader CAN
         read would be a worse defect than the one this control removes."""
         assert not is_wholly_silent_card(card), f"{door} was not counted as speech"
+
+    def test_a_field_only_another_surface_renders_is_not_speech_here(self):
+        """CERT-2473. `card_sum_reason` is a door on `/sports`, not on Discover.
+
+        The whole failure mode of the second presentation: a field was counted
+        as speech because SOME component renders it, and the card stayed on the
+        page reading a percentage and a question with no words at all. Speech is
+        what THIS surface renders.
+        """
+        assert is_wholly_silent_card(SUM_REASON_ONLY), (
+            "card_sum_reason is not in the Discover caption chain "
+            "(feedContextSnippet); a card whose only text is `independent_prices` "
+            "prints nothing on Discover and must yield its slot"
+        )
+
+    def test_the_door_list_is_the_discover_caption_chain(self):
+        """The doors ARE `feedContextSnippet`'s futures branch, not a guess.
+
+        Pinned as a set so that adding a door nobody rendered — or dropping one
+        the renderer reads — fails here, next to the sentence naming the file.
+        """
+        assert set(_CARD_TEXT_DOORS_TOP) | set(_CARD_TEXT_DOORS_DATA) == {
+            "context_summary",
+            "headline",
+            "reason",
+            "hook_description",
+        }
 
     def test_whitespace_is_not_speech(self):
         card = {
@@ -195,17 +231,41 @@ class TestTheSilentCardYieldsItsSlot:
 
         assert {id(i): i["score"] for i in out} == before
 
-    def test_the_controls_keep_their_slots(self):
-        """The hook-only and sum-reason-only cards speak, so page one keeps
-        them. This is the direction that fails if the door list shrinks."""
-        items = [HOOK_ONLY, SUM_REASON_ONLY] + [_speaking(f"c-{n}") for n in range(12)]
+    def test_the_hook_only_control_keeps_its_slot(self):
+        """A card speaking through ONE real Discover door is not demoted.
+
+        This is the direction that fails if the door list shrinks too far — the
+        opposite error from CERT-2473's, and just as bad: demoting a card the
+        reader can actually read.
+        """
+        items = [HOOK_ONLY] + [_speaking(f"c-{n}") for n in range(12)]
 
         out, meta = enforce_first_page_quality_floor(items, first_page_size=10)
 
         assert meta["silent_in_window"] == 0
         assert meta["demoted"] == 0
         assert out[0] is HOOK_ONLY
-        assert out[1] is SUM_REASON_ONLY
+
+    def test_the_sum_reason_card_yields_its_slot(self):
+        """CERT-2473's specimen, through the floor rather than the predicate.
+
+        `Russia x Ukraine ceasefire agreement by...?` carries only the machine
+        key `independent_prices`, which Discover never prints. It must leave the
+        window for a card that speaks — this is the cross-layer proof the BLOCK
+        asked for, at the level the reader experiences.
+        """
+        items = [SUM_REASON_ONLY] + [_speaking(f"c-{n}") for n in range(12)]
+
+        out, meta = enforce_first_page_quality_floor(items, first_page_size=10)
+
+        assert meta["silent_in_window"] == 1
+        assert meta["demoted"] == 1
+        assert meta["unreplaced"] == 0
+        assert SUM_REASON_ONLY not in out[:10], (
+            "the silent Russia/Ukraine specimen kept its page-one slot"
+        )
+        assert SUM_REASON_ONLY in out, "it must be demoted, never dropped"
+        assert len(out) == len(items), "page length is preserved"
 
     def test_a_page_with_nothing_to_swap_in_keeps_the_silent_card_loudly(self):
         """Gotcha #53 / #1091: a short page is worse than a silent one. The
@@ -235,3 +295,53 @@ class TestTheSilentCardYieldsItsSlot:
         assert meta["offenders_in_window"] == 2
         assert meta["silent_in_window"] == 1
         assert meta["demoted"] == 2
+
+
+class TestTheTwoLayersCannotDrift:
+    """CERT-2473's root cause, guarded: the backend decided what "speech" is
+    from a field SOME component renders, while the page this floor governs
+    renders four other fields. Both halves were green; nothing tested the join
+    — the same shape as #4695 itself (ten read sites, no emitter) and #4708 (an
+    emitter with no read site). Third time this week, so it gets a guard.
+    """
+
+    def _discover_caption_fields(self) -> set[str]:
+        """The fields `feedContextSnippet`'s FUTURES branch actually reads."""
+        import re
+        from pathlib import Path
+
+        utils = (
+            Path(__file__).resolve().parents[2]
+            / "frontend"
+            / "components"
+            / "discover"
+            / "utils.ts"
+        )
+        assert utils.exists(), f"the Discover caption chain moved: {utils}"
+        source = utils.read_text()
+        match = re.search(r"return firstMeaningful\(\[(.*?)\]\)", source, re.S)
+        assert match, (
+            "could not find `firstMeaningful([...])` in feedContextSnippet — if the "
+            "caption chain was restructured, re-derive the door list from the new "
+            "shape rather than deleting this test"
+        )
+        return {
+            field.split(".")[-1]
+            for field in re.findall(r"\b(?:item|data)\.(\w+)", match.group(1))
+        }
+
+    def test_the_backend_doors_are_exactly_the_discover_caption_chain(self):
+        backend = set(_CARD_TEXT_DOORS_TOP) | set(_CARD_TEXT_DOORS_DATA)
+        frontend = self._discover_caption_fields()
+        assert backend == frontend, (
+            "the silence predicate and the Discover caption chain disagree.\n"
+            f"  backend doors : {sorted(backend)}\n"
+            f"  Discover reads: {sorted(frontend)}\n"
+            "A field the backend counts as speech but Discover never prints "
+            "leaves a wordless card on page one (CERT-2473). A field Discover "
+            "prints but the backend ignores demotes a card the reader can read."
+        )
+
+    def test_card_sum_reason_is_not_in_the_discover_chain(self):
+        """The specific claim the BLOCK rested on, asserted at the source."""
+        assert "card_sum_reason" not in self._discover_caption_fields()
