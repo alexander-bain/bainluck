@@ -396,18 +396,55 @@ def _prop_belongs_to_card(
     return False
 
 
-def combat_status(latest_commence, now) -> str:
-    """upcoming / live / settled for a card from its latest fight's commence time
-    (fight night spans a few hours). Conservative: no time → upcoming."""
+#: How long after the main event's start a card is still under way. A main
+#: event plus its decision, the belt and the interview runs a couple of hours;
+#: six is generous and is the arm that was never wrong.
+_COMBAT_CARD_RUN_HOURS = 6.0
+
+
+def combat_status(latest_commence, now, earliest_commence=None) -> str:
+    """upcoming / live / settled for a fight card, from its OWN first and last bouts.
+
+    The card wears the same pulsing red `● LIVE` pill a football match at 67'
+    wears (`TemporalBadge`, discover/shared.tsx), so "live" is a claim a reader
+    can check by looking for a fight. The old rule opened that window a fixed
+    EIGHT HOURS before the card's LATEST bout — an approximation of "the prelims
+    must have started by now" that is only ever as good as the spread between the
+    first bout and the last.
+
+    Censused on production (2026-09-10, every combat card commencing in
+    [-10d, +30d]) that spread is not reliable, and on the card that filed #4505 it
+    is zero: `event:ufc:26sep10` carries **ten bouts all stamped
+    2026-09-10 00:00:00+00**, so `latest - 8h` put the live pill on it at 16:00Z
+    the day before — the issue caught it badged Live at 21:57Z on 09-09, two hours
+    before its own served start. Cards with real times were not served by the
+    approximation either: 09-09 ran 00:12 → 05:20, so the pill lit 52 minutes
+    early there too.
+
+    So the window is the card: **live from the first bout** until
+    ``_COMBAT_CARD_RUN_HOURS`` after the last. With no first bout known,
+    ``earliest_commence`` defaults to the latest, which under-claims (the pill
+    waits for the main event) rather than claiming a fight that has not happened
+    — the same direction as this function's standing "no time → upcoming".
+
+    The trailing arm is unchanged and is what keeps this honest in the other
+    direction: a card is not dropped as finished the moment its main event starts.
+    """
     if latest_commence is None:
         return "upcoming"
+    first = earliest_commence if earliest_commence is not None else latest_commence
     try:
-        hours = (latest_commence - now).total_seconds() / 3600
+        hours_to_last = (latest_commence - now).total_seconds() / 3600
+        hours_to_first = (first - now).total_seconds() / 3600
     except TypeError:
         return "upcoming"
-    if hours < -6:  # card finished (> ~6h after the main event started)
-        return "settled"
-    if hours <= 8:  # fight night window
+    # A first bout later than the last is bad data, never a schedule: fall back
+    # to the pair's true order rather than opening a window that cannot close.
+    if hours_to_first > hours_to_last:
+        hours_to_first = hours_to_last
+    if hours_to_last < -_COMBAT_CARD_RUN_HOURS:
+        return "settled"  # card finished (> ~6h after the main event started)
+    if hours_to_first <= 0:  # the first bout is under way or already fought
         return "live"
     return "upcoming"
 
@@ -687,13 +724,17 @@ async def list_card_concepts(
             # Tie-invariant: every bout in a tied max group carries the same
             # commence, so this is the latest time whichever row sorts last.
             latest = bouts[-1].commence_time  # _list_event_bouts sorts ascending
+            earliest = bouts[0].commence_time
         elif kalshi and kalshi["fights"]:
             kalshi["fights"].sort(key=_ct)
             latest = kalshi["fights"][-1]["commence"]
+            earliest = kalshi["fights"][0]["commence"]
         else:
             continue
 
-        status = combat_status(latest, now)
+        # #4505: the live window opens at THIS card's first bout, never at a fixed
+        # lead on its last — see `combat_status`.
+        status = combat_status(latest, now, earliest)
         if status not in statuses:
             continue
 
@@ -946,12 +987,18 @@ class CombatEventAdapter:
         # Kalshi-only commence is the resolution/close date and would leave a card
         # that already fought reading "upcoming" for days (gotcha #14).
         authoritative_commence = bouts[-1].commence_time if bouts else latest_commence
+        # #4505: the card's own first bout opens the live window. Kalshi-only cards
+        # have no scheduled first bout, so this is None there and `combat_status`
+        # falls back to the main event — under-claiming, never early.
+        first_commence = bouts[0].commence_time if bouts else fights[0].commence_time
 
         # #1803, second reachable instance — found by censusing the class rather
         # than trusting its golf-shaped scoping. The card's ASSIGNED status is
         # computed below for `event.status`; it is hoisted here because `_child`
         # needs it to floor its own settled inference. Same authority, one call.
-        card_settled = combat_status(authoritative_commence, now) == "settled"
+        card_settled = (
+            combat_status(authoritative_commence, now, first_commence) == "settled"
+        )
 
         def _fight_outcomes(m):
             outs = sorted(
@@ -1065,7 +1112,7 @@ class CombatEventAdapter:
                 "slug": card_slug(card_name or main_event.name, target),
                 "domain": cfg.domain,
                 "name": card_name or main_event.name,  # numbered/Fight-Night card
-                "status": combat_status(authoritative_commence, now),
+                "status": combat_status(authoritative_commence, now, first_commence),
                 "start_date": (
                     authoritative_commence.isoformat()
                     if authoritative_commence is not None
@@ -1127,6 +1174,9 @@ class CombatEventAdapter:
         # (#4555). Never `bouts[-1]` — see `main_bout_of`.
         main_bout = main_bout_of(bouts)
         latest_commence = main_bout.commence_time
+        # #4505: this envelope's card is events-only, so its first bout is known —
+        # `bouts` is sorted ascending by `bout_order_key`.
+        first_commence = bouts[0].commence_time if bouts else None
 
         def _child(ev):
             outs = _competitors(ev)
@@ -1152,7 +1202,7 @@ class CombatEventAdapter:
                 "slug": card_slug(card_name or headline, target),
                 "domain": cfg.domain,
                 "name": card_name or headline,
-                "status": combat_status(latest_commence, now),
+                "status": combat_status(latest_commence, now, first_commence),
                 "start_date": (
                     latest_commence.isoformat() if latest_commence is not None else None
                 ),

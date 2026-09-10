@@ -95,8 +95,14 @@ class TestBoxingDeriveConcept:
 
 class TestCombatStatusSharedByBoxing:
     def test_upcoming_live_settled(self):
+        """#4505: the middle line used to read `NOW + 2h == "live"` — a main event
+        two hours away, with nobody yet fighting, wearing the pulsing red pill. It
+        asserted the defect, so it is flipped, not exempted. The live window now
+        opens at the card's OWN first bout; with none given the function falls back
+        to the main event and under-claims."""
         assert combat_status(NOW + timedelta(hours=48), NOW) == "upcoming"
-        assert combat_status(NOW + timedelta(hours=2), NOW) == "live"
+        assert combat_status(NOW + timedelta(hours=2), NOW) == "upcoming"
+        assert combat_status(NOW + timedelta(hours=2), NOW, NOW - timedelta(hours=1)) == "live"
         assert combat_status(NOW - timedelta(hours=10), NOW) == "settled"
 
 

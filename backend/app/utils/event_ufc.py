@@ -103,8 +103,10 @@ def classify_ufc_prop(external_id: str | None, name: str | None) -> str | None:
     return classify_prop(UFC_CONFIG, external_id, name)
 
 
-def ufc_status(latest_commence, now) -> str:
-    return combat_status(latest_commence, now)
+def ufc_status(latest_commence, now, earliest_commence=None) -> str:
+    # Forwards the card's own first bout (#4505) — an alias that dropped it would
+    # silently reinstate the eight-hour pre-roll for every caller that used it.
+    return combat_status(latest_commence, now, earliest_commence)
 
 
 def derive_ufc_concept(
