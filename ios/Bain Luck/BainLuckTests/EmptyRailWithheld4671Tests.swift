@@ -21,7 +21,7 @@ import XCTest
 /// 2. The rail underneath was already a fiction. From the event's own
 ///    `/api/events/15307717/game-markets`, re-measured 2026-09-09: four totals
 ///    rows at thresholds `5.5 / 7.5 / 9.5 / 11.5`, **every one served at
-///    `over_probability = 0.99`**. `buildDensityFromThresholds` differences
+///    `over_probability = 0.99`**. `MarketMapRail.densityFromThresholds` differences
 ///    adjacent pairs, so every `dp` is `0.99 - 0.99 = 0`, `rawPdf` is three
 ///    entries of density `0`, and the normalised return is **fourteen zeros** —
 ///    which `densityRail` renders at `alpha = 0.15 + 0` uniformly across its
@@ -30,10 +30,15 @@ import XCTest
 /// THE TRAP THIS ENCODES, and the reason `railDrawsNothing` reads the density
 /// array rather than the card's `drawsDistribution` flag: that flag comes from
 /// `totalRailHasDistribution`, which asks whether the THRESHOLDS are distinct.
-/// These four are distinct, so the flag is **true** on the very card this issue
+/// These four are distinct, so the flag was **true** on the very card this issue
 /// was filed for. A gate written against the flag would have compiled, passed,
-/// merged, and changed nothing on screen. `test_theFlagTheCardCarriesIsTrueHere`
-/// pins that, so nobody re-derives the gate from the flag later.
+/// merged, and changed nothing on screen.
+///
+/// #4692 has since put that flag on the drawn heights too, so it answers false
+/// here and the trap is closed at its source rather than routed around;
+/// `test_theFlagTheCardCarriesNowReadsTheDrawnHeightsToo` records both states.
+/// What still keeps this rule its own function is the MARKER arm, which no
+/// subtitle rule has.
 final class EmptyRailWithheld4671Tests: XCTestCase {
 
     /// The fourteen heights the specimen's rail actually renders.
@@ -52,12 +57,30 @@ final class EmptyRailWithheld4671Tests: XCTestCase {
         )
     }
 
-    /// The flag the card carries on this specimen is TRUE. This is the whole
-    /// reason the gate reads the drawn heights instead.
-    func test_theFlagTheCardCarriesIsTrueHere() {
-        XCTAssertTrue(
-            MarketMapRail.totalRailHasDistribution(thresholds: [5.5, 7.5, 9.5, 11.5]),
-            "the served lines are distinct, so a gate on drawsDistribution is inert here"
+    /// The flag the card carries on this specimen was TRUE when #4671 shipped,
+    /// and is FALSE now. Both facts are the same lesson and this case keeps
+    /// recording it.
+    ///
+    /// #4671 could not gate on `drawsDistribution` because that flag asked the
+    /// served THRESHOLDS whether they were distinct, and 5.5 / 7.5 / 9.5 / 11.5
+    /// are distinct — a gate written against it would have compiled, passed,
+    /// merged, and changed nothing on the card it was filed for. #4692 has since
+    /// moved the flag onto the drawn heights, so it now answers false here and
+    /// the two rules agree on this array.
+    ///
+    /// That agreement is NOT permission to derive one from the other. What keeps
+    /// `railDrawsNothing` separate is its marker arm, pinned in
+    /// `test_theMarkerArmIsWhatThisRuleAddsToTheSubtitles` — on this very array
+    /// the two rules give opposite answers as soon as a marker is on the rail.
+    func test_theFlagTheCardCarriesNowReadsTheDrawnHeightsToo() {
+        XCTAssertFalse(
+            MarketMapRail.totalRailHasDistribution(density: npbSuspended),
+            "#4692 — the flag asks the heights now, and this rail draws fourteen zeros"
+        )
+        XCTAssertEqual(
+            MarketMapRail.totalRailHasDistribution(density: npbSuspended),
+            MarketMapRail.marginRailHasDistribution(density: npbSuspended),
+            "the two cards' subtitle rules must answer the same array identically"
         )
     }
 
@@ -83,7 +106,7 @@ final class EmptyRailWithheld4671Tests: XCTestCase {
 
     // MARK: - The class, not the specimen
 
-    /// `buildDensityFromThresholds` has two early exits — fewer than two lines,
+    /// `MarketMapRail.densityFromThresholds` has two early exits — fewer than two lines,
     /// and no pair separated by a positive gap — and both return
     /// `Array(repeating: 8, count: 14)`. A uniform NON-zero array is the same
     /// empty chrome as a uniform zero one, and reading heights refuses both with

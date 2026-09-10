@@ -607,10 +607,13 @@ struct MarketMapView: View {
         )
         let rangeMin = bounds.min
         let rangeMax = bounds.max
-        let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
+        let density = MarketMapRail.densityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
         // #3576 — whether that density is data or a placeholder. The rule lives
         // in `MarketMapRail` so it can be asserted without rasterising a view.
-        let hasDistribution = MarketMapRail.totalRailHasDistribution(thresholds: allThresh)
+        // #4692 — and it is asked of the HEIGHTS, the same array the rail is
+        // about to shade, not of the lines they were built from: eleven lines
+        // 2.5–12.5 all quoted at 0.99 are distinct and draw nothing.
+        let hasDistribution = MarketMapRail.totalRailHasDistribution(density: density)
 
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
@@ -791,9 +794,10 @@ struct MarketMapView: View {
         )
         let rangeMin = bounds.min
         let rangeMax = bounds.max
-        let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
-        // #3576 — the full map's rule, on the half map's identical flat array.
-        let hasDistribution = MarketMapRail.totalRailHasDistribution(thresholds: allThresh)
+        let density = MarketMapRail.densityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
+        // #3576 — the full map's rule, on the half map's identical flat array,
+        // and since #4692 asked of the same heights the full map asks of.
+        let hasDistribution = MarketMapRail.totalRailHasDistribution(density: density)
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
         return mapCard(
@@ -1237,43 +1241,4 @@ struct MarketMapView: View {
         return density.map { ($0 / peak) * 96 }
     }
 
-    private func buildDensityFromThresholds(
-        _ thresholds: [(threshold: Double, overProb: Double)],
-        rangeMin: Double, rangeMax: Double, segments: Int = 14
-    ) -> [Double] {
-        if thresholds.count < 2 { return Array(repeating: 8, count: segments) }
-        let sorted = thresholds.sorted(by: { $0.threshold < $1.threshold })
-        var rawPdf: [(mid: Double, density: Double)] = []
-        for i in 0..<(sorted.count - 1) {
-            let dt = sorted[i + 1].threshold - sorted[i].threshold
-            guard dt > 0 else { continue }
-            let dp = sorted[i].overProb - sorted[i + 1].overProb
-            rawPdf.append((mid: (sorted[i].threshold + sorted[i + 1].threshold) / 2, density: max(0, dp / dt)))
-        }
-        if rawPdf.isEmpty { return Array(repeating: 8, count: segments) }
-        let step = (rangeMax - rangeMin) / Double(segments)
-        var density = Array(repeating: 0.0, count: segments)
-        for i in 0..<segments {
-            let x = rangeMin + (Double(i) + 0.5) * step
-            if rawPdf.count == 1 { density[i] = rawPdf[0].density }
-            else if x <= rawPdf[0].mid { density[i] = rawPdf[0].density * max(0, 1 - (rawPdf[0].mid - x) / (step * 3)) }
-            else if x >= rawPdf.last!.mid { density[i] = rawPdf.last!.density * max(0, 1 - (x - rawPdf.last!.mid) / (step * 3)) }
-            else {
-                for j in 0..<(rawPdf.count - 1) {
-                    if x >= rawPdf[j].mid && x <= rawPdf[j + 1].mid {
-                        let t = (x - rawPdf[j].mid) / (rawPdf[j + 1].mid - rawPdf[j].mid)
-                        density[i] = rawPdf[j].density * (1 - t) + rawPdf[j + 1].density * t
-                        break
-                    }
-                }
-            }
-        }
-        let smoothed = density.enumerated().map { (i, _) in
-            let prev = i > 0 ? density[i - 1] : density[i]
-            let next = i < density.count - 1 ? density[i + 1] : density[i]
-            return (prev + density[i] * 2 + next) / 4
-        }
-        let peak = max(smoothed.max() ?? 0.001, 0.001)
-        return smoothed.map { ($0 / peak) * 96 }
-    }
 }

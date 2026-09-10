@@ -21,7 +21,7 @@ import XCTest
 /// `230` are basketball points and were applied to every sport in the app.
 ///
 /// With no thresholds there was also no ladder and no density
-/// (`buildDensityFromThresholds` returns a flat array below two points) and no
+/// (`MarketMapRail.densityFromThresholds` returns a flat array below two points) and no
 /// marker (`ouLine` had no source left), so the card carried three invented
 /// numbers and nothing else.
 final class MarketMapRailTests: XCTestCase {
@@ -270,7 +270,10 @@ final class MarketMapRailTests: XCTestCase {
     /// three hold: the card is still drawn, it no longer claims a distribution,
     /// and the rail is told not to shade one.
     func testThePhotographedSettledNFLCardKeepsItsCardAndDropsTheWordDistribution() {
-        let served: [Double] = []   // 0 totals rows, measured
+        // 0 totals rows, measured. The builder's first exit hands the rail a
+        // uniform 8, which is exactly the pale bar in the photograph.
+        let drawn = drawnHeights([])
+        XCTAssertEqual(drawn, Array(repeating: 8.0, count: 14))
 
         XCTAssertFalse(MarketMapRail.totalMapDrawsNothing(
             hasThresholds: false, overUnder: nil, isLive: false, isDone: true,
@@ -278,7 +281,7 @@ final class MarketMapRailTests: XCTestCase {
         ), "#2086 — the FINAL tile is a real fact, so the card is declared, not deleted")
 
         XCTAssertFalse(
-            MarketMapRail.totalRailHasDistribution(thresholds: served),
+            MarketMapRail.totalRailHasDistribution(density: drawn),
             "nothing was quoted, so the flat rail is a placeholder"
         )
         XCTAssertEqual(
@@ -290,14 +293,45 @@ final class MarketMapRailTests: XCTestCase {
 
     /// 🔴 BOTH DIRECTIONS. The damaging mirror regression is stripping the word
     /// from every settled game that DOES have a distribution, which would make
-    /// the fix a downgrade on every well-quoted NFL game. The 19 lines are the
-    /// ones event 14632820 actually served.
+    /// the fix a downgrade on every well-quoted game.
+    ///
+    /// **Re-keyed by #4692, and re-measured rather than re-typed.** The rule now
+    /// turns on the served PRICES, which the old fixture — nineteen bare
+    /// thresholds off event 14632820 — did not carry, so the question this case
+    /// exists to ask could not be put to it at all. native/093 predicted the
+    /// fixture would invert, reasoning that a settled game's cover lines collapse
+    /// to one price by construction. **Measured, that is true only of blowouts**,
+    /// and both halves are now pinned with real rows:
+    ///
+    /// 1. Event 15296447 (Derby County 0 – West Ham United 3, `completed`),
+    ///    `GET /api/events/15296447/game-markets` 2026-09-10: seven goal lines
+    ///    0.5 → 6.5 priced `0.99, 0.99, 0.99, 0.01, 0.01, 0.01, 0.01`. The lines
+    ///    STRADDLE the final, so the prices step where the total landed and the
+    ///    rail draws that step — a settled card with a real, if coarse, shape,
+    ///    and the reason this rule is not a status check.
+    /// 2. Event 14632820 (49ers @ Rams, NFL) — the old fixture's own event,
+    ///    re-measured the same day and now carrying what it serves: nineteen
+    ///    lines walking 0.945 down to 0.065. The well-quoted ladder the mirror
+    ///    regression would ruin. (Its thresholds moved too; the line at 23.5 is
+    ///    now 27.5. A fixture of bare numbers looked stable only because nothing
+    ///    was checking the half that had drifted.)
     func testASettledGameWithRealLinesKeepsItsDistributionAndItsWord() {
-        let production: [Double] = [
-            23.5, 30.5, 33.5, 36.5, 39.5, 41.5, 42.5, 43.5, 44.5,
-            45.5, 46.5, 47.5, 50.5, 53.5, 56.5, 59.5, 62.5, 65.5,
+        let westHam: [(threshold: Double, overProb: Double)] = [
+            (0.5, 0.99), (1.5, 0.99), (2.5, 0.99),
+            (3.5, 0.01), (4.5, 0.01), (5.5, 0.01), (6.5, 0.01),
         ]
-        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: production))
+        XCTAssertTrue(
+            MarketMapRail.totalRailHasDistribution(density: drawnHeights(westHam)),
+            "the step from 0.99 to 0.01 at the final IS the shape; a settled card may keep its word"
+        )
+
+        let production: [(threshold: Double, overProb: Double)] = [
+            (27.5, 0.945), (30.5, 0.91), (33.5, 0.87), (36.5, 0.815), (39.5, 0.755),
+            (42.5, 0.67), (45.5, 0.58), (46.5, 0.555), (47.5, 0.515), (48.5, 0.475),
+            (49.5, 0.455), (50.5, 0.43), (51.5, 0.39), (54.5, 0.315), (57.5, 0.245),
+            (60.5, 0.195), (63.5, 0.145), (66.5, 0.085), (69.5, 0.065),
+        ]
+        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(density: drawnHeights(production)))
         XCTAssertEqual(
             MarketMapRail.fullTotalSubtitle(isDone: true, hasDistribution: true, unit: "points"),
             "Final points distribution"
@@ -308,27 +342,91 @@ final class MarketMapRailTests: XCTestCase {
         )
     }
 
-    /// The rule mirrors `buildDensityFromThresholds`'s two flat exits, so it is
-    /// pinned against both of them and against the smallest real distribution.
+    /// The rule is pinned against both of `MarketMapRail.densityFromThresholds`'s
+    /// flat exits — driven THROUGH the builder now rather than restated from
+    /// outside it, which is the whole of what #4692 changed — and against the
+    /// smallest real distribution.
     func testTheRuleMirrorsBothOfTheDensityBuildersFlatExits() {
         // Exit 1 — fewer than two lines.
-        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(thresholds: []))
-        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(thresholds: [44.5]))
-        // Exit 2 — two lines, no positive gap between any pair. `rawPdf` skips
-        // every `dt <= 0`, so this returns the same flat array as exit 1.
-        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(thresholds: [44.5, 44.5]))
-        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(thresholds: [7, 7, 7]))
-        // The smallest thing that IS a distribution.
-        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: [44.5, 45.5]))
-        // A duplicate alongside a genuine gap is still a distribution.
-        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: [44.5, 44.5, 45.5]))
+        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(density: drawnHeights([])))
+        XCTAssertFalse(
+            MarketMapRail.totalRailHasDistribution(density: drawnHeights([(44.5, 0.5)]))
+        )
+        // Exit 2 — no pair separated by a positive gap. `rawPdf` skips every
+        // `dt <= 0`, so this returns the same uniform 8 as exit 1.
+        XCTAssertFalse(
+            MarketMapRail.totalRailHasDistribution(density: drawnHeights([(44.5, 0.6), (44.5, 0.4)]))
+        )
+        XCTAssertFalse(
+            MarketMapRail.totalRailHasDistribution(
+                density: drawnHeights([(7, 0.9), (7, 0.5), (7, 0.1)])
+            )
+        )
+        // 🔴 THE THIRD CASE, which is #4692's own and which NEITHER exit
+        // produces: distinct lines at one price difference to fourteen zeros.
+        // The old threshold rule called this a distribution.
+        XCTAssertEqual(
+            drawnHeights([(44.5, 0.99), (45.5, 0.99)]), Array(repeating: 0.0, count: 14)
+        )
+        XCTAssertFalse(
+            MarketMapRail.totalRailHasDistribution(
+                density: drawnHeights([(44.5, 0.99), (45.5, 0.99)])
+            )
+        )
+        // Two distinct lines at DIFFERENT prices are a single interval, so the
+        // builder's `rawPdf.count == 1` branch gives every segment the same
+        // height: a solid edge-to-edge band that asserts no shape at all. #4692
+        // refuses that too, and that arm is the 2-line flip.
+        XCTAssertEqual(
+            drawnHeights([(44.5, 0.6), (45.5, 0.4)]), Array(repeating: 96.0, count: 14)
+        )
+        XCTAssertFalse(
+            MarketMapRail.totalRailHasDistribution(density: drawnHeights([(44.5, 0.6), (45.5, 0.4)]))
+        )
+        // The smallest thing that IS a distribution: three lines, two intervals,
+        // different mass in each.
+        XCTAssertTrue(
+            MarketMapRail.totalRailHasDistribution(
+                density: drawnHeights([(44.5, 0.9), (45.5, 0.6), (46.5, 0.55)])
+            )
+        )
     }
 
-    /// `extractTotalThresholds` sorts, but this rule is handed a bare array and
-    /// must not depend on that: it sorts for itself.
+    /// `extractTotalThresholds` sorts, but the builder is handed a bare array and
+    /// must not depend on that: the same rows in any order draw the same rail and
+    /// get the same answer.
+    ///
+    /// (#4692 kept this case rather than retiring it with the threshold rule it
+    /// was written for. Sortedness stopped being a property of the RULE's input —
+    /// drawn heights have no order left to get wrong — but it is still a property
+    /// of the BUILDER's, which is where it was always really being tested.)
     func testTheRuleDoesNotDependOnTheCallerHavingSorted() {
-        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: [65.5, 23.5, 44.5]))
-        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: [45.5, 44.5]))
+        let inOrder: [(threshold: Double, overProb: Double)] = [
+            (23.5, 0.9), (44.5, 0.6), (65.5, 0.1),
+        ]
+        let shuffled: [(threshold: Double, overProb: Double)] = [
+            (65.5, 0.1), (23.5, 0.9), (44.5, 0.6),
+        ]
+        XCTAssertEqual(drawnHeights(inOrder), drawnHeights(shuffled))
+        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(density: drawnHeights(shuffled)))
+    }
+
+    /// The heights the full-game totals card draws for a set of served rows — the
+    /// card's own call, in the card's own order, so a fixture answers the question
+    /// production asks instead of a paraphrase of it.
+    ///
+    /// `totalBounds` returns `(max(0, min - pad), max + pad)` outright whenever
+    /// any line parsed, so the sport's declared span cannot reach any specimen
+    /// with lines on it: `declared: nil` here is faithful, not a shortcut.
+    private func drawnHeights(
+        _ served: [(threshold: Double, overProb: Double)]
+    ) -> [Double] {
+        let bounds = MarketMapRail.totalBounds(
+            thresholds: served.map(\.threshold), markerValues: [], declared: nil, pad: 10
+        )
+        return MarketMapRail.densityFromThresholds(
+            served, rangeMin: bounds.min, rangeMax: bounds.max, segments: 14
+        )
     }
 
     /// An UNSETTLED card is out of scope and must not move. Its subtitle never
@@ -348,7 +446,7 @@ final class MarketMapRailTests: XCTestCase {
     }
 
     /// The half card gets the same treatment because it has the same defect —
-    /// the same `buildDensityFromThresholds`, the same hard-coded word.
+    /// the same `MarketMapRail.densityFromThresholds`, the same hard-coded word.
     func testTheHalfCardDropsTheWordOnTheSameCondition() {
         XCTAssertEqual(
             MarketMapRail.halfTotalSubtitle(hasDistribution: false, unit: "points"),
