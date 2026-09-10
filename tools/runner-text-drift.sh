@@ -32,12 +32,22 @@
 # anything this cannot measure is reported UNKNOWN and counted as a finding —
 # never quietly skipped.
 #
+# THE ONE EXCEPTION IS A PROVABLE NO-OP (#4820). A launcher can be time-stale
+# because its file was rewritten with IDENTICAL bytes — routine in the shared
+# tree, where any checkout bumps every mtime. When the checkout matches the ref,
+# nothing is uncommitted, and the file's last commit predates the process, the
+# text it parsed is the text on disk and a restart cannot change anything: that
+# is TOUCHED, printed in the full report, hidden from --quiet, and not a finding.
+# Every sub-question that cannot be answered still falls back to STALE, so the
+# bias is kept wherever there is real doubt. See `content_unchanged_since`.
+#
 #   tools/runner-text-drift.sh              # every tracked launcher
 #   tools/runner-text-drift.sh --quiet      # print only what needs a restart
 #
-# Exit: 0 every running launcher is current · 1 at least one is stale or unknown
-#       · 2 the check itself could not run. 1 is a RESULT; 2 is a story about the
-#       harness (gotcha #124) — the caller is meant to be able to tell them apart.
+# Exit: 0 every running launcher is current or TOUCHED · 1 at least one is stale
+#       or unknown · 2 the check itself could not run. 1 is a RESULT; 2 is a story
+#       about the harness (gotcha #124) — the caller must be able to tell them
+#       apart. TOUCHED never contributes to exit 1: it is the proof of a no-op.
 set -u
 
 PATTERNS=(lane-runner.sh lane4-runner.sh bus-runner.sh lanes-supervisor.sh)
@@ -107,6 +117,44 @@ file_mtime_epoch() {
   BL_F="$1" first_integer_of 'stat -f %m "$BL_F"' 'stat -c %Y "$BL_F"'
 }
 
+# #4820. `mtime >= start` asks "was this file WRITTEN after the process began?".
+# That is not the question a restart answers — the one that matters is "did the
+# TEXT move?". The shared tree is rewritten with identical bytes constantly
+# (`checkout`, `restore`, `reset --hard`, ten lanes doing branch work), and each
+# of those bumps mtime while the running process is still executing exactly what
+# is on disk. Measured 2026-09-10 16:52Z: 10 of 10 lane runners reported STALE,
+# every one byte-identical to master, last real content change 7h40m BEFORE they
+# started. All ten reports were false and a restart would have changed nothing.
+#
+# This is NOT a reversal of "the safe direction is over-reporting". It removes
+# one SYSTEMATIC false positive that fires on a provable no-op. Every
+# sub-question this cannot answer — not a repo, no commit dating the file, an
+# uncommitted edit, a checkout behind the ref — returns 1 and falls straight back
+# to STALE. The bias is kept precisely where the answer is uncertain, and dropped
+# only where the content is provably older than the process reading it.
+content_unchanged_since() {
+  local repo="$1" script="$2" start="$3" dir base cts
+  [ -n "$repo" ] || return 1
+  # Addressed as `-C <dir> -- <basename>`, never as an absolute pathspec against
+  # the toplevel. On macOS `/var` is a symlink to `/private/var`, so a launcher
+  # under a temp dir yields a script path and a `--show-toplevel` that disagree by
+  # that prefix, and git rejects the absolute pathspec as outside the repository.
+  # Both git calls below would then fail identically to "content moved" — safe
+  # direction, but it would make this whole branch permanently unreachable there.
+  dir=$(dirname "$script"); base=$(basename "$script")
+  # An uncommitted edit is content that moved with no commit to date it. Also
+  # catches the untracked file, whose `git log` below is empty anyway.
+  git -C "$dir" diff --quiet HEAD -- "$base" 2>/dev/null || return 1
+  # Committer date, NOT author date (%ct, not %at): a rebase or cherry-pick keeps
+  # the author date of the original write, which can predate a process start by
+  # weeks while the bytes actually landed in this checkout seconds ago. %at would
+  # manufacture exactly the false CURRENT this file exists to prevent.
+  cts=$(BL_D="$dir" BL_B="$base" first_integer_of \
+        'git -C "$BL_D" log -1 --format=%ct -- "$BL_B"')
+  [ -n "$cts" ] || return 1
+  [ "$cts" -lt "$start" ]
+}
+
 # The script a process is running, taken from its own argv rather than guessed
 # from the pattern: two checkouts can hold the same filename, and the whole point
 # of this tool is to be exact about WHICH file the process is behind.
@@ -139,7 +187,7 @@ matched_pids() {
   done <<< "$PS_SNAP"
 }
 
-STALE=0; UNKNOWN=0; CURRENT=0; ROWS=""
+STALE=0; UNKNOWN=0; CURRENT=0; TOUCHED=0; ROWS=""
 
 # One snapshot, read before anything else forks: taking it per pattern would let
 # the process table change between patterns and report a pid that has since gone.
@@ -192,13 +240,28 @@ UNKNOWN  $label  — cannot read start time or file mtime"
       # is behind too (#4685) and a restart alone would load the wrong text.
       repo=$(cd "$(dirname "$script")" && git rev-parse --show-toplevel 2>/dev/null)
       hint="restart it"
+      behind=0
       if [ -n "$repo" ]; then
         live=$(git -C "$repo" hash-object "$script" 2>/dev/null)
         head=$(git -C "$repo" rev-parse --verify -q "$REF:$(basename "$script")" 2>/dev/null)
         if [ -n "$live" ] && [ -n "$head" ] && [ "$live" != "$head" ]; then
+          behind=1
           hint="the CHECKOUT is behind $REF too — update it, THEN restart"
         fi
       fi
+
+      # #4820. The mtime moved — but if the checkout matches the ref AND the text
+      # has not been committed since this process started AND nothing is
+      # uncommitted, then the bytes it parsed are the bytes on disk and a restart
+      # is provably a no-op. `behind` is checked first because a checkout behind
+      # the ref means disk and master disagree, and the commit date then dates a
+      # commit this working tree does not hold.
+      if [ "$behind" -eq 0 ] && content_unchanged_since "$repo" "$script" "$start"; then
+        ROWS="$ROWS
+TOUCHED  $label  — mtime moved but $(basename "$script") is byte-identical to its last commit, made before this process started; no restart needed"
+        TOUCHED=$((TOUCHED+1)); continue
+      fi
+
       ROWS="$ROWS
 STALE    $label  — started ${age}m before $(basename "$script") last changed; $hint"
       STALE=$((STALE+1))
@@ -213,7 +276,7 @@ current  $label  — $(basename "$script") unchanged since it started"
   done <<< "$matches"
 done
 
-TOTAL=$((STALE + UNKNOWN + CURRENT))
+TOTAL=$((STALE + UNKNOWN + CURRENT + TOUCHED))
 if [ "$TOTAL" -eq 0 ]; then
   # No launcher running is the normal state in CI and on a laptop between
   # sessions. Say so out loud: silence here must not read as "all current".
@@ -227,6 +290,9 @@ else
   printf '%s\n' "$ROWS" | sed '/^$/d'
 fi
 
-echo "runner-text-drift: $CURRENT current, $STALE stale, $UNKNOWN unknown"
+# `touched` is APPENDED, never interleaved: callers and guard tests match on the
+# "N current, N stale, N unknown" substring and a new field in the middle would
+# silently stop matching every one of them.
+echo "runner-text-drift: $CURRENT current, $STALE stale, $UNKNOWN unknown, $TOUCHED touched"
 [ $((STALE + UNKNOWN)) -eq 0 ] || exit 1
 exit 0
