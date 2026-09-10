@@ -50,11 +50,12 @@ class TestDictContents:
         assert ESPN_SPORT_MAPPING["americanfootball_nfl"] == "football/nfl"
 
     def test_statpal_sport_mapping_size(self):
-        assert len(STATPAL_SPORT_MAPPING) == 14
+        # 13 since #4691 retired `golf_pga`; see `RETIRED_STATPAL_SPORT_KEYS`.
+        assert len(STATPAL_SPORT_MAPPING) == 13
 
     def test_statpal_sport_mapping_sample(self):
         assert STATPAL_SPORT_MAPPING["americanfootball_nfl"] == "nfl"
-        assert STATPAL_SPORT_MAPPING["golf_pga"] == "pga"
+        assert STATPAL_SPORT_MAPPING["soccer_epl"] == "soccer"
 
     def test_odds_api_to_win_prob_key_size(self):
         assert len(ODDS_API_TO_WIN_PROB_KEY) == 3

@@ -557,14 +557,25 @@ class TestTheRealPassEmitsTheTerminal:
 #    so zero-asked landed on `complete`: the one word this whole issue exists to
 #    stop a silent pass from saying.
 #
-#    `golf_pga` is not a hypothetical. It is in `STATPAL_SPORT_MAPPING` and it
-#    has NO `sports` row in production (measured 2026-09-09 via db-query: 13 of
-#    the 14 mapped keys resolve, golf_pga is the one that does not), so the
-#    single-sport call skips it at `sport_not_found` before the fetch. No beat
-#    passes it today — the four `sync-statpal-schedules-*` entries are
-#    nba/nhl/mlb/nfl — so this is reachable through the admin trigger and
-#    through any future per-sport caller, including the #4434 failover path
+#    `golf_pga` was not a hypothetical. It was in `STATPAL_SPORT_MAPPING` and had
+#    NO `sports` row in production (measured 2026-09-09 via db-query: 13 of the
+#    then-14 mapped keys resolved, golf_pga was the one that did not), so the
+#    single-sport call skipped it at `sport_not_found` before the fetch — the
+#    admin trigger and any per-sport caller, including the #4434 failover path
 #    that calls `_sync_statpal_schedules(sport_key)` in-line.
+#
+#    **#4691 then removed that specimen**, which is the right end for it: the
+#    key was retired from the map because StatPal cannot serve a field event, so
+#    today every mapped key resolves and no live call reaches zero-asked. The
+#    terminal stays, and so do these tests, for two reasons. `sports` rows are
+#    DATA — one can be renamed or dropped and put a mapped sport back in this
+#    state without a deploy — and a terminal that only exists while a config bug
+#    does is a terminal nobody can trust afterwards.
+#
+#    So the specimen is INJECTED below rather than read from the real map. A
+#    test that sourced it from production config would have gone green on the
+#    day #4691 landed while quietly measuring nothing, which is the failure mode
+#    this whole file is about, one level up again.
 # =============================================================================
 
 
@@ -584,6 +595,19 @@ def _wire_tables_without(monkeypatch, absent_key):
     return session
 
 
+def _map_including(monkeypatch, unrowed_key):
+    """Put the specimen in the map the pass reads, instead of borrowing one.
+
+    `basketball_nba` rides along because the fix's denominator is `sports_asked`
+    and not `len(sport_keys)`: a map of exactly one key cannot tell those two
+    apart, so the mutant that swaps them would survive every test in this class.
+    """
+    monkeypatch.setattr(
+        "app.tasks.statpal_sync.STATPAL_SPORT_MAPPING",
+        {unrowed_key: "pga", "basketball_nba": "nba"},
+    )
+
+
 class TestAPassThatAskedNobodyDoesNotReportSuccess:
 
     @pytest.fixture(autouse=True)
@@ -597,12 +621,13 @@ class TestAPassThatAskedNobodyDoesNotReportSuccess:
     async def test_a_mapped_sport_with_no_row_is_no_work_not_complete(
         self, monkeypatch
     ):
-        """The production specimen. Zero sports asked, zero rows written, and
-        before this the summary said `complete` — a green row for a pass that
-        did nothing, which is gotcha #53 one layer above the venue."""
+        """The specimen #4691 has since retired. Zero sports asked, zero rows
+        written, and before this the summary said `complete` — a green row for a
+        pass that did nothing, which is gotcha #53 one layer above the venue."""
         from app.tasks.statpal_sync import _sync_statpal_schedules
 
         _wire_tables_without(monkeypatch, "golf_pga")
+        _map_including(monkeypatch, "golf_pga")
         _stub_venue(monkeypatch, "ok")
 
         result = await _sync_statpal_schedules("golf_pga")
@@ -627,6 +652,7 @@ class TestAPassThatAskedNobodyDoesNotReportSuccess:
         from app.tasks.statpal_sync import _sync_statpal_schedules
 
         _wire_tables_without(monkeypatch, "golf_pga")
+        _map_including(monkeypatch, "golf_pga")
         _stub_venue(monkeypatch, "ok")
 
         result = await _sync_statpal_schedules("golf_pga")
@@ -651,12 +677,8 @@ class TestAPassThatAskedNobodyDoesNotReportSuccess:
         from app.tasks.statpal_sync import _sync_statpal_schedules
 
         _wire_tables_without(monkeypatch, "golf_pga")
+        _map_including(monkeypatch, "golf_pga")
         _stub_venue(monkeypatch, "fetch_failed")
-
-        monkeypatch.setattr(
-            "app.tasks.statpal_sync.STATPAL_SPORT_MAPPING",
-            {"golf_pga": "pga", "basketball_nba": "nba"},
-        )
 
         result = await _sync_statpal_schedules()
 
