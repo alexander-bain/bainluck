@@ -122,11 +122,42 @@ enum TeamShortName {
         return t.count <= 4 && !t.isEmpty && t.allSatisfy(\.isNumber)
     }
 
+    /// Is this one competitor written as TWO surnames — a doubles pair?
+    ///
+    /// #4626, inheriting #3110. The browser has had this test since #3110 and
+    /// this file never got it, so the two clients named DIFFERENT players: the
+    /// site badges "Siniakova / Townsend" `SIN` and the iPhone badged `TOW`,
+    /// because `short` below simply took the last word. "Milutinovic / Van de
+    /// Peer" reached the doubles surface reading **`PEE`** during the US Open,
+    /// and "Aboian / La Serna J" drew the single glyph **`J`**.
+    ///
+    /// THE SEPARATOR THAT MEANS "AND" IS A SPACED SLASH, and that is the whole
+    /// test — the browser's `isDoublesPair`, same rule, same spelling. An
+    /// UNSPACED slash is part of ONE entity's own name and is deliberately not
+    /// matched: "Bodo/Glimt" (a club), "Scranton/Wilkes-Barre RailRiders", and
+    /// the pairs ESPN writes without spaces ("Krawietz/Puetz") already survive
+    /// because a name with no whitespace has no last word to fall off.
+    ///
+    /// Re-measured for this fix on production 2026-09-10, every distinct side
+    /// carrying a spaced slash on an event in the last 30 days: **388 names**,
+    /// and of the 300 sampled **297 badge a different player today than the
+    /// site does**. All of them are two-part; none has three.
+    static func isDoublesPair(_ name: String) -> Bool {
+        name.contains(" / ")
+    }
+
     /// The short display label for a team name.
     ///
     /// Returns the input unchanged when there is nothing to shorten, so a caller
     /// never has to supply its own fallback for the empty or single-word case.
     static func short(_ name: String) -> String {
+        // #4626 — a pair is returned WHOLE, which is #3110's decision and the
+        // browser's behaviour (`teamShortName` line 401). The guard belongs
+        // HERE rather than at the badge, because `short` also drives the pair
+        // LABELS: without it the app prints one half of a pair as if it were
+        // the competitor's whole name, and the doubles final reads as a singles
+        // match between two people who were not playing singles.
+        if isDoublesPair(name) { return name }
         let parts = name.split(separator: " ").filter { !$0.isEmpty }
         guard parts.count > 1 else { return name }
         guard let last = parts.last else { return name }
@@ -180,7 +211,12 @@ enum TeamShortName {
         // compound name, it is two names. `short` returns a pair unchanged, so
         // routing it through the fork would badge "Siniakova / Townsend" as `ST`
         // off two "distinctive" tokens.
-        if name.contains(" / ") { return shipped }
+        //
+        // #4626 — this now reads `isDoublesPair` rather than re-spelling the
+        // separator inline. It was the ONLY place in this file that knew what a
+        // pair looks like, which is exactly why `short` did not: one rule that
+        // exists in one function guards one caller.
+        if isDoublesPair(name) { return shipped }
         let distinctive = distinctiveTokens(name)
         guard distinctive.count >= 3 else { return shipped }
         // The initial is the token's first GLYPH, not its first character. A
