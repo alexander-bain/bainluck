@@ -1984,7 +1984,52 @@ def _team_nickname_event_arms(terms: list[str]) -> list:
     as the whole query: "pats game" -> "Patriots game".
     """
 
-    arms = []
+    return [
+        and_(
+            Sport.key == sport_key,
+            *[_event_name_match(t, e) for t, e in expanded],
+        )
+        for _rewritten, expanded, sport_key in _team_nickname_event_rewrites(terms)
+    ]
+
+
+def _team_nickname_event_rewrites(
+    terms: list[str],
+) -> list[tuple[list[str], list, str]]:
+    """Every curated-nickname rewrite of `terms`, each with the sport it is scoped to.
+
+    Extracted from :func:`_team_nickname_event_arms` for #4847, and the extraction
+    is the point rather than a tidy-up. `/typeahead` needs the same rewrites in
+    TWO forms — as SQL recall arms, and as a Python admission test on the rows
+    those arms return (`_ta_names_participant`) — and the two must not be able to
+    disagree about which query names which team in which sport. An arm added only
+    to the SQL fetches the Patriots row and then discards it in Python: inert code
+    that still costs the query, on a per-keystroke path. Two call sites reading one
+    list cannot drift; two call sites each re-deriving the rewrite from
+    `_TEAM_NICKNAME_EVENT_EXPANSIONS` can, and this file's own comments record
+    `/search` and `/typeahead` drifting for three cycles by keeping two copies of
+    one rule.
+
+    Returns ``[(rewritten_terms, expanded_pairs, sport_key), ...]``:
+
+    * `rewritten_terms` — the query with the nickname replaced by the canonical
+      token, surrounding terms KEPT so an alias composes rather than only working
+      as the whole query ("pats game" -> "Patriots game"). This is the form the
+      Python admission test reads, because `query_names_participant` takes a
+      QUERY, not a recall predicate.
+    * `expanded_pairs` — the same rewrite after synonym expansion, i.e. the
+      `(term, expansion)` list the SQL recall arms consume.
+
+    The two forms differ only by the synonym widening, which is a RECALL device
+    the Python test deliberately does not mirror: `query_names_participant` is
+    documented as stricter than the class that admitted the row, and widening it
+    here would let a synonym, not a name, promote an event.
+
+    Empty for every query with no curated nickname in it — the overwhelming
+    majority, and the path on which nothing downstream changes at all.
+    """
+
+    rewrites = []
     for index, term in enumerate(terms):
         entry = _TEAM_NICKNAME_EVENT_EXPANSIONS.get(term.lower())
         if entry is None:
@@ -1994,13 +2039,58 @@ def _team_nickname_event_arms(terms: list[str]) -> list:
         expanded = _apply_search_synonyms(expand_search_terms(alternative))
         if not expanded:
             continue
-        arms.append(
-            and_(
-                Sport.key == sport_key,
-                *[_event_name_match(t, e) for t, e in expanded],
-            )
-        )
-    return arms
+        rewrites.append((alternative, expanded, sport_key))
+    return rewrites
+
+
+def _team_nickname_event_admissions(terms: list[str]) -> list[tuple[str, str]]:
+    """The `(rewritten query, sport_key)` pairs `/typeahead`'s Python test reads (#4847).
+
+    The same rewrites :func:`_team_nickname_event_arms` compiles into SQL, in the
+    shape :func:`query_names_participant` takes — a QUERY STRING, because that
+    predicate asks "does this query name the people playing", not "does this
+    predicate match".
+    """
+
+    return [
+        (" ".join(rewritten), sport_key)
+        for rewritten, _expanded, sport_key in _team_nickname_event_rewrites(terms)
+    ]
+
+
+def _nickname_names_participant(
+    admissions: list[tuple[str, str]],
+    sport_key: str | None,
+    participants,
+) -> bool:
+    """Does a curated nickname in the query name THIS row's participants? (#4847)
+
+    The nickname half of `/typeahead`'s `_ta_names_participant`. Module-level for
+    the reason :func:`_last_match_query` is: the pool assembly runs against a live
+    session, so a rule left inline in the route is a rule no CI job can read, and
+    this one is a promotion test — the kind that gets quietly loosened.
+
+    **The sport scope is the load-bearing clause and it is why this takes a
+    `sport_key` at all.** In SQL the arm is `Sport.key == sport_key AND <name
+    match>`. Drop the scope here and the Python test becomes LOOSER than the arm
+    that fetched the row: `pats` would admit `St Kitts & Nevis Patriots` — a
+    Caribbean Premier League side, a genuine whole-word match for the rewritten
+    token `Patriots`, and the precise wrong answer
+    :func:`team_nickname_event_expansions` scopes itself to avoid. A row can also
+    arrive here from the OTHER recall arms, so "the arm would not have fetched it"
+    is not a defence available to this function.
+
+    `sport_key` is `None` for a row with no sport, which matches no curated
+    expansion and so admits nothing — the right answer rather than a crash.
+    """
+
+    if not admissions:
+        return False
+    return any(
+        expansion_sport == sport_key
+        and query_names_participant(rewritten, participants)
+        for rewritten, expansion_sport in admissions
+    )
 
 
 def _build_expanded_fts(column, term: str, expansion: str | None):
@@ -6768,6 +6858,49 @@ async def typeahead_search(
     # named this row" means.
     event_name_filter = or_(fts_event_names, ilike_event_names)
 
+    # #4847: the game-card half of #4728/#4809 arriving on the DROPDOWN. `pats`
+    # and `niners` resolved the team row and five markets here and offered zero
+    # of the reader's games, because this rail matches the denormalised
+    # `Event.home_team_name`/`away_team_name` and never joins `teams`, so an
+    # alias on `teams.alternate_names` is invisible to it — the same hole #4809
+    # closed one surface over. Measured on production 2026-09-10 20:1xZ:
+    #
+    #     q         team   futures   EVENT
+    #     pats      1      5         0
+    #     niners    1      5         0
+    #     patriots  3      3         1  <- and it is the CRICKET side
+    #
+    # The arms go into BOTH filters, and both are load-bearing — this was
+    # measured, not assumed, and the two acceptance queries are answered by
+    # DIFFERENT halves:
+    #
+    #   * `niners` by the upcoming pool. `San Francisco 49ers @ Los Angeles
+    #     Rams` is 2026-09-11 00:35Z, inside this pool's now+7d window.
+    #   * `pats` by the or-LAST arm ONLY. The Patriots' next game is 2026-09-20,
+    #     NINE DAYS OUT and outside that window, so `event_team_filter` alone
+    #     leaves the reported symptom exactly as it is. What answers the query
+    #     is last night's `New England Patriots @ Seattle Seahawks`
+    #     (2026-09-10 00:20Z, completed) through `_last_match_query` — which is
+    #     #4411's "next-or-last" rule doing precisely what it was written for.
+    #
+    # Kept out of the branches above so the no-nickname path — every query but a
+    # curated handful — compiles byte-identical SQL and pays nothing on a
+    # per-keystroke endpoint. Unlike the sport-alias arm excluded from
+    # `event_name_filter` just above, a nickname NAMES A PARTICIPANT, so it
+    # belongs in the or-last recall by that clause's own rule rather than in
+    # spite of it.
+    #
+    # Additive by construction: OR arms can only ADD rows, and `patriots` is not
+    # a curated key at all (`team_nickname_event_expansions()` has six entries,
+    # all colloquial), so the cricket control above cannot move.
+    # The arms come from `_team_nickname_event_arms` — the SAME builder `/search`
+    # uses, not a second copy of the rule — and the Python admission test below
+    # reads the same rewrites through `_team_nickname_event_rewrites`.
+    _ta_nickname_arms = _team_nickname_event_arms(terms)
+    if _ta_nickname_arms:
+        event_team_filter = or_(event_team_filter, *_ta_nickname_arms)
+        event_name_filter = or_(event_name_filter, *_ta_nickname_arms)
+
     # LAT-P140: the two halves go in as SEPARATE arms of the UNION built below,
     # not as one OR'd arm. `_futures_name_arms` carries the measurement; the short
     # version is that after `ix_futures_name_fts_open` landed, the OR still made
@@ -6932,8 +7065,33 @@ async def typeahead_search(
     # what keeps this from becoming "show finished matches whenever nothing is
     # on". `us open` names no participant, so it admits nothing and the arm is
     # inert for every tournament, league and sport query.
+    # #4847: a curated nickname NAMES the participant as surely as the canonical
+    # token does — `pats` is what a Patriots fan types — so the test reads the
+    # same rewrites the recall arms were built from. Without this half the arm
+    # above is inert code on a per-keystroke path in BOTH directions: the
+    # or-last query would fetch `New England Patriots @ Seattle Seahawks` and
+    # this predicate would immediately discard it, and the primary pool's own
+    # Patriots rows would fail the `if not any(...)` gate below and fire a second
+    # query that was not needed.
+    #
+    # The SPORT SCOPE travels with the rewrite, exactly as it does in SQL
+    # (`Sport.key == sport_key`). Dropping it here would admit `St Kitts & Nevis
+    # Patriots` — a real Caribbean Premier League side and a genuine whole-word
+    # match for the rewritten token — as an answer to `pats`, which is the
+    # precise wrong answer `team_nickname_event_expansions` scopes itself to
+    # avoid. A Python test looser than the arm that fetched the row is how a
+    # promotion test stops meaning what the recall predicate meant.
+    _ta_nickname_admissions = _team_nickname_event_admissions(terms)
+
     def _ta_names_participant(ev) -> bool:
-        return query_names_participant(q, (ev.home_team_name, ev.away_team_name))
+        names = (ev.home_team_name, ev.away_team_name)
+        if query_names_participant(q, names):
+            return True
+        return _nickname_names_participant(
+            _ta_nickname_admissions,
+            ev.sport.key if ev.sport else None,
+            names,
+        )
 
     # `None` = the arm never ran, which is a THIRD state and not the same fact as
     # "ran and was not armed" (#4506). A probe that cannot tell those apart reads
