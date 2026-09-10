@@ -279,9 +279,19 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               glyph is gone, so the row renders only when something is left in it. */}
           {(lastAbove50Label || data.confidence_tier) && (
             <div className="flex items-center gap-1.5 mt-3.5 pt-3 border-t border-surface-border">
+              {/* #4645 — the caption composes with the rung's own words instead
+                  of prefixing them. "Above 50% through" was written for the DATE
+                  ladder it shipped with, where the rung label is a date and the
+                  sentence closes ("Above 50% through Before 2027"). On a
+                  comparator ladder the label starts with the same word the
+                  caption ends near, and production printed "Above 50% through
+                  Above 67" — the reader sees "above" twice and two unrelated
+                  quantities (50, 67) in six words. The thing worth saying is the
+                  same for both ladders: this is the furthest rung the market
+                  still calls better than even. */}
               {lastAbove50Label && (
                 <>
-                  <span className="text-[12px] text-text-secondary">Above 50% through</span>
+                  <span className="text-[12px] text-text-secondary">More likely than not:</span>
                   <span className="font-mono font-bold text-[13px] text-accent-brand">{lastAbove50Label}</span>
                 </>
               )}
