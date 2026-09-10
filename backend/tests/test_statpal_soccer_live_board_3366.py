@@ -171,14 +171,19 @@ class TestTheLiveBoardIsTheOneThatAnswers:
 
 class TestTheFailoverMapCanReachSoccer:
 
-    def test_seven_of_the_fourteen_mapped_keys_are_soccer(self):
-        """The size of the hole, asserted so it cannot shrink unnoticed."""
+    def test_seven_of_the_thirteen_mapped_keys_are_soccer(self):
+        """The size of the hole, asserted so it cannot shrink unnoticed.
+
+        Thirteen, not the fourteen this was written against: #4691 retired
+        `golf_pga`. The soccer numerator is untouched — golf was never one of
+        these keys — so only the denominator moves.
+        """
         soccer_keys = sorted(
             k for k, v in STATPAL_SPORT_MAPPING.items() if v == "soccer"
         )
         assert len(soccer_keys) == 7
         assert "soccer_epl" in soccer_keys
-        assert len(STATPAL_SPORT_MAPPING) == 14
+        assert len(STATPAL_SPORT_MAPPING) == 13
 
     @pytest.mark.asyncio
     async def test_every_soccer_key_reads_rows_where_it_used_to_raise(

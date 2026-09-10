@@ -2406,13 +2406,18 @@ def test_the_two_day_board_sports_are_the_ones_with_no_board_for_today():
 
     # The eligible denominator, asserted: every mapped key lands in exactly one
     # arm, so neither count can be read as a share of an unstated population.
-    assert len(cannot) + len(can) == len(STATPAL_SPORT_MAPPING) == 14
+    #
+    # 13, not the 14 this census was written against: #4691 retired `golf_pga`,
+    # which was the fifth member of the `can` arm. The `cannot` arm is untouched
+    # — golf was never a day-board sport — so the whole of the change lands on
+    # the control side, which is why both counts are asserted and not just one.
+    assert len(cannot) + len(can) == len(STATPAL_SPORT_MAPPING) == 13
     assert len(cannot) == 9, cannot
-    assert len(can) == 5, can
+    assert len(can) == 4, can
 
     assert all(k.startswith(("soccer", "tennis")) for k in cannot), cannot
     # The control arm has to be non-empty and has to be the four season-schedule
-    # sports plus golf, all of which answer without a token.
+    # sports, all of which answer without a token.
     assert "americanfootball_nfl" in can and "baseball_mlb" in can
 
 

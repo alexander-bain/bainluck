@@ -402,7 +402,15 @@ def test_livescore_only_sports_cannot_discover_and_that_is_recorded():
         # its own payload. #3193 fixed the parser and it moved up a tier. Nothing
         # about this set's MEANING changed: it is still "mapped, but cannot
         # create", and NFL simply stopped qualifying.
-        "golf_pga",
+        #
+        # golf_pga WAS here too, and unlike NFL it did not belong. This tier
+        # means "StatPal updates it but does not discover it", and golf was not
+        # being updated either: the livescore sync reaches its sports by joining
+        # `Sport` to a live `Event`, so it needs the same `sports` row the
+        # schedule sync needs, and golf_pga has never had one. It was in the
+        # tier by virtue of the map alone — the exact misreading this test's own
+        # docstring warns about. #4691 retired the key, so it now sits in
+        # `none_at_all` below, where a sport StatPal cannot serve belongs.
         "soccer_epl",
         "soccer_france_ligue_one",
         "soccer_germany_bundesliga",
@@ -418,14 +426,20 @@ def test_livescore_only_sports_cannot_discover_and_that_is_recorded():
 
 
 def test_most_espn_sports_have_no_statpal_counterpart_at_all():
-    """14 of 26. For these, holding last known state is the only option.
+    """15 of 26. For these, holding last known state is the only option.
 
     Pinned so that a future 'fall back to StatPal' switch cannot be read as
     covering the ESPN catalogue. It covers, at best, THREE of its twenty-six
-    sports for discovery and twelve for scores.
+    sports for discovery and eleven for scores.
+
+    15, not the 14 this was written against: #4691 retired `golf_pga` from
+    `STATPAL_SPORT_MAPPING`, and this set is defined as the ESPN keys the StatPal
+    map does not name, so golf lands here. The count went UP because a sport
+    stopped claiming coverage it never had — the honest direction.
     """
     _, _, none_at_all = _tiers()
-    assert len(none_at_all) == 14
+    assert len(none_at_all) == 15
+    assert "golf_pga" in none_at_all
     assert len(ESPN_SPORT_MAPPING) == 26
     assert none_at_all == set(ESPN_SPORT_MAPPING) - set(STATPAL_SPORT_MAPPING)
     # The headline sports among them, spelled out: an outage on any of these

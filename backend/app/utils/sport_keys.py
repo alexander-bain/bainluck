@@ -168,7 +168,7 @@ STATPAL_SPORT_MAPPING: dict[str, str] = {
     "icehockey_nhl": "nhl",
     "soccer_epl": "soccer",
     "soccer_usa_mls": "soccer",
-    "golf_pga": "pga",
+    # `golf_pga` was here until #4691 — see `RETIRED_STATPAL_SPORT_KEYS` below.
     # Note: StatPal does NOT cover college sports (NCAAB, NCAAF) or WNBA.
     # Their API only supports 13 pro/international sports:
     # NFL, NBA, MLB, NHL, soccer, golf, cricket, esports, F1, handball,
@@ -183,6 +183,36 @@ STATPAL_SPORT_MAPPING: dict[str, str] = {
     # Tennis (ATP + WTA both use StatPal sport="tennis")
     "tennis_atp": "tennis",
     "tennis_wta": "tennis",
+}
+
+#: OUR sport keys deliberately NOT mapped to a StatPal identifier, and why (#4691).
+#:
+#: Recorded rather than deleted, the shape #2907 bullet 1 used for the venue paths
+#: StatPal does not publish: the next person to notice golf missing from this map
+#: reads the reason here instead of re-adding the key.
+#:
+#: A key in `STATPAL_SPORT_MAPPING` is a claim that the three StatPal consumers —
+#: `sync_statpal_schedules`, `sync_statpal_live_scores`, `sync_statpal_standings` —
+#: can do something with the sport. All three resolve OUR key to a `sports` row
+#: first and `continue` on `sport_not_found`, and the livescore path additionally
+#: reaches its sports by JOINING `Sport` to a live `Event`. So a mapped key with no
+#: row is not "livescore-only"; it is unreachable on every path at once.
+#:
+#: This is NOT the general rule "every mapped key has a `sports` row" — that is not
+#: an invariant. `sports` rows are minted by ingest on first event (`golf_other`,
+#: id 49671, is one), so a key legitimately has no row until something creates an
+#: event under it. Golf is different in kind, not in readiness: the reason below is
+#: `schedule_sentinel`'s own, where PGA already sits under `declared NOT COVERED`.
+RETIRED_STATPAL_SPORT_KEYS: dict[str, str] = {
+    # Retired 2026-09-10. Measured the same day: 13 of the then-14 mapped keys
+    # resolved to a `sports` row and `golf_pga` was the only one that did not —
+    # it has never had one, because nothing has ever created an event under it.
+    # Giving it a row would not fix it: StatPal's schedule/livescore/standings
+    # shapes are two-side fixtures (`_fixture_match_key(home, away)`) and a golf
+    # tournament is a field of ~156 players, so there is nothing for the ingest
+    # to build. Golf reaches the site through the futures/outright keys
+    # (`golf_masters_tournament_winner`, …) instead.
+    "golf_pga": "field event — no per-game schedule to reconcile",
 }
 
 # Sports where StatPal actually provides play-by-play data.

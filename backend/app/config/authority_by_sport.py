@@ -242,11 +242,21 @@ SWITCH_WIRING_NOTE: str = switch_wiring_note(SWITCH_IS_WIRED)
 #: whose payload that chain cannot parse has an hourly task that creates nothing,
 #: hour after hour, greenly.
 #:
-#: Twelve sports are in `STATPAL_SPORT_MAPPING` and four are on the beat; since
-#: #3193, **all four parse**. `golf_pga` and the seven soccer leagues are livescore-only
-#: ON PURPOSE — the soccer season-schedule endpoint returns thousands of global
-#: fixtures and overwhelms a single run — so their absence is a standing fact, not
-#: a gap to close in passing.
+#: Thirteen sports are in `STATPAL_SPORT_MAPPING` and four are on the beat; since
+#: #3193, **all four parse**. The seven soccer leagues are livescore-only ON PURPOSE
+#: — the soccer season-schedule endpoint returns thousands of global fixtures and
+#: overwhelms a single run — so their absence is a standing fact, not a gap to close
+#: in passing.
+#:
+#: `golf_pga` used to be named here as livescore-only too, and that was WRONG in a
+#: way worth keeping the correction for (#4691). It was not livescore-only; it was
+#: unreachable on every path. The livescore sync finds its sports by joining `Sport`
+#: to a live `Event`, so it is gated on a `sports` row exactly as the schedule sync
+#: is, and `golf_pga` has never had one. A sport cannot be "livescore-only" through
+#: a door that is shut for the same reason the other doors are. The key is retired
+#: from the map as of 2026-09-10; the reason now lives in
+#: `sport_keys.RETIRED_STATPAL_SPORT_KEYS`, and `schedule_sentinel` had already
+#: declared PGA NOT COVERED — *field event, no per-game schedule to reconcile*.
 #:
 #: **`tennis_atp` and `tennis_wta` are the other live case**: both mapped, neither
 #: on the beat, and tennis is the next sport this lane stamps.
