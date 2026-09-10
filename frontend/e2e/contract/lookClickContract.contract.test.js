@@ -207,6 +207,97 @@ describe("#3968 — SHOT_SCROLL", () => {
   });
 });
 
+describe("#4749 — a scroll target past the bottom is REACHED, not clamped", () => {
+  // The production case this was written from: Discover at 390x844 seeds
+  // `visibleCount` at 20 cards and appends the next 20 only when its sentinel
+  // intersects, so the document was 7,979px and `SHOT_SCROLL=18000` came back a
+  // readable photograph of the site FOOTER — under a filename saying 18000, at
+  // exit 0. Every Discover card past index ~20 was unphotographable, which is
+  // what stopped the #4644 after-LOOK: its only badge-carrying ladders sat at
+  // reader index 23 and 39.
+
+  test("a target inside the document is NOT beyond it — the unchanged path", () => {
+    // Scrolling stops at docHeight - viewportHeight, so that exact value is the
+    // last reachable target and must not trigger the reach loop. This is the
+    // control for every existing caller: they take the same single scrollTo.
+    assert.equal(
+      evalInModule(
+        "m.scrollTargetIsBeyondDocument({ target: 7135, docHeight: 7979, viewportHeight: 844 })",
+      ),
+      false,
+    );
+    assert.equal(
+      evalInModule(
+        "m.scrollTargetIsBeyondDocument({ target: 0, docHeight: 7979, viewportHeight: 844 })",
+      ),
+      false,
+    );
+  });
+
+  test("a target past the last reachable offset IS beyond it", () => {
+    // 7136 is one pixel past the stop; 18000 is the measured case.
+    assert.equal(
+      evalInModule(
+        "m.scrollTargetIsBeyondDocument({ target: 7136, docHeight: 7979, viewportHeight: 844 })",
+      ),
+      true,
+    );
+    assert.equal(
+      evalInModule(
+        "m.scrollTargetIsBeyondDocument({ target: 18000, docHeight: 7979, viewportHeight: 844 })",
+      ),
+      true,
+    );
+  });
+
+  test("a document shorter than the viewport clamps at 0, not at a negative", () => {
+    // Without the Math.max the stop is -544, so target 0 reads as "beyond" and
+    // a short page would step-scroll pointlessly on every shot.
+    assert.equal(
+      evalInModule(
+        "m.scrollTargetIsBeyondDocument({ target: 0, docHeight: 300, viewportHeight: 844 })",
+      ),
+      false,
+    );
+    assert.equal(
+      evalInModule(
+        "m.scrollTargetIsBeyondDocument({ target: 1, docHeight: 300, viewportHeight: 844 })",
+      ),
+      true,
+    );
+  });
+
+  test("reaching the target reports the growth and says nothing alarming", () => {
+    const got = evalInModule(
+      "m.scrollReachReport({ target: 18000, finalY: 18000, docHeight: 7979, grewTo: 31200 })",
+    );
+    assert.equal(got.reached, true);
+    assert.match(got.line, /docHeight=7979 grewTo=31200 mode=viewport@18000/);
+    assert.doesNotMatch(got.line, /CLAMPED/);
+  });
+
+  test("a page that would not grow far enough is LOUD, never a quiet pass", () => {
+    // The whole point. A clamped shot that reads as clean is the #3932 failure
+    // class, and the PNG gives the reader no way to notice: it is a perfectly
+    // sharp photograph of the wrong screen.
+    const got = evalInModule(
+      "m.scrollReachReport({ target: 18000, finalY: 7135, docHeight: 7979, grewTo: 7979 })",
+    );
+    assert.equal(got.reached, false);
+    assert.match(got.line, /SHOT_SCROLL_CLAMPED/);
+    assert.match(got.line, /asked for 18000, the document stops at 7135/);
+    assert.match(got.line, /do not file it as one/);
+  });
+
+  test("no growth prints no grewTo — the line stays readable on ordinary pages", () => {
+    const got = evalInModule(
+      "m.scrollReachReport({ target: 900, finalY: 900, docHeight: 7979, grewTo: 7979 })",
+    );
+    assert.equal(got.reached, true);
+    assert.equal(got.line, "docHeight=7979 mode=viewport@900");
+  });
+});
+
 describe("#3968 — the stale artifact is deleted", () => {
   test("an existing PNG at the output path is removed before the run", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "look-stale-"));
@@ -432,7 +523,17 @@ describe("#3968 — the extraction cannot rot", () => {
       /from '\.\/shot-click-contract\.mjs'/,
       "shop-shot.mjs no longer imports the contract module",
     );
-    for (const fn of ["readStep(", "parseClickSteps(", "parseScroll(", "clearStaleArtifact(", "chooseCapture("]) {
+    for (const fn of [
+      "readStep(",
+      "parseClickSteps(",
+      "parseScroll(",
+      "clearStaleArtifact(",
+      "chooseCapture(",
+      // #4749 — the reach decision and its report are the same deal: extracted
+      // so they can be tested, worthless if shop-shot keeps its own copy.
+      "scrollTargetIsBeyondDocument(",
+      "scrollReachReport(",
+    ]) {
       assert.ok(src.includes(fn), `shop-shot.mjs never calls ${fn}`);
     }
     assert.ok(

@@ -25,6 +25,8 @@ import {
   parseScroll,
   pointerParkPoint,
   readStep,
+  scrollReachReport,
+  scrollTargetIsBeyondDocument,
   shouldParkPointer,
 } from './shot-click-contract.mjs';
 
@@ -289,12 +291,42 @@ try {
       capture = 'fullPage(CHART-UNSAFE)';
     }
   } else {
+    // #4749 — REACH a target past the current bottom instead of clamping to the
+    // bottom and photographing it under the caller's filename.
+    //
+    // An infinite-scroll surface only holds the pages the reader has scrolled
+    // through: Discover seeds `visibleCount` at 20 and appends the next 20 when
+    // its sentinel intersects. So `scrollTo(0, 18000)` on a 7,979px document is
+    // not "near the bottom of Discover" — it is the site footer, and until now
+    // that came back as a clean shot.
+    //
+    // Nothing changes for a target INSIDE the document: `scrollTargetIsBeyond‑
+    // Document` is false on the first check, the loop never runs, and it is the
+    // same one `scrollTo` and one wait it always was.
+    let grewTo = docHeight;
+    // Bounded at eight pages — far past any LOOK — and a page that has stopped
+    // growing breaks on its first no-growth pass regardless.
+    for (let step = 0; step < 8; step += 1) {
+      if (!scrollTargetIsBeyondDocument({ target: shot.y, docHeight: grewTo, viewportHeight: H })) break;
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      // Long enough for the sentinel's fetch AND its render. A shorter wait
+      // reads a page still loading as one that has stopped growing.
+      await page.waitForTimeout(3500);
+      const next = await page.evaluate(() => document.body.scrollHeight);
+      if (next <= grewTo) break; // it will not grow again; stop asking.
+      grewTo = next;
+    }
     await page.evaluate((to) => window.scrollTo(0, to), shot.y);
     // Let lazy rails and any scroll-triggered animation settle before the shot.
     await page.waitForTimeout(2500);
+    const finalY = await page.evaluate(() => Math.round(window.scrollY));
     await page.screenshot({ path: out });
+    // Replaces the plain `viewport@N`: same information when the target was
+    // reached, plus the growth and a loud refusal when it was not.
+    capture = null;
+    console.error(scrollReachReport({ target: shot.y, finalY, docHeight, grewTo }).line);
   }
-  console.error(`docHeight=${docHeight} mode=${capture}`);
+  if (capture !== null) console.error(`docHeight=${docHeight} mode=${capture}`);
   ok = true;
   console.log(out);
 } catch (e) {

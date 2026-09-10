@@ -123,6 +123,59 @@ export function parseScroll(raw) {
 }
 
 /**
+ * Is this scroll target BEYOND what the document can currently be scrolled to?
+ *
+ * #4749. `window.scrollTo(0, y)` clamps silently. On an infinite-scroll surface
+ * the document only holds the pages the reader has scrolled through, so a
+ * target past the current bottom lands on the bottom — and the shot comes back
+ * under a filename saying otherwise. Measured on Discover at 390x844 on
+ * 2026-09-10: `SHOT_SCROLL=18000` on a 7,979px document returned a readable
+ * photograph of the site FOOTER, exit 0. That is #3932's failure class one
+ * level out: plausible, filed under a name that lies, unfalsifiable in the
+ * failing direction.
+ *
+ * Discover seeds `visibleCount` at `PAGE_SIZE = 20` and appends the next 20
+ * only when its sentinel intersects, so before this every Discover card past
+ * index ~20 was unphotographable — which is why the #4644 after-LOOK could not
+ * be paid from page one (its only badge-carrying ladders sat at reader index 23
+ * and 39). The caller's remedy is to step to the bottom and let the page load
+ * before trying again; `shop-shot.mjs` does that, and this predicate is the one
+ * decision in it, so it is the part that gets a test.
+ *
+ * Reachable means within `docHeight - viewportHeight`, because that is where
+ * scrolling stops. A target past it is not "near the bottom" — it is a screen
+ * that does not exist yet.
+ *
+ * @param {{target: number, docHeight: number, viewportHeight: number}} input
+ * @returns {boolean}
+ */
+export function scrollTargetIsBeyondDocument({ target, docHeight, viewportHeight }) {
+  return target > Math.max(0, docHeight - viewportHeight);
+}
+
+/**
+ * What stderr says about a viewport shot, so a clamp is never silent.
+ *
+ * A LOOK is only evidence if the reader of the PNG can tell WHICH screen it is.
+ * When the page grew under us (infinite scroll) or refused to grow far enough,
+ * both facts belong beside the shot — and "could not reach" has to read as a
+ * finding, not a footnote, because the PNG itself looks perfectly clean.
+ *
+ * @param {{target: number, finalY: number, docHeight: number, grewTo: number}} input
+ * @returns {{line: string, reached: boolean}}
+ */
+export function scrollReachReport({ target, finalY, docHeight, grewTo }) {
+  const reached = finalY >= target;
+  const grew = grewTo > docHeight ? ` grewTo=${grewTo}` : "";
+  const line = reached
+    ? `docHeight=${docHeight}${grew} mode=viewport@${target}`
+    : `docHeight=${docHeight}${grew} mode=viewport@${target} ` +
+      `SHOT_SCROLL_CLAMPED: asked for ${target}, the document stops at ${finalY}. ` +
+      `This PNG is NOT the screen you asked for — do not file it as one.`;
+  return { line, reached };
+}
+
+/**
  * The tallest document we will photograph by GROWING the viewport (CSS px).
  *
  * This is a READABILITY line, not a technical limit, and the difference is
