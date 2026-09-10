@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from typing import Callable, Sequence, TypeVar
 
+from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder
+
 _T = TypeVar("_T")
 
 # Anonymized reserved-slot outcomes. "Team X" only at SINGLE letter — "Team GB"/
@@ -341,6 +343,153 @@ def drop_dominant_field_outcomes(
             is_field_outcome(name_of(i)) and (prob_of(i) or 0) >= _FIELD_DOMINANT_MIN
         )
     ]
+    return kept if kept else list(items)
+
+
+# ── CUMULATIVE LADDERS (#4610) ──
+#
+# A "cumulative" ladder is a set of outcomes on ONE nested condition: "Above 52",
+# "Above 58", "Above 67" … Each rung's event CONTAINS the next one's, so
+# ``P(Above 67) <= P(Above 58)`` is not a convention, it is arithmetic. A set
+# that breaks it is telling the reader two things that cannot both be true.
+#
+# THE LAW AND ITS GRAMMAR ARE NOT REDEFINED HERE. Both live in
+# :mod:`app.utils.ladder_monotonicity` (CAL-P134/136), which already owns the
+# containment argument, the leg grammar, and the discriminator that keeps a
+# mutually EXCLUSIVE band set ("29,900 to 29,999.99", "Exactly 3.64%") out of
+# it — bands partition rather than nest and may be priced in any order, so a
+# favorite is a real thing on a band set and a category error on a ladder. A
+# second copy of that grammar in a display module is exactly the third-divergent-
+# copy failure this module was created for (#993). What is added here is the two
+# things a DISPLAY caller needs and a census does not: a tolerance, and an answer
+# to "which rung is the wrong one".
+_LADDER_MONOTONE_TOLERANCE = 0.02
+
+# WHY A DISPLAY FILTER REFUSES LESS THAN THE LAW. `monotonicity_violations` is
+# strict: any reversal is a reversal, which is correct for a census counting
+# contradictions. A card is a different question — it drops a bar the reader was
+# going to be shown, and a rung that dips half a cent under its neighbour is
+# bid/ask noise, not something a reader can see is impossible. Measured on
+# production 2026-09-09 across the 12 cumulative ladders served in
+# `GET /api/feed?limit=100`: the reader-visible breaks run 6 to 57 points
+# (Netflix "Above 67" 94% over an 80.5% floor, Hulu "Above 79" 95.5% over 38%),
+# while the smallest strict reversal in the same population is 0.5 of a point
+# ("Qwen market share", 16.0% -> 16.5%). Two points refuses every break a reader
+# could catch and keeps every rounding artifact on the card.
+
+# Below this many priced rungs, nothing is dropped. With two rungs a reversal is
+# real but UNATTRIBUTABLE — either price could be the wrong one — and dropping
+# the arbitrary half of a contradiction is worse than showing both.
+_LADDER_MIN_PRICED_RUNGS = 3
+
+
+def incoherent_ladder_indexes(
+    items: Sequence[_T],
+    name_of: Callable[[_T], str | None],
+    prob_of: Callable[[_T], float | None],
+) -> set[int]:
+    """Positions in ``items`` whose price contradicts their own cumulative ladder.
+
+    Returns an EMPTY set unless
+    :func:`app.utils.ladder_monotonicity.cumulative_outcome_ladder` says the
+    outcomes are one nested ladder, so a band set, a mixed set, a two-tail set
+    and a set with no comparator legs all come back untouched.
+
+    Which rungs are named is not "everything that dips": the answer is the
+    complement of the LONGEST run that IS coherent. Take a ladder priced 93.5% /
+    73% / 37% / 2% / 24% / 8.5% / 3.5% up its rungs. A scan that flags every rung
+    sitting above its predecessors' floor blames the last three — three prices
+    that agree with each other and with everything below them — and leaves the
+    one broken rung (the 2%) standing as the ladder's own definition of the
+    truth. Keeping the longest coherent run names the 2%, and on the two
+    production cards this was written for it names "Above 67" (Netflix) and
+    "Above 94.609" (USDINR): the rungs those cards were headlined by.
+    """
+    # The rows handed to the law are throwaway dicts carrying the caller's
+    # POSITION, not its label: a leg is identified by where it sits in `items`,
+    # never by its name, which two rows of one list are free to repeat.
+    ladder = cumulative_outcome_ladder(
+        [{"name": name_of(item) or "", "index": index} for index, item in enumerate(items)]
+    )
+    if ladder is None:
+        return set()
+    legs, direction = ladder
+
+    ordered: list[tuple[float, float, int]] = []
+    for value, leg in legs:
+        index = int(leg["index"])  # type: ignore[call-overload]
+        probability = prob_of(items[index])
+        if probability is None:
+            continue
+        ordered.append((value, float(probability), index))
+    ordered.sort(key=lambda rung: rung[0])
+
+    if len(ordered) < _LADDER_MIN_PRICED_RUNGS:
+        return set()
+
+    # Longest coherent run, O(n^2) over a list a market's outcome count bounds.
+    # `bound` is the run's running EXTREME rather than its previous element:
+    # compared pairwise only, a run could drift by the tolerance at every step
+    # and end up contradicting its own first rung.
+    falling = direction == DEC
+    best_length = [1] * len(ordered)
+    bound = [probability for _, probability, _ in ordered]
+    previous: list[int | None] = [None] * len(ordered)
+    for i in range(len(ordered)):
+        probability = ordered[i][1]
+        for j in range(i):
+            if falling:
+                fits = probability <= bound[j] + _LADDER_MONOTONE_TOLERANCE
+                carried = min(bound[j], probability)
+            else:
+                fits = probability >= bound[j] - _LADDER_MONOTONE_TOLERANCE
+                carried = max(bound[j], probability)
+            if not fits:
+                continue
+            # Longest first; among equals the most permissive bound, so the run
+            # that survives is the one a later rung can still join.
+            better_length = best_length[j] + 1 > best_length[i]
+            same_length_looser_bound = best_length[j] + 1 == best_length[i] and (
+                carried > bound[i] if falling else carried < bound[i]
+            )
+            if better_length or same_length_looser_bound:
+                best_length[i] = best_length[j] + 1
+                bound[i] = carried
+                previous[i] = j
+
+    end = max(range(len(ordered)), key=lambda i: best_length[i])
+    coherent: set[int] = set()
+    cursor: int | None = end
+    while cursor is not None:
+        coherent.add(ordered[cursor][2])
+        cursor = previous[cursor]
+
+    return {index for _, _, index in ordered if index not in coherent}
+
+
+def drop_incoherent_ladder_outcomes(
+    items: Sequence[_T],
+    name_of: Callable[[_T], str | None],
+    prob_of: Callable[[_T], float | None],
+) -> list[_T]:
+    """Remove the rungs :func:`incoherent_ladder_indexes` names.
+
+    #4610. A price that cannot be true is not evidence: it may not be a card's
+    leader, its mover, its surprise, or a bar the reader is asked to read. On
+    production 2026-09-09 the Discover card "Netflix App Downloads in September"
+    served ``P(Above 67) = 94%`` over ``P(Above 58) = 88%``, and that single rung
+    generated all four of the card's reasons (``major_movement_24h``,
+    ``leader_change``, ``rank_shakeup``, ``major_surprise``), its headline "New
+    favorite: Above 67 (94%)", its caption, and the score that put it on page
+    one at position 20 of 100.
+
+    NEVER EMPTIES, matching :func:`drop_dominant_field_outcomes`: an
+    honest-empty decision belongs to the surface, not to a filter.
+    """
+    incoherent = incoherent_ladder_indexes(items, name_of, prob_of)
+    if not incoherent:
+        return list(items)
+    kept = [item for index, item in enumerate(items) if index not in incoherent]
     return kept if kept else list(items)
 
 

@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from app.utils.market_grouping import extract_threshold
+from app.utils.outcome_display import incoherent_ladder_indexes
 from app.utils.outcome_display_names import display_outcome_names
 
 _IPO_RE = re.compile(r"\b(ipo|initial public offering|market cap|valuation)\b", re.I)
@@ -362,6 +363,24 @@ def _threshold_points(
 
     # Monotonic display: a ladder read top-to-bottom must not double back.
     points.sort(key=lambda p: float(p["value"]))
+
+    # #4610 — and neither must its PRICES. On a cumulative ladder ("Above 52",
+    # "Above 58", "Above 67") each rung is a strict subset of every looser rung,
+    # so a rung priced above one of them is not a bar the reader can be asked to
+    # read: the two bars cannot both be true. Runs on the ladder as parsed, not
+    # on the [:12] slice the caller returns, because the rung that breaks the
+    # ordering is frequently outside the first twelve (production 2026-09-09,
+    # "USDINR price on Sep 11": "Above 94.609" at 65% over a 62% floor, rung 21
+    # of 30). Callers that own an outcome list filter it upstream as well; this
+    # is the display primitive's own guard, for the admin/debug and native
+    # callers that do not.
+    incoherent = incoherent_ladder_indexes(
+        points,
+        lambda p: p.get("label"),
+        lambda p: p.get("probability"),
+    )
+    if incoherent:
+        points = [p for n, p in enumerate(points) if n not in incoherent]
 
     # Mixed scales mean the labels were never one ladder — drop the threshold
     # treatment entirely rather than render self-contradicting bars.
