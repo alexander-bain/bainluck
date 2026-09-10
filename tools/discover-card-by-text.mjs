@@ -1,4 +1,4 @@
-// discover-card-by-text.mjs <url> <out.png> <regex> — shoot the Discover card whose text matches.
+// discover-card-by-text.mjs <url> <out.png> <text> — shoot the Discover card containing <text>.
 //
 // WHY A SCROLL-TO-ELEMENT PROBE EXISTS (discover/030, D1 #4066).
 //
@@ -10,8 +10,8 @@
 // browser's own fetch are two different draws from a shuffled deck.
 //
 // So this addresses the card the way a reader would: by what it SAYS. It scrolls the page until a
-// card matching the regex is on screen, or reports honestly that the deal it was dealt does not
-// contain one. It also prints the matched card's full text, so the caption under test is evidence
+// card whose text contains <text> (case-insensitive substring) is on screen, or reports honestly
+// that the deal it was dealt does not contain one. It also prints the matched card's full text, so the caption under test is evidence
 // in the log as well as in the PNG.
 //
 // EXIT CODES ARE A STORY (gotcha #124): 0 shot it, 2 usage, 4 no card matched after scrolling the
@@ -36,16 +36,16 @@ function findPlaywright() {
 }
 
 const { chromium } = createRequire(findPlaywright())('playwright');
-const [url, out, pattern] = process.argv.slice(2);
-if (!url || !out || !pattern) {
-  console.error('usage: discover-card-by-text.mjs <url> <out.png> <regex>');
+const [url, out, needle] = process.argv.slice(2);
+if (!url || !out || !needle) {
+  console.error('usage: discover-card-by-text.mjs <url> <out.png> <text>');
+  console.error('  <text> is matched as a case-insensitive SUBSTRING of the card\'s innerText.');
   console.error('  SHOT_W / SHOT_H   viewport (default 390x844 — this is a phone-first surface)');
   console.error('  SHOT_PAGES        how many auto-pager pulls to allow (default 3)');
   process.exit(2);
 }
 if (existsSync(out)) rmSync(out);
 
-const re = new RegExp(pattern, 'i');
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
 if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>');
@@ -67,18 +67,24 @@ try {
   await page.mouse.move(W - 2, 2);
 
   // Walk down the page, letting the auto-pager pull more cards, until a match is on the page.
+  //
+  // SUBSTRING, NOT A REGEX, and that is a fix rather than a simplification: building a RegExp out
+  // of argv is a regular-expression injection (CodeQL flagged exactly that on this file's first
+  // sha, high severity, and standing notice 32 refused it). Every caller so far passes a literal
+  // phrase a reader can see on the card — "opening price" — so the expressive power was never used
+  // and only the injection surface was real.
   let found = null;
-  for (let pass = 0; pass <= maxPages && !found; pass++) {
+  for (let pass = 0; pass <= maxPages; pass++) {
     found = await page.evaluate((src) => {
-      const rx = new RegExp(src, 'i');
+      const wanted = src.toLowerCase();
       // The card root the feed actually renders. Fall back to any element that both matches and
       // has no matching descendant, so this keeps working if the class hook is renamed.
       const nodes = Array.from(document.querySelectorAll('article, [data-card], [class*="card" i]'));
-      const hit = nodes.find((n) => rx.test(n.innerText || ''));
+      const hit = nodes.find((n) => (n.innerText || '').toLowerCase().includes(wanted));
       if (!hit) return null;
       const r = hit.getBoundingClientRect();
       return { top: r.top + window.scrollY, height: r.height, text: (hit.innerText || '').slice(0, 600) };
-    }, pattern);
+    }, needle);
     if (found) break;
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await page.waitForTimeout(4000);
@@ -86,7 +92,7 @@ try {
 
   if (!found) {
     const docHeight = await page.evaluate(() => document.body.scrollHeight);
-    console.error(`NOMATCH /${pattern}/ docHeight=${docHeight} — this load did not deal the specimen; re-run`);
+    console.error(`NOMATCH "${needle}" docHeight=${docHeight} — this load did not deal the specimen; re-run`);
     code = 4;
   } else {
     // Centre the card rather than putting it at y=0: a card flush to the top edge is
