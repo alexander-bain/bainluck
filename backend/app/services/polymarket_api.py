@@ -89,6 +89,24 @@ class PolymarketEvent(BaseModel):
     end_date: Optional[datetime] = None
     creation_date: Optional[datetime] = None
 
+    #: #4965 — THE FIXTURE INSTANT, which ``start_date`` is not.
+    #:
+    #: Gamma's ``startDate`` is when the market was LISTED, not when the game is
+    #: played: measured 2026-09-10, the three consecutive Rangers/Mariners
+    #: fixtures carried ``startDate`` 2026-09-02/03/04T13:00Z — the daily 13:15Z
+    #: ingest, three identical stamps a week before any of the games. We store
+    #: that value as ``FuturesMarket.commence_time``, so the matcher's only date
+    #: signal for a Polymarket game market names the wrong day, and three dates
+    #: of one series linked to a single event row.
+    #:
+    #: ``startTime`` (event) / ``gameStartTime`` (market) is the real thing and
+    #: is an unambiguous UTC instant, which is why it is preferred over the
+    #: ``slug``: the slug carries a LOCAL calendar date, and for
+    #: ``mlb-tex-sea-2026-09-08`` the true start is 2026-09-09T01:40Z — a
+    #: different UTC day. Using the slug would have required inferring each
+    #: league's timezone convention; this needs no timezone reasoning at all.
+    game_start_time: Optional[datetime] = None
+
     # Multi-outcome flag
     neg_risk: bool = False
 
@@ -658,6 +676,26 @@ class PolymarketAPIService:
                 start_date=self._parse_timestamp(event_data.get("startDate")),
                 end_date=self._parse_timestamp(event_data.get("endDate")),
                 creation_date=self._parse_timestamp(event_data.get("creationDate")),
+                # #4965: the event key first, then any nested market's own —
+                # both name the same instant and only one of the two is present
+                # on some payloads. `or None` rather than a truthiness chain on
+                # the parse result, so an unparseable stamp falls through to the
+                # next candidate instead of pinning None.
+                game_start_time=(
+                    self._parse_timestamp(event_data.get("startTime"))
+                    or next(
+                        (
+                            ts
+                            for ts in (
+                                self._parse_timestamp(m.get("gameStartTime"))
+                                for m in (event_data.get("markets") or [])
+                                if isinstance(m, dict)
+                            )
+                            if ts is not None
+                        ),
+                        None,
+                    )
+                ),
                 neg_risk=event_data.get("negRisk", False),
                 markets=markets,
                 volume=self._safe_float(event_data.get("volume")),

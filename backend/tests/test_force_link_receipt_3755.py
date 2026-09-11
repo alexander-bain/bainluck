@@ -408,7 +408,51 @@ def test_the_guard_arms_are_still_only_two():
     assert arms == {
         "_REFUSAL_EVENT_DATE": "event_date",
         "_REFUSAL_SIBLING_DATE": "sibling_date",
+        # #4965: the third arm. This test did its job — it went red when the arm
+        # was added, and the endpoint mapping above was extended to name it
+        # rather than let the ``else`` file it as a sibling collision. The
+        # decision recorded: a venue-fixture conflict is a DATE conflict, so it
+        # shares REJECT_EVENT_DATE_CONFLICT with `_REFUSAL_EVENT_DATE` and is
+        # asserted to do so in `test_the_venue_fixture_arm_is_a_date_conflict`.
+        "_REFUSAL_VENUE_FIXTURE": "venue_fixture",
     }, f"the duplicate guard's refusal arms changed: {arms}"
+
+
+@pytest.mark.asyncio
+async def test_the_venue_fixture_arm_is_a_date_conflict(
+    monkeypatch, force_link_harness
+):
+    """#4965's arm must not enter the receipt history as a sibling collision.
+
+    The mapping above is an ``else`` catch-all, so before this the new arm
+    would have been filed as ``already_linked_elsewhere`` — #2706's
+    ``GROUP BY reject_reason`` would have counted every Polymarket wrong-date
+    refusal in the bucket that means "someone else got there first", which is
+    the opposite operator instruction.
+    """
+    from app.tasks import prediction_market_matching as pmm
+    from app.utils import match_receipts as mr
+
+    _configure(
+        monkeypatch, matchup=("a", "b"), matched=MATCHED,
+        refusal=pmm._REFUSAL_VENUE_FIXTURE,
+    )
+    market = _FakeMarket()
+    db = _FakeDB(market)
+
+    result = await am.prediction_market_force_link(
+        request=None, secret="x", external_id=MARKET_ROW["external_id"], db=db,
+    )
+
+    assert result["status"] == "duplicate_guard_blocked"
+    assert result["reject_reason"] == mr.REJECT_EVENT_DATE_CONFLICT, (
+        "a venue-fixture refusal was filed as a sibling collision"
+    )
+    (call,) = force_link_harness
+    assert call["reject_reason"] == mr.REJECT_EVENT_DATE_CONFLICT
+    assert call["detail"]["refusal"] == pmm._REFUSAL_VENUE_FIXTURE
+    # The market must NOT have been linked.
+    assert market.event_id != MATCHED["event_id"]
 
 
 @pytest.mark.asyncio
