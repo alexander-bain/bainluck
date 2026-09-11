@@ -330,9 +330,12 @@ class TestTheArmIsActuallyWiredIn:
 
         `_names_participant` is what #4986 promotes on. A row selected BY THE
         TEAM'S OWN ID is the participant's by construction — a strictly tighter
-        test than any name match — so it must carry the flag, or a query whose
-        nickname the token test declines ("celtic" naming "Boston Celtics")
-        fetches the game and then drops it at the pool cap.
+        test than any name match — so it must carry the flag. The arm fires
+        precisely when the pool is full of somebody else's fixtures, so a row it
+        adds without the flag ranks behind them and is cut at `_EVENT_POOL_SIZE`:
+        the ship would fetch the right game and still not show it. Any query
+        resolving its team through an alias the row's display names do not
+        contain is in exactly that state.
         """
         assert "event.id in _ta_lead_team_row_ids" in self._source()
 

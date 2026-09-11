@@ -7260,8 +7260,16 @@ async def typeahead_search(
     # *San Diego State Aztecs at UCLA Bruins*, so `_ta_names_participant` is True,
     # the gate never opens, and the reader is shown one club's card above another
     # club's fixture. Boston's own next game (2026-09-30, three of them inside
-    # the horizon) was unreachable by any path. `celtics` is the same shape with
-    # Celtic FC.
+    # the horizon) was unreachable by any path. Re-measured on production at
+    # 12:49Z on the day this shipped, screenshot in `artifacts-lane1-246/`.
+    #
+    # 🔴 `celtics` USED TO BE THE SECOND SPECIMEN AND IS NOT ANY MORE. #5201 filed
+    # it as the same shape (Boston's card above Celtic FC's fixture); at 13:37Z,
+    # after #5059's window half went live, `celtics` served four Boston games and
+    # no Celtic FC one. `celtic` singular resolves CELTIC into slot 0 — its own
+    # fixtures are in the pool, so this arm never fires there. The specimen was a
+    # measurement with a timestamp, not a property, and a comment that keeps
+    # quoting a repaired case teaches the next reader the wrong mechanism.
     #
     # 🔴 ADDITIVE, AND THAT IS THE DESIGN. Nothing above is re-gated: every query
     # that worked this morning fetches exactly the rows it fetched then, in the
@@ -7379,11 +7387,16 @@ async def typeahead_search(
             # arm that fetched the row; `_lead_team_next_match_query` selects on
             # `team_id` (or the team's exact full name) and nothing else, which
             # is strictly TIGHTER than any name test — so this row is the
-            # participant's by construction. Without this clause the arm fetches
-            # Boston's game and then declines to promote it whenever the query is
-            # a nickname the token test does not accept ("celtic" naming "Boston
-            # Celtics"), and a row that is fetched but never promoted is cut by
-            # `_EVENT_POOL_SIZE` behind the namesakes it was added to answer.
+            # participant's by construction and the flag follows from the FETCH,
+            # not from a second opinion about the text.
+            #
+            # It is not decoration. The arm fires precisely when the pool is full
+            # of somebody else's fixtures, so a row it adds that does not carry
+            # the flag ranks behind them and is cut by `_EVENT_POOL_SIZE` — the
+            # ship would fetch the right game and still not show it. Any query
+            # that resolves its team through an alias or a curated nickname the
+            # row's own display names do not contain is in that state; the id is
+            # what fetched it, so the id is what should promote it.
             "_names_participant": (
                 _ta_names_participant(event) or event.id in _ta_lead_team_row_ids
             ),
