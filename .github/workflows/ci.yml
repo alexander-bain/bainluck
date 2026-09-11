@@ -39,6 +39,66 @@ on:
     branches: [master]
 
 jobs:
+  # #5007 (THRU-H) — does this candidate need the backend jobs at all?
+  #
+  # The four shards plus search-recall are 11.1m and 8.3m of a 12.1m run
+  # (measured, n=25). A candidate confined to `frontend/` that no backend test
+  # can even read is protected by none of them and pays for all of them.
+  #
+  # THIS JOB FAILS TOWARD "full", exactly like release-required fails toward
+  # releasing. Skipping a job that would have caught a defect ships the defect;
+  # running a job that proves nothing costs minutes. Not symmetric.
+  #
+  # The decision is NOT "is every changed file under frontend/". Twelve backend
+  # tests read `frontend/**` off disk as cross-tier parity guards, so that rule
+  # alone is a fail-open — see `.github/ci-cross-tier-paths.txt` and its rot
+  # guard, `backend/tests/test_ci_cross_tier_manifest.py`. The script consults
+  # that manifest; a candidate touching one of those paths runs everything.
+  #
+  # `deploy` is unaffected. Whenever this job says `frontend`, every changed path
+  # is under `frontend/`, so `heroku-release-required.sh` necessarily says
+  # `false` and `deploy` was already skipping — the reduced set is a strict
+  # subset of the no-release set. That invariant is asserted by
+  # `test_a_frontend_scope_always_implies_no_heroku_release`, not left to reading.
+  change-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.decide.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The classifier diffs a range; a shallow clone has no base to diff.
+          fetch-depth: 0
+
+      - name: Classify the complete candidate
+        id: decide
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # The MERGE BASE, not the base branch tip. A two-dot diff against a
+            # base that has moved reports master's own advances as part of this
+            # candidate — conservative, but it would force `full` on almost
+            # every PR and the saving would quietly never appear. Falling back
+            # to the base sha keeps that conservative behaviour if merge-base
+            # cannot be computed.
+            BASE="$(git merge-base '${{ github.event.pull_request.base.sha }}' \
+                                   '${{ github.event.pull_request.head.sha }}' 2>/dev/null \
+                     || echo '${{ github.event.pull_request.base.sha }}')"
+            HEAD='${{ github.event.pull_request.head.sha }}'
+          else
+            BASE='${{ github.event.before }}'
+            HEAD='${{ github.sha }}'
+          fi
+          # `|| echo full` is the last fail-safe: if the script cannot run at
+          # all, we run everything.
+          SCOPE="$(bash .github/scripts/ci-change-scope.sh "$BASE" "$HEAD" || echo full)"
+          case "$SCOPE" in
+            full|frontend) ;;
+            *) echo "unparseable scope '$SCOPE' — defaulting to full"; SCOPE=full ;;
+          esac
+          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+          echo "change scope: $SCOPE (base=$BASE head=$HEAD)"
+
   # Queue 312 — sharded because this job WAS the merge-to-deploy path: 8m23s of a
   # 9m31s run (measured, run 31436687919), with every other job finishing minutes
   # earlier. Four legs of ~113s each make frontend-build the long pole instead.
@@ -49,6 +109,12 @@ jobs:
   # `shard-completeness` job below proves that claim on every run against pytest's
   # own collection — read its header for why that check is not optional.
   backend-tests:
+    # #5007 — skipped only when change-scope PROVED the candidate cannot reach
+    # anything these shards test. The comparison is `!= 'frontend'`, not
+    # `== 'full'`, so an empty or unset output (a cancelled or failed
+    # change-scope job) still runs the shards.
+    needs: change-scope
+    if: needs.change-scope.outputs.scope != 'frontend'
     runs-on: ubuntu-latest
     strategy:
       # Every shard runs even when one fails. With fail-fast the first red
@@ -156,6 +222,10 @@ jobs:
   # test run, so it finishes long before the shards and never joins the critical
   # path. Cheap enough that there is no argument for sampling it.
   shard-completeness:
+    # #5007 — this proves the SHARD PARTITION is complete, so it is meaningful
+    # only when the shards run. Skipped with them, never independently.
+    needs: change-scope
+    if: needs.change-scope.outputs.scope != 'frontend'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -260,6 +330,10 @@ jobs:
   # was unguarded on a p1 surface. This job is that rail, and it is
   # deploy-blocking (see `deploy.needs`).
   search-recall:
+    # #5007 — the recall rail exercises backend search. A candidate confined to
+    # `frontend/` and touching no cross-tier path cannot change what it measures.
+    needs: change-scope
+    if: needs.change-scope.outputs.scope != 'frontend'
     runs-on: ubuntu-latest
     defaults:
       run:
