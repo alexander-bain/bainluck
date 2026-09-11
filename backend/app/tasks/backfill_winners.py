@@ -26,6 +26,10 @@ from app.utils.calibration_closing_line import (
     closing_line_lateral_sql,
 )
 from app.utils.kalshi_empty_book import lone_ask_on_empty_book_sql
+from app.utils.prediction_market_matching import (
+    COMBAT_FIGHT_WINNER_PREFIXES,
+    TENNIS_MATCH_WINNER_PREFIXES,
+)
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES_SQL,
     GUESS_FAMILY_SOURCES_SQL,
@@ -1573,6 +1577,122 @@ def _ticker_period(ticker: str | None) -> str | None:
 _RECONSTRUCTABLE_PERIODS = frozenset({"1h", "2h"})
 
 
+#: #5214: WHICH KALSHI FAMILIES `_resolve_kalshi_from_scores` MAY GRADE AT ALL.
+#:
+#: That function knows one fact — the final score — so it may only answer the
+#: three questions a final score decides: who won (`*GAME`, `*MATCH`) and did
+#: both teams score (`*BTTS`). It used to decide this with `_non_ml`, a DENYLIST
+#: of leg-type substrings, and a denylist answers the wrong question: it asks
+#: "have I been told to stay away from this?" when the only safe question is
+#: "can I actually grade this?". Anything nobody had thought to list was graded
+#: as a moneyline.
+#:
+#: What that cost, measured on production 2026-09-11 ~14:0xZ:
+#:   * REALIZED — 137 outcomes carry a verdict nothing could have computed:
+#:     `KXNCAAMBFIRST10` 83 (who reaches 10 points first, graded as the game
+#:     winner — Wisconsin 82-83 High Point, a ONE-POINT game, "High Point");
+#:     `KXWTASETWINNER` 48 + `KXATPSETWINNER` 4; `KXUCLADVANCE` 2 (a two-leg
+#:     tie graded off one leg). The set markets are self-refuting on our own
+#:     rows: `…-26AUG21BEJKEY-1` and `-2` are Set 1 and Set 2 of a match that
+#:     finished 2-1, both graded to the match winner, so one of the pair is
+#:     necessarily wrong; `KXATPSETWINNER-26AUG30SWEMOU-3` grades a Set 3 that
+#:     was never played (the match ended 2-0).
+#:   * PENDING — 211 markets sit in the candidate scan RIGHT NOW that the
+#:     denylist admits and this allowlist refuses: `KXNBA3D` 173 ("Triple
+#:     Doubles"), `KXUFCROUNDS` 20 ("Round of Finish"), `KXNBA2D` 9, `KXMLBOUTS`
+#:     7, `KXNFLPASSTDS` 1, `KXNFLRECYDS` 1.
+#:   * LATENT — 141 of the 434 Kalshi families over completed events reach the
+#:     moneyline branch, ~110 of them props (`KXNHLGOAL`, `KXNFLPASSYDS`,
+#:     `KXUFCVICROUND`, `KXMLBRBI`…). They hold no `game_score` row only because
+#:     Kalshi settled them first; gotcha #35 says that cover expires at 74-86
+#:     days. No denylist could have enumerated them, which is the whole argument
+#:     for inverting the rule.
+#:
+#: A refusal costs nothing a wrong verdict does not cost more: `game_score` is
+#: not in OVERWRITABLE_WINNER_SOURCES_SQL, so a wrong one is PERMANENT, while an
+#: ungraded row stays in the scan for the venue's own settlement and renders
+#: honestly everywhere (#1638 / `_settled_grade_fields`).
+#:
+#: Keyed on the family — the segment before the first `-` — for #5116's reason:
+#: the EVENT segment concatenates team abbreviations and makes short tokens
+#: collide across the team boundary. `_ticker_period` already keys on the same
+#: segment, so this is the established anchor in this file, not a new idea.
+#:
+#: `EXACTMATCH` is carved out BY NAME because it is the one family that ends in
+#: an admitted suffix without asking an admitted question: `KXATPEXACTMATCH` /
+#: `KXWTAEXACTMATCH` ask the exact set score ("Nuno Borges wins 2-0"). Those
+#: markets carry 4-6 outcomes today, so `n_outcomes != 2` would also turn them
+#: away — but that is an unrelated short-circuit, and a guard that only holds
+#: because something else declines first is a guard that is not being tested.
+#:
+#: KNOWN RESIDUAL, deliberately not fixed here: a cricket test match can be
+#: DRAWN with unequal run totals, so `KXWTESTMATCH` is admitted by the suffix
+#: while `home_score <> away_score` does not mean somebody won. One market,
+#: zero `game_score` rows.
+_SCORE_GRADEABLE_FAMILY_RE = re.compile(r"(?:game|match|btts)$", re.IGNORECASE)
+_SCORE_UNGRADEABLE_FAMILY_RE = re.compile(r"exactmatch$", re.IGNORECASE)
+
+#: CERT-2624's repair. A suffix rule spells the question, but three sports write
+#: the SAME question — "who won this contest?" — with a family that ends in
+#: neither `game` nor `match`, so the regex above admitted `KXATPMATCH` and
+#: refused `KXATPDOUBLES` for no reason a reader could defend.
+#:
+#: This file is not the first place that had to enumerate them.
+#: `feeds_win_prob_blend` already decides which Kalshi tickers are canonical
+#: WINNER lines — the ones whose YES price may write into the event's win-prob
+#: blend — and it answers with exactly these two frozensets. Two functions asking
+#: "is this the contest winner?" must never be able to disagree, so this one
+#: READS THE SAME CONSTANTS rather than restating them. A family added to the
+#: blend's vocabulary is admitted here in the same commit, by construction; a
+#: hand-copied list is a second vocabulary that drifts on the first addition.
+#: (The cert named four families. The constants hold six the suffix rule misses:
+#: it omitted the two CHALLENGER doubles variants, which is the drift, arriving
+#: before the list was even written down.)
+#:
+#: Admitting them is measured-safe, production 2026-09-11 ~15:0xZ:
+#:   * COMBAT — `KXUFCFIGHT` has 416 linked markets, and the 50 whose event
+#:     carries a score encode it as a pure winner flag: every one of the 50 is
+#:     `1-0` or `0-1`, never a tie, never a judge's card. "Higher score wins" is
+#:     therefore exactly right for a bout (spot-checked against the real results:
+#:     Song Yadong `0-1` over Umar Nurmagomedov, Dolidze `1-0` over de Ridder).
+#:   * DOUBLES — `KXATPDOUBLES` has 311 linked markets and **0** whose event
+#:     carries a score, so admitting it is inert today; it is admitted for the
+#:     same reason singles is, and grades the same way (sets won) if a score
+#:     ever lands.
+#:   * NOTHING IS BEING REPAIRED RETROACTIVELY. `game_score` outcomes across
+#:     these families: `KXUFCFIGHT` 0/864, `KXBOXING` 0/618, `KXATPDOUBLES`
+#:     0/623 — and the control that makes those zeros mean something is
+#:     `KXATPMATCH`, a family this rule has ADMITTED all along, also 0/5185.
+#:     The venue settles these itself (802, 602, 609 and 5177 by `api_settlement`
+#:     and friends), so the score path is a fallback that has never fired here.
+#:     The exposure is the ~100 rows the venue has NOT settled, against gotcha
+#:     #35's 74-86 day purge — which is precisely the cert's point, and why the
+#:     repair is worth making even though nothing changes today.
+_CANONICAL_WINNER_FAMILIES = frozenset(
+    COMBAT_FIGHT_WINNER_PREFIXES | TENNIS_MATCH_WINNER_PREFIXES
+)
+
+
+def _score_gradeable_family(ticker: str | None) -> bool:
+    """Can `_resolve_kalshi_from_scores` grade this ticker's family at all?
+
+    True only for full-game winner and both-teams-to-score families. See
+    `_SCORE_GRADEABLE_FAMILY_RE` for the measured population and why this is an
+    allowlist rather than another entry on `_non_ml`, and
+    `_CANONICAL_WINNER_FAMILIES` for the fight/doubles winner lines that ask the
+    same question without the suffix that spells it.
+    """
+    family = (ticker or "").split("-", 1)[0]
+    # The refusal is consulted first and wins: `EXACTMATCH` is not a winner line
+    # whatever else matches, and a carve-out that a later arm could overturn is
+    # not a carve-out.
+    if _SCORE_UNGRADEABLE_FAMILY_RE.search(family):
+        return False
+    if family.lower() in _CANONICAL_WINNER_FAMILIES:
+        return True
+    return _SCORE_GRADEABLE_FAMILY_RE.search(family) is not None
+
+
 async def _period_scores(
     session,
     event_id: int,
@@ -1638,7 +1758,8 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     that function's ``scan_in`` for why the locked set is the exact stand-in
     for re-running the HAVING clause after this function's commits.
     """
-    stats = {"moneyline": 0, "btts": 0, "skipped": 0, "refused_period": 0, "errors": []}
+    stats = {"moneyline": 0, "btts": 0, "skipped": 0, "refused_period": 0,
+             "refused_family": 0, "errors": []}
     # Markets this run has just given a non-overwritable winner. A market only
     # leaves the shared candidate set when SOME outcome ends up
     # `is_winner AND resolution_source NOT IN (overwritable)` — and every write
@@ -1725,6 +1846,18 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
                 # honestly (#1638 / `_settled_grade_fields`).
                 if _ticker_period(row.ticker) is not None:
                     stats["refused_period"] += 1
+                    continue
+
+                # #5214: and it may only answer questions a final score DECIDES.
+                # The period refusal above catches "the right question about the
+                # wrong window"; this catches "a question the final score cannot
+                # answer at all" — who reached 10 points first, who won set 2,
+                # who advances on aggregate, how many triple-doubles. Read
+                # `_SCORE_GRADEABLE_FAMILY_RE` for the measured population; the
+                # short version is that `_non_ml` below is a denylist and could
+                # never have enumerated the ~110 prop families that reach here.
+                if not _score_gradeable_family(row.ticker):
+                    stats["refused_family"] += 1
                     continue
 
                 # BTTS: both teams to score
@@ -2166,7 +2299,29 @@ _TOTAL_REGRADE_SCOPE_RE = (
 #: The union of the two lists is exactly the original twenty tokens — this is an
 #: anchoring change, never a narrowing of intent. `test_ml_repair_anchoring_5116`
 #: asserts that, and asserts the production false positives above stay unmatched.
-_ML_REPAIR_TOKENS_ANCHORED = "(pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|rfi|f5)"
+#:
+#: #5214 adds `first10|setwinner|advance`: the three families measured to be
+#: holding a moneyline verdict they could never have earned (137 outcomes —
+#: `KXNCAAMBFIRST10` 83, `KXWTASETWINNER` 48, `KXATPSETWINNER` 4, `KXUCLADVANCE`
+#: 2). They are long and unambiguous, and anchoring them to the family segment
+#: was checked against all 434 Kalshi families over completed events: they match
+#: those three plus four other `*ADVANCE` families that hold no `game_score` row.
+#:
+#: THIS IS NOT THE ALLOWLIST, AND MUST NOT BECOME IT. `_score_gradeable_family`
+#: admits only `*GAME`/`*MATCH`/`*BTTS`, because that is all ONE resolver can
+#: grade. Driving this re-null from the same predicate would clear every
+#: `*SPREAD`, `*TOTAL` and `*TEAMTOTAL` row as well — ~40,000 outcomes that
+#: `_resolve_kalshi_spread_total_from_scores` grades correctly and owns. Two
+#: different questions: "may the moneyline resolver touch this?" and "is this
+#: verdict wrong?". Explicit tokens, one per measured family.
+#:
+#: The re-null and the allowlist ship together on purpose. Alone, the re-null is
+#: #5116's loop in reverse — clear, re-grade, clear — and the reader sees a blank
+#: only in the gap. With the allowlist refusing the family, the row is cleared
+#: once and stays cleared, which is the acceptance criterion.
+_ML_REPAIR_TOKENS_ANCHORED = (
+    "(pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|rfi|f5|first10|setwinner|advance)"
+)
 _ML_REPAIR_TOKENS_FREE = (
     "(teamtotal|spread|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention)"
 )

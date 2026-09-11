@@ -92,18 +92,39 @@ def test_real_non_moneyline_families_are_still_re_nulled(ticker, why):
     assert _matches(ticker), f"{ticker} lost coverage ({why})"
 
 
+#: Tokens added after #5116, each with the issue that measured its population.
+#: A widening is allowed; an UNDECLARED widening is not, because #5116 was caused
+#: by exactly that — tokens accumulating on a list nobody re-measured. Adding a
+#: token means adding it here and saying which rows it clears.
+_DECLARED_ADDITIONS = {
+    "first10": "#5214: KXNCAAMBFIRST10, 83 outcomes graded as the game winner",
+    "setwinner": "#5214: KXWTASETWINNER 48 + KXATPSETWINNER 4",
+    "advance": "#5214: KXUCLADVANCE 2, a two-leg tie graded off one leg",
+}
+
+
 def test_anchoring_never_narrows_the_token_list():
-    """The union of the two lists is exactly the twenty tokens that shipped before.
+    """The union still covers every token that shipped before #5116.
 
     #5116 is an anchoring change. Dropping a token would silently stop repairing a
-    real family, which looks identical to the fix working.
+    real family, which looks identical to the fix working. Growth is permitted only
+    through `_DECLARED_ADDITIONS`, so a token can never arrive unmeasured.
     """
     assert _tokens(bw._ML_REPAIR_TOKENS_ANCHORED).isdisjoint(
         _tokens(bw._ML_REPAIR_TOKENS_FREE)
     ), "a token in both lists makes the anchored arm dead"
-    assert _tokens(bw._ML_REPAIR_TOKENS_ANCHORED) | _tokens(
-        bw._ML_REPAIR_TOKENS_FREE
-    ) == _tokens(_PRE_5116_WHOLE_ID_RE)
+
+    union = _tokens(bw._ML_REPAIR_TOKENS_ANCHORED) | _tokens(bw._ML_REPAIR_TOKENS_FREE)
+    original = _tokens(_PRE_5116_WHOLE_ID_RE)
+
+    assert original - union == set(), (
+        f"{sorted(original - union)} was dropped from the re-null — a real family "
+        "stopped being repaired, which looks exactly like the fix working"
+    )
+    assert union - original == set(_DECLARED_ADDITIONS), (
+        f"undeclared token(s) {sorted(union - original - set(_DECLARED_ADDITIONS))}: "
+        "add them to _DECLARED_ADDITIONS with the measured rows they clear"
+    )
 
 
 def test_short_tokens_are_the_anchored_ones():
