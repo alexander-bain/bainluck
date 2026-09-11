@@ -13349,6 +13349,39 @@ async def _build_game_markets(
                 result.append(item)
         return result
 
+    def _is_threshold_ladder(rows: list[dict]) -> bool:
+        """True when these rows are RUNGS OF ONE LADDER, so capping them is meaningful.
+
+        `_enforce_monotonicity` encodes one premise: as the threshold gets harder
+        the probability must not rise. That is only true of outcomes on the SAME
+        SIDE of the SAME question. Applied to anything else it is not a smoother,
+        it is a cascade — #5374, where every spread on an event shared the empty
+        grouping key and a Kalshi ladder inherited a cap from an unrelated
+        Polymarket market and from the OPPOSING player's outcome.
+
+        Two tests, and both are properties of the rows rather than of their names:
+
+        * every row carries a threshold — a bare Yes/No market (Polymarket's
+          `Set Handicap … (-2.5)`) has none and is not a ladder at all; and
+        * the thresholds are DISTINCT under `abs`, which is what sorts them.
+          A repeat means two outcomes occupy one rung, and two outcomes on one
+          rung are opposite sides of it, never a step down from each other. This
+          is also what makes the test catch a mixed-side market without asking
+          which side any row is on: a market carrying both teams necessarily
+          repeats every rung it offers.
+
+        Deliberately NOT a side classifier parsed out of `outcome_name`. That is
+        the #1951 drift failure — a second recognizer does not throw when it
+        disagrees with the first, it just quietly answers differently — and the
+        distinctness test buys the same protection off data already on the row.
+        """
+        if len(rows) < 2:
+            return False
+        thresholds = [r.get("threshold") for r in rows]
+        if any(t is None for t in thresholds):
+            return False
+        return len({abs(t) for t in thresholds}) == len(thresholds)
+
     game_totals = _enforce_monotonicity(game_totals)
 
     # Also apply sport-range guard to period totals (use team_total range
@@ -13388,15 +13421,49 @@ async def _build_game_markets(
         group.sort(key=lambda x: x.get("threshold", 0) or 0)
         team_total_items.extend(_enforce_monotonicity(group))
 
-    # 7d. Enforce monotonicity on spreads — group by team side
-    spread_by_side: dict[str, list[dict]] = {}
+    # 7d. Enforce monotonicity on spreads — WITHIN ONE MARKET'S OWN LADDER (#5374)
+    #
+    # This grouped by `team_side`, and NOTHING EVER SET `team_side` ON A SPREAD ROW.
+    # The key is assigned in 7c above, on team-total rows, and is read here off a
+    # dict that never carries it — so `.get("team_side", "unknown")` returned the
+    # default for every spread on every event and the whole section became ONE
+    # group. `_enforce_monotonicity` then caps each row at the previous row's
+    # probability, so the served list came out monotone non-increasing across
+    # every market and both sources at once.
+    #
+    # Measured on production 2026-09-11 21:07Z, `GET /api/events/15309206/game-markets`
+    # (Zverev vs Khachanov, live), served against the stored price in the same minute:
+    # `Alexander Zverev -2.5 games` stored 0.84 and SERVED 0.11, `-5.5` stored 0.60
+    # and served 0.11, and Polymarket's `Set Handicap (-2.5)` served Yes 0.245 AND
+    # No 0.245 — a binary pair summing to 0.49, which refutes itself without any
+    # ground truth. 7 of 11 rows wrong. The Kalshi ladder 0.84/0.50/0.08 is already
+    # correctly monotone and needed no help; it was destroyed by a cap inherited
+    # from an unrelated Polymarket market and from Khachanov's outcome at 0.11.
+    #
+    # A market is the widest a cap may travel, because it is the widest thing that
+    # can be one ladder. Within it, `_is_threshold_ladder` decides whether these
+    # rows ARE rungs; a Yes/No pair and a mixed-side market are left alone.
+    #
+    # The `> 0` filter that lived inside `_enforce_monotonicity` is hoisted so it
+    # still runs on EVERY row, including rows in groups no longer capped — skipping
+    # the call must not put 0% rungs back on the page.
+    spreads = [
+        s for s in spreads
+        if s.get("probability") is not None and s.get("probability", 0) > 0
+    ]
+    spreads.sort(key=lambda x: abs(x.get("threshold", 0) or 0))
+    spread_by_market: dict[object, list[dict]] = {}
     for sp in spreads:
-        side = sp.get("team_side", "unknown")
-        spread_by_side.setdefault(side, []).append(sp)
-    spreads = []
-    for group in spread_by_side.values():
-        group.sort(key=lambda x: abs(x.get("threshold", 0) or 0))
-        spreads.extend(_enforce_monotonicity(group, prob_key="probability"))
+        spread_by_market.setdefault(sp.get("_market_id"), []).append(sp)
+    _spread_out: list[dict] = []
+    for group in spread_by_market.values():
+        if _is_threshold_ladder(group):
+            _spread_out.extend(_enforce_monotonicity(group, prob_key="probability"))
+        else:
+            _spread_out.extend(group)
+    # Back to the served order the section has always had — by rung, not by market.
+    _spread_out.sort(key=lambda x: abs(x.get("threshold", 0) or 0))
+    spreads = _spread_out
 
     # 8. Calculate pace
     pace = _estimate_game_pace(
