@@ -66,6 +66,17 @@ interface MarketMapSectionProps {
    * beside it counts sets, and every rail on this page is drawn in games.
    */
   linescore?: PlayedLinescore | null;
+  /**
+   * #5206: this match passed the point of being upcoming and NOTHING reported
+   * how it went — `suspended`, or `scheduled` well past its own kickoff.
+   *
+   * It arrives as a decided boolean rather than as a `commence_time` this
+   * component would re-derive, because the page already asks the question once
+   * (`hasNoReportedResult`, `page.tsx`) to draw the hero's "No result reported".
+   * Two graders reading one input and disagreeing is #1650, and the whole point
+   * of `lib/eventState.ts` is that no two surfaces answer this differently.
+   */
+  noResultReported?: boolean;
 }
 
 interface HalfScores {
@@ -191,6 +202,7 @@ export default function MarketMapSection({
   sportKey,
   espnHistory,
   linescore,
+  noResultReported = false,
 }: MarketMapSectionProps) {
   const hAbbr = deriveAbbr(homeTeam, homeAbbr);
   const aAbbr = deriveAbbr(awayTeam, awayAbbr);
@@ -199,6 +211,31 @@ export default function MarketMapSection({
   const isLive = eventStatus === "live";
   const isDone = eventStatus === "completed" || eventStatus === "closed";
   const status = isLive ? "live" : isDone ? "done" : "pre";
+
+  /**
+   * ── #5206: A FORECAST AND A RESULT ARE TWO QUESTIONS, AND SO ARE THEIR MARKS ──
+   *
+   * `status` is a three-value type threaded through twenty call sites and into
+   * `MarketMap` itself, so an unreported match has nowhere to land but `"pre"` —
+   * the branch that draws a forward-looking `Projection` mark and a
+   * `Projected N` headline. On production a suspended match therefore carried a
+   * hero reading "No result reported" and, one card below, "Scoring map —
+   * Projected 3". The web twin of #4018, whose line applies verbatim.
+   *
+   * Widening `status` to a fourth value would touch every one of those sites for
+   * a question only two of them ask. What is actually wrong is narrower than the
+   * state: the marks are in the WRONG TENSE. A match that should already have
+   * happened has no forecast to offer — but the number the market quoted before
+   * it is still true, and still worth showing.
+   *
+   * So this does not suppress the map; it moves the forecast into the past
+   * tense, reusing the vocabulary the file already owns rather than inventing
+   * one. `type: "pre" / label: "Pre-game"` is exactly what the `done` branch and
+   * the half-maps' `isDone ? "pre" : "proj"` already emit for the same reason.
+   * The ladder, the density and the distribution are untouched: those are what
+   * the market says, not a claim about what will happen.
+   */
+  const noForecast = noResultReported;
 
   /**
    * ux/1034 B5: the scoreboard's two numbers, ONLY where they count the thing
@@ -354,14 +391,15 @@ export default function MarketMapSection({
 
     if (status === "pre") {
       if (projValue != null) {
+        // #5206: past tense for a match nobody reported — see `noForecast`.
         markers.push({
-          key: "proj",
+          key: noForecast ? "pre" : "proj",
           value: projValue,
-          type: "proj",
-          label: "Projection",
+          type: noForecast ? "pre" : "proj",
+          label: noForecast ? "Pre-game" : "Projection",
           displayValue: formatMargin(projValue, projTeamAbbr || ""),
-          logoUrl: projLogo,
-          logoFallback: projTeamAbbr || "",
+          logoUrl: noForecast ? undefined : projLogo,
+          logoFallback: noForecast ? undefined : projTeamAbbr || "",
         });
       }
     } else if (status === "live") {
@@ -533,8 +571,14 @@ export default function MarketMapSection({
     const projected = pace?.projected_total ?? null;
     const ouVal = overUnder ?? ouLine.threshold;
 
+    // #5206: `Projected 3` on a match nobody reported was the headline in the
+    // bug report. In `pre` this number is just the over/under LINE rounded — a
+    // quote, dressed as a forecast — so an unreported match shows no headline
+    // at all rather than a projection it has no standing to make.
     const headlineValue = status === "pre"
-      ? `Projected ${Math.round(ouVal)}`
+      ? noForecast
+        ? ""
+        : `Projected ${Math.round(ouVal)}`
       : status === "live" && projected != null
       ? `Projected ${Math.round(projected)}`
       : "";
@@ -543,18 +587,23 @@ export default function MarketMapSection({
 
     if (status === "pre") {
       markers.push({
-        key: "proj",
+        key: noForecast ? "pre" : "proj",
         value: ouVal,
-        type: "proj",
-        label: "Projection",
+        type: noForecast ? "pre" : "proj",
+        // #5206: past tense for a match nobody reported — see `noForecast`.
+        label: noForecast ? "Pre-game" : "Projection",
         displayValue: String(Math.round(ouVal)),
         // #3360: the ring carries its own number. `hideTile: true` means this
         // marker draws NO tile underneath, so the dot was the only mark on the
         // rail and it was empty — a 26px ring with nothing in it, which reads
         // as a missing value rather than a marker. `logoFallback` is what
         // MarketMap renders inside a `proj` dot.
-        logoFallback: String(Math.round(ouVal)),
-        hideTile: true,
+        //
+        // #5206: a `pre` mark draws its own TILE, so it needs neither the
+        // fallback nor `hideTile` — carrying them over would hide the only mark
+        // on the rail and reproduce #3360 in the arm this fix creates.
+        logoFallback: noForecast ? undefined : String(Math.round(ouVal)),
+        hideTile: noForecast ? undefined : true,
       });
     } else if (status === "live") {
       if (scored != null) {
@@ -777,9 +826,11 @@ export default function MarketMapSection({
       // Projection / Pre-game spread
       halfMarkers.push({
         key: "proj",
+        // #5206: the half maps already made this exact distinction for a
+        // finished game; an unreported match earns it for the same reason.
+        type: isDone || noForecast ? "pre" : "proj",
         value: projMargin,
-        type: isDone ? "pre" : "proj",
-        label: isDone ? "Pre-game" : "Projection",
+        label: isDone || noForecast ? "Pre-game" : "Projection",
         displayValue: formatMarginLabel(projMargin, projTeam, closest50.threshold),
         logoFallback: projTeam,
       });
