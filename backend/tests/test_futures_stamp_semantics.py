@@ -521,7 +521,12 @@ PRICE_CHANGE_STAMPERS = {
     # 1.0 or 0.0 — beside the verdict, because a leg the venue has called must
     # not keep the last number anyone paid for it. Through the shared helper for
     # the reason above; a settled price is still a price MOVE.
-    "app/tasks/kalshi.py": 5,
+    # 5 -> 6 (#5246 / CERT-2641): `_poll_kalshi_markets`' settled arm. The
+    # 2-hourly poll grades through `graded_columns` and, until now, wrote the
+    # live quote beside the verdict in the same statement. When the venue has
+    # answered, the price IS the answer, so that arm re-stamps against the
+    # terminal 1.0/0.0 — through the shared helper, for the reason above.
+    "app/tasks/kalshi.py": 6,
     "app/tasks/polymarket.py": 3,
     "app/tasks/futures.py": 1,
     # #5246 / CERT-2637: `_backfill_kalshi_winners`' Core update. It is one of

@@ -2216,6 +2216,12 @@ async def run_lean_settled(
     from app.services.kalshi_api import KalshiAPIService
     from app.tasks.redis_state import get_redis_client
     from app.tasks.base import get_task_session
+    from app.utils.kalshi_market_status import gradeable_winner
+    from app.utils.settled_price import (  # #5246 / CERT-2641
+        SETTLED_NO_PRICE,
+        SETTLED_YES_PRICE,
+        settled_price_set_sql,
+    )
     import asyncio
 
     rc = get_redis_client()
@@ -2224,7 +2230,8 @@ async def run_lean_settled(
     if cursor:
         cursor = cursor.decode() if isinstance(cursor, bytes) else cursor
 
-    stats = {"pages": 0, "resolved": 0, "events": 0, "empty_pages": 0}
+    stats = {"pages": 0, "resolved": 0, "events": 0, "empty_pages": 0,
+             "undeclared": 0}
     service = KalshiAPIService()
     try:
         for _ in range(max_pages):
@@ -2239,25 +2246,41 @@ async def run_lean_settled(
             if not events:
                 break
             stats["events"] += len(events)
+            # CAL-P1004 / #5304. This partitioned on `rs is not None` and sent
+            # everything that was not the literal "yes" to `no_t`, so `""` (the
+            # venue has not called it) and `"scalar"` (settles on a number, not
+            # a side) were written `is_winner=false, api_settlement` — the top
+            # authority rung, which `is_downgrade` then protects from any later
+            # correction. `gradeable_winner` is three-state and its None means
+            # the ticker joins NEITHER list.
             yes_t, no_t = [], []
             for ev in events:
                 for mkt in (ev.get("markets") or []):
                     tk = mkt.get("ticker", "")
-                    rs = mkt.get("result")
-                    if tk and rs is not None:
-                        (yes_t if rs == "yes" else no_t).append(tk)
+                    won = gradeable_winner(mkt.get("status"), mkt.get("result"))
+                    if not tk or won is None:
+                        stats["undeclared"] += 1 if tk else 0
+                        continue
+                    (yes_t if won else no_t).append(tk)
 
             page_resolved = 0
             async with get_task_session() as sess:
+                # #5246 / CERT-2641: this endpoint is a Kalshi settlement writer
+                # like any other and owes the terminal price off the SHARED
+                # clause. It stamped `api_settlement` and left the price behind,
+                # so a leg it graded kept the last number anyone paid — and the
+                # ship's price-refresh refusal then made that unreachable.
                 if yes_t:
                     r = await sess.execute(text("""
-                        UPDATE futures_outcomes SET is_winner=true, resolution_source='api_settlement'
+                        UPDATE futures_outcomes SET is_winner=true, resolution_source='api_settlement',
+                        """ + settled_price_set_sql(SETTLED_YES_PRICE, alias="") + """
                         WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
                     """), {"t": yes_t})
                     page_resolved += r.rowcount
                 if no_t:
                     r = await sess.execute(text("""
-                        UPDATE futures_outcomes SET is_winner=false, resolution_source='api_settlement'
+                        UPDATE futures_outcomes SET is_winner=false, resolution_source='api_settlement',
+                        """ + settled_price_set_sql(SETTLED_NO_PRICE, alias="") + """
                         WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN ('pass2_guess','binary_higher_wins','multi_max_prob','clean_resolution','pass2_loser','pass3_threshold'))
                     """), {"t": no_t})
                     page_resolved += r.rowcount

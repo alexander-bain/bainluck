@@ -210,6 +210,18 @@ def test_the_settling_sweep_still_refuses_to_overwrite_a_better_verdict():
 #:
 #: Pinned as a set, not a count, so a new settlement writer fails this by NAME
 #: rather than by arithmetic somebody has to interpret.
+#:
+#: 🔴 CERT-2641 WIDENED THIS, AND THE LESSON IS ABOUT THE POPULATION, NOT THE
+#: TWO NAMES ADDED. The first census hard-coded its two FILES, so it could only
+#: ever police writers in the files I already knew about — and two mounted,
+#: executable rails escaped it: the legacy admin endpoint
+#: `run_lean_settled` (which also carried CAL-P1004's two-state read, sending
+#: `""` and `"scalar"` to the loser list) and the attended
+#: `_apply_reviewed_plan`, which restores a venue-confirmed winner to the
+#: `api_settlement` rung. "A settlement writer is a population, not a place" was
+#: the right sentence attached to the wrong scan: a hand-written FILE list is
+#: just a longer place. The file list is DISCOVERED now — see
+#: `_discovered_settlement_files` — and only the VERDICT stays hand-classified.
 LIVE_KALSHI_SETTLEMENT_WRITERS = {
     "app/tasks/backfill_winners.py": {
         "_backfill_kalshi_winners",
@@ -221,7 +233,19 @@ LIVE_KALSHI_SETTLEMENT_WRITERS = {
         "_backfill_candlestick_snapshots",
         "_backfill_from_settled_events",
         "_create_settled_market",
+        # Found by the widened census, not by CERT-2641, and it is the largest
+        # of the three: the 2-hourly poll is the bulk writer of Kalshi outcome
+        # rows. It grades through `graded_columns`, so the literal
+        # `api_settlement` never appears in it and the old scan was blind to it.
+        "_poll_kalshi_markets",
     },
+    # Mounted admin endpoint, reachable by anyone holding the admin secret. It
+    # runs the settled-events scan inline for one series, bypassing Celery.
+    "app/routes/admin_data_quality.py": {"run_lean_settled"},
+    # Attended repair. Its `restore_winner` branch puts a venue-confirmed winner
+    # back on the `api_settlement` rung; the retraction branch moves only
+    # `resolution_source` and is not a settlement write.
+    "app/tasks/repair_kalshi_fabricated_loss.py": {"_apply_reviewed_plan"},
 }
 
 #: Settlement writers in the same files that are NOT Kalshi and are NOT fixed
@@ -236,9 +260,17 @@ LIVE_KALSHI_SETTLEMENT_WRITERS = {
 #: anything writes a hard 0 or 1 over it. The DATA half of #5246 covers both —
 #: the repair clears any `api_settlement` loser on an open market whatever its
 #: source — so this gap is forward-only, and it is tracked.
+#:
+#: CERT-2641's discovery pass added the last two: they are Polymarket writers in
+#: files the old census never opened, and they are named here rather than
+#: silently skipped so the forward-only gap stays countable.
 NON_KALSHI_SETTLEMENT_WRITERS = {
     "app/tasks/backfill_winners.py": {"_backfill_polymarket_winners_from_api"},
     "app/tasks/kalshi.py": set(),
+    "app/routes/admin_data_quality.py": set(),
+    "app/tasks/repair_kalshi_fabricated_loss.py": set(),
+    "app/tasks/polymarket.py": {"_sync_polymarket_resolved_status"},
+    "app/tasks/tournament_price_refresh.py": {"_settle_resolved_outcomes"},
 }
 
 
@@ -255,11 +287,13 @@ def _settlement_writers(path):
         src = fh.read()
     tree = ast.parse(src)
     lines = src.split("\n")
-    hits = [
-        i + 1
-        for i, line in enumerate(lines)
-        if "api_settlement" in line and "resolution_source" in line
-    ]
+    # CERT-2641: WRITES only, on the same predicate the file-level discovery
+    # uses. The looser "mentions both words" form attributed four admin
+    # endpoints that only READ the grade in a WHERE (`debug_winner_backfill`,
+    # `debug_settled_precheck`, `debug_phase3`, `calibration_decomposition`) —
+    # a census that cannot tell a SET from a WHERE names innocents and buries
+    # the writers it exists to find.
+    hits = _settlement_write_lines(path)
     funcs = sorted(
         (n.lineno, n.end_lineno, n.name)
         for n in ast.walk(tree)
@@ -273,6 +307,177 @@ def _settlement_writers(path):
         lo, hi, name = enclosing[-1]
         out.setdefault(name, "\n".join(lines[lo - 1 : hi]))
     return out
+
+
+#: Line shapes that MENTION the grade without writing it. Splitting reads from
+#: writes is not fussiness: `resolution_source` appears in a compare-and-swap
+#: WHERE all over this codebase, and a census that counted those would report
+#: half the task tree as settlement writers and drown the two real ones.
+_READ_ONLY_MARKERS = ("!=", "<>", "is distinct", "is not distinct", "==")
+
+#: Helpers that RETURN the `{is_winner, resolution_source}` pair, so the call
+#: site writes the grade without the literal `'api_settlement'` ever appearing
+#: in it. `graded_columns` is the only one today (`app/utils/
+#: kalshi_market_status.py`, returning `VENUE_SETTLEMENT_SOURCE`).
+#:
+#: 🔴 THIS IS WHY THE PREDICATE NEEDS THEM, and it is a finding about the old
+#: census rather than a convenience. `kalshi._create_settled_market` writes the
+#: grade exclusively through `graded_columns`, so the only reason the previous
+#: scan ever attributed it was a COMMENT four lines up that happens to spell
+#: `api_settlement`. The census was carrying a real writer on the strength of
+#: prose about it — the same class of mistake as grading the comment that
+#: explains a fix, and it would have dropped the writer silently the moment
+#: somebody tidied the comment.
+_GRADE_WRITE_HELPERS = ("graded_columns(",)
+
+
+def _docstring_lines(tree):
+    """1-indexed line numbers belonging to a docstring.
+
+    Prose that QUOTES the string being searched for is not code. This module's
+    own docstrings, and `kalshi_fabricated_loss`'s and
+    `polymarket_condition_refresh`'s, all spell
+    `resolution_source = 'api_settlement'` while describing the defect — and a
+    scan that grades prose reports the explanation as the offence.
+    `_task_module_code` strips `#` comments for exactly this reason; `ast` is how
+    the same rule reaches a docstring.
+    """
+    import ast
+
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+            if isinstance(first.value.value, str):
+                out.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    return out
+
+
+def _settlement_write_lines(path):
+    """1-indexed lines in `path` that WRITE `resolution_source='api_settlement'`.
+
+    Accepts the two forms the codebase actually uses — a SQL assignment and a
+    Core `.values()` / dict entry — and rejects comparisons and prose.
+    """
+    import ast
+
+    with open(path) as fh:  # CodeQL py/file-not-closed
+        src = fh.read()
+    try:
+        prose = _docstring_lines(ast.parse(src))
+    except SyntaxError:
+        return []
+
+    hits = []
+    for i, raw in enumerate(src.splitlines(), start=1):
+        if i in prose or raw.lstrip().startswith("#"):
+            continue
+        code = raw.split("  #")[0]
+        # A helper's own `def` line is the DEFINITION, not a call site. Without
+        # this, `kalshi_market_status.py` — which executes no database write at
+        # all — is reported as a settlement writer by virtue of declaring the
+        # function every real writer goes through.
+        if code.lstrip().startswith(("def ", "async def ")):
+            continue
+        if any(h in code for h in _GRADE_WRITE_HELPERS):
+            hits.append(i)
+            continue
+        if "api_settlement" not in code or "resolution_source" not in code:
+            continue
+        low = code.lower()
+        if low.lstrip().startswith(("and ", "or ", "where ")):
+            continue
+        # A `WHERE` to the LEFT of the column makes this a predicate, not an
+        # assignment — including the aggregate form that reads nothing like a
+        # WHERE clause at a glance:
+        #   COUNT(*) FILTER (WHERE fo.resolution_source = 'api_settlement')
+        # Two admin dashboards COUNT settled legs that way, and a census that
+        # called them writers would demand they carry a terminal price.
+        if "where" in low.split("resolution_source")[0]:
+            continue
+        if any(m in low for m in _READ_ONLY_MARKERS):
+            continue
+        hits.append(i)
+    return hits
+
+
+def _discovered_settlement_files():
+    """Every file under `app/` that writes `resolution_source = 'api_settlement'`.
+
+    🔴 THE BLOCK THIS ANSWERS (CERT-2641). The census used to iterate a
+    hand-written list of two FILES, so a writer in any third file was invisible
+    to it — and two mounted, executable rails were. A scan whose population is
+    enumerated by hand cannot report the thing it was built to report; it can
+    only confirm what its author already believed. So the FILES are discovered
+    and only the VERDICT is hand-classified.
+
+    Comments are stripped for the reason `_task_module_code` gives: a source
+    scan that reads PROSE grades the prose, and this module's own docstrings
+    quote the string being searched for.
+    """
+    import os
+
+    found = set()
+    for root, _dirs, files in os.walk("app"):
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            path = os.path.join(root, fn).replace(os.sep, "/")
+            if _settlement_write_lines(path):
+                found.add(path)
+    return found
+
+
+def test_no_settlement_writer_lives_in_a_file_the_census_cannot_see():
+    """The census's population is DISCOVERED, so a new file cannot hide in it.
+
+    This is the guard CERT-2641 actually needed. `run_lean_settled` and
+    `_apply_reviewed_plan` both stamped `api_settlement` for months while a
+    green census reported full compliance, because neither lived in one of the
+    two files the census looked at.
+
+    A new file here is not necessarily a bug — it is unclassified. Read it,
+    decide whether it is a Kalshi settlement writer, and put it in one of the
+    two maps above. Failing loudly on an unclassified file is the entire point:
+    the alternative is what shipped, which was passing quietly on an unread one.
+    """
+    discovered = _discovered_settlement_files()
+    classified = set(LIVE_KALSHI_SETTLEMENT_WRITERS) | set(
+        NON_KALSHI_SETTLEMENT_WRITERS
+    )
+    unclassified = discovered - classified
+    assert not unclassified, (
+        "these files write `resolution_source = 'api_settlement'` and no one "
+        f"has classified them: {sorted(unclassified)}. Add each to "
+        "LIVE_KALSHI_SETTLEMENT_WRITERS (and it must then carry the terminal "
+        "price) or to NON_KALSHI_SETTLEMENT_WRITERS with the reason."
+    )
+
+
+def test_the_census_file_list_is_not_secretly_a_hand_written_list():
+    """Negative control on the discovery itself.
+
+    `_discovered_settlement_files` is only worth anything if it actually reads
+    the tree. If it silently returned `set()` — a bad cwd, a renamed package, an
+    `os.walk` over nothing — then the test above passes vacuously and the census
+    is back to being a hand-written list with extra steps (gotcha: an emptiness
+    guard its own caller cannot see).
+    """
+    discovered = _discovered_settlement_files()
+    assert len(discovered) >= 4, (
+        f"discovery found only {sorted(discovered)} — it is not reading the "
+        f"tree, so the guard above cannot fail"
+    )
+    # And it must find the two rails that escaped the first census, by name.
+    assert "app/routes/admin_data_quality.py" in discovered
+    assert "app/tasks/repair_kalshi_fabricated_loss.py" in discovered
 
 
 def test_the_settlement_writer_census_has_not_moved():
@@ -334,6 +539,203 @@ def test_every_live_kalshi_api_settlement_writer_sets_terminal_price():
             )
 
 
+#: The writers CERT-2641 found outside the first census, and what each owes.
+#: `prices_both_sides` is False for a writer that only ever writes one verdict:
+#: `_apply_reviewed_plan`'s restore branch puts back a WINNER and never a loser,
+#: so demanding a NO price there would be demanding a branch that must not exist.
+_REACHABLE_WRITERS = [
+    ("app/routes/admin_data_quality.py", "run_lean_settled", True, True),
+    ("app/tasks/repair_kalshi_fabricated_loss.py", "_apply_reviewed_plan",
+     False, False),
+]
+
+
+@pytest.mark.parametrize(
+    "path,name,prices_both_sides,partitions_results", _REACHABLE_WRITERS
+)
+def test_every_reachable_kalshi_api_settlement_writer_sets_terminal_price_and_refuses_undeclared_results(
+    path, name, prices_both_sides, partitions_results
+):
+    """🔴 THE BLOCK THIS ANSWERS (CERT-2641), on the two rails it named.
+
+    Both are REACHABLE and neither is scheduled, which is exactly why they were
+    missed: `run_lean_settled` is a mounted admin POST that runs the settled
+    scan inline for one series, and `_apply_reviewed_plan` is the attended
+    fabricated-loss repair. Between them they stamped `api_settlement` without a
+    terminal price, and the admin one also carried CAL-P1004's two-state read,
+    so `""` (the venue has not called it) and `"scalar"` (settles on a number)
+    were written as LOSSES onto the rung `is_downgrade` protects.
+
+    Asserted on the writer's own source rather than a re-derivation, and on the
+    SET clause rather than the whole statement: `is_winner` legitimately appears
+    in a compare-and-swap WHERE, so a whole-statement check would pass on a
+    mutant that moved a column into the SET.
+    """
+    body = _settlement_writers(path)[name]
+
+    # 🔴 THE CALL FORM, NOT THE BARE NAME. `run_lean_settled` imports
+    # `SETTLED_YES_PRICE`, `SETTLED_NO_PRICE` and `settled_price_set_sql` INSIDE
+    # the function, so all three names are in its body text no matter what it
+    # does with them. A mutant that deleted the YES price clause outright left
+    # every bare-name assertion green — the import alone satisfied them. Asked
+    # as calls, with the price named in the argument, the two SET clauses are
+    # the only thing that can answer.
+    def _asks(price_const):
+        return re.search(
+            r"settled_price_set_sql\(\s*" + price_const + r"\b", body
+        ) or re.search(r"settled_price_values\(", body)
+
+    assert _asks("SETTLED_YES_PRICE"), (
+        f"{path}::{name} stamps api_settlement without asking the SHARED clause "
+        f"for the winner's price. A settled leg keeps the last number anyone "
+        f"paid, and the ship's own price-refresh refusal then makes it "
+        f"permanently unreachable."
+    )
+    if prices_both_sides:
+        assert re.search(
+            r"settled_price_set_sql\(\s*SETTLED_NO_PRICE\b", body
+        ), (
+            f"{path}::{name} writes is_winner=false somewhere and prices only "
+            f"the winners — that is #5246's residue, re-created by half a fix"
+        )
+
+    if partitions_results:
+        # The undeclared refusal, at the writer that had the two-state read.
+        assert "gradeable_winner(" in body, (
+            f"{path}::{name} decides a verdict without the three-state helper, "
+            f"so an undeclared or scalar result becomes a recorded LOSS"
+        )
+        assert 'result") == "yes"' not in body and "== 'yes'" not in body, (
+            f"{path}::{name} still compares the venue's result to the literal "
+            f'"yes" — that is the CAL-P1004 partition the helper replaced'
+        )
+
+
+def test_the_polls_settled_price_is_actually_applied_not_merely_computed():
+    """🔴 A SOURCE SCAN PROVES THE TEXT IS THERE, NOT THAT IT RUNS.
+
+    This test exists because its absence let a mutant through. The census above
+    accepts `_poll_kalshi_markets` on the strength of the string
+    `settled_price_values(` appearing in its body — and that string sits on the
+    line that COMPUTES the price. Changing the branch that APPLIES it to
+    `if False:` left every population assertion green: the computation stayed,
+    the write reverted, and the leg went back to carrying a live quote.
+
+    So this binds the STRUCTURE, with `ast`, not the text: the terminal price
+    must be applied inside a branch conditioned on `settled_price`, and it must
+    reach both arms of the upsert — the conflict arm through
+    `update_set.update(settled_price)` and the INSERT arm through
+    `settled_price.get(...)`, which is the arm that decides what a row is BORN
+    holding.
+    """
+    import ast
+
+    with open("app/tasks/kalshi.py") as fh:  # CodeQL py/file-not-closed
+        tree = ast.parse(fh.read())
+
+    fn = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name == "_poll_kalshi_markets"
+    )
+
+    guarded = [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.If)
+        and isinstance(n.test, ast.Name)
+        and n.test.id == "settled_price"
+    ]
+    assert guarded, (
+        "no `if settled_price:` branch in _poll_kalshi_markets — the terminal "
+        "price is computed and never applied, so a settled leg keeps the last "
+        "quote the poll derived"
+    )
+
+    applied = ast.dump(ast.Module(body=guarded, type_ignores=[]))
+    assert "update_set" in applied and "settled_price" in applied, (
+        "the settled branch does not write the price into `update_set`"
+    )
+    assert "price_changed_at" in applied, (
+        "the settled branch moves the price without re-stamping #2024 against "
+        "the terminal value"
+    )
+
+    # The INSERT arm: what a row is born holding.
+    insert_kwargs = [
+        kw
+        for call in ast.walk(fn)
+        if isinstance(call, ast.Call)
+        for kw in call.keywords
+        if kw.arg == "current_probability"
+    ]
+    assert insert_kwargs, "no `current_probability=` in the upsert"
+    assert any(
+        "settled_price" in ast.dump(kw.value) for kw in insert_kwargs
+    ), (
+        "the INSERT arm still names the live quote unconditionally, so a leg "
+        "already settled the first time the poll sees it is BORN with a price "
+        "for a contract that is over"
+    )
+
+
+def test_the_undeclared_result_never_becomes_a_loss_at_the_admin_writer():
+    """The refusal is a PROPERTY of the helper, exercised on the real values.
+
+    The source assertions above prove the admin endpoint calls
+    `gradeable_winner`; this proves what that call does with the four results
+    the block enumerated, so the pair cannot both be satisfied by a helper that
+    stopped refusing.
+    """
+    from app.utils.kalshi_market_status import gradeable_winner
+
+    assert gradeable_winner("finalized", "yes") is True
+    assert gradeable_winner("finalized", "no") is False
+    # Neither list. Not a loss.
+    assert gradeable_winner("finalized", "") is None
+    assert gradeable_winner("finalized", "scalar") is None
+    assert gradeable_winner("closed", "") is None
+    assert gradeable_winner("active", "") is None
+
+
+#: Writers that never read a venue result and never write a loss, because their
+#: verdicts arrive already decided in a plan an operator has read and bound
+#: (`bind_apply`). Exempting them from the two population assertions below is a
+#: STATEMENT ABOUT THEIR SHAPE, not a softening: demanding a NO branch of
+#: `_apply_reviewed_plan` would be demanding a branch that must not exist —
+#: its whole purpose is restoring winners a fabricated loss took away. The
+#: property that keeps them safe is asserted directly in
+#: `test_a_plan_bound_writer_is_bound_to_a_reviewed_plan`.
+PLAN_BOUND_WRITERS = {
+    ("app/tasks/repair_kalshi_fabricated_loss.py", "_apply_reviewed_plan"),
+}
+
+
+def test_a_plan_bound_writer_is_bound_to_a_reviewed_plan():
+    """The exemption above must buy its own safety, not just skip the check.
+
+    A writer excused from the venue-result partition is only safe if something
+    else decides its verdicts. For `_apply_reviewed_plan` that is `bind_apply`,
+    which refuses any apply not bound to the dry-run an operator actually read,
+    plus the compare-and-swap on the exact prior `(is_winner,
+    resolution_source)` the plan recorded.
+    """
+    for path, name in PLAN_BOUND_WRITERS:
+        body = _settlement_writers(path)[name]
+        assert "bind_apply(" in body, (
+            f"{path}::{name} is exempt from the venue-result partition but is "
+            f"not bound to a reviewed plan either — nothing decides its verdicts"
+        )
+        assert "restore_winner" in body, (
+            f"{path}::{name} is exempt from the NO-side price on the grounds "
+            f"that it only restores winners; that branch is no longer there"
+        )
+        # The exemption is only legitimate while the writer really never writes
+        # a loss onto the settlement rung.
+        assert "is_winner = false" not in body and "is_winner=false" not in body
+
+
 def test_both_sides_of_every_settlement_are_priced():
     """YES and NO, in every writer that spells the two branches separately.
 
@@ -342,7 +744,7 @@ def test_both_sides_of_every_settlement_are_priced():
     """
     for path, names in LIVE_KALSHI_SETTLEMENT_WRITERS.items():
         for name, body in _settlement_writers(path).items():
-            if name not in names:
+            if name not in names or (path, name) in PLAN_BOUND_WRITERS:
                 continue
             if "is_winner = true" in body or "is_winner=true" in body:
                 assert "SETTLED_YES_PRICE" in body or "1.0" in body, f"{path}::{name}"
@@ -370,6 +772,8 @@ def test_the_undeclared_refusal_survives_the_price_write():
     for path in LIVE_KALSHI_SETTLEMENT_WRITERS:
         writers = _settlement_writers(path)
         for name in LIVE_KALSHI_SETTLEMENT_WRITERS[path]:
+            if (path, name) in PLAN_BOUND_WRITERS:
+                continue  # reads no venue result; see PLAN_BOUND_WRITERS
             body = writers[name]
             # Either the writer asks the three-state helper itself, or its
             # caller has already partitioned on it and the writer only ever

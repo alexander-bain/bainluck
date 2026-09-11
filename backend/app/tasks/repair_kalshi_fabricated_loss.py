@@ -209,6 +209,10 @@ from app.utils.kalshi_retention import (
     MEASURED_ON,
     PROVABLY_PURGED_AGE_DAYS,
 )
+from app.utils.settled_price import (  # #5246 / CERT-2641
+    SETTLED_YES_PRICE,
+    settled_price_set_sql,
+)
 from app.utils.repair_apply_plan import (
     APPLIED_RECEIPT_SCHEMA,
     APPLY_PLAN_SCHEMA,
@@ -2886,10 +2890,20 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             # between the plan and the write would have been overwritten by a
             # stale api_settlement. Both forms now compare on the EXACT prior
             # (is_winner, resolution_source) the plan recorded.
+            # #5246 / CERT-2641. This restores a VENUE-CONFIRMED winner to the
+            # `api_settlement` rung, so it is a settlement writer like any other
+            # and owes the terminal price. Without it the leg carries the last
+            # number anyone paid for a contract that is over — and because the
+            # ship's own price-refresh refusal skips `0 < prob < 1` violations
+            # on settled legs, nothing downstream can ever correct it. The
+            # winner side is the only side this branch writes, so the price is
+            # unconditionally YES; the retraction branch below leaves
+            # `is_winner` alone and is deliberately NOT a settlement write.
             stmt = """
                 UPDATE futures_outcomes
                 SET is_winner = true,
                     resolution_source = 'api_settlement',
+                    """ + settled_price_set_sql(SETTLED_YES_PRICE, alias="") + """,
                     last_updated = :applied_version
                 WHERE id = :id
                   AND is_winner = :prior_winner

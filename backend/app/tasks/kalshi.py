@@ -46,6 +46,7 @@ from app.utils.settled_price import (  # noqa: E402  # #5246
     SETTLED_NO_PRICE,
     SETTLED_YES_PRICE,
     settled_price_set_sql,
+    settled_price_values,
 )
 from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
 # #2927: imports nothing but stdlib (same rule as sport_keys.py), so it is safe
@@ -1506,6 +1507,24 @@ async def _poll_kalshi_markets():
                         # settlement already established.
                         graded_cols = graded_columns(market.status, market.result)
 
+                        # #5246 / CERT-2641. FOUND BY THE WIDENED CENSUS, not by
+                        # the block, and it is the biggest of the three: this is
+                        # the 2-hourly poll, the bulk writer of Kalshi outcome
+                        # rows. It grades through `graded_columns` — so the
+                        # literal `api_settlement` never appears here and the
+                        # old census could not see it — and in the SAME
+                        # statement writes `current_probability = prob`, the
+                        # last price the poll derived. For a leg the venue has
+                        # just resolved that price is not merely stale: Kalshi
+                        # stops quoting a `finalized` market, so it is the final
+                        # ghost of a live quote, frozen onto a settled row.
+                        # When the venue has answered, the price IS the answer.
+                        settled_price = (
+                            settled_price_values(graded_cols["is_winner"])
+                            if graded_cols
+                            else {}
+                        )
+
                         # Upsert outcome
                         update_set: dict = {
                             "name": outcome_name,
@@ -1528,6 +1547,20 @@ async def _poll_kalshi_markets():
                             ),
                         }
                         update_set.update(graded_cols)
+                        if settled_price:
+                            # The price columns are REPLACED, not added to: the
+                            # dict above already set `current_probability` to
+                            # the live quote. `price_changed_at` is recomputed
+                            # against the terminal value through the one
+                            # maintained copy of the #2024 predicate, so a leg
+                            # already sitting at settlement is graded without
+                            # being advertised as freshly moved.
+                            update_set.update(settled_price)
+                            update_set["price_changed_at"] = price_changed_at_value(
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.price_changed_at,
+                                settled_price["current_probability"],
+                            )
                         # Backfill opening_probability if it was NULL (market had
                         # no trading on first capture) and now has real trading
                         if has_real_trading:
@@ -1550,8 +1583,20 @@ async def _poll_kalshi_markets():
                                 market_id=futures_market_id,
                                 external_id=market.ticker,
                                 name=outcome_name,
-                                current_probability=prob,
-                                current_american_odds=american,
+                                # #5246 / CERT-2641, and the INSERT arm needs it
+                                # for CAL-P1004R's own reason: this is the bulk
+                                # CREATOR of outcome rows, so a leg already
+                                # settled the first time the poll sees it would
+                                # otherwise be BORN holding a live quote.
+                                # `opening_probability` below is deliberately
+                                # left on `prob` — that is calibration truth
+                                # (gotcha #144) and settlement does not move it.
+                                current_probability=settled_price.get(
+                                    "current_probability", prob
+                                ),
+                                current_american_odds=settled_price.get(
+                                    "current_american_odds", american
+                                ),
                                 current_yes_bid=market.yes_bid,
                                 current_yes_ask=market.yes_ask,
                                 opening_probability=opening_prob,
