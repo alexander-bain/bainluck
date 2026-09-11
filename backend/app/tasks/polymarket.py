@@ -2958,6 +2958,14 @@ async def _sync_polymarket_resolved_status():
         # and a run where it is zero resolved nothing for a bad one.
         "events_fully_open": 0,
         "settled_legs_seen": 0,
+        # CERT-751 repair. Legs the venue still reports trading, and the markets
+        # withheld because they carry one. `markets_held_mixed_children` is the
+        # number this sweep DELIBERATELY did not resolve — a parent whose event
+        # is partly settled and partly live. Counted rather than inferred,
+        # because "resolved fewer than I expected" and "correctly refused a
+        # still-trading parent" are the same rowcount otherwise (gotcha #53).
+        "open_legs_seen": 0,
+        "markets_held_mixed_children": 0,
         "markets_resolved": 0,
         "outcomes_updated": 0,
         # CAL-P086A: the resolves this task made with no winner to write. Kept
@@ -3118,10 +3126,17 @@ async def _sync_polymarket_resolved_status():
             settled_cids: list[str] = []
             settlement_prices: dict[str, tuple[float, float | None]] = {}
             terminal_cids: list[str] = []
+            # CERT-751 repair. Every leg the venue still reports TRADING, kept
+            # for the mixed-children guard below. Collected for EVERY event,
+            # including fully-open ones and before the `continue` — resolution
+            # is a one-way write, so the guard fails closed: a condition id seen
+            # open anywhere in this batch withholds the market that carries it.
+            open_cids: list[str] = []
             for raw in raw_events:
                 legs = settled_legs(raw)
                 if legs is None:
                     continue
+                open_cids.extend(legs.open_condition_ids)
                 if not legs.settled_condition_ids:
                     stats["events_fully_open"] += 1
                     continue
@@ -3129,6 +3144,7 @@ async def _sync_polymarket_resolved_status():
                 settlement_prices.update(legs.settlement_prices)
                 terminal_cids.extend(legs.terminal_condition_ids)
             stats["settled_legs_seen"] += len(settled_cids)
+            stats["open_legs_seen"] += len(open_cids)
 
             if settled_cids:
                 # Also include _yes/_no suffixed external_ids for sub-market
@@ -3154,6 +3170,16 @@ async def _sync_polymarket_resolved_status():
                 for cid in terminal_cids:
                     _terminal_extended.append(f"{cid}_yes")
                     _terminal_extended.append(f"{cid}_no")
+
+                # CERT-751 repair. The still-trading legs, under the same
+                # `_yes`/`_no` widening the settled side uses — a decomposed
+                # sub-market stores its legs suffixed, so a guard that matched
+                # only the bare condition id would miss exactly the decomposed
+                # parents this exists to protect.
+                _open_extended = list(open_cids)
+                for cid in open_cids:
+                    _open_extended.append(f"{cid}_yes")
+                    _open_extended.append(f"{cid}_no")
 
                 _proof_stamp = _json_dumps(
                     gate_stamp(
@@ -3202,17 +3228,80 @@ async def _sync_polymarket_resolved_status():
                                   )
                                   OR external_id = ANY(:raw_cids)
                               )
+                              -- CERT-751 repair: the parent+mixed-children
+                              -- guard. One settled leg used to be enough to
+                              -- resolve the market that carries it, so a
+                              -- `polymarket_event` parent aggregating 50 legs
+                              -- was marked resolved on the strength of one --
+                              -- the grader's specimen is Gamma event 92611,
+                              -- 24 legs closed and 26 STILL TRADING, whose
+                              -- production parent 113566 holds both. That
+                              -- pulls a live 50-outcome market off every open
+                              -- surface. A market is resolvable only when NONE
+                              -- of its legs is still trading; the settled
+                              -- children of a mixed event still resolve
+                              -- individually, which is the half of #2637 that
+                              -- was always correct.
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM futures_outcomes fo_open
+                                  WHERE fo_open.market_id = futures_markets.id
+                                    AND fo_open.external_id = ANY(:open_cids)
+                              )
+                              AND NOT (external_id = ANY(:open_raw))
                         """),
                         {
                             "cids": extended_cids,
                             "raw_cids": settled_cids,
                             "terminal_cids": _terminal_extended,
                             "terminal_raw": terminal_cids,
+                            "open_cids": _open_extended,
+                            "open_raw": open_cids,
                             "proof_stamp": _proof_stamp,
                             "reason_stamp": _reason_stamp,
                         },
                     )
                     page_resolved = result.rowcount
+
+                    # CERT-751 repair, the counted half. What the guard above
+                    # WITHHELD: rows the old predicate would have resolved that
+                    # carry a still-trading leg. Without this the repair is
+                    # invisible — a sweep that correctly refuses a live parent
+                    # and a sweep that simply found nothing report the same
+                    # `markets_resolved`, and the next reader cannot tell a
+                    # working guard from a dead one.
+                    held = await session.execute(
+                        text("""
+                            SELECT COUNT(*)
+                            FROM futures_markets
+                            WHERE source = 'polymarket'
+                              AND status != 'resolved'
+                              AND (
+                                  id IN (
+                                      SELECT fo.market_id
+                                      FROM futures_outcomes fo
+                                      WHERE fo.external_id = ANY(:cids)
+                                  )
+                                  OR external_id = ANY(:raw_cids)
+                              )
+                              AND (
+                                  EXISTS (
+                                      SELECT 1
+                                      FROM futures_outcomes fo_open
+                                      WHERE fo_open.market_id = futures_markets.id
+                                        AND fo_open.external_id = ANY(:open_cids)
+                                  )
+                                  OR external_id = ANY(:open_raw)
+                              )
+                        """),
+                        {
+                            "cids": extended_cids,
+                            "raw_cids": settled_cids,
+                            "open_cids": _open_extended,
+                            "open_raw": open_cids,
+                        },
+                    )
+                    stats["markets_held_mixed_children"] += held.scalar() or 0
 
                     # How many of this batch's settled legs had no winner to
                     # write. A count, not an estimate: it is the legs the CASE

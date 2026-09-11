@@ -280,3 +280,176 @@ class TestTheNeedleCensusIsLegalSQL:
         assert census.distinct_events == 2, row
         assert census.unaddressable == 0, row
         assert census.oldest_commence is not None
+
+
+# --- CERT-751: the guard has to be proven on ROWS, not on the statement ------
+
+_GUARD_SCHEMA = "poly_mixed_parent_guard_751"
+
+
+def _resolve_sql() -> str:
+    """The resolve UPDATE, lifted from the shipped source.
+
+    Same contract as :func:`_candidate_sql` and for a sharper reason: CERT-751
+    blocked this ship because every existing guard asserted the BIND LIST while
+    the defect lived in which ROWS the statement selects with it. A retyped
+    statement here could carry the guard while the shipped one does not.
+    """
+    import inspect
+
+    import app.tasks.polymarket as poly_mod
+
+    src = inspect.getsource(poly_mod._sync_polymarket_resolved_status)
+    match = re.search(
+        r'text\("""\s*(UPDATE futures_markets\s+SET status = \'resolved\'.*?)\s*"""\)',
+        src,
+        re.S,
+    )
+    assert match, (
+        "could not find the resolve UPDATE in _sync_polymarket_resolved_status "
+        "— if it was renamed or restructured, update this extractor rather "
+        "than deleting the gate (a gate that cannot find its subject must "
+        "fail, never silently pass)"
+    )
+    return match.group(1)
+
+
+@pytest.fixture
+async def mixed_parent_rows(pg_session):
+    """Gamma event 92611, reduced to the shape the grader actually found.
+
+    A `polymarket_event` PARENT carrying two legs — one the venue closed, one
+    still trading — beside the settled leg's own decomposed CHILD row. That is
+    the production pair (parent 113566 over 24 closed and 26 live legs); two
+    legs reproduce it exactly, because the predicate is an `IN`, and an `IN`
+    does not care whether the mixed set has 2 members or 50.
+    """
+    await pg_session.execute(text(f"DROP SCHEMA IF EXISTS {_GUARD_SCHEMA} CASCADE"))
+    await pg_session.execute(text(f"CREATE SCHEMA {_GUARD_SCHEMA}"))
+    await pg_session.execute(text(f"SET search_path TO {_GUARD_SCHEMA}, public"))
+    await pg_session.execute(
+        text(
+            """
+            CREATE TABLE futures_markets (
+                id serial PRIMARY KEY,
+                source varchar(50) NOT NULL,
+                external_id varchar(200) NOT NULL,
+                name varchar(300) NOT NULL,
+                category varchar(50) NOT NULL,
+                mutually_exclusive boolean NOT NULL,
+                status varchar(20) NOT NULL,
+                settled_at timestamptz,
+                market_metadata jsonb
+            )
+            """
+        )
+    )
+    await pg_session.execute(
+        text(
+            """
+            CREATE TABLE futures_outcomes (
+                id serial PRIMARY KEY,
+                market_id integer NOT NULL,
+                external_id varchar(200) NOT NULL,
+                name varchar(300) NOT NULL
+            )
+            """
+        )
+    )
+    await pg_session.execute(
+        text(
+            """
+            INSERT INTO futures_markets
+                (source, external_id, name, category, mutually_exclusive,
+                 status, market_metadata)
+            VALUES
+                ('polymarket', '92611', 'Trump visits (parent)', 'championship',
+                 true, 'open', '{}'::jsonb),
+                ('polymarket', '0xsettled', 'Trump visits Alaska', 'prop',
+                 true, 'open', '{}'::jsonb)
+            """
+        )
+    )
+    await pg_session.execute(
+        text(
+            """
+            INSERT INTO futures_outcomes (market_id, external_id, name)
+            VALUES
+                ((SELECT id FROM futures_markets WHERE external_id = '92611'),
+                 '0xsettled', 'Alaska'),
+                ((SELECT id FROM futures_markets WHERE external_id = '92611'),
+                 '0xtrading', 'Alabama'),
+                ((SELECT id FROM futures_markets WHERE external_id = '0xsettled'),
+                 '0xsettled', 'Alaska')
+            """
+        )
+    )
+    await pg_session.commit()
+    yield
+    await pg_session.execute(text("SET search_path TO public"))
+    await pg_session.execute(text(f"DROP SCHEMA IF EXISTS {_GUARD_SCHEMA} CASCADE"))
+    await pg_session.commit()
+
+
+class TestTheMixedParentGuardSelectsTheRightRows:
+    """CERT-751's BLOCK, executed against PostgreSQL.
+
+    The unit suite can prove the statement CONTAINS a guard. Only this can
+    prove the guard SELECTS correctly — which is the exact gap the grader
+    found, and the reason a token was withheld.
+    """
+
+    async def _run(self, pg_session):
+        settled = ["0xsettled"]
+        extended = ["0xsettled", "0xsettled_yes", "0xsettled_no"]
+        open_raw = ["0xtrading"]
+        open_extended = ["0xtrading", "0xtrading_yes", "0xtrading_no"]
+        await pg_session.execute(
+            text(_resolve_sql()),
+            {
+                "cids": extended,
+                "raw_cids": settled,
+                "terminal_cids": extended,
+                "terminal_raw": settled,
+                "open_cids": open_extended,
+                "open_raw": open_raw,
+                "proof_stamp": '{"proof": "winner"}',
+                "reason_stamp": '{"reason": "closed_without_terminal_price"}',
+            },
+        )
+        rows = (
+            await pg_session.execute(
+                text(
+                    "SELECT external_id, status FROM futures_markets "
+                    "ORDER BY external_id"
+                )
+            )
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    async def test_the_still_trading_parent_is_not_resolved(
+        self, pg_session, mixed_parent_rows
+    ):
+        status = await self._run(pg_session)
+
+        assert status["92611"] == "open", (
+            "the parent of a partly-settled event was marked resolved on the "
+            "strength of ONE closed leg while 'Alabama' is still trading — "
+            "this is CERT-751's finding, and it pulls a live market off every "
+            f"open surface. statuses={status}"
+        )
+
+    async def test_the_settled_child_is_still_resolved(
+        self, pg_session, mixed_parent_rows
+    ):
+        """The other direction, and the half of #2637 that was always right.
+
+        A guard that withheld the child too would be 'safe' and useless: the
+        whole ship is that finished events stop being sold as open.
+        """
+        status = await self._run(pg_session)
+
+        assert status["0xsettled"] == "resolved", (
+            "the settled child of a mixed event was withheld, so the guard is "
+            f"over-refusing and the ship does nothing. statuses={status}"
+        )

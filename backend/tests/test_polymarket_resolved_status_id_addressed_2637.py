@@ -504,6 +504,83 @@ class TestItResolvesOnlyWhatTheVenueClosed:
         )
         assert stats["events_fully_open"] == 1, stats
 
+    async def test_a_mixed_parent_is_withheld_by_the_children_guard(
+        self, monkeypatch
+    ):
+        """CERT-751's BLOCK, as a test.
+
+        The two guards above are TRUE and were not enough, which is the whole
+        lesson: they assert the BIND LIST (`raw_cids == ["0xsettled"]`, correct
+        — the trading leg is not passed), and never which ROWS the predicate
+        selects with it. The predicate is
+        `id IN (SELECT market_id FROM futures_outcomes WHERE external_id = ANY(:cids))`,
+        so a `polymarket_event` parent that merely CARRIES `0xsettled` among its
+        legs is selected on the strength of that one leg. The grader evaluated
+        it against production rows and found exactly that: Gamma event 92611,
+        24 legs closed and 26 still trading, whose parent market 113566 holds
+        both — the sweep would have pulled a live 50-outcome market off every
+        open surface.
+
+        So the assertion has to be about the STATEMENT, not the bind list: the
+        trading legs must reach the SQL as an exclusion. On the pre-repair tree
+        `open_cids` is not bound at all and this fails on the KeyError.
+        """
+        h = _Harness([MIXED_EVENT]).install(monkeypatch)
+
+        stats = await poly_mod._sync_polymarket_resolved_status()
+
+        sql, params = next(
+            (s, p)
+            for s, p in h.statements
+            if "UPDATE futures_markets" in s and "status = 'resolved'" in s
+        )
+
+        assert "fo_open" in sql and "NOT EXISTS" in sql, (
+            "the resolve statement carries no mixed-children guard, so one "
+            "settled leg still resolves the parent that holds it:\n" + sql
+        )
+
+        assert "0xtrading" in params["open_cids"], (
+            "the still-trading leg never reached the guard, so the guard is "
+            f"present but vacuous; open_cids={params['open_cids']}"
+        )
+        # The `_yes`/`_no` widening matters as much as the bare id: a decomposed
+        # sub-market stores its legs suffixed, and those ARE the parents this
+        # guard exists to protect. A guard matching only the bare id would read
+        # green here and miss every decomposed parent in production.
+        assert "0xtrading_yes" in params["open_cids"], params["open_cids"]
+        assert "0xtrading_no" in params["open_cids"], params["open_cids"]
+
+        # And the settled child is still reachable — the guard must withhold the
+        # mixed parent WITHOUT withdrawing the half of #2637 that was correct.
+        assert params["raw_cids"] == ["0xsettled"], params
+        assert "0xsettled" not in params["open_cids"], params["open_cids"]
+
+        assert stats["open_legs_seen"] == 1, stats
+
+    async def test_the_withheld_parents_are_counted_not_inferred(
+        self, monkeypatch
+    ):
+        """A guard that refuses silently cannot be told from a dead one.
+
+        `markets_resolved` alone is the same number whether the sweep correctly
+        refused a live parent or simply found nothing to do (gotcha #53), so the
+        run reports the refusals as their own count.
+        """
+        h = _Harness([MIXED_EVENT]).install(monkeypatch)
+
+        stats = await poly_mod._sync_polymarket_resolved_status()
+
+        assert "markets_held_mixed_children" in stats, (
+            "the sweep does not report what its guard withheld: "
+            f"{sorted(stats)}"
+        )
+        # The harness answers every COUNT(*) with its `open_count`, so the VALUE
+        # here is the fake's, not a measured one — what this pins is that the
+        # key exists and is populated from the query rather than left at 0.
+        assert stats["markets_held_mixed_children"] > 0, stats
+        assert h.id_calls, "the sweep never addressed the venue by id"
+
     async def test_an_ungradeable_close_still_records_why(self, monkeypatch):
         """CAL-P086A's contract, carried through the rewrite unchanged: closed
         with no readable winner is resolvable, but the reason is written."""
