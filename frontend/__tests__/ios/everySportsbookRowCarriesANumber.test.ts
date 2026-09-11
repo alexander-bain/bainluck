@@ -159,11 +159,27 @@ describe("#4406 — every sportsbook row carries a number", () => {
   });
 
   it("takes a pair the row view cannot decline to draw", () => {
-    expect(rowViewPairParameter(source)).toBe("(away: Double, home: Double)");
+    // #5271 RE-ANCHORED, and the invariant is now stated instead of spelled.
+    //
+    // The away member became optional so a draw-priced sport can withhold it:
+    // `1 − P(home)` is "the home team does not win", which in soccer includes
+    // the draw. #4406's claim is untouched by that, because it was never about
+    // the away side — it is that a ROW ALWAYS CARRIES A NUMBER. So:
+    //
+    //   `(away: Double?, home: Double)`   ✅ a row, minus one column
+    //   `(away: Double, home: Double)?`   ❌ #4406's bug — the whole row optional
+    //
+    // The old literal could not tell those apart on sight, which is why the two
+    // halves are now asserted separately.
+    const parameter = rowViewPairParameter(source);
+    expect(parameter).toMatch(/^\(away: Double\??, home: Double\)$/);
+    expect(parameter).not.toMatch(/\)\?$/);
+    expect(parameter).toContain("home: Double)");
+
     const body = swiftBlock(source, ROW_VIEW);
     // The `if let probabilities` this function used to hold WAS the bare-name
-    // state: label drawn, bar and numbers skipped. With a non-optional parameter
-    // it no longer compiles, and this is the assertion that says why it is gone.
+    // state: label drawn, bar and numbers skipped. With a non-optional HOME it
+    // still cannot come back, and this is the assertion that says why it is gone.
     expect(body).not.toMatch(/if\s+let\s+probabilities\b/);
   });
 });

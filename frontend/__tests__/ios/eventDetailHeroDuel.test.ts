@@ -73,20 +73,74 @@ d("the iOS event detail hero prints a decided pair", () => {
     // `renderedPercent:`. Listed by their argument names rather than by a
     // catch-all regex, so a NEW pair added later shows up as an unlisted name
     // in the next test rather than as a silently shorter scan.
-    const PAIRED_ARGS = [
-      "away",
-      "home",
-      "awayOpeningProbability",
-      "homeOpeningProbability",
-      "awayOpen",
-      "homeOpen",
-    ];
+    //
+    // #5271 RE-ANCHORED. The opening captions now ask `DrawPricedWinner`
+    // whether they may print a pair at all, so both branches bind the same two
+    // names: `awayOpen` (from `opened.away`, inside the guard) and
+    // `opened.home`. That collapses the old four opening names to two and makes
+    // the settled and live captions indistinguishable here — which is the
+    // point of the separate both-branches test below. The claim is unchanged:
+    // every side of a two-sided question carries a decided percent.
+    const PAIRED_ARGS = ["away", "home", "awayOpen", "opened\\.home"];
+
+    // `home` and `opened.home` also each have exactly ONE legitimate bare use —
+    // the withheld arm, where there is no second side to sum with. Those are
+    // counted and located by the next test; here they are simply not counted as
+    // violations, and every other paired name stays banned outright.
+    const BARE_IS_EARNED = new Set(["home", "opened\\.home"]);
+
     for (const arg of PAIRED_ARGS) {
-      const bare = new RegExp(`formatProbability\\(${arg}\\)`);
-      expect({ arg, bare: bare.test(view) }).toEqual({ arg, bare: false });
+      if (!BARE_IS_EARNED.has(arg)) {
+        const bare = new RegExp(`formatProbability\\(${arg}\\)`);
+        expect({ arg, bare: bare.test(view) }).toEqual({ arg, bare: false });
+      }
       expect(view).toMatch(
         new RegExp(`formatProbability\\(${arg}, renderedPercent:`),
       );
+    }
+  });
+
+  /**
+   * #5271 — THE ONE EXEMPTION, and it is stated rather than carved out of the
+   * list above, because "which numbers may be rounded alone" is the question
+   * the assertion above exists to answer.
+   *
+   * On a draw-priced sport the hero withholds the away slot, so what it prints
+   * is not one side of a two-sided question — there is no complement for it to
+   * sum to 101 with. It must NOT go through `duelPercents`: that contract's
+   * answer for one side can be `100 − other`, a number about the very
+   * complement this branch refuses to print.
+   *
+   * Asserted by NAME rather than by sweeping every bare `formatProbability` in
+   * the file — this view has legitimate lone numbers that were never pairs (a
+   * divergence magnitude, a line move's before and after), and a sweep would
+   * make this guard a list of unrelated call sites that anyone would delete.
+   */
+  it("the withheld single numbers are rounded alone, and only in that arm", () => {
+    // The hero's lone named number, directly under the name that attributes
+    // it — the two are one unit, and the name is what makes the bare rounding
+    // legitimate.
+    expect(view).toMatch(
+      /Text\(named\.home\)[\s\S]{0,400}Text\(formatProbability\(home\)\)/,
+    );
+    // Both "Opened {Home} 47%" captions, settled and live.
+    const openedSolo =
+      view.match(
+        /Text\("Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"\)/g,
+      ) ?? [];
+    expect(openedSolo).toHaveLength(2);
+
+    // EXACTLY those three bare uses and no fourth — this is the half the test
+    // above hands over, so a bare `home` appearing anywhere else (in the duel
+    // arm, say, where it would re-open the 101) fails here.
+    expect(view.match(/formatProbability\(home\)/g) ?? []).toHaveLength(1);
+    expect(view.match(/formatProbability\(opened\.home\)/g) ?? []).toHaveLength(2);
+
+    // AND THE DIRECTION THAT MATTERS: no withheld side is ever printed. If a
+    // later edit reaches for the complement again it has to name it, and these
+    // are the names it would have to use.
+    for (const withheld of ["opened\\.away", "pair\\.away"]) {
+      expect(view).not.toMatch(new RegExp(`formatProbability\\(${withheld}`));
     }
   });
 
@@ -99,12 +153,21 @@ d("the iOS event detail hero prints a decided pair", () => {
     expect(duelCalls.length).toBeGreaterThanOrEqual(3);
     // Whitespace-tolerant: SwiftFormat wraps a long argument list, and a guard
     // that a reformat can turn red is a guard nobody keeps.
-    expect(view).toMatch(
-      /renderedDuelPercents\(\s*away: awayOpeningProbability,\s*home: homeOpeningProbability\s*\)/,
-    );
-    expect(view).toMatch(
-      /renderedDuelPercents\(\s*away: awayOpen,\s*home: homeOpen\s*\)/,
-    );
+    //
+    // #5271 RE-ANCHORED to the names the two captions bind now. Both still
+    // decide their pair through the shared helper; what changed is that each
+    // first asks `DrawPricedWinner` whether it may draw a pair at all, so the
+    // duel call sits inside an `if let awayOpen = opened.away`.
+    const openingDuels =
+      view.match(
+        /renderedDuelPercents\(\s*away: awayOpen,\s*home: opened\.home\s*\)/g,
+      ) ?? [];
+    expect(openingDuels).toHaveLength(2);
+
+    // …and each of the two is guarded by its own withholding check, so a
+    // caption that lost its guard and printed the complement again fails here.
+    const guards = view.match(/if let awayOpen = opened\.away \{/g) ?? [];
+    expect(guards).toHaveLength(2);
   });
 
   it("the probabilities themselves are still what the bar and the chart read", () => {
@@ -123,8 +186,21 @@ d("the iOS event detail hero prints a decided pair", () => {
     // The claim is still worth keeping and is kept, now stated as the property
     // rather than as one call's spelling: whatever this file hands the bar is a
     // 0–1 probability, never a percent.
+    //
+    // #5271 — the away segment is now `probabilities.away ?? (1 - …home)`,
+    // because a withheld away side still has a BAR: its two segments are a
+    // partition and the remainder is a true quantity ("this source does not
+    // have the home team winning"). Still a 0–1 probability, which is the
+    // property this guard holds.
     const barCall = view.slice(view.indexOf("ProbabilityBar("));
-    expect(barCall).toMatch(/awayProb: probabilities\.away, homeProb: probabilities\.home/);
-    expect(barCall.slice(0, 200)).not.toMatch(/awayProb:[^,]*[Pp]ercent/);
+    expect(barCall).toMatch(
+      /awayProb: probabilities\.away \?\? \(1 - probabilities\.home\),\s*homeProb: probabilities\.home/,
+    );
+    expect(barCall.slice(0, 300)).not.toMatch(/awayProb:[^,]*[Pp]ercent/);
+    // …and the remainder loses the away team's COLOUR when it loses its number,
+    // so the bar never claims for a team what the row declines to print.
+    expect(barCall.slice(0, 400)).toMatch(
+      /awayColor: probabilities\.away == nil/,
+    );
   });
 });

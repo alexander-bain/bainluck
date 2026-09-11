@@ -410,8 +410,25 @@ describe("#4208 the books column measures the rows it actually draws", () => {
     // no row either half can decline. `everySportsbookRowCarriesANumber.test.ts`
     // holds the type that makes it true; these two pin that this function reads
     // the row rather than re-deriving anything.
-    expect(bookmakerContent).toContain("formatProbability(row.probabilities.away)");
-    expect(bookmakerContent).toContain("probabilities: row.probabilities");
+    //
+    // #5271 RE-ANCHORED. The away column may now be withheld — on a draw-priced
+    // sport the book's pair sums to 100 on a match that can be drawn, so the
+    // away number is not that team's chance of winning. THE PROPERTY IS THE ONE
+    // THAT MATTERED AND IT IS NOW STRONGER: measurement and drawing do not
+    // merely agree, they are the SAME EXPRESSION, `printable(row)`, so a column
+    // sized on "47%" while the row prints "—" is unrepresentable rather than
+    // merely tested for.
+    expect(bookmakerContent).toContain(
+      "formatProbabilityOrDash(printable(row)?.away)"
+    );
+    expect(bookmakerContent).toContain("away: printable(row)?.away");
+    expect(bookmakerContent).toContain("formatProbability(row.probabilities.home)");
+    expect(bookmakerContent).toContain("home: row.probabilities.home");
+    // One definition feeding both halves — two would let them drift apart with
+    // both pins above still green.
+    expect(
+      bookmakerContent.match(/let printable = \{ \(row: NamedBookmakerRow\) in/g)
+    ).toHaveLength(1);
     expect(sourceRow).not.toContain("if let probabilities {");
 
     // …and the two halves read ONE array, which is what makes the above true.

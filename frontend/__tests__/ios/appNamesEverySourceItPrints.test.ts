@@ -107,11 +107,16 @@ d("#4135 — the app names a source or draws none", () => {
    * pass. (#4134 shipped a guard that tested a helper nothing called; this is
    * the same failure wearing different clothes.)
    */
-  function slice(relPath: string, declaration: string): string {
+  // `length` is a WINDOW, not the function's extent, and 900 is the default
+  // every caller but one is happy with. #5271 grew `bookmakerContent` by a
+  // closure, pushing `label: row.label` past the default window — a guard that
+  // goes green because its window slid off the assertion is the failure mode
+  // this parameter exists to make visible at the call site.
+  function slice(relPath: string, declaration: string, length = 900): string {
     const source = stripComments(readFileSync(join(IOS_ROOT, relPath), "utf8"));
     const start = source.indexOf(declaration);
     expect([relPath, declaration, start > -1]).toEqual([relPath, declaration, true]);
-    const body = source.slice(start, start + 900);
+    const body = source.slice(start, start + length);
     expect(body.length).toBeGreaterThan(declaration.length);
     return body;
   }
@@ -246,7 +251,11 @@ d("#4135 — the app names a source or draws none", () => {
       // prints. Measuring keys is wrong in BOTH directions — `betonlineag` is
       // wider than "BetOnline", `betmgm` narrower than "BetMGM" — and no
       // screenshot shows a column that is merely the wrong width.
-      const body = slice("Views/EventDetailView.swift", "private func bookmakerContent(");
+      const body = slice(
+        "Views/EventDetailView.swift",
+        "private func bookmakerContent(",
+        1600,
+      );
       expect(body).toContain("rows.map(\\.label)");
       expect(body).not.toContain("$0.bookmaker");
 
