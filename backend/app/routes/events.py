@@ -8050,6 +8050,21 @@ async def typeahead_search(
         # #4986: the verdict computed from them, same rule again.
         _s.pop("_names_participant", None)
 
+    # T2-1 (#5058): the team row answers the season question without being
+    # opened — "10+ regular-season wins: 47% · Make Playoffs: 49%".
+    #
+    # AFTER the slice, deliberately. These two facts change no ranking and are
+    # read by nothing upstream, so attaching them to the pool would pay for
+    # every team the scorer considered instead of the at-most-three a reader
+    # is shown, on the hottest path in the API. The reader is fail-open: a cold
+    # or missing projection leaves the row exactly as it was before this
+    # existed.
+    try:
+        from app.services.season_answers_reader import attach_season_answers
+        attach_season_answers(get_redis_client(), suggestions)
+    except Exception:
+        logger.debug("Season answers attach skipped", exc_info=True)
+
     # The echo is taken from the SAME `Evidence` objects `_s_rank` just consumed,
     # keyed by payload identity — never rebuilt from the suggestion. A rebuild
     # would be a second construction path, and a second path that can disagree

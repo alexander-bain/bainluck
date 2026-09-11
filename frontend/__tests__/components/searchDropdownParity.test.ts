@@ -112,4 +112,28 @@ describe("both search dropdowns share one row implementation", () => {
   test.each(SURFACES)("%s marks its answer subtitle for the browser rail", (file) => {
     expect(source(file)).toMatch(/data-testid="search-answer"/);
   });
+
+  /**
+   * T2-1 (#5058) — the team row's season answers, on BOTH surfaces.
+   *
+   * This ship is the same shape as the one that produced this file: a second
+   * line added to a dropdown row. #993 Slice A reached desktop and never
+   * reached a phone, and the friend's ten-second task — type "Patriots", read
+   * both season answers without touching anything — is graded on the phone. So
+   * "did it ship to both?" is asserted here rather than left to whoever next
+   * opens a 390px screenshot.
+   */
+  test.each(SURFACES)("%s renders the team-season subtitle", (file) => {
+    expect(source(file)).toMatch(/team-season/);
+  });
+
+  test.each(SURFACES)("%s marks the team-season subtitle for the browser rail", (file) => {
+    expect(source(file)).toMatch(/data-testid="search-team-season"/);
+  });
+
+  // The season answers are ELECTED server-side. A component reaching past the
+  // shared reader into the raw field is the drift, one edit before it happens.
+  test.each(SURFACES)("%s does not read season_answers directly", (file) => {
+    expect(source(file)).not.toMatch(/\.season_answers\b/);
+  });
 });

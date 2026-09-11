@@ -63,6 +63,19 @@ class LeagueConfig:
     # in-season Cup) collides with the NBA's KXNBA prefix but is a separate
     # competition and must not surface in the NBA Championship grid.
     external_id_exclude_prefixes: list[str] = field(default_factory=list)
+    # Kalshi series tickers carrying this league's per-team SEASON WIN TOTAL
+    # ladder (T2-1 / #5058). One market per team, named
+    # "<competition>: <subject> Total Wins", rungs named "10+ wins".
+    #
+    # 🔴 EMPTY MEANS "we have not checked this league", not "the venue has no
+    # such market". The subject on those markets is a bare place name
+    # ("New England", "Los Angeles C") resolved against THIS league's closed
+    # team set, and that resolution is only as safe as the set is small — thirty
+    # pro clubs, yes; several hundred college programmes sharing place names
+    # with each other and with the pros, not yet. Adding a series here is
+    # therefore a claim that the resolution has been measured for that league,
+    # which is why it is a list and not a pattern.
+    wins_series: list[str] = field(default_factory=list)
     team_sort: str = "championship_desc"  # "championship_desc" | "name_asc" | "seed_asc"
     conference_split: bool = False  # Show teams grouped by conference?
     conference_field: str = "conference"  # Field on standings_data for grouping
@@ -150,6 +163,9 @@ NBA_CONFIG = LeagueConfig(
             ],
         ),
     ],
+    # Measured 2026-09-11: 30 open `KXNBAWINS-27*` markets; "Los Angeles C" and
+    # "Los Angeles L" each prefix exactly one of this grid's 30 team names.
+    wins_series=["KXNBAWINS"],
     team_sort="championship_desc",
     conference_split=True,
     conference_field="conference",
@@ -438,6 +454,10 @@ NFL_CONFIG = LeagueConfig(
             ],
         ),
     ],
+    # Measured 2026-09-11: 32 open `KXNFLWINS-27*` markets, and all 32 subjects
+    # ("New England", "New York G", "Los Angeles C", ...) resolve to exactly one
+    # of this grid's 32 team names.
+    wins_series=["KXNFLWINS"],
     team_sort="championship_desc",
     conference_split=True,
     conference_field="conference",

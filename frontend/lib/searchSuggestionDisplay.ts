@@ -13,7 +13,14 @@
  * PURE: no I/O, no React, no DB. `formatEventTime` takes an injectable clock so
  * tests never seed relative to `Date.now()` (gotcha #44).
  */
-import type { TypeaheadSuggestion, TypeaheadOutcome } from "@/lib/api";
+import type { TypeaheadSuggestion, TypeaheadOutcome, TeamSeasonAnswer } from "@/lib/api";
+
+/**
+ * How many season facts a team row shows (T2-1 / #5058). Two, because two is
+ * what the friend's task asks for — the win threshold and the playoff chance —
+ * and a third would not survive a 390px row beside a logo and a type chip.
+ */
+export const TEAM_SEASON_ANSWER_LIMIT = 2;
 
 /**
  * A movement arrow is only worth the pixels at >= 2 percentage points. Matches
@@ -138,7 +145,33 @@ export type SuggestionSubtitle =
   | { kind: "futures-answer"; answer: FuturesAnswer }
   | { kind: "futures-label"; text: string }
   | { kind: "concept"; text: string }
-  | { kind: "hub"; text: string };
+  | { kind: "hub"; text: string }
+  | { kind: "team-season"; answers: TeamSeasonAnswer[] };
+
+/**
+ * The season answers a team row should print (T2-1 / #5058), or `[]`.
+ *
+ * The server has already elected which threshold to name and in what order the
+ * two facts read; this only drops what cannot be rendered honestly — a missing
+ * label, or a probability that is not a number in 0..1. An answer that fails
+ * that test is omitted rather than shown as "NaN%" or "0%", because a reader
+ * cannot tell a broken number from a real one and both look like our opinion.
+ */
+export function teamSeasonAnswers(s: TypeaheadSuggestion): TeamSeasonAnswer[] {
+  if (s.type !== "team") return [];
+  return (s.season_answers ?? [])
+    .filter(
+      (a) =>
+        !!a &&
+        typeof a.label === "string" &&
+        a.label.length > 0 &&
+        typeof a.probability === "number" &&
+        Number.isFinite(a.probability) &&
+        a.probability >= 0 &&
+        a.probability <= 1
+    )
+    .slice(0, TEAM_SEASON_ANSWER_LIMIT);
+}
 
 export function suggestionSubtitle(
   s: TypeaheadSuggestion,
@@ -177,6 +210,13 @@ export function suggestionSubtitle(
     return s.market_type_label
       ? { kind: "futures-label", text: s.market_type_label }
       : null;
+  }
+
+  if (s.type === "team") {
+    const answers = teamSeasonAnswers(s);
+    // A team with no season answers keeps the row it always had — no second
+    // line, not an empty one.
+    return answers.length > 0 ? { kind: "team-season", answers } : null;
   }
 
   return null;

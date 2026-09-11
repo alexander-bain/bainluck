@@ -1753,6 +1753,27 @@ async def _prewarm_live_feed_shapes():
     return sum(1 for s in shapes.values() if s.get("outcome") == "ok")
 
 
+async def _warm_season_answers(rc, slug: str, grid: dict, session) -> dict:
+    """Publish the T2-1 season-answer projection for one warmed grid (#5058).
+
+    Contained by design: every failure mode — a league with no config, no wins
+    series, a Redis write that refuses, a shape the projector does not
+    recognise — returns a summary and lets the grid warm carry on. The reader's
+    fallback is the team row it already had.
+    """
+    from app.config.league_configs import get_league_config
+    from app.tasks.season_answers_projection import write_season_answers_projection
+
+    config = get_league_config(slug)
+    if config is None:
+        return {"outcome": "no_config"}
+    try:
+        return await write_season_answers_projection(rc, config, grid, session)
+    except Exception as exc:  # noqa: BLE001 — a passenger never crashes the driver
+        logger.exception("Season answers projection failed for %s", slug)
+        return {"outcome": "error", "error": str(exc)[:200]}
+
+
 async def _precompute_grids(report: dict | None = None):
     """Pre-warm championship grid caches for every league that can be built.
 
@@ -1888,6 +1909,20 @@ async def _precompute_grids(report: dict | None = None):
                     logger.info(
                         "Warmed %s grid in %.1fs (%d teams)",
                         slug, leagues[slug]["duration_s"], leagues[slug]["teams"],
+                    )
+                    # T2-1 (#5058). The season answers a team card carries are
+                    # elected here, off the reader's path, from the grid that
+                    # was just published — so the dropdown's "Make Playoffs"
+                    # and the grid page's cannot be two different numbers.
+                    #
+                    # 🔴 Rides the warm, never blocks it. The grid is the
+                    # load-bearing product and this is its passenger: any
+                    # failure is logged and the league is still `ok`. It is
+                    # also placed AFTER the grid write on purpose — a
+                    # projection that raised before `rc.setex` would take the
+                    # grid cache down with it.
+                    leagues[slug]["season_answers"] = (
+                        await _warm_season_answers(rc, slug, result, session)
                     )
         except asyncio.TimeoutError:
             leagues[slug] = {
