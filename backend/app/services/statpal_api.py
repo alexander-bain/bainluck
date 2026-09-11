@@ -83,6 +83,18 @@ class StatPalFixture:
     end_time: Optional[datetime] = None
     status: str = "scheduled"  # scheduled, live, finished, postponed, cancelled
     raw_status: Optional[str] = None  # original status before normalization (e.g., "Q3", "1H", "HT")
+    # The game clock, from the live board's `timer` key (#5017). We received it
+    # on every live read since StatPal was wired up and discarded it before it
+    # reached this dataclass, which is why "StatPal serves no clock" survived
+    # three sessions: an unmodelled field is absent from the dataclass, from
+    # every grep, and from the DB, so our own instruments all agreed.
+    #
+    # Measured shape: `'7:16'` on an in-progress NFL row, ticking. On rows where
+    # it does not apply it is the EMPTY STRING on football and ABSENT on
+    # baseball — never a useful value — so the parse normalises both to None
+    # rather than store `''`, which an `isnot(None)` coverage count would read
+    # as a populated clock.
+    game_clock: Optional[str] = None
     home_score: Optional[int] = None
     away_score: Optional[int] = None
     home_q_scores: Optional[dict] = None  # {"q1": 24, "q2": 31, ...}
@@ -1813,6 +1825,9 @@ class StatPalAPIService(BaseAPIClient):
             end_time=end_time,
             status=status,
             raw_status=status_raw_str if status == "live" else None,
+            # `or None`: football sends `''` and baseball omits the key on rows
+            # where the clock does not apply. Both must reach the DB as NULL.
+            game_clock=(str(item.get("timer") or "").strip() or None) if status == "live" else None,
             home_score=home_score,
             away_score=away_score,
             home_q_scores=home_q_scores,
@@ -2147,14 +2162,40 @@ def _parse_datetime(val) -> Optional[datetime]:
     return None
 
 
+#: StatPal's live boards label the in-progress half in FULL WORDS, while the
+#: `_normalize_status` live tuple below holds only the ABBREVIATIONS (`q2`,
+#: `ht`, `2nd`). Measured at the venue (#5017, standing notice 26): NFL serves
+#: `'2nd Quarter'`/`'3rd Quarter'`/`'4th Quarter'`/`'Halftime'` and MLB serves
+#: `'Top 8th'`/`'Bottom 8th'` — every one of which fell through to the
+#: passthrough and so was never `live`.
+#:
+#: These are PATTERNS rather than a longer tuple on purpose. The families are
+#: open: enumerating the six strings that happened to be observed while a game
+#: was in that state repeats the bug (a vocabulary census is only complete for
+#: the states it caught occupied). The grammar — an ordinal followed by a period
+#: noun, or a half-inning qualifier followed by an ordinal — is what is stable.
+_LIVE_ORDINAL_PERIOD_RE = re.compile(
+    r"^\d+(?:st|nd|rd|th)\s+(?:quarter|period|half|inning)$"
+)
+_LIVE_HALF_INNING_RE = re.compile(
+    r"^(?:top|bottom|middle|end)\s+(?:of\s+)?\d+(?:st|nd|rd|th)$"
+)
+
+
 def _normalize_status(status: str) -> str:
     """Normalize game status strings to our standard statuses."""
     s = status.lower().strip()
 
+    # Long-form in-progress labels, matched by family (see the patterns above).
+    # Checked before the tuples so a future full-word label cannot fall through
+    # to the passthrough the way the observed six did.
+    if _LIVE_ORDINAL_PERIOD_RE.match(s) or _LIVE_HALF_INNING_RE.match(s):
+        return "live"
+
     # Map to our status vocabulary
     if s in ("scheduled", "not started", "ns", "tbd", "time tbd"):
         return "scheduled"
-    if s in ("live", "in progress", "1h", "2h", "ht", "et", "p", "bt",
+    if s in ("live", "in progress", "halftime", "overtime", "1h", "2h", "ht", "et", "p", "bt",
              "q1", "q2", "q3", "q4", "ot",
              "s1", "s2", "s3", "s4", "s5", "set 1", "set 2", "set 3", "set 4", "set 5",
              "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th",

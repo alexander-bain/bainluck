@@ -1,0 +1,406 @@
+"""#5017 — StatPal's in-progress labels reach `event.period`, with the clock beside them.
+
+WHAT BROKE
+==========
+`_normalize_status` mapped the ABBREVIATIONS (`q2`, `ht`, `2nd`) while StatPal's
+live boards serve FULL WORDS (`'2nd Quarter'`, `'Halftime'`, `'Top 8th'`). Every
+long form fell through the passthrough, so `status != "live"`, so
+`_parse_single_fixture` set `raw_status=None`, so the livescores writer — which
+writes `event.period` only from `raw_status` — never advanced the period. After
+#4954 flips football to StatPal, the score would advance and the quarter freeze.
+
+WHY THE OLD TEST DID NOT CATCH IT
+=================================
+`TestNormalizeStatus::test_live_variants` asserts `_normalize_status("Q1") ==
+"live"` — it enumerates the MAP'S OWN TOKENS, so it can only ever confirm that
+the map contains what the map contains. It can never see the string the venue
+actually sends. The predicate here is the inverse and is the one that catches
+the whole class at once:
+
+    _normalize_status(raw) in CLOSED_VOCAB
+
+over inputs RECORDED FROM THE WIRE (standing notice 26 applied to a unit test).
+
+WHY PATTERNS AND NOT A LONGER TUPLE
+===================================
+The families are open. Six strings were observed only because a game happened to
+be in those states while someone was looking; `'1st Quarter'`, `'Overtime'` and
+`'Middle 8th'` are the same grammar and were never observed. Enumerating the
+observed six would repeat the original mistake one size larger, so the fix
+matches the GRAMMAR and this file tests unobserved members of each family.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from sqlalchemy import event as sa_event
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.ext.compiler import compiles
+
+from app.services.statpal_api import _normalize_status
+
+
+# sqlite cannot render the postgres column types on `events`; the rail only
+# needs somewhere to put them. Same shim as #3094's harness.
+@compiles(JSONB, "sqlite")
+def _jsonb_sqlite(type_, compiler, **kw):  # pragma: no cover - test rail
+    return "JSON"
+
+
+@compiles(ARRAY, "sqlite")
+def _array_sqlite(type_, compiler, **kw):  # pragma: no cover - test rail
+    return "JSON"
+
+#: Our whole status vocabulary. Anything else is a fall-through by definition.
+CLOSED_VOCAB = {
+    "scheduled",
+    "live",
+    "finished",
+    "postponed",
+    "cancelled",
+    "suspended",
+}
+
+#: Raw `status` strings RECORDED FROM StatPal's live boards, with provenance.
+#: Every one of these was read off the wire, not copied out of our own map.
+#:
+#:   NFL, `livescores`, 2026-09-11 01:33Z–02:42Z, SF@LAR (contestid 280446),
+#:   across authority/117 (`'2nd Quarter'`, `'Halftime'`) and authority/120
+#:   (`'3rd Quarter'`, `'4th Quarter'`).
+#:   MLB, `livescores`, 2026-09-11 01:5xZ, authority/118.
+OBSERVED_IN_PROGRESS = [
+    ("nfl", "2nd Quarter"),
+    ("nfl", "3rd Quarter"),
+    ("nfl", "4th Quarter"),
+    ("nfl", "Halftime"),
+    ("mlb", "Top 8th"),
+    ("mlb", "Bottom 8th"),
+]
+
+#: Same grammar, NEVER observed — these are what make this a family test rather
+#: than a lookup test. A fix that enumerated the six above leaves every one of
+#: these broken, and a real game will serve them.
+UNOBSERVED_SAME_FAMILY = [
+    ("nfl", "1st Quarter"),
+    ("nfl", "Overtime"),
+    ("mlb", "Middle 3rd"),
+    ("mlb", "End 9th"),
+    ("nhl", "2nd Period"),
+]
+
+#: Terminal / pre-game strings observed on the same boards. These already worked
+#: and must KEEP working — the fix must not widen "live" over them.
+OBSERVED_NON_LIVE = [
+    ("Final", "finished"),
+    ("Finished", "finished"),
+    ("Not Started", "scheduled"),
+]
+
+
+# ---------------------------------------------------------------------------
+# 1. The vocabulary, by the closed-vocab predicate, over wire inputs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("sport,raw", OBSERVED_IN_PROGRESS)
+def test_observed_in_progress_labels_do_not_fall_through(sport, raw):
+    """The exact strings the venue served must land inside our vocabulary."""
+    assert _normalize_status(raw) in CLOSED_VOCAB, (
+        f"{sport} served {raw!r} and it fell through to the passthrough"
+    )
+
+
+@pytest.mark.parametrize("sport,raw", OBSERVED_IN_PROGRESS)
+def test_observed_in_progress_labels_are_live_specifically(sport, raw):
+    """Not merely 'in the vocabulary' — an in-progress game is `live`.
+
+    `raw_status` (and therefore `event.period`) is populated ONLY when the
+    normalized status is exactly `live`, so landing on any other member of the
+    vocabulary would still leave the period frozen.
+    """
+    assert _normalize_status(raw) == "live"
+
+
+@pytest.mark.parametrize("sport,raw", UNOBSERVED_SAME_FAMILY)
+def test_unobserved_members_of_the_same_family_also_map(sport, raw):
+    """The open-set half: never seen on the wire, same grammar, must still map."""
+    assert _normalize_status(raw) == "live"
+
+
+@pytest.mark.parametrize("raw,expected", OBSERVED_NON_LIVE)
+def test_terminal_and_pregame_labels_are_unchanged(raw, expected):
+    """The fix must not swallow the states that already worked."""
+    assert _normalize_status(raw) == expected
+
+
+def test_the_pattern_does_not_make_everything_live():
+    """Negative control.
+
+    Without this, a fix that returned `"live"` unconditionally would pass every
+    assertion above. These are deliberately near-misses of the two patterns.
+    """
+    for raw in (
+        "quarter",          # noun with no ordinal
+        "8th",              # bare ordinal is the ABBREVIATION family, not ours
+        "top",              # qualifier with no ordinal
+        "1st Down",         # ordinal + a noun that is not a period
+        "Rain Delay",
+        "Postponed",
+    ):
+        assert _normalize_status(raw) != "live" or raw == "8th", (
+            f"{raw!r} should not have been widened to live by the new patterns"
+        )
+    # `'8th'` is pre-existing behaviour from the abbreviation tuple; pin it so a
+    # future edit cannot quietly drop it while this file looks green.
+    assert _normalize_status("8th") == "live"
+
+
+# ---------------------------------------------------------------------------
+# 2. The parse: the ticking clock stops being discarded
+# ---------------------------------------------------------------------------
+
+
+def _parse(item: dict):
+    from app.services.statpal_api import StatPalAPIService
+
+    return StatPalAPIService()._parse_single_fixture(item)
+
+
+def _live_item(**over):
+    item = {
+        "id": "280446",
+        "contestid": "280446",
+        "status": "3rd Quarter",
+        "timer": "7:16",
+        "home": {"name": "Los Angeles Rams", "id": "6616", "totalscore": "7"},
+        "away": {"name": "San Francisco 49ers", "id": "3206", "totalscore": "17"},
+    }
+    item.update(over)
+    return item
+
+
+def test_live_fixture_carries_the_game_clock():
+    """`timer` reaches the dataclass. It never did before — hence the freeze."""
+    fx = _parse(_live_item())
+    assert fx is not None
+    assert fx.game_clock == "7:16"
+    assert fx.raw_status == "3rd Quarter"
+
+
+def test_empty_timer_becomes_none_not_empty_string():
+    """Football sends `''` where the clock does not apply.
+
+    Storing `''` would be counted as a populated clock by the coverage query in
+    `admin_providers.py` (`Event.game_clock.isnot(None)`), so the monitor would
+    report full clock coverage for rows that display nothing.
+    """
+    fx = _parse(_live_item(timer=""))
+    assert fx is not None
+    assert fx.game_clock is None
+
+
+def test_absent_timer_becomes_none():
+    """Baseball omits the key entirely rather than sending an empty string."""
+    item = _live_item()
+    del item["timer"]
+    fx = _parse(item)
+    assert fx is not None
+    assert fx.game_clock is None
+
+
+def test_non_live_fixture_carries_no_clock():
+    """A `Final` row must not keep a clock, whatever the board sends."""
+    fx = _parse(_live_item(status="Final", timer="7:16"))
+    assert fx is not None
+    assert fx.status == "finished"
+    assert fx.game_clock is None
+
+
+# ---------------------------------------------------------------------------
+# 3. The write, driven through the real task
+# ---------------------------------------------------------------------------
+
+
+class _Fixture:
+    """A StatPal live-board row shaped as the writer consumes it."""
+
+    def __init__(self, start_time, home, away, *, raw_status, game_clock):
+        self.start_time = start_time
+        self.home_team = home
+        self.away_team = away
+        self.status = "live"
+        self.fixture_id = "280446"
+        self.odds_id = None
+        self.home_score = 7
+        self.away_score = 17
+        self.raw_status = raw_status
+        self.game_clock = game_clock
+
+
+async def _run_livescores(monkeypatch, *, fixtures, events):
+    """Drive the real `_sync_statpal_livescores` and return the event rows."""
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    import app.services.statpal_api as statpal_api
+    import app.tasks.base as task_base
+    from app.models.models import Base, Event, ScoreSnapshot, Sport
+    from app.tasks.statpal_sync import _sync_statpal_livescores
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine, tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__]
+    )
+    sync_session = Session(engine, expire_on_commit=False)
+
+    # sqlite reloads datetimes naive; the premature-live guard (#1945) compares
+    # against an aware `now` and would raise, eating every assertion. Rail
+    # fidelity gap, not a production shape — same treatment as #3094's harness.
+    @sa_event.listens_for(sync_session, "loaded_as_persistent")
+    def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
+        for attr, value in list(instance.__dict__.items()):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    sport = Sport(key="americanfootball_nfl", name="americanfootball_nfl")
+    sync_session.add(sport)
+    sync_session.flush()
+    event_ids = []
+    for home, away, preset_clock in events:
+        row = Event(
+            sport_id=sport.id,
+            home_team_name=home,
+            away_team_name=away,
+            commence_time=now - timedelta(hours=1),
+            status="live",
+            game_clock=preset_clock,
+        )
+        sync_session.add(row)
+        sync_session.flush()
+        event_ids.append(row.id)
+    sync_session.commit()
+
+    class _AsyncShim:
+        def __init__(self, session):
+            self._s = session
+
+        async def execute(self, statement):
+            return self._s.execute(statement)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def commit(self):
+            self._s.commit()
+
+        async def flush(self):
+            self._s.flush()
+
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return _AsyncShim(sync_session)
+
+        async def __aexit__(self_inner, *exc):
+            sync_session.commit()
+            return False
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+    monkeypatch.setattr(
+        "app.tasks.statpal_sync.get_task_session", lambda: _Ctx(), raising=False
+    )
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    class _Service:
+        async def get_live_scores(self, sport):
+            return list(fixtures)
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    await _sync_statpal_livescores()
+    return [
+        sync_session.execute(select(Event).where(Event.id == i)).scalar_one()
+        for i in event_ids
+    ]
+
+
+@pytest.mark.asyncio
+async def test_period_matches_espns_compound_format(monkeypatch):
+    """The ship: the period reads exactly as ESPN writes it.
+
+    ESPN sets `event.period = ee.status_detail` — `'14:53 - 3rd Quarter'`. A
+    flipped sport must be indistinguishable, so the front end (`trustedLiveClock`,
+    which suppresses the duplicate clock only when the period spells it out)
+    needs no change.
+    """
+    now = datetime.now(timezone.utc)
+    fx = _Fixture(
+        now - timedelta(hours=1),
+        "Los Angeles Rams",
+        "San Francisco 49ers",
+        raw_status="3rd Quarter",
+        game_clock="7:16",
+    )
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[fx],
+        events=[("Los Angeles Rams", "San Francisco 49ers", None)],
+    )
+    assert rows[0].period == "7:16 - 3rd Quarter"
+    assert rows[0].game_clock == "7:16"
+
+
+@pytest.mark.asyncio
+async def test_the_clock_is_not_left_frozen_at_espns_last_value(monkeypatch):
+    """The regression that makes a period-only fix WORSE than the bug.
+
+    The row starts with the clock ESPN wrote before the flip. If the fix
+    advanced the period but not the clock, the card would paint
+    `3rd Quarter 14:53` — frozen for the rest of the game. A frozen label reads
+    as stale; a frozen CLOCK reads as current.
+    """
+    now = datetime.now(timezone.utc)
+    fx = _Fixture(
+        now - timedelta(hours=1),
+        "Los Angeles Rams",
+        "San Francisco 49ers",
+        raw_status="3rd Quarter",
+        game_clock="7:16",
+    )
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[fx],
+        events=[("Los Angeles Rams", "San Francisco 49ers", "14:53")],
+    )
+    assert rows[0].game_clock == "7:16", "the clock stayed at ESPN's last value"
+    assert "14:53" not in (rows[0].period or "")
+
+
+@pytest.mark.asyncio
+async def test_halftime_writes_a_bare_label_and_no_separator(monkeypatch):
+    """Halftime is genuinely live and genuinely has no clock.
+
+    So guarding the composition on liveness alone is not enough: it would write
+    `' - Halftime'` with a leading separator. The guard is on the clock being
+    non-empty.
+    """
+    now = datetime.now(timezone.utc)
+    fx = _Fixture(
+        now - timedelta(hours=1),
+        "Los Angeles Rams",
+        "San Francisco 49ers",
+        raw_status="Halftime",
+        game_clock=None,
+    )
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[fx],
+        events=[("Los Angeles Rams", "San Francisco 49ers", None)],
+    )
+    assert rows[0].period == "Halftime"
+    assert not (rows[0].period or "").startswith(" - ")
