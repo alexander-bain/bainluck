@@ -523,12 +523,32 @@ export interface ActiveChartPoint {
    */
   scoreStamp?: string | null;
   /**
-   * Which cascade arm supplied the score `scoreStamp` dates. `"mixed"` is real
-   * and not defensive padding: the home and away arms resolve independently, so
-   * ESPN can hold one side and not the other, and the pair is then only as
-   * current as its older half.
+   * Which cascade ARM supplied the score `scoreStamp` dates — an array, not a
+   * writer.
+   *
+   * **`"history"` DELIBERATELY DOES NOT SAY "espn", AND THAT IS THE WHOLE POINT
+   * OF THE NAME.** It was `"espn"` for one commit. live/147 measured why it
+   * cannot be: `routes/events.py:15649` appends MLB Stats API and `stat_model`
+   * rows into `espn_history` with no origin key, shaped exactly like ESPN rows,
+   * then sorts by timestamp — and the supplement is dense (~50–130 points) where
+   * ESPN is sparse (2–16). On **8 of 15** recent scoring MLB events the last row
+   * — the one this cascade reads — is a supplement. `scoreStamp` is still
+   * correct on those rows, because the row carries its own timestamp; only a
+   * label naming ESPN would have lied.
+   *
+   * So this field answers "which array did the number come out of", which is all
+   * the client can honestly know, and it is NOT an attribution. Do not render it.
+   * If the badge should ever name the writer, that needs a `source` key on the
+   * supplemented rows — live's, not ours — and even then it would not be this
+   * field: backend `score_source` describes who wrote `events.home_score`, which
+   * is the `"event"` arm only. A single "from X" string spanning both arms is a
+   * third concept, not a rename.
+   *
+   * `"mixed"` is real and not defensive padding: the home and away arms resolve
+   * independently, so the history array can hold one side and not the other, and
+   * the pair is then only as current as its older half.
    */
-  scoreFrom?: "espn" | "event" | "mixed" | null;
+  scoreFrom?: "history" | "event" | "mixed" | null;
 }
 
 export interface SportsResponse {

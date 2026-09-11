@@ -1530,23 +1530,33 @@ export function computeLastChartPoint(
   // up. Note the arm test is `!= null` on the ESPN VALUE, not on `lastEspn`
   // itself: an ESPN row present but holding a null score falls through to the
   // event row, and its stamp must fall through with it.
+  //
+  // AND THE ARM IS CALLED `"history"`, NOT `"espn"`, DELIBERATELY. `espn_history`
+  // is not all ESPN: `routes/events.py:15649` appends MLB Stats API and
+  // `stat_model` rows into it with no origin key, shaped like ESPN rows, then
+  // sorts by timestamp — and the supplement is dense where ESPN is sparse, so on
+  // 8 of 15 recent scoring MLB events the LAST row (the one read here) is a
+  // supplement (live/147, measured). The stamp stays correct, because each row
+  // carries its own timestamp; it is only a LABEL naming ESPN that would lie. So
+  // the field says which array the number came out of, which is all this layer
+  // can honestly know, and `scoreFrom` is not an attribution — see its docstring.
   const resolvedHomeScore = lastEspn?.home_score ?? homeScore ?? null;
   const resolvedAwayScore = lastEspn?.away_score ?? awayScore ?? null;
   const espnStamp = lastEspn?.timestamp || null;
   const eventStamp = eventScoreObservedAt ?? null;
 
-  const arms: Array<{ from: "espn" | "event"; stamp: string | null }> = [];
+  const arms: Array<{ from: "history" | "event"; stamp: string | null }> = [];
   if (resolvedHomeScore !== null) {
     const fromEspn = lastEspn?.home_score != null;
-    arms.push({ from: fromEspn ? "espn" : "event", stamp: fromEspn ? espnStamp : eventStamp });
+    arms.push({ from: fromEspn ? "history" : "event", stamp: fromEspn ? espnStamp : eventStamp });
   }
   if (resolvedAwayScore !== null) {
     const fromEspn = lastEspn?.away_score != null;
-    arms.push({ from: fromEspn ? "espn" : "event", stamp: fromEspn ? espnStamp : eventStamp });
+    arms.push({ from: fromEspn ? "history" : "event", stamp: fromEspn ? espnStamp : eventStamp });
   }
 
   let scoreStamp: string | null = null;
-  let scoreFrom: "espn" | "event" | "mixed" | null = null;
+  let scoreFrom: "history" | "event" | "mixed" | null = null;
   if (arms.length > 0) {
     scoreFrom = arms.every((a) => a.from === arms[0].from) ? arms[0].from : "mixed";
     let oldestMs = Infinity;
