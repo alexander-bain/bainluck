@@ -314,13 +314,86 @@ KICKOFF_TAIL_HOURS = 6
 #: leaves a quarter-hour of margin and still means every hourly beat re-admits
 #: the whole class.
 #:
-#: WHAT IT COSTS, MEASURED rather than assumed: the kickoff class is 72 markets
-#: / 277 condition ids, so re-admitting it EVERY beat spends 277 of the 1,000-id
-#: :data:`CONDITION_BUDGET` and leaves ~723 for the backlog drain. That is the
-#: same figure the ordering key was sized against — the class was always meant
-#: to be swept whole every hour, and until this constant existed it simply was
-#: not.
+#: WHAT IT COSTS — #4983 CORRECTION, AND THE OLD FIGURE HERE WAS WRONG BY 4.2x.
+#: This paragraph used to read "72 markets / 277 condition ids … leaves ~723 for
+#: the backlog drain". That was measured under the THREE-hour horizon and was
+#: never re-taken after `8334d639` widened :data:`KICKOFF_LEAD_HOURS` to 24; 72
+#: markets is exactly the under-3h bucket of the widened class. It also
+#: contradicted the table under :data:`KICKOFF_LEAD_HOURS` thirty lines above,
+#: which said 656 ids — two constants in one file disagreeing by 2.4x about the
+#: same quantity, which is how the budget came to be mis-sized.
+#:
+#: MEASURED on production 2026-09-11 01:5xZ over this module's own pool
+#: predicates, the class is **588 markets / 1,150 condition ids on a weeknight**
+#: — already 115% of the 1,000-id :data:`CONDITION_BUDGET`, so the drain gets
+#: nothing even midweek. The rolling window peaks Saturday at **~3,220 ids,
+#: 322%**. Re-derive with `generate_series`; do not extrapolate, and do not
+#: quote a ratio: ids-per-market is 1.96 here and 3.85 under the old figures,
+#: so scaling the old number forward is wrong by more than 2x in either
+#: direction.
 KICKOFF_STALE_MINUTES = 45
+
+#: A kickoff market costing at most this many condition ids is a HEADLINE market
+#: — the game-level moneyline/spread/total a reader sees first — as opposed to a
+#: prop LADDER, which is addressed by every leg (#4827) and can cost up to 47.
+#:
+#: WHY THE CLASS HAS TO BE SPLIT AT ALL (#4983). Ordering inside the kickoff
+#: class is the ONLY thing that decides who is ever served, because there is no
+#: rotation to fall back on: :data:`_KICKOFF_ATTEMPT_TTL_SECONDS` is 45 minutes
+#: against a 60-minute beat, so every kickoff marker has expired by the next
+#: beat by design (that is this constant's whole point). A row the budget passes
+#: over is therefore passed over on EVERY beat until its kickoff goes by — not
+#: deferred, dropped.
+#:
+#: Under a strict `kickoff ASC` that is paid for in the worst possible currency:
+#: one game's 47-id prop ladder is served ahead of the next game's 1-id headline
+#: market. MEASURED at the Saturday peak — 165 ladder markets, 14% of the class,
+#: carry 1,644 ids, 51% of its whole demand; the ≤3h slice alone is 1,342 ids
+#: against a 1,000-id budget, so admission provably ran out INSIDE the games
+#: about to be played. The ≤3h HEADLINE markets are only 696 ids and fit with
+#: room to spare. So the class is served headline-first, each half in kickoff
+#: order, and every imminent game gets its headline number before any game gets
+#: its ladder.
+#:
+#: 3 rather than 1: 501 of 588 kickoff markets cost exactly 1 id and another 53
+#: cost 2-3 (a handful of game markets carry a draw leg or a suffixed pair), and
+#: the 4+ band is where prop ladders start. Chosen off the measured distribution,
+#: not off a market-name pattern, because the budget is denominated in ids and
+#: cost is the thing being rationed.
+KICKOFF_HEADLINE_MAX_IDS = 3
+
+#: Condition ids held back from the kickoff class so the #3879 backlog drain can
+#: never be zeroed by it — #4983's containment half.
+#:
+#: The kickoff class re-presents WHOLE every beat (see above), so without a
+#: reserve it takes the entire budget whenever it exceeds it, which is now every
+#: beat midweek and by 3.2x at weekend peak. The drain — this rail's original
+#: purpose, 56,721 unread legs — then stalls completely for the 48 hours it is
+#: needed most.
+#:
+#: 200 of 1,000 is sized against the measurement, not picked round: it leaves
+#: 800 for the kickoff class, and the ≤3h headline slice at Saturday peak is 696
+#: ids, so the acceptance #4896 exists to hold still fits inside the reserve —
+#: the drain is paid for out of the far tail and the ladders, which is the trade
+#: this reserve is FOR. If the headline slice ever grows past 800 the shortfall
+#: is reported rather than silently absorbed (`kickoff_headline_shortfall`).
+#:
+#: 🔴 WHAT THIS SHIP DOES NOT FIX, STATED SO THE TRADE IS CHOSEN AND NOT
+#: DISCOVERED: at weekend peak the whole class wants ~3,220 ids against a
+#: 1,000-id budget, so SOMETHING is dropped — that is arithmetic, not policy,
+#: and no allocation of this budget can meet #4896's acceptance across the full
+#: 24-hour class (#4983 §3 proves raising it is not a free knob either: 3,220
+#: ids is ~522 s at the measured 0.162 s/id, against :data:`_TIME_BUDGET_S` of
+#: 200 s). What this ship decides is WHICH thing is dropped. Before it, the
+#: casualty was arbitrary — whichever games sat behind the first ladder that did
+#: not fit. After it, headline numbers for imminent games are served first and
+#: the casualty is prop LADDERS on weekend peaks, reported every run as
+#: `kickoff_ladder_shortfall`. That is deliberate: a reader opening a game reads
+#: the game's own number first, and a stale prop is a worse outcome than a stale
+#: game price only if the game price is fresh. The lever that actually closes
+#: the gap is CADENCE — a 15-minute beat lets the class self-spread over ~3
+#: beats — and it is gated on heavy-queue capacity, not on this file (#4983 §4).
+DRAIN_RESERVE_IDS = 200
 
 #: Wall budget for the fetch/write loop, checked BETWEEN batches so a run always
 #: stops on a whole market (see the unit-of-work note in the module docstring).
@@ -709,6 +782,16 @@ async def _refresh_stale_polymarket_conditions(
         # cap that has to be read against the wall is the id one.
         "markets_due": 0,
         "conditions_requested": 0,
+        # #4983: the three admission phases, reported separately because
+        # `markets_due` alone cannot tell a run that served every imminent game
+        # from one that spent the same budget on a single game's prop ladders.
+        # `kickoff_headline_shortfall` > 0 is the acceptance failure; the others
+        # are the trade being made, and are expected to be non-zero at peak.
+        "kickoff_headline_due": 0,
+        "kickoff_headline_shortfall": 0,
+        "kickoff_ladder_due": 0,
+        "kickoff_ladder_shortfall": 0,
+        "drain_due": 0,
         "batches": 0,
         "markets_returned": 0,
         "volume_observed": 0,
@@ -769,16 +852,88 @@ async def _refresh_stale_polymarket_conditions(
     # admitted whatever its size, because a ladder wider than the whole id budget
     # would otherwise be permanently unreachable while sitting at the head of a
     # stalest-first ordering — the fixed point the attempt markers exist to break.
+    #
+    # #4983: THE SAME RULE, NOW APPLIED PER PHASE, because one ordering could not
+    # express two different scarcities at once. See :data:`KICKOFF_HEADLINE_MAX_IDS`
+    # for the measurement; the shape is:
+    #
+    #   1. kickoff HEADLINE markets  — every imminent game's game-level number,
+    #   2. kickoff LADDER markets    — the same games' prop ladders,
+    #   3. everything else           — the #3879 backlog drain,
+    #
+    # each in the selector's existing order (kickoff ASC, then priority, then
+    # stalest), with phases 1+2 capped at `id_cap - DRAIN_RESERVE_IDS` so phase 3
+    # can never be zeroed. Partitioning here rather than in `_CANDIDATE_SQL`
+    # keeps the ordering argument in one place and makes the whole rule testable
+    # without a database: `len(cids)` IS the cost the budget is denominated in,
+    # so nothing has to be re-derived in SQL to know it.
     due: list[tuple[int, list[str]]] = []
     ids_taken = 0
     id_cap = max(condition_budget, 0)
-    for mid, cids in eligible:
-        if len(due) >= max(budget, 0) or id_cap <= 0:
-            break
-        if due and ids_taken + len(cids) > id_cap:
-            break
-        due.append((mid, cids))
-        ids_taken += len(cids)
+    market_cap = max(budget, 0)
+
+    kickoff_headline = [
+        (mid, cids)
+        for mid, cids in eligible
+        if mid in imminent_ids and len(cids) <= KICKOFF_HEADLINE_MAX_IDS
+    ]
+    kickoff_ladder = [
+        (mid, cids)
+        for mid, cids in eligible
+        if mid in imminent_ids and len(cids) > KICKOFF_HEADLINE_MAX_IDS
+    ]
+    drain = [(mid, cids) for mid, cids in eligible if mid not in imminent_ids]
+
+    def _admit(pool: list[tuple[int, list[str]]], phase_id_cap: int) -> None:
+        """Admit whole markets from ``pool`` under ``phase_id_cap`` and the market cap.
+
+        Mutates ``due``/``ids_taken``.
+
+        The module's two existing invariants are preserved EXACTLY, not merely
+        approximately: a market is admitted only if it fits entirely (never
+        split across the budget line), and the unconditional first admission
+        stays keyed on ``due`` being empty GLOBALLY — so at most one market per
+        run may overshoot, as before, rather than one per phase. Widest market
+        measured is 47 ids against phase caps in the hundreds, so requiring the
+        fit in phases 2 and 3 starves nothing in practice, and if it ever did
+        the shortfall counters say so instead of the run going quiet.
+        """
+        nonlocal ids_taken
+        if phase_id_cap <= 0:
+            return
+        for mid, cids in pool:
+            if len(due) >= market_cap:
+                return
+            if ids_taken >= phase_id_cap:
+                return
+            if due and ids_taken + len(cids) > phase_id_cap:
+                # Skip, do not break: this pool is ordered by urgency, not by
+                # cost, so one oversized ladder must not abandon the rest of the
+                # budget to the markets behind it. Before #4983 this was a
+                # `break` over a single kickoff-ordered list, which is how a
+                # 47-id ladder took the whole class down with it.
+                continue
+            due.append((mid, cids))
+            ids_taken += len(cids)
+
+    # The reserve is capped at a FIFTH of whatever budget it is actually handed,
+    # not just at its own constant: `condition_budget` is a parameter, and a
+    # caller passing anything at or under `DRAIN_RESERVE_IDS` would otherwise
+    # drive the kickoff cap to zero and starve the priority class completely —
+    # the exact inversion of what this ship is for. At the production budget of
+    # 1,000 the two agree (min(200, 200) = 200) and this clamp is inert.
+    drain_reserve = min(DRAIN_RESERVE_IDS, id_cap // 5)
+    kickoff_id_cap = max(id_cap - drain_reserve, 0)
+    _admit(kickoff_headline, kickoff_id_cap)
+    headline_due = len(due)
+    _admit(kickoff_ladder, kickoff_id_cap)
+    ladder_due = len(due) - headline_due
+    # The drain gets the reserve PLUS whatever the kickoff phases left unspent —
+    # the reserve is a floor under phase 3, never a ceiling on it, so a quiet
+    # Monday still drains at the full budget.
+    _admit(drain, id_cap)
+    drain_due = len(due) - headline_due - ladder_due
+
     # Reported rather than merely enforced: a budget that binds every run is the
     # signal that the population has outgrown it, and it is invisible from
     # `conditions_requested` alone, which reads the same at 900-of-900 and
@@ -786,6 +941,15 @@ async def _refresh_stale_polymarket_conditions(
     stats["budget_exhausted"] = len(eligible) > len(due)
     stats["markets_due"] = len(due)
     stats["conditions_requested"] = ids_taken
+    # #4983: `budget_exhausted` is True in ordinary healthy operation — it cannot
+    # tell "trimmed the stale tail" from "dropped the games about to be played",
+    # which is the only one of the two that is an acceptance failure. So the
+    # priority class reports its own shortfall and it is a number, not a flag.
+    stats["kickoff_headline_due"] = headline_due
+    stats["kickoff_headline_shortfall"] = len(kickoff_headline) - headline_due
+    stats["kickoff_ladder_due"] = ladder_due
+    stats["kickoff_ladder_shortfall"] = len(kickoff_ladder) - ladder_due
+    stats["drain_due"] = drain_due
     if not due:
         # THE TWO EMPTY-`due` STATES ARE NOT THE SAME STATE, and this file has
         # already argued that once (`nothing_stale` vs here). A caller that
