@@ -532,6 +532,40 @@ PRICE_CHANGE_STAMPERS = {
     # question for Kalshi and Polymarket game markets.
     "app/tasks/kalshi_ws.py": 1,
     "app/tasks/polymarket_ws.py": 1,
+    # #4958: DataGolf, the writer this census could never have named. The
+    # tripwire fires on DRIFT IN A DECLARED COUNT, and a file that calls the
+    # helper zero times declares nothing — the same blind spot Q460 records two
+    # entries above for the WebSocket consumers, hit a second time. Measured on
+    # production 2026-09-11 before the fix: **57,103 DataGolf legs, 0 stamped,
+    # ever**, 52,031 of them written in the previous 24 hours. Golf outrights
+    # are the DataGolf surface, so `price_changed_at` could not answer its own
+    # question for any of them.
+    #
+    # FOUR sites, and the two that are not obvious are the point: the
+    # pre-tournament and in-play price updates, plus the two stale loops that
+    # NULL a withdrawn player's price. A price going away is a price change —
+    # the same reading `kalshi.py`'s null-out block takes, and the reason its
+    # count is 4 rather than 2.
+    #
+    # THE CONSUMERS RE-CHECKED RATHER THAN THE COUNT BUMPED, which is what this
+    # census asks for by name. This ship adds no `last_updated` stamp (DataGolf
+    # already wrote that column, with a Python datetime rather than `func.now()`,
+    # which is why the file is absent from POLL_STAMP_COUNTS above and stays
+    # absent). So of the audited readings: `routes/playoffs.py`'s grid gate,
+    # `tasks/__init__.py`'s movement-window sweep and `tasks/futures.py`'s 24h
+    # zeroing all read `last_updated` and see nothing new. The one consumer that
+    # reads THIS column, `routes/admin_judgments.py`'s price-age floor, gains
+    # 57k rows that can finally answer it — previously they fell through its
+    # `last_updated` fallback, which for a five-minutely poller means every golf
+    # leg read as freshly-priced whether or not anything had moved.
+    #
+    # Written through the shared helper, and by ORM attribute assignment rather
+    # than a Core mapping — the first site in the tree to do so. The round trip
+    # for that shape is proven in `test_datagolf_price_changed_at_4958.py`, and
+    # `test_price_stamp_writer_scan_4958.py` is the complement to THIS census:
+    # this one counts the files that call the helper, that one finds the write
+    # sites that need it and do not have it (nine remain, filed as #5192).
+    "app/tasks/datagolf.py": 4,
 }
 
 
