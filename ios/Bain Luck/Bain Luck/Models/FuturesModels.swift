@@ -82,6 +82,22 @@ nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {
     let movement: Double?
     let playerHeadshot: String?
     let playerTeam: String?
+    /// #4959 — THE GRADE THE SERVER ALREADY COMPUTED. Not decoding these is why a
+    /// finished game's props card drew a forward-looking chance and no verdict:
+    /// `_grade_settled_prop` (`routes/events.py`) joins the ESPN box score at serve
+    /// time and ships `actual`/`hit` per prop, and the app threw both away, then
+    /// re-derived the grade from `box_score_data` against an alias table of five
+    /// basketball stats — so every baseball rung failed closed.
+    ///
+    /// This is NOT the `is_winner`/`resolution_source` channel of #4788/#1638:
+    /// `hit` is computed from the box score and travels independently, so it is
+    /// sound on the rows where `resolution_source` is null.
+    ///
+    /// Both keys are ABSENT (not null) on live and scheduled payloads — the server
+    /// returns `{}` for an unfinished event — so optional is the decode, and the
+    /// box-score fallback still owns the live case.
+    let actual: Double?
+    let hit: Bool?
 }
 
 /// Generic game market outcome used for spreads, totals, team totals, and periods.

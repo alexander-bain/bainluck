@@ -60,12 +60,22 @@ struct PlayerPropsCardView: View {
         let id: String
         let type: String
         let rungs: [Rung]
+
+        /// #4959 — the stat's final value, stated once for the group the way the
+        /// totals ladder states "Final total N" once above its rungs, rather than
+        /// repeated on every rung that shares it. Every rung in a group is one
+        /// player's one stat, so they carry the same served `actual`; the first
+        /// one that knows answers for the group.
+        var finalValue: Double? { rungs.compactMap(\.actual).first }
     }
 
     private struct Rung {
         let threshold: Double
         let probability: Double
         let movement: Double?
+        /// #4959 — served by the endpoint on a finished event, absent otherwise.
+        let actual: Double?
+        let hit: Bool?
     }
 
     private var allPlayerCards: [PlayerCard] {
@@ -104,7 +114,9 @@ struct PlayerPropsCardView: View {
                 let rung = Rung(
                     threshold: prop.threshold ?? 0,
                     probability: prop.overProbability ?? 0,
-                    movement: prop.movement
+                    movement: prop.movement,
+                    actual: prop.actual,
+                    hit: prop.hit
                 )
                 statGroups[statType, default: []].append(rung)
             }
@@ -354,6 +366,22 @@ struct PlayerPropsCardView: View {
                     .font(.system(size: 8))
                     .foregroundStyle(.quaternary)
                     .lineLimit(1)
+                // #4959 — WHAT THE STAT ACTUALLY FINISHED ON, once per group, the
+                // way the totals ladder prints "Final total N" above its rungs
+                // (`TotalPointsSpectrumView.finalStrip`) rather than on every row.
+                // It takes layout priority over the caption because it is the fact
+                // and the caption is the boilerplate: in a narrow paired column the
+                // caption truncates first.
+                if isDone, let final = group.finalValue {
+                    Spacer(minLength: 2)
+                    Text("Final \(Self.formatStatValue(final))")
+                        .font(.system(size: 8, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(1)
+                }
             }
             ForEach(Array(group.rungs.enumerated()), id: \.offset) { _, rung in
                 rungRow(rung, card: card, statType: group.type)
@@ -362,9 +390,14 @@ struct PlayerPropsCardView: View {
     }
 
     private func rungRow(_ rung: Rung, card: PlayerCard, statType: String) -> some View {
-        let actualValue = lookupActualValue(player: card.name, stat: statType)
-        let isHit = actualValue.map { $0 >= rung.threshold } ?? false
-        let showActual = (isDone || isLive) && actualValue != nil
+        let verdict = Self.rungVerdict(
+            servedActual: rung.actual,
+            servedHit: rung.hit,
+            threshold: rung.threshold,
+            boxActual: lookupActualValue(player: card.name, stat: statType)
+        )
+        let isHit = verdict.hit ?? false
+        let showActual = (isDone || isLive) && verdict.hit != nil
 
         return HStack(spacing: 4) {
             Text("\(Int(rung.threshold))+")
@@ -389,7 +422,7 @@ struct PlayerPropsCardView: View {
             }
             .frame(height: 8)
 
-            if isDone, actualValue != nil {
+            if isDone, verdict.hit != nil {
                 Image(systemName: isHit ? "checkmark" : "minus")
                     .font(.system(size: 7, weight: .bold))
                     .foregroundStyle(isHit ? .green : .secondary)
@@ -410,6 +443,67 @@ struct PlayerPropsCardView: View {
     private func lookupActualValue(player: String, stat: String) -> Double? {
         guard let box = boxScore else { return nil }
         return Self.actualStatValue(player: player, stat: stat, box: box)
+    }
+
+    // MARK: - Prop Verdict (pure, fail-closed)
+
+    /// One rung's settled grade: the value the stat finished on, and whether the
+    /// rung hit. `nil` for either means "no claim" — the row draws no mark.
+    struct RungVerdict: Equatable {
+        let actual: Double?
+        let hit: Bool?
+    }
+
+    /// #4959 — RESOLVE ONE RUNG'S GRADE, SERVER FIRST.
+    ///
+    /// The endpoint grades a settled prop against the ESPN box score and serves
+    /// `actual`/`hit` per rung; the app used to ignore both and re-derive the grade
+    /// locally, which could only ever work for the five basketball stats in
+    /// ``statValue(stat:in:)``'s alias table. Across 14 finished MLB games the app
+    /// rendered 928 rungs, the server had graded 481 of them, and the app drew a
+    /// verdict on none.
+    ///
+    /// Two rules, both deliberate:
+    ///
+    /// 1. **The served `hit` wins outright.** It is orientation-aware — the server
+    ///    computes `(total < threshold)` for an Under and `(total >= threshold)` for
+    ///    an Over — whereas the local fallback only ever compares `>=`. Preferring
+    ///    the server therefore fixes Unders as a side effect, and collapses two
+    ///    graders into one (`docs/doctrine.md`: a serve-time renderer needs every
+    ///    input to travel).
+    /// 2. **A served `actual` never manufactures a `hit`.** When `hit` is nil the
+    ///    grade falls back to the box score EXACTLY as before — never to
+    ///    `servedActual >= threshold`, because a rung whose orientation we did not
+    ///    receive could be an Under, and guessing it would print a confident wrong
+    ///    verdict. The number is still shown; the claim is withheld. This is the
+    ///    same fail-closed instinct as ``actualStatValue(player:stat:box:)`` and as
+    ///    the server's own composite-leg rule (#1728).
+    ///
+    /// Live and scheduled payloads carry neither key, so the box-score path is
+    /// untouched for in-progress games.
+    static func rungVerdict(
+        servedActual: Double?,
+        servedHit: Bool?,
+        threshold: Double,
+        boxActual: Double?
+    ) -> RungVerdict {
+        let actual = servedActual ?? boxActual
+        if let servedHit {
+            return RungVerdict(actual: actual, hit: servedHit)
+        }
+        guard let boxActual else {
+            return RungVerdict(actual: actual, hit: nil)
+        }
+        return RungVerdict(actual: actual, hit: boxActual >= threshold)
+    }
+
+    /// A stat line reads as a whole number when it is one ("2", not "2.0"), and
+    /// keeps its fraction when it has one, so a `0.5`-threshold stat is never
+    /// rounded into a different answer.
+    static func formatStatValue(_ value: Double) -> String {
+        value.rounded() == value
+            ? String(Int(value))
+            : String(format: "%g", value)
     }
 
     // MARK: - Prop Attribution (pure, fail-closed)
