@@ -1707,6 +1707,109 @@ def record_task_failure(
         pass
 
 
+#: Below this, a window is too young for a rate taken over it to mean anything:
+#: one fire in the first 30 seconds of a counter's life extrapolates to 2,880 a
+#: day. Ten minutes is not a magic number — it is the point at which the fastest
+#: beat we run (~3 min) has had a few chances to fire, so the rate is a
+#: measurement rather than a single event divided by an epsilon.
+_HARD_KILL_MIN_WINDOW_S = 600
+
+
+def normalised_hard_kills_24h(counts: dict, windows: dict, raw_diff: int):
+    """Hard kills per day, each counter divided by ITS OWN window. Pure.
+
+    LAT-P329 (#4868). ``hard_kills_24h`` was ``starts − (successes + failures +
+    incompletes)``, a subtraction across FOUR INDEPENDENT WINDOWS — every counter
+    is ``SET NX EX 86400`` at its own first increment, so the keys expire on four
+    schedules and any offset between them biases the difference permanently. The
+    bias scales with the task's frequency. Read on production 2026-09-10 18:55Z:
+
+        datagolf_live   starts    284 over 49524 s (13.76 h)  = 20.64/h
+                        successes 132 over 22123 s ( 6.15 h)  = 21.46/h
+                        hard_kills_24h = 284 - 132 = 151      <- 53% of runs?!
+
+    Normalised, successes run slightly FASTER than starts: there is no kill
+    signal at all, and the 151 was a 6.2-hour count subtracted from a 13.8-hour
+    one. One step from being filed as a p1.
+
+    Rates need no common window, which is the point — a rate is already
+    per-hour, so three terminal counters with three different windows simply
+    sum. Returns ``(value, basis)``:
+
+    * ``(int, "window_normalised")`` — the corrected answer, clamped at zero.
+    * ``(raw_diff, "raw_unnormalised:window_too_short")`` and
+      ``(raw_diff, "raw_unnormalised:window_unmeasurable")`` — the windows
+      cannot support a rate, so the old derivation is passed through **carrying
+      a basis that says so**.
+
+    WHY THE FALLBACK IS THE RAW NUMBER AND NOT ``None``. Returning ``None``
+    reads as "no kills" to anything that does not check, and it throws away the
+    only figure available on a task whose TTLs are unreadable — strictly less
+    information than today. The defect in #4868 was never that the raw number
+    exists; it is that it was published *unlabelled*, so a reader could not tell
+    a measured 151 from an artefact of two clocks. Every return here is labelled,
+    and ``hard_kills_raw_diff`` sits beside it, so the two can always be
+    compared: **the gap between them is the window skew.**
+
+    A counter of zero contributes a zero rate and needs no window: a task that
+    has never succeeded has no ``:successes`` key and therefore no window, and
+    that case must stay measurable — it is the real hard-kill shape
+    (``precompute_interestingness``: 6 starts, 6 kills, no terminal of any kind).
+    """
+    starts = int(counts.get("starts") or 0)
+    starts_window = windows.get("starts_window_s")
+
+    if starts <= 0:
+        return 0, "window_normalised"
+    # The floor applies to EVERY positive counter below, not only this one —
+    # CERT-2609. A rate is only a rate over a window old enough to have held
+    # more than one event, and that is as true of a terminal counter as of
+    # starts. See the block in the loop for what the asymmetry cost.
+    if not starts_window or starts_window < _HARD_KILL_MIN_WINDOW_S:
+        return raw_diff, "raw_unnormalised:window_too_short"
+
+    terminal_rate = 0.0
+    for label in ("successes", "failures", "incompletes"):
+        count = int(counts.get(label) or 0)
+        if count <= 0:
+            continue
+        window = windows.get(f"{label}_window_s")
+        if not window or window <= 0:
+            return raw_diff, "raw_unnormalised:window_unmeasurable"
+        # CERT-2609 repair `4868-TERMINAL-WINDOW-FLOOR`. The floor has to apply
+        # to EVERY positive counter, not just starts, and the asymmetry was a
+        # real hole rather than a tidiness point: the counters roll
+        # independently, so a terminal key one second into its own new window
+        # turns 1 event into a 3,600/h rate and that rate ERASES a mature kill
+        # signal — while still labelling the answer `window_normalised`.
+        #
+        #     10 starts / 3600s  +  1 success / 1s    -> 0   (raw 9)
+        #     10 starts / 3600s  +  1 incomplete / 30s -> 0   (raw 9)
+        #     10 starts / 3600s  +  1 failure / 599s   -> 4   (raw 9)
+        #
+        # All three reproduced before the fix. This is the over-correction
+        # direction — suppressing real kills — which is the one that matters,
+        # because a kill this field fails to report is a job dying unseen.
+        if window < _HARD_KILL_MIN_WINDOW_S:
+            return raw_diff, "raw_unnormalised:window_too_short"
+        terminal_rate += count / (window / 3600.0)
+
+    starts_hours = starts_window / 3600.0
+    start_rate = starts / starts_hours
+    # Scaled back onto the STARTS window, not extrapolated to a flat 24 hours.
+    # This is the property that makes the change safe to publish under the old
+    # name: when every counter shares a window W the algebra collapses —
+    # (S/W − T/W) × W = S − T — so a task whose keys are aligned reports exactly
+    # what it reports today, to the unit. The value moves ONLY where the windows
+    # disagree, which is precisely the defect. Extrapolating to 24h instead would
+    # have changed the number on every task, including the healthy ones, and
+    # turned `hard_kills_24h` from a count into a projection behind its own name.
+    in_window = (start_rate - terminal_rate) * starts_hours
+    # Round rather than truncate: int() biases every estimate downward, and a
+    # kill lost to truncation is the signal this field exists to carry.
+    return max(0, int(round(in_window))), "window_normalised"
+
+
 def _window_age_s(r, counter_key: str):
     """Seconds since this counter's 24h window opened, or ``None``.
 
@@ -1859,7 +1962,17 @@ def get_task_metrics(task_name: str) -> dict:
         # difference is reconciled against the terminal timestamps before it is
         # published, because on an exactly-daily task the derivation is a
         # coin flip.
-        hard_kills_24h = max(0, starts_24h - (successes_24h + failures_24h + incompletes_24h))
+        #
+        # LAT-P329 (#4868) — AND THAT RECONCILIATION ONLY EVER REFUTES ONE KILL,
+        # the last run, because the stamps are evidence about no other. On
+        # `datagolf_live` that left 150 of 151 phantom kills in the published
+        # field. The raw difference is kept below because two things still need
+        # it — the refutation gate, and therefore `health`, must behave exactly
+        # as before — but what gets PUBLISHED as `hard_kills_24h` is now each
+        # counter divided by its own window. See `normalised_hard_kills_24h`.
+        hard_kills_raw_diff = max(
+            0, starts_24h - (successes_24h + failures_24h + incompletes_24h)
+        )
 
         # LAT-P022 (#1609): the counters' own window ages. Every count above is
         # named `_24h` and holds between 0 and 24 hours; without these a reader
@@ -1924,6 +2037,21 @@ def get_task_metrics(task_name: str) -> dict:
         if len(duration_stamps) >= 2:
             durations_window_s = float(max(duration_stamps) - min(duration_stamps))
 
+        # LAT-P329 (#4868): the published figure, each counter over its own
+        # window. `hard_kills_raw_diff` rides along so nothing that reasoned
+        # about the old number loses it, and so the two can be compared on any
+        # task at any time — the gap between them IS the window skew.
+        hard_kills_24h, hard_kills_basis = normalised_hard_kills_24h(
+            {
+                "starts": starts_24h,
+                "successes": successes_24h,
+                "failures": failures_24h,
+                "incompletes": incompletes_24h,
+            },
+            windows,
+            hard_kills_raw_diff,
+        )
+
         result = {
             "task": task_name,
             "successes_24h": successes_24h,
@@ -1931,6 +2059,8 @@ def get_task_metrics(task_name: str) -> dict:
             "incompletes_24h": incompletes_24h,
             "starts_24h": starts_24h,
             "hard_kills_24h": hard_kills_24h,
+            "hard_kills_basis": hard_kills_basis,
+            "hard_kills_raw_diff": hard_kills_raw_diff,
             "recent_durations_ms": durations,
             # LAT-P079 (#2071): the per-sample epoch, newest-first, positionally
             # aligned with `recent_durations_ms`, `None` for legacy unstamped
@@ -1982,14 +2112,34 @@ def get_task_metrics(task_name: str) -> dict:
         # and not at the subtraction because the evidence lives in the hash, and
         # done before the health block because the health block asserts the
         # mechanism ("hard-killed (memory / hard time limit)") out loud.
+        #
+        # LAT-P329 (#4868): the GATE stays on the RAW difference, deliberately.
+        # The refutation is evidence about the DERIVED kill — it retracts one
+        # unit of `starts − terminals` — so the difference is the thing it has
+        # standing to speak about, and `hard_kills_refuted` must appear whenever
+        # that difference is positive, including on the tasks whose normalised
+        # figure is now zero. Those are exactly the skewed-window tasks, i.e. the
+        # whole population this change is about, so gating on the new number
+        # would silently stop publishing the refutation right where it is most
+        # informative.
+        #
+        # `health` is NOT at risk either way, and it is worth writing down why
+        # rather than asserting the gate is load-bearing for it: the branch that
+        # reads `hard_kill_refutation` sits under `successes == failures ==
+        # incompletes == 0`, and with every terminal at zero the terminal rate is
+        # zero too, so the normalised figure and the raw difference are equal by
+        # construction. Both gates open together there. Pinned by
+        # `test_health_is_identical_where_the_refutation_is_read`.
         hard_kill_refutation = None
-        if hard_kills_24h > 0:
+        if hard_kills_raw_diff > 0:
             hard_kill_refutation = _terminal_evidence_refutes_hard_kill(result)
             if hard_kill_refutation:
                 # Exactly one — the last run — because that is the only run these
                 # stamps are evidence about. Earlier kills survive.
-                hard_kills_24h = max(0, hard_kills_24h - 1)
-                result["hard_kills_24h"] = hard_kills_24h
+                if hard_kills_24h is not None:
+                    hard_kills_24h = max(0, hard_kills_24h - 1)
+                    result["hard_kills_24h"] = hard_kills_24h
+                result["hard_kills_raw_diff"] = max(0, hard_kills_raw_diff - 1)
                 result["hard_kills_refuted"] = hard_kill_refutation
 
         # Compute health status. Retired tasks report a distinct "retired"
