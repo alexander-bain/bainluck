@@ -39,6 +39,8 @@ back to one kickoff-ordered pool. That one does not. If it is ever weakened, thi
 file stops guarding the ship and only guards its bookkeeping.
 """
 
+import pytest
+
 import app.tasks.polymarket_condition_refresh as rail
 
 from tests.test_polymarket_condition_refresh_3879 import _arm, _Service, _writes
@@ -281,6 +283,58 @@ class TestTheImminentGameGetsItsOwnNumberFirst:
         assert admitted == [1, 3], f"expected the skip, not the break; got {admitted}"
         assert stats["conditions_requested"] == 50
 
+    @pytest.mark.parametrize(
+        "derivative",
+        [
+            # Every one a REAL Polymarket parent name, from production history
+            # rather than from tonight's slice (CERT-2573 found them: the
+            # first two on 2026-07-23, the third on 2026-07-12).
+            "Tampa Bay Rays vs. Toronto Blue Jays - First 5 Innings Winner",
+            "Tampa Bay Rays vs. Toronto Blue Jays - 1st 5 Innings Spread",
+            "Hornets vs. Nets: 1H Moneyline",
+            "Hornets vs. Nets: Q1 Winner",
+        ],
+    )
+    async def test_known_period_vocabulary_cannot_take_the_only_headline_slot(
+        self, monkeypatch, derivative
+    ):
+        """CERT-2573's named regression, on the forms a private list omitted.
+
+        The first cut of the scope test carried its own `_PERIOD_SCOPE_RE`,
+        written from one night's production strings. These four never appeared
+        in that night and each is classed moneyline/spread/total by kind, so
+        each could take the single headline slot ahead of the full match. Scope
+        now asks `prop_window_span`, which has carried the innings and `1H`
+        vocabulary all along (`Q1` and the numbered segments were added to THAT
+        ladder, not to a second one).
+
+        Same shape as the Set/Map tests above: both rows cost one id, the
+        derivative is ordered first, capacity is one.
+        """
+        candidates = [(1, _ids(1, "d")), (2, _ids(1, "w"))]
+        svc = _Service()
+        _arm(
+            monkeypatch,
+            candidates=candidates,
+            stale=2,
+            served=100,
+            imminent={1, 2},
+            names={
+                1: (derivative, "0x" + "11" * 32),
+                2: ("Tampa Bay Rays vs. Toronto Blue Jays", "0x" + "22" * 32),
+            },
+            service=svc,
+        )
+
+        stats = await rail._refresh_stale_polymarket_conditions(condition_budget=1)
+
+        assert _admitted(svc, candidates) == [2], (
+            f"the full match must outrank {derivative!r}, which is one segment "
+            "of a contest and is only a 'headline' to the KIND test"
+        )
+        assert stats["kickoff_headline_due"] == 1
+        assert stats["kickoff_ladder_due"] == 0
+
     async def test_the_headline_shortfall_is_a_number_not_an_inference(
         self, monkeypatch
     ):
@@ -518,6 +572,18 @@ class TestTheSizingConstantsSayWhatWasMeasured:
             "Club Tijuana vs. Querétaro FC: 2nd Half O/U 5.5 Total Corners",
             "Fortuna Sittard vs. AFC Ajax: AFC Ajax 2nd Half O/U 1.5",
             "Counter-Strike: Fluxo W7M vs Back to Back  - Map 2 Winner",
+            # CERT-2573: recurring provider forms the FIRST cut of this rule
+            # omitted, because it wrote its own list from one night's slice.
+            # `prop_window_span` has carried these all along.
+            "Tampa Bay Rays vs. Toronto Blue Jays - First 5 Innings Winner",
+            "Tampa Bay Rays vs. Toronto Blue Jays - 1st 5 Innings Spread",
+            "Hornets vs. Nets: 1H Moneyline",
+            "Hornets vs. Nets: Q1 Winner",
+            # The private list knew this word and the shared ladder did not, so
+            # consuming the shared one would have QUIETLY dropped 64 linked
+            # production markets out of scope-refusal. It was added there.
+            "AFC Bournemouth vs. Brentford FC - Halftime Result",
+            "1. FC Köln vs. SV Werder Bremen - Half-time Result",
         ):
             assert rail._names_a_period_not_the_whole_contest(name), name
 
@@ -532,8 +598,60 @@ class TestTheSizingConstantsSayWhatWasMeasured:
             "Gauff vs. Rybakina: Total Sets: O/U 2.5",
             "Gauff vs. Rybakina: Match O/U 23.5",
             "Arsenal vs. Chelsea",
+            # A market that names a period AND the full game runs to the final
+            # whistle. THE PRIVATE LIST GOT THIS WRONG — it read a first-half
+            # window here — and `prop_window._SPANS_FULL_GAME_RE` has declined
+            # it deliberately, with a 76-row production note, all along. It is
+            # the second reason scope is asked of the shared ladder rather than
+            # of a copy assembled from one night's strings.
+            "Arsenal vs. Chelsea - 1st Half / Fulltime Result",
+            "1st Half / Fulltime Result",
+            "Arsenal vs. Chelsea - HT/FT Result",
+            # The half-and-fulltime family SPELLED OUT. These are the shapes
+            # that make `names_a_contest_segment`'s own full-game guard
+            # load-bearing: the ladder returns None for them (it runs the same
+            # guard), so without ours the `Halftime`/segment fallbacks below it
+            # would answer True and demote a market that runs to the whistle.
+            # Deleting that guard was a surviving mutant until these were here.
+            "Half-time / Fulltime Result",
+            "Halftime/Fulltime Result",
+            "Arsenal vs. Chelsea - Half-time / Full Time Result",
+            "Set 1 / Fulltime Result",
         ):
             assert not rail._names_a_period_not_the_whole_contest(name), name
+
+    def test_scope_composes_the_window_ladder_without_moving_it(self):
+        """The simplification that must never be made, with its two casualties.
+
+        `names_a_contest_segment` looks like it wants to BE `prop_window_span`,
+        and the first cut of this repair made it so. Putting tennis SETS into
+        the window ladder turned two standing guards red on real production
+        shapes: ruling #3161's `TestTheMapIsNeverEmptiedToCleanIt` (on a settled
+        tennis page the set-scope lines ARE the card) and
+        `test_the_set_one_winner_is_served_beside_its_siblings`.
+
+        So: SCOPE says "Set 1 Winner" is a segment, and the WINDOW ladder still
+        says it is not a suppressible window. Both halves are asserted here
+        because either one alone reads as an accident.
+        """
+        from app.utils.prop_window import names_a_contest_segment, prop_window_span
+
+        for name in (
+            "Set 1 Winner",
+            "Wu vs. Alcaraz: Set 1 Games O/U 10.5",
+            "Set 1 Winner: Wu vs Alcaraz",
+        ):
+            assert names_a_contest_segment(name), name
+            assert prop_window_span(name) is None, (
+                f"{name!r} became a suppressible window — #3161 and #3198 are "
+                "about to go red; scope COMPOSES the ladder, it does not extend it"
+            )
+
+        # And composition really is composition: everything the ladder already
+        # knows is answered by the ladder, not re-listed here.
+        for name in ("1H Moneyline", "First 5 Innings Winner", "2nd Half O/U 2.5"):
+            assert prop_window_span(name) is not None, name
+            assert names_a_contest_segment(name), name
 
     def test_the_reserve_is_a_fifth_of_the_production_budget(self):
         assert rail.DRAIN_RESERVE_IDS == 200

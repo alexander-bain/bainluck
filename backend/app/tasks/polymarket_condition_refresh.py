@@ -165,7 +165,6 @@ creates a market and never creates an outcome.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -179,6 +178,7 @@ from app.tasks.tournament_price_refresh import BATCH_SIZE
 from app.utils.futures_liveness import LIVE_MARKET_SQL, writable_leg_sql
 from app.utils.game_market_class import classify_game_market_class
 from app.utils.prediction_market_matching import _strip_category_prefix
+from app.utils.prop_window import names_a_contest_segment
 
 logger = logging.getLogger(__name__)
 
@@ -698,35 +698,47 @@ def _pack_batches(
 #: `Map 2 Winner` (Counter-Strike). The vocabulary below is those strings, not
 #: strings invented from the pattern.
 #:
-#: 🔴 `quarter` is the trap. A quarterfinal is a full match, not a segment, so
-#: the token may only fire on a PERIOD quarter. `\bquarter\b` already declines
-#: `Quarterfinal` (no word boundary before "final"), and the lookahead adds the
-#: spaced and hyphenated spellings. `Set` likewise fires only with a digit:
-#: `Total Sets: O/U 2.5` is a whole-match total and stays a headline.
-_PERIOD_SCOPE_RE = re.compile(
-    r"""
-      \b(?:set|map|leg|frame|period|inning|innings|quarter)\s*\#?\s*\d      # Set 1, Map 2, Period 3
-    | \b(?:1st|2nd|3rd|4th|first|second|third|fourth)\s+
-      (?:half|quarter|period|set|map|inning|frame|innings)\b                # 1st Half, 2nd Half
-    | \bhalf[\s-]?time\b                                                    # Halftime, Half-time
-    | \b(?:first|second)\s+half\b
-    | \bhalf\s+(?:result|winner|total|line|o/u)\b
-    | \bquarter\b(?!\s*-?\s*finals?\b)                                      # a period quarter, never a QF
-    | \b(?:ot|overtime|extra\s+time)\b
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
-
-
+#: THE VOCABULARY IS NOT KEPT HERE (CERT-2573). The first cut of this repair
+#: wrote its own `_PERIOD_SCOPE_RE` from the strings measured above, and a
+#: parallel list assembled from one night's slice is exactly the #1951 drift
+#: failure: it does not throw when it disagrees with the real one, it just
+#: quietly answers differently. It had already drifted in both directions.
+#:
+#: It was MISSING recurring provider forms that never appeared in that slice —
+#: `Tampa Bay Rays vs. Toronto Blue Jays - First 5 Innings Winner` (2026-07-23),
+#: `1st 5 Innings Spread`, `Hornets vs. Nets: 1H Moneyline` (2026-07-12) — each
+#: of which the coarse classifies as moneyline/spread/total, so each could take
+#: a scarce headline slot ahead of the full-match winner.
+#:
+#: And it was WRONG about `1st Half / Fulltime Result`, which it read as a
+#: first-half window. That market runs to the final whistle;
+#: `prop_window._SPANS_FULL_GAME_RE` has declined it deliberately, with a
+#: 76-row production note, since long before this queue.
+#:
+#: So scope is asked of `prop_window.names_a_contest_segment`, which COMPOSES
+#: `prop_window_span` — the ladder that already claims to be the one deciding
+#: what a window is — and adds only the three things that ladder deliberately
+#: does not carry (the compact `Q1`, numbered segments, a `Halftime` title).
+#:
+#: It is a sibling of the window ladder rather than an extension of it, and CI
+#: is why. Putting tennis SETS into `prop_window_span` itself turned two
+#: standing guards red: ruling #3161's `TestTheMapIsNeverEmptiedToCleanIt` and
+#: `test_the_set_one_winner_is_served_beside_its_siblings`. On a SETTLED tennis
+#: page the set-scope lines are the card, so "is this window over" and "is this
+#: the whole contest's book" are two questions and only the second is ours.
+#: `Total Sets: O/U 2.5` stays a headline either way — the digit is required.
 def _names_a_period_not_the_whole_contest(name: str) -> bool:
     """True if the title scopes itself to a segment of the contest.
 
-    Kept separate from :func:`_is_headline_market` so the vocabulary can be
-    asserted directly against production strings, and so a future reader can see
-    that the SCOPE test is a different question from the KIND test rather than a
-    tweak to it.
+    Kept as a named function rather than an inline call so the SCOPE test reads
+    as a different question from the KIND test rather than a tweak to it, and so
+    the production strings can be asserted against it directly.
+
+    The vocabulary itself lives in `prop_window`, beside the window ladder it
+    composes, so there is one module to look in and one place a new provider
+    spelling gets added.
     """
-    return bool(_PERIOD_SCOPE_RE.search(name or ""))
+    return names_a_contest_segment(name)
 
 
 def _is_headline_market(name: Optional[str], external_id: Optional[str]) -> bool:
