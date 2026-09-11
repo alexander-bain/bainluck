@@ -54,19 +54,24 @@ def _manifest_paths() -> set[str]:
     return out
 
 
-# A cross-tier read is a path built from a "frontend" component followed by a
-# chain of quoted components, e.g. `here / "frontend" / "lib" / "marketShape.ts"`.
-# Anchoring on the quoted "frontend" component (rather than the bare word) is
-# what keeps prose and comments out of the scan.
-_CHAIN = re.compile(
-    r"""["']frontend["']((?:\s*/\s*["'][^"']+["'])+)""",
-    re.VERBOSE,
-)
+# A cross-tier read appears in TWO shapes, and a scanner that knows only one is
+# itself a fail-open. CERT-2566 blocked the first cut of this file for exactly
+# that: it saw only the component chain, so three whole-path literals were
+# invisible, and a mutation of `tournamentReskin.test.tsx` alone severed
+# `emit_comparison_specimen.py` while the classifier still said `frontend`.
+#
+#   1. COMPONENT CHAIN — `here / "frontend" / "lib" / "marketShape.ts"`.
+#      Anchoring on the quoted "frontend" component (not the bare word) is what
+#      keeps prose and comments out of the scan.
+#   2. WHOLE PATH — `"frontend/lib/discoverInteractions.ts"` in one literal,
+#      including a `./`-relative spelling.
+_CHAIN = re.compile(r"""["']frontend["']((?:\s*/\s*["'][^"']+["'])+)""")
 _COMPONENT = re.compile(r"""["']([^"']+)["']""")
+_WHOLE_PATH = re.compile(r"""["']((?:\./)?frontend/[A-Za-z0-9_./\[\]-]+)["']""")
 
 
 def _cross_tier_reads() -> dict[str, set[str]]:
-    """{test filename -> {frontend paths it constructs}} derived from source."""
+    """{test filename -> {frontend paths it names}} derived from source."""
     found: dict[str, set[str]] = {}
     for path in sorted(BACKEND_TESTS.rglob("test_*.py")):
         if path.name == Path(__file__).name:
@@ -77,6 +82,8 @@ def _cross_tier_reads() -> dict[str, set[str]]:
             if not parts:
                 continue
             found.setdefault(path.name, set()).add("frontend/" + "/".join(parts))
+        for whole in _WHOLE_PATH.findall(text):
+            found.setdefault(path.name, set()).add(whole.removeprefix("./"))
     return found
 
 
@@ -123,16 +130,36 @@ class TestTheManifestDescribesReality:
         )
 
     def test_the_scan_actually_finds_the_known_parity_guards(self):
-        # Guards the guard. If the regex stops matching, `_cross_tier_reads()`
-        # returns {} and the rot check above passes vacuously — the exact shape
-        # that makes a scan-based test worthless.
+        # Guards the guard. If a regex stops matching, `_cross_tier_reads()`
+        # returns less and the rot check above passes vacuously — the exact
+        # shape that makes a scan-based test worthless.
+        #
+        # BOTH SHAPES are represented deliberately. The first cut of this test
+        # listed only component-chain owners, so it stayed green while the
+        # whole-path shape was entirely invisible (CERT-2566).
         names = set(_cross_tier_reads())
         expected = {
+            # component chain
             "test_futures_serves_resolution_source_4788.py",
             "test_futures_serves_shape_field_q478.py",
             "test_tournament_hub_links.py",
+            # whole-path literal
+            "test_comparison_specimen.py",
+            "test_discover_provenance.py",
         }
-        assert expected <= names, f"cross-tier scan found only {sorted(names)}"
+        missing = sorted(expected - names)
+        assert missing == [], f"cross-tier scan no longer sees: {missing}"
+
+    def test_the_scan_finds_both_read_shapes_by_path(self):
+        # Named paths, not just owning modules: a scan could find the file for
+        # one reason and still miss the path that matters.
+        reads = {p for paths in _cross_tier_reads().values() for p in paths}
+        for path in (
+            "frontend/lib/marketShape.ts",  # component chain
+            "frontend/lib/discoverInteractions.ts",  # whole-path literal
+            "frontend/__tests__/components/tournamentReskin.test.tsx",
+        ):
+            assert path in reads, f"scan missed {path}"
 
 
 @pytest.fixture
@@ -256,6 +283,31 @@ class TestTheClassifierFailsClosed:
         base = repo.commit({"frontend/app/page.tsx": "a"})
         head = repo.commit({"frontend/app/page.tsx": "b"})
         assert repo.scope(base, head, manifest=tmp_path / "nope.txt") == "full"
+
+    @pytest.mark.parametrize(
+        "consumer",
+        [
+            "frontend/__tests__/components/tournamentReskin.test.tsx",
+            "frontend/lib/discoverInteractions.ts",
+            "frontend/lib/play/session.ts",
+        ],
+        ids=["tournament-reskin", "discover-interactions", "play-session"],
+    )
+    def test_whole_path_frontend_consumer_cannot_be_classified_frontend(self, repo, consumer):
+        """CERT-2566's repair, proven per file.
+
+        These three are named in `backend/tests/` as single whole-path string
+        literals rather than `/`-joined components, so the first scanner could
+        not see them and the manifest omitted all three. The grader mutated
+        `tournamentReskin.test.tsx` alone, severed `emit_comparison_specimen.py`,
+        and the classifier still answered `frontend` — it would have skipped the
+        shard carrying the contract that had just broken.
+
+        Each is under `frontend/`, so a naive rule reduces scope on every one.
+        """
+        base = repo.commit({consumer: "a"})
+        head = repo.commit({consumer: "b"})
+        assert repo.scope(base, head) == "full"
 
     def test_a_frontend_scope_always_implies_no_heroku_release(self, repo):
         """The subset invariant `ci.yml`'s change-scope comment relies on.
