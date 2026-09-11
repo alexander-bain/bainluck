@@ -11984,8 +11984,22 @@ def _build_props_script(player_props, event_is_finished):
                 is_win = pp.get("is_winner")
                 if is_win is not None:
                     hit = bool(is_win)
-            if hit is not None:
+            # THE THIRD WORD (#4771). `PropsSection`'s `GradedValue` has had a
+            # muted `push` branch and `propResultLabel` has spelled it for as
+            # long as either has existed; this builder spoke two words, so the
+            # grader had to REFUSE an exactly-landed total or an exactly-covered
+            # spread rather than call it — "Over 7 runs in the first 5 innings"
+            # with exactly 7 scored simply vanished from a page that had the
+            # answer. A push is not a miss: nobody lost that question.
+            #
+            # Read BEFORE `hit`, and off a key of its own. The alternative —
+            # inferring a push from `hit is None` — would turn every ungraded
+            # row on the page into one, which is the #1650 defect exactly.
+            if pp.get("push"):
+                graded_result = "push"
+            elif hit is not None:
                 graded_result = "hit" if hit else "miss"
+            if graded_result is not None:
                 actual = pp.get("actual")
                 if actual is not None:
                     graded_label = f"{actual} — {graded_result}"
@@ -12123,6 +12137,12 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
                     "outcome_name": outcome_name,
                     "actual": verdict["actual"],
                     "hit": verdict["hit"],
+                    # Present only on a push (#4771), which is also how the
+                    # grader returns it — a `False` here on every other row
+                    # would invite a reader to test the key rather than its
+                    # value, and those two differ on exactly the rows that
+                    # matter.
+                    **({"push": True} if verdict.get("push") else {}),
                 },
             ))
         except Exception:
