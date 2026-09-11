@@ -50,7 +50,15 @@
 set -uo pipefail
 
 SHA_IN="${1:-}"
-REPO_PATH="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+# `${BASH_SOURCE[0]}` is UNBOUND — and fatal under `set -u` — when this script is
+# piped rather than executed, which is exactly how a lane runs it before it is
+# merged: `git show <branch>:tools/merge-gate.sh | bash -s -- <sha>`. Deriving
+# the repo from it then produced `repo=/` and a "not a git repository" refusal
+# on a perfectly good sha. Ask git where we are instead; it is also the right
+# answer when the script is invoked from a subdirectory.
+SELF="${BASH_SOURCE[0]:-}"
+REPO_PATH="${2:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 REPO_SLUG="alexander-bain/bainluck"
 LEDGER="${MERGE_GATE_LEDGER:-$HOME/bainluck/.claude/handoff/CODEX-CERT-LOG.md}"
 GREP=/usr/bin/grep
@@ -70,7 +78,13 @@ fi
 # One command, no network, no fixtures.
 # ─────────────────────────────────────────────────────────────────────────────
 if [ "$SHA_IN" = "--selftest" ]; then
-  self="${BASH_SOURCE[0]}"
+  self="$SELF"
+  if [ -z "$self" ] || [ ! -r "$self" ]; then
+    # The selftest reads its own source, so it needs a file. Piped in, there
+    # isn't one — say so instead of failing every scan for the wrong reason.
+    echo "  --selftest needs the script on disk; run tools/merge-gate.sh --selftest, not a pipe" >&2
+    exit 2
+  fi
   fails=0
   check () {
     if eval "$2" >/dev/null 2>&1; then
@@ -124,6 +138,12 @@ if [ "$SHA_IN" = "--selftest" ]; then
 
   out="$(bash "$self" 2>&1)"; rc=$?
   check "no argument exits 2" "[ $rc -eq 2 ]"
+
+  # The regression that made this fix necessary: piped in, `BASH_SOURCE[0]` is
+  # unbound under `set -u` and the repo path fell back to `/`.
+  piped="$(cat "$self" | bash -s -- --help-nonexistent-sha 2>&1)"
+  check "piped into bash it still finds the repo, not /" \
+    "! printf '%s' \"\$piped\" | /usr/bin/grep -q 'not a git repository: /$'"
 
   echo
   if [ "$fails" -eq 0 ]; then
@@ -294,13 +314,24 @@ pr_num="$(gh api "repos/$REPO_SLUG/commits/$SHA/pulls" --jq '.[]|select(.state==
 if [ -z "$pr_num" ]; then
   warn "PR state" "no open PR found for this sha (fine for a direct merge; check if you expected one)"
 else
-  pr_line="$(gh pr view "$pr_num" --repo "$REPO_SLUG" \
-    --json isDraft,mergeable,mergeStateStatus,headRefOid \
-    --jq '"\(.isDraft)|\(.mergeable)|\(.mergeStateStatus)|\(.headRefOid)"' 2>/dev/null)"
-  IFS='|' read -r is_draft mergeable mstate head_oid <<< "$pr_line"
+  # GitHub computes mergeability ASYNCHRONOUSLY and answers `UNKNOWN` for a
+  # short while after any push. Reporting that as a conflict is a wrong answer
+  # in the same family as the ones this script exists to prevent — it tells a
+  # lane to rebase a branch that is perfectly clean. Give it a few seconds.
+  mergeable=UNKNOWN
+  for _attempt in 1 2 3 4; do
+    pr_line="$(gh pr view "$pr_num" --repo "$REPO_SLUG" \
+      --json isDraft,mergeable,mergeStateStatus,headRefOid \
+      --jq '"\(.isDraft)|\(.mergeable)|\(.mergeStateStatus)|\(.headRefOid)"' 2>/dev/null)"
+    IFS='|' read -r is_draft mergeable mstate head_oid <<< "$pr_line"
+    [ "$mergeable" = "UNKNOWN" ] || break
+    sleep 3
+  done
   # `gh --jq` renders a JSON boolean as lowercase `true`/`false`.
   if [ "$is_draft" = "true" ]; then
     stop "PR state" "#$pr_num is a DRAFT"
+  elif [ "$mergeable" = "UNKNOWN" ]; then
+    stop "PR state" "#$pr_num mergeability still UNKNOWN after 4 reads — GitHub has not computed it yet, re-run (this is NOT a conflict)"
   elif [ "$mergeable" != "MERGEABLE" ]; then
     stop "PR state" "#$pr_num is $mergeable/$mstate — a conflicting PR gets NO pull_request CI run at all"
   elif [ "$head_oid" != "$SHA" ]; then
