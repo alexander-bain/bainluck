@@ -46,7 +46,12 @@ import {
   type PropFamilyGroup,
 } from "@/lib/propFamily";
 import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
-import { renderedPercent, renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import {
+  renderedPercent,
+  renderedOutcomeRowPercents,
+  renderedDuelMovePoints,
+  isComplementPair,
+} from "@/lib/renderedPercent";
 
 export type PropsState = "script" | "divergence" | "graded";
 
@@ -226,6 +231,99 @@ function scriptPairPercents(
 }
 
 /**
+ * #5296 — the half #5240 could not take.
+ *
+ * #5240 fixed THE SCRIPT's pregame pair and said, in its own diff, why it stopped
+ * there: `current` carries the identical defect, but THE DIVERGENCE prints a
+ * LEVEL and a MOVE, and #2951's rule is that a printed delta is the difference of
+ * the PRINTED levels. Re-rounding the pair without the badge would make the row
+ * contradict itself one column to the right — the exact defect #2951 exists to
+ * prevent. So the two have to be decided together or not at all.
+ *
+ * They are decided together here. One family, one pass, three answers that cannot
+ * disagree because they come out of the same call:
+ *
+ *   - the two pregame levels     `renderedOutcomeRowPercents(marks)`
+ *   - the two current levels     `renderedOutcomeRowPercents(currents)`
+ *   - the two badges             `renderedDuelMovePoints(currents, marks)`
+ *
+ * `renderedDuelMovePoints` is not new and is not written for this: it is #2951's
+ * own helper, already load-bearing in `lib/matchList.ts`, and it derives the delta
+ * from the rendered pairs at BOTH ends — so an opening pair is rounded once too,
+ * which matters because an opening pair is exactly as capable of summing to 101 as
+ * a current one.
+ *
+ * GATED ON THE PAIR BEING A COMPLEMENT, deliberately, and this is the whole reason
+ * the blast radius is the defect and nothing else. For a complement pair the
+ * contract changes the levels (that IS the fix) and therefore MUST also own the
+ * badge. For a non-complement two-leg family the contract returns the same two
+ * independent roundings the rows print today — but `renderedDuelMovePoints` would
+ * still re-derive its badge from those levels, which is a different number from
+ * the raw rounding `signedDelta` applies to the difference, whenever the two
+ * fractions straddle a boundary. (Spelled in prose deliberately: the inline
+ * percent inventory guard, #3867, counts LINES matching that expression and does
+ * not exempt comments, so writing it out here would have inflated a baseline that
+ * is a promise about real call sites.) That would be #2951 reaching a population
+ * this ship never measured, on
+ * rows that are not summing to 101. Those rows keep today's arithmetic exactly.
+ * (#2951's unapplied reach over non-complement rows is real and is filed, not
+ * silently widened here.)
+ *
+ * The move also decides MOVED vs UNCHANGED for these rows, for the same reason the
+ * badge does: `isUnchanged` is the raw rounding, so a pair whose printed levels
+ * differ by a point while its raw movement rounds to zero would print `↑ 1` from
+ * inside the drawer labelled "didn't move" — trading one self-contradiction for
+ * another. A paired row is partitioned by the number it prints.
+ *
+ * Ranking (`absMovement`) is left on the raw value on purpose: it decides ORDER,
+ * not a printed number, so it cannot contradict anything on the reader's screen.
+ */
+export type DivergencePair = { mark: number; current: number; move: number };
+
+const EMPTY_DIVERGENCE_PAIRS: ReadonlyMap<PropMark["key"], DivergencePair> = new Map();
+
+function divergencePairPercents(
+  groups: ReadonlyArray<{ name: string | null; items: PropMark[] }>,
+): Map<PropMark["key"], DivergencePair> {
+  const byKey = new Map<PropMark["key"], DivergencePair>();
+  for (const group of groups) {
+    // Only NAMED families pair — #5240's reason, unchanged: the unnamed group is
+    // the golf/combat concept page, where two rows standing together are two
+    // different questions and pairing them would invent a complement.
+    if (group.name == null) continue;
+    const marked = group.items.filter((i) => i.pregame_mark != null && i.current != null);
+    if (marked.length !== 2) continue;
+
+    const currents = marked.map((i) => i.current);
+    const marks = marked.map((i) => i.pregame_mark);
+    // Both ends must be complements. A family whose marks complement but whose
+    // live pair does not (one leg went stale) is not a pair this rule can speak
+    // for at both ends, and half a decision is the contradiction we are removing.
+    if (!isComplementPair(currents) || !isComplementPair(marks)) continue;
+
+    const currentPct = renderedOutcomeRowPercents(currents);
+    const markPct = renderedOutcomeRowPercents(marks);
+    const moves = renderedDuelMovePoints(
+      [currents[0], currents[1]],
+      [marks[0], marks[1]],
+    );
+    // Atomic: a family sets BOTH legs or neither. Half a pair is how a card ends
+    // up printing one contract-rounded number beside one independently-rounded
+    // one, which is the defect wearing different clothes.
+    if (currentPct.some((p) => p == null) || markPct.some((p) => p == null)) continue;
+    if (moves.some((m) => m == null)) continue;
+    for (const index of [0, 1]) {
+      byKey.set(marked[index].key, {
+        mark: markPct[index] as number,
+        current: currentPct[index] as number,
+        move: moves[index] as number,
+      });
+    }
+  }
+  return byKey;
+}
+
+/**
  * Absolute movement of a prop from its pregame mark to the current number, or
  * null when either endpoint is missing (a forward-only mark that can't yet
  * diverge). Used to rank THE DIVERGENCE biggest-mover-first.
@@ -255,9 +353,20 @@ function rankByDivergence(items: PropMark[]): PropMark[] {
 
 function signedDelta(from: number | null | undefined, to: number | null | undefined): string | null {
   if (from == null || to == null) return null;
-  const d = Math.round((to - from) * 100);
-  if (d === 0) return "±0";
-  return d > 0 ? `↑ ${d}` : `↓ ${Math.abs(d)}`;
+  return signedMovePoints(Math.round((to - from) * 100));
+}
+
+/**
+ * #5296: the same badge, from a move already expressed in WHOLE POINTS.
+ *
+ * Split out rather than reimplemented so a paired row and an unpaired one cannot
+ * drift in wording or in the `±0` / `↑` / `↓` shapes the styling above branches
+ * on — `signedDelta` is now this function plus its own rounding, which is the one
+ * thing a paired row does differently.
+ */
+function signedMovePoints(points: number): string {
+  if (points === 0) return "±0";
+  return points > 0 ? `↑ ${points}` : `↓ ${Math.abs(points)}`;
 }
 
 /**
@@ -401,6 +510,13 @@ export default function PropsSection({
   const pairPercents =
     activeState === "script" ? scriptPairPercents(groups) : EMPTY_PAIR_PERCENTS;
 
+  // #5296: the same decision for THE DIVERGENCE, which needs three numbers rather
+  // than one — see `divergencePairPercents`. Computed here for the same reason
+  // #5240's is: once, where both legs are in hand, so the row, the badge and the
+  // moved/unchanged partition all read one answer.
+  const divergencePairs =
+    activeState === "divergence" ? divergencePairPercents(groups) : EMPTY_DIVERGENCE_PAIRS;
+
   const renderRow = (item: PropMark) =>
     isBinaryBarMark(item) ? (
       <BinaryBarRow key={item.key} item={item} state={activeState} />
@@ -410,6 +526,7 @@ export default function PropsSection({
         item={item}
         state={activeState}
         pairedPercent={pairPercents.get(item.key)}
+        pairedDivergence={divergencePairs.get(item.key)}
       />
     );
 
@@ -435,6 +552,7 @@ export default function PropsSection({
                 group={group}
                 state={activeState}
                 renderRow={renderRow}
+                divergencePairs={divergencePairs}
               />
             ))}
           </div>
@@ -485,18 +603,31 @@ function PropFamilyBlock({
   group,
   state,
   renderRow,
+  divergencePairs = EMPTY_DIVERGENCE_PAIRS,
 }: {
   group: PropFamilyGroup<PropMark>;
   state: PropsState;
   renderRow: (item: PropMark) => ReactNode;
+  /** #5296: the family's own decision, so the partition below splits rows by the
+   *  badge they PRINT. Empty outside THE DIVERGENCE, and empty for any row that
+   *  is not half of a complement pair — those keep the raw test. */
+  divergencePairs?: ReadonlyMap<PropMark["key"], DivergencePair>;
 }) {
   // Only THE DIVERGENCE has a notion of "didn't move". THE SCRIPT and WHAT HIT
   // list everything, grouped but uncollapsed — except THE SCRIPT's own hole,
   // the rows it has no mark for, which fold (D102 / #4530).
   const collapsible = state === "divergence";
   const { listed, folded } = partitionScript(group.items, state);
-  const moved = collapsible ? listed.filter((i) => !isUnchanged(i)) : listed;
-  const unchanged = collapsible ? listed.filter(isUnchanged) : [];
+  // #5296: a paired row is "unchanged" when the badge it prints is absent, not
+  // when its raw movement rounds to zero. Those two answers differ whenever the
+  // printed levels straddle a boundary the raw difference does not, and the row
+  // would otherwise show `↑ 1` from inside the drawer that says it did not move.
+  const didNotMove = (item: PropMark) => {
+    const pair = divergencePairs.get(item.key);
+    return pair ? pair.move === 0 : isUnchanged(item);
+  };
+  const moved = collapsible ? listed.filter((i) => !didNotMove(i)) : listed;
+  const unchanged = collapsible ? listed.filter(didNotMove) : [];
 
   // #5241: when the fold takes the WHOLE family — the common case for a two-leg
   // O/U family with no baseline on either leg, 27 of 110 families across three
@@ -583,12 +714,16 @@ function PropRow({
   item,
   state,
   pairedPercent,
+  pairedDivergence,
 }: {
   item: PropMark;
   state: PropsState;
   /** #5240: this leg's whole percent, decided with its sibling. Absent for any
    *  row that is not half of a two-leg family — those round as they always did. */
   pairedPercent?: number;
+  /** #5296: the same, for THE DIVERGENCE's three numbers — the two levels and the
+   *  badge between them, decided together so they cannot contradict each other. */
+  pairedDivergence?: DivergencePair;
 }) {
   // L2-123 / #199: a family with no honest price renders one quiet pending label
   // ("Opens after Round N" / "No market yet") in every state — never a fabricated
@@ -608,7 +743,9 @@ function PropRow({
           {rowState === "script" && (
             <ScriptValue item={item} pairedPercent={pairedPercent} />
           )}
-          {rowState === "divergence" && <DivergenceValue item={item} />}
+          {rowState === "divergence" && (
+            <DivergenceValue item={item} paired={pairedDivergence} />
+          )}
           {rowState === "graded" && <GradedValue item={item} />}
         </>
       )}
@@ -656,21 +793,30 @@ function ScriptValue({
   );
 }
 
-function DivergenceValue({ item }: { item: PropMark }) {
-  const delta = signedDelta(item.pregame_mark, item.current);
+function DivergenceValue({
+  item,
+  paired,
+}: {
+  item: PropMark;
+  paired?: DivergencePair;
+}) {
+  // #5296: when this row is half of a complement pair the family has already
+  // decided all three numbers together, and the row prints what it was handed.
+  // Otherwise every line below is exactly what it was.
+  const delta = paired ? signedMovePoints(paired.move) : signedDelta(item.pregame_mark, item.current);
   const up = delta?.startsWith("↑");
   const flat = delta === "±0";
   return (
     <div className="flex items-center gap-2 shrink-0">
       {item.pregame_mark != null ? (
         <span className="font-mono text-[11px] text-text-muted tabular-nums">
-          {pct(item.pregame_mark)} →
+          {paired ? `${paired.mark}%` : pct(item.pregame_mark)} →
         </span>
       ) : (
         <Pending note="script pending" />
       )}
       <span className="font-mono text-sm font-semibold text-text-primary tabular-nums">
-        {pct(item.current)}
+        {paired ? `${paired.current}%` : pct(item.current)}
       </span>
       {delta && (
         <span
