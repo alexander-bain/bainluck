@@ -174,14 +174,65 @@ def fabricated_midpoint_sql(probability: str, yes_bid: str, yes_ask: str) -> str
 # empty book whose stored price is 0.99 got that number from somewhere else (a trade,
 # a stale capture) and is a different defect family (#4845), not this one.
 #
+# The midpoint test is LOAD-BEARING and is what makes the both-extremes test safe. A
+# both-extremes book whose price is NOT its midpoint got that price from somewhere real
+# — Kalshi's ingest falls back to `last_price` on a wide book, so "Aaron Rodgers: 17+
+# passing completions" quotes 0.00 / 0.98 and carries a traded 0.76. Measured: dropping
+# the midpoint clause and keeping only "both extremes + a mid-range price" pulls in 305
+# outcomes including that whole class of real lines. Keep both halves.
+#
+# THE TOLERANCES ARE MEASURED, AND THE FIRST VERSION OF THIS SHIPPED TOO TIGHT (#5247).
+# The first cut used ask >= 0.98 and reused `_PHANTOM_MIDPOINT_TOLERANCE` (0.0005). It
+# went live at 19:39Z on 2026-09-11 and the specimen ESCAPED IT TWENTY MINUTES LATER:
+# the book moved to 0.01 / 0.97 carrying 0.495, so the ask missed the floor by one cent
+# and the price missed the midpoint by half of one. The card stayed on the page. An
+# empty book is not less empty at 97c than at 98c, and a venue's own mid is not obliged
+# to be the exact arithmetic mean of the two sides it reports.
+#
+# WHY WIDENING IS SAFE — the argument is geometric, not statistical, so it does not
+# decay as the population turns over. The three bounds together CONFINE this predicate
+# to near-coin-flips and nothing else:
+#
+#     bid <= 0.02 and ask >= 0.95   =>  midpoint in [0.475, 0.510]
+#     |price - midpoint| <= 0.01    =>  price    in [0.465, 0.520]
+#
+# A row outside that band is UNREACHABLE by this function no matter how the market
+# moves. Every honest line the ship is afraid of — Rodgers at 0.76, Herbert at 0.72,
+# the settled 0.00/1.00 -> 0.99 rows of the #4845 family, "Auburn over 19.5" at 0.89 —
+# sits outside it by construction, not by luck. That is the guarantee `test_the_reach_
+# is_confined_to_the_coin_flip_band` pins, and it is why the ask could move 3c without
+# re-litigating the whole population.
+#
+# The distribution corroborates it. |price - midpoint| over the both-extreme books is
+# bimodal with a wide empty band: a spike at 0.000 and 0.005, then NOTHING until the
+# real-price tail an order of magnitude away. Any cut inside that gap is equivalent;
+# 0.01 sits in it with room on both sides. (Exact bucket counts move hour to hour and
+# are deliberately not quoted here — two reads of the same 2026-09-11 window five hours
+# apart gave 64/149 and 30/140. Re-measure, don't trust a number in a comment.)
+#
+# This is a SEPARATE constant from `_PHANTOM_MIDPOINT_TOLERANCE` on purpose — that one
+# is shared with `fabricated_midpoint_sql`, the calibration closing line and the
+# Polymarket ingest, and widening it there would move populations this ship never
+# measured.
+#
+# KNOWN INCOMPLETE, and it is an under-reach rather than a regression: a two-leg market
+# can have both legs on empty books with one leg's bid just over 0.02 (0.03-0.05), so
+# the phantom leg drops and its equally-phantom complement survives alone. Measured on
+# the same window: 109 such rows, all in the same 0.49-0.505 band. Both legs were
+# phantom before this ship and one is phantom after, so no reader is worse off. The bid
+# bound is the previous cert's measured constant and moving it is its own ship (#5333).
+#
 # No trade check is needed and none is done — deliberately, so this stays a pure
 # function on three columns the serve path already holds and adds no query to a hot
-# endpoint. The midpoint equality IS the no-trade evidence: every ingest path that has
-# a trade price prefers it over the midpoint on a wide book (gotcha #19,
-# `polymarket.py` `has_real_trading`), so a price that is still EXACTLY the midpoint of
-# an empty book is one no trade ever informed.
+# endpoint. The midpoint proximity is strong evidence of no trade rather than proof of
+# it: every ingest path that HAS a trade price prefers it over the midpoint on a wide
+# book (gotcha #19, `polymarket.py` `has_real_trading`), so a price still sitting on an
+# empty book's midpoint is one no trade informed. A historical trade can exist without
+# having moved the stored price, so this predicate claims only what it can see — that
+# the value being SERVED is unsupported by any current quote.
 EMPTY_BOOK_MAX_BID = 0.02
-EMPTY_BOOK_MIN_ASK = 0.98
+EMPTY_BOOK_MIN_ASK = 0.95
+EMPTY_BOOK_MIDPOINT_TOLERANCE = 0.01
 
 
 def is_empty_book_midpoint(
@@ -195,7 +246,13 @@ def is_empty_book_midpoint(
       1. a two-sided quote exists (both bid and ask present),
       2. it is empty on BOTH sides -- ``yes_bid <= EMPTY_BOOK_MAX_BID`` and
          ``yes_ask >= EMPTY_BOOK_MIN_ASK``, so the quote bounds nothing, and
-      3. the stored probability IS that book's midpoint.
+      3. the stored probability sits ON that book's midpoint, within
+         ``EMPTY_BOOK_MIDPOINT_TOLERANCE``.
+
+    Condition 3 is not decoration. A both-extremes book whose price is far from its
+    midpoint got that price from a real trade (Kalshi falls back to ``last_price`` on a
+    wide book), and those are honest lines -- see the constants above for the measured
+    class this would otherwise destroy.
 
     Unlike :func:`is_fabricated_midpoint`, a MISSING side is not treated as the widest
     quote on that side. A one-sided book still carries information -- an ask at 36c
@@ -212,7 +269,7 @@ def is_empty_book_midpoint(
     ask = float(yes_ask)
     if bid > EMPTY_BOOK_MAX_BID or ask < EMPTY_BOOK_MIN_ASK:
         return False
-    return abs(float(probability) - (bid + ask) / 2) < _PHANTOM_MIDPOINT_TOLERANCE
+    return abs(float(probability) - (bid + ask) / 2) <= EMPTY_BOOK_MIDPOINT_TOLERANCE
 
 
 # A distribution over a MUTUALLY EXCLUSIVE field must still cover that field once the
