@@ -124,12 +124,38 @@ async def _select_kalshi_settlement_tickers(
 
     # BAND 1 — what settled since the last cycle, newest first. Bounded on BOTH
     # sides of now (`_FRESH_SETTLEMENT_FLOOR_DAYS`) and restricted to markets
-    # carrying NO grade on ANY outcome, which is exactly what a reader sees as
-    # "settled, no result". Legs already carrying `ungradeable_result` are
+    # where NO outcome has been declared a WINNER, which is exactly what a reader
+    # sees as "settled, no result". Legs already carrying `ungradeable_result` are
     # excluded: that is #1852's RETRACTION — the venue declared a `scalar`/empty
     # result and we took the fabricated loss back out — so it is a decision, not
     # a gap, and leaving it in would clog this band with markets no cycle can
     # ever grade.
+    #
+    # #5146 — WHY THE TEST IS `IS TRUE` AND NOT `IS NOT NULL`. This clause shipped
+    # as `NOT EXISTS (… fo.is_winner IS NOT NULL)`, reading "no grade on any leg".
+    # It does not mean that. `futures_outcomes.is_winner` is
+    # `nullable=True, default=False, server_default=text("false")`
+    # (`app/models/models.py`), so a leg NO grader has ever touched stores FALSE —
+    # NULL is the rare shape, produced mainly by #1852's retraction. The old clause
+    # therefore read the column's own DEFAULT as a grade, and one untouched leg
+    # was enough to hide the whole market from this band.
+    #
+    # MEASURED on production 2026-09-11 07:30–07:55Z, running this statement with
+    # `AUTHORITATIVE_SOURCES_SQL` imported rather than retyped: the old clause made
+    # 2,416 tickers eligible inside the 3-day window, this one makes 7,927 — so
+    # **5,511 (70%) of freshly-settled tickers could never enter the fast lane** and
+    # fell to band 2's ~11-day alphabetical wrap. Venue-confirmed at the time:
+    # `KXNFLPASSTDS-26SEP10SFLAR` (last night's SF–LAR game) was 9/9 `finalized`
+    # with three `yes` results while every stored leg — Purdy 1+ through
+    # Stafford 5+ — sat at `is_winner=false, resolution_source=NULL`, i.e. the page
+    # said Brock Purdy threw no touchdown passes.
+    #
+    # It is BUDGET-NEUTRAL: the band still takes at most `fresh_limit` tickers per
+    # cycle, so only WHICH tickers are asked about changes — no extra venue calls
+    # on a phase that already dies on its budget (#4740). And it self-drains: the
+    # venue's answer lands as `api_settlement` (tier 3, an upgrade over the
+    # `all_losers` tier-1 heuristic that dominates this cohort), after which the
+    # authority clause below excludes the market.
     fresh_tickers: list[str] = []
     if fresh_limit > 0:
         fresh_rows = await session.execute(
@@ -144,7 +170,7 @@ async def _select_kalshi_settlement_tickers(
                   AND NOT EXISTS (
                       SELECT 1 FROM futures_outcomes fo
                       WHERE fo.market_id = fm.id
-                        AND fo.is_winner IS NOT NULL
+                        AND fo.is_winner IS TRUE
                   )
                   AND EXISTS (
                       SELECT 1 FROM futures_outcomes fo
