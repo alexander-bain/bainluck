@@ -5,6 +5,35 @@ from __future__ import annotations
 import re
 
 
+# Pre-game status_detail strings like "Wed, March 25th at 10:00 PM EDT" should
+# not be stored as period values. Lives here rather than in the ESPN task
+# module (#5390): it is a pure statement about period strings, this module
+# imports nothing but `re`, and its old home forced every caller in
+# `utils/espn_helpers.py` into a function-local import to dodge a real cycle.
+#
+# ESPN writes the pre-game detail in TWO shapes and the pattern only knew the
+# long one. The short numeric form ("5/23 - TBD") reached production and sat in
+# `events.period`. The `\d{1,2}/\d{1,2}` branch requires a digit on BOTH sides
+# of the slash, which is what keeps it off the real period vocabulary —
+# "Final/10", "Final/2OT" and "Final/SO" all carry a letter before the slash.
+# Measured against the whole `events` table, the branch newly matches 5 rows
+# and every one of them is a date.
+_PREGAME_DATE_RE = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b"
+    r"|\b\d{1,2}/\d{1,2}\b",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_period(status_detail: str | None) -> str | None:
+    """Return status_detail if it looks like a game period, else None."""
+    if not status_detail:
+        return None
+    if _PREGAME_DATE_RE.search(status_detail):
+        return None
+    return status_detail
+
+
 _BASEBALL_HALF_ALIASES = {
     "top": "Top",
     "t": "Top",

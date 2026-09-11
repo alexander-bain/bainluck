@@ -912,6 +912,7 @@ async def sync_espn_live_events(
 
     from app.services import get_espn_service, llm
     from app.models import Venue
+    from app.utils.game_state import _sanitize_period
     from app.utils.espn_id_stamp import REFUSED, STAMPED, stamp_espn_id_if_unheld
 
     espn = get_espn_service()
@@ -1080,9 +1081,20 @@ async def sync_espn_live_events(
                     event.game_clock = espn_event.clock
                     changed = True
 
-                # Update period
-                if espn_event.status_detail and event.period != espn_event.status_detail:
-                    event.period = espn_event.status_detail
+                # Update period — #5390: refuse ESPN's pre-game date, and never
+                # blank a real period another writer already set (same rule as
+                # `update_event_fields_from_espn`).
+                _new_period = _sanitize_period(espn_event.status_detail)
+                if _new_period:
+                    if event.period != _new_period:
+                        event.period = _new_period
+                        changed = True
+                elif (
+                    espn_event.status_detail
+                    and event.period is not None
+                    and _sanitize_period(event.period) is None
+                ):
+                    event.period = None
                     changed = True
 
                 # Update broadcast info

@@ -13,6 +13,9 @@ from sqlalchemy import select, update as _sql_update
 # live/048 — the state ladder's two doors (EVENT-GRAPH-DOCTRINE §R). Safe to
 # import here: `event_completion` imports nothing but `datetime`.
 from app.utils.event_completion import authority_may_settle, play_resumes
+# #5390: the period-string predicate lives in a leaf module, so this is a
+# plain module-level import rather than five function-local ones dodging a cycle.
+from app.utils.game_state import _sanitize_period
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import (
     select_authorized_espn_candidate as _select_authorized_espn_candidate,
@@ -360,9 +363,33 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
         event.game_clock = ee.clock
         changed = True
 
-    # Update period
-    if ee.status_detail and event.period != ee.status_detail:
-        event.period = ee.status_detail
+    # Update period.
+    #
+    # #5390 (#5012 layer 2): ESPN keeps its PRE-GAME status detail — "Thu,
+    # September 10th at 8:35 PM EDT", or the short "5/23 - TBD" — in
+    # status_detail until its first in-game update lands, which is a window of
+    # a few minutes on every kickoff. A raw copy therefore stores a DATE in a
+    # column that the pace estimator, the served `game_period` and the
+    # Discover badge all read as a period; "September 10th" parsed as period
+    # 10 and badged a 0-0 NFL game "Overtime".
+    #
+    # Two rules, and the second is why this is not a one-line sanitize:
+    #   - refuse the date, never store it;
+    #   - never blank a real period. ESPN is not the only writer here
+    #     (mlb_sync and statpal_sync write this column too) and it is the
+    #     slowest, so it routinely still says "pre-game" while MLB already
+    #     says "Top 1st". Overwriting that with None would trade one wrong
+    #     answer for a missing one.
+    # A date already stored is cleared rather than frozen, so the column
+    # self-heals on the next sync and needs no migration.
+    _new_period = _sanitize_period(ee.status_detail)
+    if _new_period:
+        if event.period != _new_period:
+            event.period = _new_period
+            changed = True
+    elif ee.status_detail and event.period is not None and _sanitize_period(event.period) is None:
+        # Both sides are the same class of garbage — drop ours.
+        event.period = None
         changed = True
 
     # Update scores + capture ScoreSnapshot for score differential chart
@@ -559,7 +586,6 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     Returns True if any change was made.
     """
     from app.models.models import Event, ESPNSnapshot
-    from app.tasks.espn_sync import _sanitize_period
 
     if ee.home_win_probability is None:
         return False
@@ -663,7 +689,9 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
             home_score=ee.home_score,
             away_score=ee.away_score,
             game_clock=ee.clock,
-            period=ee.status_detail,
+            # #5390: a snapshot's period is served back out (events.py `snap.period`),
+            # so a pre-game date is as wrong here as it is on the event row.
+            period=_sanitize_period(ee.status_detail),
         )
         session.add(snapshot)
         stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
@@ -707,7 +735,6 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     Returns True if stat_model was computed and written.
     """
     from app.models.models import Event
-    from app.tasks.espn_sync import _sanitize_period
 
     has_game_progress = ee.clock or sport_key.startswith("baseball_")
     if ee.status != "in" or ee.home_score is None or ee.away_score is None or not has_game_progress:
@@ -914,7 +941,7 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                     home_score=ee.home_score,
                     away_score=ee.away_score,
                     game_clock=ee.clock,
-                    period=ee.status_detail,
+                    period=_sanitize_period(ee.status_detail),  # #5390
                 )
                 session.add(snapshot)
 
@@ -1447,8 +1474,9 @@ async def backfill_missing_scores(session, stats):
                         if ee.home_score is not None:
                             ev.home_score = ee.home_score
                             ev.away_score = ee.away_score
-                            if ee.status_detail:
-                                ev.period = ee.status_detail
+                            _bf_period = _sanitize_period(ee.status_detail)  # #5390
+                            if _bf_period:
+                                ev.period = _bf_period
                             # #2693 CERT-784: `not ev.espn_id` asks whether THIS
                             # row has one and never whether another row already
                             # holds it — the exact question #2017 exists to add.
