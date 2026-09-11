@@ -11828,14 +11828,21 @@ def _drop_duplicate_bout_concepts(items: list[dict]) -> list[dict]:
     ]
 
 
-@router.get("/tag-counts")
-async def get_tag_counts(
-    db: AsyncSession = Depends(get_db),
-):
-    """Return item counts grouped by sport for the category index page.
+async def _candidate_tag_counts(
+    db: AsyncSession,
+) -> dict[str, dict[str, int]]:
+    """Count what the CANDIDATE predicate ADMITS, per category.
 
-    Counts active events (live, scheduled within 12h, completed within 24h)
-    and open futures markets per sport category.
+    Active events (live, scheduled within 12h, completed within 24h) and open
+    futures markets. This is a count of rows that are ELIGIBLE to be considered,
+    which is not the same thing as a count of what a reader will see, and the
+    difference is #4920: candidate admission is necessary, not sufficient.
+    ``get_tag_counts`` below prefers a measured render count wherever it has one
+    and falls back to this.
+
+    Kept whole, comments and all, as the fallback path. It is still the only
+    answer available for a category the producer has not measured, and it is the
+    answer this route gave for its entire life before #4920.
     """
     now = datetime.now(timezone.utc)
     recent_cutoff = now - timedelta(hours=24)
@@ -11952,4 +11959,63 @@ async def get_tag_counts(
             "futures": futures_counts.get(cat, 0),
         }
 
-    return {"counts": counts}
+    return counts
+
+
+@router.get("/tag-counts")
+async def get_tag_counts(
+    db: AsyncSession = Depends(get_db),
+):
+    """Item counts per category for the Browse index — what the PAGE renders.
+
+    #4920. The tile advertised ``Tennis — 368 events · 4,627 markets`` and the
+    page rendered eleven cards. Measured on production 2026-09-11 04:36-05:05Z,
+    all 28 visible tiles over-promised and not one was correct; the worst was
+    cricket at 784 promised against 1 delivered.
+
+    The honest number was never missing. ``GET /api/feed?category=X`` already
+    returns a ``total`` equal to what it renders, so this route's own long-
+    standing promise — "this count is a promise about what the category page
+    will show" — is kept by READING that number rather than by writing the
+    predicate a third time. `app/tasks/tag_counts_warm.py` measures it per
+    category; this route prefers it wherever it exists.
+
+    🔴 THE FALLBACK IS THE OLD COUNT, NOT A ZERO. A category the producer has
+    not measured keeps its candidate number, because ``/categories`` deletes a
+    tile whose counts sum to zero (#2627) and a cold Redis must not empty the
+    Browse grid. A measured zero IS published and DOES delete the tile — that is
+    #2627 working correctly, and on the production read above exactly one tile
+    moves that way (``horse_racing``: candidate 1, renders 0).
+
+    ``source`` is per category and machine-only: ``rendered`` where the count
+    came from the pipeline, ``candidate`` where this route still guesses. It is
+    how the fix is verified from outside without re-deriving it, and no client
+    prints it.
+    """
+    from app.utils import tag_counts_cache
+
+    counts = await _candidate_tag_counts(db)
+    rendered, created_at = tag_counts_cache.read()
+
+    for cat, measured in (rendered or {}).items():
+        if cat not in counts:
+            # The producer enumerates from this same candidate map, so a
+            # category here that is not there means the two have drifted (a
+            # category emptied out between the warm and now). Ignore it rather
+            # than invent a tile: this route may only ever correct a number the
+            # candidate pass already publishes, never add one.
+            continue
+        if not isinstance(measured, dict):
+            continue
+        events = measured.get("events")
+        futures = measured.get("futures")
+        if not isinstance(events, int) or not isinstance(futures, int):
+            # A half-written or wrongly-typed entry is "not measured", which is
+            # the candidate count — never a zero (see above).
+            continue
+        counts[cat] = {"events": events, "futures": futures, "source": "rendered"}
+
+    for cat, entry in counts.items():
+        entry.setdefault("source", "candidate")
+
+    return {"counts": counts, "rendered_built_at": created_at}
