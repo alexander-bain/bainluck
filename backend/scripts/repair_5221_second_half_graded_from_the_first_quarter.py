@@ -116,8 +116,8 @@ maintain. The measured control run agrees: 0 clears in 2,008 NCAAB rows.
 
 THE RESIDUE, STATED RATHER THAN QUIETLY DROPPED — all 162 of it, grouped by the
 reason the filter gave, because a refusal reported only as a count is where the
-next defect hides. Every one of the four buckets below was found by reading that
-grouping, and three of them are now issues:
+next defect hides. Every one of the five buckets below was found by reading that
+grouping, and all five are now issues:
 
     100  KXNFL1HSPREAD, linescore missing        -> #5243 (six events hold NO
          or unreadable                              box score at all; no reading
@@ -130,13 +130,23 @@ grouping, and three of them are now issues:
                                                     first half was 14-14 and
                                                     legs claim Troy won it by
                                                     over 3.5, 20.5 and 23.5.
-     10  KXNCAAMB1HSPREAD, no pure grader        -> a leg `_spread_outcome_is_
-         for this market shape                      winner` will not parse; the
-                                                    market is left whole
+     10  KXNCAAMB1HSPREAD, no pure grader        -> #5248. A leg will not parse
+         for this market shape                      for `_spread_outcome_is_
+                                                    winner`, so the market is
+                                                    left whole -- but BOTH
+                                                    teams are stored winning
+                                                    the same 1H, which UVA led
+                                                    41-25 while Virginia Tech
+                                                    is also winning it by over
+                                                    3.5, 6.5 and 9.5. 3 wrong.
       8  KXNBA2HWINNER, no pure grader           -> #5234 (the 2-leg winner
          for this market shape                      shape)
-      4  KXNBA1HSPREAD, the bug does not         -> one market,
+      4  KXNBA1HSPREAD, the bug does not         -> #5248: on the one market,
          explain the stored verdict                 KXNBA1HSPREAD-26MAR24NOPNYK
+                                                    both teams are stored
+                                                    winning the same 1H, which
+                                                    New York took 66-60. 6 of
+                                                    its 11 legs are wrong.
 
 #5234 is the shape worth naming here because it is a gap in the CODE rather than
 in the data: four `KXNBA2HWINNER` markets carry TWO legs ("Minnesota wins 2nd
