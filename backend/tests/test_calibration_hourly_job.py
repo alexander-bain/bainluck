@@ -370,6 +370,112 @@ def test_declining_the_slot_exits_zero(job, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 4b. The SECOND lock (#5335) — the beat holds the checkpoint, not our lease.
+#
+# The script's own `single_flight` lease can only ever be held by another copy
+# of the script. The beat in `worker-heavy` declines us from INSIDE the build
+# instead, which arrives as a summary, not as a refused lease — so it lands in
+# `exit_code_for`, where `verdict_for` rightly calls it non-COMPLETE and the
+# process rightly used to exit 1 at an operator who was told to wait for a 0.
+# ---------------------------------------------------------------------------
+
+def _checkpoint_declined_summary():
+    """The literal shape `_precompute_calibration_main` returns on REFUSE."""
+    return {
+        "status": "skipped",
+        "reason": "checkpoint_leased",
+        "owner": "e8da65af-505b-48d6-9d99-425bbfe5dc46:20",
+        "ledger_write": "ok",
+    }
+
+
+def test_a_checkpoint_stand_down_exits_zero(job):
+    """The #5335 regression, reproduced from production run.5277 / run.3049."""
+    assert job.exit_code_for(_checkpoint_declined_summary()) == job.EXIT_OK
+
+
+def test_a_checkpoint_stand_down_exits_zero_through_main(job, monkeypatch):
+    """Through `main`, so the stand-down LOG branch is executed too.
+
+    `exit_code_for` being right does not prove the process is: the branch that
+    reports the stand-down reads `summary["owner"]`, and a mistake there raises
+    on exactly the path this ship exists to make clean.
+    """
+    import contextlib
+
+    from app.utils.single_flight import Lease
+
+    monkeypatch.setattr(
+        job, "_run_build", lambda bound: _checkpoint_declined_summary()
+    )
+    granted = Lease(
+        task=job.TASK_NAME, key="k", token="t", acquired=True, reason=None
+    )
+
+    @contextlib.contextmanager
+    def _grant(task, ttl_seconds=None):
+        yield granted
+
+    monkeypatch.setattr("app.utils.single_flight.single_flight", _grant)
+
+    assert job.main() == job.EXIT_OK
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["population_empty", "fingerprint_mismatch", "no_rows", "", None],
+)
+def test_a_skip_for_ANY_OTHER_reason_still_exits_one(job, reason):
+    """The discriminator — without this, the fix is `status == "skipped"`.
+
+    A build that did not happen for a reason nobody has vetted is exactly the
+    silence #1515 was about. Only the checkpoint lease is exempt.
+    """
+    summary = {"status": "skipped", "reason": reason}
+    assert job.exit_code_for(summary) == job.EXIT_FAILED
+
+
+@pytest.mark.parametrize("summary", [None, "skipped", 0, [], ("skipped",)])
+def test_a_non_dict_summary_is_never_a_stand_down(job, summary):
+    """Totality: an unrecognised summary must not fall through to a clean exit."""
+    assert job.is_checkpoint_declined(summary) is False
+
+
+def test_the_stand_down_shape_still_matches_its_producer(job):
+    """Drift guard: the two literals this job matches on are the two the task emits.
+
+    A source read, so it proves the strings are still written in the REFUSE
+    branch — NOT that the branch runs. It exists because the coupling is a pair
+    of bare string literals in another module with no shared constant, so a
+    rename there would silently turn this ship back off.
+    """
+    from pathlib import Path
+
+    import app.tasks.precompute_calibration as pc
+
+    CHECKPOINT_DECLINED_STATUS = job.CHECKPOINT_DECLINED_STATUS
+    CHECKPOINT_DECLINED_REASON = job.CHECKPOINT_DECLINED_REASON
+
+    source = Path(pc.__file__).read_text()
+
+    # Anchor to the FUNCTION first. The module has more than one
+    # `if action == REFUSE:` — a bare split lands in `_deferred_rebuild_pass`,
+    # whose stand-down is a different summary and would pass this guard for the
+    # wrong reason. (It did, on the first draft of this test.)
+    body = source.split("async def _precompute_calibration_main(", 1)
+    assert len(body) == 2, "_precompute_calibration_main was renamed — re-derive"
+    body = body[1].split("\ndef ", 1)[0].split("\nasync def ", 1)[0]
+
+    assert body.count("if action == REFUSE:") == 1, (
+        "expected exactly one REFUSE branch in this function; the guard can no "
+        "longer tell which stand-down it is reading"
+    )
+    branch = body.split("if action == REFUSE:", 1)[1][:1200]
+    assert f'"status": "{CHECKPOINT_DECLINED_STATUS}"' in branch
+    assert f'"reason": "{CHECKPOINT_DECLINED_REASON}"' in branch
+
+
+# ---------------------------------------------------------------------------
 # 5. The missing-run alert — and that it is NOT keyed to the beat.
 # ---------------------------------------------------------------------------
 
