@@ -258,8 +258,14 @@ def test_an_omitted_basis_stores_null_beside_a_real_opening():
     ``opening_source`` is a plain nullable String(30) with no server default, so
     an insert that omits it stores NULL — and NULL beside a NOT NULL
     ``opening_probability`` is exactly the row shape that made 12,931 published
-    golf legs unreadable. The conditional the poller now writes must also store
-    a real NULL when there was no trading, rather than the string ``"None"``.
+    golf legs unreadable.
+
+    The three rows are the three states the poller can now produce: the old
+    omission, and the two values its conditional yields. The conditional is
+    written out as its two RESULTS rather than as
+    ``"bid_ask_midpoint" if has_real_trading else None`` with a constant test —
+    that spelling is a constant conditional (CodeQL ``py/constant-conditional-
+    expression``) and says nothing the literals do not.
     """
     engine = _sqlite_engine()
     with engine.begin() as conn:
@@ -269,18 +275,21 @@ def test_an_omitted_basis_stores_null_beside_a_real_opening():
                 current_probability=0.95, opening_probability=0.95,
             )
         )
+        # has_real_trading -> an opening AND the basis beside it.
         conn.execute(
             sa.insert(FuturesOutcome).values(
                 market_id=1, external_id="tagged", name="tagged",
                 current_probability=0.95, opening_probability=0.95,
-                opening_source="bid_ask_midpoint" if True else None,
+                opening_source="bid_ask_midpoint",
             )
         )
+        # not has_real_trading -> neither, and the None must reach the database
+        # as SQL NULL rather than as the string "None".
         conn.execute(
             sa.insert(FuturesOutcome).values(
                 market_id=1, external_id="no_trading", name="no_trading",
                 current_probability=0.95, opening_probability=None,
-                opening_source="bid_ask_midpoint" if False else None,
+                opening_source=None,
             )
         )
 

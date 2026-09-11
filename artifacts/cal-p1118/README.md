@@ -109,6 +109,30 @@ least one qualifying snapshot), so they are historical or another writer's rows.
 **This gap — not the book shape, not the band — is the honest discriminator, and
 it is nameable as a rule rather than as a provenance artifact.**
 
+### F6b — and it is the better cut, measured
+
+Same instrument, same published `kalshi/golf` cell, splitting on whether the leg
+has any snapshot meeting the WRITER's own bar instead of on the provenance tag:
+
+| cohort | band | n | won | implied | realised |
+|---|---|---:|---:|---:|---:|
+| below writer bar | ≥0.80 | 304 | 9 | 285.4 | **3.0%** |
+| below writer bar | <0.80 | 5,558 | 125 | 752.2 | **2.2%** |
+| meets writer bar | ≥0.80 | 409 | 371 | 380.4 | 90.7% |
+| meets writer bar | <0.80 | 15,871 | 2,890 | 3,037.9 | 18.2% |
+
+(Totals reconcile: 22,142 legs, implied 4,455.9, won 3,395 — the same cell.)
+
+| cut | population removed | deficit captured | cell after |
+|---|---:|---:|---:|
+| provenance (`opening_source` untagged) | **58.4%** | 1,128.8 (106%) | 1.038 — overshoots |
+| **writer bar** | **26.5%** | **903.6 (85%)** | **0.954** |
+
+The writer-bar rule removes **less than half as much population**, captures 85% of
+the miss, and lands the cell at 0.954 against a board control of 0.982 — where the
+provenance cut overshoots to 1.038. **This is the repair to build.** It still
+exceeds the gate's ±5% band, so it still needs q270.
+
 ## F7 — BLOCKER: any curve-side exclusion here needs q270
 
 The untagged cohort is 12,931 of 22,141 published `kalshi/golf` legs (**58.4%**).
