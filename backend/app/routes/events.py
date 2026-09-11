@@ -11933,15 +11933,35 @@ def _own_axis(value, inverted):
     return round(1.0 - value, 4)
 
 
-def _build_props_script(player_props, event_is_finished):
+def _build_props_script(player_props):
     """#195: flatten graded/priced player props into the PropsSection contract.
 
     Maps the endpoint's ``player_props[]`` onto the frontend ``PropMark`` shape
     (``frontend/components/event/PropsSection.tsx``): ``pregame_mark`` (THE
-    SCRIPT), ``current`` (live), and — for settled events — ``graded_result`` /
-    ``graded_label`` (WHAT HIT). The frontend derives its state (script /
+    SCRIPT), ``current`` (live), ``graded_result`` / ``graded_label`` (WHAT HIT)
+    and ``settled``. The frontend derives the SECTION's state (script /
     divergence / graded) from event status and gates the whole section on this
-    array being present and non-empty.
+    array being present and non-empty; ``settled`` is how one ROW overrides it.
+
+    #5088 / T3-2 — THE WHISTLE IS NOT THE TRIGGER, THE ROW'S OWN EVIDENCE IS.
+
+    This function used to compose a verdict only when the caller said the EVENT
+    was finished, which made a question that was answered in the third inning
+    wait for the ninth. The ``event_is_finished`` parameter is gone rather than
+    defaulted, because a dead gate left in the signature reads as a live one.
+
+    Nothing about WHICH rows carry a verdict has been loosened — the two
+    evidence tests below are unchanged and are the whole gate:
+
+    * a typed ``hit``, which only ``_grade_settled_prop`` (box score, settled
+      events only) and ``_grade_closed_windows`` (line score, and only for a
+      window ``prop_window_closed`` has PROVEN is over) ever set; or
+    * an authoritative ``resolution_source``, the same test
+      :func:`_settled_grade_fields` documents.
+
+    A row with neither is emitted with ``graded_result`` and ``graded_label``
+    null and ``settled`` false — pending, which is a different statement from
+    "lost" and the reason the ``is_winner`` fallback below is gated at all.
 
     #4390 — THE NUMBER BELONGS TO THE NAME THE ROW IS WEARING.
 
@@ -11970,25 +11990,24 @@ def _build_props_script(player_props, event_is_finished):
         label = pp.get("outcome_name") or pp.get("market_name") or ""
         graded_result = None
         graded_label = None
-        if event_is_finished:
-            hit = pp.get("hit")
-            if hit is None and pp.get("resolution_source"):
-                # is_winner is a Boolean defaulting to False — nullable, but
-                # production stores the default — so an
-                # UNRESOLVED outcome carries is_winner=False (not None) — trusting
-                # it here rendered ungraded props as a confident "miss" (observed
-                # live: WNBA player props with resolution_source=None all showed
-                # graded_result="miss"). Only fall back to is_winner when the
-                # outcome is authoritatively resolved (resolution_source set); a
-                # box-score-derived hit above never needs this gate.
-                is_win = pp.get("is_winner")
-                if is_win is not None:
-                    hit = bool(is_win)
-            if hit is not None:
-                graded_result = "hit" if hit else "miss"
-                actual = pp.get("actual")
-                if actual is not None:
-                    graded_label = f"{actual} — {graded_result}"
+        hit = pp.get("hit")
+        if hit is None and pp.get("resolution_source"):
+            # is_winner is a Boolean defaulting to False — nullable, but
+            # production stores the default — so an
+            # UNRESOLVED outcome carries is_winner=False (not None) — trusting
+            # it here rendered ungraded props as a confident "miss" (observed
+            # live: WNBA player props with resolution_source=None all showed
+            # graded_result="miss"). Only fall back to is_winner when the
+            # outcome is authoritatively resolved (resolution_source set); a
+            # box-score-derived hit above never needs this gate.
+            is_win = pp.get("is_winner")
+            if is_win is not None:
+                hit = bool(is_win)
+        if hit is not None:
+            graded_result = "hit" if hit else "miss"
+            actual = pp.get("actual")
+            if actual is not None:
+                graded_label = f"{actual} — {graded_result}"
         # #4390: `_inverted` is set by the endpoint's own over/under
         # classification, so this never re-derives orientation from the label —
         # the two would drift the moment either list of prefixes changed.
@@ -12000,6 +12019,17 @@ def _build_props_script(player_props, event_is_finished):
             "current": _own_axis(pp.get("over_probability"), inverted),
             "graded_result": graded_result,
             "graded_label": graded_label,
+            # #5088 — THE ROW SAYS WHETHER IT IS SETTLED; THE SECTION SAYS WHAT
+            # THE GAME IS DOING. `PropsSection` already reads exactly this field
+            # (`rowState = item.settled ? "graded" : state`), shipped for a
+            # completed golf round on a still-live tournament, and a window that
+            # ended in the third inning is the same statement about a game.
+            #
+            # It is emitted in EVERY state rather than only mid-game: at full
+            # time the section state is already "graded", so a `True` here
+            # changes nothing, and a field that means one thing in one state and
+            # another in the next is the shape #1650 exists to prevent.
+            "settled": graded_result is not None,
         })
     return script
 
@@ -12026,6 +12056,17 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
 
     Rows come back in WINDOW order, not market-table order (#4844): see the sort
     at the end of the function.
+
+    MID-GAME NOW (#5088 / T3-2), AND THE PARTIAL PERIOD IS WHY THE CALLER'S GATE
+    IS LOAD-BEARING. A live line score's LAST entry is the period currently being
+    played, so summing an array by length alone would grade an inning that is
+    still happening. Nothing here re-derives that: every row in ``closed_items``
+    got there through ``_window_is_closed`` → ``prop_window_closed``, which
+    refuses a baseball window unless the CURRENT inning is strictly past it, so
+    the entries this function sums are complete by construction. Removing that
+    gate, or feeding this function a row it did not classify, publishes a verdict
+    on an unfinished period — the one failure mode this whole arc exists to
+    prevent.
     """
     box = getattr(event, "box_score_data", None)
     if not isinstance(box, dict):
@@ -13505,36 +13546,35 @@ async def _build_game_markets(
         # because they are not player props and must not reach the price
         # buckets — the whole point is that their number stays gone and only
         # their result arrives.
-        # A VERDICT OR ABSENT, NEVER BLANK (CERT-2535, repairing #4845).
+        # A VERDICT OR ABSENT, NEVER BLANK (CERT-2535, repairing #4845) — AND
+        # THE GATE THAT BOUGHT IT IS NOW LIFTED THE WAY IT SAID IT WOULD BE
+        # (#5088 / T3-2, which is #1735's M2).
         #
-        # `_build_props_script` composes a verdict only when the event is
-        # FINISHED — every other row it emits carries a price instead. These rows
-        # deliberately carry no price, so mid-game they arrive with
-        # `pregame_mark`, `current`, `graded_result` and `graded_label` all null:
-        # a row whose every field is empty, which the frontend renders as a
-        # pending/em-dash line. Measured on a live sixth-inning reproduction, all
-        # four first-five spread rows came out that way.
+        # The rule CERT-2535 wrote is unchanged and is what makes the lift safe:
+        # a blank row is worse than an absent one. It was enforced by refusing to
+        # APPEND the block mid-game, because `_build_props_script` would only
+        # compose a verdict for a finished event and these rows carry no price —
+        # so mid-game every one of them arrived with `pregame_mark`, `current`,
+        # `graded_result` and `graded_label` all null.
         #
-        # That is #1588's own argument turned on this ship: against a blank row an
-        # ABSENT row is strictly better, and a row with nothing in it is worse
-        # than the suppression it replaced. So the graded block is appended only
-        # when the page is one that can print a verdict.
+        # It is now enforced one layer in, where it belongs: `_grade_closed_windows`
+        # returns ONLY rows `grade_period_window` answered (a refusal is a
+        # `continue`, never a row), and `_build_props_script` grades on the row's
+        # own evidence rather than on the whistle. A row that reaches the reader
+        # therefore carries a verdict by construction, in every game state, and a
+        # row that cannot be graded is absent exactly as it is today.
         #
-        # THE GATE IS TEMPORARY BY DESIGN and it is not a scope cut of #4845. It
-        # covers rows #1735 has been appending since it shipped, not just the
-        # deep-OTM rungs #4845 recovers — the reproduction blanks both. #1735's M2
-        # (grade a closed window in real time, "LIVE NOW → STILL TO COME → DONE")
-        # is what lifts it, and lifting it means teaching `_build_props_script` to
-        # grade mid-game, not deleting this line.
+        # THE RESOLUTION INPUT HAD TO ARRIVE FIRST, AND IT DID NOT USED TO.
+        # `_grade_closed_windows` reads `box_score_data.home_period_scores`, and
+        # `espn_helpers.fetch_live_box_scores` dropped that key on every live
+        # write — measured 2026-09-11, 46 of 46 recent MLB line scores were
+        # fetched strictly AFTER `completed_at`. Lifting this gate against the
+        # old writer would have been an inert change; see that function.
         "props_script": _build_props_script(
-            player_props + (
-                _grade_closed_windows(
-                    _window_closed_items, event, _ticker_by_market_id
-                )
-                if event_is_finished
-                else []
+            player_props
+            + _grade_closed_windows(
+                _window_closed_items, event, _ticker_by_market_id
             ),
-            event_is_finished,
         ),
     }
 
