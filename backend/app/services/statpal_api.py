@@ -95,6 +95,26 @@ class StatPalFixture:
     # rather than store `''`, which an `isnot(None)` coverage count would read
     # as a populated clock.
     game_clock: Optional[str] = None
+    #: Whether the venue's board carries a clock FIELD for this sport at all —
+    #: NOT whether that field currently holds a value. The two are different
+    #: claims and `game_clock` cannot express the difference, because
+    #: `_clean_game_clock` normalises absent, `''` and `'0:00'` to the same
+    #: `None` (deliberately — see that function).
+    #:
+    #: The writer needs the difference. Measured at both boards (#5017):
+    #: football's game object carries `timer` and EMPTIES it at halftime and at
+    #: the terminal, so an empty timer there is the venue saying "the clock has
+    #: stopped" — authoritative, and our column should follow it to NULL
+    #: (CERT-2569). Baseball's game object has no `timer` key at all; it carries
+    #: `outs` where football carries `timer`. The venue is not clearing a clock,
+    #: it has no concept of one, and `mlb_sync` deliberately uses
+    #: `Event.game_clock` to carry the inning for the live badge. Reading
+    #: baseball's structural silence as a cleared clock would blank that.
+    #:
+    #: Defaults False so a construction path that never saw a payload — the
+    #: soccer and tennis parsers below, and duck-typed fixtures in tests — makes
+    #: no claim about the clock and the writer leaves the column alone.
+    clock_field_served: bool = False
     home_score: Optional[int] = None
     away_score: Optional[int] = None
     home_q_scores: Optional[dict] = None  # {"q1": 24, "q2": 31, ...}
@@ -1826,6 +1846,9 @@ class StatPalAPIService(BaseAPIClient):
             status=status,
             raw_status=status_raw_str if status == "live" else None,
             game_clock=_clean_game_clock(item.get("timer")) if status == "live" else None,
+            # Asked of the PAYLOAD, not of the sport: the board says which
+            # sports it clocks, so nothing here enumerates sport names.
+            clock_field_served="timer" in item,
             home_score=home_score,
             away_score=away_score,
             home_q_scores=home_q_scores,

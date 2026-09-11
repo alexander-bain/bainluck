@@ -1397,27 +1397,43 @@ async def _sync_statpal_livescores() -> dict:
                             event.period = new_period
                             updated = True
 
-                        # CLEAR THE CLOCK WHEN THE VENUE CLEARS IT (CERT-2569).
+                        # CLEAR THE CLOCK WHEN THE VENUE CLEARS IT (CERT-2569),
+                        # BUT ONLY WHERE THE VENUE KEEPS A CLOCK AT ALL.
                         #
-                        # This assignment is deliberately NOT guarded on
-                        # `fixture_clock` being truthy. On a row the venue is
-                        # actively labelling as in-progress, the venue is
-                        # authoritative for the clock INCLUDING its absence:
-                        # halftime and the terminal both arrive with no timer
-                        # (measured — `'Halftime'` and `'Final'` both carry
-                        # `timer=''`).
-                        #
-                        # Guarding on truthiness reintroduces, at halftime, the
-                        # exact bug this ship exists to fix: the period would
-                        # advance to `'Halftime'` while `game_clock` kept the
-                        # last quarter's value, and `trustedLiveClock` preserves
-                        # both — so the reader sees a running-looking clock the
+                        # Within this branch the assignment is deliberately NOT
+                        # guarded on `fixture_clock` being truthy. On a row the
+                        # venue is actively labelling as in-progress, the venue
+                        # is authoritative for the clock INCLUDING its absence:
+                        # football's halftime and terminal both arrive with
+                        # `timer=''` (measured). Guarding on truthiness
+                        # reintroduces, at halftime, the exact bug this ship
+                        # exists to fix — the period would advance to
+                        # `'Halftime'` while `game_clock` kept the last
+                        # quarter's value, and `trustedLiveClock` preserves
+                        # both, so the reader sees a running-looking clock the
                         # venue had already cleared. A stale label degrades
-                        # visibly; a stale clock lies quietly. Where we cannot
-                        # write a true clock, NULL is the honest value.
-                        if event.game_clock != fixture_clock:
-                            event.game_clock = fixture_clock
-                            updated = True
+                        # visibly; a stale clock lies quietly.
+                        #
+                        # It IS guarded on the venue serving a clock field for
+                        # this sport, which is a different question and the one
+                        # `game_clock` alone cannot answer. Baseball's board has
+                        # no `timer` key at all (it carries `outs` there), so
+                        # its silence is structural, not a cleared clock — and
+                        # `mlb_sync` deliberately writes the inning into
+                        # `Event.game_clock` for the live badge. Without this
+                        # guard, #5017's own widening of `_normalize_status`
+                        # (which newly makes MLB's `'Top 8th'` read as live)
+                        # would have this beat blank that inning every 60s.
+                        # Same lesson as CERT-2569, one layer down: absent and
+                        # empty are different claims.
+                        #
+                        # `getattr` for the same reason as `fixture_clock`
+                        # above: duck-typed fixtures reach this writer, and they
+                        # make no claim about the clock.
+                        if getattr(fixture, "clock_field_served", False):
+                            if event.game_clock != fixture_clock:
+                                event.game_clock = fixture_clock
+                                updated = True
 
                     # Update scores
                     if fixture.home_score is not None and fixture.home_score != event.home_score:

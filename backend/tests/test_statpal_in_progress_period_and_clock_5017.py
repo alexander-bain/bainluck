@@ -226,7 +226,16 @@ def test_non_live_fixture_carries_no_clock():
 class _Fixture:
     """A StatPal live-board row shaped as the writer consumes it."""
 
-    def __init__(self, start_time, home, away, *, raw_status, game_clock):
+    def __init__(
+        self,
+        start_time,
+        home,
+        away,
+        *,
+        raw_status,
+        game_clock,
+        clock_field_served=True,
+    ):
         self.start_time = start_time
         self.home_team = home
         self.away_team = away
@@ -237,9 +246,15 @@ class _Fixture:
         self.away_score = 17
         self.raw_status = raw_status
         self.game_clock = game_clock
+        # Defaults True because every fixture in this file is a FOOTBALL row
+        # unless it says otherwise, and football's board carries `timer`. The
+        # baseball tests below pass False, which is what their board measures.
+        self.clock_field_served = clock_field_served
 
 
-async def _run_livescores(monkeypatch, *, fixtures, events):
+async def _run_livescores(
+    monkeypatch, *, fixtures, events, sport_key="americanfootball_nfl"
+):
     """Drive the real `_sync_statpal_livescores` and return the event rows."""
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
@@ -265,7 +280,7 @@ async def _run_livescores(monkeypatch, *, fixtures, events):
                 instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
 
     now = datetime.now(timezone.utc)
-    sport = Sport(key="americanfootball_nfl", name="americanfootball_nfl")
+    sport = Sport(key=sport_key, name=sport_key)
     sync_session.add(sport)
     sync_session.flush()
     event_ids = []
@@ -469,3 +484,189 @@ async def test_halftime_writes_a_bare_label_and_no_separator(monkeypatch):
     )
     assert rows[0].period == "Halftime"
     assert not (rows[0].period or "").startswith(" - ")
+
+
+# ---------------------------------------------------------------------------
+# 4. The sport this ship widened by accident (authority/121, repairs CERT-2574)
+# ---------------------------------------------------------------------------
+#
+# #5017's whole mechanism is `_normalize_status` learning the full-word
+# in-progress families. Football was the motivating sport, but the families are
+# shared: MLB's board serves `'Top 8th'` / `'Bottom 8th'`, which fell through to
+# the passthrough BEFORE this ship and so never reached the writer's
+# period/clock branch at all. After it, they do.
+#
+# That matters because the branch ends in an unguarded `event.game_clock =
+# fixture_clock` (CERT-2569's repair, correct for football). Measured at the
+# venue, 04:26Z: the football game object carries `timer` and empties it, while
+# the BASEBALL game object has no `timer` key at all — it carries `outs` where
+# football carries `timer`. So baseball's `fixture_clock` is always None, and
+# `mlb_sync` deliberately writes the inning into `Event.game_clock` for the live
+# badge. Ungarded, this beat blanks that inning every 60s.
+#
+# `_sync_statpal_livescores` is not gated on `AUTHORITY_BY_SPORT`, so this would
+# have shipped on deploy, on the next MLB slate — not at the football flip.
+
+
+def test_the_baseball_board_makes_no_clock_claim():
+    """The parse half: no `timer` key means no claim, not an empty clock.
+
+    `game_clock` alone cannot carry this — `_clean_game_clock` maps absent, `''`
+    and `'0:00'` to the same `None` on purpose. `clock_field_served` is the
+    field that survives that collapse.
+    """
+    baseball_item = {
+        "id": "1",
+        "status": "Top 8th",
+        "home": {"name": "Boston Red Sox", "totalscore": "4"},
+        "away": {"name": "New York Yankees", "totalscore": "2"},
+        "outs": "1",
+    }
+    fx = _parse(baseball_item)
+    assert fx is not None
+    assert fx.status == "live"
+    assert fx.raw_status == "Top 8th"
+    assert fx.game_clock is None
+    assert fx.clock_field_served is False
+
+
+def test_the_football_board_does_make_one():
+    """The contrast, on the same parser: `timer` present is a claim."""
+    fx = _parse(_live_item(timer=""))
+    assert fx is not None
+    assert fx.game_clock is None
+    assert fx.clock_field_served is True, (
+        "an EMPTY timer is still the venue keeping a clock and clearing it — "
+        "that is what CERT-2569 required us to follow"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_live_baseball_row_keeps_the_inning_in_game_clock(monkeypatch):
+    """The regression this repair exists to stop.
+
+    The row starts with the inning `mlb_sync` wrote for the live badge. StatPal
+    serves the half-inning as its status and NO clock field. The period should
+    advance; `game_clock` must be left exactly as it was, because the venue said
+    nothing about it.
+
+    NOT vacuous: the row starts with a non-empty `game_clock`, so an assignment
+    of `None` is observable here. (A clearing test that starts from an already
+    empty column cannot fail — the trap that let CERT-2569's defect through.)
+    """
+    now = datetime.now(timezone.utc)
+    fx = _Fixture(
+        now - timedelta(hours=1),
+        "Boston Red Sox",
+        "New York Yankees",
+        raw_status="Top 8th",
+        game_clock=None,
+        clock_field_served=False,
+    )
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[fx],
+        events=[("Boston Red Sox", "New York Yankees", "Top 8")],
+        sport_key="baseball_mlb",
+    )
+    assert rows[0].period == "Top 8th"
+    assert rows[0].game_clock == "Top 8", (
+        "StatPal blanked the inning mlb_sync wrote for the live badge — the "
+        "baseball board has no `timer` key, so its silence is structural and "
+        "must not be read as a cleared clock"
+    )
+
+
+@pytest.mark.asyncio
+async def test_football_halftime_still_clears_the_clock(monkeypatch):
+    """The guard must not undo CERT-2569 for the sport it was written for.
+
+    Same starting state as the baseball case — a populated `game_clock` — so the
+    two tests differ ONLY in whether the venue keeps a clock. Football's does,
+    so halftime clears it.
+    """
+    now = datetime.now(timezone.utc)
+    fx = _Fixture(
+        now - timedelta(hours=1),
+        "Los Angeles Rams",
+        "San Francisco 49ers",
+        raw_status="Halftime",
+        game_clock=None,
+        clock_field_served=True,
+    )
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[fx],
+        events=[("Los Angeles Rams", "San Francisco 49ers", "0:47")],
+    )
+    assert rows[0].period == "Halftime"
+    assert rows[0].game_clock is None, (
+        "halftime must still clear a stale football clock (CERT-2569)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_fixture_that_makes_no_clock_claim_at_all_leaves_it_alone(monkeypatch):
+    """Pins the `getattr` DEFAULT, which no other test reaches.
+
+    The baseball test above passes `clock_field_served=False` explicitly, so it
+    cannot tell a default of `False` from a default of `True` — a mutant that
+    flips the default survives it. This drives a fixture with no such attribute
+    at all, which is what every other duck-typed construction path in the tree
+    hands this writer. No claim about the clock means no write.
+    """
+    now = datetime.now(timezone.utc)
+
+    class _ClocklessFixture:
+        def __init__(self):
+            self.start_time = now - timedelta(hours=1)
+            self.home_team = "Boston Red Sox"
+            self.away_team = "New York Yankees"
+            self.status = "live"
+            self.fixture_id = "1"
+            self.odds_id = None
+            self.home_score = 4
+            self.away_score = 2
+            self.raw_status = "Top 8th"
+            self.game_clock = None
+            # deliberately no `clock_field_served`
+
+    assert not hasattr(_ClocklessFixture(), "clock_field_served")
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[_ClocklessFixture()],
+        events=[("Boston Red Sox", "New York Yankees", "Top 8")],
+        sport_key="baseball_mlb",
+    )
+    assert rows[0].period == "Top 8th"
+    assert rows[0].game_clock == "Top 8", (
+        "a fixture that never mentions the clock must not clear it — the "
+        "`getattr` default carries this and nothing else asserts it"
+    )
+
+
+def test_the_tennis_parser_makes_no_clock_claim_either():
+    """Pins the DATACLASS default, which the tennis path relies on.
+
+    Tennis reaches `_sync_statpal_livescores` (only soccer is in
+    `LIVESCORES_INGESTION_DARK_SPORTS`) and its board serves no clock. Its
+    parser never passes `clock_field_served`, so the dataclass default is the
+    only thing standing between a live tennis row and the same blanking the
+    baseball tests describe. Asserted through the real parser rather than by
+    constructing the dataclass, so it stays true if the parser starts setting it.
+    """
+    from app.services.statpal_api import StatPalAPIService
+
+    item = {
+        "id": "9",
+        "status": "3rd Set",
+        "date": "11.09.2026",
+        "time": "19:00",
+        "player": [
+            {"name": "Gauff", "id": "1", "totalscore": "1"},
+            {"name": "Rybakina", "id": "2", "totalscore": "0"},
+        ],
+    }
+    fx = StatPalAPIService()._parse_tennis_match(item, {"id": "5", "name": "US Open"})
+    assert fx is not None
+    assert fx.clock_field_served is False
