@@ -134,6 +134,23 @@ class ResolutionWindow:
 #: same reason: payouts are not final and the venue may still move it.
 VENUE_SETTLED_STATUSES = frozenset({"settled", "finalized"})
 
+#: Legs the venue LISTS but is not trading — and which therefore never become
+#: terminal. #5024. ``inactive`` is a real, common listing state, not an anomaly:
+#: ``kalshi_market_status``'s measured table counts 622 of ~2,000 nested markets
+#: on 2026-08-13, and it carries no ``result`` and keeps the backstop
+#: ``close_time`` forever.
+#:
+#: A dormant leg is not a PENDING leg, and the difference is the whole of #5024.
+#: Counting it against "every leg is terminal" does not delay a settlement by one
+#: sweep — it withholds it PERMANENTLY, because nothing the venue will ever do
+#: makes that leg terminal. Measured on production 2026-09-11 02:5xZ, live SF@LAR:
+#: ``KXNFLFIRSTTD-26SEP10SFLAR`` 26 ``finalized`` + 5 ``inactive``,
+#: ``KXNFLTEAMFIRSTTD-…-LAR`` 12 + 7, ``…-SF`` 11 + 4. All three were decided
+#: (Kyren Williams' touchdown, venue ``result='yes'``, ``settlement_ts``
+#: 01:22:33Z) and all three would have stayed ``open`` through the final whistle
+#: and every sweep after it.
+VENUE_DORMANT_STATUSES = frozenset({"inactive"})
+
 
 @dataclass(frozen=True)
 class VenueSettlement:
@@ -178,6 +195,16 @@ def derive_venue_settlement(statuses: Sequence[Optional[str]]) -> VenueSettlemen
     ``False`` rather than being treated as "probably over": the cost of waiting
     one more sweep is a day, and the cost of being wrong is a live market showing
     as resolved.
+
+    A DORMANT LEG IS NOT A PENDING LEG — #5024, and the one amendment to "ALL
+    legs must be terminal" above. ``inactive`` legs never become terminal (see
+    :data:`VENUE_DORMANT_STATUSES`), so the original reading does not make the
+    answer late, it makes it unreachable. The amended test is "no leg is still
+    PENDING", and it is deliberately gated on ``settled_legs`` being non-zero:
+    an event of nothing but dormant legs has told us nothing and still answers
+    ``False`` through ``open_at_venue``. The tennis case the paragraph above
+    protects is untouched, because a set-winner event whose match is still
+    running has ``active`` legs, and an ``active`` leg is pending.
     """
     legs = [(s or "").strip().lower() for s in statuses]
     if not legs:
@@ -188,8 +215,14 @@ def derive_venue_settlement(statuses: Sequence[Optional[str]]) -> VenueSettlemen
     settled_legs = sum(1 for s in legs if s in VENUE_SETTLED_STATUSES)
     if any(not s for s in legs):
         return VenueSettlement(False, len(legs), settled_legs, "status_absent")
-    if settled_legs == len(legs):
-        return VenueSettlement(True, len(legs), settled_legs, "settled")
+    dormant_legs = sum(1 for s in legs if s in VENUE_DORMANT_STATUSES)
+    pending_legs = len(legs) - settled_legs - dormant_legs
+    if settled_legs and not pending_legs:
+        # Reported apart from a clean sweep so the dormant population stays
+        # visible: this is the branch that used to be unreachable, and a run
+        # that leans on it should be countable without re-deriving why.
+        reason = "settled" if not dormant_legs else "settled_past_dormant_legs"
+        return VenueSettlement(True, len(legs), settled_legs, reason)
     if settled_legs:
         return VenueSettlement(False, len(legs), settled_legs, "partially_settled")
     return VenueSettlement(False, len(legs), settled_legs, "open_at_venue")

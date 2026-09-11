@@ -100,6 +100,17 @@ PAST_EVENT_BAND_DAYS = PROVABLY_PURGED_AGE_DAYS
 #: the 12,244 rows the population sweep is walking at 500 a night.
 RECENT_FINAL_WINDOW_HOURS = 6
 
+#: How far back the LIVE arm's band reaches, in hours — #5024.
+#:
+#: Bounded for one reason only: a row stuck in `status='live'` long after its
+#: game ended would otherwise sit in this selection forever, asking the venue
+#: every 10 minutes about a game nobody is playing. 12 hours clears the longest
+#: real live windows we carry (a Test-match day, a five-set match, a full esports
+#: series) with slack, against a measured 2026-09-11 02:4xZ population whose
+#: OLDEST live event had started 3h45m earlier. It is a leash on stale liveness,
+#: not a claim about how long games last.
+LIVE_EVENT_WINDOW_HOURS = 12
+
 #: What ONE run of the event-driven arm may touch.
 #:
 #: 200 against a measured 603-leg six-hour population, ordered freshest-final
@@ -141,6 +152,38 @@ RECENT_FINAL_BATCH_LIMIT = 200
 #:
 #: `LIKE 'KX%'` mirrors `SELECT_SQL`'s prefix for the same reason it does — the
 #: derivation downstream reads Kalshi event tickers and nothing else.
+#:
+#: THE LIVE ARM — #5024, and the reason `e.status = 'completed'` alone was not
+#: enough. Kalshi markets `can_close_early`: "This market will close and expire
+#: early if the event occurs." So a question can be DECIDED an hour before the
+#: whistle, and keying settlement on our own `completed_at` cannot reach it —
+#: not late, but not at all until the game ends.
+#:
+#: THE DATED SPECIMEN (standing notice 26/27), live SF@LAR 2026-09-11: Kyren
+#: Williams scored at 01:20Z; Kalshi closed his leg at 01:20:26Z and finalized it
+#: `result='yes'` with `settlement_ts=01:22:33Z`, and finalized the 25 losing
+#: legs by 01:45Z. At 02:32Z — 70 minutes later, mid-second-quarter — our row was
+#: still `status='open'` and the page drew an open 26-rung ladder summing to
+#: 124%, Kyren Williams at 99% and Brock Purdy still listed at 1% to score a
+#: touchdown someone else had already scored. Measured over all 48 live-event
+#: rows carrying the empty-book signature that minute: 38 were ALL-terminal at
+#: the venue, 3 more were terminal-past-dormant-legs, 6 genuinely part-settled
+#: and 1 genuinely open — so 41 of 48 were decided and unreachable.
+#:
+#: WHY THE `EXISTS` AND NOT SIMPLY `e.status = 'live'`. A live game's every leg
+#: is a candidate, so the bare predicate would put ~97 rows per NFL night — and
+#: on a Sunday slate several hundred — through a venue read every 10 minutes,
+#: most of them markets that are still trading normally. `yes_bid = 0 AND
+#: yes_ask = 1` is the EMPTY BOOK: both sides gone, which is what a venue leaves
+#: behind when it stops trading a market. It is the same signature the reader
+#: sees as a stuck 99%/1% ladder, because `_kalshi_yes_probability` falls through
+#: an empty book to the last trade. Measured precision on the 48 above: 41/48.
+#: It is a screen, not a verdict — the venue read still decides, and a market
+#: whose book is merely thin costs one question and no write.
+#:
+#: FINALS STILL WIN THE BATCH. `completed_at DESC NULLS LAST` sorts every
+#: finished game ahead of every live one, so the live arm can only ever consume
+#: batch capacity a final did not want. #4655's 30-minute bar is unchanged.
 RECENT_FINAL_SELECT_SQL = """
     SELECT fm.id, fm.external_id, fm.resolution_date, fm.commence_time,
            fm.market_tier
@@ -149,10 +192,26 @@ RECENT_FINAL_SELECT_SQL = """
     WHERE fm.source = 'kalshi'
       AND fm.status = 'open'
       AND fm.external_id LIKE 'KX%'
-      AND e.status = 'completed'
-      AND e.completed_at IS NOT NULL
-      AND e.completed_at >= :final_floor
-    ORDER BY e.completed_at DESC, fm.updated_at ASC
+      AND (
+            (
+              e.status = 'completed'
+              AND e.completed_at IS NOT NULL
+              AND e.completed_at >= :final_floor
+            )
+         OR (
+              e.status = 'live'
+              AND e.commence_time IS NOT NULL
+              AND e.commence_time >= :live_floor
+              AND EXISTS (
+                    SELECT 1
+                      FROM futures_outcomes fo
+                     WHERE fo.market_id = fm.id
+                       AND fo.current_yes_bid = 0
+                       AND fo.current_yes_ask = 1
+              )
+            )
+      )
+    ORDER BY e.completed_at DESC NULLS LAST, e.commence_time DESC, fm.updated_at ASC
     LIMIT :limit
 """
 
@@ -1067,6 +1126,7 @@ async def run_recent_finals(
     concurrency: int = SWEEP_CONCURRENCY,
     apply: bool = True,
     window_hours: int = RECENT_FINAL_WINDOW_HOURS,
+    live_window_hours: int = LIVE_EVENT_WINDOW_HOURS,
     session_maker: Optional[Callable] = None,
     client_factory: Optional[Callable[[], object]] = None,
     now: Optional[datetime] = None,
@@ -1094,20 +1154,38 @@ async def run_recent_finals(
     can have a bound measured in minutes. This one is keyed on the event and its
     bound is the beat period.
 
+    AND THE LIVE ARM — #5024. Kalshi markets ``can_close_early``, so a question
+    can be decided while the game is still being played: SF@LAR's First Touchdown
+    was finalized ``result='yes'`` at 01:22:33Z and our row still read ``open`` at
+    02:32Z, mid-second-quarter, drawing a 26-rung ladder that summed to 124%.
+    Keyed on ``completed_at``, this arm could not reach that row until the whistle;
+    41 of the 48 live rows carrying an empty book at 02:5xZ were already decided
+    at the venue. The selection now admits live events too, screened by the empty
+    book so a normally-trading market is never asked about, and ordered so a
+    finished game still takes the batch first.
+
     WHAT IT DOES NOT DO. It writes no grade — never ``is_winner``, never a price.
     That constraint is CAL-P061's and #1852's and it is inherited unchanged,
     because it belongs to the shared write (``UPDATE_SQL``) rather than to any
     one caller. This arm changes only WHICH rows reach that write and HOW SOON.
+    So this ship makes the market stop claiming to be open; the VERDICT the
+    reader sees is a separate write on a separate rung, and #5024 stays open for
+    it.
     """
     now = now or datetime.now(timezone.utc)
     final_floor = now - timedelta(hours=window_hours)
+    live_floor = now - timedelta(hours=live_window_hours)
     maker = session_maker or default_session_maker()
 
     async with maker() as session:
         rows = (
             await session.execute(
                 text(RECENT_FINAL_SELECT_SQL),
-                {"final_floor": final_floor, "limit": limit},
+                {
+                    "final_floor": final_floor,
+                    "live_floor": live_floor,
+                    "limit": limit,
+                },
             )
         ).all()
 
@@ -1128,6 +1206,8 @@ async def run_recent_finals(
     report["selection"] = "recent_finals"
     report["window_hours"] = window_hours
     report["final_floor"] = final_floor.isoformat()
+    report["live_window_hours"] = live_window_hours
+    report["live_floor"] = live_floor.isoformat()
     report["batch_limit"] = limit
     # A full batch means finals are arriving faster than one run drains them, so
     # the NEXT run still has a backlog and the 30-minute bar is at risk. Named on
