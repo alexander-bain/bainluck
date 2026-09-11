@@ -87,9 +87,17 @@ def _persistent(teams: list[Team]) -> Session:
     return session
 
 
-def _db_returning(teams: list[Team]) -> AsyncMock:
-    """An async DB session whose one `execute` yields these rows."""
+def _db_returning(teams: list[Team], sport_keys: list | None = None) -> AsyncMock:
+    """An async DB session whose one `execute` yields these rows.
+
+    `_enriched_teams_stmt` selects `(Team, sports.key)` pairs (#4945), so
+    `.all()` is the accessor under test. `.scalars().all()` is still configured
+    because a caller that regressed to it must fail on the ASSERTIONS, not on a
+    mock that happens to be unset.
+    """
+    keys = sport_keys if sport_keys is not None else [None] * len(teams)
     result = MagicMock()
+    result.all.return_value = list(zip(teams, keys))
     result.scalars.return_value.all.return_value = teams
     db = AsyncMock()
     db.execute.return_value = result

@@ -84,6 +84,16 @@ def _scalars_result(items):
     return result
 
 
+def _team_rows_result(teams):
+    """The team query's result: `_enriched_teams_stmt` selects
+    `(Team, sports.key)` pairs, so the route reads `.all()`, not `.scalars()`
+    (#4945 — the ambiguity guard needs a league, and a `sport_id` is not one).
+    """
+    result = MagicMock()
+    result.all.return_value = [(t, t.sport_key) for t in teams]
+    return result
+
+
 # ============================================================================
 # GET /api/leagues/{sport_key} — empty DB
 # ============================================================================
@@ -472,11 +482,13 @@ def _mock_event(
     )
 
 
-def _mock_team(name, *, sport_id=1, primary="#BD3039", logo="redsox.png"):
+def _mock_team(name, *, sport_id=1, primary="#BD3039", logo="redsox.png",
+               sport_key="baseball_mlb"):
     """A Team row as `_build_team_lookup` / `_format_team_data` read it."""
     return SimpleNamespace(
         id=abs(hash(name)) % 10_000,
         name=name,
+        sport_key=sport_key,
         alternate_names=[],
         sport_id=sport_id,
         slug=name.lower().replace(" ", "-"),
@@ -538,7 +550,7 @@ def _league_db(mock_db, markets, games=(), results=(), unreported=(), teams=()):
         _scalars_result(list(games)),
         _scalars_result(list(results)),
         _scalars_result(list(unreported)),
-        _scalars_result(list(teams)),
+        _team_rows_result(list(teams)),
     ]
 
 

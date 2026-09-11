@@ -2208,6 +2208,60 @@ def get_espn_path(sport_key: str) -> Optional[tuple[str, str]]:
     return SPORT_LEAGUE_MAP.get(sport_key)
 
 
+#: Suffixes that mark a SEASON VARIANT of a league, not a different league.
+#: The franchises, and therefore the crests and colours, are identical to the
+#: parent league's — ``baseball_mlb_preseason`` is the Red Sox, not a second
+#: club that happens to share the name. Measured on production 2026-09-10, the
+#: three variant rows in ``sports`` are ``baseball_mlb_preseason``,
+#: ``americanfootball_nfl_preseason`` and ``basketball_nba_summer_league``.
+_SEASON_VARIANT_SUFFIXES: tuple[str, ...] = ("_preseason", "_summer_league")
+
+
+def is_season_variant(sport_key: Optional[str]) -> bool:
+    """True when this key names a season variant rather than the parent league.
+
+    Callers that must choose ONE row per league prefer the parent: on production
+    2026-09-10 all 30 ``baseball_mlb_preseason`` clubs carried a logo but
+    ``standings_data`` on ZERO of them, against 30 of 33 for ``baseball_mlb``.
+    """
+    if not sport_key:
+        return False
+    return any(
+        sport_key.endswith(suffix) and len(sport_key) > len(suffix)
+        for suffix in _SEASON_VARIANT_SUFFIXES
+    )
+
+
+def league_identity(sport_key: Optional[str]) -> Optional[str]:
+    """Collapse a sport key to the LEAGUE it belongs to.
+
+    Two sport keys share an identity when they name the same league — either
+    because ``SPORT_LEAGUE_MAP`` already maps them onto one ESPN (sport, league)
+    pair, or because one is a season variant of the other
+    (``_SEASON_VARIANT_SUFFIXES``).
+
+    This exists because ``sport_id`` is NOT a league: ``baseball_mlb`` (53232)
+    and ``baseball_mlb_preseason`` (33178) are two rows for one league (#1798),
+    so any guard that asks "are these two teams in different leagues?" by
+    comparing row ids answers YES for every MLB club (#4945).
+
+    Returns ``None`` for a missing key — callers decide their own fallback
+    rather than being handed an identity that silently equates every unknown.
+    """
+    if not sport_key:
+        return None
+    base = sport_key
+    for suffix in _SEASON_VARIANT_SUFFIXES:
+        if base.endswith(suffix) and len(base) > len(suffix):
+            base = base[: -len(suffix)]
+            break
+    mapped = SPORT_LEAGUE_MAP.get(base)
+    # Unmapped keys fall back to the key itself. `sports.key` is UNIQUE, so this
+    # is exactly as discriminating as `sport_id` was — it only ever MERGES keys
+    # the map (or a season suffix) says are one league, never splits.
+    return "/".join(mapped) if mapped else base
+
+
 def normalize_to_win_prob_key(sport_key: str) -> str:
     """Map an Odds API sport key to the canonical win-prob model key.
 

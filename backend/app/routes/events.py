@@ -231,6 +231,8 @@ from app.utils.game_state import normalize_live_game_state
 from app.utils.sport_keys import (
     SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_TO_LLM_CATEGORY,
     get_sport_key_from_ticker as _get_sport_key_from_ticker,
+    is_season_variant,
+    league_identity,
 )
 
 router = APIRouter()
@@ -16859,6 +16861,9 @@ class TeamSnapshot:
 
     id: int | None = None
     sport_id: int | None = None
+    #: The `sports.key` for `sport_id`, carried because a row id is not a
+    #: league — see `_team_league_identity` and #4945.
+    sport_key: str | None = None
     name: str | None = None
     slug: str | None = None
     abbreviation: str | None = None
@@ -16872,17 +16877,23 @@ class TeamSnapshot:
     season_stats: dict | None = None
 
 
-def _snapshot_team(team) -> TeamSnapshot:
+def _snapshot_team(team, sport_key: str | None = None) -> TeamSnapshot:
     """Copy a live `Team` row into a detached `TeamSnapshot`.
 
     MUST be called while the row's session is still open — that is the whole
     point. Every read of `team.<column>` here is the last one that needs a
     session; nothing downstream of this function has one to lose.
+
+    `sport_key` is passed IN rather than read off `team.sport` deliberately:
+    the relationship is not eager-loaded here, and touching it would be a lazy
+    load on an async session. `_enriched_teams_stmt` selects the key alongside
+    the row so it arrives in the same result.
     """
     alt = team.alternate_names or []
     return TeamSnapshot(
         id=team.id,
         sport_id=team.sport_id,
+        sport_key=sport_key,
         name=team.name,
         slug=getattr(team, "slug", None),
         abbreviation=team.abbreviation,
@@ -16897,11 +16908,24 @@ def _snapshot_team(team) -> TeamSnapshot:
     )
 
 
+def _team_league_identity(team):
+    """The LEAGUE a team belongs to, for the ambiguity guard's comparison.
+
+    `sport_id` is a row id, not a league. Prefer the sport key collapsed by
+    `league_identity`, which puts a season variant and its parent league on one
+    identity; fall back to `sport_id` when no key travelled with the row, so a
+    caller that never set one keeps the pre-#4945 behaviour exactly.
+    """
+    identity = league_identity(getattr(team, "sport_key", None))
+    return identity if identity is not None else ("sport_id", team.sport_id)
+
+
 def _dedupe_team_name_lookup(teams) -> dict:
     """Map team names → team record with a cross-league ambiguity guard.
 
-    Takes anything exposing ``.name`` / ``.alternate_names`` / ``.sport_id``;
-    `_build_team_lookup` passes `TeamSnapshot` (never live ORM rows — #2107).
+    Takes anything exposing ``.name`` / ``.alternate_names`` / ``.sport_id``
+    (and, since #4945, optionally ``.sport_key``); `_build_team_lookup` passes
+    `TeamSnapshot` (never live ORM rows — #2107).
 
     A bare mascot ("Panthers", "Saints") is an ``alternate_names`` entry for
     teams across multiple leagues (Carolina Panthers NFL, Florida Panthers NHL,
@@ -16911,27 +16935,48 @@ def _dedupe_team_name_lookup(teams) -> dict:
     to teams in more than one distinct sport/league is dropped, yielding no logo
     (colored-box fallback) rather than a wrong one. Full team names
     ("Carolina Panthers") are unique per league and are retained.
+
+    **The comparison is a LEAGUE, not a `sport_id` (#4945).** Every MLB club has
+    two enriched rows — ``baseball_mlb`` (53232) and ``baseball_mlb_preseason``
+    (33178), the duplicate-identity defect in #1798 — which are one league under
+    a season variant. Comparing row ids read that as a cross-league collision
+    and dropped all 30 clubs' keys, so every MLB card on the site rendered with
+    no crest and no colours while NFL and MLS cards beside it rendered normally.
+    `_team_league_identity` collapses the variant; a genuine cross-league
+    collision (Carolina Panthers NFL vs Florida Panthers NHL) still has two
+    identities and is still dropped.
     """
     lookup: dict = {}
     key_sport: dict = {}
     ambiguous: set = set()
 
-    def _register(key, team):
+    def _register(key, team, identity):
         if not key or key in ambiguous:
             return
         if key not in lookup:
             lookup[key] = team
-            key_sport[key] = team.sport_id
-        elif key_sport.get(key) != team.sport_id:
+            key_sport[key] = identity
+        elif key_sport.get(key) != identity:
             # Cross-league collision on this exact name → ambiguous, drop it.
             ambiguous.add(key)
             lookup.pop(key, None)
             key_sport.pop(key, None)
+        elif is_season_variant(
+            getattr(lookup[key], "sport_key", None)
+        ) and not is_season_variant(getattr(team, "sport_key", None)):
+            # Same league, two rows: keep the PARENT league's. Which row an
+            # unordered query yields first is arbitrary, and the variant row is
+            # the poorer one — every `baseball_mlb_preseason` club has a logo
+            # but no `standings_data`, which `_format_team_data` ships as the
+            # card's `standings`. Without this the crest comes back and the
+            # standings silently coin-flip away.
+            lookup[key] = team
 
     for team in teams:
-        _register(team.name, team)
+        identity = _team_league_identity(team)
+        _register(team.name, team, identity)
         for alt_name in (team.alternate_names or []):
-            _register(alt_name, team)
+            _register(alt_name, team, identity)
 
     return lookup
 
@@ -16980,12 +17025,8 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
             return {k: v for k, v in _team_cache.items() if k in names_set}
 
     # Load all teams with ESPN data — single simple query
-    result = await db.execute(
-        select(Team).where(
-            or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None))
-        )
-    )
-    full_lookup = _shape_team_lookup(result.scalars().all())
+    result = await db.execute(_enriched_teams_stmt())
+    full_lookup = _shape_team_lookup(result.all())
 
     _team_cache = full_lookup
     _team_cache_time = now
@@ -16994,19 +17035,41 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     return {k: v for k, v in full_lookup.items() if k in names_set}
 
 
-def _shape_team_lookup(teams) -> dict:
-    """`Team` rows → the name→`TeamSnapshot` lookup the cache holds.
+def _enriched_teams_stmt():
+    """The one statement both team-cache build paths run.
+
+    Extracted for the same reason `_shape_team_lookup` was (LAT-P115): the
+    blocking build and the refresh-behind build each had their own copy, so a
+    change to one silently gave the two paths different populations. Adding the
+    `sports.key` join to only one of them would have done exactly that.
+
+    The join is OUTER on purpose. `teams.sport_id` is a non-null FK and
+    production had 0 orphans among the 1,618 enriched rows when this was
+    measured (2026-09-10), but an inner join would answer a future orphan by
+    silently dropping that team's logo — the failure this whole function exists
+    to prevent. A missing sport row yields `key = None`, which
+    `_team_league_identity` falls back to `sport_id` for.
+    """
+    return (
+        select(Team, Sport.key)
+        .join(Sport, Sport.id == Team.sport_id, isouter=True)
+        .where(or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None)))
+    )
+
+
+def _shape_team_lookup(rows) -> dict:
+    """`(Team, sport_key)` rows → the name→`TeamSnapshot` lookup the cache holds.
 
     Extracted, NOT copied, so the refresh-behind path and the blocking path
     cannot drift (LAT-P115: a warmed payload differing from the served one by
     one key is a wrong answer served fast).
 
     Detaches BEFORE anything else touches these rows. Deduping over snapshots
-    rather than over ORM rows also means the ambiguity guard's `.sport_id` /
-    `.alternate_names` reads happen here, inside the live-session window,
-    instead of at some later request's mercy.
+    rather than over ORM rows also means the ambiguity guard's `.sport_key` /
+    `.sport_id` / `.alternate_names` reads happen here, inside the live-session
+    window, instead of at some later request's mercy.
     """
-    snapshots = [_snapshot_team(t) for t in teams]
+    snapshots = [_snapshot_team(t, sport_key=k) for t, k in rows]
     # Cross-league ambiguity guard — see `_dedupe_team_name_lookup`.
     return _dedupe_team_name_lookup(snapshots)
 
@@ -17021,12 +17084,8 @@ async def _rebuild_team_lookup() -> None:
     global _team_cache, _team_cache_time
 
     async with async_session_maker() as s:
-        result = await s.execute(
-            select(Team).where(
-                or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None))
-            )
-        )
-        full_lookup = _shape_team_lookup(result.scalars().all())
+        result = await s.execute(_enriched_teams_stmt())
+        full_lookup = _shape_team_lookup(result.all())
 
     _team_cache = full_lookup
     _team_cache_time = time.monotonic()

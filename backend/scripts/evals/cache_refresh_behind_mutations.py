@@ -118,11 +118,16 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M10",
         "team rebuild shapes rows itself instead of reusing the extractor — drift",
-        "        full_lookup = _shape_team_lookup(result.scalars().all())\n\n"
+        # Re-targeted for #4945: the query now selects `(Team, sports.key)`
+        # pairs through `_enriched_teams_stmt`, so both build paths read
+        # `.all()` rather than `.scalars().all()`. The property under test is
+        # unchanged — the refresh-behind path must REUSE the shared extractor,
+        # not shape rows itself.
+        "        full_lookup = _shape_team_lookup(result.all())\n\n"
         "    _team_cache = full_lookup\n"
         "    _team_cache_time = time.monotonic()",
         "        full_lookup = _dedupe_team_name_lookup(\n"
-        "            [_snapshot_team(t) for t in result.scalars().all()][:1]\n"
+        "            [_snapshot_team(t, sport_key=k) for t, k in result.all()][:1]\n"
         "        )\n\n"
         "    _team_cache = full_lookup\n"
         "    _team_cache_time = time.monotonic()",
