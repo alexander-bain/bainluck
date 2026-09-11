@@ -390,3 +390,47 @@ class TestTheCard:
         assert response["opening_odds"]["home_probability"] == pytest.approx(
             COLUMN_OPENING
         )
+
+    def test_a_pickem_card_opens_at_zero_rather_than_at_nothing(self):
+        """#5414 — the falsy-zero bug in this formatter's own `spread` line.
+
+        `float(x) if x else None` reads a pick'em's 0.0 as absent, so the card
+        said the game had no opening line. Measured on production 2026-09-11
+        over 90 days: 557 of the 7,717 events carrying an opening spread (7.2%)
+        opened at exactly 0.
+
+        This fixture is the only input on which truthiness and `is not None`
+        differ, which is what makes it the guard rather than a restatement of
+        the test above. The presence assertion is separate from the value
+        assertion because a missing key and a `None` both fail `== 0.0`, and
+        they are different bugs.
+        """
+        event = self._event(_offset(-2), status="in_progress")
+        event.opening_home_spread = 0.0
+        event.opening_over_under = 0.0
+
+        opening = events_route._format_event_with_aggregated_odds(event, None)[
+            "opening_odds"
+        ]
+
+        assert "spread" in opening
+        assert opening["spread"] is not None, (
+            "a pick'em game is published as having no opening line — the "
+            "formatter is testing truthiness again, and 0.0 is falsy"
+        )
+        assert opening["spread"] == 0.0
+        assert opening["over_under"] == 0.0
+
+    def test_a_card_with_no_opening_spread_still_says_none(self):
+        """The other direction: `is not None` must not invent a 0 out of a NULL.
+
+        Without this, a fix that hardcoded `float(x or 0)` would pass the
+        pick'em test above and publish "opened at pick'em" for every game that
+        never had a spread at all.
+        """
+        opening = events_route._format_event_with_aggregated_odds(
+            self._event(_offset(-2), status="in_progress"), None
+        )["opening_odds"]
+
+        assert opening["spread"] is None
+        assert opening["over_under"] is None

@@ -23,6 +23,7 @@ def _make_event(
     home_prob: float = 0.65,
     home_score: int | None = 88,
     away_score: int | None = 82,
+    opening_home_spread: float | None = -4.5,
 ):
     event = MagicMock()
     event.id = id
@@ -67,6 +68,13 @@ def _make_event(
     event.opening_home_probability = 0.58
     event.opening_away_probability = 0.42
     event.opening_favorite = home_team
+    # #5414: set explicitly, and not only so the assertions below have a value to
+    # pin. These are MagicMock attributes — left unset they are truthy mocks, so
+    # a serializer that reads them raises TypeError inside `float()` rather than
+    # serving a wrong number. A fixture narrower than the row does not fail
+    # softly here; it fails as a 500 that reads like a route bug.
+    event.opening_home_spread = opening_home_spread
+    event.opening_over_under = 210.5
     event.box_score_data = {
         "players": [
             {"name": "Jayson Tatum", "team": home_team, "points": 31},
@@ -352,6 +360,100 @@ async def upcoming_event_detail_client():
     app.dependency_overrides.clear()
 
 
+@pytest.fixture
+async def pickem_event_detail_client():
+    """A live event that opened at a spread of exactly 0.0 — a pick'em (#5414).
+
+    The whole point is the zero. `float(x) if x else None` reads 0.0 as absent,
+    so a pick'em was published as "no opening line". Measured on production
+    2026-09-11 over 90 days: 557 of the 7,717 events carrying an opening spread
+    (7.2%) opened at 0.
+
+    Distinct event id and the caches cleared, for `event_detail_client`'s
+    reason: `/api/events/{id}` keys an in-process payload cache by id, so
+    reusing id 1 would serve this test the other fixture's banked body and it
+    would pass on a stale payload.
+    """
+    from app.main import app
+    from app.routes.events import _event_detail_cache, _game_markets_cache
+
+    _game_markets_cache.clear()
+    _event_detail_cache.clear()
+
+    event = _make_event(
+        id=7, home_team="Celtics", away_team="76ers", status="live",
+        opening_home_spread=0.0,
+    )
+    mock_session = _make_event_detail_session(event=event)
+
+    async def _mock_get_db():
+        yield mock_session
+
+    async def _mock_get_optional_user():
+        return None
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_db_rw] = _mock_get_db
+    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
+
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+
+    _game_markets_cache.clear()
+    _event_detail_cache.clear()
+    app.dependency_overrides.clear()
+
+
+class TestThePregameLineReachesThePage:
+    """#5414 — the event page had no pre-game spread or total on its payload.
+
+    `opening_odds` is built in two places in `routes/events.py`: the LIST
+    formatter (`_format_event_with_aggregated_odds`) has always carried `spread`
+    and `over_under`, and the DETAIL route (`get_event`) carried only the
+    probability pair and the favourite. So the margin card's PRE-GAME tile had
+    nothing correct to read and fell back to "whichever quoted rung priced
+    closest to a coin flip" — right by coincidence on Cubs–Pirates (opened -1.5,
+    tile read "CHC by 1.5+"), wrong on Zverev–Khachanov (opened -5.5, tile read
+    "ZVE by 2.5+"). Two serializers of one object, one of them incomplete.
+    """
+
+    async def test_the_detail_route_serves_the_opening_spread_and_total(
+        self, event_detail_client
+    ):
+        resp = await event_detail_client.get("/api/events/1")
+        opening = resp.json()["opening_odds"]
+
+        assert opening["spread"] == -4.5, (
+            "the event page has no pre-game spread again, so the margin card's "
+            "PRE-GAME tile is back to guessing from the rung ladder"
+        )
+        assert opening["over_under"] == 210.5
+
+    async def test_a_pickem_opening_is_zero_not_missing(
+        self, pickem_event_detail_client
+    ):
+        """The falsy-zero bug, pinned by VALUE and by TYPE.
+
+        `is not None` and truthiness differ on exactly one input, so this is the
+        only fixture that can tell the two implementations apart. Asserting
+        `== 0.0` alone is not enough: `None == 0.0` is False but so is a missing
+        key's `.get()`, so the key's presence is asserted separately.
+        """
+        resp = await pickem_event_detail_client.get("/api/events/7")
+        opening = resp.json()["opening_odds"]
+
+        assert "spread" in opening
+        assert opening["spread"] is not None, (
+            "a pick'em game is published as having no opening line — the "
+            "serializer is testing truthiness again, and 0.0 is falsy"
+        )
+        assert opening["spread"] == 0.0
+
+
 class TestUpcomingEventDetailWithholdsTheOpening:
     """#3922 — the hero's "Opened X – Y" line and its "since open" arrow.
 
@@ -553,6 +655,12 @@ class TestEventDetailShape:
         assert body["opening_odds"] == {
             "home_probability": 0.58,
             "away_probability": 0.42,
+            # #5414: the detail route served three of the five opening columns
+            # and omitted the two a PRE-GAME tile needs, while the LIST
+            # formatter for this same object always carried them. The event page
+            # therefore had no pre-game spread or total on its payload at all.
+            "spread": -4.5,
+            "over_under": 210.5,
             "favorite": "Celtics",
         }
         assert body["box_score_data"]["players"][0]["name"] == "Jayson Tatum"
