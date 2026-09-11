@@ -507,15 +507,20 @@ export default function SearchBar({
                     // T2-1 (#5058): the friend's task answered without a click.
                     return (
                       <div
-                        className="text-xs text-text-secondary truncate"
+                        className="text-xs text-text-secondary overflow-hidden"
                         data-testid="search-team-season"
                       >
                         {sub.answers.map((a, i) => (
                           <span key={a.key}>
+                            {/* The separator sits OUTSIDE the nowrap span on
+                                purpose: its spaces are the only break
+                                opportunity in the line. */}
                             {i > 0 && <span className="text-text-muted">{" · "}</span>}
-                            {a.label}{" "}
-                            <span className="text-text-primary font-medium">
-                              {toPercent(a.probability)}%
+                            <span className="whitespace-nowrap">
+                              {a.label}{" "}
+                              <span className="text-text-primary font-medium">
+                                {toPercent(a.probability)}%
+                              </span>
                             </span>
                           </span>
                         ))}

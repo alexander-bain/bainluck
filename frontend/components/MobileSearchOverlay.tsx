@@ -300,15 +300,20 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
                   // holds the logic and the components hold only classes.
                   return (
                     <div
-                      className="text-xs text-text-secondary truncate mt-0.5"
+                      className="text-xs text-text-secondary overflow-hidden mt-0.5"
                       data-testid="search-team-season"
                     >
                       {sub.answers.map((a, i) => (
                         <span key={a.key}>
+                          {/* The separator sits OUTSIDE the nowrap span on
+                              purpose: its spaces are the only break
+                              opportunity in the line. */}
                           {i > 0 && <span className="text-text-muted">{" · "}</span>}
-                          {a.label}{" "}
-                          <span className="text-text-primary font-medium">
-                            {toPercent(a.probability)}%
+                          <span className="whitespace-nowrap">
+                            {a.label}{" "}
+                            <span className="text-text-primary font-medium">
+                              {toPercent(a.probability)}%
+                            </span>
                           </span>
                         </span>
                       ))}
