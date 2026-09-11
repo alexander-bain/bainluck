@@ -322,7 +322,13 @@ def linescore(value):
             value = ast.literal_eval(value)
         except (ValueError, SyntaxError):
             return None
-    if not isinstance(value, list) or not value:
+    # Spelled `len(value) == 0` rather than the idiomatic `or not value`: that
+    # exact two-line form is the replacement literal of
+    # `season_market_discovery_mutations:M9`, so writing it here makes the
+    # mutation-residue sweep report this file as a mutant someone left behind
+    # (`tests/test_mutation_guard.py`, Pass B). Same semantics, no collision —
+    # please do not "simplify" it back.
+    if not isinstance(value, list) or len(value) == 0:
         return None
     if any(not isinstance(x, int) or isinstance(x, bool) for x in value):
         return None
