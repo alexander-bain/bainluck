@@ -63,6 +63,68 @@ REPO_SLUG="alexander-bain/bainluck"
 LEDGER="${MERGE_GATE_LEDGER:-$HOME/bainluck/.claude/handoff/CODEX-CERT-LOG.md}"
 GREP=/usr/bin/grep
 
+# ─────────────────────────────────────────────────────────────────────────────
+# supersedes_scan — classify one cert id against the ledger for notice 18.
+#
+# Sets SUP_VERDICT to exactly one of: clean | declared | review, and leaves the
+# matching rows in SUP_ROWS with the counts in SUP_N / SUP_DECL.
+#
+# It SETS rather than echoes on purpose. Called as `$(supersedes_scan ...)` the
+# body runs in a subshell and every one of those four variables is discarded —
+# the caller then dies on `SUP_N: unbound variable` under `set -u`, and no unit
+# test that only reads the classification can see it. Call it as a statement.
+#
+# WHY THREE ANSWERS AND NOT TWO. Notice 18's rule is positional: "no LATER
+# ledger row names that CERT-N AFTER the word 'supersedes'". No grep decides
+# that, because the ledger writes both halves of the question in English:
+#
+#   a bus-status row  "CERT-2620 supersedes CERT-2617 ... CERT-2619 token stands"
+#     names 2619 BEFORE the word and AFFIRMS it — the broad grep STOPs on it
+#     anyway. That false STOP held 97e9923b for hours on 2026-09-11 while 1,558
+#     wrong period verdicts stayed live (integrator/304, lane1b/158).
+#
+# The obvious repair is to match only `supersedes: CERT-N`, the header form
+# notice 12 mandates. MEASURED on the 2,810-line ledger, that form silently
+# passes four REAL declarations written as prose — `supersedes the earlier
+# CERT-700 ancestor row`, `the CERT-874 BLOCK`, `the CERT-793 GREEN`, `the
+# CERT-599 sha`. It cures the false STOP by opening a hole.
+#
+# Widening it to "the id anywhere in the same clause" catches those four and
+# then fires on a dozen sentences ABOUT the check — `supersedes scan for
+# CERT-893`, `supersedes rows naming CERT-2217`, `supersedes | grep CERT-2246`.
+# Both directions are a branch flag built from a substring, and the branch that
+# DENIES the condition cites the same words as the branch that asserts it.
+#
+# So the gate stops pretending it can read. Broad grep is the SCREEN, the
+# canonical form is the TEST, and the case they disagree on is handed to a
+# person WITH THE ROW PRINTED — which turns an escalation to the orchestrator
+# into one five-second read. It never resolves that case silently in either
+# direction.
+# ─────────────────────────────────────────────────────────────────────────────
+SUP_VERDICT=""; SUP_ROWS=""; SUP_N=0; SUP_DECL=0
+supersedes_scan () {
+  local cert="$1" ledger="$2"
+  # SCREEN: every row mentioning the word and this id, minus the cert's OWN
+  # grade row — a repair row cites its own id after "supersedes" (notice 8b).
+  # `-w` on the screen too: without it `supersedes.*CERT-261` matches a row that
+  # only ever says CERT-2619, and the shorter id inherits the longer one's
+  # review. `-w` anchors the END of the match, so CERT-261 followed by `9` is
+  # not a match while CERT-2619 followed by a space is.
+  SUP_ROWS="$($GREP -nw "supersedes.*$cert" "$ledger" | $GREP -v "| $cert --")"
+  # `grep -c .` over an empty string is 0; `printf '%s'` adds no trailing line.
+  SUP_N="$(printf '%s' "$SUP_ROWS" | $GREP -c . )"
+  # TEST: the declaration form notice 12 mandates. `-w` so CERT-261 never
+  # matches CERT-2619 and CERT-2619 never matches CERT-26190.
+  SUP_DECL="$($GREP -oE 'supersedes:? *CERT-[0-9]+' "$ledger" | $GREP -cw "$cert")"
+  if [ "${SUP_N:-0}" -eq 0 ]; then
+    SUP_VERDICT=clean
+  elif [ "${SUP_DECL:-0}" -gt 0 ]; then
+    SUP_VERDICT=declared
+  else
+    SUP_VERDICT=review
+  fi
+}
+
 if [ -z "$SHA_IN" ]; then
   echo "usage: tools/merge-gate.sh <sha> [<repo-path>]" >&2
   echo "       tools/merge-gate.sh --selftest" >&2
@@ -126,7 +188,59 @@ if [ "$SHA_IN" = "--selftest" ]; then
 
   # Notice 18: a repair row cites its own id after "supersedes".
   check "the supersedes scan excludes the cert's own row" \
-    "/usr/bin/grep -q -- '-vc \"| \$CERT_ID --\"' '$self'"
+    "/usr/bin/grep -q -- '-v \"| \$cert --\"' '$self'"
+
+  # The bug the unit tests below could NOT see, because they only ever read the
+  # classification: called in `$( )` the function's four output variables are
+  # set in a subshell and discarded, and the caller dies on an unbound SUP_N.
+  # Caught by an end-to-end run, so it is guarded at the source.
+  check "supersedes_scan is called as a statement, never in a subshell" \
+    "! sed -e 's/#.*//' '$self' | /usr/bin/grep -q '\$(supersedes_scan'"
+
+  # ── notice 18, behavioural. These call the SHIPPED function against fixture
+  # ledgers rather than re-deriving its greps, because a test that reimplements
+  # the thing it guards measures the reimplementation. Every fixture below is a
+  # verbatim shape lifted off the real ledger.
+  fx="$(mktemp -d)"
+  trap 'rm -rf "$fx"' EXIT
+
+  # The row that caused all of this: 2619 is named BEFORE the word and is
+  # AFFIRMED; the id named after it is 2617. Must not STOP on 2619.
+  cat > "$fx/busrow.md" <<'FIXEOF'
+| CERT-BUS-STATUS-2026-09-11-1407-01a090b5 | DRAINED | CERT-2620 supersedes CERT-2617, whose earlier token is not merge authority; required repair remains. CERT-2619 token stands; follow-up remains. |
+FIXEOF
+  check "notice 18: an affirming bus row is REVIEW, not a STOP (the 97e9923b false STOP)" \
+    "supersedes_scan CERT-2619 '$fx/busrow.md'; [ \"\$SUP_VERDICT\" = review ]"
+  check "notice 18: the genuine supersede in that same row IS declared" \
+    "supersedes_scan CERT-2617 '$fx/busrow.md'; [ \"\$SUP_VERDICT\" = declared ]"
+
+  # A prose declaration that the canonical form alone would silently PASS.
+  # Four of these are on the real ledger; this is why the middle case is a
+  # review and not a clean.
+  cat > "$fx/prose.md" <<'FIXEOF'
+| CERT-0701 -- SUBJECT | GREEN | supersedes the earlier CERT-700 ancestor row at `65c2e4ed`. |
+FIXEOF
+  check "notice 18: a prose declaration is REVIEW, never clean (no silent pass)" \
+    "supersedes_scan CERT-700 '$fx/prose.md'; [ \"\$SUP_VERDICT\" = review ]"
+
+  cat > "$fx/clean.md" <<'FIXEOF'
+| CERT-2619 -- SUBJECT | GREEN/TOKEN GRANTED | supersedes scan returned 0. |
+| CERT-2700 -- OTHER | GREEN | nothing to see here. |
+FIXEOF
+  check "notice 18: the cert's own row never supersedes itself (notice 8b)" \
+    "supersedes_scan CERT-2619 '$fx/clean.md'; [ \"\$SUP_VERDICT\" = clean ]"
+  check "notice 18: an id absent from the ledger is clean" \
+    "supersedes_scan CERT-9999 '$fx/clean.md'; [ \"\$SUP_VERDICT\" = clean ]"
+
+  # -w, not \b: BSD grep is what /usr/bin/grep is here, and a prefix match
+  # would make CERT-261 inherit CERT-2619's verdict.
+  cat > "$fx/bounds.md" <<'FIXEOF'
+| CERT-9000 -- SUBJECT | GREEN | supersedes: CERT-2619 |
+FIXEOF
+  check "notice 18: CERT-261 does not match CERT-2619's declaration (-w boundary)" \
+    "supersedes_scan CERT-261 '$fx/bounds.md'; [ \"\$SUP_VERDICT\" = clean ]"
+  check "notice 18: CERT-2619 itself is declared in that fixture (control)" \
+    "supersedes_scan CERT-2619 '$fx/bounds.md'; [ \"\$SUP_VERDICT\" = declared ]"
 
   check "rev-parse is verified, not trusted to be empty on failure" \
     "/usr/bin/grep -q 'rev-parse --verify --quiet' '$self'"
@@ -236,14 +350,28 @@ fi
 # The mechanized form excludes the cert's OWN row, because a repair row cites
 # its own id after "supersedes" and the plain grep therefore fires a false STOP
 # on precisely the certs that grade first (notice 8b).
+#
+# Three outcomes, not two — the reasoning is on `supersedes_scan` above.
 # ─────────────────────────────────────────────────────────────────────────────
 if [ -n "$CERT_ID" ] && [ -r "$LEDGER" ]; then
-  sup="$($GREP -n "supersedes.*$CERT_ID" "$LEDGER" | $GREP -vc "| $CERT_ID --")"
-  if [ "${sup:-0}" -eq 0 ]; then
-    pass "notice 18 supersedes" "0 later rows name $CERT_ID after 'supersedes'"
-  else
-    stop "notice 18 supersedes" "$sup row(s) supersede $CERT_ID — write the orchestrator, do not merge, do not revert"
-  fi
+  # A statement, not a command substitution — see supersedes_scan's note.
+  supersedes_scan "$CERT_ID" "$LEDGER"
+  case "$SUP_VERDICT" in
+    clean)
+      pass "notice 18 supersedes" "0 later rows name $CERT_ID after 'supersedes'"
+      ;;
+    declared)
+      stop "notice 18 supersedes" "$SUP_DECL row(s) declare a supersede of $CERT_ID — write the orchestrator, do not merge, do not revert"
+      ;;
+    review)
+      # NOT a pass and NOT a stop. The rows are printed because the whole point
+      # is that the answer is legible in them and in nothing else.
+      warn "notice 18 supersedes" "READ THESE $SUP_N ROW(S) — no declaration of the form 'supersedes: $CERT_ID' exists, so this is prose UNLESS one of them names $CERT_ID *after* the word:"
+      printf '%s\n' "$SUP_ROWS" | head -3 | cut -c1-200 | sed 's/^/          /'
+      [ "${SUP_N:-0}" -gt 3 ] && echo "          ... and $((SUP_N - 3)) more — search the ledger for '$CERT_ID'"
+      echo "          if one does: STOP, write the orchestrator, do not revert. If all are prose: this sha is clear."
+      ;;
+  esac
 else
   warn "notice 18 supersedes" "no cert id resolved — skipped (expected for Tier A)"
 fi
