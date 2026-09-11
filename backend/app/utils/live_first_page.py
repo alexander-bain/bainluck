@@ -15,8 +15,10 @@ WHY THE EXISTING MACHINERY DOES NOT COVER IT
 --------------------------------------------
 Two independent reasons, and neither is a bug in the thing that has it:
 
-1. **`_rank_key` is `(_rank_score, _sort_time)`.** Event scoring gives a live
-   US Open match 95 and a finished MLB game 98, so every completed game
+1. **`_rank_key` leads with `(_rank_score, _sort_time)`.** (#5101 appended a
+   third, canonical-identity component, but it only ever breaks an exact tie on
+   the first two, so it does not touch this argument.) Event scoring gives a
+   live US Open match 95 and a finished MLB game 98, so every completed game
    deterministically outranks every live match. `_score_*` sets
    `sort_time = now + 86400` for live rows, which *used* to carry them to the
    top — but #141/Item 1 de-saturated the scores, and `_rank_key`'s own
