@@ -283,7 +283,18 @@ class TestTheWindowStillCloses:
         a cap earns its keep. Alex was told there is "a separate limit of two
         such cards at a time, so Discover cannot turn into a scoreboard"; six
         qualifying tier-1 finals spread across the fourteen hours must still
-        yield two, and the two with the highest EI."""
+        yield two.
+
+        WHICH two is #5300's, not D118's. This slate's EIs step by ONE point
+        (90..85) across a FIVE-HOUR age spread, so it is knife-edge on excitement
+        by construction, and #5300's freshness decay — Alex's "no fixed clock, a
+        decay the eval can grade" — resolves it by age. That is the intended
+        policy change and it is asserted on its own terms below; a decay gentle
+        enough to leave a 1-point EI gap standing over five hours would be
+        inert. The subject of THIS test is the CAP surviving the wider window,
+        and that is unchanged: six qualifying finals still yield exactly two.
+        `test_the_morning_keeps_the_game_that_mattered_5300.py` owns the
+        ordering, including that a REAL excitement gap still beats freshness."""
         slate = [
             _final(
                 event_id=1500 + n,
@@ -298,7 +309,26 @@ class TestTheWindowStillCloses:
         ]
         kept = _recent_marquee_final_ids(slate, COFFEE)
         assert len(kept) == _DISCOVER_RECENT_FINAL_SLOTS == 2
-        assert kept == {1500, 1501}
+        # The two freshest of a slate whose EIs differ by one point each (#5300).
+        assert kept == {1504, 1505}
+
+    def test_at_equal_ages_the_wider_window_still_yields_the_two_best(self):
+        """The half of the old assertion that is still D118's, isolated.
+
+        Take the age spread out of the same slate and excitement decides again,
+        which is what "a separate limit of two such cards" was always about. Had
+        #5300's decay been strong enough to reorder THIS, it would have stopped
+        being a tie-break and become the ranking."""
+        slate = [
+            _final(
+                event_id=1500 + n,
+                ei=90 - n,
+                commence_time=COFFEE - timedelta(hours=13.1),
+                ended_at=COFFEE - timedelta(hours=10),
+            )
+            for n in range(6)
+        ]
+        assert _recent_marquee_final_ids(slate, COFFEE) == {1500, 1501}
 
     def test_the_wider_window_does_not_readmit_the_scoreboard(self):
         """The other direction, re-run on the new window rather than assumed to
