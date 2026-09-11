@@ -188,14 +188,28 @@ async def test_the_dropped_half_of_the_question_comes_back_as_a_verdict(finished
         assert label in script, (
             f"{label!r} is still absent from WHAT HIT; served labels: {sorted(script)}"
         )
-        # Tampa Bay led the first five 1–6 from Atlanta's side, so both Atlanta
-        # rungs are a miss — and the score is stated from the NAMED side first.
-        assert script[label]["graded_label"] == "1–6 — miss", script[label]
+        # Tampa Bay led the first five 6–1, so both Atlanta rungs are a miss.
+        # #5086: the score is stated AWAY–HOME whoever the rung names — it used
+        # to be stated from the named side first, which is what made this block
+        # print the same five innings two ways.
+        assert script[label]["graded_label"] == "6–1 — miss", script[label]
         assert script[label]["graded_result"] == "miss"
 
     # The sibling legs that were already working still work — this is additive.
     assert script[FAVOURED_1]["graded_label"] == "6–1 — hit"
     assert script[FAVOURED_2]["graded_label"] == "6–1 — hit"
+
+    # #5086 — the FIRST 5 SPREAD block is the one Alex named: "the same five
+    # innings are 1–6 on the two Atlanta rungs and 6–1 on the two Tampa Bay
+    # rungs". All four rungs state one window, so all four state one pair.
+    pairs = {
+        script[label]["graded_label"].split(" — ")[0]
+        for label in (DROPPED_1, DROPPED_2, FAVOURED_1, FAVOURED_2)
+    }
+    assert pairs == {"6–1"}, (
+        f"one five-inning window, {len(pairs)} scorelines across the spread "
+        f"block: {sorted(pairs)} — the orientation may not follow the named side"
+    )
 
 
 @pytest.mark.asyncio

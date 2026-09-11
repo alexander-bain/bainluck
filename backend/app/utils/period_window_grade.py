@@ -161,6 +161,35 @@ def _plural_runs(n: int) -> str:
     return f"{n} run" if n == 1 else f"{n} runs"
 
 
+def _scoreline(away_runs: int, home_runs: int) -> str:
+    """#5086 — the ONE place a period scoreline is composed, always AWAY–HOME.
+
+    This used to be three f-strings following two different rules: a row that
+    named a team printed that team's runs first, and the tie row printed HOME
+    first. Each is defensible read alone, and together they made one inning
+    state itself two ways four lines apart — Alex, on the served specimen:
+
+        Tampa Bay wins first 5 innings   6–1 — hit
+        Tie                              1–6 — miss
+        Atlanta wins first 5 innings     1–6 — miss
+
+    with nothing on screen saying which side either number belonged to, and the
+    FIRST 5 SPREAD block underneath flipping the same five innings the same way.
+    His ruling is the contract this helper exists to keep: "whatever order is
+    chosen, it has to be chosen once for the whole period block, not per row."
+
+    Away–home is that order because it is already the site's everywhere else —
+    the web summary and every native card (`Utilities/EventState.swift`). The
+    subject-first rule it replaces was documented as needing "no legend", which
+    was true of a row and false of a group; the group is what a reader sees.
+
+    The winner and spread arms still resolve ``mine``/``theirs`` to decide the
+    VERDICT. Only the displayed pair is fixed to away–home: this changes what a
+    row says, never whether it hit.
+    """
+    return f"{away_runs}–{home_runs}"
+
+
 def grade_period_window(
     unit,
     first_period,
@@ -183,9 +212,11 @@ def grade_period_window(
     ``actual`` is prose about the number, never a verdict word: the caller
     composes ``f"{actual} — {hit|miss}"`` through ``_build_props_script``, which
     is the site's one settled vocabulary for this slot (#1650 exists because a
-    single backend state was wearing three phrasings). Where a row names a side,
-    that side's runs are stated FIRST, so "Tampa Bay wins first 5 innings" reads
-    ``6–1 — hit`` and needs no legend.
+    single backend state was wearing three phrasings).
+
+    Every scoreline this function emits is AWAY–HOME, through
+    :func:`_scoreline`, whatever the row names — see that helper for why the
+    older subject-first rule was withdrawn (#5086).
     """
     if unit != "inning":
         return None
@@ -232,7 +263,7 @@ def grade_period_window(
     # ── Shape C: the window's winner, including the tie leg ──────────────────
     if _TIE_RE.match(outcome):
         return {
-            "actual": f"{home_runs}–{away_runs}",
+            "actual": _scoreline(away_runs, home_runs),
             "hit": home_runs == away_runs,
         }
 
@@ -242,7 +273,7 @@ def grade_period_window(
         if side is None:
             return None
         mine, theirs = (home_runs, away_runs) if side == "home" else (away_runs, home_runs)
-        return {"actual": f"{mine}–{theirs}", "hit": mine > theirs}
+        return {"actual": _scoreline(away_runs, home_runs), "hit": mine > theirs}
 
     # ── Shape D: the window's spread ─────────────────────────────────────────
     # Matched last: "Tampa Bay -1.5 first 5 innings" and "Tampa Bay wins first 5
@@ -260,6 +291,6 @@ def grade_period_window(
         margin = (mine - theirs) + line
         if margin == 0:
             return None  # a push; see the module docstring
-        return {"actual": f"{mine}–{theirs}", "hit": margin > 0}
+        return {"actual": _scoreline(away_runs, home_runs), "hit": margin > 0}
 
     return None

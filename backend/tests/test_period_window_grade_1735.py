@@ -97,17 +97,19 @@ def _grade(outcome, *, first=1, last=5, market="Tampa Bay vs Atlanta: First 5 In
 class TestTheFourShapesKalshiActuallySells:
     """Every outcome name here is copied from production, not invented."""
 
-    def test_the_first_five_winner_reads_the_named_sides_score_first(self):
+    def test_the_first_five_winner_states_the_window_away_home_whoever_it_names(self):
+        # #5086: the same window, the other side, the other verdict — and the
+        # SAME pair, because the scoreline no longer flips with the name. The
+        # verdict still turns on who won; only the display is fixed away–home.
         assert _grade("Tampa Bay wins first 5 innings") == {"actual": "6–1", "hit": True}
-        # The same window, the other side, the other verdict — and the score
-        # flips with the name, so neither row needs a legend to be read.
-        assert _grade("Atlanta wins first 5 innings") == {"actual": "1–6", "hit": False}
+        assert _grade("Atlanta wins first 5 innings") == {"actual": "6–1", "hit": False}
 
     def test_the_tie_leg_grades_off_the_window_and_not_the_final(self):
         # Atlanta lost the game 2–7 and lost the first five 1–6, but the FIRST
         # INNING was 0–0. A grader reading the final score gets this wrong.
         assert _grade("Tie 1st inning", last=1) == {"actual": "0–0", "hit": True}
-        assert _grade("Tie") == {"actual": "1–6", "hit": False}
+        # #5086: away–home, same as the two named rows beside it in the group.
+        assert _grade("Tie") == {"actual": "6–1", "hit": False}
 
     def test_the_over_under_ladder_grades_on_the_windows_combined_runs(self):
         # Seven runs in the first five: every rung up to 6.5 hit.
@@ -120,10 +122,13 @@ class TestTheFourShapesKalshiActuallySells:
         # Tampa Bay led the first five by five runs.
         assert _grade("Tampa Bay -1.5 first 5 innings") == {"actual": "6–1", "hit": True}
         assert _grade("Tampa Bay -2.5 first 5 innings") == {"actual": "6–1", "hit": True}
-        assert _grade("Atlanta -1.5 first 5 innings") == {"actual": "1–6", "hit": False}
+        # #5086: Alex saw the FIRST 5 SPREAD block flip the same five innings
+        # under the inning-winner block, so the spread arm is fixed away–home
+        # too — the margin still decides the verdict off the named side.
+        assert _grade("Atlanta -1.5 first 5 innings") == {"actual": "6–1", "hit": False}
         # The sign is read, not assumed: a five-run underdog covers +1.5.
-        assert _grade("Atlanta +1.5 first 5 innings") == {"actual": "1–6", "hit": False}
-        assert _grade("Atlanta +5.5 first 5 innings") == {"actual": "1–6", "hit": True}
+        assert _grade("Atlanta +1.5 first 5 innings") == {"actual": "6–1", "hit": False}
+        assert _grade("Atlanta +5.5 first 5 innings") == {"actual": "6–1", "hit": True}
 
     def test_the_run_question_is_answered_by_the_window_not_the_scoreboard(self):
         # Nine runs were scored in this game. None of them in the first inning,
@@ -226,7 +231,7 @@ class TestTheRefusalsAreTheProduct:
             "inning", 1, 5, "Los Angeles A vs Boston: First 5 Innings", None,
             "Los Angeles A wins first 5 innings",
             HOME_PERIODS, AWAY_PERIODS, "Los Angeles Angels", "Boston Red Sox",
-        ) == {"actual": "1–6", "hit": False}
+        ) == {"actual": "6–1", "hit": False}  # #5086: away–home (Boston 6, LA 1)
 
     def test_a_bare_yes_on_a_question_that_is_not_about_runs_is_refused(self):
         # Production stores "1st Inning Total" with a lone `Yes` outcome and the
@@ -236,8 +241,11 @@ class TestTheRefusalsAreTheProduct:
     def test_a_named_inning_is_not_graded_as_the_innings_before_it(self):
         # The span trap, at the util. Atlanta won the SIXTH inning 1–0 and lost
         # innings 1–6 by 2–6, so reading only the window's end flips the verdict.
-        assert _grade("Atlanta wins 6th inning", first=6, last=6) == {"actual": "1–0", "hit": True}
-        assert _grade("Atlanta wins 6th inning", first=1, last=6) == {"actual": "2–6", "hit": False}
+        # #5086: pairs are away–home (Tampa Bay first), so the SIXTH reads 0–1
+        # to Atlanta's win and innings 1–6 read 6–2 to its loss. The verdict is
+        # what the span changes here; the orientation is fixed either way.
+        assert _grade("Atlanta wins 6th inning", first=6, last=6) == {"actual": "0–1", "hit": True}
+        assert _grade("Atlanta wins 6th inning", first=1, last=6) == {"actual": "6–2", "hit": False}
 
     def test_a_home_team_that_never_batted_the_ninth_is_refused(self):
         # A home side leading after the top of the 9th does not bat, so its
@@ -487,18 +495,36 @@ async def test_the_suppressed_window_row_comes_back_as_a_verdict(finished_client
     # The composition is `_build_props_script`'s, which is the point — #1650
     # exists because one backend state wore three phrasings.
     #
-    # 1–0, not 2–7: the SIXTH inning, graded on the sixth inning. This assertion
+    # 0–1, not 7–2: the SIXTH inning, graded on the sixth inning. This assertion
     # is the span trap, taken through the route rather than off the util.
     assert script[WINNER]["graded_result"] == "hit"
-    assert script[WINNER]["graded_label"] == "1–0 — hit"
-
     assert script[LOSER]["graded_result"] == "miss"
-    assert script[LOSER]["graded_label"] == "0–1 — miss"
-
     assert script[TIE]["graded_result"] == "miss"
-    assert script[TIE]["graded_label"] == "1–0 — miss"
+
+    # #5086 — THE GROUP IS THE UNIT, asserted BEFORE the per-row labels below
+    # so that it is this line, with its message, that reports a regression.
+    #
+    # Every row here is defensible read alone, which is exactly why the defect
+    # shipped: the winner row said `1–0`, the tie row four lines under it said
+    # `0–1`, and each was internally consistent under its own rule. Only the set
+    # shows it. Re-introducing either old rule — subject-first on named rows, or
+    # home-first on the tie — splits this set and reds this assertion.
+    pairs = {
+        script[row]["graded_label"].split(" — ")[0]
+        for row in (WINNER, LOSER, TIE)
+    }
+    assert pairs == {"0–1"}, (
+        f"one inning, {len(pairs)} scorelines: {sorted(pairs)} — every rung of a "
+        "period group states the same pair, away–home, whoever the row names"
+    )
+
+    assert script[WINNER]["graded_label"] == "0–1 — hit"  # #5086: away–home
+    assert script[LOSER]["graded_label"] == "0–1 — miss"
+    assert script[TIE]["graded_label"] == "0–1 — miss"
 
     # The first-five spread, over innings 1–5, on the same page and the same read.
+    # Alex saw this block flip the same five innings under the winner block, so
+    # it carries the same orientation: Tampa Bay 6, Atlanta 1.
     assert SPREAD in script
     assert script[SPREAD]["graded_result"] == "hit"
     assert script[SPREAD]["graded_label"] == "6–1 — hit"
@@ -575,7 +601,7 @@ async def test_a_settled_inning_row_comes_back_as_a_verdict(settled_price_client
     )
     # Graded on the SIXTH inning (1–0 Atlanta), not the 2–7 final.
     assert script[WINNER]["graded_result"] == "hit"
-    assert script[WINNER]["graded_label"] == "1–0 — hit"
+    assert script[WINNER]["graded_label"] == "0–1 — hit"  # #5086: away–home
 
     # The 0.01 legs are the same cohort at the other end of the band.
     assert script[LOSER]["graded_result"] == "miss"
@@ -642,7 +668,7 @@ async def test_mixed_source_prices_produce_one_price_free_verdict(mixed_source_c
 
     Kalshi has the sixth inning at 0.99 and Polymarket at 0.30. One leaves through
     the step 9 carve-out, the other through `_window_open`, and before this repair
-    the reader got `1–0 — hit` twice — a set living inside either path is blind to
+    the reader got `0–1 — hit` twice — a set living inside either path is blind to
     the other.
     """
     payload = (await mixed_source_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
@@ -653,7 +679,7 @@ async def test_mixed_source_prices_produce_one_price_free_verdict(mixed_source_c
         "does not span both price paths"
     )
     assert rows[0]["graded_result"] == "hit"
-    assert rows[0]["graded_label"] == "1–0 — hit"
+    assert rows[0]["graded_label"] == "0–1 — hit"  # #5086: away–home
 
     # And neither copy came back as a price, from either venue or either path.
     assert WINNER not in _all_served_outcome_names(payload)
@@ -761,7 +787,7 @@ async def test_the_mid_band_arm_is_unchanged_by_the_carve_out(finished_client):
     payload = (await finished_client.get(f"/api/events/{EVENT_ID}/game-markets")).json()
     rows = [r for r in (payload.get("props_script") or []) if r["label"] == WINNER]
     assert len(rows) == 1, f"the mid-band winner row appears {len(rows)}× in WHAT HIT"
-    assert rows[0]["graded_label"] == "1–0 — hit"
+    assert rows[0]["graded_label"] == "0–1 — hit"  # #5086: away–home
 
 
 # ---------------------------------------------------------------------------
