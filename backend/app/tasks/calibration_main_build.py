@@ -296,6 +296,16 @@ STAGED_FUTURES_ENABLED = True
 #: (B=17 never banked one), so the re-key cost nothing on the day.
 STAGED_FUTURES_BUCKETS = 128
 
+#: The planner mode every unit statement runs under — #5085, precedent #4506.
+#:
+#: NOT hygiene, and NOT a global. Production sits at ``plan_cache_mode = auto``
+#: and stays there; this is armed per unit, inside that unit's transaction, and
+#: dies with it. See :meth:`CalibrationMainBuild._force_custom_plan` for the
+#: three-beat measurement that named the sixth execution as the cost and for why
+#: this one is not disarmed the way #4506's is.
+UNIT_PLAN_CACHE_MODE = "force_custom_plan"
+
+
 def _process_rss_mb() -> float | None:
     """This process's resident set size in MB, or ``None`` if unobtainable.
 
@@ -1053,10 +1063,66 @@ class PhaseRunner:
             # identically to "the carried worst is zero".
             self.ledger.record_gauge(f"staged:unit_worst_reason:unmeasured:{phase}", 1)
         await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+        await self._force_custom_plan(db)
         await (
             self.tag_rebuild_session(db) if deferred_rebuild else self.tag_session(db)
         )
         return timeout_ms
+
+    async def _force_custom_plan(self, db) -> None:
+        """Re-plan the unit statement every unit — #5085, precedent #4506.
+
+        **The measurement.** Three consecutive beats (2026-09-11, generations
+        04:15Z / 05:15Z / 06:15Z) each completed **exactly five** units and then
+        cancelled the sixth attempt at its fence, with fences of 452,028 ms,
+        632,404 ms and 306,064 ms respectively. A cause that does not move when
+        the fence halves is not the fence. The cancelled slices were 20/21, 25,
+        30/31 — and **every one of them completed on the very next beat**, as
+        that beat's first or second attempt, in 80-165 s. So the expense belongs
+        to the sixth POSITION in a beat, not to any slice.
+
+        **Why that number is not a coincidence.** ``chunk_sql`` is built once
+        outside the unit loop (``precompute_calibration.py:5106``) and executed
+        once per unit against one pooled asyncpg connection, so all of a beat's
+        units are executions 1..N of ONE prepared statement. Production runs
+        ``plan_cache_mode = auto`` (``pg_settings``: ``boot_val = reset_val =
+        auto``, recorded in ``test_last_match_arm_custom_plan_4506``), under
+        which Postgres uses a custom plan for the first five executions and then
+        pins the generic one. The unit statement's parameters are three arrays
+        whose lengths and selectivity vary per slice; a generic plan cannot see
+        into them, which is precisely the estimate collapse #4506 measured on
+        ``_last_match_query`` (811 estimated rows against a real 0, 618 ms
+        median against 1-3 ms with literals). A new beat is a new task run and a
+        new connection, so the execution counter resets — which is why the same
+        slice is fast tomorrow and why nobody caught this from a slice census.
+
+        **Why it is safe to arm and not disarm.** ``SET LOCAL`` is scoped to the
+        open transaction, and this transaction holds exactly the unit statement
+        and the session tag before ``commit`` ends it — so unlike #4506, which
+        had to restore ``auto`` because two more queries ran behind it in the
+        same request, there is nothing here to charge for a replan it did not
+        ask for. The arm is re-applied per unit for the same reason the
+        statement timeout beside it is: ``SET LOCAL`` dies with the previous
+        unit's commit.
+
+        **Why the arming is known to take.** The ``SET LOCAL statement_timeout``
+        on the line above is observably in force — units are being cancelled at
+        exactly the bound it sets — so this is not the silent-no-op case #4506
+        had to guard (``SET LOCAL`` outside a transaction). It is recorded as a
+        gauge anyway, because "the arm never took" and "the diagnosis was wrong"
+        are different findings and must not read alike.
+
+        Never fails the beat: a build that cannot set a planner GUC should run
+        slowly, not stop.
+        """
+        try:
+            await db.execute(
+                text(f"SET LOCAL plan_cache_mode = '{UNIT_PLAN_CACHE_MODE}'")
+            )
+            self.ledger.record_gauge("staged:unit_plan_cache_mode_armed", 1)
+        except Exception as exc:  # noqa: BLE001 — a planner hint is never fatal
+            logger.warning("calibration unit plan_cache_mode not armed: %s", exc)
+            self.ledger.record_gauge("staged:unit_plan_cache_reason:not_armed", 1)
 
     async def commit(self, db) -> None:
         """End the phase's read transaction so its output counts as committed.
