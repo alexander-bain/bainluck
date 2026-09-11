@@ -23,6 +23,7 @@ from sqlalchemy import func as sa_func, select, and_, null, or_, update
 
 from app.tasks.base import get_task_session
 from app.utils.market_settlement import settled_values
+from app.utils.price_change_stamp import price_changed_at_value  # #2024, #4958
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +352,27 @@ async def _poll_datagolf_markets() -> dict:
                                 await session.flush()
                             else:
                                 outcome.name = player.player_name
+                                # #4958: `price_changed_at` BEFORE the price, and
+                                # the order is cosmetic — PostgreSQL evaluates
+                                # every SET expression of one UPDATE against the
+                                # OLD row, so the bare column inside the helper
+                                # is the price this write is about to replace.
+                                # This task wrote 57,103 legs and stamped none of
+                                # them: #2024 rolled the shared helper out to
+                                # kalshi/polymarket/futures_price_refresh and
+                                # DataGolf was not one of the three, so golf
+                                # outrights could answer "when did we last look"
+                                # and never "when did this price last move".
+                                # Assigning a SQL expression to a mapped
+                                # attribute is deliberate: the alternative is a
+                                # fourth Python copy of the change predicate, and
+                                # a copy that drifts does not throw — it just
+                                # stops stamping (the helper's own docstring).
+                                outcome.price_changed_at = price_changed_at_value(
+                                    FuturesOutcome.current_probability,
+                                    FuturesOutcome.price_changed_at,
+                                    prob,
+                                )
                                 outcome.current_probability = prob
                                 outcome.last_updated = now
 
@@ -393,6 +415,18 @@ async def _poll_datagolf_markets() -> dict:
                         )
                         stale_nulled = 0
                         for stale in stale_result.scalars().all():
+                            # #4958: a price GOING AWAY is a price change, and on
+                            # this rail it is the only one this write can make —
+                            # the same reading kalshi.py's unprice path takes.
+                            # The `IS NOT NULL` in the query above means the
+                            # helper's comparison is always distinct here, so the
+                            # stamp always advances; it is written through the
+                            # helper anyway so there is one predicate, not two.
+                            stale.price_changed_at = price_changed_at_value(
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.price_changed_at,
+                                None,
+                            )
                             stale.current_probability = None
                             stale.last_updated = now
                             # Same reason as tasks/futures.py' stale zeroing
@@ -727,6 +761,13 @@ async def _poll_datagolf_live() -> dict:
                                 session.add(outcome)
                                 await session.flush()
                             else:
+                                # #4958, same shape and same reason as the
+                                # pre-tournament poll's update branch above.
+                                outcome.price_changed_at = price_changed_at_value(
+                                    FuturesOutcome.current_probability,
+                                    FuturesOutcome.price_changed_at,
+                                    prob,
+                                )
                                 outcome.current_probability = prob
                                 outcome.last_updated = now
 
@@ -776,6 +817,13 @@ async def _poll_datagolf_live() -> dict:
                         )
                         stale_nulled = 0
                         for stale in stale_result.scalars().all():
+                            # #4958, the unprice arm — see the pre-tournament
+                            # poll's stale loop for why a vanished price stamps.
+                            stale.price_changed_at = price_changed_at_value(
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.price_changed_at,
+                                None,
+                            )
                             stale.current_probability = None
                             stale.last_updated = now
                             # Same reason as tasks/futures.py' stale zeroing
