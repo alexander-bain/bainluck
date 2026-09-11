@@ -114,7 +114,21 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const catStyle = getCat(data.sport?.split("_")[0]);
   const sportCat = data.sport?.split("_")[0] || "sports";
 
-  const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : isSuspended ? SUSPENDED_LABEL : data.highlight?.label || "");
+  // #5245(b) — THE CONTEXT SLOT NEVER SPEAKS THE STATE. `contextSnippet` below
+  // falls back to this string, so a finished game whose wire carried no caption
+  // printed a bare grey "Final" under the pre-match row — a THIRD telling of a
+  // state the crest label and the FINAL chip have already said, sitting in the
+  // slot a reader reads as the card's explanation. `feedContextSnippet` is
+  // deliberately backend strings only (ruling 003); this local fallback was the
+  // one derived string in the chain. Empty means "render no caption" (standing
+  // notice 34: leave the space empty rather than explain the emptiness).
+  //
+  // isLive and isSuspended are deliberately NOT changed. They are the same class
+  // — "Live now" and the suspended label are equally derived — but they are
+  // served copy on populations #5245 did not photograph or measure, and the
+  // suspended string is protected by CERT-786's guards. Their own ship, their
+  // own before/after.
+  const headline = item.headline || (isLive ? "Live now" : isDone ? "" : isSuspended ? SUSPENDED_LABEL : data.highlight?.label || "");
   // UX-P045 — a settled card used to collapse to the bare word "Final", so a game
   // that ended 20 minutes ago and one that ended 19 hours ago read identically.
   // Measured 2026-08-10 07:04 PT: 15 of 15 event cards were finished games and 14
@@ -185,7 +199,15 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
 
       <div className="p-4">
         <Link href={`/events/${data.id}`} onClick={onDetailClick} className="block group">
-          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.away_team} {isDone ? "" : "@"} {data.home_team}</h3>
+          {/* #5245(a) — `Away @ Home`, in EVERY state. The finished card used to
+              drop the separator to "", so two multi-word names ran together as a
+              single string a reader cannot parse: "Colorado Rockies New York
+              Yankees", photographed on page one 2026-09-11. Nothing pinned the
+              empty separator — no test, no ruling — and the card disagreed with
+              itself in two places: the pre-match row's comment below calls this
+              heading `Away @ Home`, and the article's own aria-label says "vs"
+              for a final. This is the restore, not a redesign. */}
+          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.away_team} @ {data.home_team}</h3>
         </Link>
 
         {/* UX-P248 / Alex D-D — why this card is in front of THIS reader. Sits
