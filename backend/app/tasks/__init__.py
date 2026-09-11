@@ -6634,6 +6634,74 @@ for _beat_entry in celery_app.conf.beat_schedule.values():
 
 
 # =============================================================================
+# #5001 (THRU-B) — the founder switch that hands the hourly calibration rebuild
+# to a Heroku one-off dyno.
+#
+# WHY A SWITCH RATHER THAN DELETING THE ENTRY
+#
+# The rebuild has to move off `worker-heavy` because every master merge cycles
+# that worker and SIGTERMs the build in flight (D45 records the cause; runs 2580
+# and 4937 both died that way, 4937 at ~110/128 phases). A Heroku one-off dyno
+# is not cycled by an app release, so `scripts/run_calibration_hourly.py` run
+# from Heroku Scheduler survives the deploy that would have killed the beat.
+#
+# But the cutover is attended and it has to be reversible by Alex alone, from
+# one terminal, with no deploy: set `CALIBRATION_BEAT_DISABLED=1` and the beat
+# stops; unset it and the beat is back on the next dyno restart. Deleting the
+# entry in source would make the rollback a code change, which is the wrong
+# shape for a switch whose whole purpose is to be flipped back in a hurry.
+#
+# ORDER MATTERS: this runs AFTER the heavy-queue backstop above, so the entry is
+# removed from the final schedule rather than from an intermediate copy the
+# backstop then re-adds a queue to.
+#
+# ONLY EXACTLY "1" DISABLES IT. `CALIBRATION_BEAT_DISABLED=0`, `false`, `no` and
+# an empty string all leave the beat running. A switch that reads any non-empty
+# string as ON turns `=0` — the thing a person types to mean OFF — into ON, and
+# the failure is silent and hourly. Same test as `HEAVY_APP=1` in the Procfile
+# (#5003), deliberately: two switches in one release should not have two
+# different truthiness rules.
+#
+# Guard tests: `tests/test_calibration_hourly_job.py` asserts BOTH directions —
+# the entry is present with the switch unset (so the default cannot rot to
+# "disabled" unnoticed) and absent with it set to "1", plus the five non-"1"
+# controls.
+# =============================================================================
+CALIBRATION_BEAT_DISABLED_ENV = "CALIBRATION_BEAT_DISABLED"
+
+#: The beat entry this switch removes. Named once; the guard test imports it
+#: rather than retyping the string, so a rename cannot leave the test asserting
+#: something about a key that no longer exists (a vacuously green guard).
+CALIBRATION_BEAT_ENTRY = "precompute-calibration-main"
+
+
+def apply_calibration_beat_switch(schedule: dict, env=None) -> dict:
+    """Remove the hourly calibration beat entry iff the switch is exactly "1".
+
+    Pure over ``schedule`` and ``env`` — it MUTATES and returns ``schedule`` so
+    the module-level call below reads as one statement, but it reads no globals
+    and no process state, which is what lets the guard test drive both branches
+    without a subprocess and without touching `os.environ`.
+
+    Idempotent, and a no-op when the entry is already gone.
+    """
+    source = os.environ if env is None else env
+    if source.get(CALIBRATION_BEAT_DISABLED_ENV) != "1":
+        return schedule
+    if schedule.pop(CALIBRATION_BEAT_ENTRY, None) is not None:
+        logger.info(
+            "%s=1 — beat entry %r removed; the hourly calibration rebuild is "
+            "expected from the Heroku Scheduler one-off "
+            "(scripts/run_calibration_hourly.py). Unset it to restore the beat.",
+            CALIBRATION_BEAT_DISABLED_ENV, CALIBRATION_BEAT_ENTRY,
+        )
+    return schedule
+
+
+apply_calibration_beat_switch(celery_app.conf.beat_schedule)
+
+
+# =============================================================================
 # #1609 HYGIENE — bound the lifetime of a cache-warmer beat message.
 #
 # ⚠️ THIS IS HYGIENE, NOT THE CURE, AND IT IS LABELLED SO ON PURPOSE.
