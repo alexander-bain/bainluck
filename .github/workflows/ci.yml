@@ -1826,7 +1826,7 @@ jobs:
       # lockfile alone, or the cache goes stale the moment sources change while
       # still reporting a hit.
       - name: Cache the Next.js build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: frontend/.next/cache
           key: next-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/app/**', 'frontend/components/**', 'frontend/lib/**') }}
