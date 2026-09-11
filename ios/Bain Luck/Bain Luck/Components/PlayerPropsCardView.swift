@@ -37,8 +37,10 @@ struct PlayerPropsCardView: View {
         let name: String
         let initials: String
         let headshotURL: URL?
-        let team: String
-        let teamLabel: String
+        /// #4919 — both optional, and both nil together: a card that cannot
+        /// name its side prints no label and answers only the "All" filter.
+        let team: String?
+        let teamLabel: String?
         let color: Color
         let statGroups: [StatGroup]
 
@@ -87,9 +89,15 @@ struct PlayerPropsCardView: View {
                 .joined()
 
             let headshotURL = props.compactMap({ $0.prop.playerHeadshot }).first.flatMap { URL(string: $0) }
-            let apiTeam = props.first?.prop.playerTeam ?? "away"
-            let teamLabel = apiTeam == "home" ? "Home" : "Away"
-            let color = apiTeam == "home" ? homeColor : awayColor
+            // #4919 — the first row that KNOWS, not the first row: the served
+            // `player_team` is per-prop, so a player whose opening row is
+            // unattributed can still be named by a sibling. (No card on the
+            // measured fixture is rescued this way, and no player's rows
+            // disagree — but this is the same shape the headshot above uses,
+            // and `first` would throw away an answer we were handed.)
+            let side = PlayerPropsTeam.side(for: props.compactMap({ $0.prop.playerTeam }).first)
+            let teamLabel = PlayerPropsTeam.label(for: side)
+            let color = PlayerPropsTeam.color(for: side, home: homeColor, away: awayColor)
 
             var statGroups: [String: [Rung]] = [:]
             for (prop, statType) in props {
@@ -125,7 +133,7 @@ struct PlayerPropsCardView: View {
                 name: player,
                 initials: initials,
                 headshotURL: headshotURL,
-                team: apiTeam,
+                team: PlayerPropsTeam.filterValue(for: side),
                 teamLabel: teamLabel,
                 color: color,
                 statGroups: groups
@@ -252,9 +260,12 @@ struct PlayerPropsCardView: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                         .lineLimit(1)
-                    Text(card.teamLabel)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
+                    // #4919 — no label at all when the side is unknown.
+                    if let teamLabel = card.teamLabel {
+                        Text(teamLabel)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
 
                 Spacer()
