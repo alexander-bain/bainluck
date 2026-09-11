@@ -65,9 +65,24 @@ THE FOUR PROPERTIES, AND WHERE EACH COMES FROM
 
 EXIT CODES
 
-    0  the build ran and reported a publishable terminal, OR a previous copy
-       still holds the lease (a declined slot is not a failure)
+    0  the build ran and reported a publishable terminal, OR this slot stood
+       down because another builder already holds one of the TWO locks (a
+       declined slot is not a failure)
     1  the build raised, or returned a terminal that is not publishable
+
+    There are two locks, and a stand-down on either one is a clean exit:
+
+    * this script's own Redis `single_flight` lease on `TASK_NAME`, which only
+      another copy of this script can hold — declined before the build starts;
+    * the task's INTERNAL checkpoint lease, which the beat in `worker-heavy`
+      holds and which this script's lease knows nothing about — declined from
+      inside `_run_build`, so it comes back as a summary, not as a `lease`.
+
+    The second one is why `exit_code_for` cannot just ask `verdict_for`: the
+    beat and this job overlap by design during the documented rollout (the
+    practice run happens BEFORE `CALIBRATION_BEAT_DISABLED=1`) and again during
+    the `bainluck-heavy` cutover (#4456), and an operator told to wait for
+    `exit 0` must not be made to wait an hour for one (#5335).
 
 Heroku Scheduler does not retry, so the exit code is a signal for the log and
 for anybody reading `heroku ps`; the tile above is the thing that actually
@@ -113,6 +128,30 @@ RUNTIME_BOUND_ENV = "CALIBRATION_HOURLY_TIMEOUT_S"
 
 EXIT_OK = 0
 EXIT_FAILED = 1
+
+#: The summary a build returns when it declined from the INSIDE because another
+#: worker holds the checkpoint lease (`_precompute_calibration_main`, the
+#: `action == REFUSE` branch). Matched on BOTH fields: `status: "skipped"` is
+#: not enough on its own, because a skip for any other reason is a build that
+#: did not happen for a reason nobody has vetted, and those must keep exiting 1.
+CHECKPOINT_DECLINED_STATUS = "skipped"
+CHECKPOINT_DECLINED_REASON = "checkpoint_leased"
+
+
+def is_checkpoint_declined(summary) -> bool:
+    """True when ``summary`` is the checkpoint lease's own stand-down.
+
+    Pure and total: a non-dict summary (the build raised and something else was
+    substituted, or the contract moved) is NOT a stand-down. Reading a missing
+    key as a decline would turn every unrecognised summary into a clean exit,
+    which is the failure this job exists to make visible.
+    """
+    if not isinstance(summary, dict):
+        return False
+    return (
+        summary.get("status") == CHECKPOINT_DECLINED_STATUS
+        and summary.get("reason") == CHECKPOINT_DECLINED_REASON
+    )
 
 
 def runtime_bound_seconds(env: dict | None = None) -> int:
@@ -162,9 +201,19 @@ def exit_code_for(summary) -> int:
     hour's build worked — the divergence that let three calibration tasks report
     ``health: healthy`` while producing nothing (queue 300H, #1515).
 
-    A declined slot never reaches here; `main` returns before the build.
+    One summary is exempt, and only one: the checkpoint lease's stand-down.
+    A slot declined by THIS script's lease never reaches here (`main` returns
+    before the build), but a slot declined by the task's internal checkpoint
+    lease does — it is an ordinary return value, and `verdict_for` correctly
+    calls it non-`COMPLETE` because no build ran. That is the right verdict for
+    the health counters and the wrong exit code for the operator, so it is
+    remapped HERE rather than by weakening the contract those counters read
+    (#5335).
     """
     from app.utils.task_verdict import COMPLETE, verdict_for
+
+    if is_checkpoint_declined(summary):
+        return EXIT_OK
 
     verdict = verdict_for(METRIC_LABEL, summary)
     return EXIT_OK if verdict.verdict == COMPLETE else EXIT_FAILED
@@ -224,6 +273,19 @@ def main(argv=None) -> int:
 
     elapsed = time.monotonic() - started
     code = exit_code_for(summary)
+    if is_checkpoint_declined(summary):
+        # Exit 0, but NOTHING WAS BUILT. The rollout tells the operator to wait
+        # for `exit 0` before going on, so this line has to be impossible to
+        # read as a successful practice run: the mechanism worked, the build did
+        # not happen, and the beat that already holds the checkpoint will do it.
+        logger.info(
+            "calibration hourly job STOOD DOWN after %.1fs — the checkpoint is "
+            "leased by %s, so no build ran and nothing was published this slot. "
+            "Exiting 0: the job wiring is proven, the rebuild is NOT. The holder "
+            "will publish; re-run after it finishes to see a real build.",
+            elapsed, summary.get("owner"),
+        )
+        return code
     logger.info(
         "calibration hourly job finished in %.1fs — exit %d, summary %.400s",
         elapsed, code, summary,
