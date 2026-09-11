@@ -86,7 +86,11 @@ REPO=alexander-bain/bainluck
 
 SHA_IN="${1:-}"
 if [ -z "$SHA_IN" ] || [ "$SHA_IN" = "-h" ] || [ "$SHA_IN" = "--help" ]; then
-  sed -n '2,70p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'
+  # Print the header block by SENTINEL, not by line number. An earlier draft used
+  # `sed -n '2,70p'`; adding a paragraph above line 70 silently truncated the help
+  # mid-section, ending on a heading with no body. A slice keyed to a line number
+  # is wrong the first time anyone edits the thing it slices.
+  sed -n '2,${/^[^#]/q;p;}' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'
   exit 2
 fi
 
@@ -254,10 +258,10 @@ if [ "$NC" -eq 0 ]; then
   exit 2
 fi
 
-FILES=(); REL=(); MISSING=0
+REL=(); MISSING=0
 while IFS= read -r f; do
   [ -f "$WT/$f" ] || { echo "MISSING: $f"; MISSING=1; }
-  FILES+=( "$f" ); REL+=( "${f#backend/}" )
+  REL+=( "${f#backend/}" )
 done < "$T.all"
 if [ "$MISSING" -ne 0 ]; then
   echo "RESULT: HARNESS -- a derived file is absent from the composed tree (pytest exit-4 trap); band not run."
