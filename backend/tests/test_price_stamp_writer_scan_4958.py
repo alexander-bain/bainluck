@@ -59,6 +59,13 @@ THE RULES, AND WHY EACH ONE IS THE SHAPE IT IS
   `kalshi.py` and `polymarket.py` build their `set_` dicts as annotated
   variables, and a scan that read those as "no columns named" would have quietly
   declared the two biggest writers compliant while seeing nothing at all.
+* A `**helper(...)` splat is resolved by CALLING the helper (`SPLAT_HELPERS`),
+  never by copying its column names into this file. #5246 introduced one — the
+  shared settlement-price clause — precisely so that a settlement writer is a
+  population with one definition rather than four copies, and a scan that
+  hardcoded its keys would keep passing after somebody changed what it returns.
+  A helper whose key set DEPENDS on its argument is left unreadable rather than
+  resolved on whichever branch this file happened to list first.
 
 THE LEDGER IS THE FINDING. Nine sites in six files still write a price without
 maintaining the stamp; they are listed in `KNOWN_UNSTAMPED` with their reasons
@@ -115,6 +122,55 @@ KNOWN_UNSTAMPED: dict[tuple[str, str, str], int] = {
     ("app/tasks/prediction_market_matching.py", "_poll_live_prediction_market_prices", "orm-assign"): 2,
     ("app/tasks/tournament_price_refresh.py", "_write_refreshed_prices", "update.values"): 1,
 }
+
+
+#: Helpers whose `**splat` into a `.values(...)`/`set_` mapping contributes a
+#: statically known set of COLUMN NAMES, as `name -> (module, arg tuples)`.
+#:
+#: Resolved by importing and CALLING the helper rather than by listing its keys
+#: here. A copied list is a second definition of the thing the helper exists to
+#: be the only copy of: it would keep this scan green after someone changed what
+#: the helper returns, which is the exact failure mode #4958 was filed for.
+#:
+#: Each helper is called once per argument tuple and the key sets must AGREE —
+#: see `_keys_from_helper`.
+SPLAT_HELPERS: dict[str, tuple[str, tuple]] = {
+    # #5246 / CERT-2637. The shared settlement-price clause. The PRICE depends on
+    # the argument (1.0 for a venue YES, 0.0 for a NO); the COLUMN SET does not,
+    # so both branches are called and required to agree.
+    "settled_price_values": ("app.utils.settled_price", (True, False)),
+}
+
+
+def _keys_from_helper(name: str) -> tuple[set[str], bool]:
+    """(column names, readable) for a `**helper(...)` splat.
+
+    Unknown callee => unreadable, so a new helper is a build failure that gets
+    read by a person rather than a silent hole in the census.
+    """
+    spec = SPLAT_HELPERS.get(name)
+    if spec is None:
+        return set(), False
+    import importlib
+
+    module, arg_sets = spec
+    func = getattr(importlib.import_module(module), name)
+    per_call = [set(func(arg)) for arg in arg_sets]
+    if any(keys != per_call[0] for keys in per_call):
+        # An argument-dependent key set cannot be resolved at the call site
+        # without evaluating the argument, which this scan does not do.
+        return set(), False
+    return per_call[0], True
+
+
+def _splat_keys(value: ast.AST, tree: ast.AST | None, fn: str,
+                owner: dict[int, str] | None) -> tuple[set[str], bool]:
+    """(columns, readable) for one `**value` / `{**value}` element."""
+    if isinstance(value, ast.Name) and tree is not None and owner is not None:
+        return _resolve_named_mapping(value.id, tree, fn, owner)
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+        return _keys_from_helper(value.func.id)
+    return set(), False
 
 
 def _aliases(tree: ast.AST, names: set[str]) -> set[str]:
@@ -203,12 +259,9 @@ def _mapping_keys(node: ast.AST, tree: ast.AST | None = None, fn: str = "",
         for kw in node.keywords:
             if kw.arg is not None:
                 continue
-            if isinstance(kw.value, ast.Name) and tree is not None and owner is not None:
-                found, ok = _resolve_named_mapping(kw.value.id, tree, fn, owner)
-                keys |= found
-                readable = readable and ok
-            else:
-                readable = False
+            found, ok = _splat_keys(kw.value, tree, fn, owner)
+            keys |= found
+            readable = readable and ok
         return keys, readable
     if isinstance(node, ast.Dict):
         keys = {k.value for k in node.keys if isinstance(k, ast.Constant)}
@@ -216,12 +269,9 @@ def _mapping_keys(node: ast.AST, tree: ast.AST | None = None, fn: str = "",
         for key, value in zip(node.keys, node.values):
             if key is not None:
                 continue
-            if isinstance(value, ast.Name) and tree is not None and owner is not None:
-                found, ok = _resolve_named_mapping(value.id, tree, fn, owner)
-                keys |= found
-                readable = readable and ok
-            else:
-                readable = False
+            found, ok = _splat_keys(value, tree, fn, owner)
+            keys |= found
+            readable = readable and ok
         return keys, readable
     return set(), False
 
@@ -594,6 +644,89 @@ def test_a_values_splat_is_UNRECOGNISED() -> None:
         "    update(FuturesOutcome).values(**cols)\n"
     )
     assert len(unrecognised) == 1
+
+
+# ── `**helper(...)`, the #5246 shape ────────────────────────────────────────
+
+
+def test_a_splat_of_a_KNOWN_helper_is_read_and_its_columns_counted() -> None:
+    """The live shape at `backfill_winners.py::_backfill_kalshi_winners`.
+
+    The helper contributes `current_probability`, so the site is a price write
+    and the stamp beside it makes it a compliant one. Reading the splat is what
+    makes that judgement possible at all — before this, the site was
+    UNRECOGNISED and CI said so.
+    """
+    stamped, unstamped, unrecognised = _scan(
+        "from sqlalchemy import update\n"
+        "from app.models.models import FuturesOutcome\n"
+        "from app.utils.settled_price import settled_price_values\n"
+        "def w(is_winner):\n"
+        "    update(FuturesOutcome).values(\n"
+        "        is_winner=is_winner,\n"
+        "        **settled_price_values(is_winner),\n"
+        "        price_changed_at=expr,\n"
+        "    )\n"
+    )
+    assert not unrecognised and not unstamped and len(stamped) == 1
+
+
+def test_a_splat_of_a_KNOWN_helper_WITHOUT_the_stamp_is_still_caught() -> None:
+    """Teaching the scan a shape must not excuse the shape.
+
+    The whole risk of making an unreadable site readable is that it becomes
+    readable AND compliant in one step. Same splat, no `price_changed_at`: the
+    site must land in `unstamped`, which is what `test_no_new_writer_skips_the_
+    stamp` ratchets on.
+    """
+    stamped, unstamped, unrecognised = _scan(
+        "from sqlalchemy import update\n"
+        "from app.models.models import FuturesOutcome\n"
+        "from app.utils.settled_price import settled_price_values\n"
+        "def w(is_winner):\n"
+        "    update(FuturesOutcome).values(**settled_price_values(is_winner))\n"
+    )
+    assert not unrecognised and not stamped and len(unstamped) == 1
+
+
+def test_a_splat_of_an_UNKNOWN_helper_stays_UNRECOGNISED() -> None:
+    """The hole this could have opened. `_splat_keys` resolving any call at all
+    would let a future `**whatever()` hide a price write; only the allowlist
+    resolves, and everything else still fails loudly."""
+    _, _, unrecognised = _scan(
+        "from sqlalchemy import update\n"
+        "from app.models.models import FuturesOutcome\n"
+        "def w(x):\n"
+        "    update(FuturesOutcome).values(**some_other_helper(x))\n"
+    )
+    assert len(unrecognised) == 1
+
+
+def test_every_SPLAT_HELPER_is_importable_and_agrees_across_its_arguments() -> None:
+    """The positive control on the allowlist itself.
+
+    `_keys_from_helper` reports an argument-dependent key set as UNREADABLE,
+    which is the safe direction but is indistinguishable from "resolved" at the
+    call site once the entry exists. This asserts each listed helper really does
+    resolve, so an entry cannot rot into a permanent silent refusal.
+    """
+    assert SPLAT_HELPERS, "the allowlist is empty — the resolver is unexercised"
+    for name in SPLAT_HELPERS:
+        keys, readable = _keys_from_helper(name)
+        assert readable, f"{name} no longer resolves to a stable column set"
+        assert keys, f"{name} resolved to no columns"
+
+
+def test_the_settlement_helper_still_carries_the_price_column() -> None:
+    """The coupling that makes #5246's guard and this one one system.
+
+    If `settled_price_values` stopped naming `current_probability`, the
+    settlement writers would silently leave `_scan_app`'s price-write set and
+    this whole file would go green on them. The scan resolves the helper by
+    calling it precisely so that change is visible here rather than nowhere.
+    """
+    keys, _ = _keys_from_helper("settled_price_values")
+    assert PRICE in keys
 
 
 def test_a_module_qualified_builder_resolves() -> None:
