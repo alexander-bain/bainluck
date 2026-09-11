@@ -659,7 +659,7 @@ def cap_futures_on_games_led_first_page(
 
     The same measurement ruled out the other obvious fix, which is worth
     recording because it looks more correct than it is:
-    ``compose_lead(items, include_tonights_games=discover_mode)`` switches the
+    ``compose_lead``'s ``include_tonights_games=discover_mode`` switches the
     tonight's-games lead pass OFF in Sports mode, which reads like a plain bug
     on the one surface whose job is "what's on tonight". Turning it on yields
     three routine MLS overtimes in slots 1-3, one of them scoring 65 and
