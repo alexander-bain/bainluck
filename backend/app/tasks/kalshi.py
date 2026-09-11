@@ -411,6 +411,71 @@ def kalshi_outcome_names(event_title, markets) -> dict[str, str]:
 # gate later in this module (both use 0.50).
 _KALSHI_TIGHT_SPREAD_MAX = 0.50
 
+# Tolerance for the book-refutation test below, in decimal probability. Kalshi
+# quotes on a one-cent grid (the venue's own `price_level_structure` reads
+# `linear_cent`), so half a cent sits below the smallest move the venue can
+# make and cannot mask a real one.
+_BOOK_REFUTES_TRADE_EPSILON = 0.005
+
+
+def _book_refutes_trade(
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    last_price: float,
+) -> bool:
+    """True when the LIVE book prices out the last trade, so the trade is stale.
+
+    Rule 2 of :func:`_kalshi_yes_probability` prefers a real trade to a wide
+    book, and that is right when the book is uninformative. It is wrong when the
+    book has MOVED past the trade: an ask of 0.09 means anyone may buy at nine
+    cents right now, so a trade at 0.52 is not evidence of anything except that
+    somebody once paid more. The trade is a memory; the quote is an offer.
+
+    MEASURED (#5121, production 2026-09-11 ~17:00Z). Every violating rung of the
+    two ladder series in that issue — 12 of 12, checked against Kalshi's own
+    `/trade-api/v2/markets/{ticker}` — stored EXACTLY the venue's `last_price`
+    while that price sat above the venue's own `yes_ask`:
+
+        KXNBAWINS-27MIA-60   ours 0.5200   venue last 0.5200   venue ask 0.0900
+        KXNFLWINS-27CLE-13   ours 0.1000   venue last 0.1000   venue ask 0.0500
+        KXNFLWINS-27SF-16    ours 0.1700   venue last 0.1700   venue ask 0.0800
+        ... 9 more, same shape, zero mismatches
+
+    That is what a reader saw as Miami's "60+ wins 52%" printed ABOVE its own
+    "55+ wins 14.5%" — a cumulative ladder going up, which no season can make
+    true. The rung is not a disagreement between us and the venue; it is us
+    choosing the venue's stalest number over its freshest one.
+
+    🔴 THE EMPTY BOOK IS DELIBERATELY NOT REFUTED, and `kalshi_resolution_sweep`
+    depends on that. Its `RECENT_FINAL_SELECT_SQL` screens on
+    `yes_bid = 0 AND yes_ask = 1` precisely because that shape falls through to
+    the last trade here — it is how a stuck 99%/1% ladder is detected. An ask of
+    1.00 cannot be exceeded by any last price, so this predicate is inert on the
+    empty book by construction rather than by a special case, and
+    `test_empty_book_still_falls_through_to_the_last_trade_5121` pins it.
+
+    The bid arm is the ask arm's mirror (a live bid ABOVE the last trade prices
+    it out the same way, since you could sell into that bid). It is a
+    completion, not a measured repair: the helper only reaches rule 2 with a
+    positive bid when the spread is >= 0.50, and production carries no such rows
+    from this writer — the 374 `probability < yes_bid` Kalshi rows that do exist
+    have an ask distribution rule 1 could not have produced, so another writer
+    owns them (filed separately, NOT fixed here).
+    """
+    if (
+        yes_ask is not None
+        and yes_ask > 0
+        and last_price > yes_ask + _BOOK_REFUTES_TRADE_EPSILON
+    ):
+        return True
+    if (
+        yes_bid is not None
+        and yes_bid > 0
+        and last_price < yes_bid - _BOOK_REFUTES_TRADE_EPSILON
+    ):
+        return True
+    return False
+
 
 def _kalshi_yes_probability(
     yes_bid: Optional[float],
@@ -427,7 +492,9 @@ def _kalshi_yes_probability(
     captured as closing lines and inflated calibration MCE (#181). Priority:
 
       1. tight two-sided book (both > 0 AND ask-bid < 0.50) -> midpoint
-      2. else a real trade -> last_price (trade evidence beats a wide book)
+      2. else a real trade the LIVE BOOK DOES NOT REFUTE -> last_price
+         (trade evidence beats a wide book, but never a book that moved past it
+         — see :func:`_book_refutes_trade`, #5121)
       3. else longshot ask-only cap (ask > 0 AND ask <= 0.50, no/one-sided bid)
       4. else None -> caller skips (wide/one-sided book, no trade; don't fabricate)
 
@@ -441,7 +508,11 @@ def _kalshi_yes_probability(
         and (yes_ask - yes_bid) < _KALSHI_TIGHT_SPREAD_MAX
     ):
         return (yes_bid + yes_ask) / 2
-    if last_price is not None and last_price > 0:
+    if (
+        last_price is not None
+        and last_price > 0
+        and not _book_refutes_trade(yes_bid, yes_ask, last_price)
+    ):
         return last_price
     if (
         yes_bid is not None
