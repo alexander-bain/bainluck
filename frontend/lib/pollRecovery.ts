@@ -110,22 +110,75 @@ interface KeyState {
 }
 
 /**
+ * A function-valued `refreshInterval` is never nudged faster than this, however
+ * small the value it reports. See `pollIntervalMs`.
+ */
+export const FUNCTION_INTERVAL_FLOOR_MS = MAX_RECOVERY_DELAY_MS;
+
+/**
  * The `refreshInterval` of a key we are willing to nudge, or null.
  *
- * Only a finite positive NUMBER counts. `refreshInterval` may also be a
- * function of the cached data, and `0` is SWR's "not polled". Both route to
- * null: a key we cannot price is a key we do not add traffic for, and a key
- * that is not polling was never latched by the bug this fixes. (Measured at
- * time of writing: all 78 `refreshInterval` sites in the app are numeric
- * literals, including `autoRefresh ? 60000 : 0`, which correctly yields null
- * when auto-refresh is off.)
+ * ── THE FIRST CUT OF THIS SHIPPED INERT ON ITS OWN SPECIMEN (CERT-2584) ──────
+ *
+ * It accepted only a finite positive NUMBER and routed functions to null, on a
+ * written claim that "all 78 `refreshInterval` sites in the app are numeric
+ * literals". That claim was false, and false in the worst possible place: the
+ * MAIN event request in `app/events/[id]/page.tsx` — the live page this whole
+ * issue was filed against — passes
+ *
+ *     refreshInterval: (data) => eventRefreshInterval(data?.status, …)
+ *
+ * so the one key whose freezing produced the bug report was the one key that
+ * never armed. The claim came from reading a `grep` whose output stopped at 30
+ * of 78 lines and generalising from the visible part. A count is not a census.
+ *
+ * ── WHY EVALUATING THE FUNCTION IS SAFE, AND WHY IT IS FLOORED ───────────────
+ *
+ * swr itself calls `refreshInterval(getCache().data)` on every tick, so calling
+ * it is ordinary, not a liberty. We call it with `undefined` because a global
+ * `onError` has the config but not the cached data — the same argument swr
+ * passes before the first fetch lands.
+ *
+ * That answer can differ from the one swr computes WITH data, so it cannot be
+ * trusted as a floor: a function returning, say, 1000 for `undefined` and
+ * 60000 for a real payload would have us nudging sixty times faster than the
+ * healthy poll and break the load invariant. Hence
+ * `max(evaluated, FUNCTION_INTERVAL_FLOOR_MS)`: honour the function when it
+ * asks for something SLOWER than the ceiling, and never go faster than the
+ * ceiling when it asks for something quicker. For the live event page the
+ * evaluated value is `SCHEDULED_REFRESH_INTERVAL` (120s), comfortably slower
+ * than the floor, so that page recovers on its own declared cadence.
+ *
+ * Everything else still routes to null — `0` (SWR's "not polled", the live case
+ * from `{ refreshInterval: autoRefresh ? 60000 : 0 }`), a function that throws,
+ * and a function that reports a non-positive or non-finite cadence. A key that
+ * is not polling was never latched by the bug this fixes, so arming it would be
+ * traffic nobody asked for.
  */
 function pollIntervalMs(refreshInterval: unknown): number | null {
-  return typeof refreshInterval === "number" &&
-    Number.isFinite(refreshInterval) &&
-    refreshInterval > 0
-    ? refreshInterval
-    : null;
+  if (typeof refreshInterval === "number") {
+    return Number.isFinite(refreshInterval) && refreshInterval > 0
+      ? refreshInterval
+      : null;
+  }
+
+  if (typeof refreshInterval === "function") {
+    let evaluated: unknown;
+    try {
+      evaluated = (refreshInterval as (data?: unknown) => unknown)(undefined);
+    } catch {
+      // A cadence function that cannot answer without data is a key we cannot
+      // price, and this module fails toward not adding traffic.
+      return null;
+    }
+    return typeof evaluated === "number" &&
+      Number.isFinite(evaluated) &&
+      evaluated > 0
+      ? Math.max(evaluated, FUNCTION_INTERVAL_FLOOR_MS)
+      : null;
+  }
+
+  return null;
 }
 
 /**

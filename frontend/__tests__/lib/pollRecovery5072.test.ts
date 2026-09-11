@@ -29,6 +29,7 @@ import {
   recoveryDelayMs,
   MAX_RECOVERY_DELAY_MS,
   MAX_SERVER_WAIT_MS,
+  FUNCTION_INTERVAL_FLOOR_MS,
   type PollRecovery,
   type PollRecoveryDeps,
 } from "../../lib/pollRecovery";
@@ -256,7 +257,11 @@ describe("#5072 — what must NOT be armed", () => {
   it.each([
     ["undefined (no refreshInterval at all)", undefined],
     ["0, swr's own 'not polled'", 0],
-    ["a function of the cached data, which we cannot price", () => 30_000],
+    ["a function reporting 0 — not polled, just computed that way", () => 0],
+    ["a function that throws instead of answering", () => {
+      throw new Error("dependencies not ready");
+    }],
+    ["a function returning something that is not a cadence", () => "soon"],
     ["a negative number", -1],
     ["NaN", Number.NaN],
     ["Infinity", Number.POSITIVE_INFINITY],
@@ -389,6 +394,101 @@ describe("#5072 — bookkeeping", () => {
     const h = harness();
     h.recovery.recordError(KEY, throttled(), POLL_MS);
     h.recovery.stopAll();
+
+    expect(h.recovery.armedKeys()).toEqual([]);
+  });
+});
+
+/**
+ * CERT-2584's required repair, `5072-FUNCTION-VALUED-LIVE-POLL-RECOVERS`.
+ *
+ * The first cut of this ship rejected function-valued intervals and said so in
+ * a test — while `app/events/[id]/page.tsx`, the live page the issue was filed
+ * against, passes exactly that. The one key whose freezing produced the bug
+ * report was the one key that never armed. These tests are written in the
+ * production shape so that cannot come back.
+ */
+describe("#5072 — the live event page's own function-valued cadence", () => {
+  /**
+   * Verbatim from `lib/eventLivePush.ts`, which the page's `refreshInterval`
+   * closure calls. Reproduced rather than imported so this stays a test of THIS
+   * module's contract with a function, not of that helper.
+   */
+  const eventRefreshInterval = (
+    status: string | null | undefined,
+    streamConnected: boolean,
+    intervals: { live: number; scheduled: number },
+  ): number =>
+    streamConnected
+      ? intervals.scheduled
+      : status === "live"
+        ? intervals.live
+        : intervals.scheduled;
+
+  const LIVE_REFRESH_INTERVAL = 32_000;
+  const SCHEDULED_REFRESH_INTERVAL = 120_000;
+
+  /** The page's actual config value, closure and all. */
+  const pageInterval = (streamConnected: boolean) => (data?: unknown) =>
+    eventRefreshInterval(
+      (data as { status?: string } | undefined)?.status,
+      streamConnected,
+      { live: LIVE_REFRESH_INTERVAL, scheduled: SCHEDULED_REFRESH_INTERVAL },
+    );
+
+  it("arms — the regression CERT-2584 caught, stated as the assertion it should always have had", () => {
+    const h = harness();
+    h.recovery.recordError(KEY, throttled(), pageInterval(false));
+
+    expect(h.recovery.armedKeys()).toEqual([KEY]);
+    // 120s: the cadence the page's own function reports with no data yet, which
+    // is slower than the floor, so it is honoured rather than overridden.
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(SCHEDULED_REFRESH_INTERVAL);
+  });
+
+  it("recovers end to end: error, nudge, failed re-arm, then success hands back to swr", async () => {
+    const h = harness();
+
+    // 1. The production-shape failure: one 429 on the live event key.
+    h.recovery.recordError(KEY, throttled(), pageInterval(false));
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(SCHEDULED_REFRESH_INTERVAL);
+
+    // 2. The comeback comes due and asks the server again. Before this repair
+    //    no request was ever made for this key, for the life of the mount.
+    h.failNextNudge(SCHEDULED_REFRESH_INTERVAL);
+    await h.tick();
+    expect(h.nudged).toEqual([KEY]);
+
+    // 3. Still throttled: re-armed, not abandoned. Note it does NOT double —
+    //    the ceiling is `max(base, 60s)`, which for a 120s key IS 120s, so a
+    //    slow key simply keeps retrying at its own healthy cadence forever
+    //    rather than sliding towards silence. That is the load invariant doing
+    //    its job in the direction nobody thinks to check.
+    expect(h.recovery.armedKeys()).toEqual([KEY]);
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(SCHEDULED_REFRESH_INTERVAL);
+
+    // 4. The second comeback lands. swr's cached error clears, its own poll
+    //    resumes at whatever cadence the function reports WITH data, and this
+    //    module stands down.
+    await h.tick();
+    expect(h.nudged).toEqual([KEY, KEY]);
+    expect(h.recovery.armedKeys()).toEqual([]);
+  });
+
+  it("never nudges a function-priced key faster than the ceiling, whatever it reports", () => {
+    // The reason the evaluated value is a floor and not the answer: we call the
+    // function with `undefined`, and it may report something much quicker than
+    // it would with a real payload. Honouring that literally would nudge sixty
+    // times faster than the healthy poll.
+    const h = harness();
+    h.recovery.recordError(KEY, throttled(), () => 1_000);
+
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(FUNCTION_INTERVAL_FLOOR_MS);
+  });
+
+  it("still honours a function that asks to be left alone", () => {
+    const h = harness();
+    h.recovery.recordError(KEY, throttled(), () => 0);
 
     expect(h.recovery.armedKeys()).toEqual([]);
   });
