@@ -165,6 +165,13 @@ async function getAuthTokenWithTimeout(): Promise<string | null> {
 export interface ApiError extends Error {
   status?: number;
   detail?: unknown;
+  /**
+   * The limiter's advertised wait, in ms, when a 429 reached the caller rather
+   * than being absorbed by the retry below. #5072's poll recovery reads it to
+   * decide when to come back; without it that decision is a guess in the one
+   * case where the server actually told us.
+   */
+  retryAfterMs?: number;
 }
 
 /**
@@ -260,16 +267,26 @@ async function apiFetch<T>(
         // would burn the reader's seconds AND still be inside the same saturated
         // window. So an over-budget wait is not clamped, it is REFUSED — throw
         // now and let the page say we were throttled, which is true and fast.
+        // `error`, not `detail`: the limiter puts `retry_after` at the root
+        // of the body, beside `detail`, and `detail` itself is the message
+        // string. Passing `detail` here type-checks, passes a parser unit
+        // test written to the same mistake, and silently never retries —
+        // which is exactly what a production run of this path showed.
+        //
+        // Parsed BEFORE the retry decision and attached to the error, not
+        // inside it (#5072): the branch below declines the wait when it is
+        // over budget and throws, and the thing that then has to decide when
+        // to come back — the poll recovery in `lib/pollRecovery.ts` — was
+        // being handed an error with the answer stripped out of it.
+        const retryAfterMs =
+          res.status === 429
+            ? parseRetryAfterMs(res.headers.get("retry-after"), error)
+            : null;
+        if (retryAfterMs !== null) {
+          apiError.retryAfterMs = retryAfterMs;
+        }
+
         if (res.status === 429 && attempt < maxRetries) {
-          // `error`, not `detail`: the limiter puts `retry_after` at the root
-          // of the body, beside `detail`, and `detail` itself is the message
-          // string. Passing `detail` here type-checks, passes a parser unit
-          // test written to the same mistake, and silently never retries —
-          // which is exactly what a production run of this path showed.
-          const retryAfterMs = parseRetryAfterMs(
-            res.headers.get("retry-after"),
-            error,
-          );
           if (retryAfterMs !== null && retryAfterMs <= timeoutMs) {
             await new Promise((r) =>
               setTimeout(r, retryAfterMs + Math.random() * RETRY_AFTER_JITTER_MS),

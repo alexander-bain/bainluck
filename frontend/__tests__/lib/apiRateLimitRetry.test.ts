@@ -177,6 +177,59 @@ describe("apiFetch and a rate-limited response", () => {
     expect(err.detail).toBe("Rate limit exceeded: 60/minute");
   });
 
+  it("hands the limiter's own wait on to the caller when it throws (#5072)", async () => {
+    // The branch above DECLINES an over-budget wait and throws. Whatever
+    // reacts to that throw then has to decide when to come back — for a polled
+    // key that is `lib/pollRecovery.ts` — and until this ship the number the
+    // server had just supplied was parsed, used for the retry decision, and
+    // then dropped on the floor, so the decision was a guess in the one case
+    // where we had been told the answer.
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(throttled("47", wireBody(47)));
+
+    const err = await fetchCalibration().catch((e) => e);
+    expect(err.retryAfterMs).toBe(47000);
+  });
+
+  it("reads that wait from the BODY too, which is the only source a browser has", async () => {
+    // `api.bainluck.com` is a different origin and `main.py`'s `expose_headers`
+    // does not list `Retry-After`, so a real reader's `res.headers.get()`
+    // returns null. A test that only proved the header path would pass while
+    // every browser got `undefined`.
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(throttled(null, wireBody(47)));
+
+    const err = await fetchCalibration().catch((e) => e);
+    expect(err.retryAfterMs).toBe(47000);
+  });
+
+  it("attaches no wait when the server did not give one", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(throttled(null, { detail: "Rate limit exceeded: 60/minute" }));
+
+    const err = await fetchCalibration().catch((e) => e);
+    // Absent, not zero: `pollRecovery` reads a missing value as "the server did
+    // not say" and falls back to the key's own poll cadence. A `0` here would
+    // read as a positive instruction to come back immediately.
+    expect(err.retryAfterMs).toBeUndefined();
+  });
+
+  it("attaches no wait to a non-429, even one carrying a Retry-After header", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      headers: { get: () => "30" },
+      json: jest.fn().mockResolvedValue({ detail: "Service unavailable" }),
+    } as unknown as Response);
+
+    const err = await fetchCalibration().catch((e) => e);
+    expect(err.status).toBe(503);
+    expect(err.retryAfterMs).toBeUndefined();
+  });
+
   it("does not retry a 404 — the control that keeps this scoped to 429", async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: false,

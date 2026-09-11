@@ -1,13 +1,50 @@
 "use client";
 
-import { SWRConfig } from "swr";
+import { SWRConfig, mutate, useSWRConfig } from "swr";
 import type { ReactNode } from "react";
+import { createPollRecovery } from "@/lib/pollRecovery";
+
+/**
+ * #5072 — the recovery scheduler for polled keys that have errored.
+ *
+ * Module scope, not a `useRef`: there is one SWR cache in the app and this
+ * tracks state about it, so it must outlive any single render and be shared by
+ * every subtree. It is inert until `onError` arms it, which cannot happen
+ * during SSR, so constructing it at import time on the server costs nothing.
+ */
+const pollRecovery = createPollRecovery({
+  mutate: (key) => mutate(key),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (handle) => clearTimeout(handle),
+  // Written to match swr's own `isVisible`/`isOnline` defaults, including
+  // their fail-open direction: a runtime that cannot answer is treated as
+  // visible and online, because refusing to recover is the failure we are
+  // fixing.
+  isVisible: () =>
+    typeof document === "undefined" || document.visibilityState !== "hidden",
+  isOnline: () => typeof navigator === "undefined" || navigator.onLine !== false,
+});
 
 /**
  * Global SWR configuration to reduce redundant network requests
  * and improve perceived load times.
  */
 export default function SWRProvider({ children }: { children: ReactNode }) {
+  // The cache the children below will use.
+  //
+  // Reading it HERE, above our own `SWRConfig`, is correct precisely because
+  // this provider does not set `provider:` — with no cache override, children
+  // share the default global cache, which is what `useSWRConfig()` returns at
+  // any depth. Taking it this way is fully typed; `cache` is deliberately
+  // absent from swr's `PublicConfiguration`, so reaching for it off the config
+  // object handed to `onError` needs a cast that asserts what the types deny.
+  //
+  // ⚠️ If a `provider:` is ever added to the `SWRConfig` below, this line stops
+  // referring to the same cache and function-priced keys silently fall back to
+  // being evaluated with `undefined` — which is exactly the CERT-2587 defect.
+  // `__tests__/lib/pollRecoveryIsWired5072.test.ts` pins the absence of one.
+  const { cache } = useSWRConfig();
+
   return (
     <SWRConfig
       value={{
@@ -22,8 +59,37 @@ export default function SWRProvider({ children }: { children: ReactNode }) {
         // retry loop on top (up to ~9 attempts per failing key). #L2-137:
         // single source of retry — disable SWR's.
         shouldRetryOnError: false,
-        // Don't refetch on reconnect — let refreshInterval handle it
+        // Don't refetch on reconnect — let refreshInterval handle it.
+        //
+        // #5072: that sentence was false for four years of this file's life.
+        // `refreshInterval` REFUSES to fetch while the key is errored
+        // (`swr@2.4.1`: `if (!getCache().error && …)`), so with retry, focus
+        // and reconnect all off there was no path back at all — one 429 and a
+        // page left open never asked again. `onError` below is what makes the
+        // comment true.
         revalidateOnReconnect: false,
+        // The single edge that arms recovery. It is the only SWR callback this
+        // depends on, and deliberately so: four pages define their own
+        // hook-level `onSuccess`, which SHADOWS a global one, so a global
+        // `onSuccess` would silently never fire for exactly the live event
+        // page this was filed against. No page defines a hook-level `onError`;
+        // if one ever does, that key degrades to a single recovery attempt
+        // rather than an endless one — still strictly better than the latch.
+        //
+        // The cache entry is read HERE and passed down (CERT-2587). `cache` is
+        // on the merged config swr hands this callback, so `cache.get(key).data`
+        // is the same input swr's own polling effect feeds to a function-valued
+        // `refreshInterval`. Without it, a callback that answers 0 for
+        // `undefined` and 30000 for a live payload — which is exactly what
+        // `app/event/[domain]/[slug]/page.tsx` does — reads as "not polled" and
+        // its live page stays latched.
+        onError: (error, key, config) =>
+          pollRecovery.recordError(
+            key,
+            error,
+            config?.refreshInterval,
+            cache.get(key)?.data,
+          ),
       }}
     >
       {children}
