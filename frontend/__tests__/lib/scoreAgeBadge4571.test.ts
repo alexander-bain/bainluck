@@ -78,6 +78,26 @@
  * The remaining correctness pressure comes from the mutation table in the PR,
  * not from the red count. A suite for a freshness fix that only asserted "a
  * stamp appears" would pass on the price clock, which is the whole defect.
+ *
+ * ═══ AMENDED — THE ARM IS AN ARRAY, NOT A WRITER ═══
+ *
+ * The first commit shipped the history arm labelled `"espn"`. live/147 measured
+ * that it cannot be: `espn_history` is not all ESPN. `routes/events.py:15649`
+ * appends MLB Stats API and `stat_model` rows into it with no origin key,
+ * shaped like ESPN rows, then sorts by timestamp — and the supplement is dense
+ * (~50–130 points) where ESPN is sparse (2–16), so on **8 of 15** recent scoring
+ * MLB events the LAST row, the one this cascade reads, is a supplement.
+ * `scoreStamp` was correct throughout, because each row carries its own
+ * timestamp; only the label would have lied. The sting is that those MLB rows
+ * are exactly the arm that can be photographed, so the label would have been
+ * least trustworthy where it was most visible.
+ *
+ * So the value is `"history"` and the field is explicitly NOT an attribution.
+ * Its own red-first, measured against `4e6b2744` (master carrying the first
+ * commit): **3 failed, 15 passed of 18** — the two arm-label rows and the new
+ * naming guard. The two rows added with it are pure prohibitions and green on
+ * both sides: the arm is never called `espn`, and the page never renders
+ * `scoreFrom` at all.
  */
 
 import { computeLastChartPoint } from "../../lib/eventKeyStats";
@@ -124,7 +144,7 @@ describe("#4571 the score's stamp follows its provenance", () => {
       EVENT_T,
     );
     expect(pt!.homeScore).toBe(21);
-    expect(pt!.scoreFrom).toBe("espn");
+    expect(pt!.scoreFrom).toBe("history");
     expect(pt!.scoreStamp).toBe(ESPN_T);
     // Not the event row's clock either — that describes a different number.
     expect(pt!.scoreStamp).not.toBe(EVENT_T);
@@ -138,7 +158,7 @@ describe("#4571 the score's stamp follows its provenance", () => {
       null,
     );
     expect(pt!.scoreStamp).toBe(ESPN_T);
-    expect(pt!.scoreFrom).toBe("espn");
+    expect(pt!.scoreFrom).toBe("history");
   });
 
   // ---- the event-row arm: 28 of 36 scoring events, dark until live's sha lands ----
@@ -284,6 +304,33 @@ describe("#4571 the score's stamp follows its provenance", () => {
     expect(pt!.scoreStamp).toBeNull();
   });
 
+  // ---- the arm is an ARRAY, not a writer ----
+
+  test("the history arm is never labelled `espn`, because `espn_history` is not all ESPN", () => {
+    // Green on BOTH sides (the parent emits no `scoreFrom` at all), and it is a
+    // pure prohibition, which is the only kind of assertion that survives this
+    // being "tidied up" later.
+    //
+    // live/147 measured it: `routes/events.py:15649` appends MLB Stats API and
+    // `stat_model` rows into `espn_history` with no origin key, shaped like ESPN
+    // rows, then sorts by timestamp — and the supplement is dense (~50–130
+    // points) where ESPN is sparse (2–16). On 8 of 15 recent scoring MLB events
+    // the LAST row, the one this cascade reads, is a supplement. `scoreStamp`
+    // stays correct because each row carries its own timestamp; only a label
+    // naming ESPN would lie. The sting is that those MLB rows are exactly the
+    // arm that can be photographed, so the label would be least trustworthy
+    // where it is most visible.
+    const pt = computeLastChartPoint(
+      hist({ espn_history: [espnRow()] as never, win_prob_history: priceOnlyWinProb }),
+      21,
+      17,
+      EVENT_T,
+    );
+    expect(pt!.scoreFrom).not.toBe("espn");
+    // and the stamp is still right, which is the half that IS knowable
+    expect(pt!.scoreStamp).toBe(ESPN_T);
+  });
+
   // ---- what the badge does with it ----
 
   test("the badge blames the SCORE when the score is the older fact", () => {
@@ -345,6 +392,17 @@ describe("#4571 the page hands the badge the score it actually rendered", () => 
     // the majority branch and must never be spent as a score age.
     expect(code).not.toMatch(/scoreStamp:\s*lastChartPoint[?.]*\.timestamp/);
     expect(code).not.toMatch(/renderedScoreStamp\s*=\s*lastChartPoint[?.]*\.timestamp/);
+  });
+
+  test("`scoreFrom` is carried but NEVER rendered — it is not an attribution", () => {
+    // Green on both sides. live/147 asked for this explicitly: the value says
+    // which ARRAY the number came out of, and on 53% of scoring MLB events that
+    // array's last row is not ESPN. Naming a writer needs a `source` key on the
+    // supplemented rows (live's slice, not ours), and even then it would be a
+    // different field — backend `score_source` describes the `"event"` arm only.
+    // D102 / notice 34 also bear on adding a second grey sentence to the hero.
+    const code = executableSource(PAGE);
+    expect(code).not.toMatch(/scoreFrom/);
   });
 
   test("the event row's clock is threaded into the helper as its fourth argument", () => {
