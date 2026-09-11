@@ -21,6 +21,21 @@ The harness is the one `test_backfill_partial_result_carries_phase_stats_4658`
 established: phase functions are mocked so nothing touches a database or a
 venue, but the pipeline, its closure scoping, its budget guards and its return
 paths are the shipped ones.
+
+CERT-2585 BLOCKED THE FIRST VERSION OF THIS FIX, AND THIS FILE IS WHY IT COULD.
+That version mirrored the four into the hygiene block ~200 lines below the first
+`_cannot_afford` gate and called it "the un-budget-guarded core section". The
+tests here passed anyway, because the harness only ever advanced its virtual
+clock AT the four repairs — so no gate above them could fire and the drive could
+not tell a reachable line from a starved one. Production's own numbers say it is
+starved: `task-metrics` 2026-09-11 shows both successful cycles in 24h running
+782.1s and 611.6s against an effective budget of 540s, so the cycle returns at a
+gate well above that site.
+
+The clock is therefore now blown BEFORE the guarded region is entered, which is
+the production condition, and the four are asserted to run anyway. A test whose
+clock cannot reach the failing state is not a weaker test, it is a test of a
+different program.
 """
 
 import inspect
@@ -49,9 +64,14 @@ DARK_REPAIR_KEYS_5111 = (
     "premature_open_cleared",
 )
 
-#: Everything awaited between the top of `_backfill_all_winners` and the block
-#: under test. Mocked to inert dicts: this file is about whether the four are
-#: reached, not about what any of these do.
+#: The guard the pipeline hits first, and the phase name it reports stopping
+#: before. The four must be dispatched ABOVE this line — that is the whole of
+#: CERT-2585's required repair.
+FIRST_BUDGET_EXIT_PHASE = "kalshi_markets_api"
+
+#: Everything awaited between the top of `_backfill_all_winners` and the
+#: resolver-hygiene block. Mocked to inert dicts: this file is about whether the
+#: four are reached, not about what any of these do.
 PHASES_BEFORE_THE_BLOCK = (
     "_resolve_kalshi_from_scores",
     "_resolve_kalshi_spread_total_from_scores",
@@ -60,6 +80,12 @@ PHASES_BEFORE_THE_BLOCK = (
     "_resolve_kalshi_total_bases_from_boxscore",
     "_resolve_kalshi_period_props",
     "_backfill_kalshi_winners",
+)
+
+#: Phases BELOW the first gate. They are mocked too, so that a regression which
+#: moves the four back under the gate fails on the await assertions rather than
+#: dying in an unmocked callee — a red for the right reason.
+PHASES_AFTER_THE_FIRST_GATE = (
     "_backfill_kalshi_winners_via_markets",
     "_backfill_polymarket_winners_from_api",
     "_backfill_datagolf_winners",
@@ -132,18 +158,26 @@ async def _run_the_pipeline():
 
 
 async def _drive_through_the_hygiene_block():
-    """Run the real pipeline until just past the resolver-hygiene block.
+    """Run the real pipeline with the budget ALREADY blown at the first gate.
 
-    The clock is virtual and does not advance on its own. The LAST of the four
-    repairs moves it to 700.0, so the very next budget gate —
-    `_cannot_afford("candlestick_trades")`, which sits immediately below the
-    block — returns `_partial_result`. That gives a deterministic stop right
-    after the code under test instead of one tuned by counting calls (gotcha
-    #44: an anchor that branches on the clock is not an anchor).
+    The clock is virtual and does not advance on its own. `kalshi_api` — the
+    last phase above the resolver-hygiene block — moves it to 700.0, so
+    `_budget_left()` is 840 - 700 = 140, under the 300s `_BUDGET_MARGIN_S`, and
+    the very first `_cannot_afford` gate returns `_partial_result`. Nothing
+    below that gate runs.
 
-    If the four calls were deleted, the clock would never advance here, the
-    pipeline would sail past that gate, and the await-count assertions below go
-    red — which is exactly the regression this file exists to catch.
+    That is the production condition, not a contrived one: measured on
+    `task-metrics` 2026-09-11, both successful cycles in the trailing 24h ran
+    782.1s and 611.6s against an effective budget of 540s. A drive that lets the
+    pipeline sail through every gate is testing a cycle production does not have.
+
+    The clock jump is unconditional and lives in a phase ABOVE the code under
+    test, so the stop point is fixed by the pipeline's own structure rather than
+    by anything the four repairs do (gotcha #44: an anchor that branches on the
+    clock is not an anchor). The previous version advanced the clock inside the
+    LAST of the four, which made the stop point depend on the code under test —
+    it could not fail while the four sat below a gate, which is exactly the
+    defect CERT-2585 caught.
     """
     import app.tasks.kalshi as kalshi
 
@@ -158,7 +192,7 @@ async def _drive_through_the_hygiene_block():
                          AsyncMock(return_value={"snapshots_created": 0, "errors": []})), \
             patch.object(kalshi, "_backfill_trade_history",
                          AsyncMock(return_value={"snapshots_created": 0, "errors": []})):
-        for name in PHASES_BEFORE_THE_BLOCK:
+        for name in PHASES_BEFORE_THE_BLOCK + PHASES_AFTER_THE_FIRST_GATE:
             patch.object(bw, name, AsyncMock(return_value={})).start()
 
         for name in DARK_REPAIRS_5111:
@@ -167,12 +201,13 @@ async def _drive_through_the_hygiene_block():
             mocks[name] = m
             patch.object(bw, name, m).start()
 
-        async def _stop_the_clock(*a, **k):
-            # 840 - 700 = 140, under the 300s margin: the next gate returns.
+        async def _blow_the_budget(*a, **k):
+            # 840 - 700 = 140, under the 300s margin: the first gate returns.
             state["v"] = 700.0
-            return {"cleared": 1, "errors": []}
+            return {}
 
-        mocks["_clear_premature_open_winners"].side_effect = _stop_the_clock
+        # `kalshi_api`, the phase immediately above the hygiene block.
+        bw._backfill_kalshi_winners.side_effect = _blow_the_budget
 
         try:
             result = await bw._backfill_all_winners(dry_run=True, limit=5)
@@ -216,31 +251,84 @@ async def test_dark_repair_counters_reach_the_verdict(key):
     )
 
 
-def test_the_four_run_before_the_755_re_null():
-    """Placement, which is the decision #5111 had to make and get right.
+@pytest.mark.asyncio
+async def test_dark_repairs_run_before_first_budget_exit():
+    """CERT-2585's required repair, asserted end to end on the shipped pipeline.
 
-    Measured 2026-09-11: the #755 re-null's regex is unanchored and
-    case-insensitive over the whole `external_id`, so it reaches 611 of the
-    TOTAL re-grade's 14,337 production rungs through accidental team-
-    abbreviation substrings (`DE-TB-OS`, `TOR-TB`, `SD-STL`, `B-REB-RI`) — the
-    re-null's own defect, filed as #5116, and one it inflicts on those rows
-    today with or without these calls.
+    The exact condition production runs in: the budget is gone by the time the
+    first `_cannot_afford` gate is reached, so the cycle returns
+    `partial_budget_guard` there and NOTHING below that gate executes. The four
+    repairs must still have run, and their counters must still reach the
+    verdict — otherwise #5111's fix only relocates the darkness.
 
-    The four therefore sit in the un-budget-guarded resolver-hygiene block,
-    ABOVE the re-null and above the first `_cannot_afford` gate below it.
-    Moving them under that gate would drop them into the budget-guarded tail —
-    the #898 starvation `_regrade_golf_extra_winners` was explicitly written to
-    escape, and the one edit that would silently reproduce this bug.
+    All three claims are asserted together on one drive on purpose. "The guard
+    fired" alone would pass if the four never ran; "the four ran" alone would
+    pass on a drive whose guard never fired, which is precisely how the first
+    version of this file went green over a starved call site.
+    """
+    result, mocks = await _run_the_pipeline()
+
+    assert result.get("status") == "partial_budget_guard", (
+        "the drive did not stop at a budget guard, so it cannot say anything "
+        f"about what runs above one. Got status={result.get('status')!r}."
+    )
+    assert result.get("stopped_before") == FIRST_BUDGET_EXIT_PHASE, (
+        "the drive stopped at a LATER gate than the first one. Everything "
+        "between the two is then untested, which is the hole CERT-2585 found. "
+        f"Got stopped_before={result.get('stopped_before')!r}."
+    )
+
+    not_run = [r for r in DARK_REPAIRS_5111 if mocks[r].await_count != 1]
+    assert not not_run, (
+        f"{not_run} did not run before the first budget exit. They are below a "
+        "`_cannot_afford` gate, and production reaches that gate on every "
+        "cycle it completes (782.1s / 611.6s vs a 540s effective budget, "
+        "measured 2026-09-11). A repair below the gate is dark, exactly as it "
+        "was for the nine weeks #5111 is about."
+    )
+
+    missing = [k for k in DARK_REPAIR_KEYS_5111 if k not in result]
+    assert not missing, (
+        f"{missing} are absent from the partial-budget return. The four ran but "
+        "report nothing, so `task-metrics` cannot distinguish that from their "
+        "never having run — #4658's rule, and the reason nobody noticed for "
+        "nine weeks. Add them to the `_PHASE_STATS` table."
+    )
+
+
+def test_the_four_are_dispatched_above_every_budget_gate():
+    """The structural guard: source position, so the next mover is stopped cold.
+
+    Two orderings have to hold, and they came from different places.
+
+    ABOVE THE FIRST `_cannot_afford` — CERT-2585. Below it the calls are
+    starved rather than dark, which looks fixed and is not. This is asserted
+    against the FIRST gate in the source rather than a named one, so inserting a
+    new gate above the block also reds.
+
+    ABOVE THE #755 RE-NULL — measured 2026-09-11. That re-null's regex is
+    unanchored and case-insensitive over the whole `external_id`, so it reaches
+    611 of the TOTAL re-grade's 14,337 production rungs through accidental
+    team-abbreviation substrings (`DE-TB-OS`, `TOR-TB`, `SD-STL`, `B-REB-RI`) —
+    the re-null's own defect, filed as #5116, inflicted on those rows with or
+    without these calls.
     """
     src = inspect.getsource(bw._backfill_all_winners)
 
+    first_gate = src.index("if _cannot_afford(")
     renull = src.index("ml_repair_stats = {")
+
     for repair in DARK_REPAIRS_5111:
         call = src.index(f"await {repair}()")
+        assert call < first_gate, (
+            f"{repair} is called below the first `_cannot_afford` gate. That is "
+            "the CERT-2585 defect: production returns at a budget guard on "
+            "every long cycle, so the call never executes. Move it back into "
+            "the resolver-hygiene block above the first gate."
+        )
         assert call < renull, (
             f"{repair} is called after the #755 re-null. Read #5116 before "
-            "moving it: below the re-null it also lands in the budget-guarded "
-            "tail, which is where these repairs starve."
+            "moving it."
         )
 
 
