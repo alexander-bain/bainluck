@@ -1,0 +1,46 @@
+# CROSS-TIER PATHS — frontend files that BACKEND tests read off disk.
+#
+# #5007 (THRU-H). The change classifier may drop the backend jobs for a
+# frontend-only candidate. That is only safe because the backend suite is
+# assumed not to depend on `frontend/`. It does: twelve backend test files are
+# cross-tier parity guards that read client source and assert the client
+# consumes what the backend serves.
+#
+# A frontend-only change that touches ANY path below therefore still runs the
+# full suite. Touching none of them is what makes "frontend-only" mean
+# "no backend test can see this".
+#
+# THIS FILE IS NOT MAINTAINED BY HAND ALONE. `backend/tests/test_ci_cross_tier_manifest.py`
+# re-derives the set from `backend/tests/` on every run and goes red when a new
+# cross-tier read appears that is not listed here. Without that guard this list
+# rots into a fail-open the first time somebody adds a parity test — which is
+# the whole risk of the classifier, so the guard is the load-bearing half, not
+# the list.
+#
+# Blank lines and `#` comments are ignored. One repo-relative path per line.
+#
+# A line ending in `/` is a DIRECTORY PREFIX and covers everything beneath it.
+# `test_playoff_degraded_contract.py` builds a fixtures directory and then joins
+# filenames onto it, so no file-level entry can honestly describe what it reads —
+# the directory is the real dependency.
+
+frontend/lib/marketShape.ts
+frontend/app/sports/page.tsx
+frontend/lib/discover/feedPaging.ts
+frontend/lib/tournamentHubs.ts
+frontend/components/discover/utils.ts
+frontend/app/playoffs/[sport]/page.tsx
+frontend/e2e/helpers/sweepFiling.js
+frontend/e2e/scripts/file-sweep-findings.js
+frontend/lib/discover/feedFreshness.ts
+frontend/components/futures/OutcomeRow.tsx
+frontend/components/weather/data.ts
+
+# Named as WHOLE-PATH literals rather than component chains (CERT-2566). The
+# first cut of the scanner could not see this shape, so these three were missing
+# and a change to any of them was classified `frontend` while a backend contract
+# depended on it.
+frontend/__tests__/components/tournamentReskin.test.tsx
+frontend/lib/discoverInteractions.ts
+frontend/lib/play/session.ts
+frontend/__tests__/fixtures/
