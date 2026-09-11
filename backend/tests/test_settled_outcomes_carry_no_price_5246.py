@@ -251,7 +251,8 @@ def _settlement_writers(path):
     """
     import ast
 
-    src = open(path).read()
+    with open(path) as fh:  # CodeQL py/file-not-closed
+        src = fh.read()
     tree = ast.parse(src)
     lines = src.split("\n")
     hits = [
