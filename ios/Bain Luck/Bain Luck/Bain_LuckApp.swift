@@ -257,7 +257,14 @@ struct Bain_LuckApp: App {
                         away: best.awayTeam, home: best.homeTeam
                     )
                     let score = "\(away) \(best.awayScore ?? 0) - \(home) \(best.homeScore ?? 0)"
-                    let period = best.espn?.period ?? best.espn?.gameClock ?? ""
+                    // #5057 — the seventh site. This was a FALLBACK, not a join,
+                    // so it never doubled and #4880 left it: it printed ESPN's
+                    // period verbatim, and the dropdown row right underneath it
+                    // (`MenuBarView`) already said `Q4 6:34`. Delegating also
+                    // gains the clock this dropped on football, where the raw
+                    // period carries it as a prefix rather than beside it.
+                    let period = PeriodLabel.liveStatusText(
+                        period: best.espn?.period, gameClock: best.espn?.gameClock) ?? ""
                     navCoordinator.liveGameTitle = period.isEmpty ? score : "\(score) • \(period)"
                     navCoordinator.liveGameCount = liveEvents.count
                 } else {
