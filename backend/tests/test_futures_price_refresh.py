@@ -57,14 +57,15 @@ class TestSelectionPredicate:
         admission back into a fence and reddens the second half.
         """
         assert fpr.HIGH_VALUE_SQL.count("market_tier") == 1
-        assert "market_tier = 1 AND fm.volume IS NULL" in fpr.HIGH_VALUE_SQL
+        assert "market_tier = 1" in fpr.HIGH_VALUE_SQL
         # The value arm names no tier at all: volume alone admits Brazil.
         assert "market_tier" not in fpr.VALUE_MEASURED_SQL
         # and the two halves are a disjunction, not a conjunction.
         assert " OR " in fpr.HIGH_VALUE_SQL
-        assert " AND " not in fpr.HIGH_VALUE_SQL.replace(
-            fpr.VALUE_TIER1_UNPRICED_SQL, ""
-        )
+        assert " AND " not in fpr.HIGH_VALUE_SQL.replace(fpr.VALUE_TIER1_SQL, "")
+        # #5268: the tier arm carries NO volume qualifier of any kind. A volume
+        # word inside it is the `IS NULL` fence coming back under another name.
+        assert "volume" not in fpr.VALUE_TIER1_SQL
 
     def test_null_volume_is_not_read_as_a_measured_zero(self):
         """The second hole: `volume >= 10000` is NULL-rejecting.
@@ -88,14 +89,22 @@ class TestSelectionPredicate:
                 (1, 1, None),      # tier 1, unmeasured -> admitted
                 (2, 2, 114_137_967),  # Brazil: tier 2, huge -> admitted
                 (3, 2, None),      # tier 2, unmeasured -> not admitted
-                (4, 5, 12),        # measured and small -> not admitted
+                (4, 5, 12),        # measured and small, LOW tier -> not admitted
+                # #5268, the specimen: KXWBCHEAVYWEIGHTTITLE-27, tier 1, volume
+                # 2,814. `>= 10000` false, `IS NULL` false -> it passed NEITHER
+                # arm and was refreshed by nothing, while serving six boxers at
+                # 96% for one belt off a quote last written 35 hours earlier.
+                (5, 1, 2_814),     # tier 1, measured and small -> admitted
             ],
         )
         where = fpr.HIGH_VALUE_SQL.replace("fm.", "").replace(
             ":volume_floor", "10000"
         )
         got = {r[0] for r in con.execute(f"SELECT id FROM fm WHERE {where}")}
-        assert got == {1, 2}
+        assert got == {1, 2, 5}
+        # Both directions. Tier 1 is an admission, so 5 is in; it is not a
+        # licence, so 4 — measured, small and tier 5 — stays out.
+        assert 4 not in got
 
     def test_uses_exists_not_max_captured_at(self):
         """MAX(captured_at) over the 179M-row snapshot table times out at 10s.
@@ -117,7 +126,10 @@ class TestSelectionPredicate:
                 "fm.status = 'open'",
                 # #3315: the value test, both halves, on both sides.
                 "fm.volume >= :volume_floor",
-                "fm.market_tier = 1 and fm.volume is null",
+                # #5268: the tier arm is now an unqualified admission on both
+                # sides. If the guard and the task ever disagree about the
+                # volume qualifier again, they are measuring two populations.
+                "fm.market_tier = 1",
                 "fm.resolution_date > now()",
                 "not exists",
             ):
@@ -302,7 +314,7 @@ class TestOrderingHasNoFixedPoint:
         guarded is unchanged: the scan must see more than one run can take.
         """
         assert fpr.VALUE_POOL_LIMIT > fpr.DEFAULT_MARKET_BUDGET
-        assert fpr.UNPRICED_POOL_LIMIT > fpr.KALSHI_MARKET_BUDGET
+        assert fpr.TIER1_POOL_LIMIT > fpr.KALSHI_MARKET_BUDGET
 
     def test_the_pool_is_materialised_so_the_planner_cannot_undo_it(self):
         """PG12+ inlines a single-reference CTE, which restores the bad plan.
@@ -315,6 +327,206 @@ class TestOrderingHasNoFixedPoint:
         """
         assert "AS MATERIALIZED" in fpr.ELIGIBLE_POOL_SQL
         assert "AS MATERIALIZED" in fpr._CANDIDATE_SQL.text
+
+
+class TestTier1PoolIsSizedAboveItsPopulation:
+    """#5268. A stable ordering under a BINDING limit is a fixed point.
+
+    The tier-1 arm orders by `fm.id` and there is no value key to sort on. That
+    is safe only while the limit exceeds the population: the moment it binds,
+    the same head is selected every run and the tail — the highest ids, meaning
+    the NEWEST markets — is never seen at all. That is the starvation this
+    module exists to end, reintroduced by a constant.
+    """
+
+    #: Production 2026-09-11, under the FULL liveness predicate. Recorded so the
+    #: limit is checked against a measurement rather than against a feeling.
+    MEASURED_TIER1_POPULATION = 2_786
+    MEASURED_VALUE_POPULATION = 4_377
+
+    def test_limit_leads_the_measured_population(self):
+        assert fpr.TIER1_POOL_LIMIT > self.MEASURED_TIER1_POPULATION
+        assert fpr.VALUE_POOL_LIMIT > self.MEASURED_VALUE_POPULATION
+
+    def test_the_headroom_is_declared_and_met(self):
+        """Not just "above" — above by a stated margin, both pools.
+
+        The value pool is the thin one (4,377 of 4,500) and this test is where
+        that becomes visible instead of becoming a Tuesday.
+        """
+        for limit, population in (
+            (fpr.TIER1_POOL_LIMIT, self.MEASURED_TIER1_POPULATION),
+            (fpr.VALUE_POOL_LIMIT, self.MEASURED_VALUE_POPULATION),
+        ):
+            headroom = (limit - population) / limit
+            assert headroom >= fpr._POOL_LIMIT_HEADROOM_MIN, (
+                f"pool limit {limit} leaves {headroom:.1%} over a measured "
+                f"{population}; below the declared "
+                f"{fpr._POOL_LIMIT_HEADROOM_MIN:.0%} the pool is one ingest "
+                "away from truncating a stable ordering"
+            )
+
+    def test_widening_the_arm_without_raising_the_limit_is_caught(self):
+        """The mutation this class exists for, asserted as arithmetic.
+
+        #5268 widened the tier-1 arm from `volume IS NULL` (866 rows) to any
+        volume (2,786). Shipping that against the old 2,000 limit would have
+        truncated 786 markets by id, silently and forever. Pinned so the pair
+        can never be half-applied.
+        """
+        assert fpr.TIER1_POOL_LIMIT > 2_000, (
+            "the tier-1 arm now admits every tier-1 market, so the pre-#5268 "
+            "limit of 2,000 sits UNDER the population it must lead"
+        )
+
+
+class TestThePoolReportsWhenTheLimitDecided:
+    """#5268. The docstring promised `unpriced_pool_hit`; no such stat existed.
+
+    The name appeared in a comment and nowhere in the code, so the documented
+    safety net for a truncating pool was prose. These pin the real one — because
+    a pool that returned everything and a pool that returned the first N of
+    everything both just return N rows, and nothing downstream can tell them
+    apart after the fact.
+    """
+
+    def test_the_stat_names_exist_and_are_distinct(self):
+        assert fpr._STAT_TIER1_POOL_HIT == "tier1_pool_hit"
+        assert fpr._STAT_VALUE_POOL_HIT == "value_pool_hit"
+        assert fpr._STAT_TIER1_POOL_HIT != fpr._STAT_VALUE_POOL_HIT
+
+    def test_the_sizes_are_selected_from_the_materialised_pools(self):
+        """Read off the CTEs, not re-counted.
+
+        A second scan to ask "did the limit bind?" would cost the ~12s the pools
+        exist to avoid paying twice, so the sizes ride the statement that is
+        already running. If these subqueries ever name a table instead of the
+        pool CTEs, the diagnostic has quietly become a third scan.
+        """
+        sql = fpr._CANDIDATE_SQL.text
+        assert "(SELECT count(*) FROM value_pool) AS value_pool_size" in sql
+        assert "(SELECT count(*) FROM tier1_pool) AS tier1_pool_size" in sql
+
+    class _PoolResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
+    class _PoolSession:
+        """Returns candidate rows in the class arm's 8-column shape."""
+
+        def __init__(self, rows):
+            self._rows = rows
+
+        async def execute(self, statement, params=None):
+            return TestThePoolReportsWhenTheLimitDecided._PoolResult(self._rows)
+
+    @staticmethod
+    def _row(mid, value_size, tier1_size):
+        # id, source, external_id, volume, poly_event_id, venue_settled_since,
+        # value_pool_size, tier1_pool_size
+        return (mid, "kalshi", f"KX{mid}", 2_814, None, None, value_size, tier1_size)
+
+    async def _scan(self, rows, **kw):
+        stats: dict = {}
+        session = self._PoolSession(rows)
+        markets = await fpr._scan_candidates(
+            session, volume_floor=10_000, stale_hours=6, stats=stats, **kw
+        )
+        return markets, stats
+
+    async def test_a_pool_at_its_limit_raises_the_flag(self):
+        _, stats = await self._scan(
+            [self._row(1, 10, 50)], value_pool_limit=100, tier1_pool_limit=50
+        )
+        assert stats[fpr._STAT_TIER1_POOL_HIT] is True
+        assert fpr._STAT_VALUE_POOL_HIT not in stats
+        assert stats["tier1_pool_size"] == 50
+        assert stats["value_pool_size"] == 10
+
+    async def test_a_pool_under_its_limit_raises_nothing(self):
+        _, stats = await self._scan(
+            [self._row(1, 10, 20)], value_pool_limit=100, tier1_pool_limit=50
+        )
+        assert fpr._STAT_TIER1_POOL_HIT not in stats
+        assert fpr._STAT_VALUE_POOL_HIT not in stats
+        assert fpr._STAT_POOL_HEADROOM_LOW not in stats
+        assert stats["tier1_pool_size"] == 20
+
+    async def test_approaching_the_limit_warns_before_anything_is_lost(self):
+        """A `*_pool_hit` is a post-mortem: at the limit, rows are ALREADY gone.
+
+        99 of 100 leaves 1% headroom against a declared 2% minimum, and nothing
+        has been truncated yet — the only moment at which raising the limit is
+        still free. This is the signal that arrives in time.
+        """
+        _, stats = await self._scan(
+            [self._row(1, 10, 99)], value_pool_limit=1_000, tier1_pool_limit=100
+        )
+        assert fpr._STAT_TIER1_POOL_HIT not in stats, "nothing truncated yet"
+        assert "tier1 99/100" in stats[fpr._STAT_POOL_HEADROOM_LOW]
+        assert "value" not in stats[fpr._STAT_POOL_HEADROOM_LOW]
+
+    async def test_exactly_the_declared_headroom_is_not_low(self):
+        """The boundary, pinned so the runtime check and the CI guard agree.
+
+        98 of 100 leaves exactly 2%, which MEETS `_POOL_LIMIT_HEADROOM_MIN`.
+        `TestTier1PoolIsSizedAboveItsPopulation` accepts the same margin with
+        `headroom >= _POOL_LIMIT_HEADROOM_MIN`; if these two ever disagree about
+        the boundary, a pool passes CI and warns in production, or the reverse.
+        """
+        _, stats = await self._scan(
+            [self._row(1, 10, 98)], value_pool_limit=1_000, tier1_pool_limit=100
+        )
+        assert fpr._STAT_POOL_HEADROOM_LOW not in stats
+
+    async def test_a_pool_at_its_limit_is_a_hit_not_merely_low(self):
+        """The two states are distinct and must not collapse into one."""
+        _, stats = await self._scan(
+            [self._row(1, 10, 50)], value_pool_limit=100, tier1_pool_limit=50
+        )
+        assert stats[fpr._STAT_TIER1_POOL_HIT] is True
+        assert fpr._STAT_POOL_HEADROOM_LOW not in stats
+
+    async def test_zero_candidates_does_not_report_an_empty_pool(self):
+        """The quiet-night trap, and the reason the sizes are not defaulted.
+
+        Every market being FRESH returns no candidate rows. The pool sizes are
+        unreadable in that case — they can only be read off a row — so recording
+        `0` would publish "the eligible population is empty" on exactly the night
+        the sweep is working perfectly, and a monitor reading it would invert.
+        """
+        markets, stats = await self._scan([])
+        assert markets == []
+        assert "tier1_pool_size" not in stats
+        assert "value_pool_size" not in stats
+        assert fpr._STAT_TIER1_POOL_HIT not in stats
+
+    async def test_the_two_extra_columns_do_not_reach_the_market_dicts(self):
+        """The class arm selects 8 columns; a market has 6 fields.
+
+        `_rows_to_markets` is shared with the two identity arms, whose statements
+        still select 6. A fixed-tuple unpack would make this an unpack error in
+        the arms that never changed.
+        """
+        markets, _ = await self._scan([self._row(7, 10, 20)])
+        assert len(markets) == 1
+        assert markets[0]["id"] == 7
+        assert markets[0]["external_id"] == "KX7"
+        assert markets[0]["arm"] == fpr._ARM_CLASS
+        assert "value_pool_size" not in markets[0]
+
+    def test_union_not_union_all_still_dedupes_the_overlap(self):
+        """Load-bearing since #5268 in a way it was not before.
+
+        A tier-1 market whose volume clears the floor now satisfies BOTH arms.
+        Under UNION ALL it would arrive as two candidates and be priced twice,
+        spending a budget the module measures in markets-per-run.
+        """
+        assert "UNION ALL" not in fpr.ELIGIBLE_POOL_SQL
+        assert "UNION" in fpr.ELIGIBLE_POOL_SQL
 
 
 class TestTerminalIsHonest:
@@ -1096,7 +1308,10 @@ class _RunHarness:
 
         async def execute(self, statement, params=None):
             sql = str(statement)
-            if "WITH pool AS MATERIALIZED" in sql:
+            # #5268 split the one pool CTE into value_pool/tier1_pool/pool, so
+            # the old `WITH pool` prefix no longer matches the class
+            # arm. Keyed on the substring all three share.
+            if "pool AS MATERIALIZED" in sql:
                 if "COUNT(*)" in sql:
                     return _RunHarness._Result(scalar=0)
                 return _RunHarness._Result(self.outer.class_rows)
@@ -1177,8 +1392,14 @@ class _RunHarness:
 
 
 def _brazil_class_row():
-    """One class-arm market that WILL price: tier-2 Brazil, addressable."""
-    return [(112996, "polymarket", "0xbrazil", 114_137_967, "45915", None)]
+    """One class-arm market that WILL price: tier-2 Brazil, addressable.
+
+    Eight columns, matching the class arm's real statement: the six market
+    columns plus the two pool sizes it trails since #5268. Kept faithful to the
+    production shape on purpose — a fake that is narrower than the statement it
+    stands in for is how a row-shape regression reads green here.
+    """
+    return [(112996, "polymarket", "0xbrazil", 114_137_967, "45915", None, 10, 20)]
 
 
 class TestAnUnavailablePageOneSignalCannotReadGreen:

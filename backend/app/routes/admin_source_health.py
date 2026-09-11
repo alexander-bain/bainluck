@@ -14,7 +14,7 @@ from app.services import get_db
 from app.tasks.futures_price_refresh import (  # noqa: E402
     ELIGIBLE_POOL_SQL,
     HIGH_VALUE_SQL,
-    UNPRICED_POOL_LIMIT,
+    TIER1_POOL_LIMIT,
     VALUE_POOL_LIMIT,
 )
 from app.utils.futures_liveness import (
@@ -356,7 +356,7 @@ async def futures_price_freshness(
     pool_params = {
         "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
         "value_pool_limit": VALUE_POOL_LIMIT,
-        "unpriced_pool_limit": UNPRICED_POOL_LIMIT,
+        "tier1_pool_limit": TIER1_POOL_LIMIT,
     }
     params = {**pool_params, "max_age_hours": max_age_hours}
 
