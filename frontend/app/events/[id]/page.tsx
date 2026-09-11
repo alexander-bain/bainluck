@@ -11,7 +11,11 @@ import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
-import { applyLiveFrame, eventRefreshInterval } from "@/lib/eventLivePush";
+import {
+  applyLiveFrame,
+  eventFeedIsStalled,
+  eventRefreshInterval,
+} from "@/lib/eventLivePush";
 import LiveAgeStamp from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import LiveSparkline from "@/components/event/LiveSparkline";
@@ -768,6 +772,28 @@ export default function EventPage({ params }: EventPageProps) {
     commenceTime: event?.commence_time,
   });
 
+  // #4861 — and only where one actually IS landing. The ring above counts down
+  // a `setInterval` that ticks whether or not anything arrives, so on the page
+  // a reader left open it went on promising an update long after the payload
+  // stopped coming. `eventFeedIsStalled` carries the case and the measurement.
+  //
+  // Read during render rather than held in state on purpose: `countdown`
+  // already re-renders this component once a second, so the elapsed time is
+  // re-derived on the same tick the ring is drawn from, and there is no second
+  // timer to fall out of step with the first.
+  const feedStalled = eventFeedIsStalled({
+    hasError: Boolean(eventError),
+    msSinceLastLanding: Date.now() - lastRefresh,
+    refreshInterval,
+  });
+
+  // The two cases that earn the age badge, named here so the header can render
+  // it exactly once (#4469). Mutually exclusive by construction: the first
+  // needs the stream, and `shouldShowRefreshCountdown` is false while the
+  // stream is connected.
+  const pushedAge = !isFinished && streamConnected;
+  const stalledAge = showRefreshCountdown && feedStalled;
+
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
   // null (or its "Score data is not available" message) inside a card shell,
@@ -886,10 +912,26 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* live/034 S2 — on a pushed event there is no "next update" to count
             down to, because updates arrive. Show how old the number is instead.
-            The countdown stays for every event still on the poll. */}
-        {!isFinished && streamConnected && (
+            The countdown stays for every event still on the poll.
+
+            #4861 adds the second case that earns this badge: a POLLED page that
+            has stopped being fed. It is the same disclosure for the same reason
+            — past its own stale boundary the badge drops the green and the word
+            "live" by itself — so it is the same badge, rendered once.
+
+            ONE CALL SITE, deliberately (#4469's guard): two would be two answers
+            to "how old is this number", and the whole point of the badge is that
+            there is one. The two conditions cannot both hold — `pushedAge` needs
+            the stream, and `shouldShowRefreshCountdown` returns false while the
+            stream is connected — so `connected` is simply passed through and is
+            false on the stalled branch by construction.
+
+            The sparkline stays on the pushed branch only: it is the last ten
+            minutes of a number that is still arriving, and on a page that has
+            stopped being fed it would be one more thing implying motion. */}
+        {(pushedAge || stalledAge) && (
           <div className="ml-auto flex items-center gap-3">
-            <LiveSparkline points={sparklinePoints} />
+            {pushedAge && <LiveSparkline points={sparklinePoints} />}
             <LiveAgeStamp
               updatedAt={heroStamp.stamp}
               oldestFact={heroStamp.fact}
@@ -899,8 +941,11 @@ export default function EventPage({ params }: EventPageProps) {
         )}
 
         {/* Visual countdown timer — #3802 gates it on proximity, not just on
-            "not finished and not pushed". */}
-        {showRefreshCountdown && (
+            "not finished and not pushed". #4861: and not while the page's own
+            fetches are failing — the ring is a `setInterval` that ticks whether
+            or not anything arrives, so it promised an update for three hours
+            over a game that had already ended. */}
+        {showRefreshCountdown && !feedStalled && (
           <div className="ml-auto flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {effectivelyLive && (
