@@ -51,6 +51,7 @@ from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     DISCOVERY_SCHEDULED_SPORTS,
     ESPN,
+    FLIP_EVIDENCE,
     FLIP_RULED_WITHOUT_STREAK,
     GOVERNING_IDENTITY_NUMBERS,
     SHADOW_STAMPERS,
@@ -230,18 +231,32 @@ class TestTheStructuralRefusalsAreUntouched:
 
 
 class TestTheStandingSwitchStillDidNotMove:
-    """A gate exemption, not a flip."""
+    """A gate exemption, not a flip.
 
-    def test_every_sport_is_still_espn_standing(self):
-        assert set(AUTHORITY_BY_SPORT.values()) == {ESPN}
+    NBA joined the RULED SET here and did not join the standing switch, and
+    that is still directly observable: it holds `ESPN` and carries no
+    `FLIP_EVIDENCE`. #4954 flipped NFL on 2026-09-11 by a ship of its own, so
+    "every value is ESPN" stopped being the way to say this — the way to say it
+    is that no sport arrives in the switch by MEMBERSHIP, only by an evidenced
+    edit.
+    """
+
+    def test_nba_is_still_espn_standing(self):
         assert authority_for(NBA) == ESPN
+        assert NBA not in FLIP_EVIDENCE
 
     def test_no_ruled_sport_was_written_into_the_standing_switch(self):
-        for key in FLIP_RULED_WITHOUT_STREAK:
+        unflipped = sorted(k for k in FLIP_RULED_WITHOUT_STREAK if k not in FLIP_EVIDENCE)
+        assert NBA in unflipped, (
+            "NBA is this file's subject and it has been flipped by some later "
+            "ship — re-read that ship before touching this test"
+        )
+        for key in unflipped:
             assert AUTHORITY_BY_SPORT.get(key) == ESPN, (
                 f"{key} was written into the standing switch as well as the "
-                "gate; that is the STANDING-STATPAL path, which is not a "
-                "fallback and is not what D104 asked for"
+                "gate, with no FLIP_EVIDENCE; that is the STANDING-STATPAL "
+                "path arriving by membership, which is not a fallback and is "
+                "not what D104 asked for"
             )
 
 

@@ -41,8 +41,11 @@ import pytest
 
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
+    DEFAULT_AUTHORITY,
     ESPN,
+    FLIP_EVIDENCE,
     FLIP_RULED_WITHOUT_STREAK,
+    STATPAL,
     SWITCH_ACTOR_SERVES,
     SWITCH_CONSUMERS,
     SWITCH_IS_WIRED,
@@ -733,7 +736,14 @@ async def test_the_row_publishes_the_wiring_beside_the_current_authority(monkeyp
         authority = entry["authority"]
         # Beside `current`, in the same object. A note published one level up
         # would not travel with the value it qualifies.
-        assert authority["current"] == ESPN
+        # Was `== ESPN`, which stopped being a fact about the payload on
+        # 2026-09-11 (#4954 flipped football). What the payload owes is that
+        # the value it publishes is the SWITCH's value — read from the map
+        # here, not from `authority_for`, which is the route's own call and
+        # would make this tautological.
+        assert authority["current"] == AUTHORITY_BY_SPORT.get(
+            entry["sport_key"], DEFAULT_AUTHORITY
+        )
         assert authority["switch_wired"] is True
         assert "INERT" not in authority["switch_note"]
         # And it is the derived sentence, not a second copy that could drift.
@@ -748,21 +758,57 @@ async def test_the_row_publishes_the_wiring_beside_the_current_authority(monkeyp
         # D104 (2026-09-09) permits a ruled sport's failover with no streak, so
         # a blanket "nothing fires" is no longer true of this payload and an
         # eighth sport must not be able to slip in under a hardcoded name.
+        #
+        # THREE STATES SINCE #4954, NOT TWO. A flipped sport is served by
+        # StatPal STANDING, so `decide` returns `failed_over=False` for it —
+        # the same `false` an ungated sport publishes, for the opposite
+        # reason. Collapsing them (asserting `is ruled` and letting football
+        # fall out of the loop) is what would let the best-covered sport we
+        # have publish the uncovered sport's answer unnoticed.
         failover = authority["failover"]
         ruled = entry["sport_key"] in FLIP_RULED_WITHOUT_STREAK
-        assert failover["would_fire_if_espn_went_dark"] is ruled, (
-            f"{entry['sport_key']} is {'' if ruled else 'not '}D104-ruled, so "
-            f"its projection should be {ruled}: {failover['why']!r}"
+        flipped = (
+            AUTHORITY_BY_SPORT.get(entry["sport_key"], DEFAULT_AUTHORITY) == STATPAL
+        )
+        assert not (flipped and not ruled), (
+            f"{entry['sport_key']} is flipped but not D104-ruled — that is a "
+            "streak flip and this assertion table has never seen one; extend "
+            "it rather than widening the branch"
+        )
+        expected_fire = ruled and not flipped
+        assert failover["would_fire_if_espn_went_dark"] is expected_fire, (
+            f"{entry['sport_key']} ruled={ruled} flipped={flipped}, so its "
+            f"projection should be {expected_fire}: {failover['why']!r}"
         )
         assert failover["code"] == (
-            "FAILOVER-ESPN-DARK" if ruled else "NO-FAILOVER-NOT-GATED"
+            "STANDING-STATPAL"
+            if flipped
+            else "FAILOVER-ESPN-DARK" if ruled else "NO-FAILOVER-NOT-GATED"
+        )
+        # The field that stops the two `false`s reading alike. A flipped sport
+        # and a failing-over sport are BOTH covered; only an ungated one is not.
+        assert failover["would_be_served_if_espn_went_dark"] is (ruled or flipped), (
+            f"{entry['sport_key']} publishes coverage {failover['would_be_served_if_espn_went_dark']} "
+            f"with code {failover['code']}"
         )
         if not ruled:
             assert "measured half" in failover["why"]
 
 
-def test_nothing_has_flipped_so_the_note_is_the_only_thing_standing_between():
-    """Context, and a tripwire. While every value is ESPN the inert switch is
-    harmless; the day one reads STATPAL, this file's claim is the only warning a
-    reader gets, and it had better still be true."""
-    assert set(AUTHORITY_BY_SPORT.values()) == {ESPN}
+def test_the_flipped_sport_is_the_one_the_evidence_names():
+    """Was `test_nothing_has_flipped_…`. The day it guarded arrived.
+
+    Its old body was `set(AUTHORITY_BY_SPORT.values()) == {ESPN}` and its
+    docstring said: *"the day one reads STATPAL, this file's claim is the only
+    warning a reader gets, and it had better still be true."* That day is
+    2026-09-11 (#4954), so the test is re-derived onto the claim itself rather
+    than deleted — the switch is WIRED, the note says so and does not say
+    INERT, and nothing reached STATPAL without receipts.
+    """
+    flipped = sorted(k for k, v in AUTHORITY_BY_SPORT.items() if v == STATPAL)
+    assert flipped == sorted(FLIP_EVIDENCE), (
+        f"the switch and its receipts disagree: switch={flipped} "
+        f"evidence={sorted(FLIP_EVIDENCE)}"
+    )
+    assert SWITCH_IS_WIRED is True
+    assert "INERT" not in SWITCH_WIRING_NOTE

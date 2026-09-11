@@ -55,6 +55,7 @@ from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     DISCOVERY_SCHEDULED_SPORTS,
     ESPN,
+    FLIP_EVIDENCE,
     FLIP_RULED_WITHOUT_STREAK,
     MEASUREMENT_POPULATION_SCOPES,
     SHADOW_STAMPERS,
@@ -264,28 +265,67 @@ class TestOnlyFootballShipsOnThisIssue:
 
 
 class TestTheSwitchItselfDidNotMove:
-    """The flip is a FALLBACK, not a standing source of record.
+    """A gate exemption is not a flip — still the claim, re-derived.
 
     Alex asked for "ESPN first, StatPal fallback". `AUTHORITY_BY_SPORT` is the
     *standing* switch, and `authority_failover.decide` is explicit that a sport
     set to STATPAL there "has already flipped ... this pass's silence from ESPN
     is not an outage for it" — a different behaviour, reached by a different
     question, and one that on a pass where ESPN DOES answer changes nothing at
-    all. Writing STATPAL there would not have delivered what was asked, so this
-    ship must be visible as having not touched it.
+    all. Writing STATPAL there would not have delivered what D104 asked for, so
+    this ship must be visible as having not touched it.
+
+    **NFL LEFT THIS STATE ON 2026-09-11, and not by this ship (#4954).** It was
+    flipped by a separate, evidenced, attended edit under D50's second half — a
+    YOUR-TURN entry Alex saw, fired on silence. That is the proof that the two
+    steps are two, not a hole in the claim below, and the tests here are
+    re-derived rather than re-pointed at the new value: the proposition is
+    MEMBERSHIP OF THE RULED SET DOES NOT WRITE THE STANDING SWITCH, and it is
+    observable on every ruled sport no ship of its own has flipped.
+
+    Re-pointing them (`== STATPAL` for NFL) would have been one character and
+    would have deleted the only proof that D104's ship kept its hands off the
+    switch. The anti-vacuity assert below is what stops the same deletion
+    happening silently on the day the last ruled sport flips.
     """
 
-    def test_every_sport_is_still_espn_standing(self):
-        assert set(AUTHORITY_BY_SPORT.values()) == {ESPN}
-        assert authority_for(NFL) == ESPN
-
     def test_the_ruled_set_is_not_the_standing_switch(self):
-        for key in FLIP_RULED_WITHOUT_STREAK:
+        unflipped = sorted(k for k in FLIP_RULED_WITHOUT_STREAK if k not in FLIP_EVIDENCE)
+        assert unflipped, (
+            "every ruled sport now carries FLIP_EVIDENCE, so this test can no "
+            "longer observe the distinction it exists to pin. Re-derive it on "
+            "a constructed sport (tests/authority_specimens) — do not delete it"
+        )
+        for key in unflipped:
             assert AUTHORITY_BY_SPORT.get(key) == ESPN, (
                 f"{key} was written into the standing switch as well as the "
-                "gate; that is the STANDING-STATPAL path, which is not a "
+                "gate, and carries no FLIP_EVIDENCE; that is the "
+                "STANDING-STATPAL path arriving by membership, which is not a "
                 "fallback and is not what D104 asked for"
             )
+
+    def test_the_one_sport_that_did_leave_espn_left_by_an_evidenced_ship(self):
+        """Whatever moved is accounted for — a flip never arrives anonymously.
+
+        This is the other half of the same guard. The test above proves the
+        ruling did not write the switch; this one proves that what DID write it
+        brought D50's receipts, so "the ruled set leaked into the map" and "a
+        ship flipped a sport on purpose" can never be confused for each other.
+        """
+        for key, authority in sorted(AUTHORITY_BY_SPORT.items()):
+            if authority == ESPN:
+                continue
+            evidence = FLIP_EVIDENCE.get(key)
+            assert evidence, f"{key} left ESPN with no FLIP_EVIDENCE entry"
+            assert evidence.get("your_turn"), (
+                f"{key} left ESPN naming no YOUR-TURN entry; D50's second half "
+                "is not optional"
+            )
+        assert authority_for(NFL) != ESPN and FLIP_EVIDENCE.get(NFL), (
+            "NFL is this file's subject and #4954 flipped it on 2026-09-11 — "
+            "if it is back on ESPN the rollback happened, and the docstring "
+            "above needs rewriting before this test is made to pass again"
+        )
 
 
 class TestTheMonitorSurvives:

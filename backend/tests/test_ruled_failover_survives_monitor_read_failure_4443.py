@@ -3,6 +3,19 @@
 Named as a non-blocking follow-up by CERT-2393 on the D104 football ship
 (#4417), measured on master, and real.
 
+**FOOTBALL IS PINNED AS A CANDIDATE HERE SINCE 2026-09-11 (`nfl_as_candidate`,
+#4954).** The subject of this file's ship is the GATE, and a sport whose switch
+reads `statpal` never reaches the gate at all — it is served standing, so
+`decide` returns `STANDING-STATPAL` before the ledger's readability is a
+question. Football flipped, so the defect below is no longer reachable *for
+football* and these tests would otherwise have gone on running against a path
+that cannot exhibit it.
+
+The fix is not thereby moot: it is what stands between an unreadable snapshot
+store and every ruled-but-unflipped sport (`basketball_nba`, `baseball_mlb`
+today), and it is what will matter for football again the moment a rollback
+puts it back behind ESPN — which is the one move D50 says has to stay cheapest.
+
 THE DEFECT
 ----------
 `espn_sync._decide_failovers` read the durable ledger and forced the gate shut
@@ -54,12 +67,13 @@ from app.utils.authority_agreement import SHADOW_STAMPERS
 
 # Reused rather than re-cut: one rail for this path, so a change to the
 # sqlite/session shim cannot leave two test files describing different worlds.
-from tests.test_authority_failover_3473 import (  # noqa: F401 — `dispatches` is a fixture
+from tests.test_authority_failover_3473 import (  # noqa: F401 — fixtures
     NFL,
     _Fx,
     _live,
     _wire_sqlite,
     dispatches,
+    nfl_as_candidate,
 )
 
 #: A sport D104 has NOT ruled, so its refusal must still carry the ledger's own
@@ -118,7 +132,7 @@ def test_only_a_ruled_sport_can_pass_the_gate_on_an_empty_ledger():
 
 @pytest.mark.asyncio
 async def test_a_ruled_sport_still_fails_over_when_the_monitor_cannot_be_read(
-    monkeypatch,
+    monkeypatch, nfl_as_candidate,
 ):
     """THE SHIP. ESPN dark for football + the snapshot store down ⇒ still serves.
 
@@ -146,7 +160,7 @@ async def test_a_ruled_sport_still_fails_over_when_the_monitor_cannot_be_read(
 
 @pytest.mark.asyncio
 async def test_the_reported_reason_names_both_the_ruling_and_the_failed_read(
-    monkeypatch,
+    monkeypatch, nfl_as_candidate,
 ):
     """The degraded read stays VISIBLE — it is ignored as authority, not hidden.
 
@@ -251,7 +265,7 @@ async def test_a_readable_ledger_is_still_the_thing_the_gate_reads(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_failover_actually_writes_when_the_monitor_is_unreadable(
-    monkeypatch, dispatches  # noqa: F811 — the imported fixture, bound by pytest
+    monkeypatch, dispatches, nfl_as_candidate  # noqa: F811 — imported fixtures
 ):
     """End to end: a `serving` verdict is not a write, so assert the WRITE.
 

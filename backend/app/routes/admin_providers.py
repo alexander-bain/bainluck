@@ -1984,12 +1984,35 @@ def _authority_note(sport_key: str) -> str:
     does not reach it — this endpoint's whole audience is the operator asking
     whether anything has flipped yet.
     """
-    from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK
+    from app.config.authority_by_sport import (
+        FLIP_RULED_WITHOUT_STREAK,
+        STATPAL as _STATPAL,
+        authority_for as _authority_for,
+    )
 
     common = (
         "the sport's source of record TODAY. The agreement row below "
         "measures the candidate; it does not select it. "
     )
+    # ASKED FIRST, AND DERIVED (#4954). Both branches below describe a sport
+    # that has NOT flipped — one that may fail over, one that may not — and
+    # both would have gone on being served, word for word, beside a `current`
+    # reading `statpal`. That is the same rot this docstring is about, one
+    # branch further in: a note about the GATE, printed for a sport that walked
+    # through it. Read off `authority_for` rather than a list, so the sentence
+    # follows the switch instead of a second copy of it.
+    if _authority_for(sport_key) == _STATPAL:
+        return common + (
+            "THIS SPORT HAS FLIPPED. StatPal is its standing source of record, "
+            "so an ESPN-dark pass is reported as standing service "
+            "(`STANDING-STATPAL`) rather than as an outage override, and a "
+            "pass where BOTH are dark is UNCOVERED and alarms. On a pass where "
+            "ESPN answers, nothing changed: ESPN still supplies this sport's "
+            "scores, clock and win probability, and the flip did not move the "
+            "event graph. What it flipped ON is in "
+            "`config.authority_by_sport.FLIP_EVIDENCE`, which distinguishes a "
+            "seven-day streak from a D104 ruling — do not assume the streak."
+        )
     if sport_key in FLIP_RULED_WITHOUT_STREAK:
         return common + (
             "Alex ruled this sport may fail over WITHOUT a certification streak "
@@ -2155,6 +2178,22 @@ async def statpal_authority_agreement(
         hypothetical = would_fail_over_now(sport_key, gate)
         entry["authority"]["failover"] = {
             "would_fire_if_espn_went_dark": hypothetical.failed_over,
+            # THE FIELD ABOVE INVERTS ON A FLIPPED SPORT, WHICH IS WHY THIS ONE
+            # EXISTS (#4954). `failed_over` means "an OVERRIDE fired", and a
+            # sport whose standing source of record is already StatPal does not
+            # need one — `decide` returns STANDING-STATPAL with
+            # `failed_over=False`. So on the day football flipped, the row
+            # started publishing `would_fire_if_espn_went_dark: false` for the
+            # best-covered sport we have, one field away from `no shadow
+            # stamper` sports publishing the same `false` for the opposite
+            # reason. Literally correct, and the exact shape of the failure the
+            # disclosure was built to prevent.
+            #
+            # `serving` answers the question the operator actually has — "if
+            # ESPN went dark right now, would football still have a schedule?"
+            # — and it is read off the same single `decide` call, never
+            # re-derived, so it cannot disagree with the code beside it.
+            "would_be_served_if_espn_went_dark": hypothetical.serving == STATPAL,
             "code": hypothetical.code,
             "why": hypothetical.why,
             "note": (
@@ -2162,7 +2201,11 @@ async def statpal_authority_agreement(
                 "exactly as long as ESPN is silent and ends by itself on the "
                 "pass ESPN answers — nothing is latched, so there is nothing to "
                 "clear. It fires only on an absence of FIXTURES and can never "
-                "fire on a score, status or period disagreement."
+                "fire on a score, status or period disagreement. READ THE TWO "
+                "BOOLEANS TOGETHER: a sport already flipped to StatPal in "
+                "`AUTHORITY_BY_SPORT` is served STANDING rather than by an "
+                "override, so `would_fire` is false and `would_be_served` is "
+                "true. Both false is the uncovered case."
             ),
         }
 
