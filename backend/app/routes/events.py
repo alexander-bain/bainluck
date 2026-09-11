@@ -17621,7 +17621,15 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
     for team, name, key in [(home_team, home_name, "home"), (away_team, away_name, "away")]:
         if not team or not getattr(team, "standings_data", None):
             continue
-        s = team.standings_data
+        # THE PUBLIC VIEW, NOT THE RAW COLUMN (#5377). Reading
+        # `standings_data` directly here is what let this surface print a rank
+        # the row could not support: on 2026-09-11, the morning before NFL
+        # week 1, 30 of 32 teams were 0-0 and ALL 30 carried a `div_rank` 1-4,
+        # so Sunday's hero read "Texans 0-0, #4 AFC South" — a fan told their
+        # team was last in its division before a snap was played. Going
+        # through `public_standings` means this builder and the team page
+        # inherit ONE rule from one place instead of agreeing by hand.
+        s = public_standings(team.standings_data)
         parts = []
         # Win-loss record
         if "wins" in s and "losses" in s:
@@ -17651,8 +17659,11 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
     # Compute simple stakes text via rules
     stakes = None
     if home_team and away_team:
-        hs = getattr(home_team, "standings_data", None) or {}
-        aws = getattr(away_team, "standings_data", None) or {}
+        # The public view here too (#5377) — otherwise "Division rivals" keeps
+        # firing off the same unsupported pre-season ranks the line above just
+        # stopped printing, and a stakes badge is a louder claim than a number.
+        hs = public_standings(getattr(home_team, "standings_data", None) or {})
+        aws = public_standings(getattr(away_team, "standings_data", None) or {})
 
         # Same division rivals
         if hs.get("division") and hs.get("division") == aws.get("division"):
