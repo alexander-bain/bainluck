@@ -43,6 +43,32 @@ from app.utils.prediction_market_matching import (
     feeds_win_prob_blend,
     find_moneyline_outcome,
 )
+from app.utils.probability_eligibility import (
+    EligibilityRecord,
+    MarketRef,
+    verified_record,
+)
+
+
+# The rule name every record minted here carries, qualified by the issue that
+# defines the gate's behaviour. A stored record has to stay legible after the
+# function is edited, and "admissible_as_blend_speaker" alone would not say
+# WHICH admissible_as_blend_speaker — the per-source asymmetry it grew in #5031
+# is the difference between a record that means something and one that does not.
+BLEND_ADMISSION_RULE = "live_blend.admissible_as_blend_speaker@5031"
+
+
+def _market_ref(market: Any) -> MarketRef:
+    """One contributing market as the record's evidence pointer.
+
+    `getattr` for the same reason the speaker's own ids use it: this function is
+    called on whatever the caller's ORM row or test double exposes, and a missing
+    attribute must degrade to "no id" rather than raise on the write path.
+    """
+    return MarketRef(
+        market_id=getattr(market, "id", None),
+        source_market_id=getattr(market, "external_id", None),
+    )
 
 
 @dataclass(frozen=True)
@@ -101,6 +127,13 @@ class BlendReading:
     name and raw YES price into the snapshot's ``game_state``, which is the audit
     trail for "why did the blend say that". Returning the number alone would have
     forced the caller to re-find the outcome and risk finding a different one.
+
+    ``eligibility`` (CU-4, #5311) is that same audit trail in the form a READER
+    can use. `game_state` lives on a different table, is written only when the
+    caller asks for a snapshot, and no serve-time path joins it — so the evidence
+    sits beside the published number and not on it. This field is minted here,
+    by the gate that admitted the speaker, so it cannot disagree with the gate;
+    a caller stamping the JSONB passes it straight to `stamp_source_reading`.
     """
 
     home_probability: float
@@ -108,6 +141,7 @@ class BlendReading:
     outcome: Any
     yes_probability: float
     devigged: bool
+    eligibility: Optional[EligibilityRecord] = None
 
 
 def _home_probability_for_market(
@@ -376,30 +410,64 @@ def compute_source_home_probability(
         return None
 
     devigged = False
+    # EVERY MARKET THAT MOVES THE NUMBER, in the order it moved it. The speaker
+    # is always the first; a devig sibling that is admitted joins it. This is
+    # what the record names (CERT-2646) — see `_market_ref`.
+    contributors = [speaker.market]
 
     if len(entries) == 2:
         for sibling in entries:
             if sibling.market.id == speaker.market.id:
                 continue
-            # A Kalshi sibling must be a WINNER line too, or this is not a
-            # devig. The devig exists for Kalshi's per-team pair ("Celtics
-            # win?" / "76ers win?"), where both halves price the same question
-            # from opposite sides. Tennis is the case that made the missing
-            # check bite: `kxatpsetwinner` carries the SAME two player names as
-            # `kxatpmatch`, so `_home_probability_for_market` resolves it
-            # happily and the mean of "wins the match" and "wins set 2" would
-            # be stamped as the match moneyline — a number belonging to neither
-            # question. For a genuine per-team pair both markets share one
-            # prefix, so this gate is a no-op there.
+            # ── A CONTRIBUTOR IS GATED LIKE A SPEAKER (CERT-2646) ────────────
             #
-            # Gated on Kalshi only, exactly as `is_game_winner_market` and the
-            # primary's own admission check above are: that predicate is
-            # hard-False for every other source, so applying it unconditionally
-            # would silently retire the Polymarket devig instead of protecting
-            # it.
-            if sibling.market.source == "kalshi" and not is_game_winner_market(
-                sibling.market
-            ):
+            # This half of the average was gated for Kalshi and NOT AT ALL for
+            # anything else, while the record named only the speaker. So an
+            # admitted 60% winner averaged with a gate-refused 20% Polymarket
+            # First-Team-to-Score derivative served 40%, `devigged=True`,
+            # stamped `verified` / `full_event_winner` and naming only the
+            # winner: a composite substantiated by one of its two halves, which
+            # is precisely the class #5311 exists to end. A market that moves
+            # the number is a speaker for it, whatever we call the variable.
+            #
+            # THE INSTRUMENT IS PER SOURCE, and that is not tidiness — the two
+            # recognizers disagree and each is right about its own source:
+            #
+            #   * Kalshi keeps `is_game_winner_market`, the TICKER rule
+            #     (`feeds_win_prob_blend`), exactly as before. The class
+            #     recognizer would be a regression here: measured, it reads
+            #     False on `Fight Night: Silva vs Delgado`
+            #     (`KXUFCFIGHT-26SEP12SILDEL`) because the colon stops the title
+            #     being a bare matchup and no winner word appears — a real fight
+            #     winner, refused. This is `admissible_as_blend_speaker`'s own
+            #     documented asymmetry and this queue does not move it.
+            #   * Every other source has no ticker signal — that absence IS the
+            #     defect — so the class recognizer decides, via
+            #     `admissible_as_blend_speaker(..., is_primary=False)`. A
+            #     contributor is never "the primary" for admission purposes:
+            #     the exemption exists for the row the live writers have always
+            #     trusted to SPEAK, not for a second row averaged into it.
+            #     Measured on the same names: `Zverev vs. Khachanov` and
+            #     `Chicago Cubs vs Pittsburgh Pirates` admitted, `First Team to
+            #     Score`, `Total Corners` and `St. Louis City SC 2 - 2 Minnesota
+            #     United FC` refused.
+            #
+            # The earlier comment here warned that applying the predicate
+            # unconditionally would retire the Polymarket devig. That is true of
+            # `live_blend.is_game_winner_market`, which is hard-False off
+            # Kalshi, and NOT of the class recognizer — two different functions
+            # that share a name. Which one you reach for is the whole question.
+            #
+            # The Kalshi tennis case the original check was built for still
+            # holds: `kxatpsetwinner` carries the same two player names as
+            # `kxatpmatch`, so the mean of "wins the match" and "wins set 2"
+            # would be stamped as the moneyline — a number belonging to neither
+            # question. For a genuine per-team pair both markets share one
+            # prefix, so the gate is a no-op there.
+            if sibling.market.source == "kalshi":
+                if not is_game_winner_market(sibling.market):
+                    continue
+            elif not admissible_as_blend_speaker(sibling.market, is_primary=False):
                 continue
             sibling_reading = _home_probability_for_market(
                 sibling, matchup, home_team_name, away_team_name,
@@ -407,6 +475,7 @@ def compute_source_home_probability(
             if sibling_reading is not None:
                 home_prob = (home_prob + sibling_reading[0]) / 2.0
                 devigged = True
+                contributors.append(sibling.market)
 
     return BlendReading(
         home_probability=home_prob,
@@ -414,4 +483,19 @@ def compute_source_home_probability(
         outcome=outcome,
         yes_probability=yes_prob,
         devigged=devigged,
+        # `speaker.market`, never `primary.market`: the loop above falls through
+        # the group until a market can speak, so those are not always the same
+        # row. Naming the primary here would be worse than naming nothing — it
+        # would substantiate a reading with a market that did not produce it.
+        #
+        # `contributors` names the OTHER half of a devig for the same reason one
+        # step out: a composite is not the price of the market that happened to
+        # speak first. `verified_record` drops the list when it holds only the
+        # speaker, so a single-market reading is unchanged on the wire.
+        eligibility=verified_record(
+            rule=BLEND_ADMISSION_RULE,
+            market_id=getattr(speaker.market, "id", None),
+            source_market_id=getattr(speaker.market, "external_id", None),
+            contributors=[_market_ref(m) for m in contributors],
+        ),
     )

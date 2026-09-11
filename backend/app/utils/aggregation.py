@@ -37,6 +37,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.utils.probability_eligibility import (
+    ELIGIBILITY_KEY,
+    EligibilityRecord,
+    is_refused,
+)
 from app.utils.source_divergence import (
     SourceDivergence,
     assess_divergence,
@@ -239,6 +244,7 @@ def stamp_source_reading(
     source: str,
     value: float,
     now: Optional[datetime] = None,
+    eligibility: Optional[EligibilityRecord] = None,
 ) -> dict:
     """Write one source into ``win_probability_sources`` WITH its write time.
 
@@ -251,6 +257,21 @@ def stamp_source_reading(
     hero's recency decay do anything. A source that does not come through here
     keeps full weight forever — correct as a default, and invisible as a bug,
     so if you add a seventh writer of this column, add it here too.
+
+    ``eligibility`` is CU-4 (#5311): the record naming the rule that admitted
+    this reading and the market it came from. Optional, and omitting it is not a
+    silent downgrade — a reading with no record grades `UNVERIFIED` rather than
+    `VERIFIED`, so a writer that does not pass one is VISIBLE in the census
+    instead of being indistinguishable from a gated one, which is the whole
+    defect this record exists to end.
+
+    A ``None`` here never CLEARS a record a previous pass wrote. That is the same
+    merge discipline the entry already has, and it matters more for this key than
+    for the others: the writers run at different cadences over the same event
+    (the 15-minute matcher, the 120-second poll, the WS fast lane), so a writer
+    that has not yet adopted the record would otherwise strip the evidence a
+    writer that has just finished stamping — and the column would oscillate
+    between substantiated and not, at whichever cadence is faster.
     """
     updated = dict(sources or {})
     stamp = now or datetime.now(timezone.utc)
@@ -268,6 +289,8 @@ def stamp_source_reading(
     entry = dict(existing) if isinstance(existing, dict) else {}
     entry["value"] = value
     entry["updated_at"] = stamp.isoformat()
+    if eligibility is not None:
+        entry[ELIGIBILITY_KEY] = eligibility.to_entry()
     updated[source] = entry
     return updated
 
@@ -632,6 +655,14 @@ def _tier1_readings(
     number observed?" over exactly the entries ``effective_source_weights`` feeds
     the hero, and not a second, drifting reading of the same column — the hazard
     that function's own docstring names.
+
+    CU-4 (#5311): this is also where the read-side eligibility gate belongs, for
+    that same reason. It is the ONE place that decides which stored readings
+    reach the hero, the chart edge, the divergence gate and the Discover card, so
+    a refusal applied here cannot be applied inconsistently across surfaces — and
+    a refusal applied anywhere else would be the second opinion this function was
+    extracted to prevent. See `probability_eligibility.is_refused` for why the
+    gate is narrow (positive refusals only) on today's record-free population.
     """
     status = event_status or getattr(event, "status", None)
     is_finished = status in ("completed", "closed")
@@ -643,6 +674,8 @@ def _tier1_readings(
         if k not in SOURCE_WEIGHTS:
             continue
         if is_finished and k in _EXCLUDE_WHEN_COMPLETED:
+            continue
+        if is_refused(v):
             continue
         value, updated_at = parse_source_entry(v)
         if value is None:
