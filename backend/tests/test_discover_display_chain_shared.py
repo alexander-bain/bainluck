@@ -215,6 +215,15 @@ class TestChainContract:
             "reviewed_filter",
             "bundles",
             "lead_composition",
+            # #5100: last night's marquee final is seated into page one's back
+            # half here, and the slot in this list is the contract. AFTER
+            # `lead_composition`, because `compose_lead` writes a prefix and two
+            # prefix writers compose as last-writer-wins — seating first would be
+            # overwritten. BEFORE `first_page_quality_floor`, because that pass is
+            # last "deliberately" (see below) and must screen the order the reader
+            # is actually served, displaced slots included. Its tick is outside
+            # its gate, per the convention this list already records.
+            "final_seating",
             # #1958: the first-page quality floor runs AFTER lead composition,
             # because that is the only order in which it sees the same twenty
             # cards `boring-rate@20` / `ladder-rate@20` are counted over.

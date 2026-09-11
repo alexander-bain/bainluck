@@ -67,6 +67,7 @@ from app.models.models import (
     Team,
 )
 from app.services import get_db, get_db_rw
+from app.utils.discover_final_seating import seat_marquee_finals
 from app.utils.live_first_page import hoist_live_events_into_first_page
 from app.utils.sports_first_page_rails import (
     CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
@@ -1885,7 +1886,7 @@ def apply_discover_display_chain(
             the caller — this function does no I/O.
         timing_cb: optional ``fn(stage_name)`` called after ``ranking``,
             ``reviewed_filter``, ``bundles``, ``lead_composition``,
-            ``first_page_quality_floor``, ``finished_rail_cap``,
+            ``final_seating``, ``first_page_quality_floor``, ``finished_rail_cap``,
             ``client_deletion_swap`` and
             ``live_first_page`` so ``get_feed`` keeps its per-stage timings. The
             exact list and its ORDER are pinned by
@@ -1939,6 +1940,10 @@ def apply_discover_display_chain(
     # site would put the empty case in two places instead of one.
     kept_kickoff_ids: set[int] = set()
     required_marquee_ids: set[int] = set()
+    # #5100 — and `kept_final_ids` joins them for exactly the same reason, now
+    # that the seating pass below reads it after this branch has closed. It was
+    # assigned only inside the branch while its only readers were inside too.
+    kept_final_ids: set[int] = set()
     if event_pct is not None and event_pct < 0.3:
         # #4681 — chosen BEFORE either pass and handed to both. The demotion
         # would cap these to 35 and the noise filter would delete them, and a
@@ -2120,6 +2125,47 @@ def apply_discover_display_chain(
                 sorted(missing),
                 [it.get("type") for it in items[:MAX_LEAD]],
             )
+
+    # === LAST NIGHT'S RESULT IS FINDABLE THIS MORNING (#5100, #4681's other half) ===
+    #
+    # #4681 selects at most two finished marquee games and spares them from both
+    # passes that would delete them. Measured on production 2026-09-11 10:26Z,
+    # that is admission without placement: both selected finals were SERVED —
+    # `discover_marquee_final: true` on each — at positions 133 and 134 of 135,
+    # which is page seven at `FEED_PAGE_LIMIT = 20`.
+    #
+    # THE CAUSE IS NOT THE DEMOTION, which already exempts a kept final. It is
+    # `apply_completed_freshness_decay` (#3484), applied back in `_score_events`
+    # before this set can exist: past `COMPLETED_DECAY_HOURS` a finished game
+    # keeps 0.45 of its score, and both specimens sat exactly on that floor —
+    # pre-decay displays of ~93 and ~87 multiplied below the 132nd futures card.
+    # A game ending at 03:26Z is 9.6h old at 6am Pacific, so a morning reader
+    # meets the floor by construction, which is the window this ship is named for.
+    #
+    # PROMOTE, DO NOT UN-DECAY. Exempting a kept final from the decay would
+    # restore ~93 and seat it in the top ten, above every live market — more than
+    # "findable this morning" asks for, and the decay is load-bearing for every
+    # finished game that is NOT one of the two. So no score is touched here.
+    #
+    # AFTER the lead, BEFORE the floor, and both boundaries are contracts:
+    # `compose_lead` writes a prefix and two prefix writers compose as
+    # last-writer-wins (the failure recorded in its own comment above), so
+    # seating first would simply be overwritten; and the floor is last
+    # "deliberately", because `boring-rate@20` is counted over the SERVED order —
+    # seating after it would hand the reader two displaced slots it never
+    # screened. `test_a_marquee_final_reaches_page_one_wiring_5100` reads the AST
+    # rather than trusting this paragraph.
+    #
+    # It cannot disturb the lead check above: `MAX_LEAD` is 3 and the seat floor
+    # is 10, so `items[:MAX_LEAD]` is untouched by construction.
+    final_seating_meta = None
+    if discover_mode:
+        items, final_seating_meta = seat_marquee_finals(
+            items,
+            kept_final_ids,
+            first_page_size=DISCOVER_COMPOSITION_WINDOW,
+        )
+    _tick("final_seating")
 
     # === FIRST-PAGE QUALITY FLOOR (#1958, Fable ruling (d)) ===
     #
@@ -2356,6 +2402,9 @@ def apply_discover_display_chain(
 
     return items, {
         "reviewed_filtered_count": reviewed_filtered_count,
+        # None = the pass never ran (a non-Discover surface); a zero `seated`
+        # means it ran and found nothing to seat. Opposite facts (gotcha #53).
+        "final_seating": final_seating_meta,
         "first_page_quality_floor": first_page_floor_meta,
         "finished_rail_cap": finished_rail_cap_meta,
         "client_deletion_swap": client_deletion_swap_meta,
