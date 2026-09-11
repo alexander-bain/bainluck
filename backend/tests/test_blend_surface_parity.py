@@ -282,7 +282,18 @@ class TestTheBlendEarnsTheEdgeByBeingNewer:
     """
 
     def test_the_shelton_alcaraz_specimen_reconciles(self):
-        """The production shape: an hour-old chart edge, a fresher blend."""
+        """The production shape: an hour-old chart edge, a fresher blend.
+
+        THE HERO'S VALUE MOVED UNDER #1999, THE INVARIANT DID NOT. This class
+        pins that the chart edge and the hero are the same number; which number
+        that is belongs to the aggregator. Pre-game recency decay is now off, so
+        the sportsbook's 3.0 is no longer floored by being 205 minutes older
+        than Polymarket's 0.8, and the pair reconciles on 0.2306 instead of
+        0.215. `_pin_blend_edge` still fires for exactly the reason it did
+        before — it asks `newest_source_reading_time`, the freshest stamp on the
+        event, which is still Polymarket's 21-minute-old one whichever source
+        ends up carrying the hero.
+        """
         event = _event(
             status="scheduled",
             betting=_stamped(0.2306, 205),
@@ -293,7 +304,7 @@ class TestTheBlendEarnsTheEdgeByBeingNewer:
         assert _pin_blend_edge(line, event, is_live=False, now=NOW) is True
 
         hero = _hero_probability(event)
-        assert hero == 0.215
+        assert hero == 0.2306
         assert _chart_live_edge(line) == hero
 
         # And the gap was a RENDERED one, not a float-noise one: the bucket the

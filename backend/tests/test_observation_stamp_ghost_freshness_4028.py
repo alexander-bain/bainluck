@@ -147,16 +147,23 @@ def _event_with_betting():
     )
 
 
-def _hero_from(sources):
-    """The number the page prints, off exactly the JSONB the writer wrote."""
+def _hero_from(sources, status="scheduled"):
+    """The number the page prints, off exactly the JSONB the writer wrote.
+
+    `status` is a parameter since #1999: the recency decay is now an in-play
+    rule, so "what would the page print" has two answers for one JSONB and a
+    test that cannot say which one it is asking for is asking for neither.
+    The specimen is pre-game (first pitch was four hours out), so that stays
+    the default.
+    """
     return compute_aggregate_probability(
         SimpleNamespace(
             win_probability_sources=sources,
-            status="scheduled",
+            status=status,
             espn_win_prob_home=None,
             opening_home_probability=None,
         ),
-        "scheduled",
+        status,
     )
 
 
@@ -310,6 +317,17 @@ class TestTheHeroThePageWouldPrint:
         is a measured difference rather than a green light. Deliberately built
         from `stamp_source_reading` directly: the writer no longer produces this
         shape, and pinning it any other way would pin nothing.
+
+        ASKED IN PLAY SINCE #1999. This control used to be asked pre-game, via
+        `_hero_from`'s `status="scheduled"`. It cannot be asked there any more,
+        because the pre-game recency gate makes the outcome it describes
+        unreachable before kickoff — a ghost holding the freshest stamp on an
+        unstarted game no longer outvotes the books at all
+        (`test_pregame_recency_gate_1999.py` pins that as its own ship). Moving
+        the control in-play keeps it doing the only job it has: proving the arm
+        above measures a real difference rather than an inert code path. The
+        pre-game half of this same shape is now the STRONGER claim and lives
+        beside the gate.
         """
         sources = stamp_source_reading(
             _event_with_betting().win_probability_sources,
@@ -318,11 +336,42 @@ class TestTheHeroThePageWouldPrint:
             now=NOW,
         )
 
-        assert _hero_from(sources) == pytest.approx(GHOST_HOME_VALUE)
+        assert _hero_from(sources, status="live") == pytest.approx(GHOST_HOME_VALUE)
 
     def test_the_ghost_is_demoted_not_deleted(self):
         """The floor is 0.1, and "we stopped hearing from Polymarket" is not
-        "Polymarket does not exist" — the source key must survive in the column."""
+        "Polymarket does not exist" — the source key must survive in the column.
+
+        ASKED IN PLAY SINCE #1999, for the same reason as the control above:
+        demotion is what happens while a game is running. The pre-game arm of
+        the same invariant — the key survives there too, at FULL weight, because
+        nothing has gone stale before kickoff — is the test below.
+        """
+        from app.utils.aggregation import effective_source_weights
+
+        sources = stamp_source_reading(
+            _event_with_betting().win_probability_sources,
+            "polymarket",
+            GHOST_HOME_VALUE,
+            now=GHOST_OBSERVED,
+        )
+        keys, _, weights = effective_source_weights(
+            SimpleNamespace(win_probability_sources=sources, status="live"),
+            "live",
+        )
+
+        assert "polymarket" in keys, "the demoted source was dropped, not decayed"
+        assert weights[keys.index("polymarket")] == pytest.approx(0.08)
+        assert weights[keys.index("betting")] == pytest.approx(3.0)
+
+    def test_pregame_the_ghost_is_not_demoted_at_all_and_still_loses(self):
+        """#1999's half of the same guarantee, so the pair reads as one rule.
+
+        Before kickoff the ghost keeps its full 0.8 — a five-day-old sportsbook
+        line and a fresh market price are not evidence about each other when
+        nothing is moving — and it loses anyway, on the base weights, which is
+        the outcome #4028 exists to protect.
+        """
         from app.utils.aggregation import effective_source_weights
 
         sources = stamp_source_reading(
@@ -336,6 +385,6 @@ class TestTheHeroThePageWouldPrint:
             "scheduled",
         )
 
-        assert "polymarket" in keys, "the demoted source was dropped, not decayed"
-        assert weights[keys.index("polymarket")] == pytest.approx(0.08)
+        assert weights[keys.index("polymarket")] == pytest.approx(0.8)
         assert weights[keys.index("betting")] == pytest.approx(3.0)
+        assert _hero_from(sources) == pytest.approx(BETTING_VALUE)
