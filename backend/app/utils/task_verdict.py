@@ -677,17 +677,54 @@ def _classify(result: Any) -> TaskVerdict:
 # 16:16:18Z against v3873 at 16:16:02Z (+16s) — and neither half was in the
 # record. Heroku already exports ``HEROKU_RELEASE_VERSION`` and
 # ``HEROKU_RELEASE_CREATED_AT`` into the dyno's environment, so the second half
-# can simply be written down at the moment it is true. A release seconds old at
-# the instant of a shutdown IS the attribution.
+# can simply be written down at the moment it is true.
+#
+# -----------------------------------------------------------------------------
+# LAT-P329 (#4950) — THE HALF ABOVE WAS WRITTEN DOWN, AND IT NAMES THE WRONG
+# RELEASE. This is the correction, and it is worth reading before touching the
+# fields below, because the original reasoning is persuasive and wrong.
+#
+# Those ``+24s`` / ``+16s`` deltas were computed OUTSIDE the dyno, by subtracting
+# a ``heroku releases`` row from a failure timestamp. ``_release_facts`` was then
+# built on the assumption that ``HEROKU_RELEASE_CREATED_AT`` inside the dying
+# worker would reproduce that same subtraction. It cannot. Those variables are
+# baked into a dyno at boot and never change, so a worker being torn down carries
+# the release it is RUNNING — which, during a deploy, is by construction the one
+# being REPLACED. The release that does the killing is the new one, and the dying
+# process has never heard of it.
+#
+# So the old age field measured the length of the OUTGOING release's window, and
+# the note beside it read that as "old release ⇒ not a deploy" — exonerating a
+# deploy in exactly the case where a deploy was the cause. Two production
+# specimens, a day apart, both the same shape:
+#
+#     2026-09-10  env v4410 (19:53:13Z), age 3350 -> interrupt 20:49:03Z
+#                 v4411 created 20:48:46Z                        +17s
+#     2026-09-11  env v4426 (07:46:23Z), age 3682 -> interrupt 08:47:45Z
+#                 v4427 created 08:47:28Z                        +17s
+#
+# In both, the age field is exactly the outgoing release's window length, and a
+# reader obeying the old note was routed away from the true cause.
+#
+# The dyno cannot fix this by itself: naming the killer needs the release list,
+# which is an out-of-process read that a SIGTERM handler has no business making.
+# So the split is (1) the worker writes down ``interrupted_at``, the one fact
+# only it holds, and the age field is renamed to say what it actually measures;
+# (2) :func:`attribute_teardown` does the comparison later, from the summary plus
+# a release list, as a pure function with the rule in it rather than in prose.
 
 
 def _release_facts(now: float | None = None) -> dict[str, Any]:
-    """What release this dyno is running, and how old it was just now.
+    """What release this dyno is RUNNING, and how long it had been live just now.
 
     Every field is either read from the environment or omitted. ``None`` where a
     variable is absent is deliberate: outside Heroku (CI, a laptop) there is no
     release to name, and inventing "unknown" would let a local run look like a
     dyno that failed to report.
+
+    ``running_release_age_s`` is named for what it measures and nothing more.
+    It is *not* the age of whatever tore this worker down — see the LAT-P329
+    block above and :func:`attribute_teardown`.
     """
     import os
     from datetime import datetime, timezone
@@ -707,12 +744,12 @@ def _release_facts(now: float | None = None) -> dict[str, Any]:
                 if now is not None
                 else datetime.now(timezone.utc)
             )
-            facts["release_age_s"] = int((reference - stamp).total_seconds())
+            facts["running_release_age_s"] = int((reference - stamp).total_seconds())
         except (ValueError, TypeError):
             # A malformed stamp is reported as unparseable rather than dropped —
             # "we could not read the release time" and "there is no release
             # time" are different facts (ruling 075, second clause).
-            facts["release_age_reason"] = "unparseable"
+            facts["running_release_age_reason"] = "unparseable"
     return facts
 
 
@@ -724,21 +761,176 @@ def describe_worker_shutdown(exc: BaseException, *, now: float | None = None) ->
     stops there. It does NOT conclude "a deploy killed this", because a dyno also
     restarts for a manual bounce, a platform migration and a memory quota, and a
     summary that names the cause it happens to expect is how the next unfamiliar
-    cause gets read as the familiar one. ``release_age_s`` is the number that
-    settles it, and a reader can settle it in one glance instead of two tools.
+    cause gets read as the familiar one.
+
+    LAT-P329 (#4950): what it now writes down is ``interrupted_at`` — the instant
+    of teardown, the one fact only this process holds. Attribution is a later,
+    out-of-process comparison against the release list; :func:`attribute_teardown`
+    is that comparison. The summary carries the evidence, not the conclusion.
     """
     code = getattr(exc, "code", None)
+    facts = _release_facts(now=now)
     return {
         "terminal": "interrupted",
         "reason": f"{type(exc).__name__}({code!r})",
         "exception_class": type(exc).__name__,
         "exit_code": code,
-        **_release_facts(now=now),
+        "interrupted_at": _iso_utc(now),
+        **facts,
         "note": (
             "The worker was torn down mid-task. This is NOT a task failure and "
-            "does not advance consecutive_failures. A release_age_s in the low "
-            "tens of seconds means the teardown was this release; a large one "
-            "means it was not, and the cause is elsewhere (dyno cycle, quota, "
-            "manual restart)."
+            "does not advance consecutive_failures. release_version is the "
+            "release this worker was RUNNING, so during a deploy it is the one "
+            "being replaced — a large running_release_age_s does NOT rule a "
+            "deploy out, it is just how long the outgoing release had been live. "
+            "To attribute: look for a release created in the seconds BEFORE "
+            "interrupted_at (see attribute_teardown / tools/why-was-it-killed.sh). "
+            "No such release means the cause is elsewhere — dyno cycle, memory "
+            "quota, manual restart."
         ),
+    }
+
+
+def _iso_utc(now: float | None = None) -> str:
+    """The moment of teardown, in the same shape Heroku prints release stamps."""
+    from datetime import datetime, timezone
+
+    moment = (
+        datetime.fromtimestamp(now, tz=timezone.utc)
+        if now is not None
+        else datetime.now(timezone.utc)
+    )
+    return _fmt_utc(moment)
+
+
+def _fmt_utc(moment: Any) -> str:
+    """An aware datetime as a UTC instant, with the ``Z`` earned rather than glued on.
+
+    Caught by running the tool for real: ``heroku releases`` prints ``-0700``
+    stamps, and a bare ``strftime(…%SZ)`` renders 08:47:28+00:00 and
+    01:47:28-0700 as two DIFFERENT strings both ending in ``Z``. The comparison
+    was right the whole time — these are aware datetimes — but the number a
+    reader copies out of the report was a local wall clock wearing a UTC suffix,
+    which is the same defect one layer down from the one this module fixes.
+    """
+    from datetime import timezone
+
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_stamp(value: Any) -> Any:
+    """An ISO-8601 stamp as an aware UTC datetime, or ``None`` if unreadable."""
+    from datetime import datetime, timezone
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _interrupt_moment(summary: dict[str, Any]) -> Any:
+    """When the teardown happened, from a summary of any vintage.
+
+    Prefers ``interrupted_at``. Summaries written before LAT-P329 do not carry
+    it, and there are live ones in Redis right now, so fall back to the
+    arithmetic #4950's reader had to do by hand: the running release's stamp plus
+    however long it had been live. ``release_age_s`` is the pre-rename spelling
+    and is still on those stored rows.
+    """
+    direct = _parse_stamp(summary.get("interrupted_at"))
+    if direct is not None:
+        return direct
+    started = _parse_stamp(summary.get("release_created_at"))
+    if started is None:
+        return None
+    age = summary.get("running_release_age_s", summary.get("release_age_s"))
+    try:
+        from datetime import timedelta
+
+        return started + timedelta(seconds=int(age))
+    except (TypeError, ValueError):
+        return None
+
+
+def attribute_teardown(
+    summary: dict[str, Any],
+    releases: Any,
+    *,
+    window_s: int = 180,
+) -> dict[str, Any]:
+    """Name the release that tore a worker down, or say why none can be named.
+
+    The rule the old prose got backwards, written as code so it can be tested.
+    A release causes a teardown when it was created in the ``window_s`` seconds
+    immediately BEFORE the interrupt and is NEWER than the release the worker was
+    running. Both halves matter:
+
+    * *before the interrupt* — a release created after it cannot have caused it;
+    * *newer than the running one* — a release cannot tear down the dyno it
+      itself started, so the running release is never its own killer. This is the
+      clause the environment variables can never satisfy on their own, and it is
+      why the answer has to be computed out here.
+
+    ``releases`` is any iterable of mappings carrying ``version`` and
+    ``created_at`` (ISO-8601 or datetime); ordering is not assumed. Returns the
+    verdict plus the evidence for it, and never raises on a malformed row — an
+    unreadable release is skipped, because refusing to attribute anything because
+    one row was junk is worse than attributing from the rest.
+    """
+    moment = _interrupt_moment(summary)
+    if moment is None:
+        return {
+            "killed_by_release": None,
+            "basis": "no_interrupt_time",
+            "detail": (
+                "The summary carries neither interrupted_at nor a "
+                "release_created_at/age pair to reconstruct it from."
+            ),
+        }
+
+    running_at = _parse_stamp(summary.get("release_created_at"))
+    candidates = []
+    for row in releases or ():
+        try:
+            created = _parse_stamp((row or {}).get("created_at"))
+            version = (row or {}).get("version")
+        except AttributeError:
+            continue
+        if created is None or version is None:
+            continue
+        lead = (moment - created).total_seconds()
+        if lead < 0 or lead > window_s:
+            continue
+        # A release never kills the dyno it started. With no running stamp to
+        # compare against we cannot apply the clause, so we keep the candidate
+        # rather than silently dropping it — an over-broad answer a reader can
+        # see beats a confident empty one.
+        if running_at is not None and created <= running_at:
+            continue
+        candidates.append((created, version, int(lead)))
+
+    if not candidates:
+        return {
+            "killed_by_release": None,
+            "interrupted_at": _fmt_utc(moment),
+            "basis": f"no_newer_release_within_{window_s}s",
+            "detail": (
+                "Nothing was deployed in the window, so the cause is elsewhere — "
+                "dyno cycle, memory quota, manual restart."
+            ),
+        }
+
+    created, version, lead = max(candidates)
+    return {
+        "killed_by_release": version,
+        "killer_created_at": _fmt_utc(created),
+        "interrupted_at": _fmt_utc(moment),
+        "lead_s": lead,
+        "running_release": summary.get("release_version"),
+        "basis": "release_created_immediately_before_interrupt",
     }
