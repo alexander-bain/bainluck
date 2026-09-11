@@ -181,6 +181,93 @@ def test_exactmatch_is_refused_on_its_own_and_not_by_the_outcome_count():
     assert not bw._score_gradeable_family("KXATPEXACTMATCH-26SEP09VACBOR")
 
 
+def test_every_canonical_fight_and_doubles_winner_family_remains_score_gradeable():
+    """CERT-2624's repair: the two functions that ask "is this the contest winner?"
+    may not disagree.
+
+    `feeds_win_prob_blend` decides which Kalshi tickers are canonical WINNER lines,
+    and it answers with `COMBAT_FIGHT_WINNER_PREFIXES | TENNIS_MATCH_WINNER_PREFIXES`.
+    A suffix rule keyed on `game|match` admits `KXATPMATCH` and refuses
+    `KXATPDOUBLES` — the same question, turned away because of how its sport spells
+    the family. This asserts the allowlist is a SUPERSET of the blend's vocabulary,
+    generatively, so a prefix added to that vocabulary tomorrow is admitted here
+    without anyone remembering to edit a list.
+    """
+    from app.utils.prediction_market_matching import (
+        COMBAT_FIGHT_WINNER_PREFIXES,
+        TENNIS_MATCH_WINNER_PREFIXES,
+        feeds_win_prob_blend,
+    )
+
+    canonical = COMBAT_FIGHT_WINNER_PREFIXES | TENNIS_MATCH_WINNER_PREFIXES
+    assert canonical, "the blend's winner vocabulary is empty — specimen is wrong"
+
+    for prefix in sorted(canonical):
+        ticker = f"{prefix.upper()}-26SEP12ABCDEF"
+        # The premise: this really is a canonical winner line to the OTHER function.
+        assert feeds_win_prob_blend(ticker), (
+            f"{ticker} is not a specimen — feeds_win_prob_blend does not call it a "
+            "winner line, so the two functions were never in disagreement about it"
+        )
+        assert bw._score_gradeable_family(ticker), (
+            f"{ticker} is a canonical winner line for the win-prob blend but the "
+            "score resolver refuses its family — CERT-2624's defect"
+        )
+
+
+def test_the_canonical_winner_set_is_load_bearing_and_not_a_restated_suffix_rule():
+    """Red arm for the test above: without the constant, six of them fail.
+
+    If every canonical prefix happened to end in an admitted suffix, the superset
+    assertion would pass with `_CANONICAL_WINNER_FAMILIES` deleted and would be
+    decorative. Six do not — the fight families and all four doubles variants — and
+    those six are exactly what the repair adds.
+    """
+    only_the_suffix_rule = {
+        prefix for prefix in bw._CANONICAL_WINNER_FAMILIES
+        if bw._SCORE_GRADEABLE_FAMILY_RE.search(prefix)
+    }
+    needs_the_constant = set(bw._CANONICAL_WINNER_FAMILIES) - only_the_suffix_rule
+
+    assert needs_the_constant == {
+        "kxufcfight",
+        "kxboxing",
+        "kxatpdoubles",
+        "kxwtadoubles",
+        "kxatpchallengerdoubles",
+        "kxwtachallengerdoubles",
+    }, (
+        "the set of families that depend on the constant has changed; if this is a "
+        "deliberate addition to the blend vocabulary, update this list — the point "
+        "is that the change is never silent"
+    )
+    # And the mirror: the suffix rule alone really does turn each of them away.
+    for prefix in needs_the_constant:
+        assert not bw._SCORE_GRADEABLE_FAMILY_RE.search(prefix), prefix
+
+
+@pytest.mark.parametrize(
+    "ticker,why",
+    [
+        ("KXATPSETWINNER-26AUG30SWEMOU-3", "a SET winner is not the match winner"),
+        ("KXWTASETWINNER-26AUG21BEJKEY-2", "a SET winner is not the match winner"),
+        ("KXATPEXACTMATCH-26SEP11ZVEKHA", "the exact set score, not who won"),
+        ("KXWTAEXACTMATCH-26AUG31DARSTE", "the exact set score, not who won"),
+        ("KXUFCROUNDS-26SEP12KLOGAN", "which ROUND it ends in, not who wins"),
+        ("KXUFCVICROUND-26SEP12KLOGAN", "round of victory, not who wins"),
+    ],
+    ids=lambda v: v if isinstance(v, str) and v.startswith("KX") else "",
+)
+def test_the_fight_and_racquet_props_beside_them_are_still_refused(ticker, why):
+    """Widening to fight/doubles WINNERS must not drag their prop siblings in.
+
+    These live in the same sports and share prefixes with the newly admitted
+    families (`KXUFCFIGHT` vs `KXUFCROUNDS`, `KXATPMATCH` vs `KXATPSETWINNER`), so
+    they are the population a careless widening would capture.
+    """
+    assert not bw._score_gradeable_family(ticker), f"{ticker} admitted ({why})"
+
+
 def test_the_rule_reads_the_family_segment_not_the_whole_ticker():
     """#5116's lesson, applied forward.
 
@@ -223,8 +310,11 @@ def test_period_markets_are_refused_before_the_family_gate_is_consulted():
 KNOWN_ALLOWLIST_RENULL_DISAGREEMENT = {"KXEKSTRAKLASAGAME"}
 
 #: Every Kalshi family observed over completed/closed events, production
-#: 2026-09-11 ~14:0xZ (434 total). Only the ones that end in an admitted suffix are
-#: listed — those are the only ones that can disagree.
+#: 2026-09-11 ~14:0xZ (434 total). Only the ones that end in an admitted SUFFIX are
+#: listed. That was the whole admitted set when this was gathered; since CERT-2624 it
+#: is not, because `_CANONICAL_WINNER_FAMILIES` admits fight/doubles lines that end in
+#: neither `game` nor `match`. The disagreement check below unions those in rather
+#: than restating them here, so this list can stay what it says it is.
 _ADMITTED_FAMILIES_PRODUCTION = [
     "KXAFLGAME", "KXALEAGUEGAME", "KXARGPREMDIVGAME", "KXATPMATCH",
     "KXBELGIANPLGAME", "KXBRASILEIROBGAME", "KXBRASILEIROGAME",
@@ -251,9 +341,22 @@ def test_the_allowlist_and_the_re_null_do_not_disagree_about_a_family():
     in the gap. That is #5116's loop, and it is the reason the allowlist and the
     re-null ship in the same commit rather than one after the other.
     """
+    # The canonical winner families are unioned in DELIBERATELY.
+    # `_ADMITTED_FAMILIES_PRODUCTION` was gathered as "production families ending in
+    # an admitted SUFFIX", which was the whole admitted set when it was written. Once
+    # `_CANONICAL_WINNER_FAMILIES` started admitting fight/doubles lines (CERT-2624)
+    # that list stopped being the admitted set by construction, and this check would
+    # have gone silently blind to exactly the families the repair added.
+    candidates = set(_ADMITTED_FAMILIES_PRODUCTION) | {
+        prefix.upper() for prefix in bw._CANONICAL_WINNER_FAMILIES
+    }
+    assert "KXUFCFIGHT" in candidates, (
+        "the canonical winner families are not reaching this check — it is blind to "
+        "the population CERT-2624's repair admitted"
+    )
     disagree = {
         family
-        for family in _ADMITTED_FAMILIES_PRODUCTION
+        for family in candidates
         if bw._score_gradeable_family(family)
         and re.search(bw._ML_REPAIR_TOKENS_ANCHORED, family, re.IGNORECASE)
     }

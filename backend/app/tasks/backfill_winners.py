@@ -26,6 +26,10 @@ from app.utils.calibration_closing_line import (
     closing_line_lateral_sql,
 )
 from app.utils.kalshi_empty_book import lone_ask_on_empty_book_sql
+from app.utils.prediction_market_matching import (
+    COMBAT_FIGHT_WINNER_PREFIXES,
+    TENNIS_MATCH_WINNER_PREFIXES,
+)
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES_SQL,
     GUESS_FAMILY_SOURCES_SQL,
@@ -1628,17 +1632,64 @@ _RECONSTRUCTABLE_PERIODS = frozenset({"1h", "2h"})
 _SCORE_GRADEABLE_FAMILY_RE = re.compile(r"(?:game|match|btts)$", re.IGNORECASE)
 _SCORE_UNGRADEABLE_FAMILY_RE = re.compile(r"exactmatch$", re.IGNORECASE)
 
+#: CERT-2624's repair. A suffix rule spells the question, but three sports write
+#: the SAME question — "who won this contest?" — with a family that ends in
+#: neither `game` nor `match`, so the regex above admitted `KXATPMATCH` and
+#: refused `KXATPDOUBLES` for no reason a reader could defend.
+#:
+#: This file is not the first place that had to enumerate them.
+#: `feeds_win_prob_blend` already decides which Kalshi tickers are canonical
+#: WINNER lines — the ones whose YES price may write into the event's win-prob
+#: blend — and it answers with exactly these two frozensets. Two functions asking
+#: "is this the contest winner?" must never be able to disagree, so this one
+#: READS THE SAME CONSTANTS rather than restating them. A family added to the
+#: blend's vocabulary is admitted here in the same commit, by construction; a
+#: hand-copied list is a second vocabulary that drifts on the first addition.
+#: (The cert named four families. The constants hold six the suffix rule misses:
+#: it omitted the two CHALLENGER doubles variants, which is the drift, arriving
+#: before the list was even written down.)
+#:
+#: Admitting them is measured-safe, production 2026-09-11 ~15:0xZ:
+#:   * COMBAT — `KXUFCFIGHT` has 416 linked markets, and the 50 whose event
+#:     carries a score encode it as a pure winner flag: every one of the 50 is
+#:     `1-0` or `0-1`, never a tie, never a judge's card. "Higher score wins" is
+#:     therefore exactly right for a bout (spot-checked against the real results:
+#:     Song Yadong `0-1` over Umar Nurmagomedov, Dolidze `1-0` over de Ridder).
+#:   * DOUBLES — `KXATPDOUBLES` has 311 linked markets and **0** whose event
+#:     carries a score, so admitting it is inert today; it is admitted for the
+#:     same reason singles is, and grades the same way (sets won) if a score
+#:     ever lands.
+#:   * NOTHING IS BEING REPAIRED RETROACTIVELY. `game_score` outcomes across
+#:     these families: `KXUFCFIGHT` 0/864, `KXBOXING` 0/618, `KXATPDOUBLES`
+#:     0/623 — and the control that makes those zeros mean something is
+#:     `KXATPMATCH`, a family this rule has ADMITTED all along, also 0/5185.
+#:     The venue settles these itself (802, 602, 609 and 5177 by `api_settlement`
+#:     and friends), so the score path is a fallback that has never fired here.
+#:     The exposure is the ~100 rows the venue has NOT settled, against gotcha
+#:     #35's 74-86 day purge — which is precisely the cert's point, and why the
+#:     repair is worth making even though nothing changes today.
+_CANONICAL_WINNER_FAMILIES = frozenset(
+    COMBAT_FIGHT_WINNER_PREFIXES | TENNIS_MATCH_WINNER_PREFIXES
+)
+
 
 def _score_gradeable_family(ticker: str | None) -> bool:
     """Can `_resolve_kalshi_from_scores` grade this ticker's family at all?
 
     True only for full-game winner and both-teams-to-score families. See
     `_SCORE_GRADEABLE_FAMILY_RE` for the measured population and why this is an
-    allowlist rather than another entry on `_non_ml`.
+    allowlist rather than another entry on `_non_ml`, and
+    `_CANONICAL_WINNER_FAMILIES` for the fight/doubles winner lines that ask the
+    same question without the suffix that spells it.
     """
     family = (ticker or "").split("-", 1)[0]
+    # The refusal is consulted first and wins: `EXACTMATCH` is not a winner line
+    # whatever else matches, and a carve-out that a later arm could overturn is
+    # not a carve-out.
     if _SCORE_UNGRADEABLE_FAMILY_RE.search(family):
         return False
+    if family.lower() in _CANONICAL_WINNER_FAMILIES:
+        return True
     return _SCORE_GRADEABLE_FAMILY_RE.search(family) is not None
 
 
