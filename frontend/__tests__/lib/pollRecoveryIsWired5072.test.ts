@@ -45,6 +45,22 @@ describe("#5072 — the recovery is wired into the provider", () => {
     expect(providerSource).not.toMatch(/^\s*onSuccess:/m);
   });
 
+  it("passes the key's CACHED DATA, taken from the typed cache (CERT-2587)", () => {
+    // Without it, a function-valued interval that answers 0 for `undefined`
+    // reads as "not polled" and its live page stays latched.
+    expect(providerSource).toMatch(/useSWRConfig\(\)/);
+    expect(providerSource).toMatch(/cache\.get\(key\)\?\.data/);
+  });
+
+  it("does NOT set a cache `provider`, which the cache read above depends on", () => {
+    // `useSWRConfig()` is called ABOVE this provider's own `SWRConfig`, so it
+    // returns the default global cache. That is the same cache the children
+    // use only while no `provider:` overrides it. Adding one would silently
+    // reintroduce CERT-2587's defect — the read would still compile, still run,
+    // and simply describe a different cache.
+    expect(providerSource).not.toMatch(/^\s*provider:/m);
+  });
+
   it("still leaves SWR's own retry ladder off", () => {
     // #L2-137. This ship restores POLLING recovery precisely so that nobody
     // has to reach for `shouldRetryOnError`, which stacks a second retry loop

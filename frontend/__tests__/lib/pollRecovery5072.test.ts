@@ -29,7 +29,6 @@ import {
   recoveryDelayMs,
   MAX_RECOVERY_DELAY_MS,
   MAX_SERVER_WAIT_MS,
-  FUNCTION_INTERVAL_FLOOR_MS,
   type PollRecovery,
   type PollRecoveryDeps,
 } from "../../lib/pollRecovery";
@@ -61,7 +60,7 @@ interface Harness {
    * `intervalMs` is the key's `refreshInterval` as swr would report it back
    * through `onError`, and must match the one the key was armed with.
    */
-  failNextNudge: (intervalMs?: number) => void;
+  failNextNudge: (intervalMs?: unknown, cachedData?: unknown) => void;
   visible: boolean;
   online: boolean;
 }
@@ -80,7 +79,8 @@ function harness(): Harness {
     pending: null as { fn: () => void; id: number } | null,
     nextId: 1,
     nudgeFails: false,
-    nudgeFailInterval: POLL_MS,
+    nudgeFailInterval: POLL_MS as unknown,
+    nudgeFailData: undefined as unknown,
     visible: true,
     online: true,
   };
@@ -95,7 +95,7 @@ function harness(): Harness {
         // swr calls the global `onError` from inside revalidate, BEFORE the
         // promise the caller is awaiting resolves. Reproducing that ordering is
         // the whole point of this fake.
-        recovery.recordError(key, throttled(), state.nudgeFailInterval);
+        recovery.recordError(key, throttled(), state.nudgeFailInterval, state.nudgeFailData);
       }
       return undefined;
     },
@@ -129,9 +129,10 @@ function harness(): Harness {
       await Promise.resolve();
       await Promise.resolve();
     },
-    failNextNudge(intervalMs = POLL_MS) {
+    failNextNudge(intervalMs = POLL_MS, cachedData = undefined) {
       state.nudgeFails = true;
       state.nudgeFailInterval = intervalMs;
+      state.nudgeFailData = cachedData;
     },
     get visible() {
       return state.visible;
@@ -428,6 +429,9 @@ describe("#5072 — the live event page's own function-valued cadence", () => {
   const LIVE_REFRESH_INTERVAL = 32_000;
   const SCHEDULED_REFRESH_INTERVAL = 120_000;
 
+  /** What the reader is looking at when the poll fails: a live game. */
+  const CACHED_LIVE = { status: "live" };
+
   /** The page's actual config value, closure and all. */
   const pageInterval = (streamConnected: boolean) => (data?: unknown) =>
     eventRefreshInterval(
@@ -438,34 +442,33 @@ describe("#5072 — the live event page's own function-valued cadence", () => {
 
   it("arms — the regression CERT-2584 caught, stated as the assertion it should always have had", () => {
     const h = harness();
-    h.recovery.recordError(KEY, throttled(), pageInterval(false));
+    h.recovery.recordError(KEY, throttled(), pageInterval(false), CACHED_LIVE);
 
     expect(h.recovery.armedKeys()).toEqual([KEY]);
-    // 120s: the cadence the page's own function reports with no data yet, which
-    // is slower than the floor, so it is honoured rather than overridden.
-    expect(h.recovery.pendingDelayMs(KEY)).toBe(SCHEDULED_REFRESH_INTERVAL);
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(LIVE_REFRESH_INTERVAL);
   });
 
   it("recovers end to end: error, nudge, failed re-arm, then success hands back to swr", async () => {
     const h = harness();
 
-    // 1. The production-shape failure: one 429 on the live event key.
-    h.recovery.recordError(KEY, throttled(), pageInterval(false));
-    expect(h.recovery.pendingDelayMs(KEY)).toBe(SCHEDULED_REFRESH_INTERVAL);
+    // 1. The production-shape failure: one 429 on the live event key, with the
+    //    payload the reader is looking at still in cache.
+    h.recovery.recordError(KEY, throttled(), pageInterval(false), CACHED_LIVE);
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(LIVE_REFRESH_INTERVAL);
 
     // 2. The comeback comes due and asks the server again. Before this repair
     //    no request was ever made for this key, for the life of the mount.
-    h.failNextNudge(SCHEDULED_REFRESH_INTERVAL);
+    h.failNextNudge(pageInterval(false), CACHED_LIVE);
     await h.tick();
     expect(h.nudged).toEqual([KEY]);
 
-    // 3. Still throttled: re-armed, not abandoned. Note it does NOT double —
-    //    the ceiling is `max(base, 60s)`, which for a 120s key IS 120s, so a
-    //    slow key simply keeps retrying at its own healthy cadence forever
-    //    rather than sliding towards silence. That is the load invariant doing
-    //    its job in the direction nobody thinks to check.
+    // 3. Still throttled: re-armed at the next backoff step, not abandoned.
+    //    32s doubles to 64s, which the ceiling clamps to 60s — NOT 64s. This
+    //    clamp has now caught three assertions in this file that were written
+    //    as `base * 2` on autopilot; if you are about to write that, check
+    //    whether `max(base, 60s)` gets there first.
     expect(h.recovery.armedKeys()).toEqual([KEY]);
-    expect(h.recovery.pendingDelayMs(KEY)).toBe(SCHEDULED_REFRESH_INTERVAL);
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(MAX_RECOVERY_DELAY_MS);
 
     // 4. The second comeback lands. swr's cached error clears, its own poll
     //    resumes at whatever cadence the function reports WITH data, and this
@@ -475,20 +478,125 @@ describe("#5072 — the live event page's own function-valued cadence", () => {
     expect(h.recovery.armedKeys()).toEqual([]);
   });
 
-  it("never nudges a function-priced key faster than the ceiling, whatever it reports", () => {
-    // The reason the evaluated value is a floor and not the answer: we call the
-    // function with `undefined`, and it may report something much quicker than
-    // it would with a real payload. Honouring that literally would nudge sixty
-    // times faster than the healthy poll.
+  it("prices the key from its CACHED DATA, so a live page gets its real cadence", () => {
+    // CERT-2587. Evaluating with `undefined` gave the event page a hedged
+    // value; evaluating with the payload on screen gives the same answer swr's
+    // own poll would compute, which is the authoritative cadence.
     const h = harness();
-    h.recovery.recordError(KEY, throttled(), () => 1_000);
+    h.recovery.recordError(KEY, throttled(), pageInterval(false), {
+      status: "live",
+    });
 
-    expect(h.recovery.pendingDelayMs(KEY)).toBe(FUNCTION_INTERVAL_FLOOR_MS);
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(LIVE_REFRESH_INTERVAL);
   });
 
   it("still honours a function that asks to be left alone", () => {
     const h = harness();
     h.recovery.recordError(KEY, throttled(), () => 0);
+
+    expect(h.recovery.armedKeys()).toEqual([]);
+  });
+});
+
+/**
+ * CERT-2587's required repair, `5072-CACHE-AWARE-FUNCTION-INTERVAL-RECOVERY`.
+ *
+ * The first repair evaluated a function-valued interval with `undefined`, which
+ * is fine for the event page (whose callback always returns a positive number)
+ * and wrong for the event-CONCEPT page, whose callback returns 0 unless the
+ * cached payload says the event is live. Evaluating without data read that as
+ * "not polled" and left a live concept page latched after one failure — the
+ * grader's probe measured `effective=30000, scheduled=[], armed=[]`.
+ *
+ * These are that page's real config, so the two shapes can never diverge again.
+ */
+describe("#5072 — the event-concept page, whose cadence is ZERO until data says live", () => {
+  /** Verbatim shape from `app/event/[domain]/[slug]/page.tsx`. */
+  const conceptInterval = (latest?: unknown) => {
+    const l = latest as
+      | { event?: { status?: string; start_date?: string } }
+      | undefined;
+    const status = l?.event?.status;
+    if (status === "live") return 30_000;
+    if (status === "upcoming" && l?.event?.start_date) {
+      const start = Date.parse(l.event.start_date);
+      if (!Number.isNaN(start)) {
+        const hoursToStart = (start - Date.now()) / 3_600_000;
+        if (hoursToStart <= 24 && hoursToStart >= -12) return 300_000;
+      }
+    }
+    return 0;
+  };
+
+  const CONCEPT_KEY = "@\"event-concept\",\"us-open-2026\",";
+  const LIVE_PAYLOAD = { event: { status: "live" } };
+
+  it("arms and recovers after an error while the page is live", async () => {
+    const h = harness();
+
+    // The failure a reader hits: one transient error on a live concept page.
+    h.recovery.recordError(CONCEPT_KEY, throttled(), conceptInterval, LIVE_PAYLOAD);
+
+    // Armed at the page's real in-play cadence. Priced with `undefined` this
+    // was 0 and the key armed nothing at all — the CERT-2587 defect.
+    expect(h.recovery.armedKeys()).toEqual([CONCEPT_KEY]);
+    expect(h.recovery.pendingDelayMs(CONCEPT_KEY)).toBe(30_000);
+
+    // Still failing: asks again, re-arms.
+    h.failNextNudge(conceptInterval, LIVE_PAYLOAD);
+    await h.tick();
+    expect(h.nudged).toEqual([CONCEPT_KEY]);
+    expect(h.recovery.armedKeys()).toEqual([CONCEPT_KEY]);
+
+    // It lands: swr's error clears, its own poll resumes, we stand down.
+    await h.tick();
+    expect(h.nudged).toEqual([CONCEPT_KEY, CONCEPT_KEY]);
+    expect(h.recovery.armedKeys()).toEqual([]);
+  });
+
+  it("arms an about-to-start page at its slow cadence", () => {
+    const h = harness();
+    const soon = new Date(Date.now() + 6 * 3_600_000).toISOString();
+
+    h.recovery.recordError(CONCEPT_KEY, throttled(), conceptInterval, {
+      event: { status: "upcoming", start_date: soon },
+    });
+
+    // 5 minutes — the cadence that lets a countdown page flip to live on its
+    // own. It polls, so it can latch, so it must recover.
+    expect(h.recovery.pendingDelayMs(CONCEPT_KEY)).toBe(300_000);
+  });
+
+  it("TRUE ZERO is still refused: a settled concept page is not polled, so it is not armed", () => {
+    const h = harness();
+
+    h.recovery.recordError(CONCEPT_KEY, throttled(), conceptInterval, {
+      event: { status: "completed" },
+    });
+
+    // Both certs required this clause survive the repair. A page that does not
+    // poll was never latched by this bug, and arming it would invent traffic.
+    expect(h.recovery.armedKeys()).toEqual([]);
+    expect(h.scheduled).toEqual([]);
+  });
+
+  it("a distant-future page is not armed either", () => {
+    const h = harness();
+    const farOff = new Date(Date.now() + 40 * 24 * 3_600_000).toISOString();
+
+    h.recovery.recordError(CONCEPT_KEY, throttled(), conceptInterval, {
+      event: { status: "upcoming", start_date: farOff },
+    });
+
+    expect(h.recovery.armedKeys()).toEqual([]);
+  });
+
+  it("no cached data yet means no cadence to price, so nothing is armed", () => {
+    // The first fetch failing is not the bug this fixes: there is no page on
+    // screen to hold, the surface renders its own load-failure state, and the
+    // callback itself answers 0. Arming here would be a guess.
+    const h = harness();
+    h.recovery.recordError(CONCEPT_KEY, throttled(), conceptInterval, undefined);
 
     expect(h.recovery.armedKeys()).toEqual([]);
   });

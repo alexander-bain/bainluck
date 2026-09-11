@@ -110,52 +110,59 @@ interface KeyState {
 }
 
 /**
- * A function-valued `refreshInterval` is never nudged faster than this, however
- * small the value it reports. See `pollIntervalMs`.
- */
-export const FUNCTION_INTERVAL_FLOOR_MS = MAX_RECOVERY_DELAY_MS;
-
-/**
  * The `refreshInterval` of a key we are willing to nudge, or null.
  *
- * ── THE FIRST CUT OF THIS SHIPPED INERT ON ITS OWN SPECIMEN (CERT-2584) ──────
+ * ── TWO CERTS LANDED ON THIS ONE FUNCTION. BOTH WERE RIGHT. ─────────────────
  *
- * It accepted only a finite positive NUMBER and routed functions to null, on a
- * written claim that "all 78 `refreshInterval` sites in the app are numeric
- * literals". That claim was false, and false in the worst possible place: the
- * MAIN event request in `app/events/[id]/page.tsx` — the live page this whole
- * issue was filed against — passes
+ * CERT-2584: it accepted only a finite positive NUMBER and routed functions to
+ * null, on a written claim that "all 78 `refreshInterval` sites in the app are
+ * numeric literals". False, and false in the worst place: the MAIN event
+ * request in `app/events/[id]/page.tsx` — the live page this issue was filed
+ * against — passes `(data) => eventRefreshInterval(data?.status, …)`. The one
+ * key whose freezing produced the bug report was the one key that never armed.
+ * The claim came from a `grep` whose output stopped at 30 of 78 lines. A count
+ * is not a census.
  *
- *     refreshInterval: (data) => eventRefreshInterval(data?.status, …)
+ * CERT-2587: the repair evaluated the function with `undefined`, because a
+ * global `onError` has the config but seemingly not the data. That is fine for
+ * the event page, whose callback always returns a positive number — and wrong
+ * for `app/event/[domain]/[slug]/page.tsx`, whose callback is
  *
- * so the one key whose freezing produced the bug report was the one key that
- * never armed. The claim came from reading a `grep` whose output stopped at 30
- * of 78 lines and generalising from the visible part. A count is not a census.
+ *     (latest) => { if (latest?.event?.status === "live") return 30000;
+ *                   … return 0; }
  *
- * ── WHY EVALUATING THE FUNCTION IS SAFE, AND WHY IT IS FLOORED ───────────────
+ * i.e. it returns 0 for `undefined` and 30000 for a live payload. Evaluating
+ * without data read that as "not polled" and left a live concept page latched.
+ * Measured by the grader: `effective=30000, scheduled=[], armed=[]`.
  *
- * swr itself calls `refreshInterval(getCache().data)` on every tick, so calling
- * it is ordinary, not a liberty. We call it with `undefined` because a global
- * `onError` has the config but not the cached data — the same argument swr
- * passes before the first fetch lands.
+ * ── SO IT IS EVALUATED AGAINST THE KEY'S OWN CACHED DATA ────────────────────
  *
- * That answer can differ from the one swr computes WITH data, so it cannot be
- * trusted as a floor: a function returning, say, 1000 for `undefined` and
- * 60000 for a real payload would have us nudging sixty times faster than the
- * healthy poll and break the load invariant. Hence
- * `max(evaluated, FUNCTION_INTERVAL_FLOOR_MS)`: honour the function when it
- * asks for something SLOWER than the ceiling, and never go faster than the
- * ceiling when it asks for something quicker. For the live event page the
- * evaluated value is `SCHEDULED_REFRESH_INTERVAL` (120s), comfortably slower
- * than the floor, so that page recovers on its own declared cadence.
+ * `cachedData` is `config.cache.get(key).data`, read in `SWRProvider`'s
+ * `onError`. `cache` is on the merged config swr hands that callback, so this
+ * is the SAME input swr's own polling effect uses when it calls
+ * `refreshInterval(getCache().data)` — and the value it yields is therefore the
+ * authoritative effective cadence, not an approximation of it.
  *
- * Everything else still routes to null — `0` (SWR's "not polled", the live case
- * from `{ refreshInterval: autoRefresh ? 60000 : 0 }`), a function that throws,
- * and a function that reports a non-positive or non-finite cadence. A key that
- * is not polling was never latched by the bug this fixes, so arming it would be
- * traffic nobody asked for.
+ * That is also why there is no artificial floor any more. The previous cut
+ * clamped a function-priced key to a 60s minimum, which was a hedge against
+ * evaluating with the wrong input. Reading the right input removes the need:
+ * whatever the function reports for the data on screen is, by construction,
+ * exactly what a healthy poll would have used, so the load invariant holds
+ * without a second constant defending it. It also means the live event page
+ * recovers at its real 32s cadence rather than a hedged 120s.
+ *
+ * Everything else still routes to null, which is the "true zero" refusal both
+ * certs required: `0` (SWR's own "not polled", the live case from
+ * `{ refreshInterval: autoRefresh ? 60000 : 0 }`), a function that reports 0
+ * FOR ITS OWN CACHED DATA, a function that throws, and a function that reports
+ * a non-positive or non-finite cadence. A key that is not polling was never
+ * latched by the bug this fixes, so arming it would be traffic nobody asked
+ * for.
  */
-function pollIntervalMs(refreshInterval: unknown): number | null {
+function pollIntervalMs(
+  refreshInterval: unknown,
+  cachedData: unknown,
+): number | null {
   if (typeof refreshInterval === "number") {
     return Number.isFinite(refreshInterval) && refreshInterval > 0
       ? refreshInterval
@@ -165,16 +172,16 @@ function pollIntervalMs(refreshInterval: unknown): number | null {
   if (typeof refreshInterval === "function") {
     let evaluated: unknown;
     try {
-      evaluated = (refreshInterval as (data?: unknown) => unknown)(undefined);
+      evaluated = (refreshInterval as (data?: unknown) => unknown)(cachedData);
     } catch {
-      // A cadence function that cannot answer without data is a key we cannot
-      // price, and this module fails toward not adding traffic.
+      // A cadence function that cannot answer is a key we cannot price, and
+      // this module fails toward not adding traffic.
       return null;
     }
     return typeof evaluated === "number" &&
       Number.isFinite(evaluated) &&
       evaluated > 0
-      ? Math.max(evaluated, FUNCTION_INTERVAL_FLOOR_MS)
+      ? evaluated
       : null;
   }
 
@@ -221,8 +228,19 @@ export function recoveryDelayMs(
 }
 
 export interface PollRecovery {
-  /** Wire to SWR's global `onError`. Arms, or advances, recovery for the key. */
-  recordError: (key: string, error: unknown, refreshInterval: unknown) => void;
+  /**
+   * Wire to SWR's global `onError`. Arms, or advances, recovery for the key.
+   *
+   * `cachedData` is the key's current cache entry (`config.cache.get(key).data`)
+   * and is only consulted for a function-valued `refreshInterval` — see
+   * `pollIntervalMs`, and CERT-2587 for what evaluating without it cost.
+   */
+  recordError: (
+    key: string,
+    error: unknown,
+    refreshInterval: unknown,
+    cachedData?: unknown,
+  ) => void;
   /** Keys with a nudge pending. For tests and for an admin read-out. */
   armedKeys: () => string[];
   /** The delay the pending nudge for `key` was scheduled with, or null. */
@@ -288,8 +306,8 @@ export function createPollRecovery(deps: PollRecoveryDeps): PollRecovery {
   }
 
   return {
-    recordError(key, error, refreshInterval) {
-      const baseMs = pollIntervalMs(refreshInterval);
+    recordError(key, error, refreshInterval, cachedData) {
+      const baseMs = pollIntervalMs(refreshInterval, cachedData);
       if (baseMs === null) {
         // Not a polled key. A one-shot fetch that fails stays failed, exactly
         // as today — this ship restores the POLL, it does not invent retries
