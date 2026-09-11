@@ -15861,8 +15861,33 @@ async def get_event_odds_history(
         # shape they miss, and it is cheap because it only ever walks when the
         # preferred pair is unrenderable (repair
         # `3921-PROJECTION-SELECTION-CANNOT-EMIT-NEGATIVE-SCORES`).
+        # #5078: a finished game is never PROJECTED. "Settled means settled" —
+        # once the whistle has gone the real score is known and is served on this
+        # same payload, so a projection beside it can only ever disagree with a
+        # fact the reader can already see.
+        #
+        # It is not a harmless leftover, because of WHEN it runs. The event flips
+        # to `completed` at the whistle, but the venue does not settle its markets
+        # in the same instant — for the minutes in between the contracts are still
+        # `open` while their prices collapse toward 0/1, and a degenerate ladder is
+        # exactly what `binary_to_implied_spread`/`_total` cannot read. Measured on
+        # SF@LAR (14632820, final 03:25:31Z): at final+11 the payload projected the
+        # Rams winning **26-23** a game they had just lost **7-27**, rendered two
+        # inches away on the same page. By the time anyone checks, the markets have
+        # settled and the projection is `null` again — which is why this reads as a
+        # transient nobody catches rather than as a bug, and why the guard is a
+        # state gate rather than a price gate. Ladder sanity cannot fix it: the
+        # prices are not malformed, they are *correct prices for a decided market*.
+        #
+        # `implied_spreads`/`implied_totals` are deliberately left alone — they are
+        # the chart's own rungs, and this is the narrow claim: no PROJECTION of a
+        # game that has already been played.
         projected = None
-        best_pair = select_projected_final(implied_spreads, implied_totals)
+        event_is_final = event.status in ("completed", "closed")
+        best_pair = (
+            None if event_is_final
+            else select_projected_final(implied_spreads, implied_totals)
+        )
         if best_pair is not None:
             best_spread_source, best_total_source, proj = best_pair
             projected = {
