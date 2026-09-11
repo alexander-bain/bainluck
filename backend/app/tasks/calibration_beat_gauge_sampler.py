@@ -749,7 +749,11 @@ def row_rebuild_progress(row: Any) -> dict:
     published the rebuild's progress out of ``row["disclosure"]``, and
     ``build_disclosure`` is a SERVING-bank instrument: it returns
     ``unmeasured("served_at_absent")`` — a two-key dict, and nothing else —
-    whenever a bank is serving but has never been stamped. On 2026-09-06 that was
+    whenever a bank is serving but has never been stamped. (#5043 later split
+    that reason in two: those rows' banks were *empty*, not unstamped, and now
+    draw ``served_bank_empty``. The refusal is unchanged, so this repair is
+    still load-bearing — only the name in the paragraph below moved.) On
+    2026-09-06 that was
     **124 of the 168 rows in the ring, every row since 2026-09-05T07:19Z**, so
     ``units_banked``, ``units_drifted`` and ``units_drift_unknown`` answered
     ``null`` for thirty-six hours *while the very same rows carried*

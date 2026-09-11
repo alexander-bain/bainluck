@@ -98,7 +98,14 @@ PRODUCTION_2015Z_ROW: dict = {
     # What the ring actually banked for this beat, and the reason it published
     # five nulls. Kept on the fixture rather than described in prose so the test
     # below can assert against the real refusal instead of a re-enactment.
-    "disclosure": {"reason": "served_at_absent", "measured": False},
+    #
+    # #5043 renamed the refusal this row draws. Its ``staged:served_units`` is 0
+    # — there is no served bank at all, because the first beat of a new
+    # generation clears it — so the reason is now ``served_bank_empty`` rather
+    # than ``served_at_absent``, which had claimed a bank existed and had lost
+    # its stamp. The refusal itself is unchanged, which is what this suite turns
+    # on; only its name got honest.
+    "disclosure": {"reason": "served_bank_empty", "measured": False},
     "measured": False,
 }
 
@@ -119,7 +126,9 @@ class TestTheProductionRowThatWasLost:
             now=None,
         )
         assert block["measured"] is False
-        assert block["reason"] == "served_at_absent"
+        # #5043: this row's bank is EMPTY (``staged:served_units`` = 0), not
+        # unstamped, and the disclosure now says so by its own name.
+        assert block["reason"] == "served_bank_empty"
         # And it carries NOTHING else — this is why five fields went null.
         assert set(block) == {"measured", "reason"}
 

@@ -211,6 +211,21 @@ def build_disclosure(
 
     staged_dt = staged_generated_at
     if serving:
+        if served_units == 0:
+            # #5043: there is no served bank at all. The first beat of a new
+            # generation clears it, so this is the NORMAL state of a rebuild that
+            # has started over after a fingerprint change — not a bank that lost
+            # its stamp. The writer already distinguishes the two (it records
+            # ``served_units: 0`` with no ``served_at`` and no ``unstamped``
+            # reason); collapsing them here made every post-fingerprint rebuild
+            # report ``served_at_absent``, which reads as a broken read and took
+            # the rebuild-progress fields down with it (#5042).
+            #
+            # It is still UNMEASURED — the served census genuinely has no date,
+            # and inventing one from ``staged_generated_at`` is #2007 — but the
+            # reason is now its own, so a consumer can say "a fresh rebuild is
+            # underway" instead of inferring failure.
+            return unmeasured("served_bank_empty")
         if served_at_epoch is None:
             # A serving bank that has not been dated yet — promoted, not yet
             # stamped, or stamped by a build that died between the two. It is
