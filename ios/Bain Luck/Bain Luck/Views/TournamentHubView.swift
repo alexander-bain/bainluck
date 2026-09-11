@@ -44,7 +44,9 @@ struct TournamentHubView: View {
             }
         }
         .navigationTitle(displayName)
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task {
             await vm.load()
             AnalyticsService.trackScreen(name: "tournament_hub", type: slug)

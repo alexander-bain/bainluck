@@ -1024,7 +1024,7 @@ struct OddsChartView: View {
             .foregroundStyle(colorForSource(Self.primarySource(in: dataPoints), sources: sources))
             .annotation(position: .overlay, spacing: 0) {
                 Circle()
-                    .stroke(Color(.systemBackground), lineWidth: 1.5)
+                    .stroke(Color.systemBackground, lineWidth: 1.5)
                     .frame(width: MomentMarkerGeometry.markerDiameterPoints,
                            height: MomentMarkerGeometry.markerDiameterPoints)
             }

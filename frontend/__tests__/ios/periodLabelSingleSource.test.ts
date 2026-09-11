@@ -248,8 +248,15 @@ d("iOS period labels have exactly one implementation", () => {
  */
 const CANONICAL_JOIN = "PeriodLabel.liveStatusText(";
 
-/** The six sites that printed the pair, by target. Named so a revert is loud. */
+/** The seven sites that printed the pair, by target. Named so a revert is loud. */
 const PAIR_PRINTERS: Array<[string, string]> = [
+  // #5057. The seventh, and the one the discovery scan below could not find:
+  // it was a `??` FALLBACK (`espn?.period ?? espn?.gameClock`), not an array
+  // literal, so `RAW_JOIN` never matched it and #4880 shipped with the macOS
+  // menu bar still printing `6:34 - 4th Quarter` above a row saying `Q4 6:34`.
+  // Listed here AND given its own tell (`RAW_FALLBACK`) — the name pins this
+  // file, the tell makes the shape unreachable in the next one.
+  [join(IOS_ROOT, "Bain_LuckApp.swift"), "the macOS menu bar TITLE"],
   [join(IOS_ROOT, "Components/StatusBadge.swift"), "the hero capsule and every feed card"],
   [join(IOS_ROOT, "Views/EventDetailView.swift"), "the nav title and share text"],
   [join(IOS_ROOT, "Views/MenuBarView.swift"), "the macOS menu bar"],
@@ -265,6 +272,23 @@ const PAIR_PRINTERS: Array<[string, string]> = [
  * file cannot pair with a `gameClock` later.
  */
 const RAW_JOIN = /\[[^\]]*\bperiod\b[^\]]*\bgameClock\b[^\]]*\]/;
+
+/**
+ * #5057 — the OTHER way to reach the pair, which `RAW_JOIN` is blind to.
+ *
+ * `let period = best.espn?.period ?? best.espn?.gameClock ?? ""` never doubles
+ * anything, so it survived #4880 untouched and kept printing ESPN's raw period
+ * on the macOS menu bar title. Coalescing the two is still a surface deciding
+ * for itself what to say about the clock, which is the half of the rule that
+ * produced the defect — the ONE difference from `RAW_JOIN` is the failure mode,
+ * not the ownership.
+ *
+ * Ordered: `period` … `??` … `gameClock`. The five delegating call sites read
+ * `period: …, gameClock: …) ?? ""` — their `??` comes AFTER both names — so
+ * this does not fire on them. Verified across all four targets: one hit, which
+ * was the defect.
+ */
+const RAW_FALLBACK = /\bperiod\b[^\n]*\?\?[^\n]*\bgameClock\b/;
 
 const iosTargetsPresent = ALL_TARGET_ROOTS.every((root) => existsSync(root));
 const t = iosTargetsPresent ? describe : describe.skip;
@@ -293,6 +317,12 @@ t("a live period is printed beside its clock in exactly one place (#4880)", () =
         const code = stripComments(readFileSync(path, "utf8"));
         if (RAW_JOIN.test(code)) {
           offenders.push(`${path} — joins period to gameClock instead of calling liveStatusText`);
+        }
+        // #5057. Coalescing the pair is the same decision as joining it.
+        if (RAW_FALLBACK.test(code)) {
+          offenders.push(
+            `${path} — falls back from period to gameClock itself; use liveStatusText`
+          );
         }
         // `liveBadgeLabel` is handed ONE string and cannot see what is printed
         // next to it. Outside the canonical file, asking for it is asking for
@@ -324,5 +354,21 @@ t("a live period is printed beside its clock in exactly one place (#4880)", () =
       return parts.joined(separator: " ")
     `);
     expect(RAW_JOIN.test(drifted)).toBe(true);
+  });
+
+  it("the fallback check can actually fail — and does not fire on delegation", () => {
+    // #5057. Both directions, because a tell that cannot fail is worthless and
+    // a tell that fires on the FIX is worse: it would push the next author
+    // back to hand-rolling the pair to get a green suite.
+    const drifted = stripComments(`
+      let period = best.espn?.period ?? best.espn?.gameClock ?? ""
+    `);
+    expect(RAW_FALLBACK.test(drifted)).toBe(true);
+
+    const delegating = stripComments(`
+      period: PeriodLabel.liveStatusText(
+          period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "",
+    `);
+    expect(RAW_FALLBACK.test(delegating)).toBe(false);
   });
 });
