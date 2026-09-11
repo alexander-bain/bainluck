@@ -118,6 +118,37 @@ describe("the schedule clause reads the producer, not the calendar", () => {
     });
     expect(clause).toContain("1 hourly rebuild has");
   });
+
+  // --- The count measures the ARTIFACT, so it may not grade the RUNS. ---
+  //
+  // #5042. Production 2026-09-11 02:30Z served `producer: { stalled: true,
+  // beats_missed: 4 }` and the page read "4 hourly rebuilds have come and gone
+  // without one succeeding." The 00:31:39Z and 01:37:39Z beats had each banked
+  // five units — both rebuilds SUCCEEDED. What had not happened was a publish:
+  // a release changed the population fingerprint, the re-stage emptied the
+  // served bank D45 publishes from, and the fresh generation was 10/128 through
+  // (#5043). `beats_missed` is `age // interval_s`; it cannot separate "the
+  // rebuilds are failing" from "the rebuilds are fine and the publish is 118
+  // units away", so no sentence built from it may assert either one.
+  it.each([
+    ["a counted stall", { stalled: true, beats_missed: 4 }],
+    ["an uncounted stall", { stalled: true, beats_missed: null }],
+  ])("does not grade the rebuild runs on %s", (_label, producer) => {
+    const clause = clauseFor({ ...PRODUCTION_2026_09_02, producer });
+    expect(clause).not.toBeNull();
+    expect(clause).not.toMatch(/succeed/i);
+    expect(clause).not.toMatch(/fail/i);
+  });
+
+  it("still reports the measured count when it has one", () => {
+    // Withholding the number is not the fix — it is the one hard fact the
+    // reader gets. Only the claim attached to it changes.
+    const clause = clauseFor({
+      ...PRODUCTION_2026_09_02,
+      producer: { stalled: true, beats_missed: 4 },
+    });
+    expect(clause).toContain("4 hourly rebuilds have");
+  });
 });
 
 describe("the notice carries the producer verdict as data", () => {

@@ -382,12 +382,31 @@ export function stalenessScheduleClause(notice: CalibrationStalenessNotice): str
   // Stalled. Report the measured count when we have one; the count is the whole
   // reason this sentence is credible, so an unread count gets the vaguer
   // sentence rather than a fabricated number.
+  //
+  // #5042: and say what the count MEASURES. `beats_missed` is `age //
+  // interval_s` — the field's own doc comment above calls it "hourly beats that
+  // came and went without a newer artifact" — so "without one succeeding" is a
+  // tally of failed RUNS that nothing here counted. The branch above withholds
+  // a sentence for exactly this reason ("loud enough to describe a failure it
+  // has not measured"); this branch asserted it anyway.
+  //
+  // Measured 2026-09-11 02:30Z: the page read "4 hourly rebuilds have come and
+  // gone without one succeeding" while the 00:31Z and 01:37Z beats had each
+  // banked five units. Both succeeded. What had not happened was a PUBLISH —
+  // a release changed the population fingerprint, the re-stage emptied the
+  // served bank D45 publishes from, and the fresh generation was 10/128 through
+  // (#5043). The reader was told the system was broken while it was working,
+  // and the same state recurs on every fingerprint change.
+  //
+  // So: describe the artifact, which is what the number is about, and make no
+  // claim about the runs, which it is not. Still a description, never a
+  // prediction — the rule this function's docstring ends on is untouched.
   if (notice.beatsMissed === null || notice.beatsMissed <= 0) {
-    return "Hourly rebuilds are not currently succeeding.";
+    return "Hourly rebuilds have not produced a new snapshot.";
   }
   const beats = notice.beatsMissed.toLocaleString();
   const rebuild = notice.beatsMissed === 1 ? "hourly rebuild has" : "hourly rebuilds have";
-  return `${beats} ${rebuild} come and gone without one succeeding.`;
+  return `${beats} ${rebuild} come and gone without a new snapshot.`;
 }
 
 /**
