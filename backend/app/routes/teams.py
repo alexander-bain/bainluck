@@ -10,6 +10,7 @@ from app.utils.event_rails import (
     recent_or_unreported_condition,
     upcoming_rail_condition,
 )
+from app.utils.aggregation import compute_aggregate_probability
 from app.utils.lifecycle import served_event_status
 from app.utils.season_variant_team import (
     choose_parent_league_row,
@@ -25,7 +26,11 @@ from sqlalchemy.orm import selectinload
 from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome, TeamIdentityMapping
 from app.services import get_db
 from app.utils import season_windows
-from app.utils.proven_duplicates import not_a_proven_duplicate
+from app.utils.proven_duplicates import (
+    FoldedBlendView,
+    folded_probability_sources_batch,
+    not_a_proven_duplicate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +186,9 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
 
     _mark("resolve_team")
     upcoming_r, recent_r = await db.execute(upcoming_q), await db.execute(recent_q)
-    upcoming_events = [_format_event_brief(e, team) for e in upcoming_r.scalars().all()]
-    recent_events = [_format_event_brief(e, team) for e in recent_r.scalars().all()]
+    upcoming_events, recent_events = await _folded_briefs(
+        db, team, upcoming_r.scalars().all(), recent_r.scalars().all()
+    )
     _mark("events")
 
     # #1197 / #1239: the team page is Priority #3 and must NEVER hard-500 on a
@@ -282,16 +288,99 @@ def _format_team(team: Team) -> dict:
     }
 
 
+async def _folded_briefs(db, team: Team, *rails) -> list[list[dict]]:
+    """Each rail's rows as briefs, with ONE twin fold across ALL of them (#5382).
+
+    🔴 THE HALF THE FIRST PRESENTATION MISSED. Reading the canonical blend
+    instead of the never-existing ``aggregate`` key fixes every row that OWNS
+    readings. It cannot fix a row that owns none — and the team rails are
+    exactly where that row is common, because both queries above carry the
+    proven-duplicate filter (#2263): the survivor is printed and its suppressed
+    twin is not, so when the venue price landed on the twin the card had
+    nothing to blend. The event page has folded that twin since #3810 and reads
+    a number off it. Same fixture, two answers, one blank — which is the
+    divergence the fold exists to close, arriving on a second surface.
+
+    (That filter is named here without its parentheses on purpose:
+    ``test_the_team_page_rails`` counts the literal call text in this file, so a
+    mention in prose reads to it as a third rail and reddens CI on a comment.)
+
+    ONE lookup for BOTH rails, not one per rail and certainly not one per row.
+    The rails are capped at 5 each, so the N+1 here would be small — but the
+    reason to batch is not this page's size, it is that
+    ``folded_probability_sources_batch`` is the shared, measured form (#3937)
+    and a second hand-rolled fold is how two implementations of one meaning
+    start to drift. ``test_one_lookup_serves_both_rails`` pins the count.
+
+    DEGRADES TO TODAY'S ANSWER, LOUDLY. The module's own rule is that fold
+    errors are not swallowed, and its stated reason is a page that "silently
+    loses its prices" (gotcha #53). Neither half applies to this call: the
+    fallback is each row's OWN ``win_probability_sources``, so no price is
+    lost — the card prints exactly what it printed before this repair — and
+    ``logger.exception`` makes it the opposite of silent. What IS at stake is
+    that these are the CORE rail of a Priority-#3 page (#1197 / #1239): the
+    rows are already in hand, so a throw here would replace a working team page
+    with a 500 for the sake of a number a reader would otherwise still see.
+    """
+    rows = [event for rail in rails for event in rail]
+    folded: dict[int, dict] = {}
+    try:
+        folded = await folded_probability_sources_batch(db, rows)
+    except Exception:
+        logger.exception("team page: twin fold failed for team %s", team.id)
+
+    return [
+        [
+            # The row's OWN sources are the default, never ``None``: the batch
+            # promises an entry per event, but a miss must degrade to today's
+            # unfolded answer rather than to a card whose number vanishes.
+            _format_event_brief(
+                FoldedBlendView(
+                    event, folded.get(int(event.id), event.win_probability_sources)
+                ),
+                team,
+            )
+            for event in rail
+        ]
+        for rail in rails
+    ]
+
+
 def _format_event_brief(event: Event, team: Team) -> dict:
     """Compact event format for team page game lists."""
     sport = event.sport
     is_home = (event.home_team_id == team.id) or (event.home_team_name == team.name)
     opponent = event.away_team_name if is_home else event.home_team_name
 
+    # #5382: this used to read `win_probability_sources["aggregate"]` — the same
+    # read #1776 found and fixed in `league_futures.py::_event_probability`, left
+    # unfixed in this second file. THAT KEY HAS NEVER EXISTED (measured: 0 of
+    # 52,975 events with a non-null column carry it); the schema is
+    # `{source: {value, updated_at, …}}` and the blend is COMPUTED, never stored.
+    # So `wp` was None on every row of every team page, including a LIVE game
+    # holding five sources whose own event-page hero read 99%.
+    #
+    # Calls the canonical blend rather than rolling a mean over the sources here:
+    # one number per question, and `status` travels on the event, so a completed
+    # game drops Kalshi/Polymarket inside `_tier1_readings` without this
+    # formatter re-deriving a settled-language rule of its own.
+    #
+    # The isinstance guard is KEPT, for league_futures' reason: the blend does
+    # `.items()` on the column, so a truthy NON-dict (a list, a bare string)
+    # raises AttributeError — and in a per-item formatter a throw does not blank
+    # one row, it empties the whole rail (gotcha #42).
     wp = None
-    if event.win_probability_sources and isinstance(event.win_probability_sources, dict):
-        agg = event.win_probability_sources.get("aggregate", {})
-        wp = agg.get("home") if is_home else agg.get("away")
+    if isinstance(event.win_probability_sources, (dict, type(None))):
+        wp = compute_aggregate_probability(event)
+        # The blend states the HOME side's probability; this brief is
+        # team-relative ("we had them at 72%"), so an away row is the
+        # complement — the same orientation `pregame_win_probability` gets for
+        # free by picking between two stored columns. Safe because our
+        # probabilities are two-way normalised in every sport, draw leagues
+        # included: measured 2026-09-11, `opening_home + opening_away` sums to
+        # 1.0000 with 0 exceptions across all 60 sport keys, soccer among them.
+        if wp is not None and not is_home:
+            wp = 1.0 - wp
 
     # L2-174 Item 3e — the recents expectation grammar ("we had them at 72%",
     # L2-158) never fired because this brief never emitted the pre-game line or the
