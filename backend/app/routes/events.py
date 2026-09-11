@@ -17435,6 +17435,56 @@ def _team_league_identity(team):
     return identity if identity is not None else ("sport_id", team.sport_id)
 
 
+def _crest_is_shared(a, b) -> bool:
+    """True when two rows for one name carry the SAME crest — no wrong answer exists.
+
+    The cross-league guard exists to stop us attaching a WRONG logo. A club
+    entered in its domestic league AND a continental cup has one row per
+    competition carrying the SAME crest — Arsenal's badge is Arsenal's badge in
+    the Premier League and in the Champions League — so dropping the key buys no
+    safety and costs the reader the crest. That is #4978: **85 names beyond
+    #4945's 30**, including Arsenal, Liverpool, Barcelona, Real Madrid, Bayern
+    Munich and Paris Saint-Germain. Every UCL row served on 2026-09-10 was
+    crest-less, and the only two that rendered were the two clubs with a single
+    enriched row.
+
+    The discriminator is logo AGREEMENT, not league identity. Carolina Panthers
+    (NFL) and Florida Panthers (NHL) carry different logos and stay dropped, as
+    do the other 234 genuinely-colliding names.
+
+    Requires the logo to be PRESENT on both and equal. Two rows that merely agree
+    on having no logo agree about nothing — they can still disagree on
+    `primary_color`, which is the other thing the card paints — so they stay
+    dropped. This is what keeps the Queue #238 mascot collisions, which carry no
+    logos at all, exactly as they were.
+    """
+    logo = getattr(a, "logo_url_small", None)
+    return bool(logo) and logo == getattr(b, "logo_url_small", None)
+
+
+def _crest_row_preference(team):
+    """Rank two same-crest rows so the winner does not depend on query order.
+
+    Merging the identity is only half the fix, and #4945 paid for the other half:
+    once a key survives, something has to PICK a row, an unordered query yields
+    them in an arbitrary order, and the rows are NOT interchangeable —
+    `_format_team_data` ships `standings_data` and `current_record` beside the
+    crest, and same-crest rows can still disagree on `primary_color` (Syracuse
+    Orange, Cornell Big Red, San José St Spartans).
+
+    Richer first, then a TOTAL tie-break: a preference that can tie is still
+    order-dependent on precisely the rows it failed to separate, which is the
+    coin-flip #4945 removed from the season-variant branch below.
+    """
+    return (
+        1 if getattr(team, "standings_data", None) else 0,
+        1 if getattr(team, "current_record", None) else 0,
+        1 if getattr(team, "primary_color", None) else 0,
+        str(getattr(team, "sport_key", "") or ""),
+        getattr(team, "id", 0) or 0,
+    )
+
+
 def _dedupe_team_name_lookup(teams) -> dict:
     """Map team names → team record with a cross-league ambiguity guard.
 
@@ -17460,6 +17510,14 @@ def _dedupe_team_name_lookup(teams) -> dict:
     `_team_league_identity` collapses the variant; a genuine cross-league
     collision (Carolina Panthers NFL vs Florida Panthers NHL) still has two
     identities and is still dropped.
+
+    **Two identities are not automatically a wrong answer (#4978).** A club
+    entered in its domestic league AND a continental cup genuinely is in two
+    leagues, so #4945's identity collapse cannot reach it — but both rows carry
+    the same crest, and dropping the key cost 85 more names their logo. Where the
+    crest AGREES the key is kept and the row picked deterministically; see
+    `_crest_is_shared` and `_crest_row_preference`. Where it differs, nothing
+    changes.
     """
     lookup: dict = {}
     key_sport: dict = {}
@@ -17472,10 +17530,19 @@ def _dedupe_team_name_lookup(teams) -> dict:
             lookup[key] = team
             key_sport[key] = identity
         elif key_sport.get(key) != identity:
-            # Cross-league collision on this exact name → ambiguous, drop it.
-            ambiguous.add(key)
-            lookup.pop(key, None)
-            key_sport.pop(key, None)
+            if _crest_is_shared(lookup[key], team):
+                # Two real competitions, one club, one crest — there is no wrong
+                # answer to protect the reader from (#4978). Keep the key and
+                # pick deterministically; `key_sport` follows the row we keep so
+                # both fields land in the same state whichever order rows arrive.
+                if _crest_row_preference(team) > _crest_row_preference(lookup[key]):
+                    lookup[key] = team
+                    key_sport[key] = identity
+            else:
+                # Cross-league collision on this exact name → ambiguous, drop it.
+                ambiguous.add(key)
+                lookup.pop(key, None)
+                key_sport.pop(key, None)
         elif is_season_variant(
             getattr(lookup[key], "sport_key", None)
         ) and not is_season_variant(getattr(team, "sport_key", None)):
