@@ -165,8 +165,25 @@ export default function SpecialEventMarkets({
   setsWon,
 }: SpecialEventMarketsProps) {
   const section = useMemo(
-    () => buildMarketSection(data.other, { completedSets, decidedSetsWinner, setsWon }),
-    [data.other, completedSets, decidedSetsWinner, setsWon],
+    () =>
+      buildMarketSection(data.other, {
+        completedSets,
+        decidedSetsWinner,
+        setsWon,
+        // #5181: our names for the two sides, so a bare venue matchup title
+        // (`Vancouver vs Los Angeles G`) is re-titled with the same words the
+        // hero uses one screen above it.
+        homeTeam: data.home_team,
+        awayTeam: data.away_team,
+      }),
+    [
+      data.other,
+      data.home_team,
+      data.away_team,
+      completedSets,
+      decidedSetsWinner,
+      setsWon,
+    ],
   );
 
   // #2086. `eventStatus` has been DECLARED on this component's props and PASSED

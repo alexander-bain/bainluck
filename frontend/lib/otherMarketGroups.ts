@@ -313,6 +313,62 @@ export function periodWinnerParts(
   return { scope: scope.trim(), first: first.trim(), second: second.trim() };
 }
 
+/**
+ * #5181 — THE CARD NAMED A CLUB THAT DOES NOT EXIST.
+ *
+ * On `/events/15298474` (Vancouver Whitecaps FC 3–0 LA Galaxy) the card read
+ * `Vancouver vs Los Angeles G`. That is the venue's own `market_name`, printed
+ * verbatim, while the SAME payload object carried `home_team:
+ * "Vancouver Whitecaps FC"` and `away_team: "LA Galaxy"` — so the page
+ * contradicted itself within one screen, the hero spelling the club correctly
+ * directly above a card that did not (gotcha #16: prefer our own names to a
+ * venue's ticker abbreviations).
+ *
+ * WHY THE TITLE IS RECOMPOSED RATHER THAN REPAIRED. `Los Angeles G` cannot be
+ * mapped back to `LA Galaxy` by string work: it is a truncated `Los Angeles
+ * Galaxy`, and our name is the *other* short form, so the two share no prefix
+ * and no token. There is nothing in the wire text to fix. The only correct
+ * name for this question is the one we already hold.
+ *
+ * WHY IT IS SCOPED TO A BARE MATCHUP, measured before it was written. Of 757
+ * open event-linked markets whose name is a bare `A vs B` (no colon), 714
+ * carry sides we DO recognise and only 43 do not — all Kalshi
+ * (`Seattle vs A's`, `Karlsruhe vs Cottbus`, `Chicago WS vs St. Louis`). So the
+ * broken strings are a minority of a population that is mostly harmless, and a
+ * rule keyed on "do we recognise the sides?" would leave the page mixing venue
+ * names and ours card by card, unpredictably. Keyed on SHAPE instead, every
+ * bare matchup names the two teams the way the hero does, and the reader gets
+ * one vocabulary per page.
+ *
+ * A name carrying anything MORE than the matchup keeps every character: a colon
+ * suffix is where the venue puts the threshold, the period and the prop subject
+ * (`… : Total Goals`, `… : O/U 2.5`), and none of that is reconstructible from
+ * two team names. Refusing those is the whole reason this reads the shape.
+ *
+ * Layout-safe: `PropMiniCard` renders the title in a plain `div` with no
+ * `truncate`, so the longer canonical name WRAPS rather than clipping — checked
+ * because at 390px the opposite would have traded this defect for #5161's.
+ */
+export function canonicalMatchupTitle(
+  marketName: string | null | undefined,
+  homeTeam: string | null | undefined,
+  awayTeam: string | null | undefined,
+): string | null {
+  const name = (marketName ?? "").trim();
+  const home = (homeTeam ?? "").trim();
+  const away = (awayTeam ?? "").trim();
+  // Both names or nothing: half a matchup is worse than the venue's whole one.
+  if (!name || !home || !away) return null;
+  // A colon means the name carries more than the matchup — leave it alone.
+  if (name.includes(":")) return null;
+  // Exactly two sides. `A vs B vs C` is not a matchup this can name.
+  const parts = name.split(/\s+vs\.?\s+/i);
+  if (parts.length !== 2) return null;
+  if (!parts[0].trim() || !parts[1].trim()) return null;
+  // Home first, matching the hero's own order on the same page.
+  return `${home} vs ${away}`;
+}
+
 /** Rows already covered by the market maps / hero above this section. */
 export function isRedundantWithMarketMaps(m: OtherMarketRow): boolean {
   const lower = (m.market_name || "").toLowerCase();
@@ -838,6 +894,14 @@ export interface MarketSectionOptions {
    * `matchScoreStillReachable`, which fails open at every door.
    */
   setsWon?: TennisSetsWon | null;
+  /**
+   * #5181: our own names for the two sides, used to re-title a card whose venue
+   * name is a bare matchup. Absent — and for a caller that has no event context
+   * it always is — every card keeps the venue's string, which is the behaviour
+   * this had before.
+   */
+  homeTeam?: string | null;
+  awayTeam?: string | null;
 }
 
 /**
@@ -912,9 +976,16 @@ export function buildMarketSection(
     // `Swiatek wins Set 1` — the repetition `stripCardPrefix` exists to prevent.
     const winnerParts = scopedWinner ? periodWinnerParts(row.market_name) : null;
     const scopedWinnerCard = winnerParts ? `${winnerParts.first} vs ${winnerParts.second}` : null;
+    // #5181: the venue's matchup string is replaced by our own two names; a
+    // parsed player prop (titled by its statistic) and a scoped period-winner
+    // card (already composed from `periodWinnerParts`) both take precedence and
+    // are untouched — this is the last fallback, the one that used to print the
+    // wire text verbatim.
     const cardName = parsed
       ? parsed.statistic
-      : scopedWinnerCard ?? (row.market_name || "Unknown");
+      : scopedWinnerCard ??
+        canonicalMatchupTitle(row.market_name, options.homeTeam, options.awayTeam) ??
+        (row.market_name || "Unknown");
     // Inside a "Home Runs" card the statistic is redundant; the threshold is
     // not, because a statistic carries several (0.5 and 1.5 both occur live).
     const label = parsed
