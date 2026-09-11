@@ -176,6 +176,80 @@ class TestTheImminentGameGetsItsOwnNumberFirst:
         assert stats["kickoff_ladder_due"] == 0
         assert stats["kickoff_ladder_shortfall"] == 1
 
+    async def test_one_id_set_winner_cannot_precede_one_id_match_winner_under_saturated_budget(
+        self, monkeypatch
+    ):
+        """REPAIR TEST TWO (CERT-2568). Kind was necessary and it was not sufficient.
+
+        `classify_game_market_class` answers WHAT KIND of book a market is. It
+        does not answer WHAT SPAN of the contest the book covers, and a
+        period-scoped winner wears the same word as a match winner: `Set 1
+        Winner` classifies `moneyline`, `1st Half O/U 1.5` classifies `total`.
+        So the first semantic cut called 61 period derivatives headlines — the
+        measured count over 900 linked Polymarket markets — and would serve
+        `Set 1 Winner` ahead of the match it is a set of.
+
+        Same shape as the prop test: both rows cost one id, the derivative is
+        ordered first, capacity is one. Nothing but a scope test separates them.
+        """
+        candidates = [
+            (1, _ids(1, "s")),  # kicks off soonest — but it is one SET of the match
+            (2, _ids(1, "m")),  # the match itself
+        ]
+        svc = _Service()
+        _arm(
+            monkeypatch,
+            candidates=candidates,
+            stale=2,
+            served=100,
+            imminent={1, 2},
+            names={
+                1: ("Gauff vs. Rybakina: Set 1 Winner", "0x" + "11" * 32),
+                2: ("Gauff vs. Rybakina", "0x" + "22" * 32),
+            },
+            service=svc,
+        )
+
+        stats = await rail._refresh_stale_polymarket_conditions(condition_budget=1)
+
+        admitted = _admitted(svc, candidates)
+        assert admitted == [2], (
+            "the MATCH winner must be served before a set of that same match; "
+            f"admitted {admitted} (kind alone admits [1] — 'Set 1 Winner' is a moneyline)"
+        )
+        assert stats["kickoff_headline_due"] == 1
+        assert stats["kickoff_headline_shortfall"] == 0
+        assert stats["kickoff_ladder_due"] == 0
+        assert stats["kickoff_ladder_shortfall"] == 1
+
+    async def test_map_and_half_derivatives_are_not_headlines_either(self, monkeypatch):
+        """The other two families CERT-2568 named, as controls on the same rule."""
+        candidates = [
+            (1, _ids(1, "a")),  # Map 1 Winner — Counter-Strike
+            (2, _ids(1, "b")),  # 1st Half O/U — soccer, the largest family
+            (3, _ids(1, "c")),  # the full match
+        ]
+        svc = _Service()
+        _arm(
+            monkeypatch,
+            candidates=candidates,
+            stale=3,
+            served=100,
+            imminent={1, 2, 3},
+            names={
+                1: ("Counter-Strike: Fluxo W7M vs Back to Back  - Map 1 Winner", "0xa"),
+                2: ("CA Osasuna vs. RCD Espanyol de Barcelona: 1st Half O/U 0.5", "0xb"),
+                3: ("CA Osasuna vs. RCD Espanyol de Barcelona", "0xc"),
+            },
+            service=svc,
+        )
+
+        stats = await rail._refresh_stale_polymarket_conditions(condition_budget=1)
+
+        assert _admitted(svc, candidates) == [3]
+        assert stats["kickoff_headline_due"] == 1
+        assert stats["kickoff_ladder_due"] == 0
+
     async def test_an_oversized_ladder_no_longer_abandons_the_budget(
         self, monkeypatch
     ):
@@ -429,6 +503,37 @@ class TestTheSizingConstantsSayWhatWasMeasured:
         # English, or this split silently demotes whole leagues to the ladder.
         assert rail._is_headline_market("1. FC Köln vs. SV Werder Bremen", cid) is True
         assert rail._is_headline_market("Club León FC vs. Atlético San Luis", cid) is True
+
+    def test_scope_is_asked_before_kind_and_the_vocabulary_is_production_strings(self):
+        """CERT-2568. A period-scoped book is a game-level book of the WRONG span.
+
+        Every rejected string here is a real production title from the 61 the
+        measurement found; every kept string is one the same pass left alone.
+        """
+        for name in (
+            "Gauff vs. Rybakina: Set 1 Games O/U 9.5",
+            "Sabalenka vs. Pegula: Set 1 Games O/U 10.5",
+            "Kjaer vs. Echargui: Set 2 Games O/U 8.5",
+            "CA Osasuna vs. RCD Espanyol de Barcelona: 1st Half O/U 0.5",
+            "Club Tijuana vs. Querétaro FC: 2nd Half O/U 5.5 Total Corners",
+            "Fortuna Sittard vs. AFC Ajax: AFC Ajax 2nd Half O/U 1.5",
+            "Counter-Strike: Fluxo W7M vs Back to Back  - Map 2 Winner",
+        ):
+            assert rail._names_a_period_not_the_whole_contest(name), name
+
+        # 🔴 A quarterfinal is a whole match. If the `quarter` token ever starts
+        # firing on a tournament ROUND, every QF at every Slam leaves the
+        # headline half — all three spellings are pinned.
+        for name in (
+            "Alcaraz vs. Sinner - Quarterfinal",
+            "Alcaraz vs. Sinner - Quarter Final",
+            "Alcaraz vs. Sinner - Quarterfinals",
+            # A whole-match total counts SETS but names no particular one.
+            "Gauff vs. Rybakina: Total Sets: O/U 2.5",
+            "Gauff vs. Rybakina: Match O/U 23.5",
+            "Arsenal vs. Chelsea",
+        ):
+            assert not rail._names_a_period_not_the_whole_contest(name), name
 
     def test_the_reserve_is_a_fifth_of_the_production_budget(self):
         assert rail.DRAIN_RESERVE_IDS == 200

@@ -165,6 +165,7 @@ creates a market and never creates an outcome.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -678,6 +679,56 @@ def _pack_batches(
     return batches
 
 
+#: A qualifier naming a SEGMENT of the contest rather than the whole of it —
+#: #4983 repair two (CERT-2568).
+#:
+#: The coarse classifier answers WHAT KIND of book a market is (winner / spread /
+#: total / prop) and says nothing about its SCOPE. `Set 1 Winner` and `Map 2
+#: Winner` classify as `moneyline` — the word "winner" is right there — and
+#: `1st Half O/U 1.5` classifies as `total`. All three are game-level books of a
+#: PERIOD, and the first cut of the semantic split therefore called them
+#: headlines and let `Set 1 Winner` precede a full-match winner under a
+#: saturated budget. Kind was necessary and it was not sufficient.
+#:
+#: MEASURED on the live population (900 Polymarket markets linked to an event
+#: commencing −6h..+48h, production 2026-09-11 03:4xZ): 523 classed as headline
+#: by kind alone, **61 of them period-scoped** — `Set 1 Games O/U 8.5/9.5/10.5`
+#: (tennis, the largest family), `1st Half O/U`, `2nd Half O/U`,
+#: `<Team> 1st Half O/U`, `1st Half O/U 5.5 Total Corners`, `Map 1 Winner` and
+#: `Map 2 Winner` (Counter-Strike). The vocabulary below is those strings, not
+#: strings invented from the pattern.
+#:
+#: 🔴 `quarter` is the trap. A quarterfinal is a full match, not a segment, so
+#: the token may only fire on a PERIOD quarter. `\bquarter\b` already declines
+#: `Quarterfinal` (no word boundary before "final"), and the lookahead adds the
+#: spaced and hyphenated spellings. `Set` likewise fires only with a digit:
+#: `Total Sets: O/U 2.5` is a whole-match total and stays a headline.
+_PERIOD_SCOPE_RE = re.compile(
+    r"""
+      \b(?:set|map|leg|frame|period|inning|innings|quarter)\s*\#?\s*\d      # Set 1, Map 2, Period 3
+    | \b(?:1st|2nd|3rd|4th|first|second|third|fourth)\s+
+      (?:half|quarter|period|set|map|inning|frame|innings)\b                # 1st Half, 2nd Half
+    | \bhalf[\s-]?time\b                                                    # Halftime, Half-time
+    | \b(?:first|second)\s+half\b
+    | \bhalf\s+(?:result|winner|total|line|o/u)\b
+    | \bquarter\b(?!\s*-?\s*finals?\b)                                      # a period quarter, never a QF
+    | \b(?:ot|overtime|extra\s+time)\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _names_a_period_not_the_whole_contest(name: str) -> bool:
+    """True if the title scopes itself to a segment of the contest.
+
+    Kept separate from :func:`_is_headline_market` so the vocabulary can be
+    asserted directly against production strings, and so a future reader can see
+    that the SCOPE test is a different question from the KIND test rather than a
+    tweak to it.
+    """
+    return bool(_PERIOD_SCOPE_RE.search(name or ""))
+
+
 def _is_headline_market(name: Optional[str], external_id: Optional[str]) -> bool:
     """Whether this market carries the GAME's own number rather than a prop.
 
@@ -710,6 +761,13 @@ def _is_headline_market(name: Optional[str], external_id: Optional[str]) -> bool
     stripper knows, and a re-implementation here would not throw when it
     disagreed — it would quietly answer differently.
     """
+    #: SCOPE BEFORE KIND (CERT-2568). The classifier answers what kind of book
+    #: this is; it does not answer what span of the contest the book covers, and
+    #: a period-scoped winner wears the same word as a match winner. So the
+    #: scope test runs FIRST and it is a refusal, never a downgrade to a
+    #: different kind.
+    if _names_a_period_not_the_whole_contest(name or ""):
+        return False
     return classify_game_market_class(
         _strip_category_prefix(name or ""), external_id or None
     ) in ("moneyline", "spread", "total")
