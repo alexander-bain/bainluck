@@ -12861,6 +12861,47 @@ async def _build_game_markets(
     )
     outcomes = outcomes_result.scalars().all()
 
+    # 4b. WHEN each of those prices was last actually OBSERVED (#4970 / D132).
+    #
+    # Every priced leg below carries `observed_at`, so a reader can see that the
+    # spread is eight minutes old while the moneyline is thirty hours old. The
+    # value is an ABSOLUTE ISO stamp and never a computed age: this payload is
+    # cached (30 s live, 1 h final in Redis, and the L1 memo holds a FINAL body
+    # for the life of the process), so a relative `age_hours` would freeze at
+    # build time and read fresher than the truth for as long as the entry
+    # survives. The client derives the age — `stalenessLabel()` already does.
+    #
+    # 🔴 `FuturesOutcome.last_updated` IS THE WRONG FIELD AND IT IS RIGHT THERE.
+    # It is already on these loaded rows and costs nothing, which is exactly why
+    # it is a trap: it is bumped by ANY write to the outcome — settlement
+    # backfill, calibration, volume, rank — not only by observing a price. On
+    # events 15308640 / 15309206 / 15308638, measured 2026-09-11 over 1,074
+    # outcomes, **890 of them (83%) carry a `last_updated` more than 30 minutes
+    # newer than their newest real observation**; mean gap 6.7 h, worst 25.75 h.
+    # Serving it would have claimed a day-old dark price was fresh, which is the
+    # defect this field exists to expose.
+    #
+    # A snapshot row exists only because a price was read, so `captured_at` is
+    # the question asked directly. Bounded id list (550 outcomes on the busiest
+    # event of the last two days), one top-1 index probe each: 102 ms measured
+    # on that event, on the REBUILD path only. See `utils/latest_observation.py`
+    # for why this shape and not `max() ... GROUP BY`.
+    from app.utils.latest_observation import load_latest_observed_at
+
+    _observed_at_by_outcome = await load_latest_observed_at(
+        db, [o.id for o in outcomes]
+    )
+
+    def _observed(outcome) -> Optional[str]:
+        """This leg's newest observation, ISO, or ``None`` if never observed.
+
+        Absent means absent (gotcha #53): an outcome with no priced snapshot is
+        missing from the mapping, and `None` travels to the reader as "no age
+        to show" rather than as a fresh one.
+        """
+        seen = _observed_at_by_outcome.get(outcome.id)
+        return seen.isoformat() if seen is not None else None
+
     # Build market_id → market lookup
     market_map = {m.id: m for m in markets}
 
@@ -13006,6 +13047,7 @@ async def _build_game_markets(
                     pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
+                        "observed_at": _observed(o),
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": tt_opening_over,
@@ -13030,6 +13072,7 @@ async def _build_game_markets(
                     "market_type": market_type,
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     **_settled_grade_fields(market, o),
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
@@ -13073,6 +13116,7 @@ async def _build_game_markets(
                 pp = {
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     "threshold": threshold,
                     "over_probability": round(over_prob, 4),
                     "opening_over_probability": opening_over,
@@ -13096,6 +13140,7 @@ async def _build_game_markets(
                 row = {
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
@@ -13136,6 +13181,7 @@ async def _build_game_markets(
                 period_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
@@ -13154,6 +13200,7 @@ async def _build_game_markets(
                     outcomes_list.append({
                         "name": o.name,
                         "probability": round(prob, 4),
+                        "observed_at": _observed(o),
                         **_settled_grade_fields(market, o),
                     })
             if outcomes_list:
@@ -13196,6 +13243,7 @@ async def _build_game_markets(
                         pp = {
                             "market_name": market.name,
                             "outcome_name": o.name,
+                            "observed_at": _observed(o),
                             "threshold": threshold,
                             "over_probability": round(over_prob, 4),
                             "opening_over_probability": opening_over,
@@ -13240,6 +13288,7 @@ async def _build_game_markets(
                     pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
+                        "observed_at": _observed(o),
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": opening_over,
@@ -13254,6 +13303,7 @@ async def _build_game_markets(
                 other_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o),

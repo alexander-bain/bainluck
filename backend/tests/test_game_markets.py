@@ -440,6 +440,9 @@ class TestGetGameMarketsFormatting:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=[outcome]),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -453,6 +456,10 @@ class TestGetGameMarketsFormatting:
                 "market_type": "half_total",
                 "market_name": "Celtics at Knicks",
                 "outcome_name": "Over 105.5",
+                # #4970 — the price's own age. `None` here because this rig
+                # feeds no observation rows; on production every leg carries the
+                # newest `futures_odds_snapshots.captured_at` for its outcome.
+                "observed_at": None,
                 "movement": 0.05,
                 "period": "2H",
                 # #2089: every game-market row carries the settlement verdict.
@@ -495,6 +502,9 @@ class TestGetGameMarketsFormatting:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=[outcome]),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -503,6 +513,9 @@ class TestGetGameMarketsFormatting:
             {
                 "market_name": "Celtics at Knicks",
                 "outcome_name": "Celtics -3.5",
+                # #4970 — the price's own age; `None` because this rig feeds no
+                # observation rows. See the note in the 2H-total case above.
+                "observed_at": None,
                 "threshold": 3.5,
                 "probability": 0.54,
                 "source": "kalshi",
@@ -549,6 +562,9 @@ class TestGetGameMarketsFormatting:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=[outcome]),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -592,6 +608,9 @@ class TestGetGameMarketsFormatting:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=[outcome]),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -626,6 +645,9 @@ class TestGetGameMarketsFormatting:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=[outcome]),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -661,6 +683,9 @@ class TestGetGameMarketsFormatting:
             _make_result(all_rows=[]),
             _make_result(rows=[market]),
             _make_result(rows=[outcome]),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -669,6 +694,9 @@ class TestGetGameMarketsFormatting:
             {
                 "market_name": "2nd Half Spread: Boston Celtics at New York Knicks",
                 "outcome_name": "Knicks +2.5",
+                # #4970 — the price's own age; `None` because this rig feeds no
+                # observation rows. See the note in the 2H-total case above.
+                "observed_at": None,
                 "threshold": 2.5,
                 "probability": 0.49,
                 "source": "kalshi",
@@ -729,6 +757,9 @@ class TestSportTotalRangeGuard:
             _make_result(all_rows=[]),   # poly parent groups
             _make_result(rows=[]),        # unlinked fallback
             _make_result(rows=outcomes),  # outcomes
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -775,6 +806,9 @@ class TestSportTotalRangeGuard:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=outcomes),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -807,6 +841,9 @@ class TestSportTotalRangeGuard:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=outcomes),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -841,6 +878,9 @@ class TestSportTotalRangeGuard:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=outcomes),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -871,6 +911,9 @@ class TestSportTotalRangeGuard:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=outcomes),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -945,6 +988,9 @@ class TestPolymarketLinePlacement:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=outcomes),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
@@ -1004,6 +1050,9 @@ class TestPolymarketLinePlacement:
             _make_result(all_rows=[]),
             _make_result(rows=[]),
             _make_result(rows=outcomes),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ])
 
         response = await get_game_markets(event.id, db)
