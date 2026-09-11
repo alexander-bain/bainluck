@@ -1427,6 +1427,12 @@ export function computeLastChartPoint(
   historyData: EventHistoryResponse | null | undefined,
   homeScore: number | null | undefined,
   awayScore: number | null | undefined,
+  /**
+   * #4571 — `event.score_observed_at`: when a writer last READ the event row's
+   * score. Optional, so every existing caller keeps its current behaviour and
+   * simply gets `scoreStamp: null` on the event-row arm.
+   */
+  eventScoreObservedAt?: string | null,
 ): ActiveChartPoint | null {
   if (!historyData) return null;
 
@@ -1506,6 +1512,59 @@ export function computeLastChartPoint(
     }
   }
 
+  // #4571 — THE SCORE'S CLOCK FOLLOWS ITS PROVENANCE, NOT ITS POSITION.
+  //
+  // The two score fields below each fall through `lastEspn -> event row`, and
+  // `timestamp` above falls through `lastEspn -> lastWp -> lastHist`. Those are
+  // INDEPENDENT cascades, so on an event with no ESPN rows the score is the
+  // event row's while `timestamp` is a price snapshot's — live/146 proved it on
+  // production event 15298476 (0 espn_history rows, score 2 off the event row,
+  // `timestamp` = Kalshi's price clock). Returning `timestamp` as the score's
+  // age would re-commit #4571's own defect in a form that reads as precise, so
+  // each side is dated by the arm that actually supplied it.
+  //
+  // A side that resolved to `null` renders no number and therefore contributes
+  // no age. A side that rendered a number whose arm has no stamp makes the whole
+  // pair undatable — an absence must not be dated (#3473), and a pair is only as
+  // current as its oldest half, the same rule `heroFreshness` applies one level
+  // up. Note the arm test is `!= null` on the ESPN VALUE, not on `lastEspn`
+  // itself: an ESPN row present but holding a null score falls through to the
+  // event row, and its stamp must fall through with it.
+  const resolvedHomeScore = lastEspn?.home_score ?? homeScore ?? null;
+  const resolvedAwayScore = lastEspn?.away_score ?? awayScore ?? null;
+  const espnStamp = lastEspn?.timestamp || null;
+  const eventStamp = eventScoreObservedAt ?? null;
+
+  const arms: Array<{ from: "espn" | "event"; stamp: string | null }> = [];
+  if (resolvedHomeScore !== null) {
+    const fromEspn = lastEspn?.home_score != null;
+    arms.push({ from: fromEspn ? "espn" : "event", stamp: fromEspn ? espnStamp : eventStamp });
+  }
+  if (resolvedAwayScore !== null) {
+    const fromEspn = lastEspn?.away_score != null;
+    arms.push({ from: fromEspn ? "espn" : "event", stamp: fromEspn ? espnStamp : eventStamp });
+  }
+
+  let scoreStamp: string | null = null;
+  let scoreFrom: "espn" | "event" | "mixed" | null = null;
+  if (arms.length > 0) {
+    scoreFrom = arms.every((a) => a.from === arms[0].from) ? arms[0].from : "mixed";
+    let oldestMs = Infinity;
+    let datable = true;
+    for (const arm of arms) {
+      const ms = arm.stamp ? Date.parse(arm.stamp) : NaN;
+      if (Number.isNaN(ms)) {
+        datable = false;
+        break;
+      }
+      if (ms < oldestMs) {
+        oldestMs = ms;
+        scoreStamp = arm.stamp;
+      }
+    }
+    if (!datable) scoreStamp = null;
+  }
+
   return {
     timestamp:
       lastEspn?.timestamp ||
@@ -1515,10 +1574,12 @@ export function computeLastChartPoint(
     homeProb,
     awayProb: 1 - homeProb,
     probKnown,
-    homeScore: lastEspn?.home_score ?? homeScore ?? null,
-    awayScore: lastEspn?.away_score ?? awayScore ?? null,
+    homeScore: resolvedHomeScore,
+    awayScore: resolvedAwayScore,
     period: lastEspn?.period?.toString() ?? null,
     clock: lastEspn?.game_clock ?? null,
     scoringPlay: latestPlay,
+    scoreStamp,
+    scoreFrom,
   };
 }
