@@ -139,15 +139,10 @@ def _home_probability_for_market(
     return home_prob, outcome, yes_prob
 
 
-def _admissible_as_fallback(market: Any) -> bool:
-    """Whether a NON-primary market may speak for its source.
+def _class_says_game_winner(market: Any) -> bool:
+    """Whether the ONE shared class recognizer calls this market a game winner.
 
-    THE FALLBACK CARRIES A BURDEN THE PRIMARY DOES NOT, and deliberately so. The
-    primary is the row the live writers have always trusted, so gating it would
-    silently retire readings that ship today — the fallback is new admission,
-    and new admission proves itself.
-
-    It has to. Polymarket decomposes a game into a dozen rows that share the
+    Polymarket decomposes a game into a dozen rows that share the
     match-winner's exact two-outcome shape and its "A vs. B" title, then append
     a qualifier: `A vs. B - Halftime Result`, `- Exact Score`,
     `: Both Teams to Score`. The matchup parser strips container suffixes to
@@ -173,6 +168,95 @@ def _admissible_as_fallback(market: Any) -> bool:
     return classify_game_market_class(
         _strip_category_prefix(name), market.external_id
     ) == "moneyline"
+
+
+def admissible_as_blend_speaker(market: Any, *, is_primary: bool) -> bool:
+    """Whether this market may speak for its source — primary or not (#5031).
+
+    THE PRIMARY USED TO BE EXEMPT, and that exemption was the bug. The reasoning
+    for it was that the primary is "the row the live writers have always
+    trusted", so gating it would retire readings that ship today. True for
+    Kalshi. False for Polymarket, because for Polymarket the primary is not a
+    trusted row at all: `is_game_winner_market` is hard-False for every
+    non-Kalshi source, so `select_primary_market`'s tie-break degrades to
+    "lowest market id" — the OLDEST row — and Polymarket mints Exact Score,
+    Total Corners and Player Props before the match-winner child. The row that
+    inherited the primary's exemption was therefore, routinely, a derivative.
+
+    It did not merely fail to speak. Those derivatives' outcomes are named after
+    the teams (`St. Louis City SC 2 - 2 Minnesota United FC`,
+    `Columbus Crew`, `Venezia FC (-1.5)`), so `find_moneyline_outcome` resolves
+    them by containment and the price of an exact scoreline is written as the
+    match winner. Measured over every OPEN Polymarket market linked to an event
+    commencing in (-6h, +48h) — 1,096 markets / 231 groups, 2026-09-11 04:20Z:
+    89 groups have a non-winner primary, and in **10 of them the derivative is
+    resolving and its number is the one stored on the event right now** (event
+    15301219 holds **0.070** from an Exact Score `2 - 2` leg against Kalshi's
+    0.705; event 15297961 holds 0.13 off a `(-1.5)` spread outcome).
+
+    THE GATE IS PER SOURCE, AND MEASURING THAT WAS THE WHOLE JOB. Applying the
+    class recognizer to the primary of EVERY source reads as the simpler rule
+    and is a regression: over the same window's 468 Kalshi groups it refuses 13
+    live UFC primaries — `Fight Night: Silva vs Delgado`, ticker
+    `KXUFCFIGHT-26SEP12SILDEL` — because the colon makes the title not a bare
+    matchup, no winner word appears, and the ticker carries neither "game" nor
+    "winner". Every one is the real fight winner, every one holds a stored leg,
+    and none has another winner market to fall back to, so the whole card would
+    have gone blank. So:
+
+      * **Kalshi** already has a venue-side admission rule that is measured and
+        enforced on primary and fallback alike — `feeds_win_prob_blend` on the
+        ticker, applied in `_reading_for_entry`. Nothing here changes for it;
+        the class recognizer is simply the wrong instrument on a Kalshi row.
+      * **Every other source** has no such signal — that absence *is* the defect
+        — so the class recognizer decides, for the primary exactly as for a
+        fallback.
+
+    The fallback keeps its existing burden unchanged, including on Kalshi, where
+    it is stricter than the primary's. That asymmetry is the pre-existing #759
+    design ("new admission proves itself") and this is not the queue that moves
+    it.
+    """
+    if getattr(market, "source", None) == "kalshi" and is_primary:
+        return True
+    return _class_says_game_winner(market)
+
+
+def count_admissible_speakers(group: Sequence[MarketOutcomes]) -> int:
+    """How many markets in this group are ALLOWED to speak for the source.
+
+    The discriminator behind a stored reading's retirement (#5031), and it has
+    to be a different question from "did the group speak", because those two
+    fail for opposite reasons and only one of them may retire a number:
+
+      * **zero admissible markets** is STRUCTURAL. The source has linked this
+        event nothing but Player Props and Total Corners; it holds no opinion
+        about who wins and it will not grow one on the next pass. A stored leg
+        here is the #1163 phantom in a second costume — a blend input with no
+        backing market — and it must go.
+      * **admissible markets that cannot resolve right now** is TRANSIENT: an
+        untraded winner market with a null price, an outcome list not yet
+        fetched. Retiring on that would drop and re-add the leg as prices come
+        and go, and the hero would twitch by a source's whole weight every
+        fifteen minutes.
+
+    So a caller retires on this returning 0, never on a `None` reading alone.
+    Asked with the same per-source rule the reading itself uses, so a Kalshi
+    group can never be retired by it (its primary is always admissible here,
+    and its props are refused far upstream by `feeds_win_prob_blend`).
+    """
+    entries = list(group or [])
+    if not entries:
+        return 0
+    primary = select_primary_market(entries)
+    primary_id = primary.market.id if primary is not None else None
+    return sum(
+        1
+        for entry in entries
+        if admissible_as_blend_speaker(
+            entry.market, is_primary=entry.market.id == primary_id
+        )
+    )
 
 
 def _reading_for_entry(
@@ -218,9 +302,14 @@ def compute_source_home_probability(
     outcomes. Returns None — never a guess — whenever the market is not a game
     winner, the matchup cannot be parsed, or no moneyline outcome is found.
 
-    THE PRIMARY IS A PREFERENCE, NOT A VERDICT. ``select_primary_market`` is
-    still asked first, so any group that already spoke keeps saying exactly what
-    it said. But its tie-break among equals is "lowest market id", and
+    THE PRIMARY IS A PREFERENCE, NOT A VERDICT, AND NOT A LICENCE (#5031). It is
+    still asked FIRST, so a group whose primary can legitimately speak keeps
+    saying exactly what it said. What it no longer gets is an exemption from
+    admission: outside Kalshi the primary must clear the same game-winner
+    recognizer a fallback clears, because outside Kalshi "primary" means nothing
+    more than "oldest row" (see ``admissible_as_blend_speaker`` for the per-source
+    split and the 13 UFC fights that prove it cannot be source-agnostic). Its
+    tie-break among equals is "lowest market id", and
     ``is_game_winner_market`` gates only KALSHI — for Polymarket every row of a
     group scores the same, so "lowest id" means OLDEST. Polymarket mints an
     event-level parent and the derivative books (Exact Score, Match O/U) before
@@ -231,17 +320,22 @@ def compute_source_home_probability(
     selects primary 1 and reads None.
 
     So the rest of the group is tried, in the same deterministic id order, and
-    the first market that CAN speak wins. This can only WIDEN what is written:
-    the primary is still tried first, so a group that already resolved takes the
-    identical answer.
+    the first ADMISSIBLE market that can speak wins.
 
-    It does not widen what is ADMITTED. The Kalshi gate, the name parse and the
-    moneyline resolution all moved into the per-market attempt
-    (`_reading_for_entry`), so a Kalshi prop is still refused rather than fallen
-    back onto; and every non-primary candidate must additionally prove it is a
-    game winner (`_admissible_as_fallback`), because Polymarket's derivatives
-    wear the match winner's name and shape and would otherwise stamp a halftime
-    price as the moneyline.
+    Admission is `admissible_as_blend_speaker`, asked of every candidate now,
+    the primary included. The Kalshi gate, the name parse and the moneyline
+    resolution live in the per-market attempt (`_reading_for_entry`), so a
+    Kalshi prop is still refused rather than fallen back onto.
+
+    A GROUP CAN NOW GO SILENT THAT USED TO SPEAK, and that is the point rather
+    than a cost: measured over the (-6h,+48h) production window, 10 Polymarket
+    groups were resolving an exact scoreline or a corners line as the match
+    winner, 6 of them re-point to a real winner market in the same group and 4
+    have no winner market at all and correctly say nothing. A caller that stored
+    a number from the silenced row must therefore RETIRE it — a gate that only
+    refuses to write freezes the old value on the page forever. That duty is the
+    caller's because this half is pure; `_phase2_persist_group_reading` carries
+    it, under the #1163 source-implies-a-backing-market invariant.
 
     ``select_primary_market`` itself is deliberately NOT changed: it is also the
     row-picker in the poll's grouping pass, and moving the tie-break under it
@@ -271,7 +365,7 @@ def compute_source_home_probability(
     speaker = None
     for entry in ordered_entries:
         is_primary = entry.market.id == primary.market.id
-        if not is_primary and not _admissible_as_fallback(entry.market):
+        if not admissible_as_blend_speaker(entry.market, is_primary=is_primary):
             continue
         found = _reading_for_entry(entry, home_team_name, away_team_name)
         if found is not None:
