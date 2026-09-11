@@ -106,7 +106,14 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
       { key: "Receptions|C: 3+", label: "C: 3+", pregame_mark: null, current: 0.34 },
     ];
     const html = script(allBare);
-    expect(html).toContain("More props (2)");
+    // AMENDED by #5241 (2026-09-11). This asserted `More props (2)`, which was
+    // the D111 wording for a family whose fold is its WHOLE content — and that
+    // shape also left a bold `Receptions` header standing over nothing but the
+    // toggle, on 27 of 110 families across three MLB pages. The family name is
+    // now the disclosure's own label. What this test is FOR is unchanged and is
+    // the other two lines: the family folds entirely rather than rendering
+    // empty, and nothing is promoted out of the fold. See PropsSection5241.
+    expect(html).toContain("Receptions (2)");
     expect(html).toContain("C: 2+");
     expect(html).not.toContain("57%");
   });
