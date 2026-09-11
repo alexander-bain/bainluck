@@ -16,7 +16,7 @@ import {
   eventFeedIsStalled,
   eventRefreshInterval,
 } from "@/lib/eventLivePush";
-import LiveAgeStamp from "@/components/event/LiveAgeStamp";
+import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import {
@@ -669,6 +669,18 @@ export default function EventPage({ params }: EventPageProps) {
     isLive,
     isFinished,
     isSuspended,
+    // #5069 — the caption must not say "Live" over a number that stopped
+    // moving. Fed from `freshestSourceStamp` and NOT from `heroStamp`, and the
+    // difference is deliberate: `heroStamp` is the age of the whole GLANCE
+    // (min across price and score, #4469), while this caption is a claim about
+    // the BLEND alone, whose age is the max across its own sources. Using the
+    // glance's age here would strip "Live" off a ten-second-old probability
+    // whenever a score on a ten-minute beat happened to be the older fact —
+    // the mirror image of the bug #4469 fixed, and just as untrue.
+    //
+    // `heroStampIsStale` is the badge's own predicate, so the caption and the
+    // grey age badge above it cross the same boundary at the same instant.
+    heroStampIsStale(freshestSourceStamp, "price"),
   );
 
   // #490: hero confidence signal (1-3 bars), computed client-side from the win-

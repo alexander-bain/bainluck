@@ -631,6 +631,25 @@ export function resolveProbability(
    * behaviour.
    */
   noReportedResult: boolean = false,
+  /**
+   * #5069 — the blend is past its own freshness boundary, so the caption must
+   * not call it "Live".
+   *
+   * Passed IN for the same reason `noReportedResult` is, and the reason is
+   * sharper here: the page already owns exactly one answer to "how old is this
+   * number" (`freshestSourceStamp`, the MAX across sources, which is the
+   * blend's own age), and the badge two lines above the caption is already
+   * rendered from it. Deriving a second age here would let the caption and the
+   * badge disagree — which IS this bug: Sabalenka–Pegula showed a grey
+   * `189m ago` above the words "Live · Bain Luck blend" in one viewport.
+   *
+   * The boundary is not re-invented either; the caller spends
+   * `LiveAgeStamp.heroStampIsStale`, the same predicate that greys the badge.
+   *
+   * Defaults false, so every caller that predates this keeps its exact
+   * behaviour.
+   */
+  blendIsStale: boolean = false,
 ): ResolvedProbability {
   const odds = event.current_odds;
   const opening = event.opening_odds;
@@ -704,7 +723,15 @@ export function resolveProbability(
         heroBlend !== null && typeof event.hero_probability_away === "number"
           ? event.hero_probability_away
           : 1 - blendPoint;
-      probSourceLabel = "Live · Bain Luck blend";
+      // #5069 — "Live" describes WHEN, not WHICH. It reads to a person as "this
+      // number is current", so on a blend that stopped being written it is
+      // simply false, and standing notice 34 says the fix is removing a word
+      // rather than adding a sentence explaining it. The number still shows;
+      // only the claim about its currency goes, and the grey age badge above
+      // is already saying how old it is.
+      probSourceLabel = blendIsStale
+        ? "Bain Luck blend"
+        : "Live · Bain Luck blend";
       // 🔴 #2085 — `fromCurrentOdds` stays FALSE here on purpose. This pair is
       // the BLEND (`hero_probability` / `hero_probability_away`), which the
       // backend derives as `round(1 - agg, 6)` and serves with no rendered

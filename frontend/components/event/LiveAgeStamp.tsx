@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 import { STALE_MS } from '@/components/event/FreshnessChip';
+import type { HeroFact } from '@/lib/event/heroFreshness';
 
 /**
  * live/034 S2 — "live · Ns ago".
@@ -74,6 +75,39 @@ function ageSeconds(updatedAt: string | null | undefined): number | null {
   return Math.max(0, Math.round((Date.now() - parsed) / 1000));
 }
 
+/**
+ * THE ONE PLACE THAT DECIDES WHETHER A HERO FACT IS STILL LIVE (#5069).
+ *
+ * Exported because this badge is no longer the only thing on the hero making
+ * that claim. Two lines below it the hero captions its number
+ * "Live · Bain Luck blend", and on Sabalenka–Pegula (2026-09-10) it said so
+ * over a three-hour-old blend while this badge, on the same card, in the same
+ * viewport, already read a grey `189m ago`.
+ *
+ * So the caption calls THIS, rather than comparing an age to a boundary of its
+ * own. A second copy of the comparison is precisely how a dot and its caption
+ * come to disagree — which is the argument `STALE_AFTER_S_BY_FACT` was written
+ * to make, and this is that argument applied one component outward.
+ */
+export function heroFactIsStale(age: number, oldestFact: HeroFact | null): boolean {
+  return age > STALE_AFTER_S_BY_FACT[oldestFact ?? "price"];
+}
+
+/**
+ * The same rule, reached from a stamp, for callers that hold no ticking age.
+ *
+ * An absent or unparseable stamp is NOT stale: "we cannot say how old this is"
+ * and "this is old" are different claims, and only the second one earns the
+ * removal of a word.
+ */
+export function heroStampIsStale(
+  updatedAt: string | null | undefined,
+  oldestFact: HeroFact | null,
+): boolean {
+  const age = ageSeconds(updatedAt);
+  return age !== null && heroFactIsStale(age, oldestFact);
+}
+
 export default function LiveAgeStamp({
   updatedAt,
   oldestFact = null,
@@ -89,7 +123,7 @@ export default function LiveAgeStamp({
 
   if (age === null) return null;
 
-  const stale = age > STALE_AFTER_S_BY_FACT[oldestFact ?? "price"];
+  const stale = heroFactIsStale(age, oldestFact);
   const label = age < 60 ? `${age}s ago` : `${Math.floor(age / 60)}m ago`;
 
   return (
