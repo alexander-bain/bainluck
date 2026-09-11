@@ -247,6 +247,32 @@ d("a draw is not the away team on iOS", () => {
     );
   });
 
+  /**
+   * THE INDIVIDUAL SPORTSBOOKS TABLE, one card below the sources rows and the
+   * site the first LOOK caught: `BetMGM 53% 47%` sat under an away column the
+   * rows above had already emptied.
+   *
+   * Its away price is SERVED, not derived, so the complement sweep below can
+   * never see it — the tell is that the pair sums to 100 on a match that can be
+   * drawn. Withheld at display time only, so #4406's "a row is a name AND a
+   * number" filter keeps taking both prices.
+   */
+  it("the book table withholds its away column too, without losing rows", () => {
+    const code = stripComments(detail());
+
+    expect(code).toMatch(
+      /let printable = \{ \(row: NamedBookmakerRow\) in\s*DrawPricedWinner\.printablePair\(/
+    );
+    expect(code).toMatch(
+      /\[formatProbabilityOrDash\(printable\(row\)\?\.away\),\s*formatProbability\(row\.probabilities\.home\)\]/
+    );
+    // #4406's filter is untouched: the row still needs BOTH prices to exist.
+    expect(code).toMatch(
+      /guard let key = bm\.bookmaker,[\s\S]{0,300}let probabilities = bookmakerProbabilities\(bm\)/
+    );
+    expect(code).toMatch(/let probabilities: \(away: Double, home: Double\)/);
+  });
+
   /** THE MAP HEADER — Alex's third sighting of the same 99%. */
   it("the map headline asks the rule which side it may name", () => {
     const code = stripComments(map());

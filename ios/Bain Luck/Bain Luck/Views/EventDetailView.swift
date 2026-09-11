@@ -1532,10 +1532,28 @@ struct EventDetailView: View {
         // wrong in both directions: `betonlineag` is 2 characters wider than
         // "BetOnline", `betmgm` 2 narrower than "BetMGM". The column and the row
         // read one array now, so they cannot describe different strings.
+        //
+        // #5271 — a book's away price is SERVED rather than derived here, so the
+        // hero's complement is not what is wrong with it. What is wrong is the
+        // same thing: on the Braunschweig–Dresden specimen BetMGM printed
+        // `53% 47%`, a pair summing to exactly 100 on a match that can be drawn.
+        // The book quotes three outcomes; the pair we store and serve is that
+        // quote normalised two ways with the draw discarded (#1011), so the 53%
+        // beside the away crest is not that team's chance of winning either.
+        //
+        // Withheld at DISPLAY time and not in `namedBookmakerRows`, so #4406's
+        // rule is untouched: a row still needs both prices to exist at all, and
+        // still always carries a number, because the home side always survives.
+        let printable = { (row: NamedBookmakerRow) in
+            DrawPricedWinner.printablePair(
+                away: row.probabilities.away,
+                home: row.probabilities.home,
+                sport: event.sport)
+        }
         let columns = EventSourceLabelColumn.columns(
             labels: rows.map(\.label),
             values: rows.flatMap { row -> [String] in
-                [formatProbability(row.probabilities.away),
+                [formatProbabilityOrDash(printable(row)?.away),
                  formatProbability(row.probabilities.home)]
             },
             availableWidth: sourceRowWidth,
@@ -1546,7 +1564,10 @@ struct EventDetailView: View {
                 sourceProbabilityRow(
                     label: row.label,
                     font: .caption,
-                    probabilities: row.probabilities,
+                    probabilities: (
+                        away: printable(row)?.away,
+                        home: row.probabilities.home
+                    ),
                     colors: colors,
                     columns: columns)
             }
