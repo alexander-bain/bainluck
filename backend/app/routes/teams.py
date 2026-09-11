@@ -11,6 +11,10 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.lifecycle import served_event_status
+from app.utils.season_variant_team import (
+    choose_parent_league_row,
+    wants_parent_league_row,
+)
 from app.utils.standings_shape import public_standings
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -68,6 +72,36 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             )).scalars().first()
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+
+    # #2498: A CLUB'S PAGE IS ITS LEAGUE'S ROW, NOT ITS SPRING ROW.
+    #
+    # `boston-red-sox` was the `baseball_mlb_preseason` row (853) — 13-15,
+    # `standings_data` NULL, breadcrumb "MLB PRESEASON" — while the club playing
+    # a pennant race sat one slug away at `boston-red-sox-mlb` (10709, 80-67,
+    # division East). All 30 MLB preseason clubs held the clean slug that way.
+    #
+    # The swap is ID-ANCHORED and only that: the candidate query is keyed on a
+    # shared `espn_id`, so this never matches on a name or a kickoff time and
+    # ruling 048 is not in play. It writes nothing and merges nothing — both
+    # rows survive; one of them stops being what a URL resolves to.
+    #
+    # NFL and NBA are untouched by construction: their variant rows carry no
+    # `espn_id` at all, so the query below returns nothing for them.
+    if wants_parent_league_row(getattr(team.sport, "key", None)) and getattr(team, "espn_id", None):
+        siblings = (await db.execute(
+            select(Team.id, Sport.key)
+            .join(Sport, Sport.id == Team.sport_id)
+            .where(Team.espn_id == team.espn_id, Team.id != team.id)
+        )).all()
+        parent_id = choose_parent_league_row(team.sport.key, siblings)
+        if parent_id is not None:
+            parent = (await db.execute(
+                select(Team).options(selectinload(Team.sport)).where(Team.id == parent_id)
+            )).scalars().first()
+            # Only on a row we actually loaded. A `None` here would 404 a page
+            # that was serving a moment ago — a worse page beats no page.
+            if parent is not None:
+                team = parent
 
     now = datetime.now(timezone.utc)
 
