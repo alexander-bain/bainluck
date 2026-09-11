@@ -1396,9 +1396,28 @@ async def _sync_statpal_livescores() -> dict:
                         if event.period != new_period:
                             event.period = new_period
                             updated = True
-                    if fixture_clock and event.game_clock != fixture_clock:
-                        event.game_clock = fixture_clock
-                        updated = True
+
+                        # CLEAR THE CLOCK WHEN THE VENUE CLEARS IT (CERT-2569).
+                        #
+                        # This assignment is deliberately NOT guarded on
+                        # `fixture_clock` being truthy. On a row the venue is
+                        # actively labelling as in-progress, the venue is
+                        # authoritative for the clock INCLUDING its absence:
+                        # halftime and the terminal both arrive with no timer
+                        # (measured — `'Halftime'` and `'Final'` both carry
+                        # `timer=''`).
+                        #
+                        # Guarding on truthiness reintroduces, at halftime, the
+                        # exact bug this ship exists to fix: the period would
+                        # advance to `'Halftime'` while `game_clock` kept the
+                        # last quarter's value, and `trustedLiveClock` preserves
+                        # both — so the reader sees a running-looking clock the
+                        # venue had already cleared. A stale label degrades
+                        # visibly; a stale clock lies quietly. Where we cannot
+                        # write a true clock, NULL is the honest value.
+                        if event.game_clock != fixture_clock:
+                            event.game_clock = fixture_clock
+                            updated = True
 
                     # Update scores
                     if fixture.home_score is not None and fixture.home_score != event.home_score:

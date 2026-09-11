@@ -382,6 +382,71 @@ async def test_the_clock_is_not_left_frozen_at_espns_last_value(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_halftime_clears_prior_live_clock(monkeypatch):
+    """CERT-2569's required regression: when the venue clears the clock, so do we.
+
+    The first version of this fix guarded the `game_clock` write on the incoming
+    clock being truthy. At halftime StatPal sends no timer, so the guard meant
+    the row KEPT the previous quarter's clock: `period='Halftime'` beside
+    `game_clock='0:00'`, and `trustedLiveClock` preserves both — a
+    running-looking clock the venue had already cleared.
+
+    That is the very failure this ship exists to fix, re-entering through the
+    front door. `test_halftime_writes_a_bare_label_and_no_separator` could not
+    catch it because it starts from a row with NO clock, so the assignment it
+    needs to observe is a no-op there. This one starts from a populated clock.
+    """
+    now = datetime.now(timezone.utc)
+    fx = _Fixture(
+        now - timedelta(hours=1),
+        "Los Angeles Rams",
+        "San Francisco 49ers",
+        raw_status="Halftime",
+        game_clock=None,
+    )
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[fx],
+        events=[("Los Angeles Rams", "San Francisco 49ers", "0:00")],
+    )
+    assert rows[0].game_clock is None, (
+        "halftime kept the prior clock — a cleared clock must reach the DB as NULL"
+    )
+    assert rows[0].period == "Halftime"
+
+
+@pytest.mark.asyncio
+async def test_a_quarter_transition_clears_a_stale_clock_too(monkeypatch):
+    """The same rule at a non-halftime boundary, so the fix is not halftime-shaped."""
+    now = datetime.now(timezone.utc)
+    fx = _Fixture(
+        now - timedelta(hours=1),
+        "Los Angeles Rams",
+        "San Francisco 49ers",
+        raw_status="Final",
+        game_clock=None,
+    )
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[fx],
+        events=[("Los Angeles Rams", "San Francisco 49ers", "12:05")],
+    )
+    assert rows[0].game_clock is None
+    assert rows[0].period == "Final"
+
+
+@pytest.mark.parametrize("zero", ["0:00", "00:00", "0.00", "0"])
+def test_a_zero_clock_is_not_a_clock(zero):
+    """live/141: `''` renders as nothing, `'0:00'` renders as a stopped clock.
+
+    Both mean "no clock", so both must reach the DB as NULL.
+    """
+    fx = _parse(_live_item(timer=zero))
+    assert fx is not None
+    assert fx.game_clock is None
+
+
+@pytest.mark.asyncio
 async def test_halftime_writes_a_bare_label_and_no_separator(monkeypatch):
     """Halftime is genuinely live and genuinely has no clock.
 

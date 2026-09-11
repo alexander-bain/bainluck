@@ -1825,9 +1825,7 @@ class StatPalAPIService(BaseAPIClient):
             end_time=end_time,
             status=status,
             raw_status=status_raw_str if status == "live" else None,
-            # `or None`: football sends `''` and baseball omits the key on rows
-            # where the clock does not apply. Both must reach the DB as NULL.
-            game_clock=(str(item.get("timer") or "").strip() or None) if status == "live" else None,
+            game_clock=_clean_game_clock(item.get("timer")) if status == "live" else None,
             home_score=home_score,
             away_score=away_score,
             home_q_scores=home_q_scores,
@@ -2180,6 +2178,29 @@ _LIVE_ORDINAL_PERIOD_RE = re.compile(
 _LIVE_HALF_INNING_RE = re.compile(
     r"^(?:top|bottom|middle|end)\s+(?:of\s+)?\d+(?:st|nd|rd|th)$"
 )
+
+
+#: A clock that has run out is not a clock. StatPal clears the timer at
+#: halftime and at the terminal by sending `''` (football) or omitting the key
+#: (baseball) — but a literal `'0:00'` must reach the DB as NULL too, because
+#: `''` renders as nothing while `'0:00'` renders as a running clock stopped on
+#: zero. live/141 photographed exactly that on production: `Halftime · 0:00`
+#: under a pulsing LIVE badge (#5049).
+_ZERO_CLOCKS = {"0:00", "00:00", "0.00", "0", "00:00:00"}
+
+
+def _clean_game_clock(raw) -> Optional[str]:
+    """Normalise a venue game clock to a real value or None.
+
+    Absent, empty and zero all mean "no clock". Storing `''` or `'0:00'` would
+    be counted as a populated clock by `admin_providers.py`'s
+    `Event.game_clock.isnot(None)` coverage query, so the monitor would report
+    clock coverage for rows that either display nothing or display a lie.
+    """
+    value = str(raw or "").strip()
+    if not value or value in _ZERO_CLOCKS:
+        return None
+    return value
 
 
 def _normalize_status(status: str) -> str:
