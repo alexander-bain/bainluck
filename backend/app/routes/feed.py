@@ -93,6 +93,7 @@ from app.utils.aggregation import (
     compute_aggregate_probability as _compute_aggregate_probability,
 )
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
+from app.utils.probability_eligibility import is_refused
 from app.utils.feed_event_candidates import (
     EVENT_CANDIDATE_BUDGET,
     candidate_window_conditions,
@@ -5395,6 +5396,15 @@ def _numeric_source_probs(win_probability_sources) -> list[float]:
     ``test_a_value_ios_cannot_decode_never_reaches_the_wire_4120`` pins that
     ``SOURCE_WEIGHTS`` is a subset of the display registry so the two can differ
     without contradicting each other.
+
+    CU-4 (#5311) — A REFUSED READING MUST NOT REACH THIS EITHER, and here the
+    cost of letting it through is the #4120 shape a second time. This is the
+    "do the sources agree" question, and a leg the hero refuses is one that
+    MANUFACTURES disagreement: a Polymarket derivative at 0.30 beside a real
+    winner line at 0.60 makes ``max - min`` 0.30, ``sources_agree`` False, and
+    ``compute_confidence_score`` applies a penalty to the Discover card of the
+    very event whose hero already excluded that number. The ticket's ordering is
+    eligibility BEFORE ranking, and this is a ranking input.
     """
     out: list[float] = []
     if not win_probability_sources:
@@ -5403,6 +5413,8 @@ def _numeric_source_probs(win_probability_sources) -> list[float]:
         if k not in SOURCE_WEIGHTS:
             continue
         if isinstance(v, bool):
+            continue
+        if is_refused(v):
             continue
         if isinstance(v, (int, float)):
             out.append(float(v))

@@ -17936,6 +17936,11 @@ def _format_event(
             try:
                 from app.config.win_prob_sources import WIN_PROB_SOURCES
                 from app.utils.aggregation import parse_source_entry
+                from app.utils.probability_eligibility import (
+                    from_entry as _eligibility_of,
+                    grade_entry as _grade_entry,
+                    is_refused as _is_refused,
+                )
                 wp_sources = {}
                 for src_key, src_value in _wps.items():
                     if src_key.startswith("_"):
@@ -17981,6 +17986,16 @@ def _format_event(
                     # that count away from the app.
                     if numeric is None:
                         continue
+                    # CU-4 (#5311): a reading the hero REFUSED must not be served
+                    # as a source row. This loop reads the JSONB directly rather
+                    # than through `_tier1_readings`, so without this the two
+                    # halves of one screen would disagree — the hero computed
+                    # without the entry while the source list printed it, with a
+                    # number nothing on the page stands behind. That is the
+                    # ticket's own "one screen fixes the failure while another
+                    # reintroduces it", inside a single response.
+                    if _is_refused(src_value):
+                        continue
                     source_config = WIN_PROB_SOURCES.get(src_key, {})
                     wp_sources[src_key] = {
                         "value": numeric,
@@ -17990,6 +18005,27 @@ def _format_event(
                     }
                     if updated_at is not None:
                         wp_sources[src_key]["updated_at"] = updated_at.isoformat()
+                    # The additive eligibility fields. SIBLINGS of `value`, never
+                    # inside it, for the reason the #1829/#4120 paragraphs above
+                    # spell out: iOS `WinProbValue` throws on an unexpected type
+                    # inside `value`, while an unknown sibling key is ignored by
+                    # every Swift `Decodable` struct — which is exactly how
+                    # `updated_at` was added safely.
+                    #
+                    # `evidence_status` is emitted for EVERY source, including
+                    # the five that can never carry a record. An absent key would
+                    # be ambiguous between "this server predates CU-4" and "this
+                    # source is not applicable", and collapsing those is how a
+                    # census counts a deployment gap as a clean result.
+                    wp_sources[src_key]["evidence_status"] = _grade_entry(
+                        src_key, src_value
+                    )
+                    _record = _eligibility_of(src_value)
+                    if _record is not None:
+                        if _record.scope:
+                            wp_sources[src_key]["verified_scope"] = _record.scope
+                        if _record.rule:
+                            wp_sources[src_key]["contract_version"] = _record.rule
                 if wp_sources:
                     response["win_probability_sources"] = wp_sources
             except Exception:

@@ -3496,11 +3496,17 @@ async def _phase2_persist_group_reading(
     # healthy poll leaves `last_updated` at ~now, so this is inert on every live
     # source and only ever bites the dead ones. `None` = the row cannot say, and
     # then this writer's own clock is the honest answer, exactly as before.
+    # CU-4 (#5311): the record naming the market that spoke rides with the
+    # value. `reading.eligibility` is minted by the gate that admitted the
+    # speaker, so this writer cannot assert an admission the gate did not make —
+    # the same reason `game_state` above uses `reading.market` and not the
+    # group's primary.
     _pm_wps = stamp_source_reading(
         _pm_r.scalar_one_or_none(),
         anchor.source,
         round(home_prob, 4),
         now=source_observation_time(reading.outcome),
+        eligibility=reading.eligibility,
     )
     await session.execute(
         update(Event)
@@ -5865,9 +5871,13 @@ async def _poll_live_prediction_market_prices():
                 _pm_r2 = await session.execute(
                     select(Event.win_probability_sources).where(Event.id == event.id)
                 )
-                # #1829: value + write time.
+                # #1829: value + write time. CU-4 (#5311): plus the record
+                # naming the market that spoke — `reading.eligibility`, minted
+                # by the gate, for the same reason `game_state` above names
+                # `reading.market` rather than the loop's primary.
                 _pm_wps2 = _stamp2(
-                    _pm_r2.scalar_one_or_none(), market.source, round(home_prob, 4)
+                    _pm_r2.scalar_one_or_none(), market.source, round(home_prob, 4),
+                    eligibility=reading.eligibility,
                 )
                 await session.execute(
                     _sql_upd2(Event)

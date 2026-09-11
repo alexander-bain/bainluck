@@ -314,6 +314,7 @@ class LiveBlendRefresher:
                     stamped_at = datetime.now(timezone.utc)
                     new_sources = stamp_source_reading(
                         current, self.source, value, now=stamped_at,
+                        eligibility=reading.eligibility,
                     )
                     # Core update, never ORM attribute assignment — gotcha #4.
                     await session.execute(

@@ -43,6 +43,15 @@ from app.utils.prediction_market_matching import (
     feeds_win_prob_blend,
     find_moneyline_outcome,
 )
+from app.utils.probability_eligibility import EligibilityRecord, verified_record
+
+
+# The rule name every record minted here carries, qualified by the issue that
+# defines the gate's behaviour. A stored record has to stay legible after the
+# function is edited, and "admissible_as_blend_speaker" alone would not say
+# WHICH admissible_as_blend_speaker — the per-source asymmetry it grew in #5031
+# is the difference between a record that means something and one that does not.
+BLEND_ADMISSION_RULE = "live_blend.admissible_as_blend_speaker@5031"
 
 
 @dataclass(frozen=True)
@@ -101,6 +110,13 @@ class BlendReading:
     name and raw YES price into the snapshot's ``game_state``, which is the audit
     trail for "why did the blend say that". Returning the number alone would have
     forced the caller to re-find the outcome and risk finding a different one.
+
+    ``eligibility`` (CU-4, #5311) is that same audit trail in the form a READER
+    can use. `game_state` lives on a different table, is written only when the
+    caller asks for a snapshot, and no serve-time path joins it — so the evidence
+    sits beside the published number and not on it. This field is minted here,
+    by the gate that admitted the speaker, so it cannot disagree with the gate;
+    a caller stamping the JSONB passes it straight to `stamp_source_reading`.
     """
 
     home_probability: float
@@ -108,6 +124,7 @@ class BlendReading:
     outcome: Any
     yes_probability: float
     devigged: bool
+    eligibility: Optional[EligibilityRecord] = None
 
 
 def _home_probability_for_market(
@@ -414,4 +431,13 @@ def compute_source_home_probability(
         outcome=outcome,
         yes_probability=yes_prob,
         devigged=devigged,
+        # `speaker.market`, never `primary.market`: the loop above falls through
+        # the group until a market can speak, so those are not always the same
+        # row. Naming the primary here would be worse than naming nothing — it
+        # would substantiate a reading with a market that did not produce it.
+        eligibility=verified_record(
+            rule=BLEND_ADMISSION_RULE,
+            market_id=getattr(speaker.market, "id", None),
+            source_market_id=getattr(speaker.market, "external_id", None),
+        ),
     )
