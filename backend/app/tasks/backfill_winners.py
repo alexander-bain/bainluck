@@ -45,6 +45,99 @@ from app.utils.winner_field_coherence import (
 logger = logging.getLogger(__name__)
 
 
+def _SETTLED_PRICE_SET_SQL(price: str) -> str:
+    """#5246 — the settlement PRICE, written in the same statement as the grade.
+
+    WHAT A READER SEES WITHOUT THIS. On US Open men's semifinal day the winner
+    card offered **48 names** when four players were left, and priced Alexander
+    Zverev at **34%** while Kalshi said **49.5%**. The four survivors' stored
+    probabilities were already exactly right (0.495 + 0.375 + 0.085 + 0.055 =
+    1.010); the other 44 were eliminated players still carrying the last price
+    anyone paid for them, so the column summed to 1.480 and the rail's
+    normalisation taxed every live outcome by a third. Tapping "+28 more" on the
+    women's card showed Iga Swiatek at 2% to win a tournament she was out of.
+
+    THE HALF THAT WAS MISSING, AND IT IS THIS STATEMENT'S OWN. The two UPDATEs
+    below already hold the venue's settlement — `mkt["result"]` is Kalshi's own
+    yes/no on a `status: finalized` market — and they write it to `is_winner` and
+    `resolution_source`. They did not write it to the PRICE. That is the whole
+    defect: the grade landed and the price did not, and the two are the same
+    fact about the same contract.
+
+    WHY NOTHING ELSE EVER FIXES IT. Measured against Kalshi 2026-09-11 17:2xZ,
+    `GET /events/KXATP-26USO?with_nested_markets=true` returns all 48 markets and
+    every `finalized` one carries `yes_bid: null, yes_ask: null, last_price:
+    null`. `_kalshi_yes_probability(None, None, None)` returns None, and every
+    price-writing site skips a None — `futures_price_refresh` additionally
+    refuses anything outside `0 < prob < 1`, which a settled 0.0 or 1.0 is by
+    construction. So a settled leg's price is not merely stale, it is
+    **unreachable**: no poll will ever quote it again, and no poll can write the
+    only two values it can now legally have. The residue is permanent unless the
+    grader writes it, and the grader is here.
+
+    `current_american_odds` goes to NULL rather than to a number. American odds
+    for a resolved contract are not a long price, they are undefined, and the
+    delisting path (`futures_price_refresh._KALSHI_RETIRE_DELISTED_SQL`) already
+    nulls the pair together for the same reason.
+
+    NO CALIBRATION TRUTH MOVES. `opening_probability` and
+    `calibration_probability` are the curve's inputs (`docs` / gotcha #144: the
+    curve price is `COALESCE(calibration_probability, opening_probability)`), and
+    neither is touched here; `futures_odds_snapshots` keeps the full price
+    history either way. This writes the one column that is supposed to answer
+    "what is this worth NOW", for a contract whose answer is now known exactly.
+
+    `price_changed_at` is maintained inline rather than through
+    `app.utils.price_change_stamp.price_changed_at_value` because that helper
+    builds an ORM/Core set-clause and these are raw `text()` UPDATEs keyed on a
+    ticker array. The predicate is deliberately the same one — cast both sides to
+    the column's stored `Numeric(7, 6)` and stamp only when the write would
+    actually change what is stored — so a leg already sitting at the settlement
+    price is graded without being advertised as freshly moved (#2024).
+
+    :param price: the settlement price as a SQL literal — ``"1.0"`` for a leg the
+        venue resolved YES, ``"0.0"`` for one it resolved NO. Callers pass a
+        literal, never user input; there is no interpolation of anything else.
+    """
+    if price not in ("0.0", "1.0"):
+        raise ValueError(f"settlement price must be 0.0 or 1.0, got {price!r}")
+    return f"""
+        current_probability={price},
+        current_american_odds=NULL,
+        price_changed_at=CASE
+            WHEN fo.current_probability IS DISTINCT FROM CAST({price} AS numeric(7,6))
+            THEN NOW() ELSE fo.price_changed_at END
+    """
+
+
+def settled_grade_update_sql(result: str) -> str:
+    """The whole `UPDATE` the Kalshi settled-events sweep runs, for one result.
+
+    Built here rather than inline at the call site so the statement the task
+    actually executes is the statement a test can read. CI has no Postgres — the
+    real-database gates in this repo are all env-gated and SKIP there — so a
+    guard on this SQL is only worth anything if it inspects the composed string
+    instead of re-deriving it, and re-deriving it in the test is how a producer
+    fix passes its own guard while shipping nothing (#5246's own lesson from the
+    mutation sweep: bind the half of the fix that matters).
+
+    :param result: Kalshi's own ``result`` for the market — ``"yes"`` or ``"no"``.
+    """
+    if result not in ("yes", "no"):
+        raise ValueError(f"kalshi result must be 'yes' or 'no', got {result!r}")
+    won = result == "yes"
+    return (
+        "UPDATE futures_outcomes fo SET "
+        f"is_winner={'true' if won else 'false'}, "
+        "resolution_source='api_settlement', last_updated=NOW(), "
+        + _SETTLED_PRICE_SET_SQL("1.0" if won else "0.0")
+        + " WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL"
+        " OR fo.resolution_source IN " + OVERWRITABLE_WINNER_SOURCES_SQL + ")"
+        # Q487: external_id is NOT unique.
+        " AND " + DUPLICATE_CONDITION_LEG_SQL
+    )
+
+
 #: #4057: HOW MUCH OF THE KALSHI SETTLEMENT SWEEP IS RESERVED FOR WHAT JUST SETTLED.
 #:
 #: The sweep below walks `external_id ASC` from a Redis cursor, 2,000 tickers a
@@ -7427,24 +7520,12 @@ async def _resolve_winners_only(limit: int = 2000):
                     async with get_task_session() as sess:
                         if yes_t:
                             r = await sess.execute(
-                                text("""
-                                UPDATE futures_outcomes fo SET is_winner=true, resolution_source='api_settlement', last_updated=NOW()
-                                WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
-                                -- Q487: external_id is NOT unique.
-                                AND """ + DUPLICATE_CONDITION_LEG_SQL + """
-                            """),
-                                {"t": yes_t},
+                                text(settled_grade_update_sql("yes")), {"t": yes_t}
                             )
                             page_resolved += r.rowcount
                         if no_t:
                             r = await sess.execute(
-                                text("""
-                                UPDATE futures_outcomes fo SET is_winner=false, resolution_source='api_settlement', last_updated=NOW()
-                                WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
-                                -- Q487: external_id is NOT unique.
-                                AND """ + DUPLICATE_CONDITION_LEG_SQL + """
-                            """),
-                                {"t": no_t},
+                                text(settled_grade_update_sql("no")), {"t": no_t}
                             )
                             page_resolved += r.rowcount
                         await sess.commit()
