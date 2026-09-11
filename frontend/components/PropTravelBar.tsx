@@ -257,6 +257,15 @@ export default function PropTravelBar({ row }: { row: DivergenceRow }) {
   const left = `${from * 100}%`;
   const width = `${Math.max(to - from, 0) * 100}%`;
 
+  // #5018 — which value the reader finds at the LEFT end of the track. Strict
+  // `<`: when the two coincide there is no travel to mis-describe and no reason
+  // to disturb the reading order, so "opened" keeps the left.
+  const currentIsLeft = row.current < row.pregameMark;
+  const openedCaption = <span>opened {pct(row.pregameMark)}</span>;
+  const nowCaption = (
+    <span className="text-text-secondary font-medium">now {pct(row.current)}</span>
+  );
+
   // Direction by colour, design-system tokens only (the site is light-mode
   // only; raw Tailwind dark classes are banned).
   const spanTone =
@@ -295,9 +304,34 @@ export default function PropTravelBar({ row }: { row: DivergenceRow }) {
           style={{ left: `${row.current * 100}%` }}
         />
       </div>
+      {/* #5018 — THE CAPTIONS FOLLOW THE GEOMETRY, NOT A FIXED ORDER.
+          The track above is drawn unordered (`from` = min, `to` = max), so on a
+          faller the left end of the bar is `current` and the right end is
+          `pregameMark`. These two captions used to be a fixed `justify-between`
+          pair — "opened" first and therefore always left — so every downward
+          mover printed each label under the opposite end of the thing it names:
+          "Stribling's 15+ receiving yards opened at 69% — it's 7% now" drew a
+          bar from 7% to 69% captioned `opened 69%` on the left, `now 7%` on the
+          right (SF@LAR, 2026-09-10 6:32pm PT).
+          Risers were right only because an up-move's geometry happens to agree
+          with the fixed order, which is why this survived: two thirds of a
+          typical frame reads correctly.
+          The tick marks inside the track were always positioned correctly, but
+          at phone width they are a hairline and a 3px block with no labels of
+          their own — these captions are the only thing a reader can actually
+          read. */}
       <div className="mt-1 flex items-center justify-between text-[11px] text-text-muted tabular-nums">
-        <span>opened {pct(row.pregameMark)}</span>
-        <span className="text-text-secondary font-medium">now {pct(row.current)}</span>
+        {currentIsLeft ? (
+          <>
+            {nowCaption}
+            {openedCaption}
+          </>
+        ) : (
+          <>
+            {openedCaption}
+            {nowCaption}
+          </>
+        )}
       </div>
     </div>
   );
