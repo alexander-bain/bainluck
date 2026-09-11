@@ -14,7 +14,11 @@ one is correct**::
 `app/utils/tag_counts_cache.py` carries the why. This module is the producer.
 
 WHY A PRODUCER AND NOT A BETTER QUERY. The honest number already exists:
-``GET /api/feed?category=X`` returns a ``total`` that equals what it renders.
+``GET /api/feed?category=X`` builds the very list the page draws, and counting
+that list the way the renderer counts it is the answer. (NOT the response's
+``total``, which counts feed slots — measured on production, tennis reported
+``total=9`` for a page rendering 11, because one of the nine was a bundle. See
+`tag_counts_cache.split_rendered_items` and CERT-2589.)
 What is missing is anybody keeping it. Serving it on demand is the one shape
 that cannot work — 28 categories x ~1 s measured is half a minute per page load
 — so it is measured on a beat and read from Redis, the shape

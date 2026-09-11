@@ -17,11 +17,19 @@ cut, market-quality gates, dedup). Candidate admission is necessary, not
 sufficient, so the count can only ever over-promise.
 
 WHY THIS MODULE EXISTS RATHER THAN A BETTER QUERY. The honest number is not
-missing and does not need inventing: ``GET /api/feed?category=X`` already
-returns a ``total``, and that total is what the page renders. There is no second
-predicate to write — there is a number being computed and thrown away. This
-module is the slot it gets kept in, so the tile and the page answer from one
-place, which is what the promise in ``get_tag_counts`` has always claimed.
+missing and does not need inventing: ``GET /api/feed?category=X`` already builds
+the very list the page draws. There is no second predicate to write — there is a
+result being computed and thrown away. This module is the slot it gets kept in,
+so the tile and the page answer from one place, which is what the promise in
+``get_tag_counts`` has always claimed.
+
+NOT the response's ``total``, and this correction is measured. An earlier draft
+of this paragraph said ``total`` "is what the page renders"; on a live production
+tennis read (2026-09-11 06:5xZ) ``total`` was **9** — one bundle plus eight
+futures — while the page rendered **11**, because the bundle unfolds. ``total``
+counts FEED SLOTS. The split below therefore counts the ``items`` list with the
+renderer's own unfolding, which is the only reading that survives being checked
+against the page (CERT-2589).
 
 🔴 "NOT MEASURED" AND "MEASURED ZERO" ARE DIFFERENT ANSWERS, AND CONFLATING THEM
 DELETES TILES. ``/categories`` removes a tile whose counts sum to zero —
