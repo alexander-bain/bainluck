@@ -175,7 +175,9 @@ export default async function Image({ params }: { params: { id: string } }) {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: 23 }}>
             <div>{event ? eventStatus(event) : "Probability-first odds"}</div>
-            <div>bainluck.com/discover</div>
+            {/* #4957: the bare wordmark, matching the other three share cards. This card is
+                for ONE event, so naming /discover advertised a page other than the picture. */}
+            <div>bainluck.com</div>
           </div>
         </div>
       </div>
