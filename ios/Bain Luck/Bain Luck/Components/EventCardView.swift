@@ -34,8 +34,19 @@ struct EventCardView: View {
         !isSuspended && (event.status == "scheduled" || (!isLive && !isFinished))
     }
 
-    private var awayWon: Bool { isFinished && (event.awayScore ?? 0) > (event.homeScore ?? 0) }
-    private var homeWon: Bool { isFinished && (event.homeScore ?? 0) > (event.awayScore ?? 0) }
+    /// #4915 — one reading of who won, shared with the event-page hero.
+    ///
+    /// The feed payload behind this card carries no `hero_settled_result`, so
+    /// the scores decide here; `EventOutcome` is what makes the third answer
+    /// sayable at all. `awayWon`/`homeWon` keep their names and their exact
+    /// meaning — the bug was never that they were true too often, it was that
+    /// on a level result they are BOTH false and the card read `!won` as "lost".
+    private var outcome: EventOutcome {
+        EventOutcome.resolve(
+            status: event.status, homeScore: event.homeScore, awayScore: event.awayScore)
+    }
+    private var awayWon: Bool { outcome.won(isAway: true) }
+    private var homeWon: Bool { outcome.won(isAway: false) }
 
     /// #2902 — these two used to fall back to the SAME grey, so every card
     /// whose sides have no brand colour (all tennis, all golf pairings, any
@@ -258,7 +269,12 @@ struct EventCardView: View {
             Text(name)
                 .font(.subheadline)
                 .fontWeight(won ? .bold : .medium)
-                .foregroundStyle(won ? .primary : (isFinished ? .secondary : .primary))
+                // #4915 — `!won` was standing in for "lost", and on a level
+                // result both sides are `!won`, so a finished draw greyed BOTH
+                // teams. The draw is exempted rather than the rule rewritten:
+                // a finished row we hold no score for keeps today's settled dim,
+                // which is a different treatment answering a different question.
+                .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
                 .lineLimit(1)
             if let record, !isFinished {
                 Text(record)
@@ -270,7 +286,10 @@ struct EventCardView: View {
                 Text("\(score)")
                     .font(isLive ? .title3.monospacedDigit() : .subheadline.monospacedDigit())
                     .fontWeight(isLive ? .bold : (won ? .bold : .regular))
-                    .foregroundStyle(isLive ? .primary : (won ? .primary : .secondary))
+                    // #4915 — same exemption, and only that: a SUSPENDED row's
+                    // scores keep their dim (neither side has won anything yet),
+                    // so the draw is the one arm that moves.
+                    .foregroundStyle(isLive ? .primary : (won || outcome == .draw ? .primary : .secondary))
             }
             if isFinished {
                 preGameOddsLabel(for: side)

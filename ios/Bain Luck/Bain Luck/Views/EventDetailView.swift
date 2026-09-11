@@ -667,9 +667,23 @@ struct EventDetailView: View {
                 VStack(spacing: 4) {
                     if isFinished {
                         // Winner emphasis for completed games
-                        let homeWon = (event.homeScore ?? 0) > (event.awayScore ?? 0)
-                        let tied = event.homeScore == event.awayScore
-                        if tied {
+                        let outcome = heroOutcome(event)
+                        let homeWon = outcome == .home
+                        if let drawLabel = outcome.drawLabel {
+                            // #4915 — a draw IS a result, and this slot used to
+                            // throw it away: the tie branch printed the bare
+                            // status word in the loser's grey, so a 1–1 read as
+                            // "both teams lost" beside a decisive match's bold
+                            // "Munich Win". Same font as the verdict it sits in
+                            // for, and `.primary` because nobody lost here.
+                            Text(drawLabel)
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.primary)
+                        } else if outcome == .undecided {
+                            // Over, and we cannot name a result — no score held
+                            // for a side. The neutral status word is all we can
+                            // honestly print (the `final_unresolved` state, said
+                            // in the verdict slot rather than in the number).
                             Text("Final")
                                 .font(.title2.weight(.bold))
                                 .foregroundStyle(.secondary)
@@ -1478,15 +1492,22 @@ struct EventDetailView: View {
         )
     }
 
+    /// The hero's one reading of who won, server-first (#4915).
+    private func heroOutcome(_ event: EventDetail) -> EventOutcome {
+        EventOutcome.resolve(
+            status: event.status,
+            homeScore: event.homeScore,
+            awayScore: event.awayScore,
+            servedResult: event.heroSettledResult
+        )
+    }
+
     private func winnerColor(isAway: Bool, event: EventDetail) -> Color {
         guard isFinished else { return .primary }
-        let away = event.awayScore ?? 0
-        let home = event.homeScore ?? 0
-        if isAway {
-            return away > home ? .primary : .secondary
-        } else {
-            return home > away ? .primary : .secondary
-        }
+        // #4915 — this was two strict comparisons over `?? 0`, and on a level
+        // result NEITHER can be true, so the grey that means "this team lost"
+        // was painted on both sides of every draw. Only the loser gets it now.
+        return heroOutcome(event).isLoser(isAway: isAway) ? .secondary : .primary
     }
 
     private func metadataItem(title: String, value: String) -> some View {
