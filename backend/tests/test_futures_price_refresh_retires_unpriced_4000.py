@@ -276,7 +276,10 @@ class _RetirementHarness:
 
         async def execute(self, statement, params=None):
             sql = str(statement)
-            if "WITH pool AS MATERIALIZED" in sql:
+            # #5268 split the one pool CTE into value_pool/tier1_pool/pool, so
+            # the old `WITH pool` prefix no longer matches the class
+            # arm. Keyed on the substring all three share.
+            if "pool AS MATERIALIZED" in sql:
                 if "COUNT(*)" in sql:
                     return _Result(scalar=0)
                 return _Result(self.outer.CLASS_ROWS)

@@ -584,7 +584,7 @@ class TestTheReachArmSeesWhatTheSelectorCannot:
                     "stale_hours": 6,
                     "volume_floor": 10000,
                     "value_pool_limit": 500,
-                    "unpriced_pool_limit": 500,
+                    "tier1_pool_limit": 500,
                 },
             )
         ).fetchall()

@@ -223,10 +223,36 @@ HIGH_VALUE_VOLUME_FLOOR = 10_000
 #:
 #: * measured volume at or above the floor, at ANY tier — Brazil qualifies on the
 #:   only evidence that was ever relevant;
-#: * OR tier 1 with volume we simply do not have — tier 1 is our own positive
-#:   statement of importance, and it is the right authority precisely where the
-#:   venue's number is missing. It is a tier ADMISSION, never a tier fence: no
-#:   market is excluded for its tier by this predicate.
+#: * OR tier 1, at ANY volume — tier 1 is our own positive statement of
+#:   importance, and it is the right authority wherever the venue's number is
+#:   not one. It is a tier ADMISSION, never a tier fence: no market is excluded
+#:   for its tier by this predicate.
+#:
+#: 🔴 THE SECOND ARM USED TO READ ``market_tier = 1 AND fm.volume IS NULL``, AND
+#: THAT ``IS NULL`` WAS THE SAME HOLE ONE STEP SMALLER (#5268).
+#:
+#: #3315 fixed "we never measured this" being read as "this is worthless". It
+#: left the neighbouring case untouched: a tier-1 market whose volume we DID
+#: measure and which is merely SMALL failed both arms and was refreshed by
+#: nothing. The rationale above — tier 1 is our own statement of importance —
+#: does not become false when a number arrives; a small number is not a reason
+#: to stop believing our own tier grade, and a thin market is precisely where a
+#: stale quote is least likely to correct itself.
+#:
+#: MEASURED on production 2026-09-11, under the full liveness predicate:
+#:
+#:   live tier-1 markets with measured volume BELOW the floor   1,005
+#:     of those, not refreshed in over 24h                        953   (95%)
+#:     of those, not refreshed in over 7 days                     399
+#:
+#: The specimen is ``KXWBCHEAVYWEIGHTTITLE-27`` (market 2951423): **tier 1**,
+#: ``mutually_exclusive``, open interest 2,171, volume 2,814 — so ``>= 10000``
+#: is false and ``IS NULL`` is false, and it passed NEITHER arm. Its outcomes
+#: were last written 2026-09-10 06:52Z and its 17 rows summed to **801%**, six
+#: different boxers each reading 96% for one belt. That number is a last trade
+#: the venue's own book had already priced out (the #5121 mechanism), and #5267
+#: fixes that at the WRITE boundary — which can never reach a row nothing
+#: writes. A forward fix needs the row to be visited.
 #:
 #: The two halves are named separately because the selector has to plan them
 #: separately (see :data:`ELIGIBLE_POOL_SQL`) while every other reader wants the
@@ -235,12 +261,12 @@ HIGH_VALUE_VOLUME_FLOOR = 10_000
 #: definitions of eligibility — the drift ``futures_liveness`` exists to prevent,
 #: one level down.
 VALUE_MEASURED_SQL = "fm.volume >= :volume_floor"
-VALUE_TIER1_UNPRICED_SQL = "(fm.market_tier = 1 AND fm.volume IS NULL)"
+VALUE_TIER1_SQL = "(fm.market_tier = 1)"
 
 #: One string, interpolated by every reader that wants the whole test, for the
 #: reason ``futures_liveness`` exists: six hand-copied WHERE blocks agree until
 #: the day one of them needs a sixth clause.
-HIGH_VALUE_SQL = f"({VALUE_MEASURED_SQL} OR {VALUE_TIER1_UNPRICED_SQL})"
+HIGH_VALUE_SQL = f"({VALUE_MEASURED_SQL} OR {VALUE_TIER1_SQL})"
 
 #: A high-value open market older than this is stale. Matches the 6h
 #: ``LIVE_PRICE_STALE`` contract that ``utils/tournament_register.py`` already
@@ -362,13 +388,44 @@ KALSHI_DELISTED_CHECK_BUDGET = 60
 #: goes via psql, attended, never through an Alembic release).
 #:
 #: Both limits are set ABOVE their live populations, measured under the FULL
-#: liveness predicate on 2026-09-05 (3,864 value-eligible, 1,155
-#: tier-1-unpriced), so today nothing is truncated at the pool at all — the
-#: headroom is ~16% and ~73%. If one day something is, the value pool truncates by volume
-#: ascending — the declared ordering — and the unpriced pool reports it
-#: (``unpriced_pool_hit``) rather than shrinking in silence.
+#: liveness predicate. 2026-09-05: 3,864 value-eligible, 1,155 tier-1-unpriced.
+#: 2026-09-11, after the tier-1 arm widened to any volume (#5268): **4,377
+#: value-eligible and 2,786 tier-1**, so the tier-1 pool's population grew past
+#: the old 2,000 and the limit moves with it. Headroom is now ~3% and ~44%.
+#:
+#: 🔴 THE VALUE POOL'S HEADROOM IS THIN AND THAT IS A KNOWN, NAMED RISK. 4,377
+#: against 4,500 is 123 rows. When it is crossed the value pool truncates by
+#: volume ASCENDING — the declared ordering — so the rows dropped are the least
+#: valuable, which is the intended failure direction rather than an accident.
+#: :data:`_POOL_LIMIT_HEADROOM_MIN` and the guard test below assert the margin
+#: so the crossing is a red test and not a silent Tuesday.
+#:
+#: 🔴 THE TIER-1 POOL'S ORDERING IS ``fm.id`` AND THAT IS ONLY SAFE WHILE THE
+#: LIMIT EXCEEDS THE POPULATION. A stable ordering under a binding limit is a
+#: fixed point: the same head is selected every run and the tail — the highest
+#: ids, meaning the NEWEST markets — is never seen at all. That is the exact
+#: starvation this module exists to end, so the limit must lead the population
+#: rather than follow it.
+#:
+#: The previous revision of this comment promised that a truncated tier-1 pool
+#: "reports it (``unpriced_pool_hit``) rather than shrinking in silence". **No
+#: such stat existed** — the name appeared in this docstring and nowhere in the
+#: code. It does now (:data:`_STAT_TIER1_POOL_HIT`, set by :func:`_scan_candidates`),
+#: because raising a limit while trusting a breach signal that was never built
+#: is how the next silent starvation gets written.
 VALUE_POOL_LIMIT = 4_500
-UNPRICED_POOL_LIMIT = 2_000
+TIER1_POOL_LIMIT = 4_000
+
+#: Fraction of a pool limit that must remain unused for the pool to be
+#: considered safely sized. Asserted against the production populations recorded
+#: above, so a measurement that drifts into the limit fails a test rather than
+#: quietly truncating a sweep.
+_POOL_LIMIT_HEADROOM_MIN = 0.02
+
+#: Stats key set when a pool came back exactly at its limit — i.e. the LIMIT,
+#: not the population, decided the pool. See :data:`TIER1_POOL_LIMIT`.
+_STAT_TIER1_POOL_HIT = "tier1_pool_hit"
+_STAT_VALUE_POOL_HIT = "value_pool_hit"
 
 #: Polymarket ids per Gamma ``/events?id=..&id=..`` request. Verified against the
 #: live API 2026-08-25: repeated ``id`` params return the full nested markets
@@ -443,36 +500,47 @@ _POLY_EVENT_ID_SQL = """
 #: over two unequal populations, the same shape as the shared market budget the
 #: per-source budgets replaced.
 #:
-#: The unpriced pool orders by ``fm.id``: there is no value key to sort on, and
+#: The tier-1 pool orders by ``fm.id``: there is no value key to sort on, and
 #: an oldest-capture ordering is the fixed point the module docstring forbids. A
 #: stable ordering is safe here BECAUSE the pool limit exceeds the population, so
 #: the Redis attempt markers — not the SQL — do the rotating.
+#:
+#: 🔴 THE TWO ARMS ARE NAMED CTEs RATHER THAN AN INLINE ``UNION`` SO THEIR SIZES
+#: CAN BE READ. The union semantics are unchanged — still ``UNION`` (not ALL) on
+#: the id alone, which matters more since #5268 than it did before: a tier-1
+#: market whose volume clears the floor now satisfies BOTH arms, and the dedupe
+#: is what keeps it one candidate instead of two. What the names buy is
+#: ``count(*)`` per arm out of an ALREADY MATERIALIZED CTE — free, where a
+#: second scan to ask "did the limit bind?" would cost the ~12 s the pools exist
+#: to avoid paying twice. See :data:`_STAT_TIER1_POOL_HIT`.
 #:
 #: It is one shared string rather than a shape each side re-types for exactly the
 #: reason ``LIVE_MARKET_SQL`` is: the task refreshes this set and
 #: ``/api/admin/source-health/futures-price-freshness`` asserts over it, and a
 #: guard covering a different population than the fix is how a breach reads
 #: green. Callers bind ``:volume_floor``, ``:value_pool_limit`` and
-#: ``:unpriced_pool_limit``, and JOIN ``pool`` on ``fm.id``.
+#: ``:tier1_pool_limit``, and JOIN ``pool`` on ``fm.id``.
 ELIGIBLE_POOL_SQL = f"""
-    WITH pool AS MATERIALIZED (
-        (
+    WITH value_pool AS MATERIALIZED (
           SELECT fm.id
             FROM futures_markets fm
            WHERE {LIVE_MARKET_SQL}
              AND {VALUE_MEASURED_SQL}
            ORDER BY fm.volume DESC
            LIMIT :value_pool_limit
-        )
-        UNION
-        (
+    ),
+    tier1_pool AS MATERIALIZED (
           SELECT fm.id
             FROM futures_markets fm
            WHERE {LIVE_MARKET_SQL}
-             AND {VALUE_TIER1_UNPRICED_SQL}
+             AND {VALUE_TIER1_SQL}
            ORDER BY fm.id
-           LIMIT :unpriced_pool_limit
-        )
+           LIMIT :tier1_pool_limit
+    ),
+    pool AS MATERIALIZED (
+        SELECT id FROM value_pool
+        UNION
+        SELECT id FROM tier1_pool
     )
 """
 
@@ -481,7 +549,9 @@ _CANDIDATE_SQL = text(
     {ELIGIBLE_POOL_SQL}
     SELECT fm.id, fm.source, fm.external_id, fm.volume,
            {_POLY_EVENT_ID_SQL},
-           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
+           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since,
+           (SELECT count(*) FROM value_pool) AS value_pool_size,
+           (SELECT count(*) FROM tier1_pool) AS tier1_pool_size
       FROM futures_markets fm
       JOIN pool ON pool.id = fm.id
      WHERE NOT EXISTS (
@@ -560,6 +630,14 @@ _ARM_SERVED = "served"
 
 
 def _rows_to_markets(rows, *, arm: str) -> list[dict]:
+    """The six market columns, however many the statement selected.
+
+    The class arm's statement trails two pool-size columns (see
+    :data:`_STAT_TIER1_POOL_HIT`) that the identity arms do not have, so this
+    slices to the six it needs rather than destructuring the whole row. A fixed
+    six-tuple unpack here would make adding a diagnostic column to one statement
+    a runtime unpack error in the two that never changed.
+    """
     return [
         {
             "id": mid,
@@ -585,7 +663,7 @@ def _rows_to_markets(rows, *, arm: str) -> list[dict]:
             volume,
             poly_event_id,
             venue_settled_since,
-        ) in rows
+        ) in (tuple(row)[:6] for row in rows)
     ]
 
 
@@ -651,7 +729,8 @@ async def _scan_candidates(
     volume_floor: int,
     stale_hours: int,
     value_pool_limit: int = VALUE_POOL_LIMIT,
-    unpriced_pool_limit: int = UNPRICED_POOL_LIMIT,
+    tier1_pool_limit: int = TIER1_POOL_LIMIT,
+    stats: dict | None = None,
 ) -> list[dict]:
     """Stale valuable markets, most valuable first, at ANY tier.
 
@@ -661,6 +740,18 @@ async def _scan_candidates(
     dark. Since #3315 the headroom is the POOL rather than a ``scan_limit`` on
     the outer statement, because on this query an outer LIMIT bounded no work at
     all — see :data:`ELIGIBLE_POOL_SQL`.
+
+    Records a pool-size stat per arm, and a ``*_pool_hit`` flag when an arm came
+    back exactly at its limit — the state in which the LIMIT, not the population,
+    decided who is eligible. That is reported rather than inferred because the
+    two failures look identical from outside: a pool that returned everything and
+    a pool that returned the first N of everything both just return N rows.
+
+    🔴 ZERO ROWS IS NOT ZERO POOL. The sizes come off the pool CTEs, which are
+    computed whether or not any market survives the staleness anti-join, but they
+    can only be READ off a returned row. So an empty candidate list leaves the
+    sizes unset rather than recording ``0`` — writing a zero here would report
+    "the pools are empty" on the ordinary night when everything is simply fresh.
     """
     rows = (
         await session.execute(
@@ -669,10 +760,22 @@ async def _scan_candidates(
                 "volume_floor": volume_floor,
                 "stale_hours": stale_hours,
                 "value_pool_limit": value_pool_limit,
-                "unpriced_pool_limit": unpriced_pool_limit,
+                "tier1_pool_limit": tier1_pool_limit,
             },
         )
     ).fetchall()
+    # Length-guarded rather than assumed: the sizes are a DIAGNOSTIC, and a
+    # diagnostic that can raise is a diagnostic that takes the sweep down with
+    # it. `test_the_sizes_are_selected_from_the_materialised_pools` is what
+    # holds the production statement to selecting them.
+    if stats is not None and rows and len(rows[0]) > 7:
+        value_size, tier1_size = int(rows[0][6]), int(rows[0][7])
+        stats["value_pool_size"] = value_size
+        stats["tier1_pool_size"] = tier1_size
+        if value_size >= value_pool_limit:
+            stats[_STAT_VALUE_POOL_HIT] = True
+        if tier1_size >= tier1_pool_limit:
+            stats[_STAT_TIER1_POOL_HIT] = True
     return _rows_to_markets(rows, arm=_ARM_CLASS)
 
 
@@ -1759,6 +1862,7 @@ async def _refresh_stale_futures_prices(
             session,
             volume_floor=volume_floor,
             stale_hours=stale_hours,
+            stats=stats,
         )
 
         # A market can qualify on more than one arm — every US Open winner field
@@ -2125,7 +2229,7 @@ async def _refresh_stale_futures_prices(
                         "volume_floor": volume_floor,
                         "stale_hours": stale_hours,
                         "value_pool_limit": VALUE_POOL_LIMIT,
-                        "unpriced_pool_limit": UNPRICED_POOL_LIMIT,
+                        "tier1_pool_limit": TIER1_POOL_LIMIT,
                     },
                 )
             ).scalar()
