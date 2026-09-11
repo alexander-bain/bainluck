@@ -757,7 +757,7 @@ def _is_headline_market(name: Optional[str], external_id: Optional[str]) -> bool
     budget is denominated in ids, but the ORDER is a claim about what a reader
     needs first, and that is semantics. So it is asked of the one shared
     recognizer, `classify_game_market_class` — the same one
-    `live_blend._admissible_as_fallback` uses to decide whether a market may
+    `live_blend._class_says_game_winner` uses to decide whether a market may
     speak for its source, which is the same judgement one rail earlier.
 
     Headline = the game-level book a reader sees on the card: `moneyline`,
@@ -768,7 +768,7 @@ def _is_headline_market(name: Optional[str], external_id: Optional[str]) -> bool
     that is about to start.
 
     The prefix strip is the shared parser's, not a second copy of its list, for
-    the reason `_admissible_as_fallback` gives: Polymarket's tournament prefixes
+    the reason `_class_says_game_winner` gives: Polymarket's tournament prefixes
     (`US Open ATP: A vs B`) are not the league tags the classifier's own
     stripper knows, and a re-implementation here would not throw when it
     disagreed — it would quietly answer differently.

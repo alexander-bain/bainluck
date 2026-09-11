@@ -533,18 +533,52 @@ def _clamped(outcomes: Sequence[Any]) -> list[Any]:
 
 
 def _orient_one_market(
-    entry: Any, home_team_name: str, away_team_name: str
+    entry: Any, home_team_name: str, away_team_name: str, *, is_primary: bool = False
 ) -> Optional[tuple[Any, Any, bool]]:
-    """Orientation from ONE market, or None if this market cannot say."""
-    from app.utils.live_blend import is_game_winner_market
+    """Orientation from ONE market, or None if this market cannot say.
+
+    ADMISSION IS THE SHARED POLICY, NOT A LOCAL ONE (#5323). Both gates below
+    are the two the live blend composes for a single market, in the same order:
+    `_reading_for_entry`'s Kalshi ticker gate, and `admissible_as_blend_speaker`
+    asked of every candidate. Whatever is allowed to write the hero number is
+    allowed to draw the curve, and nothing else — a chart that draws a line the
+    hero refuses is the same defect wearing a different surface.
+    """
+    from app.utils.live_blend import (
+        admissible_as_blend_speaker,
+        is_game_winner_market,
+    )
     from app.utils.prediction_market_matching import (
         extract_matchup_with_ticker_fallback,
         find_moneyline_outcome,
     )
 
     # Kalshi props/spreads never feed the blend, whatever they are linked to —
-    # the same gate `compute_source_home_probability` applies.
+    # the venue-side ticker rule, the same one `_reading_for_entry` applies.
     if entry.market.source == "kalshi" and not is_game_winner_market(entry.market):
+        return None
+
+    # 🔴 AND THE PER-SOURCE ADMISSION, WHICH THIS PATH NEVER ASKED (#5323).
+    #
+    # `is_game_winner_market` is hard-False for every non-Kalshi source, so the
+    # gate above is not a gate on Polymarket — it is a no-op, and the fall-
+    # through was total: no admission test of any kind. That matters because
+    # Polymarket decomposes a game into rows sharing the match-winner's exact
+    # two-outcome shape and its "A vs. B" title, so an Exact Score or Halftime
+    # Result leg PARSES and its team-named outcomes RESOLVE by containment —
+    # `find_moneyline_outcome` cannot tell it apart. #5031 fixed this for the
+    # stored live number and the chart's own path was never re-aimed at it, so
+    # the price series of a derivative could be drawn as the match-winner curve.
+    #
+    # `_choose_oriented_market` tries every remaining market in id order, which
+    # widens the exposure rather than narrowing it: a derivative that orients
+    # wins the curve. Asking the shared policy of every candidate is what makes
+    # that loop safe to keep.
+    #
+    # Deliberately the SHARED function and not a second recognizer here: a local
+    # copy is the #1951 drift failure, where the second copy does not throw when
+    # it disagrees, it just quietly answers differently.
+    if not admissible_as_blend_speaker(entry.market, is_primary=is_primary):
         return None
 
     matchup = extract_matchup_with_ticker_fallback(
@@ -618,7 +652,13 @@ def resolve_orientation(
         if primary is None or entry.market.id != primary.market.id
     ]
     for entry in order:
-        oriented = _orient_one_market(entry, home_team_name, away_team_name)
+        oriented = _orient_one_market(
+            entry, home_team_name, away_team_name,
+            # The primary's exemption is Kalshi-only and lives inside the shared
+            # policy; passing the flag rather than pre-judging it here keeps the
+            # per-source split in one place (#5031's 13 UFC primaries).
+            is_primary=primary is not None and entry.market.id == primary.market.id,
+        )
         if oriented is not None:
             return oriented
     return None

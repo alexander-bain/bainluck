@@ -16,6 +16,7 @@ duplicates every point, a request Kalshi refuses, an interval Kalshi answers
 with nonsense, or rows the #1828 state filter then deletes on read.
 """
 
+import pathlib
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -1565,6 +1566,228 @@ def test_orientation_still_declines_when_no_market_in_the_group_can_say():
 
     assert resolve_orientation([parent, sibling], "Vallejo", "Monfils") is None
     assert resolve_orientation([], "Vallejo", "Monfils") is None
+
+
+def _poly_derivative_outcomes():
+    """A derivative's outcomes are NAMED AFTER THE PLAYERS — that is the trap.
+
+    `find_moneyline_outcome` resolves by containment, so an Exact Score leg
+    whose sides read `Vallejo 2 - 0` / `Monfils 2 - 0` looks exactly like a
+    moneyline to it. Nothing downstream of orientation can tell them apart,
+    which is why the admission gate has to be upstream of it.
+    """
+    return [
+        _outcome("Adolfo Daniel Vallejo 2 - 0", 0.18, "0xexact_yes", 1),
+        _outcome("Gael Monfils 2 - 0", 0.82, "0xexact_no", 2),
+    ]
+
+
+def test_a_polymarket_derivative_can_never_draw_the_match_winner_curve():
+    """🔴 #5323. The chart gated only Kalshi, so Polymarket had NO gate at all.
+
+    `is_game_winner_market` is hard-False for every non-Kalshi source, so the
+    Kalshi guard was a no-op on Polymarket and orientation fell straight through
+    to `find_moneyline_outcome`. #5031 fixed this for the stored hero number;
+    the chart's own path was never re-aimed at the shared policy, so the price
+    series of an Exact Score leg could be drawn as the match-winner curve.
+
+    The derivative here holds the LOWER id on purpose. Polymarket mints Exact
+    Score and the other derivative books before the match-winner child, and
+    `select_primary_market`'s tie-break outside Kalshi degrades to "lowest id" =
+    OLDEST — so the derivative is the PRIMARY, and it is tried first.
+    """
+    from app.tasks.event_chart_backfill import resolve_orientation
+    from app.utils.live_blend import select_primary_market
+
+    exact = _poly_entry(100, "Vallejo vs Monfils - Exact Score",
+                        _poly_derivative_outcomes())
+    child = _poly_entry(200, "Vallejo vs Monfils", _poly_child_outcomes())
+
+    # The fixture is not vacuous: the derivative really is the primary, and it
+    # really would have oriented on its own before this fix.
+    assert select_primary_market([exact, child]).market.id == 100
+
+    oriented = resolve_orientation(
+        [exact, child], "Adolfo Daniel Vallejo", "Gael Monfils"
+    )
+    assert oriented is not None, "the real match-winner child must still draw"
+    assert oriented[0].id != 100, "an Exact Score leg may never draw the curve"
+    assert oriented[0].id == 200
+
+    # And alone it draws NOTHING rather than falling back to a plausible line.
+    assert resolve_orientation(
+        [exact], "Adolfo Daniel Vallejo", "Gael Monfils"
+    ) is None
+
+    for name in ("Vallejo vs Monfils - Halftime Result",
+                 "Vallejo vs Monfils: Both Teams to Score"):
+        assert resolve_orientation(
+            [_poly_entry(100, name, _poly_derivative_outcomes())],
+            "Adolfo Daniel Vallejo", "Gael Monfils",
+        ) is None, f"{name} is not the match winner"
+
+
+def test_the_chart_and_the_hero_admit_exactly_the_same_markets():
+    """One policy object, both consumers — the property, not the call site.
+
+    #5323 is an instance of the CU-4 thesis: one screen fixes the failure while
+    another reintroduces it. A test that merely asserts the chart *calls*
+    `admissible_as_blend_speaker` would pass against a call whose result is
+    discarded, so this asks the question the ship is actually about — does the
+    chart draw anything the hero would refuse to say?
+    """
+    from app.tasks.event_chart_backfill import _orient_one_market
+    from app.utils.live_blend import admissible_as_blend_speaker
+
+    specimens = [
+        ("Vallejo vs Monfils", True),
+        ("US Open ATP: Vallejo vs Monfils", True),
+        ("Vallejo vs Monfils - Exact Score", False),
+        ("Vallejo vs Monfils - Halftime Result", False),
+        ("Vallejo vs Monfils: Both Teams to Score", False),
+    ]
+    # The table is not one-sided, or it could be satisfied by a gate that always
+    # refuses (or always admits).
+    assert {expected for _, expected in specimens} == {True, False}
+
+    for name, expected in specimens:
+        entry = _poly_entry(100, name, _poly_child_outcomes())
+        assert admissible_as_blend_speaker(
+            entry.market, is_primary=True) is expected, (
+            f"fixture drift: the shared policy no longer answers {expected} "
+            f"for {name!r}"
+        )
+        drew = _orient_one_market(
+            entry, "Adolfo Daniel Vallejo", "Gael Monfils", is_primary=True
+        ) is not None
+        assert drew is expected, (
+            f"the chart {'drew' if drew else 'refused'} {name!r} but the hero "
+            f"{'admits' if expected else 'refuses'} it"
+        )
+
+
+def test_a_kalshi_primary_keeps_the_exemption_the_shared_policy_gives_it():
+    """The new gate must not be applied source-agnostically. That is a regression.
+
+    `admissible_as_blend_speaker` exempts a KALSHI primary deliberately: the
+    class recognizer is the wrong instrument on a Kalshi row, and applying it
+    there refuses 13 live UFC primaries (`Fight Night: Silva vs Delgado`) whose
+    colon makes the title not a bare matchup. Kalshi's real admission is the
+    venue-side ticker rule, which this path already applied and still does.
+
+    Without this test the obvious "simplification" — ask the class recognizer of
+    everything — reads cleaner and blanks a whole card.
+    """
+    from app.tasks.event_chart_backfill import _orient_one_market
+    from app.utils.live_blend import MarketOutcomes, _class_says_game_winner
+
+    market = SimpleNamespace(
+        id=1, source="kalshi", name="Fight Night: Silva vs Delgado",
+        external_id="KXUFCFIGHT-26SEP12SILDEL-SIL",
+        market_metadata={}, group_id=None,
+    )
+    entry = MarketOutcomes(
+        market=market,
+        outcomes=[
+            _outcome("Silva", 0.62, "KXUFCFIGHT-26SEP12SILDEL-SIL", 1),
+            _outcome("Delgado", 0.38, "KXUFCFIGHT-26SEP12SILDEL-DEL", 2),
+        ],
+    )
+
+    # The fixture earns its name: the class recognizer really does refuse it.
+    assert _class_says_game_winner(market) is False
+
+    assert _orient_one_market(
+        entry, "Silva", "Delgado", is_primary=True
+    ) is not None, "a Kalshi primary must keep its exemption"
+
+
+def test_a_kalshi_fallback_does_not_inherit_the_primarys_exemption():
+    """The exemption is the PRIMARY's, and passing the flag is not decoration.
+
+    Caught by red-check: hardcoding `is_primary=True` at the call site left the
+    whole suite green. It is not cosmetic — it hands every Kalshi FALLBACK the
+    primary's exemption, so the chart admits rows the hero refuses and the
+    divergence this ship exists to close reopens on the Kalshi half.
+
+    The asymmetry being preserved is the pre-existing #759 design: a fallback
+    carries a stricter burden than the primary, on Kalshi too. The specimen is
+    the UFC shape — a ticker the venue rule ADMITS whose title the class
+    recognizer REFUSES — because that is the only combination where the two
+    gates disagree and the flag is therefore observable.
+    """
+    from app.tasks.event_chart_backfill import resolve_orientation
+    from app.utils.live_blend import (
+        MarketOutcomes,
+        compute_source_home_probability,
+        select_primary_market,
+    )
+
+    def _kalshi(market_id, name, outcomes):
+        return MarketOutcomes(
+            market=SimpleNamespace(
+                id=market_id, source="kalshi", name=name,
+                external_id="KXUFCFIGHT-26SEP12SILDEL-SIL",
+                market_metadata={}, group_id=None,
+            ),
+            outcomes=outcomes,
+        )
+
+    fights = [
+        _outcome("Silva", 0.62, "KXUFCFIGHT-26SEP12SILDEL-SIL", 1),
+        _outcome("Delgado", 0.38, "KXUFCFIGHT-26SEP12SILDEL-DEL", 2),
+    ]
+    # Primary is the lowest id and cannot orient (no outcomes); the fallback is
+    # ticker-admitted but class-refused.
+    primary = _kalshi(1, "Silva vs Delgado", [])
+    fallback = _kalshi(2, "Fight Night: Silva vs Delgado", fights)
+
+    assert select_primary_market([primary, fallback]).market.id == 1
+
+    # The control that makes this test non-vacuous: as a PRIMARY the very same
+    # market is admitted, so a refusal below is the flag and nothing else.
+    assert resolve_orientation([fallback], "Silva", "Delgado") is not None
+
+    assert resolve_orientation([primary, fallback], "Silva", "Delgado") is None, (
+        "a Kalshi fallback must clear the class recognizer, primary or not"
+    )
+    # And the hero agrees, which is the whole point.
+    assert compute_source_home_probability(
+        [primary, fallback], "Silva", "Delgado"
+    ) is None
+
+
+def test_every_live_blend_symbol_a_comment_cites_actually_exists():
+    """A docstring citing a function that does not exist is a false authority.
+
+    #5323 found `live_blend._admissible_as_fallback` cited twice in
+    `polymarket_condition_refresh` as the authority for an admission decision.
+    No such symbol has ever existed — the module defines
+    `_class_says_game_winner`. A reader following the citation infers a shared
+    gate that is not shared, which is exactly the drift this ship is closing.
+
+    The file list is DISCOVERED, not written out here: a hand-written list can
+    only police the files its author already thought of.
+
+    `live_blend.py` is excluded by the pattern rather than by a later filter,
+    because it is a FILENAME and never an attribute reference — the first
+    version of this scan reported `py` as a missing symbol in three files.
+    """
+    import re
+
+    from app.utils import live_blend
+
+    app_dir = pathlib.Path(live_blend.__file__).resolve().parents[1]
+    cited: dict[str, set[str]] = {}
+    for path in sorted(app_dir.rglob("*.py")):
+        for symbol in re.findall(r"\blive_blend\.(?!py\b)([A-Za-z_][A-Za-z0-9_]*)",
+                                 path.read_text()):
+            cited.setdefault(symbol, set()).add(str(path.relative_to(app_dir)))
+
+    assert cited, "discovery found nothing — the scan is broken, not the code"
+    missing = {s: sorted(f) for s, f in cited.items()
+               if not hasattr(live_blend, s)}
+    assert missing == {}, f"cited but absent from live_blend: {missing}"
 
 
 def test_a_kalshi_prop_in_the_group_is_still_refused_not_fallen_back_onto():
