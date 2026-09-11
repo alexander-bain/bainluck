@@ -356,12 +356,20 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # Does it force a Heroku release? Not a gate — a routing fact. Notice 10: a
 # `backend/tests/**` merge never releases ALONE; it rides a server-side batch.
+#
+# This value is computed HERE, from the diff. Do not cross-check it against the
+# CI check-run of the same name: `release-required` in ci.yml is gated on
+# `github.ref == 'refs/heads/master' && github.event_name == 'push'`, so on a
+# pull_request run it never executes — and a skipped job still publishes a
+# check-run, conclusion `skipped`. That `skipped` is therefore on EVERY PR sha
+# in the repo and says nothing about whether the sha releases (#5235; notice 32
+# already says the same of `deploy: skipped`).
 # ─────────────────────────────────────────────────────────────────────────────
 rr_script="$REPO_PATH/.github/scripts/heroku-release-required.sh"
 if [ -x "$rr_script" ] || [ -r "$rr_script" ]; then
   base="$(git -C "$REPO_PATH" merge-base "$MASTER" "$SHA")"
   rr="$(cd "$REPO_PATH" && bash "$rr_script" "$base" "$SHA" 2>/dev/null | tail -1)"
-  echo "  ----  release-required           $rr"
+  echo "  ----  release-required           $rr — computed here from the diff; the CI check-run of this name is push-gated, reads 'skipped' on EVERY PR sha, and is never a verdict"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
