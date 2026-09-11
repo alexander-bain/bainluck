@@ -79,6 +79,17 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     let bookmakerOdds: [BookmakerOdds]?
     let highlight: Highlight?
     let openingOdds: OpeningOdds?
+    /// The server's blended price for the HOME side, and its complement for the
+    /// away side (`routes/events.py` serves `hero_probability` from
+    /// `home_probability` and `hero_probability_away` from `away_probability`).
+    ///
+    /// #4967 — search serves these on rows that carry no `current_odds` at all,
+    /// and the model did not name them, so `Decodable` dropped them in silence
+    /// and the row drew no percentage. Named here as two plain optionals: the
+    /// struct has no `CodingKeys` and the client decodes with
+    /// `.convertFromSnakeCase`, so naming them IS the decode.
+    let heroProbability: Double?
+    let heroProbabilityAway: Double?
 }
 
 /// Futures market result returned by search endpoints.

@@ -250,3 +250,52 @@ nonisolated func firstNamedSideNumber(
     )[0] else { return nil }
     return (probability: away, percent: percent)
 }
+
+/// The same lone number, for a row that may be priced by `current_odds` OR by the
+/// blend the server already computed — preferring `current_odds` when both exist.
+///
+/// ## Why the fallback needs a function and not an `??` at the call site
+///
+/// #4967: `SearchView.searchEventRow` drew a percentage only when `current_odds`
+/// was present, so an unfinished row whose price the server HAD already blended
+/// printed nothing at all. Measured on production 2026-09-10 across eight
+/// queries: of 84 unfinished rows, 29 drew no number, and 20 of those 29 carried
+/// a complete `hero_probability` / `hero_probability_away` pair the phone was
+/// throwing away. The remaining 9 carry neither and must keep printing nothing
+/// (#4794 — a row with no reading states no reading).
+///
+/// ## The served percents belong to `current_odds`, so the hero arm cannot see them
+///
+/// `duelPercents`' contract above is explicit that `servedAway`/`servedHome`
+/// describe `current_odds` and nothing else: pairing that rounding with another
+/// source's probability prints a mismatched pair that still sums to 100, which no
+/// sum guard can catch. The hero arm therefore passes `nil` for both and lets
+/// `renderedDuelPercents` derive. That is enforced HERE rather than trusted at the
+/// call site, because the call site is a view body and CI compiles no Swift
+/// (#4302) — a rule that lives in a `View` is a rule no gate can reach.
+///
+/// Preference order is `current_odds` first so that no row which renders correctly
+/// today changes: the hero pair is strictly a fallback for rows drawing nothing.
+nonisolated func firstNamedSideNumber(
+    oddsAway: Double?,
+    oddsHome: Double?,
+    servedAway: Int?,
+    servedHome: Int?,
+    heroAway: Double?,
+    heroHome: Double?
+) -> (probability: Double, percent: Int)? {
+    if let fromOdds = firstNamedSideNumber(
+        away: oddsAway,
+        home: oddsHome,
+        servedAway: servedAway,
+        servedHome: servedHome
+    ) {
+        return fromOdds
+    }
+    return firstNamedSideNumber(
+        away: heroAway,
+        home: heroHome,
+        servedAway: nil,
+        servedHome: nil
+    )
+}

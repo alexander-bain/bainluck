@@ -965,16 +965,23 @@ struct SearchView: View {
                         .fontWeight(.medium)
                         .monospacedDigit()
                 }
-            } else if let odds = event.currentOdds,
+            } else if
                       // #4306 — the title above is away-first and the score arm
                       // above prints `away - home`, so the lone number here
                       // describes the side named FIRST. It used to draw
                       // `homeProbability`, which inverted every scheduled row.
+                      //
+                      // #4967 — and it drew nothing at all unless `current_odds`
+                      // was present, discarding a blend the server had already
+                      // computed. The preference order and the served-percent
+                      // rule both live in the helper, not here.
                       let firstNamed = firstNamedSideNumber(
-                          away: odds.awayProbability,
-                          home: odds.homeProbability,
-                          servedAway: odds.awayRenderedPercent,
-                          servedHome: odds.homeRenderedPercent
+                          oddsAway: event.currentOdds?.awayProbability,
+                          oddsHome: event.currentOdds?.homeProbability,
+                          servedAway: event.currentOdds?.awayRenderedPercent,
+                          servedHome: event.currentOdds?.homeRenderedPercent,
+                          heroAway: event.heroProbabilityAway,
+                          heroHome: event.heroProbability
                       ) {
                 Text(formatProbability(firstNamed.probability, renderedPercent: firstNamed.percent))
                     .font(.subheadline)
