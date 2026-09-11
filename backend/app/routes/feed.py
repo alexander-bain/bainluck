@@ -75,6 +75,7 @@ from app.utils.sports_first_page_rails import (
     cap_futures_on_games_led_first_page,
     cap_repeated_finished_rails,
     client_deletes_finished_card,
+    finished_event_age_anchor,
     swap_client_deleted_finished_off_first_page,
 )
 from app.utils.tonights_games import (
@@ -1537,6 +1538,116 @@ def _imminent_marquee_kickoff_ids(
     return set(ranked[: max(0, lead_capacity)])
 
 
+#: How many of the finished slots one league may hold (#5300).
+#:
+#: ONE, because the slot budget is two and the defect is a league owning both.
+#: Measured on production rows at 2026-09-11 15:30Z, the three tier-1 finals
+#: inside the window were Pirates @ White Sox (MLB, EI 82), Rockies @ Yankees
+#: (MLB, EI 60) and 49ers @ Rams (NFL primetime, EI 54). Ranked by EI alone the
+#: arm kept the two MLB games and dropped the NFL one, which is what #5100's own
+#: after-LOOK photographed at 14:52Z (ranks 11 and 12 of 20, no NFL game) and
+#: what the bus's day-1 ranking eval captured at 16:18Z as "2 dead cards of 20".
+#:
+#: EI measures HOW CLOSE a game was, not HOW MUCH IT MATTERED — the 49ers game
+#: carries ``signal:blowout`` and so scores below a tight Pirates–White Sox — so
+#: on any night one league plays a full slate its best two close finishes beat
+#: the one game the country actually watched. A per-league slot is the same
+#: shape ``cap_repeated_finished_rails`` and ``_DISCOVER_FIRST_PAGE_CATEGORY_CAPS``
+#: already apply one layer out: no single rail, category or league owns the page.
+#:
+#: NOT a significance TABLE. ``timing:primetime`` looks like the signal and is
+#: not one — ``event_taxonomy`` derives it from the clock alone (19:00–23:59
+#: Eastern), so a 7:05pm ET baseball game earns it and a 1pm playoff game does
+#: not. A rule resting on it would have passed today by luck (both MLB rows
+#: started 18:05 and 18:40 ET, just under the boundary) and stopped working the
+#: first night the Yankees played an hour later.
+_DISCOVER_FINAL_LEAGUE_SLOTS = 1
+
+#: The half-life, in hours, of a finished game's claim on a Discover slot (#5300).
+#:
+#: The ordering term Alex's "no fixed clock — a decay the eval can grade" asks
+#: for. Retention is still the 14h cliff (D118 = B, and a CI-guarded mirror of
+#: the frontend constant — this ship does not move it); what decays here is the
+#: card's RANK against the other finals, so a fresher result outranks a staler
+#: one of similar quality instead of the two being ordered by EI alone.
+#:
+#: TEN HOURS, chosen against the age spread a real morning actually has. The
+#: finals inside the window on 2026-09-11 were 12.1h, 13.2h and 13.3h old — a
+#: spread of 1.2h, over which this term is a factor of 1.09. That is the
+#: intended strength: the decay BREAKS NEAR-TIES and discounts a card drifting
+#: toward the retention edge, and it does not overrule a real difference in how
+#: good the games were. Half of "last night" is not more "last night" than the
+#: other half, and a 13h-old thriller should still beat an 8h-old dud.
+#:
+#: The other end is where it earns its keep: at the 14h edge a card retains ~38%
+#: of its opening claim, so a stale final still holds a slot on a night with
+#: nothing newer and gives it up as soon as something newer arrives.
+#:
+#: A SHORTER HALF-LIFE WAS MEASURED AND REJECTED. At six hours the term stops
+#: being a tie-break and becomes the ranking: it reordered
+#: ``test_marquee_final_stays_fourteen_hours_d118``'s six-final slate purely by
+#: age, turning "last night's best games" into "last night's latest games".
+#: That guard catching it is the guard working.
+_DISCOVER_FINAL_EI_HALF_LIFE_HOURS = 10.0
+
+
+def _discover_final_league_key(item: dict) -> str:
+    """The bucket ``_DISCOVER_FINAL_LEAGUE_SLOTS`` counts a finished game against.
+
+    The ``league:`` tag first and the ``sport:`` tag second, because the reader's
+    "one league's slate" is a league before it is a sport, and a row can carry
+    the sport without the league.
+
+    AN UNTAGGED ROW GETS ITS OWN BUCKET, keyed on its event id, and that is the
+    load-bearing case rather than a tidy default. Folding every untagged final
+    into one shared ``""`` bucket would let the FIRST such row starve every
+    other one — a missing tag would silently become a policy about games that
+    have nothing to do with each other. A row we cannot classify is a row this
+    cap must not act on, so it competes on rank alone.
+    """
+    data = item.get("data") or {}
+    for tag in data.get("event_tags") or []:
+        if isinstance(tag, str) and tag.startswith("league:") and tag[7:].strip():
+            return tag
+    for tag in data.get("event_tags") or []:
+        if isinstance(tag, str) and tag.startswith("sport:") and tag[6:].strip():
+            return tag
+    return f"event:{data.get('id')}"
+
+
+def _discover_final_freshness_weight(
+    item: dict, now: datetime | None = None
+) -> float:
+    """How much of its opening claim a finished game still holds, in ``(0, 1]``.
+
+    Ages off :func:`finished_event_age_anchor` — ``ended_at`` falling back to
+    ``commence_time`` — which is the SAME anchor
+    ``client_deletes_finished_card`` retires the card on. Two clocks here would
+    let the arm rank a card by one age and drop it by another.
+
+    An unreadable or missing stamp returns ``1.0`` rather than ``0.0``. The
+    conservative direction is the one that leaves the ranker's existing answer
+    alone: a row whose age cannot be read keeps its EI ordering exactly as it
+    had it before this ship, instead of being silently sorted last by a parse
+    failure. A future age (a clock skew, an ``ended_at`` in the future) is
+    clamped to ``1.0`` for the same reason — it must not become a boost.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    ended = _parse_feed_datetime(finished_event_age_anchor(item.get("data") or {}))
+    if ended is None:
+        return 1.0
+    age_hours = (now - ended).total_seconds() / 3600.0
+    if age_hours <= 0:
+        return 1.0
+    return float(0.5 ** (age_hours / _DISCOVER_FINAL_EI_HALF_LIFE_HOURS))
+
+
+def _discover_final_rank_score(item: dict, now: datetime | None = None) -> float:
+    """A finished game's claim on a slot: its excitement, decayed by its age."""
+    return _discover_event_ei_score(item) * _discover_final_freshness_weight(item, now)
+
+
 def _recent_marquee_final_ids(
     feed_items: list[dict], now: datetime | None = None
 ) -> set[int]:
@@ -1578,9 +1689,22 @@ def _recent_marquee_final_ids(
       would stop bounding anything the day that gap is fixed. The cap is what
       bounds the population; this only keeps an unrenderable card out.
 
-    Ranked by EI, which is the excitement reading a settled game HAS (#4504
-    documents that EI is written for exactly these statuses and no other), and
-    tie-broken by event id so a tie cannot reorder between two requests.
+    Ranked by EI — the excitement reading a settled game HAS (#4504 documents
+    that EI is written for exactly these statuses and no other) — DECAYED by the
+    game's age (:func:`_discover_final_rank_score`), and tie-broken by event id
+    so a tie cannot reorder between two requests.
+
+    Then filled ONE LEAGUE AT A TIME (#5300). Walking the ranked list and
+    skipping a league already at ``_DISCOVER_FINAL_LEAGUE_SLOTS`` is what stops a
+    full nightly slate taking both slots with its two closest finishes while the
+    one game the country watched — a blowout, so a LOW EI — takes neither. The
+    constant's own comment carries the production numbers.
+
+    THE CAP NEVER COSTS A SLOT. A second pass re-offers the rows the league walk
+    skipped, in the same ranked order, so a night whose only finals are three MLB
+    games still fills both slots with the best two. The cap decides WHICH final
+    wins a contested slot; it must not leave the morning emptier than it found it,
+    which is #1091's standing lesson about caps that turn into filters.
     """
     eligible: list[tuple[float, int]] = []
     for item in feed_items:
@@ -1600,10 +1724,36 @@ def _recent_marquee_final_ids(
         event_id = data.get("id")
         if event_id is None:
             continue
-        eligible.append((_discover_event_ei_score(item), int(event_id)))
+        eligible.append((_discover_final_rank_score(item, now), int(event_id)))
 
     eligible.sort(key=lambda pair: (-pair[0], pair[1]))
-    return {event_id for _, event_id in eligible[:_DISCOVER_RECENT_FINAL_SLOTS]}
+
+    league_of = {
+        int((item.get("data") or {}).get("id")): _discover_final_league_key(item)
+        for item in feed_items
+        if item.get("type") == "event"
+        and (item.get("data") or {}).get("id") is not None
+    }
+
+    kept: list[int] = []
+    per_league: dict[str, int] = {}
+    deferred: list[int] = []
+    for _, event_id in eligible:
+        if len(kept) >= _DISCOVER_RECENT_FINAL_SLOTS:
+            break
+        league = league_of.get(event_id, f"event:{event_id}")
+        if per_league.get(league, 0) >= _DISCOVER_FINAL_LEAGUE_SLOTS:
+            deferred.append(event_id)
+            continue
+        kept.append(event_id)
+        per_league[league] = per_league.get(league, 0) + 1
+
+    for event_id in deferred:
+        if len(kept) >= _DISCOVER_RECENT_FINAL_SLOTS:
+            break
+        kept.append(event_id)
+
+    return set(kept)
 
 
 def _item_is_in_kept_set(item: dict, kept_ids: set[int]) -> bool:
