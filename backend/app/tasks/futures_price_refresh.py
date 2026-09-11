@@ -947,9 +947,29 @@ async def _write_prices(
       job; creating one here would let a price-only path mint identity with no
       categorisation, tier or grouping. Counted as ``unknown_outcomes`` so the
       refusal is visible rather than silent.
-    * **Never touches a settled outcome** (``is_winner`` TRUE). Gotcha #21: a
-      settled book stops quoting, and re-pricing it can only corrupt resolved
-      state.
+    * **Never touches a settled outcome** — crowned (``is_winner`` TRUE) *or*
+      graded a loser by the venue's own settlement feed. Gotcha #21: a settled
+      book stops quoting, and re-pricing it can only corrupt resolved state.
+
+      🔴 THE LOSER HALF WAS MISSING AND IT IS #5246. ``is_winner IS NOT TRUE`` is
+      a test for a CROWN, not for a GRADE: a leg the venue resolved NO carries
+      ``is_winner = FALSE``, so it passed this filter and stayed eligible for
+      re-pricing forever. Nothing has re-priced one yet only because the venue
+      declines to quote a finalized contract — measured 2026-09-11 17:2xZ,
+      ``GET /events/KXATP-26USO?with_nested_markets=true`` returns all 48 US Open
+      men's markets and every ``finalized`` one carries ``yes_bid: null,
+      yes_ask: null, last_price: null``. That is the VENUE's grace, not our
+      guard, and a guard that holds only because the other side stayed quiet is
+      one nobody can prove still works. ``resolution_source`` is the grade's own
+      column, so the refusal is written against it directly.
+
+      Scoped to ``api_settlement`` deliberately, and not to "any non-NULL
+      ``resolution_source``". Most of the other sources are INFERENCES —
+      ``pass2_guess``, ``multi_max_prob``, ``binary_higher_wins`` and the rest of
+      ``OVERWRITABLE_WINNER_SOURCES_SQL`` are guesses the system is allowed to
+      change its mind about — and a live quote is better evidence than a guess.
+      ``api_settlement`` is the one source that is the venue saying the contract
+      is over, which is the only case where a quote could not be an improvement.
 
       The predicate is ``IS NOT TRUE``, not ``IS NULL``, and the difference is
       the whole of #2199's first live failure. ``FuturesOutcome.is_winner``
@@ -980,10 +1000,7 @@ async def _write_prices(
         row[1]: row[0]
         for row in (
             await session.execute(
-                text(
-                    "SELECT id, external_id FROM futures_outcomes "
-                    "WHERE market_id = :mid AND is_winner IS NOT TRUE"
-                ),
+                text(ELIGIBLE_OUTCOMES_SQL),
                 {"mid": market_id},
             )
         ).fetchall()
@@ -1123,6 +1140,29 @@ async def _fetch_kalshi_prices(service, external_id: str):
             }
         )
     return priced
+
+
+#: Which outcomes of a market may be re-priced by a poll — the settled refusal,
+#: in the one place that decides it.
+#:
+#: Both clauses are about SETTLEMENT and neither implies the other. ``is_winner
+#: IS NOT TRUE`` refuses a CROWN; ``resolution_source IS DISTINCT FROM
+#: 'api_settlement'`` refuses a GRADE, which is the half #5246 was missing — a
+#: leg the venue resolved NO carries ``is_winner = FALSE`` and sailed through the
+#: crown test. See `_write_prices`' docstring for the measurement and for why the
+#: refusal names ``api_settlement`` alone rather than any non-NULL source.
+#:
+#: ``IS DISTINCT FROM`` and not ``!=``: ``resolution_source`` is nullable and an
+#: ungraded row holds NULL, which ``!= 'api_settlement'`` evaluates to NULL —
+#: falsy — so the plain inequality would refuse to price EVERY ungraded outcome
+#: in the table. That is the tri-state trap this same predicate already records
+#: for ``is_winner`` two clauses along, and it fails in the opposite direction:
+#: silently pricing nothing rather than silently pricing everything.
+ELIGIBLE_OUTCOMES_SQL = (
+    "SELECT id, external_id FROM futures_outcomes "
+    "WHERE market_id = :mid AND is_winner IS NOT TRUE "
+    "AND resolution_source IS DISTINCT FROM 'api_settlement'"
+)
 
 
 #: Legs that claim CERTAINTY on a contract nobody has graded (#4253).

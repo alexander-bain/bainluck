@@ -36,6 +36,13 @@ from app.utils.resolution_authority import (
     OVERWRITABLE_WINNER_SOURCES_SQL,
     SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
+from app.utils.price_change_stamp import price_changed_at_value
+from app.utils.settled_price import (
+    SETTLED_NO_PRICE,
+    SETTLED_YES_PRICE,
+    settled_price_set_sql,
+    settled_price_values,
+)
 from app.utils.winner_field_coherence import (
     DUPLICATE_CONDITION_LEG_SQL,
     INCOHERENT_FIELD_HAVING_SQL,
@@ -474,6 +481,13 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                     is_winner=is_winner,
                                     resolution_source="api_settlement",
                                     last_updated=func.now(),
+                                    # #5246 / CERT-2637: this is a LIVE grader.
+                                    **settled_price_values(is_winner),
+                                    price_changed_at=price_changed_at_value(
+                                        FuturesOutcome.current_probability,
+                                        FuturesOutcome.price_changed_at,
+                                        1.0 if is_winner else 0.0,
+                                    ),
                                 )
                             )
                             if updated.rowcount > 0:
@@ -663,7 +677,8 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                         r = await session.execute(
                             text("""
                                 UPDATE futures_outcomes fo
-                                SET is_winner = true, resolution_source = 'api_settlement', last_updated = NOW()
+                                SET is_winner = true, resolution_source = 'api_settlement', last_updated = NOW(),
+                                    """ + settled_price_set_sql(SETTLED_YES_PRICE) + """
                                 FROM futures_markets fm
                                 WHERE fo.market_id = fm.id
                                   AND fm.source = 'kalshi'
@@ -677,7 +692,8 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                         r = await session.execute(
                             text("""
                                 UPDATE futures_outcomes fo
-                                SET is_winner = false, resolution_source = 'api_settlement', last_updated = NOW()
+                                SET is_winner = false, resolution_source = 'api_settlement', last_updated = NOW(),
+                                    """ + settled_price_set_sql(SETTLED_NO_PRICE) + """
                                 FROM futures_markets fm
                                 WHERE fo.market_id = fm.id
                                   AND fm.source = 'kalshi'
@@ -786,7 +802,8 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
                                 UPDATE futures_outcomes fo
                                 SET is_winner = true,
                                     resolution_source = 'api_settlement',
-                                    last_updated = NOW()
+                                    last_updated = NOW(),
+                                    """ + settled_price_set_sql(SETTLED_YES_PRICE) + """
                                 FROM futures_markets fm
                                 WHERE fo.market_id = fm.id
                                   AND fm.source = 'kalshi'
@@ -803,7 +820,8 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
                                 UPDATE futures_outcomes fo
                                 SET is_winner = false,
                                     resolution_source = 'api_settlement',
-                                    last_updated = NOW()
+                                    last_updated = NOW(),
+                                    """ + settled_price_set_sql(SETTLED_NO_PRICE) + """
                                 FROM futures_markets fm
                                 WHERE fo.market_id = fm.id
                                   AND fm.source = 'kalshi'
@@ -7390,7 +7408,14 @@ async def _resolve_winners_only(limit: int = 2000):
             """))
             _top_series = [r[0] for r in _sr.all()]
         logger.info("resolve_winners: discovered %d series with unresolved outcomes", len(_top_series))
-        settled_stats = {"pages": 0, "resolved": 0, "series_scanned": 0}
+        settled_stats = {
+            "pages": 0,
+            "resolved": 0,
+            "series_scanned": 0,
+            # CAL-P1004: markets the venue has not called (`result` "" or
+            # "scalar"). Previously graded as losses; now skipped and counted.
+            "undeclared": 0,
+        }
         service2 = KalshiAPIService()
         try:
             for series in _top_series:
@@ -7420,15 +7445,49 @@ async def _resolve_winners_only(limit: int = 2000):
                     for ev in events:
                         for mkt in ev.get("markets") or []:
                             tk = mkt.get("ticker", "")
-                            rs = mkt.get("result")
-                            if tk and rs is not None:
-                                (yes_t if rs == "yes" else no_t).append(tk)
+                            if not tk:
+                                continue
+                            # CAL-P1004, found from #5246. This was
+                            # `rs is not None` + `rs == "yes" else no_t`, which is
+                            # the two-state grade `kms.gradeable_winner` exists to
+                            # replace — and the only one of this file's four Kalshi
+                            # graders still carrying it. It escaped
+                            # `test_kalshi_forward_capture_grade_p1004`'s scan on a
+                            # NAME: that pattern is `result\w* == "yes"` and the
+                            # local here was called `rs`.
+                            #
+                            # It is not cosmetic. `result` is the empty STRING for a
+                            # market the venue has not called, and `"scalar"` for one
+                            # that settles on a number — measured at 39 of 204 results
+                            # on CAL-P053's sample, roughly one settled market in five.
+                            # Both are `is not None`, so both went to `no_t` and were
+                            # written `is_winner=false` at `api_settlement`, the top
+                            # authority rung, which `is_downgrade` then protects from
+                            # correction.
+                            #
+                            # #5246 is why it had to be fixed HERE rather than filed:
+                            # this sweep now writes `current_probability = 0` beside
+                            # the verdict, so an undeclared market would have had its
+                            # price zeroed on the strength of a grade the venue never
+                            # gave. The fix makes the consequence worse; it does not
+                            # get to leave it.
+                            won = kms.gradeable_winner(
+                                mkt.get("status"), mkt.get("result")
+                            )
+                            if won is None:
+                                # Counted, never silent: an absence must not be
+                                # recorded as a fact (gotcha #53), and a population
+                                # nobody counts is one nobody notices.
+                                settled_stats["undeclared"] += 1
+                                continue
+                            (yes_t if won else no_t).append(tk)
                     page_resolved = 0
                     async with get_task_session() as sess:
                         if yes_t:
                             r = await sess.execute(
                                 text("""
-                                UPDATE futures_outcomes fo SET is_winner=true, resolution_source='api_settlement', last_updated=NOW()
+                                UPDATE futures_outcomes fo SET is_winner=true, resolution_source='api_settlement', last_updated=NOW(),
+                                """ + settled_price_set_sql(SETTLED_YES_PRICE) + """
                                 WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
                                 -- Q487: external_id is NOT unique.
                                 AND """ + DUPLICATE_CONDITION_LEG_SQL + """
@@ -7439,7 +7498,8 @@ async def _resolve_winners_only(limit: int = 2000):
                         if no_t:
                             r = await sess.execute(
                                 text("""
-                                UPDATE futures_outcomes fo SET is_winner=false, resolution_source='api_settlement', last_updated=NOW()
+                                UPDATE futures_outcomes fo SET is_winner=false, resolution_source='api_settlement', last_updated=NOW(),
+                                """ + settled_price_set_sql(SETTLED_NO_PRICE) + """
                                 WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
                                 -- Q487: external_id is NOT unique.
                                 AND """ + DUPLICATE_CONDITION_LEG_SQL + """

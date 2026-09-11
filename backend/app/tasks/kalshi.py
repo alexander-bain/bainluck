@@ -42,6 +42,12 @@ from app.utils.event_completion import (  # noqa: E402  # #3544
     KALSHI_OCCURRENCE_COMMENCE_SOURCE,
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.settled_price import (  # noqa: E402  # #5246
+    SETTLED_NO_PRICE,
+    SETTLED_YES_PRICE,
+    settled_price_set_sql,
+    settled_price_values,
+)
 from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
 # #2927: imports nothing but stdlib (same rule as sport_keys.py), so it is safe
 # at module scope — the alarm below needs it outside the task body.
@@ -1572,6 +1578,24 @@ async def _poll_kalshi_markets():
                         # settlement already established.
                         graded_cols = graded_columns(market.status, market.result)
 
+                        # #5246 / CERT-2641. FOUND BY THE WIDENED CENSUS, not by
+                        # the block, and it is the biggest of the three: this is
+                        # the 2-hourly poll, the bulk writer of Kalshi outcome
+                        # rows. It grades through `graded_columns` — so the
+                        # literal `api_settlement` never appears here and the
+                        # old census could not see it — and in the SAME
+                        # statement writes `current_probability = prob`, the
+                        # last price the poll derived. For a leg the venue has
+                        # just resolved that price is not merely stale: Kalshi
+                        # stops quoting a `finalized` market, so it is the final
+                        # ghost of a live quote, frozen onto a settled row.
+                        # When the venue has answered, the price IS the answer.
+                        settled_price = (
+                            settled_price_values(graded_cols["is_winner"])
+                            if graded_cols
+                            else {}
+                        )
+
                         # Upsert outcome
                         update_set: dict = {
                             "name": outcome_name,
@@ -1594,6 +1618,20 @@ async def _poll_kalshi_markets():
                             ),
                         }
                         update_set.update(graded_cols)
+                        if settled_price:
+                            # The price columns are REPLACED, not added to: the
+                            # dict above already set `current_probability` to
+                            # the live quote. `price_changed_at` is recomputed
+                            # against the terminal value through the one
+                            # maintained copy of the #2024 predicate, so a leg
+                            # already sitting at settlement is graded without
+                            # being advertised as freshly moved.
+                            update_set.update(settled_price)
+                            update_set["price_changed_at"] = price_changed_at_value(
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.price_changed_at,
+                                settled_price["current_probability"],
+                            )
                         # Backfill opening_probability if it was NULL (market had
                         # no trading on first capture) and now has real trading
                         if has_real_trading:
@@ -1616,8 +1654,20 @@ async def _poll_kalshi_markets():
                                 market_id=futures_market_id,
                                 external_id=market.ticker,
                                 name=outcome_name,
-                                current_probability=prob,
-                                current_american_odds=american,
+                                # #5246 / CERT-2641, and the INSERT arm needs it
+                                # for CAL-P1004R's own reason: this is the bulk
+                                # CREATOR of outcome rows, so a leg already
+                                # settled the first time the poll sees it would
+                                # otherwise be BORN holding a live quote.
+                                # `opening_probability` below is deliberately
+                                # left on `prob` — that is calibration truth
+                                # (gotcha #144) and settlement does not move it.
+                                current_probability=settled_price.get(
+                                    "current_probability", prob
+                                ),
+                                current_american_odds=settled_price.get(
+                                    "current_american_odds", american
+                                ),
                                 current_yes_bid=market.yes_bid,
                                 current_yes_ask=market.yes_ask,
                                 opening_probability=opening_prob,
@@ -4534,7 +4584,19 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                                 wr = await session.execute(
                                     text("""
                                         UPDATE futures_outcomes
-                                        SET is_winner = :w, resolution_source = 'api_settlement'
+                                        SET is_winner = :w, resolution_source = 'api_settlement',
+                                            -- #5246 / CERT-2637. The grade is a BIND
+                                            -- PARAM here, so the price has to follow the
+                                            -- same param rather than a literal: two
+                                            -- statements keyed off one `:w` cannot
+                                            -- disagree, a literal could.
+                                            current_probability = CASE WHEN :w THEN 1.0 ELSE 0.0 END,
+                                            current_american_odds = NULL,
+                                            price_changed_at = CASE
+                                                WHEN current_probability IS DISTINCT FROM
+                                                     CAST(CASE WHEN :w THEN 1.0 ELSE 0.0 END
+                                                          AS numeric(7,6))
+                                                THEN NOW() ELSE price_changed_at END
                                         WHERE external_id = :t
                                           AND (resolution_source IS NULL
                                                OR resolution_source IN
@@ -5134,7 +5196,8 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             r_yes = await session.execute(
                                 text("""
                                     UPDATE futures_outcomes fo
-                                    SET is_winner = true, resolution_source = 'api_settlement'
+                                    SET is_winner = true, resolution_source = 'api_settlement',
+                                        """ + settled_price_set_sql(SETTLED_YES_PRICE) + """
                                     FROM futures_markets fm
                                     WHERE fo.market_id = fm.id AND fm.source = 'kalshi'
                                       AND fo.external_id = ANY(:tickers)
@@ -5152,7 +5215,8 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             r_no = await session.execute(
                                 text("""
                                     UPDATE futures_outcomes fo
-                                    SET is_winner = false, resolution_source = 'api_settlement'
+                                    SET is_winner = false, resolution_source = 'api_settlement',
+                                        """ + settled_price_set_sql(SETTLED_NO_PRICE) + """
                                     FROM futures_markets fm
                                     WHERE fo.market_id = fm.id AND fm.source = 'kalshi'
                                       AND fo.external_id = ANY(:tickers)
@@ -5840,6 +5904,14 @@ async def _create_settled_market(
         # correctly protected every row that already existed. Ungraded now
         # stores SQL NULL on both columns: "the venue has not answered" is a
         # value we write, not a value we decline to write.
+        # #5246 / CERT-2637. This path CREATES rows that are already graded, so
+        # it can mint the defect rather than merely fail to fix it: without this,
+        # a settled leg is born holding `last_price` — the last number anyone
+        # paid for a contract that is over — and no poll can ever correct it.
+        # When the venue has answered, the price IS the answer.
+        if graded_cols:
+            prob = 1.0 if graded_cols["is_winner"] else 0.0
+            american = None
         base_stmt = pg_insert(FuturesOutcome).values(
             market_id=market_id,
             external_id=m.ticker,
@@ -5867,6 +5939,17 @@ async def _create_settled_market(
                     "is_winner": graded_cols["is_winner"],
                     "resolution_source": graded_cols["resolution_source"],
                     "last_updated": func.now(),
+                    # #5246: the conflict path is a RESOLUTION write, so it
+                    # carries the resolved price too. `price_changed_at` goes
+                    # through the shared #2024 predicate rather than a second
+                    # copy of it.
+                    "current_probability": prob,
+                    "current_american_odds": None,
+                    "price_changed_at": price_changed_at_value(
+                        FuturesOutcome.current_probability,
+                        FuturesOutcome.price_changed_at,
+                        prob,
+                    ),
                 },
             )
         else:

@@ -231,20 +231,32 @@ class TestNoTwoStateGradeSurvivesInTheTask:
         assert code.count("graded_columns(") == 2, code.count("graded_columns(")
         assert code.count("gradeable_winner(") == 2, code.count("gradeable_winner(")
 
-    def test_all_three_backfill_graders_defer_too(self):
-        """#4604. The count is THREE, and it was two for a month.
+    def test_all_four_backfill_graders_defer_too(self):
+        """#4604, then #5246. The count is FOUR; it was three, and two before that.
 
-        ``backfill_winners`` has three places that turn a Kalshi ``result`` into
-        ``is_winner``: the nested-event walk, the settled-markets pager, and
-        ``_backfill_kalshi_winners_targeted``. The first two adopted the shared
-        judgment with CAL-P053; the third kept the two-state read, and the
-        docstring at the top of THIS file recorded the whole file as converted.
+        ``backfill_winners`` has four places that turn a Kalshi ``result`` into
+        ``is_winner``: the nested-event walk, the settled-markets pager,
+        ``_backfill_kalshi_winners_targeted``, and the settled-EVENTS sweep in
+        ``_resolve_winners_only``. The first two adopted the shared judgment with
+        CAL-P053; the third kept the two-state read until #4604; the fourth kept
+        it until #5246.
 
-        Pinned as a number for the same reason the sibling above is: a fourth
-        grader cannot be added without someone reading this test.
+        🔴 THE FOURTH ESCAPED THIS FILE'S OWN SCAN ON A NAME. ``TWO_STATE_RE`` is
+        ``result\\w* == "yes"`` — deliberately the name SHAPE rather than one
+        spelling, per its own comment — and the local in that sweep was called
+        ``rs``. So ``rs == "yes"`` sat beside three converted siblings, inside a
+        file this test suite reported as clean, for as long as CAL-P1004 has
+        existed. It was found from #5246, not from here: that ship made the sweep
+        write ``current_probability = 0`` beside the verdict, which turned an
+        undeclared market's phantom loss into a zeroed price and made someone look.
+
+        The lesson is the one the sibling scan already half-learned. A name-shape
+        pattern is stronger than a spelling, and still weaker than a count: this
+        assertion is what a rename cannot dodge. Pinned for exactly that reason —
+        a FIFTH grader cannot be added without someone reading this test.
         """
         code = "\n".join(self._code_lines(BACKFILL_SOURCE))
-        assert code.count("gradeable_winner(") == 3, code.count("gradeable_winner(")
+        assert code.count("gradeable_winner(") == 4, code.count("gradeable_winner(")
 
     def test_the_helper_is_imported_not_reimplemented(self):
         code = TASK_SOURCE.read_text()
