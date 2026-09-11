@@ -210,13 +210,29 @@ class _Recorder:
             sql = str(stmt)
         except Exception:  # noqa: BLE001
             return result
-        if _is_last_match_select(sql):
+        # 🔴 THE FUTURES LANE IS TESTED FIRST, AND THE ORDER IS THE WHOLE POINT.
+        #
+        # These branches used to run events-first, keyed on `FROM events`. #4914
+        # added a correlated `NOT EXISTS (SELECT events.id FROM events ...)` to
+        # the FUTURES pool — the market's own game must not already be Final —
+        # so the futures statement now contains `FROM events` too, matched the
+        # event branch, and this double handed the futures lane a list of
+        # EVENTS. Every prop vanished from the dropdown and fifteen assertions
+        # here failed, describing a route defect that did not exist.
+        #
+        # `futures_markets` is the exact discriminator: no event query in
+        # `routes/events.py` mentions that table (verified against the compiled
+        # SQL, `not_a_proven_duplicate()` included), while the futures pool
+        # always selects FROM it. A substring test on the SUBORDINATE table can
+        # only get less reliable as predicates are added; one on the table being
+        # SELECTED FROM cannot.
+        if "futures_markets" in sql and "SELECT" in sql.upper():
+            rows = self.futures
+        elif _is_last_match_select(sql):
             self.last_match_calls += 1
             rows = self.last_match
         elif _is_event_select(sql):
             rows = self.upcoming
-        elif "futures_markets" in sql and "SELECT" in sql.upper():
-            rows = self.futures
         else:
             return result
         result.scalars.return_value.all.return_value = list(rows)
