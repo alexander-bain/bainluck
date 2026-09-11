@@ -351,7 +351,9 @@ async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
 
     **D104 = A4 (2026-09-09) made this path reach the network.** It used to make
     no StatPal call at all, because `flip_permitted` refused every sport. Now a
-    sport in `FLIP_RULED_WITHOUT_STREAK` — football today — gets its standby read
+    sport in `FLIP_RULED_WITHOUT_STREAK` — read the frozenset, which has grown
+    twice since this line was written (#4493, #4436) and whose members are not
+    restated here for that reason (#5139) — gets its standby read
     on a pass where ESPN went dark for it: one `get_schedule_fixtures` and one
     `livescores`, via `_statpal_standby_reading`. Every other silent sport still
     costs exactly one durable ledger read and no network call, because it refuses

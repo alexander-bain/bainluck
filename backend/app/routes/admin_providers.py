@@ -2046,6 +2046,7 @@ async def statpal_authority_agreement(
     _check_admin_secret(secret, request=request)
 
     from app.config.authority_by_sport import (
+        FLIP_RULED_WITHOUT_STREAK,
         STATPAL,
         SWITCH_IS_WIRED,
         SWITCH_WIRING_NOTE,
@@ -2258,6 +2259,20 @@ async def statpal_authority_agreement(
         # and a copy of those names living in a route file is a copy that keeps
         # saying MEETS after the constant stops.
         "gate": FLIP_GATE_SUMMARY,
+        # #5139: the sports D104 released from the seven-day gate, as DATA.
+        #
+        # The summary above used to carry this list in prose ("football today")
+        # and kept saying it through two additions — #4493's NBA and #4436's
+        # MLB. `utils.authority_agreement` cannot interpolate the set itself
+        # (this config module imports it, so the dependency only runs one way),
+        # which is what pushed the list into a hand-maintained sentence in the
+        # first place. Here the import is already local and already made, so
+        # the list can simply be derived.
+        #
+        # Sorted so the payload diffs cleanly pass to pass — a frozenset's
+        # iteration order is not stable across runs, and a reader diffing two
+        # captures should see a change only when the SET changed.
+        "ruled_without_streak": sorted(FLIP_RULED_WITHOUT_STREAK),
         "sports": sports,
     }
 

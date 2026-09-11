@@ -608,11 +608,29 @@ FLIP_GATE_SUMMARY = (
     # is that for a ruled sport it has stopped being a gate and become a monitor,
     # and an operator reading `MEETS 5/7` on football needs to know that number
     # is no longer what decides.
+    #
+    # #5139: this clause used to read "(football today)" and went on reading it
+    # after the NBA joined the set (#4493) and the MLB after it (#4436), so on
+    # the first day all three sports read 7/7 the payload's opening sentence
+    # told the reader that basketball's streak still gated its flip — it had
+    # not since #4493 — and that nothing separated hockey from basketball, when
+    # hockey was the only one of the three the seven days still bound.
+    #
+    # The set is NOT named here again in any form. This module cannot import
+    # `authority_by_sport` to interpolate it (that module imports THIS one —
+    # `authority_by_sport.py:62` — so the constant cannot know its own readers
+    # without a cycle), and a hand-maintained copy is what rotted. So the prose
+    # names no member and points at `ruled_without_streak`, which the endpoint
+    # derives from the frozenset on every pass. Prose that names no member
+    # cannot go stale; a served list is rebuilt each time it is read.
+    # `test_the_summary_names_no_sport_5139` fails if a member comes back.
     "D104 (2026-09-09): the top-tier leagues no longer WAIT on those seven days "
-    "— for a sport in `authority_by_sport.FLIP_RULED_WITHOUT_STREAK` (football "
-    "today) the streak is published as a MONITOR and gates nothing, and a game "
-    "StatPal lists that we lack is our fetch bug to fix (#2867) rather than a "
-    "gap in the venue. Every other sport is gated exactly as above."
+    "— for a sport in `authority_by_sport.FLIP_RULED_WITHOUT_STREAK`, served "
+    "beside this summary as `ruled_without_streak` and named on each sport's "
+    "own `authority.note`, the streak is published as a MONITOR and gates "
+    "nothing, and a game StatPal lists that we lack is our fetch bug to fix "
+    "(#2867) rather than a gap in the venue. Every other sport is gated "
+    "exactly as above."
 )
 
 
