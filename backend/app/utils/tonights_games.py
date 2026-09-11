@@ -80,11 +80,22 @@ def _parse_dt(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _is_eligible(item: dict, now: datetime, soon_window_hours: int) -> bool:
+def _is_eligible(
+    item: dict,
+    now: datetime,
+    soon_window_hours: int,
+    protected_event_ids: set[int] | None = None,
+) -> bool:
     """A game a reader would call 'on tonight' — live, or about to start.
 
     Deliberately strict. Every rejection below keeps an item in the Discover
     mix where it already was; none of them removes anything.
+
+    ``protected_event_ids`` is the set the ADMISSION arm already selected for
+    this request (#4898's ``_imminent_marquee_kickoff_ids``). Such an id widens
+    the kickoff window and NOTHING else: every other rejection below — finished,
+    suspended, media-less, start time in the past — still applies to it. See
+    :func:`compose_lead` for why the window is the only gate that may differ.
     """
     if item.get("type") != "event":
         return False
@@ -126,8 +137,20 @@ def _is_eligible(item: dict, now: datetime, soon_window_hours: int) -> bool:
         # Strictly ahead of us and inside the window. A start time in the past
         # on a still-"scheduled" row means the status is lagging, not that the
         # game is imminent, so it does not qualify.
+        #
+        # The past-start rejection is checked FIRST and applies to protected ids
+        # too: the admission arm rejects a lagging status for this exact reason,
+        # and a pass that disagreed with the arm feeding it is the defect shape
+        # #4898's own docstring warns about.
         delta = commence - now
-        return timedelta(0) <= delta <= timedelta(hours=soon_window_hours)
+        if delta < timedelta(0):
+            return False
+        if delta <= timedelta(hours=soon_window_hours):
+            return True
+        # Outside the lead pass's own window, but the admission arm chose this
+        # game for THIS request — so it leads from the arm's window, not from a
+        # second one this pass would have to be kept in sync with.
+        return bool(protected_event_ids) and data.get("id") in protected_event_ids
 
     return False
 
@@ -152,9 +175,20 @@ def select_tonights_games(
     now: datetime,
     max_lead: int = MAX_LEAD,
     soon_window_hours: int = SOON_WINDOW_HOURS,
+    protected_event_ids: set[int] | None = None,
 ) -> list[dict]:
-    """The bounded set of items that should lead, in the order they should lead."""
-    eligible = [it for it in feed_items if _is_eligible(it, now, soon_window_hours)]
+    """The bounded set of items that should lead, in the order they should lead.
+
+    A protected game sorts by the SAME key as every other one — live first, then
+    soonest to start — so widening the window never lets a game six hours out
+    displace one starting in twenty minutes. It can only fill a slot the more
+    imminent games did not.
+    """
+    eligible = [
+        it
+        for it in feed_items
+        if _is_eligible(it, now, soon_window_hours, protected_event_ids)
+    ]
     eligible.sort(key=lambda it: _lead_sort_key(it, now))
     return eligible[:max_lead]
 
@@ -194,11 +228,30 @@ def compose_lead(
     include_tonights_games: bool = True,
     max_lead: int = MAX_LEAD,
     soon_window_hours: int = SOON_WINDOW_HOURS,
+    protected_event_ids: set[int] | None = None,
 ) -> list[dict]:
     """The ONE ordering pass for the front of the Discover deck (C185).
 
     Returns ``[pinned marquees] + [up to max_lead tonight games] + [remainder]``,
     every slice in stable input order.
+
+    ONE SELECTION DECISION, NOT TWO WINDOWS (T4-A1, #5099)
+    -----------------------------------------------------
+    ``protected_event_ids`` is #4898's admission set — the about-to-start
+    marquee games the display chain already decided to KEEP this request. Before
+    it was threaded here, admission and seating read two different windows:
+    ``_DISCOVER_IMMINENT_KICKOFF_HOURS = 6`` decided what survived and
+    ``SOON_WINDOW_HOURS = 4`` decided what led, so between T-6h and T-4h a
+    marquee game was on the page but was not seated by this pass. Any top-three
+    placement it had in that band came from whatever the diversity pass happened
+    to do — measured, not argued: at T-6h/T-5h/T-4.5h the specimen sat at rank 3
+    with this pass a no-op, and moved to rank 1 only at T-3h when its own window
+    opened.
+
+    Widening ``SOON_WINDOW_HOURS`` would have been the wrong fix twice over: it
+    is C185's contract and it governs every routine game too. Passing the set
+    the other pass already chose keeps ONE selection decision with two
+    consumers, which is the same shape #4898 used for its two deleting passes.
 
     WHY THIS IS ONE FUNCTION AND NOT TWO PASSES
     -------------------------------------------
@@ -239,7 +292,9 @@ def compose_lead(
         # the `max_lead` slots — that would silently shorten the game lead-in
         # while looking like a cap.
         games = (
-            select_tonights_games(unpinned, now, max_lead, soon_window_hours)
+            select_tonights_games(
+                unpinned, now, max_lead, soon_window_hours, protected_event_ids
+            )
             if include_tonights_games
             else []
         )

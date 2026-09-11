@@ -78,6 +78,7 @@ from app.utils.sports_first_page_rails import (
 )
 from app.utils.tonights_games import (
     MARQUEE_PIN_KEY,
+    MAX_LEAD,
     compose_lead,
 )
 
@@ -1742,12 +1743,16 @@ def apply_discover_display_chain(
             ``test_discover_display_chain_shared.py`` —
             ``test_timing_callback_fires_for_every_recorded_stage`` is what
             catches a new stage added here and nowhere else.
-        now: the request clock, read only by ``_recent_marquee_final_ids``
-            (#4681) to ask whether a finished card is still inside the window
-            the web client will render it in. ``None`` means "use the real
-            clock", which is what production does; a test passes it so the
-            marquee-final arm has a fixed anchor instead of branching on the
-            wall clock (gotcha #44).
+        now: the request clock, read by ``_recent_marquee_final_ids`` (#4681) to
+            ask whether a finished card is still inside the window the web
+            client will render it in, by ``_imminent_marquee_kickoff_ids``
+            (#4898) on the other side of kickoff, and by ``compose_lead``
+            (T4-A1, #5099) when it decides which games lead. ``None`` means "use
+            the real clock", which is what production does; a test passes it so
+            those passes have a fixed anchor instead of branching on the wall
+            clock (gotcha #44). It is threaded to EVERY clock-reading pass in
+            the chain — this list was wrong once, and the pass it omitted was
+            silently no-opping for every fixed-clock caller.
 
     Returns:
         ``(items, meta)``. ``meta['reviewed_filtered_count']`` is ``None`` when
@@ -1778,6 +1783,12 @@ def apply_discover_display_chain(
     # from live+close+tier but isn't more interesting than "Will China
     # invade Taiwan?" for a Discover audience. Only truly exceptional
     # events (strong EI or top-tier exception keywords) keep their score.
+    #
+    # Bound OUTSIDE the branch: the lead pass below reads this set, and it runs
+    # unconditionally. Leaving it to the branch would be an `UnboundLocalError`
+    # on every non-Discover surface (gotcha #7), and defaulting it at the read
+    # site would put the empty case in two places instead of one.
+    kept_kickoff_ids: set[int] = set()
     if event_pct is not None and event_pct < 0.3:
         # #4681 — chosen BEFORE either pass and handed to both. The demotion
         # would cap these to 35 and the noise filter would delete them, and a
@@ -1876,8 +1887,58 @@ def apply_discover_display_chain(
     #
     # The marquee prefix is UNGATED (as it always was); only the tonight's-
     # games prefix is Discover-mode-only, so Sports mode never invokes it.
-    items = compose_lead(items, include_tonights_games=discover_mode)
+    #
+    # `now` IS PASSED, and it was not before (T4-A1, #5099). This call took the
+    # wall clock while `_imminent_marquee_kickoff_ids` above took the request's
+    # `now`, so one selection decision was made against two clocks. In
+    # production the two agree — `get_feed` derives `now` from the wall clock —
+    # so this fixes nothing a reader can see today. What it fixes is every
+    # caller that passes an explicit clock: the admin ratification instrument
+    # and any fixed-clock test built a page whose lead pass had silently
+    # no-opped, because the fixtures' kickoff times were computed from the fixed
+    # clock and read against the real one. That is the drift this whole function
+    # exists to prevent, and it made the T-6h/T-1h/live acceptance evidence
+    # #5099 asks for impossible to write truthfully.
+    items = compose_lead(
+        items,
+        now,
+        include_tonights_games=discover_mode,
+        protected_event_ids=kept_kickoff_ids,
+    )
     _tick("lead_composition")
+
+    # === A REQUIRED MARQUEE THAT DID NOT MAKE THE LEAD IS LOUD (T4-A1, #5099) ===
+    #
+    # "A missing required marquee is an explicit FAILED edition check, not
+    # filler." The admission arm named at most `_DISCOVER_IMMINENT_MARQUEE_SLOTS`
+    # games as required for this request; if none of them is in the lead the
+    # page is not the page the ship promises, and that must not read the same as
+    # a night with no marquee game at all (gotcha #53 — an empty result and a
+    # failed one are different facts).
+    #
+    # It REPORTS; it does not re-order. The lead is already capped at MAX_LEAD
+    # and the pinned prefix outranks games by C185's contract, so a marquee can
+    # legitimately be squeezed out by a pin or by more imminent games. Forcing
+    # it in here would be a second composition authority — the exact thing this
+    # ship exists to remove.
+    marquee_lead_shortfall = 0
+    if kept_kickoff_ids:
+        seated = {
+            (it.get("data") or {}).get("id")
+            for it in items[:MAX_LEAD]
+            if it.get("type") == "event"
+        }
+        if not (kept_kickoff_ids & seated):
+            marquee_lead_shortfall = len(kept_kickoff_ids)
+            logger.warning(
+                "Discover lead composition: %d required marquee game(s) %s were "
+                "admitted for this request but none reached the top %d — lead "
+                "holds %s",
+                marquee_lead_shortfall,
+                sorted(kept_kickoff_ids),
+                MAX_LEAD,
+                [it.get("type") for it in items[:MAX_LEAD]],
+            )
 
     # === FIRST-PAGE QUALITY FLOOR (#1958, Fable ruling (d)) ===
     #
@@ -2119,6 +2180,11 @@ def apply_discover_display_chain(
         "client_deletion_swap": client_deletion_swap_meta,
         "futures_first_page_cap": futures_cap_meta,
         "live_first_page": live_first_page_meta,
+        # 0 = the check passed OR no marquee game was required this request.
+        # The two are distinguished by `marquee_lead_required` beside it, so a
+        # quiet night never reads as a passing check (gotcha #53).
+        "marquee_lead_shortfall": marquee_lead_shortfall,
+        "marquee_lead_required": len(kept_kickoff_ids),
     }
 
 

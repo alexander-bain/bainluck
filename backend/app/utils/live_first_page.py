@@ -24,8 +24,8 @@ Two independent reasons, and neither is a bug in the thing that has it:
    Distinct floats never tie, so the live boost has been inert on this path.
    That is a premise that expired, not a line that was ever wrong.
 
-2. **`lead_with_tonights_games` is Discover-only.** `compose_lead` is invoked as
-   `compose_lead(items, include_tonights_games=discover_mode)` and the comment
+2. **`lead_with_tonights_games` is Discover-only.** `compose_lead` is invoked
+   with `include_tonights_games=discover_mode` and the comment
    above it says so in as many words: "only the tonight's-games prefix is
    Discover-mode-only, so Sports mode never invokes it." That was a reasonable
    call — Discover's problem was having no games at all — and this module
