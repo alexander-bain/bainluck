@@ -240,6 +240,22 @@ def test_the_refusal_is_decided_per_market_not_per_leg():
     assert {leg["outcome_id"] for leg in refuse} == {20, 21}
 
 
+def test_a_market_whose_legs_disagree_fails_closed():
+    """Disagreement within a market refuses the market, it does not clear it.
+
+    The scan's `EXISTS` is keyed on `market_id` alone, so no production row can
+    reach this today — which is precisely why it is worth pinning. Reading the
+    first leg's answer instead of requiring all of them would let a future
+    per-leg scan clear a whole market off one row, silently, in the one function
+    whose job is to refuse.
+    """
+    from scripts.repair_5246_settled_outcomes_still_carrying_a_price import plan
+
+    clear, refuse = plan([_leg(7, 70, True), _leg(7, 71, False)])
+    assert clear == []
+    assert {leg["outcome_id"] for leg in refuse} == {70, 71}
+
+
 def test_an_empty_reconciliation_is_not_a_clean_backup():
     """gotcha #53: `all()` over an empty mapping is True.
 

@@ -256,8 +256,18 @@ def classify(legs):
     *does a live priced field survive here?* — is a property of the market. A
     per-leg answer would clear the legs of a market one at a time and blank the
     card on the last one.
+
+    `all()` and not `legs[0]`, and the difference is fail-closed vs fail-open.
+    The scan's `EXISTS` is keyed on `fo.market_id` alone, so today every leg of
+    a market carries the identical flag and the two forms agree on every
+    production row. That is a property of one subquery, not of this function —
+    and reading `legs[0]` would let a future scan that computed the flag per-leg
+    clear a whole market off one row's answer, silently, which is the exact
+    outcome the refusal exists to prevent. Disagreement resolves to REFUSE, so
+    the safe direction is also the one that needs no new plumbing to be seen:
+    the rows land in the refused count.
     """
-    survives = bool(legs[0]["live_field_survives"])
+    survives = all(bool(leg["live_field_survives"]) for leg in legs)
     return (legs, []) if survives else ([], legs)
 
 
