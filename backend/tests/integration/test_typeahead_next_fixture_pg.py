@@ -89,13 +89,38 @@ CONTROL = "Kansas City Chiefs"
 #: The ceiling control. Its only fixture is past the horizon.
 CEILING = "Miami Dolphins"
 
+#: #5201, the namesake family. `bruins` resolves BOSTON into slot 0 — NHL is a
+#: prominent sport key and the pool is ordered on prominence — while the only
+#: fixture in the seven-day pool belongs to UCLA. The or-NEXT arm above cannot
+#: reach Boston's game: its gate asks whether any pooled row NAMES the query, and
+#: `query_names_participant('bruins', [..., 'UCLA Bruins'])` is True.
+#:
+#: 🔴 Boston's fixture is named "Bruins", not "Boston Bruins", ON PURPOSE. It is
+#: reachable ONLY by `away_team_id`, so this family proves the id arm rather than
+#: the name arm that shadows it in every naive seed. Production carries the same
+#: split: 1,378 of the 1,722 future fixtures inside the horizon have a team id,
+#: and the four whose display name disagrees with the team's own name are exactly
+#: the rows a name-only version loses.
+NAMESAKE_SUBJECT = "Boston Bruins"
+NAMESAKE_DECOY = "UCLA Bruins"
+
+#: #5201, the second half: the same shape reachable ONLY by exact name. 344
+#: future fixtures inside the horizon carry no `home_team_id` at all (143 of them
+#: in `soccer_other` alone) and 81 of those name a real team row exactly. Chicago
+#: is one of them here — no ids on the row, so the name arm is the only path.
+NAME_ONLY_SUBJECT = "Chicago Bears"
+NAME_ONLY_DECOY = "Hershey Bears"
+
 
 async def _seed(session):
-    """One sport, three teams, six events; ids assigned by the server."""
+    """Four sports, eight teams, twelve events; ids assigned by the server."""
     from app.models.models import Event, Sport, Team
 
     nfl = Sport(key="americanfootball_nfl", name="NFL")
-    session.add(nfl)
+    nhl = Sport(key="icehockey_nhl", name="NHL")
+    ncaaf = Sport(key="americanfootball_ncaaf", name="NCAAF")
+    ahl = Sport(key="icehockey_ahl", name="AHL")
+    session.add_all([nfl, nhl, ncaaf, ahl])
     await session.flush()
 
     now = datetime.now(timezone.utc)
@@ -176,6 +201,77 @@ async def _seed(session):
         Team(sport_id=nfl.id, name=CEILING, abbreviation="MIA"),
     ])
 
+    # --- #5201: the namesake families ---------------------------------------
+    # These teams are FLUSHED before their events, because the whole point of
+    # the first family is that its fixture is found by `away_team_id` and by
+    # nothing else.
+    boston = Team(sport_id=nhl.id, name=NAMESAKE_SUBJECT, abbreviation="BOS")
+    ucla = Team(sport_id=ncaaf.id, name=NAMESAKE_DECOY, abbreviation="UCLA")
+    chicago = Team(sport_id=nfl.id, name=NAME_ONLY_SUBJECT, abbreviation="CHI")
+    hershey = Team(sport_id=ahl.id, name=NAME_ONLY_DECOY, abbreviation="HER")
+    session.add_all([boston, ucla, chicago, hershey])
+    await session.flush()
+
+    # The decoy: inside the seven-day pool, so it both fills the pool AND closes
+    # the or-NEXT gate. This is the production shape exactly — UCLA played the
+    # Saturday, Boston not for nineteen days.
+    namesake_decoy_soon = Event(
+        sport_id=ncaaf.id,
+        home_team_name=NAMESAKE_DECOY,
+        home_team_id=ucla.id,
+        away_team_name="San Diego State Aztecs",
+        commence_time=now + timedelta(days=1),
+        status="scheduled",
+        event_tags=None,
+    )
+    # 🔴 Named "Bruins", id-linked to Boston: reachable by the id arm only.
+    namesake_subject_next = Event(
+        sport_id=nhl.id,
+        home_team_name="Buffalo Sabres",
+        away_team_name="Bruins",
+        away_team_id=boston.id,
+        commence_time=now + timedelta(days=19),
+        status="scheduled",
+        event_tags=None,
+    )
+    # The ceiling, inside this family so the arm cannot pass by returning the
+    # first Boston row it sees.
+    namesake_subject_distant = Event(
+        sport_id=nhl.id,
+        home_team_name="Bruins",
+        home_team_id=boston.id,
+        away_team_name="Montreal Canadiens",
+        commence_time=now + timedelta(days=200),
+        status="scheduled",
+        event_tags=None,
+    )
+
+    # The name-only family: no team ids anywhere on either row.
+    name_only_decoy_soon = Event(
+        sport_id=ahl.id,
+        home_team_name=NAME_ONLY_DECOY,
+        away_team_name="Wilkes-Barre Penguins",
+        commence_time=now + timedelta(days=1),
+        status="scheduled",
+        event_tags=None,
+    )
+    name_only_subject_next = Event(
+        sport_id=nfl.id,
+        home_team_name=NAME_ONLY_SUBJECT,
+        away_team_name="Green Bay Packers",
+        commence_time=now + timedelta(days=25),
+        status="scheduled",
+        event_tags=None,
+    )
+
+    session.add_all([
+        namesake_decoy_soon,
+        namesake_subject_next,
+        namesake_subject_distant,
+        name_only_decoy_soon,
+        name_only_subject_next,
+    ])
+
     await session.commit()
     return {
         "subject_last": subject_last.id,
@@ -184,6 +280,11 @@ async def _seed(session):
         "control_distant": control_distant.id,
         "ceiling_beyond": ceiling_beyond.id,
         "ceiling_last": ceiling_last.id,
+        "namesake_decoy_soon": namesake_decoy_soon.id,
+        "namesake_subject_next": namesake_subject_next.id,
+        "namesake_subject_distant": namesake_subject_distant.id,
+        "name_only_decoy_soon": name_only_decoy_soon.id,
+        "name_only_subject_next": name_only_subject_next.id,
     }
 
 
@@ -379,3 +480,124 @@ async def test_the_horizon_is_a_ceiling_and_the_fallback_survives_it(typeahead):
         "no game at all for the Dolphins: the or-LAST arm stopped answering the "
         f"case it exists for. Returned: {returned}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 4. #5201 — the arm above admits only rows the query NAMES, and a NAMESAKE
+#    names it. Same harness, because it is the same question one step in: not
+#    "is there a fixture" but "is there THIS team's fixture".
+# ---------------------------------------------------------------------------
+
+
+@needs_postgres
+async def test_the_resolved_teams_own_fixture_reaches_the_dropdown(typeahead):
+    """🔴 THE SHIP (#5201). `bruins` reaches BOSTON's game.
+
+    Production, 2026-09-11: the reader got a Boston Bruins card in slot 0 and,
+    as the only game on the page, *San Diego State Aztecs at UCLA Bruins*.
+    Boston's own next fixture existed — three of them inside the horizon — and
+    no path on the endpoint could reach it, because the or-NEXT gate was
+    satisfied by UCLA and the or-NEXT query's eight-row window over 120 days
+    fills with UCLA's weekly fixtures long before it arrives at Boston's.
+
+    The seeded row is named "Bruins" and carries Boston's `away_team_id`, so
+    this passes only if the arm selects on IDENTITY. A version that matched the
+    team's display name — which is 99.7% as good on production and looks
+    equivalent in review — returns nothing here.
+    """
+    ask, ids = typeahead
+
+    returned = _event_ids(await ask("bruins"))
+
+    assert ids["namesake_subject_next"] in returned, (
+        "the Bruins' own next game is still unreachable — the reader gets a "
+        f"Boston card above another club's fixture. Returned: {returned}"
+    )
+
+
+@needs_postgres
+async def test_the_namesakes_fixture_is_not_taken_away(typeahead):
+    """The ship is ADDITIVE, and this is the assertion that holds it to that.
+
+    Nothing about UCLA's fixture is wrong — it is a real game that really
+    matches the query, and a reader who meant UCLA is entitled to it. The repair
+    is that Boston's game is THERE TOO, not that somebody else's is gone. A
+    version that re-gated the pool on the resolved team would pass the test
+    above and quietly delete this row.
+    """
+    ask, ids = typeahead
+
+    returned = _event_ids(await ask("bruins"))
+
+    assert ids["namesake_decoy_soon"] in returned, (
+        "UCLA's fixture disappeared: the new arm is filtering the pool instead "
+        f"of adding to it. Returned: {returned}"
+    )
+
+
+@needs_postgres
+async def test_the_horizon_still_binds_on_the_new_arm(typeahead):
+    """gotcha #41 wants both ends, and the arm takes exactly ONE row.
+
+    Boston has a fixture at nineteen days and another at two hundred. The near
+    one is the answer; the far one must never be, or the arm has become an
+    unbounded "find me anything by this team" and a dissolved club answers with
+    a fixture from a season nobody asked about.
+
+    Paired with the positive assertion deliberately: "the distant row is absent"
+    passes trivially when the arm is broken and returns nothing at all.
+    """
+    ask, ids = typeahead
+
+    returned = _event_ids(await ask("bruins"))
+
+    assert ids["namesake_subject_next"] in returned
+    assert ids["namesake_subject_distant"] not in returned, (
+        "a fixture two hundred days out was offered — the new arm is not "
+        f"ceilinged, or it is not sorted by the soonest. Returned: {returned}"
+    )
+
+
+@needs_postgres
+async def test_a_fixture_with_no_team_ids_is_still_reached(typeahead):
+    """The name arm, and it is not symmetry — it is 81 measured rows.
+
+    Of the 344 future fixtures inside the horizon with no `home_team_id`
+    (production 2026-09-11), 81 name a real team row exactly; `soccer_other`
+    carries 143 id-less fixtures on its own. This family has ids on NEITHER row,
+    so it passes only if the exact-name arm survives.
+
+    🔴 And it must be an EQUALITY. The decoy here is *Hershey Bears*, inside the
+    pool and inside the seven days: a LIKE would match it, close the gate, and
+    put the ship back exactly where #5201 found it.
+    """
+    ask, ids = typeahead
+
+    returned = _event_ids(await ask("bears"))
+
+    assert ids["name_only_subject_next"] in returned, (
+        "the Bears' own fixture is unreachable — the name arm is gone and the "
+        f"id arm cannot see a row with no ids. Returned: {returned}"
+    )
+    assert ids["name_only_decoy_soon"] in returned, (
+        f"Hershey's fixture disappeared — the arm is filtering. Got: {returned}"
+    )
+
+
+@needs_postgres
+async def test_the_arm_does_not_offer_a_game_the_pool_already_holds(typeahead):
+    """The gate and the query must not disagree, seen from the reader's side.
+
+    If the gate's test for "this team's fixture is already here" is narrower
+    than the query that fetches one, the arm re-fetches a row the pool already
+    holds and the reader sees the same game twice — #2263's complaint, arriving
+    through a new door. Asserted over every query in the file, because the
+    cheapest way to introduce it is to repair one family and not notice another.
+    """
+    ask, _ = typeahead
+
+    for query in ("bruins", "bears", "patriots", "chiefs", "dolphins"):
+        returned = _event_ids(await ask(query))
+        assert len(returned) == len(set(returned)), (
+            f"{query!r} offered the same game twice: {returned}"
+        )

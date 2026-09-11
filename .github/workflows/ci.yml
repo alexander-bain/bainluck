@@ -433,7 +433,17 @@ jobs:
             exit 1
           fi
 
-      - name: Typeahead or-NEXT fixture contract (real Postgres)
+      - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
+        # #5201 rides this step: the or-NEXT arm below is gated on "no pooled row
+        # NAMES the query's participant", and a NAMESAKE satisfies that gate —
+        # measured on production 2026-09-11, `bruins` showed a Boston Bruins card
+        # in slot 0 above *San Diego State Aztecs at UCLA Bruins* and Boston's own
+        # three upcoming fixtures were unreachable. The lead-team arm's clauses
+        # are compiled in `tests/test_typeahead_reaches_the_resolved_teams_fixture_5201.py`;
+        # the four cases that need real rows (an id-only fixture, a name-only
+        # fixture, the horizon, and the same game never offered twice) are in
+        # this file and are graded here.
+        #
         # T2-2 / #5059. `/typeahead`'s upcoming pool is bounded at now+7d, so
         # "the live game, else the NEXT, else the last finished" lost its middle
         # term for whole leagues at once: measured on production 2026-09-11, all

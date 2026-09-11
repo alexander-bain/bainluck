@@ -479,7 +479,7 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         according to how the user navigated to it, off the same global identity
         finding.
 
-        NINE call sites, and the number is the assertion:
+        TEN call sites, and the number is the assertion:
 
           `/search`             `event_scope_conditions` — the list the two UNION
                                 recall arms, the outer entity query, the
@@ -507,11 +507,19 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
                                 specimen measured while building it returned a
                                 twinned pair inside its own window (Celtic v
                                 Ferencváros listed twice, three hours apart).
+          `/typeahead`          `_lead_team_next_match_query` — #5201's lead-team
+                                arm, the tenth. Added 2026-09-11. A FIFTH recall
+                                path into the same dropdown, and the one that
+                                needs the clause most sharply: it reaches the
+                                same 120 days as the arm above it AND takes
+                                exactly one row, so a twin that sorts first is
+                                not a duplicate printed beside the answer — it IS
+                                the answer, and the real fixture is never seen.
           `/search-suggestions` live close games · starting soon · recent upsets
                                 — the search box's zero state, eight chips across
                                 four sources
 
-        The count went 7 -> 8 -> 9 by ADDING a surface each time, never by
+        The count went 7 -> 8 -> 9 -> 10 by ADDING a surface each time, never by
         dropping the clause from one. If a future change makes this fail, check
         which of the two it was before touching the number: this assertion
         exists to catch the deletion, and bumping it to match a deletion is how
@@ -535,8 +543,8 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         from app.routes import events
 
         source = inspect.getsource(events)
-        assert source.count("not_a_proven_duplicate()") == 9, (
-            "one of the nine search-surface call sites is gone — see CERT-439"
+        assert source.count("not_a_proven_duplicate()") == 10, (
+            "one of the ten search-surface call sites is gone — see CERT-439"
         )
 
     def test_the_behavioural_search_gate_exists_and_is_wired_into_ci(self):
