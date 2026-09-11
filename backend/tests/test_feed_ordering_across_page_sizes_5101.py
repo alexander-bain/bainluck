@@ -362,9 +362,35 @@ def test_the_tie_break_is_a_complete_ordering():
         _AscendingTieBreak("b"),
         _AscendingTieBreak("a"),
     )
+    # Each operator is evaluated ONCE into a table and the table is compared, so
+    # that "the pair a/b under >" is stated exactly once. Writing these as
+    # chained asserts (`a > b and b < a`) restates a relation CodeQL can already
+    # infer from the one beside it, and its "Redundant comparison" rule flagged
+    # six of them on the previous push of this branch. The coverage is the same;
+    # only the shape changed.
+    #
     # "a" sorts BEFORE "b" ascending, so under the inversion a > b.
-    assert a > b and b < a
-    assert a >= b and b <= a
-    assert a >= a2 and a <= a2
-    assert not (a < b) and not (b > a)
-    assert a == a2 and not (a == b)
+    observed = {
+        "a>b": a > b,
+        "b<a": b < a,
+        "a>=b": a >= b,
+        "b<=a": b <= a,
+        "a<b": a < b,
+        "b>a": b > a,
+        "a>=a2": a >= a2,
+        "a<=a2": a <= a2,
+        "a==a2": a == a2,
+        "a==b": a == b,
+    }
+    assert observed == {
+        "a>b": True,
+        "b<a": True,
+        "a>=b": True,
+        "b<=a": True,
+        "a<b": False,
+        "b>a": False,
+        "a>=a2": True,
+        "a<=a2": True,
+        "a==a2": True,
+        "a==b": False,
+    }
