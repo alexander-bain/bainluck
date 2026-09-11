@@ -16,6 +16,15 @@ struct PlayerPropsCardView: View {
 
     @State private var teamFilter: String = "all"
     @State private var expandedCards: Set<String> = []
+    /// #5137 — separate from `expandedCards`: opening a card's other stats and
+    /// opening its unpriced ones are two different asks, and a reader who wants
+    /// the second should not be handed the first.
+    @State private var unpricedExpandedCards: Set<String> = []
+    /// #5137 — the LOOK rig cannot tap (`LaunchRig.expandsCollapsedSections`),
+    /// so without this the one section this ship adds is the one section it
+    /// could never photograph. Off unless the rig asks: the chevron a reader
+    /// sees still starts closed.
+    private let unpricedStartOpen = LaunchRig.expandsCollapsedSections()
 
     /// #3430 — both competitors of one matchup, so the pair rule decides. A
     /// prop attributed to a team the other side shares a label with is
@@ -44,13 +53,26 @@ struct PlayerPropsCardView: View {
         let color: Color
         let statGroups: [StatGroup]
 
-        /// #4857 — the total order's key. `topProbability` is 0 for a card with
-        /// no rungs, which cannot occur here (`groups` is filtered non-empty
-        /// before a card is built) but keeps the key total rather than optional.
+        /// #5137 — the ladders that are showing a price, and the ladders that
+        /// are only showing the same number over and over. Every part of the
+        /// card that speaks to the reader in probabilities reads the first list.
+        var pricedGroups: [StatGroup] { statGroups.filter(\.isPriced) }
+        var unpricedGroups: [StatGroup] { statGroups.filter { !$0.isPriced } }
+
+        /// #4857 — the total order's key, over the priced ladders only (#5137).
+        ///
+        /// A card is placed by what it can tell a reader, so a flat ladder must
+        /// not buy it a rung count or lend it a `topProbability`: Gausman's six
+        /// rungs of 0.80 would otherwise rank his card above every genuinely
+        /// priced one on the page on the strength of a number no market quoted.
+        /// `topProbability` is 0 for a card with no priced rungs — 4 of the 627
+        /// measured — which sorts it last, where a card with nothing to show
+        /// belongs.
         var orderKey: PlayerPropsOrder.CardKey {
-            PlayerPropsOrder.CardKey(
-                rungs: statGroups.map(\.rungs.count).reduce(0, +),
-                topProbability: statGroups.flatMap(\.rungs).map(\.probability).max() ?? 0,
+            let priced = pricedGroups
+            return PlayerPropsOrder.CardKey(
+                rungs: priced.map(\.rungs.count).reduce(0, +),
+                topProbability: priced.flatMap(\.rungs).map(\.probability).max() ?? 0,
                 name: name
             )
         }
@@ -60,6 +82,12 @@ struct PlayerPropsCardView: View {
         let id: String
         let type: String
         let rungs: [Rung]
+
+        /// #5137 — a ladder whose every rung prints the same percentage is not a
+        /// price and does not draw bars. See ``PlayerPropsPricing``.
+        var isPriced: Bool {
+            PlayerPropsPricing.isPricedLadder(rungs.map(\.probability))
+        }
 
         /// #4959 — the stat's final value, stated once for the group the way the
         /// totals ladder states "Final total N" once above its rungs, rather than
@@ -283,14 +311,18 @@ struct PlayerPropsCardView: View {
                 Spacer()
             }
 
-            // Stat groups — default to Points, per-card expansion for other stats
+            // Stat groups — default to Points, per-card expansion for other stats.
+            // #5137 — over the PRICED ladders only: an unpriced one must not take
+            // the one slot an untapped card has (it did on 52 of 627 measured
+            // cards), and must not be counted in "+N more stats".
+            let priced = card.pricedGroups
             let isExpanded = expandedCards.contains(card.id)
-            let pointsGroups = card.statGroups.filter {
+            let pointsGroups = priced.filter {
                 $0.type.lowercased().contains("point") || $0.type.lowercased().contains("pts")
             }
-            let defaultGroups = pointsGroups.isEmpty ? Array(card.statGroups.prefix(1)) : pointsGroups
-            let groupsToShow = isExpanded ? card.statGroups : defaultGroups
-            let hiddenCount = card.statGroups.count - defaultGroups.count
+            let defaultGroups = pointsGroups.isEmpty ? Array(priced.prefix(1)) : pointsGroups
+            let groupsToShow = isExpanded ? priced : defaultGroups
+            let hiddenCount = priced.count - defaultGroups.count
             if groupsToShow.count == 1 {
                 statGroupView(groupsToShow[0], card: card)
             } else {
@@ -328,6 +360,9 @@ struct PlayerPropsCardView: View {
                 }
                 .buttonStyle(.plain)
             }
+            // #5137 — the ladders with no price: present and openable, costing no
+            // real estate closed (D102), and never drawn as probabilities.
+            unpricedSection(card)
         }
         .padding(10)
         .background(
@@ -389,6 +424,122 @@ struct PlayerPropsCardView: View {
         }
     }
 
+    // MARK: - Unpriced ladders (#5137)
+
+    /// The card's flat ladders, behind one collapsed line.
+    ///
+    /// Closed it is a single 11pt link, and a card with no flat ladder at all —
+    /// 519 of the 627 measured — never draws it. Open, each ladder
+    /// states the two things about it that are true: what the stat finished on,
+    /// and which rungs hit. The bar and the percentage are the parts that were
+    /// never a price, and they are the parts that do not come back.
+    @ViewBuilder
+    private func unpricedSection(_ card: PlayerCard) -> some View {
+        let groups = card.unpricedGroups
+        if !groups.isEmpty {
+            let isOpen = unpricedStartOpen || unpricedExpandedCards.contains(card.id)
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    if isOpen {
+                        unpricedExpandedCards.remove(card.id)
+                    } else {
+                        unpricedExpandedCards.insert(card.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                    Text("Unpriced prop\(groups.count == 1 ? "" : "s") (\(groups.count))")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            if isOpen {
+                ForEach(groups) { group in
+                    unpricedGroupView(group, card: card)
+                }
+            }
+        }
+    }
+
+    /// One unpriced ladder: its name, what the stat finished on, and the rungs
+    /// that were graded.
+    ///
+    /// **A rung earns a row here by having something to say.** The priced ladder
+    /// gives a rung a bar and a percentage, and neither survives the judgement
+    /// that this ladder is not a price — so an ungraded rung would be a bare
+    /// "3+" with empty space beside it, which is the shape D34 rules out: if a
+    /// number cannot be shown honestly the space is left empty rather than
+    /// filled with something that merely occupies it. 203 of the 286 flat rungs
+    /// measured ARE graded, so this is the common case, not the fallback; a
+    /// ladder with nothing graded shows its name alone and says the true thing
+    /// by saying less.
+    private func unpricedGroupView(_ group: StatGroup, card: PlayerCard) -> some View {
+        let graded = isDone
+            ? group.rungs.filter { verdict(for: $0, card: card, statType: group.type).hit != nil }
+            : []
+
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(cleanStatLabel(group.type, player: card.name).uppercased())
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.5)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                if isDone, let final = group.finalValue {
+                    Spacer(minLength: 2)
+                    Text("Final \(Self.formatStatValue(final))")
+                        .font(.system(size: 8, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(1)
+                }
+            }
+            ForEach(Array(graded.enumerated()), id: \.offset) { _, rung in
+                unpricedRungRow(rung, card: card, statType: group.type)
+            }
+        }
+    }
+
+    /// One graded rung of an unpriced ladder: the threshold and the verdict. No
+    /// bar, no percentage — there is no price to draw.
+    private func unpricedRungRow(_ rung: Rung, card: PlayerCard, statType: String) -> some View {
+        let isHit = verdict(for: rung, card: card, statType: statType).hit ?? false
+
+        return HStack(spacing: 4) {
+            Text("\(Int(rung.threshold))+")
+                .font(.system(size: 10))
+                .foregroundStyle(isHit ? card.color : .secondary)
+                .fontWeight(isHit ? .bold : .regular)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: 28, alignment: .trailing)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Image(systemName: isHit ? "checkmark" : "minus")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(isHit ? .green : .secondary)
+                .frame(width: 10)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// One rung's grade, resolved the way every row on this card resolves it.
+    private func verdict(for rung: Rung, card: PlayerCard, statType: String) -> RungVerdict {
+        Self.rungVerdict(
+            servedActual: rung.actual,
+            servedHit: rung.hit,
+            threshold: rung.threshold,
+            boxActual: lookupActualValue(player: card.name, stat: statType)
+        )
+    }
+
     private func rungRow(_ rung: Rung, card: PlayerCard, statType: String) -> some View {
         let verdict = Self.rungVerdict(
             servedActual: rung.actual,
@@ -429,7 +580,9 @@ struct PlayerPropsCardView: View {
                     .frame(width: 10)
             }
 
-            Text("\(Int((rung.probability * 100).rounded()))%")
+            // #5137 — through the same rounding the flat-ladder rule reads, so a
+            // ladder judged flat is exactly a ladder printing one repeated number.
+            Text("\(PlayerPropsPricing.displayPercent(rung.probability))%")
                 .font(.system(size: 10, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(.primary)

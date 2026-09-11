@@ -109,6 +109,39 @@ d("#4857 — the props card deals a stable order", () => {
     // `topProbability` sorting on `\.threshold` by mistake compiles, type-checks,
     // and produces a stable-but-wrong order that no Swift test of the comparator
     // alone would catch, because the comparator would still be a total order.
-    expect(card()).toMatch(/topProbability: statGroups\.flatMap\(\\\.rungs\)\.map\(\\\.probability\)\.max\(\)/);
+    expect(card()).toMatch(/topProbability: priced\.flatMap\(\\\.rungs\)\.map\(\\\.probability\)\.max\(\)/);
+  });
+
+  it("#5137 — the sort key reads the PRICED ladders, not every ladder", () => {
+    // This assertion was `statGroups.flatMap(…)` until #5137, and the widening it
+    // guards against is a REVERSION, not a typo. A flat ladder is not a price —
+    // Kevin Gausman's six rungs of 0.80 come from one stale bid 0.60 / ask 1.00
+    // book replicated down the ladder — so counting its rungs, or letting its
+    // 0.80 be a card's `topProbability`, ranks his card above every genuinely
+    // priced one on the page on the strength of a number no market quoted.
+    //
+    // Swift cannot catch this either: `PlayerPropsPricingTests` proves the rule,
+    // and `PlayerPropsOrderTests` proves the comparator is a total order, and
+    // both stay green if the key goes back to reading every ladder. CI compiles
+    // no Swift, so this file is the only place the WIRING is asserted.
+    const source = card();
+    expect(source).toMatch(/var orderKey: PlayerPropsOrder\.CardKey \{\s*let priced = pricedGroups/);
+    expect(source).toMatch(/rungs: priced\.map\(\\\.rungs\.count\)\.reduce\(0, \+\)/);
+    // The card body must select from the priced ladders too: the untapped card
+    // shows one group, and on 52 of 627 measured cards that slot held a flat one.
+    expect(source).toMatch(/let priced = card\.pricedGroups/);
+    expect(source).toMatch(/let defaultGroups = pointsGroups\.isEmpty \? Array\(priced\.prefix\(1\)\) : pointsGroups/);
+    expect(source).toMatch(/let hiddenCount = priced\.count - defaultGroups\.count/);
+  });
+
+  it("#5137 — the flat-ladder rule is asked, and the rung's percentage rounds through it", () => {
+    // Two halves of one claim. If `isPriced` stops calling the utility the card
+    // silently prices everything again; if the rung label stops rounding through
+    // `displayPercent`, "judged flat" and "prints one repeated number" can drift
+    // apart, and the ladder the rule hides is no longer the ladder the reader saw.
+    const source = card();
+    expect(source).toMatch(/PlayerPropsPricing\.isPricedLadder\(rungs\.map\(\\\.probability\)\)/);
+    expect(source).toMatch(/PlayerPropsPricing\.displayPercent\(rung\.probability\)/);
+    expect(source).not.toMatch(/Int\(\(rung\.probability \* 100\)\.rounded\(\)\)/);
   });
 });
