@@ -7,6 +7,11 @@ exactly two columns, so the restore writes exactly those two back.
     python3 scripts/restore_4923_period_verdicts_from_the_final_score.py            # plan only
     python3 scripts/restore_4923_period_verdicts_from_the_final_score.py --apply    # undo
 
+    # #5023 — put back ONLY the 70 rows the first cohort wrongly matched on the
+    # ticker's date suffix, leaving the 1,718 correct retractions in place:
+    python3 scripts/restore_4923_period_verdicts_from_the_final_score.py \\
+      --outside-declared-cohort --apply
+
     heroku run:detached -a bainluck \\
       "python3 scripts/restore_4923_period_verdicts_from_the_final_score.py --apply"
 
@@ -43,6 +48,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BAK_TABLE = "bak_4923_futures_outcomes"
 MANIFEST_TABLE = "bak_4923_repair_manifest"
 
+#: `--outside-declared-cohort` (#5023) — put back ONLY the rows the repair
+#: should never have touched. The 2026-09-11 01:37Z run matched the period
+#: grammar against the whole `external_id` instead of the series family, so 70
+#: outcomes across 12 markets were cleared on the strength of a day-of-month
+#: running into a club code (`KXMLSSPREAD-26APR22HOUSD` → `22H`). Those 70 held
+#: CORRECT verdicts; the other 1,718 are the ship and must stay cleared.
+#:
+#: WHY THIS IS A PREDICATE AND NOT A LIST OF IDS. A hand-pasted id list is a
+#: snapshot of one person's query and cannot be re-derived or reviewed; this
+#: asks the manifest the same question the fixed cohort asks, so it stays
+#: correct if the manifest grows and it is checkable by reading it. It is the
+#: NEGATION of the repair's own (now family-anchored) cohort — the two files
+#: must be read together, and a change to one without the other is a bug.
+_SERIES = "split_part(fm.external_id, '-', 1)"
+_DECLARED_COHORT = f"""(   {_SERIES} ~* '(^|[^H])[12]H[A-Z]*BTTS'
+                        OR {_SERIES} ~* '(^|[^H])2H'
+                        OR {_SERIES} ~* '[1-4]Q'
+                        OR {_SERIES} ~* 'F[357](SPREAD|TOTAL)?$' )"""
+
 #: Every outcome this repair cleared, with what the live row says NOW and what
 #: the backup says it was. Reported in full rather than filtered in SQL, so the
 #: rows that will be LEFT ALONE are visible in the plan instead of silently
@@ -59,8 +83,12 @@ SELECT m.outcome_id,
   JOIN {BAK_TABLE} b        ON b.id = m.outcome_id
   JOIN futures_outcomes f   ON f.id = m.outcome_id
   JOIN futures_markets fm   ON fm.id = f.market_id
+ {{scope}}
  ORDER BY m.outcome_id
 """
+
+#: The `--outside-declared-cohort` scope, substituted into `{scope}` above.
+_OUTSIDE_SCOPE = f"WHERE NOT {_DECLARED_COHORT}"
 
 #: The compare-and-swap. `resolution_source IS NULL` restores a row only while
 #: it is still in the state the repair left it in. The backup's own
@@ -90,10 +118,15 @@ async def run(args) -> None:
                   f"applied, so there is nothing to undo.")
             return
 
-        rows = (await s.execute(text(_PLAN_SQL))).all()
+        scope = _OUTSIDE_SCOPE if args.outside_declared_cohort else ""
+        rows = (await s.execute(text(_PLAN_SQL.format(scope=scope)))).all()
         restorable = [r for r in rows if r.current_resolution_source is None]
         moved_on = [r for r in rows if r.current_resolution_source is not None]
 
+        if args.outside_declared_cohort:
+            print("SCOPE: only the manifest rows OUTSIDE the declared cohort — the "
+                  "#5023 date-suffix false positives. The ship's own clears are "
+                  "not in this plan and are not restorable by this invocation.")
         print(f"=== #4923 restore plan: {len(rows)} outcomes in the manifest ===")
         print(f"  still ungraded, will be restored : {len(restorable)}")
         print(f"  graded since, LEFT ALONE         : {len(moved_on)}")
@@ -125,4 +158,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--apply", action="store_true",
                    help="write the pre-repair verdicts back (default is plan-only)")
+    p.add_argument("--outside-declared-cohort", action="store_true",
+                   help="restore ONLY the #5023 false positives — manifest rows "
+                        "whose series family carries no period token at all")
     asyncio.run(run(p.parse_args()))
