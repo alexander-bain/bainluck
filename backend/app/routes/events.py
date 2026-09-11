@@ -18431,10 +18431,17 @@ def _lead_team_next_match_query(team_id: int, team_name: str, now: datetime):
     live-first ordering (Q438: the served status can never disagree with the
     sort), the same `now - 1h` floor so a game that kicked off forty minutes ago
     cannot fall between two arms, the same measured 120-day ceiling (gotcha #41
-    wants both ends), and the same `not_a_proven_duplicate()` (CERT-439), which
-    matters more here than anywhere: this arm reaches furthest out, over fixtures
-    still accumulating provider rows, and it takes only ONE row — so a twin that
-    sorts first is not a duplicate beside the answer, it IS the answer.
+    wants both ends), and the same proven-duplicate clause (CERT-439). That last
+    one matters more here than anywhere: this arm reaches furthest out, over
+    fixtures still accumulating provider rows, and it takes only ONE row — so a
+    twin that sorts first is not a duplicate printed beside the answer, it IS the
+    answer, and the real fixture is never seen.
+
+    (The clause is named without its parentheses in this docstring on purpose.
+    `test_proven_duplicate_2263.py` counts the search surfaces that carry it by
+    SOURCE TEXT over this whole module, so prose that spells the call exactly
+    reads as an eleventh call site that does not exist — and the number is that
+    test's entire assertion.)
     """
     return (
         select(Event)
