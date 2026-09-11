@@ -37,7 +37,7 @@ import re
 
 import pytest
 
-from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK
+from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK, STATPAL
 from app.routes import admin_providers
 from app.utils.authority_agreement import FLIP_GATE_SUMMARY, SHADOW_STAMPERS
 
@@ -187,6 +187,26 @@ async def test_every_ruled_sport_says_so_on_its_own_row_5139(call):
     `ruled_without_streak`, once in each sport's `authority.note`. If those two
     disagree, the reader believes whichever they read first, and #5139 is
     precisely what happens when one of them is maintained by hand.
+
+    RULED AND FLIPPED ARE TWO FACTS, NOT ONE (#4954, 2026-09-11). As first
+    written this asked ONE binary question of every row, because when it was
+    written every sport was `ESPN` and "ruled" and "flipped" could not come
+    apart. #4954 makes football `STATPAL`, and `_authority_note` answers a
+    FLIPPED sport with the flip rather than with the gate — the gate sentence is
+    moot for a sport that has already walked through it. Football is then in
+    `ruled_without_streak` (D104 permitted it to flip without a streak — still
+    true, and the field records the RULING) while its note carries no streak
+    clause (it records what has HAPPENED). Those are not two answers to one
+    question, so the old equality failed on a payload that was telling the
+    truth. The two renderings still may not CONTRADICT each other, which is
+    what this now asserts.
+
+    Neither #5139 nor #4954 was wrong alone: each is green on its own base and
+    they merge with no textual conflict. The pair produced a state neither
+    reasoned about, and only a composed tree could see it (authority/129).
+    Written to hold in BOTH directions so it cannot depend on merge order:
+    before the flip no row takes the flipped branch and every assertion below
+    is the original one, unchanged.
     """
     from tests.test_authority_agreement_endpoint import FakeSession
 
@@ -194,12 +214,35 @@ async def test_every_ruled_sport_says_so_on_its_own_row_5139(call):
         metrics={"last_result_summary": {}}, session=FakeSession(anchors=1, column_agrees=1)
     )
     served = set(out["ruled_without_streak"])
+    checked = 0
 
     for entry in out["sports"]:
         note = entry["authority"]["note"]
+        ruled = entry["sport_key"] in served
+
+        if entry["authority"]["current"] == STATPAL:
+            # Exempt from the equality, NOT from scrutiny: the one way this
+            # branch could become a hole is a flipped row that still serves the
+            # pre-flip gate sentence — the stale-note failure #5139 exists to
+            # catch, wearing the new state as cover.
+            assert "may fail over WITHOUT a certification streak" not in note, (
+                f"{entry['sport_key']}: has flipped to StatPal, yet its note "
+                f"still offers the pre-flip gate sentence — two answers again, "
+                f"and the stale one reads as current: {note!r}"
+            )
+            checked += 1
+            continue
+
         ruled_by_note = "may fail over WITHOUT a certification streak" in note
-        assert ruled_by_note == (entry["sport_key"] in served), (
+        assert ruled_by_note == ruled, (
             f"{entry['sport_key']}: `authority.note` says "
-            f"ruled={ruled_by_note} while `ruled_without_streak` says "
-            f"{entry['sport_key'] in served}"
+            f"ruled={ruled_by_note} while `ruled_without_streak` says {ruled}"
         )
+        checked += 1
+
+    # Anti-vacuity: an endpoint serving `sports: []` would satisfy every
+    # assertion above by having nothing to assert them on.
+    assert checked == len(out["sports"]) and checked > 0, (
+        f"examined {checked} of {len(out['sports'])} rows — a guard that "
+        f"inspects no row cannot fail"
+    )
