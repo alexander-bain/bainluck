@@ -99,10 +99,10 @@ actor WidgetAPIClient {
                 awayScore: event.awayScore,
                 homeProb: bothServed ? servedHomePct! : derivedHomePct,
                 awayProb: bothServed ? servedAwayPct! : derivedAwayPct,
-                period: [event.espn?.period, event.espn?.gameClock]
-                    .compactMap { $0 }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " "),
+                // #4880 — see `PeriodLabel.liveStatusText`. `PeriodLabel.swift` is
+                // a member of this target so the widget shares the phone's rule.
+                period: PeriodLabel.liveStatusText(
+                    period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "",
                 sport: event.sportName ?? event.sport ?? "",
                 homeColor: event.homeTeamData?.primaryColor,
                 awayColor: event.awayTeamData?.primaryColor

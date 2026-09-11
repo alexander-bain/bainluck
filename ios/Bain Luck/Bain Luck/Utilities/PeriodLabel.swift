@@ -201,6 +201,50 @@ enum PeriodLabel {
         return normalize(body)
     }
 
+    /// The one rule for printing a live period **beside its clock** — the hero
+    /// capsule, the nav title, the macOS menu bar, the watch and the widget.
+    ///
+    /// #4880: on every live soccer match the hero read **`23' 23'`**. ESPN serves
+    /// soccer's `period` and `game_clock` as the SAME string (`"25'"` / `"25'"`,
+    /// measured on all three live UCL matches, 2026-09-10), and six call sites
+    /// joined the pair with a space.
+    ///
+    /// This is #3273 recurring in the one shape its fix could not cover.
+    /// ``liveBadgeLabel`` strips a clock **prefix** (`"5:11 - 1st Quarter"`),
+    /// because that is what football sends; soccer's period does not CONTAIN the
+    /// clock, it **equals** it, with no separator to find. The old guard tested
+    /// for containment-with-a-separator and never for equality.
+    ///
+    /// Takes both strings because that is the only way to see the collision:
+    /// `liveBadgeLabel` alone is handed one string and cannot know what is about
+    /// to be printed next to it. Every caller that prints the pair goes through
+    /// here, which is what makes the third recurrence unreachable rather than
+    /// merely fixed — asserted across all three targets by
+    /// `frontend/__tests__/ios/periodLabelSingleSource.test.ts`.
+    ///
+    /// Returns `nil` for "say nothing about the clock", so each surface keeps its
+    /// own fallback (the badge says `LIVE`, the watch says nothing at all).
+    static func liveStatusText(period: String?, gameClock: String?) -> String? {
+        let label = (period.map(liveBadgeLabel) ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        var clock = (gameClock ?? "").trimmingCharacters(in: .whitespaces)
+
+        // A clock the reader cannot use. Baseball has none — production serves
+        // `game_clock: null` on MLB (measured on 15308638), and ESPN has also
+        // sent the literal `"0:00"`, which is what the guard this replaces was
+        // written against. Both paths are live, so both are handled here.
+        if clock == "0:00" || clock == "0" { clock = "" }
+
+        // THE DEFECT. Drop the LABEL, never the clock: `game_clock` is the field
+        // that is always a clock, where `period` is whatever ESPN chose to send.
+        let parts = label.caseInsensitiveCompare(clock) == .orderedSame
+            ? [clock]
+            : [label, clock]
+
+        let text = parts.filter { !$0.isEmpty }.joined(separator: " ")
+        return text.isEmpty ? nil : text
+    }
+
     // MARK: - A bare period number (#4888)
 
     /// What a BARE period digit means, by sport, and how far the numbering runs.

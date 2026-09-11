@@ -158,8 +158,10 @@ struct EventDetailView: View {
             homeServed: event.homeTeamData?.abbreviation
         )
         if let hs = event.homeScore, let as_ = event.awayScore {
-            let parts = [event.espn?.period, event.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }
-            let state = parts.joined(separator: " ")
+            // #4880 — this joined the raw pair with no guard at all, so the title
+            // read "… • 25' 25'" on every live soccer match.
+            let state = PeriodLabel.liveStatusText(
+                period: event.espn?.period, gameClock: event.espn?.gameClock) ?? ""
             return "\(away) \(as_) - \(home) \(hs)" + (state.isEmpty ? "" : " • \(state)")
         }
         return "\(away) vs \(home)"

@@ -19,14 +19,11 @@ struct StatusBadge: View {
     /// card, because the raw period was joined to the clock it already contains.
     /// `PeriodLabel.liveBadgeLabel` shortens it while keeping baseball's
     /// half-inning, which is why "Bottom 7th" below is still whole.
+    /// #4880 — the join, the meaningless-clock guard and the equality case all
+    /// moved to `PeriodLabel.liveStatusText`, because five other surfaces print
+    /// the same pair and only this one had any of the rules.
     private var liveText: String {
-        let label = period.map(PeriodLabel.liveBadgeLabel)
-        var parts = [label, gameClock].compactMap { $0 }.filter { !$0.isEmpty }
-        // Baseball has no game clock — "0:00" is meaningless
-        if let clock = gameClock, clock == "0:00" || clock == "0" {
-            parts = [label].compactMap { $0 }.filter { !$0.isEmpty }
-        }
-        return parts.isEmpty ? "LIVE" : parts.joined(separator: " ")
+        PeriodLabel.liveStatusText(period: period, gameClock: gameClock) ?? "LIVE"
     }
 
     /// The arms are an if/else chain rather than a `switch` on purpose: the

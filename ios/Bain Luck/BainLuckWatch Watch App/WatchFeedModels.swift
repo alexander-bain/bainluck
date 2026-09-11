@@ -118,9 +118,11 @@ nonisolated struct WatchFeedEvent: Decodable, Identifiable, Sendable {
     var isSettled: Bool { status == "completed" || status == "closed" }
 
     /// Short live-game clock string ("Q3 4:21" / "T7"), when available.
+    ///
+    /// #4880 — shares the phone's rule rather than keeping a fourth copy of the
+    /// join. `PeriodLabel.swift` is a member of this target for that reason.
     var clockText: String? {
-        let parts = [espn?.period, espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
+        PeriodLabel.liveStatusText(period: espn?.period, gameClock: espn?.gameClock)
     }
 
     /// Best-effort abbreviation for a side, falling back to the last name token.
