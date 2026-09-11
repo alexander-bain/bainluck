@@ -89,10 +89,15 @@ function render(item: FeedItem) {
   );
 }
 
-/** The visible matchup heading, tags stripped. */
+/** The visible matchup heading — its leading text node, whitespace-normalised.
+ *
+ * Deliberately NOT a regex that deletes every angle-bracket run: that shape is an
+ * incomplete HTML sanitizer (CodeQL js/incomplete-multi-character-sanitization,
+ * high severity), and standing notice 32 refuses the sha for it — correctly even
+ * in a test, because the shape is what gets copied somewhere that matters. */
 function headingText(html: string): string {
   const m = html.match(/<h3[^>]*>([\s\S]*?)<\/h3>/);
-  return m ? m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
+  return m ? leadingText(m[1]) : "";
 }
 
 /** The card's context paragraph, or null when the card renders no caption.
@@ -101,7 +106,16 @@ function headingText(html: string): string {
  * it, so the slot is addressable without adding a test-only attribute. */
 function contextParagraph(html: string): string | null {
   const m = html.match(/<p class="text-sm text-text-secondary mt-2">([\s\S]*?)<\/p>/);
-  return m ? m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : null;
+  return m ? leadingText(m[1]) : null;
+}
+
+/** The text before the first tag, whitespace-normalised.
+ *
+ * Everything these guards assert on is a leading text node: the heading is pure
+ * text, and the caption's only possible sibling is the trailing "See more"
+ * button, which is not part of the sentence a reader reads. */
+function leadingText(fragment: string): string {
+  return fragment.split("<")[0].replace(/\s+/g, " ").trim();
 }
 
 /** Occurrences of the word as its own rendered text node, e.g. `>Final<`.
