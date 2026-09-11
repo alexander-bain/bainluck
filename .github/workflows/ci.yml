@@ -592,6 +592,33 @@ jobs:
             exit 1
           fi
 
+      - name: A played game's market leaves the search pool (real Postgres)
+        # #4914. `Set 2 Winner: Swiatek vs Zheng` was served as row 7 of
+        # `q=swiatek` at tier 1 showing `No 100%`, four days after that match
+        # ended, because `status='open'` and `resolution_date >= now` both ask
+        # the VENUE's question and its resolution_date was six days out. 574
+        # markets were in that state on production at the same minute.
+        #
+        # Real Postgres because the whole risk of the fix is NULL semantics.
+        # 32,483 of the ~50.6K markets in this pool carry `event_id IS NULL`,
+        # and the natural `~event_id.in_(...)` spelling drops every one of them
+        # (`NULL NOT IN (...)` is NULL, not TRUE) — two thirds of search recall,
+        # deleted by a predicate that reads like a tightening. A session double
+        # never evaluates the correlation at all; only a server can say which
+        # rows come back.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_played_game_suppression_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/played_game_suppression.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/played_game_suppression.txt; then
+            echo "::error::#4914 played-game suppression gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening

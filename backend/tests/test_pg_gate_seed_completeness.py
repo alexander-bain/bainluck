@@ -79,6 +79,7 @@ COVERED = (
     "test_stand_in_event_starts_real_postgres.py",
     "test_tennis_twin_sweep_pg.py",
     "test_tennis_commence_predicate_real_postgres.py",
+    "test_typeahead_played_game_suppression_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

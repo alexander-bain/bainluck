@@ -1882,6 +1882,81 @@ def _futures_name_arms(ilike_futures_filter, fts_q: str) -> list:
     return [_fts_filter(FuturesMarket.name, fts_q), ilike_futures_filter]
 
 
+def _futures_game_already_played():
+    """The market's own game has been declared Final (#4914). SHARED by /search and /typeahead.
+
+    Returns a NOT EXISTS clause, correlated on ``FuturesMarket.event_id``, that is
+    TRUE for a market we may still offer and FALSE for one whose game is over.
+
+    WHY THIS EXISTS. `status = 'open'` and `resolution_date >= now` — the two
+    filters this joins — both ask the VENUE's question ("has the venue settled
+    this yet?"). Neither asks the reader's ("is this still a thing I can have an
+    opinion about?"), and the two come apart for hours or days, because
+    `resolution_date` is a coarse settlement deadline, not a game clock.
+    MEASURED on production `9ed5a436`, 2026-09-11 01:5xZ, `GET /typeahead?q=swiatek`:
+
+        row 7  Set 2 Winner: Swiatek vs Zheng   market_tier 1   No 100% · Yes null
+
+    Swiatek-Zheng completed 2026-09-07 17:45Z — FOUR DAYS earlier — and that
+    market's `resolution_date` is 2026-09-13. So it is `open`, it is unresolved,
+    it is tier 1, and it is a settled question printed at 100% in the front
+    door's dropdown. 574 markets were in exactly that state at the same minute.
+
+    🔴 NOT EXISTS, NOT `~event_id.in_(...)`. 32,483 of the ~50.6K markets this
+    pool admits carry `event_id IS NULL`, and `NULL NOT IN (...)` evaluates to
+    NULL, not TRUE — the `IN` form silently drops every unattached market and
+    guts recall. NOT EXISTS is correct on a NULL correlation by construction:
+    no matching row, no suppression. `test_unattached_market_survives_4914`
+    pins it, and it fails on the `IN` spelling.
+
+    🔴 THE DISCRIMINATOR IS THE GAME'S STATE, NOT THE PRICE — #4914 says so in
+    those words. A lopsided price on a game not yet played is a real market; a
+    100% on one already played is an answer. Only :data:`SETTLED_STATUSES`
+    (`completed`, `closed`) is read, which is documented at its definition as
+    the READER-facing "has something declared this final?" question — the same
+    question a client asks to draw a Final. Deliberately NOT included:
+
+      * `live` (200 markets) — in-progress, legitimately tradeable. Suppressing
+        these would empty the dropdown during the exact game a reader is watching.
+      * `suspended` (11,077) — the largest bucket, and ZERO of them carry a
+        `completed_at`. We have not established those games were played, so
+        suppressing them would be a guess at 19x this fix's blast radius. Filed
+        separately rather than swept in here.
+      * `voided` (126) — a cancelled game is a different defect from a played one.
+
+    🔴 `.correlate(FuturesMarket)` IS LOAD-BEARING, and the failure it prevents
+    is a CRASH, not a wrong answer. Auto-correlation keys on what the enclosing
+    query selects from. Embedded in a plain `select(FuturesMarket...)` — the
+    /typeahead UNION arm — SQLAlchemy correlates `futures_markets` and the
+    clause is right with or without this call. But an enclosing query that ALSO
+    joins `events` (several on the /search path do) auto-correlates BOTH tables,
+    the subquery is left with nothing to select from, and SQLAlchemy raises at
+    COMPILE time:
+
+        InvalidRequestError: Select statement returned no FROM clauses due to
+        auto-correlation; specify correlate(<tables>) to control correlation
+
+    Naming the one table we mean pins the subquery's own `FROM events` in place.
+    Measured both ways at build time, not reasoned.
+    `test_predicate_survives_an_outer_query_that_joins_events_4914` compiles the
+    joined shape and fails on that exception.
+
+    Note this clause does NOT render correctly in ISOLATION — compiled bare it
+    still shows `FROM events, futures_markets`, because correlation needs an
+    enclosing query to resolve against. It is only ever used embedded, and the
+    two guards above cover the two shapes it is embedded in.
+    """
+    return ~(
+        select(Event.id)
+        .where(
+            Event.id == FuturesMarket.event_id,
+            Event.status.in_(tuple(sorted(SETTLED_STATUSES))),
+        )
+        .correlate(FuturesMarket)
+        .exists()
+    )
+
+
 def _alias_futures_arms(terms: list[str]) -> list:
     """Futures NAME arms for each alias alternative (LAT-P029 Item 1), ready to UNION.
 
@@ -5334,6 +5409,13 @@ async def search_events(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
         ),
+        # #4914: and the game itself is not already over. Same helper as
+        # /typeahead's `_ta_open_now` — this file's own `_build_league_ticker_match`
+        # comment records /search keeping a defect for three cycles after
+        # /typeahead's twin was fixed, so the two surfaces take one predicate or
+        # they drift again. AND distributes over the UNION exactly as the two
+        # filters above it do.
+        _futures_game_already_played(),
     )
     def _futures_candidates_in(arms):
         """The UNION-of-arms candidate filter, for any SUBSET of the arms.
@@ -7228,6 +7310,10 @@ async def typeahead_search(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
+        # #4914: and the game itself is not already over — the dropdown stops
+        # offering a decided question at 100%. Same helper as /search's
+        # `_futures_open_now`, deliberately: one predicate, both surfaces.
+        _futures_game_already_played(),
     )
     # LAT-P143: resolve the held-back outcome arm FIRST, under its own bound, and
     # fold it in as a plain id list. `[]` is a real answer (the arm matched no open
