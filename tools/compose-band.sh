@@ -58,14 +58,22 @@
 # ── EXIT CODES: this script does NOT pass pytest's through unchanged ─────────
 #
 #   0  COMPOSES CLEAN / SCREEN CLEAN — marker written; gate 28b will pass.
-#   1  RED — a real composition failure, reproduced in isolation. Do not push.
-#   3  PROBABLE FLAKE — the band failed but every failure passes alone. This is
-#      NOT a clearance: no marker is written and gate 28b still stops.
-#   2  HARNESS — the run did not answer the question. Re-run.
+#   1  RED — a real composition failure: reproduced in isolation AND absent from
+#      the base. Do not push.
+#   3  PROBABLE FLAKE (passes alone) or PRE-EXISTING (fails on the base too).
+#      Neither is a clearance: no marker is written and gate 28b still stops.
+#   2  HARNESS / INCONCLUSIVE — the run did not answer the question. Re-run.
 #
 # Only 0 and 1 are RESULTS (gotcha #124). pytest's own 5 (nothing collected) and
 # 4 (bad invocation) both look "not failed" to a careless eye, so they are mapped
 # to 2 rather than allowed to read as success.
+#
+# **1 requires THREE answers, not two (#5409).** Isolation separates flake from
+# real; it cannot separate the sha's from master's, because an already-red-on-
+# master failure is maximally deterministic and so reproduces in isolation every
+# time — the re-run CONFIRMS the wrong cause. A failure is only the sha's once it
+# has also been shown ABSENT from the base. A baseline that cannot be taken
+# yields 2, never 1: an unattributed failure is not a verdict about a sha.
 #
 # ── SHELL NOTES ──────────────────────────────────────────────────────────────
 #
@@ -98,13 +106,31 @@ fi
 # piped in rather than executed, which is how notice 18's FIRED clause invokes
 # its sibling (`git show origin/master:tools/... | bash -s -- <sha>`).
 REPO_PATH="${2:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
 if ! git -C "$REPO_PATH" rev-parse --git-dir >/dev/null 2>&1; then
   echo "RESULT: HARNESS -- '$REPO_PATH' is not a git repository. Pass the repo path as argument 2."
   exit 2
 fi
 
+
 echo "### compose-band -- <sha> vs CURRENT master (self-deriving band)"
 echo "### $(TZ=America/Los_Angeles date '+%a %-m/%-d %-I:%M%p PT') / $(date -u +%H:%MZ)"
+
+# `compose_band_verdict` lives in its own file so a test can drive every branch
+# of it (#5409). Sourced from the repo we were handed rather than from
+# `${BASH_SOURCE[0]}`, which is UNBOUND when this script is piped in — the same
+# trap `REPO_PATH` above exists for. If it is absent (an older checkout, or a
+# pipe from a ref that predates it), the fallback is defined INLINE rather than
+# leaving the name undefined: a missing attribution must read as INCONCLUSIVE,
+# never as RED.
+# shellcheck source=tools/compose_band_verdict.sh
+if [ -r "$REPO_PATH/tools/compose_band_verdict.sh" ]; then
+  . "$REPO_PATH/tools/compose_band_verdict.sh"
+else
+  echo "### NOTE: tools/compose_band_verdict.sh not found under $REPO_PATH — every exit-1"
+  echo "###       band will be reported INCONCLUSIVE rather than attributed."
+  compose_band_verdict() { [ "${1-}" = "0" ] && echo FLAKE || echo INCONCLUSIVE; }
+fi
 
 if ! git -C "$REPO_PATH" fetch origin master -q 2>/tmp/bl_cb_fetch_err.txt; then
   # A stale origin/master fails OPEN in the dangerous direction: the marker is
@@ -132,6 +158,23 @@ MASTER=$(git -C "$REPO_PATH" rev-parse origin/master)
 
 echo "### sha    $SHA"
 echo "### master $MASTER"
+
+# ---- SHALLOW CLONE (#5409). Not fatal, and deliberately not: the band's own
+# question — "do these tests pass on master+sha?" — does not need history. But an
+# unknown share of the tests it runs DO: any test that shells out to
+# `merge-base --is-ancestor`, `rev-list`, `log` or a graft-crossing walk gets a
+# wrong answer here and a right one in CI, which checks out `fetch-depth: 0`.
+# `~/bainluck/.git` has been shallow since 2026-09-11 07:34 and every lane
+# worktree shares it, so this is the fleet's normal state, not an oddity.
+# Printed once, up front, so it is in the operator's scrollback BEFORE a verdict
+# rather than being reconstructed after one.
+IS_SHALLOW=$(git -C "$REPO_PATH" rev-parse --is-shallow-repository 2>/dev/null || echo unknown)
+if [ "$IS_SHALLOW" = "true" ]; then
+  echo "### ⚠️  SHALLOW CLONE -- '$REPO_PATH' has a graft boundary, so any test that walks history"
+  echo "###     (merge-base --is-ancestor, rev-list, log) can fail here and pass in CI, which uses"
+  echo "###     fetch-depth: 0. A failure of that shape is the CHECKOUT's, not the sha's. The"
+  echo "###     baseline re-run below tells them apart; read its verdict, not the band's exit."
+fi
 
 # Already merged? Then there is nothing to compose, and banding it is the
 # four-times-repeated waste that notice 31 exists to prevent.
@@ -338,8 +381,95 @@ case "$EXIT" in
            echo "        The same subset failing twice => order pollution, a REAL composition defect:"
            echo "        do not push, and report it."
            EXIT=3 ;;
-        1) echo "RESULT: RED -- the failure(s) reproduce in isolation, so this is the sha's, not the"
-           echo "        machine's. The sha does NOT compose with current master. DO NOT PUSH IT." ;;
+        1) # ---- THE THIRD QUESTION (#5409). Isolation separates FLAKE from REAL.
+           # It does NOT separate "the sha's" from "already red on master", and
+           # that class is maximally deterministic — it reproduces every time, so
+           # the isolation re-run actively CONFIRMS the wrong cause and the old
+           # text stated that inference as fact.
+           #
+           # Measured by lane1/254, 2026-09-11: `65d7f749` (CERT-2653, GREEN
+           # token, every merge-gate notice passed) banded 1 failed / 26,902
+           # passed and got "this is the sha's ... DO NOT PUSH IT". The sha was
+           # fine; the desk merged it and master CI is green. The failing node
+           # shells out to `git merge-base --is-ancestor`, and `~/bainluck/.git`
+           # is a SHALLOW clone, so the ancestry walk hits the graft boundary and
+           # answers "not an ancestor" for commits GitHub confirms are ancestors.
+           # It fails identically on master WITHOUT the sha, and CI checks out
+           # `fetch-depth: 0` so it passes there. 32 minutes, and a good ship
+           # nearly withheld.
+           #
+           # So: re-run the same nodes on the compose BASE alone. Fails there too
+           # => PRE-EXISTING, never "DO NOT PUSH IT". This is general — it
+           # catches every already-red-on-master case, not just the shallow one.
+           BASEWT=${BASEWT:-/tmp/bl-compose-band-base-${MASTER:0:8}}
+           BASE_NODES=(); BASE_SKIPPED=0
+           for n in "${ISO[@]}"; do
+             # A node in a file the SHA ADDS cannot exist at master, and handing
+             # it to pytest there is the exit-4 trap (#124): "no tests ran"
+             # arrives as a story about the harness, not as a baseline.
+             case "$n" in *"::"*) f="backend/${n%%::*}" ;; *) f="backend/$n" ;; esac
+             if git -C "$REPO_PATH" cat-file -e "$MASTER:$f" 2>/dev/null; then
+               BASE_NODES+=( "$n" )
+             else
+               BASE_SKIPPED=$((BASE_SKIPPED+1))
+             fi
+           done
+           if [ "${#BASE_NODES[@]}" -eq 0 ]; then
+             case "$(compose_band_verdict 1 none 0 "$BASE_SKIPPED")" in
+               RED_NO_BASELINE)
+                 echo "RESULT: RED -- the failure(s) reproduce in isolation AND every failing node lives in"
+                 echo "        a test file this sha ADDS ($BASE_SKIPPED of $NFAIL), so there is no baseline"
+                 echo "        to compare against and the failure can only be the sha's."
+                 echo "        The sha does NOT compose with current master. DO NOT PUSH IT." ;;
+               *)
+                 echo "RESULT: INCONCLUSIVE -- no failing node could be re-run on the base and none was"
+                 echo "        skipped for being sha-only, so the node list is not what it should be."
+                 echo "        The band's exit 1 stands UNATTRIBUTED. Do not push on this run."
+                 EXIT=2 ;;
+             esac
+           else
+             echo "### re-running the failing node(s) on the BASE ($MASTER) WITHOUT the sha, to tell"
+             echo "### a regression this sha caused from one master is already carrying (#5409)."
+             [ "$BASE_SKIPPED" -gt 0 ] && echo "###   ($BASE_SKIPPED node(s) skipped: their file does not exist at master)"
+             git -C "$REPO_PATH" worktree remove --force "$BASEWT" >/dev/null 2>&1
+             if ! git -C "$REPO_PATH" worktree add --detach "$BASEWT" "$MASTER" >/dev/null 2>&1; then
+               echo "RESULT: INCONCLUSIVE -- could not create the baseline worktree at $BASEWT, so"
+               echo "        'the sha's or master's?' was never asked. The band's exit 1 stands"
+               echo "        UNATTRIBUTED. Do not push on this run; re-run or check by hand."
+               EXIT=2
+             else
+               # Same invocation shape as the band and the isolation run. A
+               # baseline that differs in more than its TREE answers a different
+               # question.
+               ( cd "$BASEWT/backend" && python3 -m pytest "${BASE_NODES[@]}" -q --no-header ) > "$T.base" 2>&1
+               BASEEXIT=$?
+               echo "### baseline re-run exit: $BASEEXIT"
+               tail -6 "$T.base"
+               echo
+               case "$(compose_band_verdict 1 "$BASEEXIT" "${#BASE_NODES[@]}" "$BASE_SKIPPED")" in
+                 PRE_EXISTING)
+                    echo "RESULT: PRE-EXISTING, NOT RED -- the same failure(s) reproduce on master $MASTER"
+                    echo "        WITHOUT this sha. Master is already carrying them. This band says NOTHING"
+                    echo "        against the sha, and it does NOT clear it either: no marker is written,"
+                    echo "        because a pre-existing failure hides whatever the sha might also have done"
+                    echo "        to the same node. Narrow the band past these node(s) and re-run, or"
+                    echo "        establish by hand that they are unrelated. Report the master failure."
+                    if [ "$IS_SHALLOW" = "true" ]; then
+                      echo "        ALSO: this checkout is a SHALLOW clone (see the warning above), which is"
+                      echo "        the known cause of ancestry-dependent tests failing here and passing in CI."
+                    fi
+                    EXIT=3 ;;
+                 RED)
+                    echo "RESULT: RED -- the failure(s) reproduce in isolation AND pass on master $MASTER"
+                    echo "        without this sha. It is the sha's, not the machine's and not master's."
+                    echo "        The sha does NOT compose with current master. DO NOT PUSH IT." ;;
+                 *) echo "RESULT: INCONCLUSIVE -- the baseline re-run exited $BASEEXIT, which is a story about"
+                    echo "        the harness and not a verdict (#124), so 'the sha's or master's?' is"
+                    echo "        unanswered. The band's exit 1 stands UNATTRIBUTED. Do not push on this run."
+                    EXIT=2 ;;
+               esac
+             fi
+           fi ;;
         *) echo "RESULT: HARNESS -- the isolation re-run exited $ISOEXIT, which is a story about the"
            echo "        harness and not a verdict (#124). The band's own exit 1 still stands unexplained."
            EXIT=2 ;;
