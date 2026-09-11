@@ -703,6 +703,38 @@ for line in sys.stdin:
     sys.stdout.flush()
 '
 
+# ─── WHO YOU ARE ──────────────────────────────────────────────────────────────
+# The session prompt was STANDING-NOTICES.md + the directive body and nothing
+# else: it never named the lane the runner was serving (#5066). Almost every
+# file in a lane inbox is a note one lane WROTE TO another and signed in the
+# author's name, so on a reply the strongest identity signal in the whole prompt
+# named the WRONG lane.
+#
+# Measured 2026-09-10: the integrator runner took a ux reply out of its own
+# inbox; the session opened with "I'll orient first — which lane this session
+# is", read `runner-inbox/ux/`, and ran ux's shoot as `ux/1186` from ~/bainluck
+# for 2h40m while the real ux runner ran the same game — three unread merge
+# offers sitting in the desk's inbox throughout. Served three times before it
+# was caught, because a hijacked session ends at the 2h cap and re-queues.
+#
+# The runner is the only party that knows: the lane is its own argv, never
+# something a session should infer from cwd and a signature. Emitted
+# immediately BEFORE the body rather than at the top of the prompt, because the
+# body is what misleads and the notices sit between the two.
+lane_identity_header () {
+  cat <<EOF
+# ─── WHO YOU ARE (written by lane-runner.sh; no lane authors this block) ──────
+# YOU ARE LANE \`$1\`.
+#   worktree  : $2
+#   inbox     : $3
+#   directive : $4
+# The directive below may be a note another lane WROTE TO YOU and signed in that
+# lane's name. A signature names its AUTHOR. It is never your identity and it
+# never moves you to that lane: serve \`$1\`'s inbox and no other.
+# ──────────────────────────────────────────────────────────────────────────────
+EOF
+}
+
 IDLE=0
 while true; do
   TOOK=0
@@ -719,6 +751,14 @@ while true; do
     # own leftover markers from ones that were already sitting there.
     SESSION_START=$(date +%s)
     echo "[runner:$L] $TS taking $(basename "$Q") → log $(basename "$LOG")"
+    # Assembled here, not inline in the `claude` call: three `cat`s, a heredoc
+    # and a `basename` inside one `-p "$( … )"` is where a quoting slip stops
+    # being visible.
+    PROMPT="$(cat "$HANDOFF/STANDING-NOTICES.md" 2>/dev/null
+              echo
+              lane_identity_header "$L" "$WORKDIR" "$INBOX" "$(basename "$Q")"
+              echo
+              cat "$RUN")"
     # Fresh headless session per queue. Timeout guards a hung session; state is
     # in handoff files, so a killed session resumes via its own report + re-stage.
     # Notice 39 rung 2. Inside the subshell so the runner's own environment is
@@ -734,7 +774,7 @@ while true; do
       # the next session, which is the only reader that can act on it.
       bl_tag_state "$L" "$BL_ZD" | tee -a "$LOG"
       timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
-        --output-format stream-json -p "$(cat "$HANDOFF/STANDING-NOTICES.md" 2>/dev/null; echo; cat "$RUN")" \
+        --output-format stream-json -p "$PROMPT" \
         2>&1 | python3 -u -c "$FMT" | tee -a "$LOG"
       # PIPESTATUS MUST be read inside the subshell. Read outside it, the array
       # holds the subshell's OWN status — i.e. tee's — so a timeout-124 or a
