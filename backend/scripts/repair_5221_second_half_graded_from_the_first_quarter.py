@@ -50,6 +50,58 @@ exactly. Candidate counts have GROWN since #5236 was filed (its table read 6,100
 1H candidates against 6,870 here) because the beat keeps grading while the
 producer fix waits to deploy; the clearable set is what this repair is sized on.
 
+🔴 CLEARING IS ONLY HALF A REPAIR (CERT-2631, first presentation BLOCK).
+The producer's candidate scan admits a market only when
+
+    SUM(CASE WHEN fo.is_winner
+             AND fo.resolution_source NOT IN <overwritable> THEN 1 ELSE 0 END) = 0
+
+and `game_score` is not overwritable. So a single SPARED leg stored TRUE — a
+verdict this repair judged CORRECT and deliberately left alone — holds its whole
+market out of that scan forever, and the siblings this repair just cleared stay
+blank permanently. The first version did exactly that on the production-derived
+`KXNBA1HSPREAD-26MAR24NOPNYK` fixture: 2 legs cleared, 5 spared, and the spared
+set contains a TRUE `game_score` leg. It turned "the wrong verdict" into "no
+verdict, for good", which is worse than what it found.
+
+So the correct verdicts on an AFFECTED market are now cleared too, into their own
+`unlock` cohort — backed up, manifested and restorable exactly like the rest. It
+is safe in the one direction that matters: the producer re-grades EVERY leg of a
+candidate market from the real score, so a correct verdict removed here is
+re-derived correctly on the next pass, while a correct verdict LEFT here strands
+its siblings. The cost is a bounded blank window (the beat is 6-hourly); the
+alternative is permanent.
+
+    series             candidates   TRUE legs (unlock ceiling)   foreign-locked mkts
+    KXNBA1HSPREAD           2,209          359                          0
+    KXNBA1HTOTAL            1,867            0                          0
+    KXNCAAMB1HSPREAD          889          207                          0
+    KXNCAAMB1HTOTAL           801          375                          0
+    KXNBA1HWINNER             609          203                          0
+    KXNBA2HWINNER             608          204                          0
+    KXNCAAMB1HWINNER          318          106                          0
+    KXNBA2HSPREAD             158           34                          0
+    KXNBA2HTOTAL              153          153                          0
+    KXNFL1HSPREAD             105           89                          0
+    KXNCAAF2HSPREAD            94           15                          0
+    KXNCAAF1HSPREAD            72           41                          0
+    ----------------------------------------------------------------------------
+    total                   7,883        1,786                          0
+
+Re-measured on production 2026-09-11 ~18:5xZ, series by series, through THIS
+script's own `_PLAN_SQL`. The candidate column reproduces the 7,883 above
+exactly, which is the cross-check that the added per-market EXISTS widened
+nothing. 1,786 is a CEILING on the unlock, not the unlock: only TRUE legs that
+are SPARED on a market with at least one clear are unlocked.
+
+AND ONE MARKET CLASS IS NOW REFUSED WHOLE. If a market's locker is TRUE and
+non-overwritable but is NOT `game_score` — `api_settlement`, the venue's own
+word, above all — this repair may not clear it, and leaving it would strand
+every leg cleared beside it. Such a market is refused entirely: a repair that
+cannot finish must not start. Measured at **0 markets** across all twelve series
+today, so it is a safety clause rather than a population — which is precisely
+why it is pinned by a test rather than by the count.
+
 THE CONTROL, which is why "51.6% of NBA 1H totals are wrong" is a measurement
 and not a number. `basketball_ncaab` plays HALVES, so `[0]` genuinely is the
 first half there and `_first_half_period_count` returns 1. Its 2,008 rows —
@@ -181,6 +233,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+#: The producer's own "who may still be re-graded" list, imported rather than
+#: re-spelled: `_PLAN_SQL`'s locker test has to be the exact complement of the
+#: HAVING clause in `_resolve_kalshi_spread_total_from_scores`, and a second
+#: copy of that list is how the two drift apart silently.
+from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES_SQL  # noqa: E402
+
 BAK_TABLE = "bak_5221_futures_outcomes"
 #: What the repair DID, as opposed to what the rows WERE (the CERT-2439 lesson,
 #: inherited from #4923). A full-row backup records where a row CAME FROM and
@@ -244,7 +302,14 @@ SELECT fo.id                AS outcome_id,
        e.away_score         AS final_away,
        e.box_score_data -> 'home_period_scores' AS home_periods,
        e.box_score_data -> 'away_period_scores' AS away_periods,
-       COALESCE(s.key, '')  AS sport_key
+       COALESCE(s.key, '')  AS sport_key,
+       EXISTS (SELECT 1 FROM futures_outcomes lk
+                WHERE lk.market_id = fm.id
+                  AND lk.is_winner IS TRUE
+                  AND lk.resolution_source IS NOT NULL
+                  AND lk.resolution_source <> 'game_score'
+                  AND lk.resolution_source NOT IN {OVERWRITABLE_WINNER_SOURCES_SQL})
+              AS foreign_locker
   FROM futures_outcomes fo
   JOIN futures_markets fm ON fm.id = fo.market_id
   JOIN events e           ON e.id = fm.event_id
@@ -289,6 +354,19 @@ SQL = {
     # (LIVE-077-TOUCH-STAMP-PROVENANCE-GUARD / CERT-1936), and this script reads
     # no venue price. The guard's `settled` class would permit the stamp; a
     # permission is not a reason.
+    # THE UNLOCK (CERT-2631). Byte-for-byte the same write as `clear`; a
+    # SEPARATE key because it is a different CLAIM. `clear` says "this verdict
+    # is refuted"; this says "this verdict is right, and it is standing in the
+    # doorway of the ones that are not". Folding them would hide from the
+    # manifest — and so from the restore, and from anyone reading the counts —
+    # that some correct verdicts were removed on purpose.
+    #
+    # The CAS is `is_winner IS TRUE` as well as the source, so a leg that stopped
+    # being the locker between the plan and the write is left alone.
+    "unlock": "UPDATE futures_outcomes "
+              "SET is_winner = NULL, resolution_source = NULL "
+              "WHERE id = :oid AND resolution_source = 'game_score' "
+              "  AND is_winner IS TRUE",
     "clear": "UPDATE futures_outcomes "
              "SET is_winner = NULL, resolution_source = NULL "
              "WHERE id = :oid AND resolution_source = 'game_score'",
@@ -473,31 +551,31 @@ def classify(legs):
     # quietly change what gets graded here.
     period = _ticker_period(first["ticker"])
     if period not in ("1h", "2h"):
-        return [], [], _refuse(
+        return [], [], [], _refuse(
             legs, f"_ticker_period says {period!r}, not a half this repair reads")
 
     n = _first_half_period_count(first["sport_key"])
     if n is None:
-        return [], [], _refuse(
+        return [], [], [], _refuse(
             legs, f"sport {first['sport_key']!r} has no half we may invent")
 
     home = linescore(first["home_periods"])
     away = linescore(first["away_periods"])
     if home is None or away is None:
-        return [], [], _refuse(legs, "linescore missing or cannot be summed")
+        return [], [], [], _refuse(legs, "linescore missing or cannot be summed")
 
     correct_pts = (correct_period_score(period, n, home, first["final_home"]),
                    correct_period_score(period, n, away, first["final_away"]))
     buggy_pts = (buggy_period_score(period, home, first["final_home"]),
                  buggy_period_score(period, away, first["final_away"]))
     if None in correct_pts or None in buggy_pts:
-        return [], [], _refuse(
+        return [], [], [], _refuse(
             legs, f"the {period.upper()} score cannot be reconstructed from this row")
 
     correct = market_verdicts(first["ticker"], legs, *correct_pts)
     buggy = market_verdicts(first["ticker"], legs, *buggy_pts)
     if correct is None or buggy is None:
-        return [], [], _refuse(legs, "no pure grader for this market shape")
+        return [], [], [], _refuse(legs, "no pure grader for this market shape")
 
     clear, spare, refuse = [], [], []
     for leg in legs:
@@ -514,7 +592,52 @@ def classify(legs):
             spare.append(leg)
         else:
             clear.append(leg)
-    return clear, spare, refuse
+
+    # 🔴 CLEARING IS ONLY HALF A REPAIR: THE MARKET HAS TO BE RE-GRADEABLE
+    # AFTERWARDS (CERT-2631).
+    #
+    # The producer's candidate scan
+    # (`_resolve_kalshi_spread_total_from_scores`) admits a market only when
+    #
+    #     SUM(CASE WHEN fo.is_winner
+    #              AND fo.resolution_source NOT IN <overwritable>
+    #         THEN 1 ELSE 0 END) = 0
+    #
+    # and `game_score` is NOT overwritable. So a single SPARED leg that is
+    # `is_winner = TRUE` — a verdict this repair judged CORRECT and deliberately
+    # left alone — keeps its whole market out of that scan forever. The cleared
+    # siblings are then never re-graded: the repair turns "the wrong verdict"
+    # into "no verdict, permanently", which is worse than what it found.
+    #
+    # Measured on the production-derived `KXNBA1HSPREAD-26MAR24NOPNYK` fixture:
+    # 2 legs clear, 5 spare, and the spared set contains a TRUE `game_score`
+    # leg. Under the old code that market emerged from the repair with two blank
+    # legs and no route back.
+    #
+    # So the correct verdicts on an affected market are cleared TOO, into their
+    # own `unlock` cohort. That is safe in the one direction that matters: the
+    # producer re-grades EVERY leg of a candidate market from the real score, so
+    # a correct verdict removed here is re-derived correctly on the next pass,
+    # while a correct verdict LEFT here strands its siblings for good. The cost
+    # is a bounded blank window (the beat runs every six hours); the alternative
+    # is permanent.
+    unlock = []
+    if clear:
+        if first["foreign_locker"]:
+            # A TRUE, non-overwritable verdict from a source that is NOT
+            # `game_score` — `api_settlement` above all, which is the venue's own
+            # word. We may not clear that to buy re-eligibility, and leaving it
+            # would strand every leg we cleared. So the market is refused whole:
+            # a repair that cannot finish must not start.
+            return [], [], [], _refuse(
+                legs,
+                "market is locked out of re-grading by a TRUE verdict this "
+                "repair may not clear (not `game_score`) — clearing here would "
+                "strand the cleared legs blank",
+            )
+        unlock = [leg for leg in spare if leg["stored_is_winner"]]
+        spare = [leg for leg in spare if not leg["stored_is_winner"]]
+    return clear, unlock, spare, refuse
 
 
 def backup_is_exact(recon) -> bool:
@@ -591,13 +714,14 @@ def plan(rows):
         leg = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
         by_market.setdefault(leg["market_id"], []).append(leg)
 
-    clear, spare, refuse = [], [], []
+    clear, unlock, spare, refuse = [], [], [], []
     for legs in by_market.values():
-        c, s, r = classify(legs)
+        c, u, sp, r = classify(legs)
         clear.extend(c)
-        spare.extend(s)
+        unlock.extend(u)
+        spare.extend(sp)
         refuse.extend(r)
-    return clear, spare, refuse
+    return clear, unlock, spare, refuse
 
 
 async def run(args) -> None:
@@ -609,25 +733,27 @@ async def run(args) -> None:
 
     async with get_task_session() as s:
         candidates = (await s.execute(text(_PLAN_SQL))).all()
-        clear, spare, refuse = plan(candidates)
+        clear, unlock, spare, refuse = plan(candidates)
         applied_before = await manifest_count(s)
 
         print(f"=== #5221 + #5236 period re-grade: {len(candidates)} candidates ===")
         print(f"  the linescore REFUTES the stored verdict, will clear : {len(clear)}")
+        print(f"  CORRECT, but locks its market out of re-grading      : {len(unlock)}")
         print(f"  computed wrong, lands right, LEFT ALONE              : {len(spare)}")
         print(f"  the filter would be guessing, REFUSED                : {len(refuse)}")
         print(f"  already applied in {MANIFEST_TABLE}: {applied_before}")
 
-        print("\nby series (candidates / clear / spare / refuse):")
+        print("\nby series (candidates / clear / unlock / spare / refuse):")
         buckets = collections.OrderedDict()
-        for name, legs in (("clear", clear), ("spare", spare), ("refuse", refuse)):
+        for name, legs in (("clear", clear), ("unlock", unlock),
+                           ("spare", spare), ("refuse", refuse)):
             for leg in legs:
                 series = (leg["ticker"] or "").split("-", 1)[0]
                 buckets.setdefault(series, collections.Counter())[name] += 1
         for series in sorted(buckets, key=lambda s: -sum(buckets[s].values())):
             b = buckets[series]
             print(f"  {series:<22} {sum(b.values()):>5} | {b['clear']:>5} "
-                  f"{b['spare']:>5} {b['refuse']:>5}")
+                  f"{b['unlock']:>5} {b['spare']:>5} {b['refuse']:>5}")
 
         print("\nfirst 10 to clear:")
         for leg in clear[:10]:
@@ -667,7 +793,12 @@ async def run(args) -> None:
                 print("\n❌ REFUSING — see above.")
                 return
 
-        outcome_ids = [int(leg["outcome_id"]) for leg in clear]
+        # The unlock rows are WRITTEN, so they are BACKED UP. A backup that
+        # covers only the `clear` cohort would leave the correct verdicts this
+        # repair removes with no undo at all — the exact hole D51(b) exists to
+        # close, reopened by a cohort added later.
+        outcome_ids = [int(leg["outcome_id"]) for leg in clear] + \
+                      [int(leg["outcome_id"]) for leg in unlock]
 
         if args.backup:
             print(f"\n=== backup: copying {len(outcome_ids)} futures_outcomes rows "
@@ -722,14 +853,37 @@ async def run(args) -> None:
             })
             cleared += 1
 
+        # THE UNLOCK, and only for markets this run actually cleared (CERT-2631).
+        # `--limit` may have stopped short of a market's clears, and unlocking a
+        # market whose wrong legs are still standing would remove a correct
+        # verdict to buy re-eligibility nothing is waiting on.
+        cleared_markets = {int(leg["market_id"]) for leg in doable}
+        unlocked, unlock_declined = 0, 0
+        for leg in unlock:
+            if int(leg["market_id"]) not in cleared_markets:
+                continue
+            res = await s.execute(text(SQL["unlock"]),
+                                  {"oid": int(leg["outcome_id"])})
+            if (res.rowcount or 0) == 0:
+                unlock_declined += 1
+                continue
+            await s.execute(text(SQL["man_record"]), {
+                "oid": int(leg["outcome_id"]),
+                "mid": int(leg["market_id"]),
+                "now": now,
+            })
+            unlocked += 1
+
         await s.commit()
         print(f"\nCOMMITTED: cleared {cleared} outcomes, {declined} declined by the "
               f"compare-and-swap (re-graded since the plan — that is the good case).")
+        print(f"           unlocked {unlocked} correct verdicts that were holding "
+              f"their markets out of the producer's scan, {unlock_declined} declined.")
         print(f"Undo: restore_5221_second_half_graded_from_the_first_quarter.py "
               f"--apply (restores only these {cleared}, and only while they are "
               f"still ungraded).")
 
-        after_clear, _, _ = plan((await s.execute(text(_PLAN_SQL))).all())
+        after_clear, _, _, _ = plan((await s.execute(text(_PLAN_SQL))).all())
         print(f"POST-REPAIR: {len(after_clear)} outcomes still carry a 1H/2H "
               f"verdict the linescore refutes (target: 0 after a full run).")
 

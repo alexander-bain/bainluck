@@ -48,8 +48,14 @@ restore = _load("restore_5221_second_half_graded_from_the_first_quarter")
 # ---------------------------------------------------------------------------
 
 def _legs(ticker, names, stored, *, home, away, final, periods,
-          sport="basketball_nba", market_id=1):
-    """One market's legs in the shape `_PLAN_SQL` returns."""
+          sport="basketball_nba", market_id=1, foreign_locker=False):
+    """One market's legs in the shape `_PLAN_SQL` returns.
+
+    `foreign_locker` mirrors the per-market EXISTS the scan carries: does this
+    market hold a TRUE, non-overwritable verdict from a source other than
+    `game_score`? Defaults False because that is the ordinary case; the one
+    fixture that sets it is the `api_settlement` refusal (CERT-2631).
+    """
     return [
         {
             "outcome_id": 100 + i,
@@ -64,6 +70,7 @@ def _legs(ticker, names, stored, *, home, away, final, periods,
             "home_periods": periods[0],
             "away_periods": periods[1],
             "sport_key": sport,
+            "foreign_locker": foreign_locker,
         }
         for i, (name, won) in enumerate(zip(names, stored))
     ]
@@ -165,7 +172,7 @@ def test_the_cohort_excludes_events_that_hold_a_first_half_scoring_play():
 
 def test_a_refuted_verdict_is_cleared():
     """The ship: Boston is served as the 2H winner of a half Golden State won."""
-    clear, spare, refuse = repair.classify(_bosgsw())
+    clear, _unlock, spare, refuse = repair.classify(_bosgsw())
     assert {leg["outcome_name"] for leg in clear} == {"Golden State", "Boston"}
     assert not refuse
     # "Tie" is False under both readings, so it is right for the wrong reason.
@@ -182,7 +189,7 @@ def test_a_correct_verdict_is_never_cleared_even_though_it_looks_identical():
     them, and a repair that cannot tell them apart eats the fix's own output.
     """
     correct = _bosgsw(stored=[True, False, False])  # Golden State really won 2H
-    clear, spare, refuse = repair.classify(correct)
+    clear, _unlock, spare, refuse = repair.classify(correct)
     assert clear == []
     assert len(spare) + len(refuse) == 3
 
@@ -197,7 +204,7 @@ def test_a_row_the_buggy_formula_does_not_explain_is_refused_not_cleared():
     # final-minus-Q1 gives 78-85, so it says Boston won. A stored `False` on
     # Boston is therefore a value this bug did not write.
     odd = _bosgsw(stored=[False, False, False])
-    clear, spare, refuse = repair.classify(odd)
+    clear, _unlock, spare, refuse = repair.classify(odd)
     assert [leg["outcome_name"] for leg in refuse] == ["Boston"]
     assert "Boston" not in {leg["outcome_name"] for leg in clear}
 
@@ -211,13 +218,13 @@ def test_a_two_half_sport_can_never_be_cleared_by_this_repair():
     the test that says so.
     """
     ncaab = _bosgsw(sport="basketball_ncaab")
-    clear, _, _ = repair.classify(ncaab)
+    clear, _u, _s, _r = repair.classify(ncaab)
     assert clear == []
 
 
 def test_an_unmapped_sport_refuses_rather_than_inventing_a_half():
     ice = _bosgsw(sport="icehockey_nhl")
-    clear, spare, refuse = repair.classify(ice)
+    clear, _unlock, spare, refuse = repair.classify(ice)
     assert clear == [] and spare == [] and len(refuse) == 3
 
 
@@ -241,7 +248,7 @@ def test_the_two_leg_winner_shape_is_refused_and_stays_refused():
         home="Indiana Pacers", away="Portland Trail Blazers",
         final=(112, 105), periods=([26, 33, 29, 24], [24, 23, 33, 25]),
     )
-    clear, spare, refuse = repair.classify(porind)
+    clear, _unlock, spare, refuse = repair.classify(porind)
     assert clear == [] and spare == []
     assert len(refuse) == 2
 
@@ -259,7 +266,7 @@ def test_one_unreadable_leg_refuses_the_whole_market():
         home="Golden State Warriors", away="Boston Celtics",
         final=(110, 121), periods=([32, 19, 22, 37], [36, 38, 28, 19]),
     )
-    clear, spare, refuse = repair.classify(totals)
+    clear, _unlock, spare, refuse = repair.classify(totals)
     assert clear == [] and spare == []
     assert len(refuse) == 2
 
@@ -277,9 +284,13 @@ def test_a_total_is_graded_by_the_producers_own_total_grader():
         home="Golden State Warriors", away="Boston Celtics",
         final=(110, 121), periods=([32, 19, 22, 37], [36, 38, 28, 19]),
     )
-    clear, spare, refuse = repair.classify(totals)
+    clear, unlock, spare, refuse = repair.classify(totals)
     assert [leg["outcome_name"] for leg in clear] == ["Over 125.5 2H points scored"]
-    assert [leg["outcome_name"] for leg in spare] == ["Over 100.5 2H points scored"]
+    # Over 100.5 is CORRECT and stored TRUE, so it is the leg that would hold
+    # this market out of the producer's scan. It moves to `unlock`, not `spare`
+    # (CERT-2631) — it is still not a leg the repair judged wrong.
+    assert [leg["outcome_name"] for leg in unlock] == ["Over 100.5 2H points scored"]
+    assert spare == []
     assert refuse == []
 
 
@@ -313,7 +324,7 @@ def test_linescore_refuses_everything_it_cannot_sum(raw, expected):
 def test_a_short_linescore_refuses_rather_than_summing_what_is_there():
     """A game that has not reached the interval cannot answer this (#816)."""
     partial = _bosgsw(periods=([32], [36]))
-    clear, spare, refuse = repair.classify(partial)
+    clear, _unlock, spare, refuse = repair.classify(partial)
     assert clear == [] and spare == [] and len(refuse) == 3
 
 
@@ -343,13 +354,19 @@ def test_there_is_no_override_flag_for_the_sanity_floor():
 def test_the_repair_never_writes_a_verdict():
     """It clears; the producer grades. Two writers of one number is the defect.
 
-    The only UPDATE against `futures_outcomes` this file may carry is the clear.
+    TWO UPDATEs are permitted now (CERT-2631) — the clear and the unlock — and
+    the count is pinned so a third cannot appear unread. Both may only ever
+    write NULLs: the moment either one sets `is_winner =` to anything else, this
+    script has started grading and the whole safety argument is gone.
     """
     src = (_SCRIPTS / "repair_5221_second_half_graded_from_the_first_quarter.py"
            ).read_text()
-    assert src.count("UPDATE futures_outcomes") == 1
-    assert "is_winner = NULL" in repair.SQL["clear"]
-    assert "resolution_source = NULL" in repair.SQL["clear"]
+    assert src.count("UPDATE futures_outcomes") == 2
+    for key in ("clear", "unlock"):
+        assert "is_winner = NULL" in repair.SQL[key]
+        assert "resolution_source = NULL" in repair.SQL[key]
+        assert not re.search(r"is_winner\s*=\s*(TRUE|FALSE|true|false)",
+                             repair.SQL[key])
 
 
 def test_the_plan_groups_by_market_before_it_classifies():
@@ -360,7 +377,7 @@ def test_the_plan_groups_by_market_before_it_classifies():
         final=(110, 121), periods=([32, 19, 22, 37], [36, 38, 28, 19]),
         market_id=2,
     )
-    clear, spare, refuse = repair.plan(rows)
+    clear, _unlock, spare, refuse = repair.plan(rows)
     assert len(clear) + len(spare) + len(refuse) == 4
     assert {leg["outcome_name"] for leg in clear} == {
         "Golden State", "Boston", "Over 125.5 2H points scored"}
@@ -402,16 +419,21 @@ ORLSAC = dict(
 
 def test_a_first_half_spread_the_first_quarter_flattered_is_cleared():
     """The #5236 ship: Portland won the half by 17 and we say they missed 5.5."""
-    clear, spare, refuse = repair.classify(_legs(**PORIND_1H_SPREAD))
+    clear, _unlock, spare, refuse = repair.classify(_legs(**PORIND_1H_SPREAD))
     assert {leg["outcome_name"] for leg in clear} == {
         "Portland wins the 1H by over 5.5 points",
         "Portland wins the 1H by over 8.5 points",
     }
     assert not refuse
     # Over 2.5 was cleared by the quarter too, and Indiana never led — right for
-    # the wrong reason, and this repair does not un-say a right answer.
-    assert {leg["outcome_name"] for leg in spare} == {
+    # the wrong reason. Neither is a verdict this repair judged WRONG, but
+    # "Portland over 2.5" is stored TRUE with a non-overwritable `game_score`
+    # source, so it is precisely what would hold this market out of the
+    # producer's re-grade. It is unlocked; the FALSE one is simply spared.
+    assert {leg["outcome_name"] for leg in _unlock} == {
         "Portland wins the 1H by over 2.5 points",
+    }
+    assert {leg["outcome_name"] for leg in spare} == {
         "Indiana wins the 1H by over 1.5 points",
     }
 
@@ -421,7 +443,7 @@ def test_a_first_half_winner_names_the_team_that_led_at_the_quarter():
     legs = _legs(ticker="KXNBA1HWINNER-26FEB19ORLSAC",
                  names=["Orlando", "Sacramento", "Tie"],
                  stored=[False, True, False], **ORLSAC)
-    clear, spare, refuse = repair.classify(legs)
+    clear, _unlock, spare, refuse = repair.classify(legs)
     assert {leg["outcome_name"] for leg in clear} == {"Orlando", "Sacramento"}
     assert [leg["outcome_name"] for leg in spare] == ["Tie"]
     assert not refuse
@@ -438,7 +460,7 @@ def test_a_first_half_total_ladder_clears_only_the_lines_the_half_crosses():
     legs = _legs(ticker="KXNBA1HTOTAL-26FEB19ORLSAC",
                  names=[f"Over {x} 1H points scored" for x in lines],
                  stored=[False] * len(lines), **ORLSAC)
-    clear, spare, refuse = repair.classify(legs)
+    clear, _unlock, spare, refuse = repair.classify(legs)
     assert [leg["outcome_name"] for leg in clear] == [
         f"Over {x} 1H points scored" for x in (105.5, 108.5, 111.5, 114.5, 117.5)]
     assert [leg["outcome_name"] for leg in spare] == [
@@ -471,7 +493,7 @@ def test_a_correct_first_half_verdict_is_never_cleared():
     legs = _legs(ticker="KXNBA1HWINNER-26FEB19ORLSAC",
                  names=["Orlando", "Sacramento", "Tie"],
                  stored=[True, False, False], **ORLSAC)  # Orlando really won it
-    clear, spare, refuse = repair.classify(legs)
+    clear, _unlock, spare, refuse = repair.classify(legs)
     assert clear == []
 
 
@@ -489,7 +511,7 @@ def test_a_two_half_sport_is_untouchable_on_the_first_half_path_too():
                  home="Indiana Pacers", away="Portland Trail Blazers",
                  final=(119, 127), periods=([33, 29, 24, 33], [37, 42, 26, 22]),
                  sport="basketball_ncaab")
-    clear, _, _ = repair.classify(legs)
+    clear, _u, _s, _r = repair.classify(legs)
     assert clear == []
 
 
@@ -559,7 +581,7 @@ def test_the_period_is_decided_by_the_producers_own_classifier():
                                         PORIND_1H_SPREAD.items()
                                         if k in ("home", "away", "final",
                                                  "periods")})
-        clear, spare, refuse = repair.classify(legs)
+        clear, _unlock, spare, refuse = repair.classify(legs)
         assert clear == [] and spare == [], ticker
         assert "_ticker_period" in refuse[0]["refuse_reason"], ticker
 
@@ -612,7 +634,7 @@ def test_every_refusal_carries_a_stated_reason():
     would go on to bury once per run.
     """
     for label, legs in _every_refusal():
-        clear, spare, refuse = repair.classify(legs)
+        clear, _unlock, spare, refuse = repair.classify(legs)
         assert refuse, f"{label}: expected a refusal, got clear={clear} spare={spare}"
         for leg in refuse:
             assert leg.get("refuse_reason"), label
@@ -623,7 +645,7 @@ def test_the_refusal_paths_are_distinguishable_from_each_other():
     """Six paths, six reasons — a shared string would merge two defects into one bucket."""
     reasons = set()
     for _label, legs in _every_refusal():
-        _c, _s, refuse = repair.classify(legs)
+        _c, _u2, _s, refuse = repair.classify(legs)
         reasons.add(refuse[0]["refuse_reason"])
     assert len(reasons) == 6, reasons
 
@@ -639,7 +661,7 @@ def test_a_missing_linescore_refuses_rather_than_being_skipped():
                  home="Arizona Cardinals", away="Carolina Panthers",
                  final=(33, 30), periods=(None, None),
                  sport="americanfootball_nfl_preseason")
-    clear, spare, refuse = repair.classify(legs)
+    clear, _unlock, spare, refuse = repair.classify(legs)
     assert clear == [] and spare == []
     assert "linescore" in refuse[0]["refuse_reason"]
 
@@ -664,3 +686,100 @@ def test_a_drained_backlog_still_reads_as_drained_at_the_new_floor():
     """The discriminator must not become a false alarm just because the floor rose."""
     verdict = repair.explain_small_plan(8, 1550)
     assert verdict.startswith("ALREADY APPLIED")
+
+
+# --- CERT-2631: clearing is only half a repair -------------------------------
+
+
+def _having_gate_blockers(legs, cleared, unlocked):
+    """The producer's HAVING clause, evaluated on a market after this repair.
+
+    `_resolve_kalshi_spread_total_from_scores` admits a market only when
+
+        SUM(CASE WHEN fo.is_winner
+                 AND fo.resolution_source NOT IN <overwritable>
+            THEN 1 ELSE 0 END) = 0
+
+    Written out here rather than imported because the point is to check the
+    repair against the producer's RULE, not against a helper the repair and the
+    producer might both be wrong about. `game_score` — what every leg in this
+    cohort carries — is not in `OVERWRITABLE_WINNER_SOURCES_SQL`, so any leg
+    still stored TRUE after the repair is a blocker.
+    """
+    touched = {leg["outcome_id"] for leg in cleared} | {
+        leg["outcome_id"] for leg in unlocked
+    }
+    return [
+        leg["outcome_name"]
+        for leg in legs
+        if leg["stored_is_winner"] and leg["outcome_id"] not in touched
+    ]
+
+
+def test_repaired_market_is_reeligible_and_regrades_every_cleared_leg():
+    """A market this repair touches must come out of it re-gradeable.
+
+    🔴 THE BLOCK THIS ANSWERS (CERT-2631). The first version cleared the wrong
+    legs and SPARED the correct ones — including the correct ones stored TRUE.
+    `game_score` is not overwritable, so one spared TRUE leg keeps its whole
+    market out of the producer's candidate scan forever, and the legs this
+    repair had just cleared stayed blank permanently. The repair turned "the
+    wrong verdict" into "no verdict, for good", which is worse than the defect.
+
+    The specimen is the production-derived PORIND 1H spread the block named:
+    2 legs clear, and the spared set contains a TRUE `game_score` leg.
+    """
+    legs = _legs(**PORIND_1H_SPREAD)
+    clear, unlock, spare, refuse = repair.classify(legs)
+
+    assert clear, "fixture must clear something or it proves nothing"
+    assert unlock, "this market's correct TRUE leg is the locker; it must unlock"
+    assert _having_gate_blockers(legs, clear, unlock) == [], (
+        "the market is still locked out of the producer's scan, so every "
+        "cleared leg would stay blank forever"
+    )
+    # And the unlocked leg really was correct — this is not a licence to clear
+    # anything convenient.
+    assert not any(leg in clear for leg in unlock)
+    assert not any(leg in spare for leg in unlock)
+    assert not refuse
+
+
+def test_an_untouched_market_is_never_unlocked():
+    """No clears, no unlock. The correct verdicts of a healthy market stand.
+
+    The unlock exists to make a REPAIRED market re-gradeable. A market this
+    filter finds nothing wrong with is not repaired, so removing a correct
+    verdict there would be pure destruction — and it would hand the producer a
+    market to re-grade for no reason.
+    """
+    correct = _legs(
+        "KXNBA1HSPREAD-26MAR24NOPNYK",
+        ["New York wins the 1H by over 2.5 points"],
+        [True],
+        home="New York Knicks", away="New Orleans Pelicans",
+        final=(120, 100), periods=([30, 30, 30, 30], [25, 25, 25, 25]),
+    )
+    clear, unlock, spare, refuse = repair.classify(correct)
+    assert clear == []
+    assert unlock == [], "nothing was repaired here, so nothing may be unlocked"
+
+
+def test_a_market_locked_by_a_venue_settlement_is_refused_whole():
+    """We may not clear `api_settlement` to buy re-eligibility, so we clear nothing.
+
+    A TRUE, non-overwritable verdict from a source other than `game_score` — the
+    venue's own settlement above all — cannot be removed by this repair. Leaving
+    it would strand every leg the repair cleared, so the only honest move is to
+    refuse the market whole: a repair that cannot finish must not start.
+
+    This is the one case where a market with genuinely wrong verdicts is left
+    wrong on purpose, and it is reported as a refusal so the population stays
+    visible rather than becoming a silent skip.
+    """
+    legs = _legs(**{**PORIND_1H_SPREAD, "foreign_locker": True})
+    clear, unlock, spare, refuse = repair.classify(legs)
+    assert clear == []
+    assert unlock == []
+    assert len(refuse) == len(legs)
+    assert all("strand" in leg["refuse_reason"] for leg in refuse)

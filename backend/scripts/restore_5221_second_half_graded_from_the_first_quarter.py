@@ -17,7 +17,12 @@ record that this script is what changed it. Restoring from the backup alone
 means asking "does the live row differ from its backup?", which is also true of
 a row the fixed producer has re-graded since — and the undo would then replace a
 correct half verdict with the first-quarter one this repair existed to remove.
-The manifest holds one row per SUCCESSFUL clear, so it is the only record of
+The manifest holds one row per SUCCESSFUL write — both the `clear` cohort (a
+refuted verdict removed) and, since CERT-2631, the `unlock` cohort (a CORRECT
+verdict removed because it was holding its market out of the producer's
+re-grade). Both are backed up and both restore through the statement below,
+which needs no change: an unlocked row is a `game_score` row left at NULL, which
+is exactly what the compare-and-swap already requires. So it is the only record of
 what this script actually did.
 
 #5236 folded the FIRST-half cohort into the repair; nothing here changed for it.
