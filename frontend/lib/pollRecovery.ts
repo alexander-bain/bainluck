@@ -214,6 +214,36 @@ function serverWaitMs(error: unknown): number | null {
  * that is itself never below the poll interval (a key polling every 5 minutes
  * must not start recovering every 60 seconds — that would be FASTER than
  * healthy, breaking the load invariant).
+ *
+ * ── #5134: THE FLOOR IS APPLIED LAST, AND THAT ORDER IS THE WHOLE FIX ────────
+ *
+ * Both clamps on the `retryAfterMs` path were right; their ORDER was not. It
+ * read `min(max(retryAfterMs, baseMs), MAX_SERVER_WAIT_MS)`, which establishes
+ * the floor and then lets the ceiling pull the answer back underneath it. Any
+ * key polling slower than `MAX_SERVER_WAIT_MS` therefore recovered FASTER than
+ * it polls the moment it saw a 429 — a direct breach of the load invariant that
+ * is this module's entire safety argument for not capping the attempt count.
+ *
+ * It is not hypothetical and it is not confined to admin. A census of every
+ * `refreshInterval` in the app (102 mentions, read whole — a count is not a
+ * census, #5072) finds six keys above five minutes:
+ *
+ *     app/admin/page.tsx                       600_000    10 min  →  was 5 min
+ *     components/weather/NaturalEvents.tsx   3_600_000     1 hr   →  was 5 min
+ *     components/weather/RainForecast.tsx    3_600_000     1 hr   →  was 5 min
+ *     components/weather/TemperatureMap.tsx  3_600_000     1 hr   →  was 5 min
+ *     components/weather/WildCards.tsx      21_600_000     6 hr   →  was 5 min
+ *     components/weather/ClimateDashboard.tsx 21_600_000    6 hr   →  was 5 min
+ *
+ * The worst case is a READER-facing page, not the admin one the issue named: a
+ * six-hour weather key throttled once came back every five minutes — 72x its
+ * healthy rate — and kept doing so for as long as the limiter kept saying 429,
+ * because each nudge's own failure re-armed it at the same wrong number.
+ *
+ * So: clamp the server's instruction to what we are willing to wait, and THEN
+ * take the floor. Written in that order the floor is last by construction and
+ * cannot be undercut by a later operation — the property is structural rather
+ * than a coincidence of two constants' relative sizes.
  */
 export function recoveryDelayMs(
   baseMs: number,
@@ -221,7 +251,7 @@ export function recoveryDelayMs(
   retryAfterMs: number | null,
 ): number {
   if (retryAfterMs !== null) {
-    return Math.min(Math.max(retryAfterMs, baseMs), MAX_SERVER_WAIT_MS);
+    return Math.max(Math.min(retryAfterMs, MAX_SERVER_WAIT_MS), baseMs);
   }
   const ceiling = Math.max(baseMs, MAX_RECOVERY_DELAY_MS);
   return Math.min(baseMs * 2 ** attempt, ceiling);
