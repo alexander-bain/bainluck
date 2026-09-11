@@ -565,13 +565,40 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Most recent chart point for GamePlayCard (see eventKeyStats.ts)
   const lastChartPoint = useMemo<ActiveChartPoint | null>(
-    () => computeLastChartPoint(historyData, event?.home_score, event?.away_score),
-    [historyData, event?.home_score, event?.away_score],
+    () =>
+      computeLastChartPoint(
+        historyData,
+        event?.home_score,
+        event?.away_score,
+        // #4571 — the event row's own clock, so the helper can date the score by
+        // the arm that supplied it rather than by its neighbouring timestamp.
+        event?.score_observed_at,
+      ),
+    [historyData, event?.home_score, event?.away_score, event?.score_observed_at],
   );
 
   // Best-known scores: prefer latest ESPN history (more frequent updates) over event SWR
   const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
   const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
+
+  // #4571 — the age of the score PAIR the two lines above just resolved.
+  //
+  // `lastChartPoint` runs the same cascade internally and reports the clock of
+  // the arm that won, so the common path is simply to read it. The `??` fallback
+  // above is the one case it cannot answer for: with no `historyData` at all
+  // `computeLastChartPoint` returns null, and the rendered score is the event
+  // row's — dated, then, by the event row's stamp.
+  //
+  // Null is a real answer and the most common one today: `score_observed_at` is
+  // not on production yet (live's backend sha is blocked on this half existing),
+  // so the event-row arm reports null and the badge ages on the price alone,
+  // exactly as it does now. The ESPN arm is live already and starts telling the
+  // truth on merge.
+  const renderedScoreStamp = lastChartPoint
+    ? lastChartPoint.scoreStamp ?? null
+    : bestHomeScore !== null || bestAwayScore !== null
+      ? event?.score_observed_at ?? null
+      : null;
 
   // Loading timeout — if the event hasn't loaded after 12s, show error with retry
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
@@ -753,9 +780,22 @@ export default function EventPage({ params }: EventPageProps) {
   //
   // Gated on `liveGamesLine`, not on `event.linescore`, and deliberately: an
   // unrendered fact cannot mislead anyone, so it must not age the badge either.
+  //
+  // #4571 — AND THE SAME GATE NOW COVERS EVERY OTHER SPORT. Until now the
+  // `: null` arm was every ordinary integer score — NFL, MLB, NBA — so outside
+  // tennis the badge aged the PRICE and printed a green `live · 6s ago` over a
+  // score of entirely unknown age. #4469 fixed the glance for one sport and the
+  // grader of CERT-2545 said so plainly: *"the badge can still age only the
+  // price."*
+  //
+  // `renderedScoreStamp` (computed beside `bestHomeScore`) is the clock of the
+  // score tuple ACTUALLY on screen, chosen by provenance. The tennis arm is
+  // untouched and stays first: a games line and an integer score are different
+  // renderings, `linescore.observed_at` is the clock of the one that is drawn,
+  // and #4469's two guard suites pin it.
   const heroStamp = heroFreshness({
     priceStamp: freshestSourceStamp,
-    scoreStamp: liveGamesLine ? event.linescore?.observed_at : null,
+    scoreStamp: liveGamesLine ? event.linescore?.observed_at : renderedScoreStamp,
   });
 
   // L2-131 Item 1: the settled hero gains the pregame mark — the winner's

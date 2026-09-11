@@ -205,6 +205,22 @@ export interface Event {
      */
     observed_at?: string;
   } | null;
+  /**
+   * #4571 — when a writer last READ `home_score`/`away_score` on this row, and
+   * which writer read it. NOT when the score last changed: a 0–0 that nobody
+   * has looked at in twenty minutes and a 0–0 confirmed eight seconds ago are
+   * different facts, and only this field can tell them apart.
+   *
+   * PRESENT-ONLY, and the two keys travel together or not at all. Absence means
+   * *"no writer has read this row's score"*, which is a different statement from
+   * *"we read it and it has no age"* — so test membership (`"score_observed_at"
+   * in event`) rather than truthiness if you ever need to separate those.
+   *
+   * Served by `_format_event`, so the detail route and the list routes both
+   * carry them. Owned by the LIVE lane (notice 41); the frontend only reads.
+   */
+  score_observed_at?: string | null;
+  score_source?: string | null;
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
@@ -488,6 +504,31 @@ export interface ActiveChartPoint {
    */
   probKnown?: boolean;
   scoringPlay?: ScoringPlay | null;
+  /**
+   * #4571 — THE CLOCK OF THE SCORE THIS POINT ACTUALLY CARRIES, or null when it
+   * cannot be dated honestly.
+   *
+   * `timestamp` above is NOT this. The two are resolved by independent cascades:
+   * `timestamp` falls through `lastEspn -> lastWp -> lastHist`, while
+   * `homeScore` falls through `lastEspn -> event.home_score`. When there is no
+   * ESPN row they come apart, and `timestamp` becomes a PRICE snapshot's clock
+   * sitting beside a score off the event row. Measured by live/146 on production
+   * event 15298476: 0 espn_history rows, so the score was the event row's `2`
+   * while `timestamp` was Kalshi's price stamp. Dating the score with that is
+   * the exact defect #4571 exists to kill, wearing a face that reads correct.
+   *
+   * So this field is derived from PROVENANCE, not position, and it is null
+   * whenever any rendered side's age is unknown — an absence must not be dated
+   * (#3473). `scoreFrom` names the arm it came from.
+   */
+  scoreStamp?: string | null;
+  /**
+   * Which cascade arm supplied the score `scoreStamp` dates. `"mixed"` is real
+   * and not defensive padding: the home and away arms resolve independently, so
+   * ESPN can hold one side and not the other, and the pair is then only as
+   * current as its older half.
+   */
+  scoreFrom?: "espn" | "event" | "mixed" | null;
 }
 
 export interface SportsResponse {
