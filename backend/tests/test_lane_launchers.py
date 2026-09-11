@@ -27,6 +27,7 @@ Every script is driven through its own `--dry-run`, so nothing here opens a
 Terminal window, kills a process, or writes into the live handoff tree.
 """
 
+import contextlib
 import os
 import re
 import shutil
@@ -2321,3 +2322,153 @@ def test_the_supervisor_path_lives_in_lanes_conf_like_every_other_runner():
     assert source_conf('echo "${SUPERVISOR:-UNSET}"').strip().endswith(
         "lanes-supervisor.sh"
     ), "lanes.conf does not name the supervisor"
+
+
+# ─── WHO YOU ARE: the lane identity header (#5066, 2026-09-10) ────────────────
+#
+# The injected prompt was `STANDING-NOTICES.md` + the directive body and nothing
+# else — it never named the lane the runner was serving. Almost every file in a
+# lane inbox is a note one lane WROTE TO another and signed in the author's
+# name, so on a reply the strongest identity signal in the entire prompt named
+# the WRONG lane.
+#
+# Measured: the integrator runner took a ux reply out of its own inbox; the
+# session opened with "I'll orient first — which lane this session is", read
+# `runner-inbox/ux/`, and ran ux's shoot as `ux/1186` from ~/bainluck for 2h40m
+# while the real ux runner ran the same game. Three unread merge offers sat in
+# the desk's inbox throughout, and it was served three times before anyone
+# noticed, because a hijacked session ends at the 2h cap and re-queues.
+#
+# These tests drive the SESSION LOOP, not `--dry-run`: the header is assembled
+# on the one code path a rehearsal never reaches, and the whole failure was that
+# nobody had ever read what the loop actually sends.
+
+
+def _capture_prompt(tmp_path, lane, directive_name, body, notices="# NOTICES\n1. be good\n"):
+    """Run the real session loop against a stub `claude` and return the prompt.
+
+    The stub writes the argument after `-p` to a file and exits 0, so this is
+    the exact string the session would have received. The runner loops forever
+    by design, so it is killed by process GROUP once the capture lands — the
+    session subshell is a child and `kill(pid)` alone would leak it.
+    """
+    handoff = tmp_path / "handoff"
+    inbox = handoff / "runner-inbox" / lane
+    inbox.mkdir(parents=True)
+    (inbox / directive_name).write_text(body)
+    (handoff / "STANDING-NOTICES.md").write_text(notices)
+    workdir = tmp_path / "worktree"
+    workdir.mkdir()
+
+    capture = tmp_path / "prompt.txt"
+    binp = tmp_path / "bin"
+    binp.mkdir()
+    stub = binp / "claude"
+    stub.write_text(
+        "#!/bin/bash\n"
+        "while [ $# -gt 0 ]; do\n"
+        '  if [ "$1" = "-p" ]; then printf %s "$2" > ' + f'"{capture}"' + "; break; fi\n"
+        "  shift\n"
+        "done\n"
+        "exit 0\n"
+    )
+    stub.chmod(0o755)
+
+    env = dict(os.environ)
+    env.update({
+        "LANE_HANDOFF": str(handoff),
+        "LANE_IDLE_SLEEP": "1",
+        "LANE_SESSION_TIMEOUT": "30",
+        "PATH": f"{binp}:{os.environ['PATH']}",
+    })
+    proc = subprocess.Popen(
+        ["bash", str(RUNNER), str(workdir), lane],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        env=env, cwd=str(REPO), start_new_session=True,
+    )
+    try:
+        deadline = time.time() + 60
+        while time.time() < deadline and not capture.exists():
+            if proc.poll() is not None:
+                break
+            time.sleep(0.2)
+        assert capture.exists(), (
+            "the runner never launched a session for a queued directive; "
+            f"rc={proc.poll()} output=\n{(proc.stdout.read() if proc.stdout else '')[:4000]}"
+        )
+        return capture.read_text()
+    finally:
+        # Already gone, or not ours to signal — either way there is nothing left
+        # to kill. `suppress` rather than `except: pass` so the intent is the
+        # statement (and CodeQL's py/empty-except has nothing to report).
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        proc.wait(timeout=30)
+
+
+def test_the_session_prompt_names_the_lane_the_runner_was_invoked_for(tmp_path):
+    """The whole defect in one assertion: the word was simply not there."""
+    prompt = _capture_prompt(
+        tmp_path, "integrator", "001-merge-something.md", "Merge the queue.\n"
+    )
+    assert "YOU ARE LANE `integrator`" in prompt, (
+        "the session prompt does not name its lane; a session can only guess "
+        f"its identity from cwd and the directive's signature:\n{prompt[:2000]}"
+    )
+
+
+def test_a_directive_signed_by_another_lane_does_not_change_who_you_are(tmp_path):
+    """The exact shape that fired: a reply written by ux, sitting in the
+    integrator's inbox, signed in ux's name. The header must name the runner's
+    lane and must say plainly that the signature is the author."""
+    body = (
+        "# REPLY to integrator-295 — the #4788 LOOK was already paid\n\n"
+        "Your note is stamped 19:11Z. Nothing is owed.\n\n"
+        "— ux/1183\n"
+    )
+    prompt = _capture_prompt(
+        tmp_path, "integrator", "from-ux-1183-REPLY-4788.md", body
+    )
+    assert "YOU ARE LANE `integrator`" in prompt, prompt[:2000]
+    assert "YOU ARE LANE `ux`" not in prompt
+    # The body still arrives — the header frames it, it does not replace it.
+    assert "— ux/1183" in prompt
+    # And the reader is told what that signature is, so it does not have to
+    # work the precedence out for itself.
+    assert "AUTHOR" in prompt, (
+        "the header does not tell the session that a signature names the "
+        f"author rather than the reader:\n{prompt[:2000]}"
+    )
+
+
+def test_the_header_names_the_worktree_the_inbox_and_the_directive(tmp_path):
+    """`ux/1186` ran from ~/bainluck, the SHARED master tree, because nothing
+    told it which worktree was its own. The directive's filename was never in
+    the prompt either, though every session navigates by those names."""
+    prompt = _capture_prompt(
+        tmp_path, "latency", "RESTOCK-latency-999-do-the-thing.md", "Do the thing.\n"
+    )
+    assert str(tmp_path / "worktree") in prompt, "the header omits the worktree"
+    assert str(tmp_path / "handoff" / "runner-inbox" / "latency") in prompt, (
+        "the header omits the lane's own inbox"
+    )
+    assert "RESTOCK-latency-999-do-the-thing.md" in prompt, (
+        "the directive's filename never reaches the session"
+    )
+
+
+def test_the_notices_and_the_directive_body_still_arrive_intact(tmp_path):
+    """A header that ate either of them would be a worse bug than the one it
+    fixes, and `-p "$(...)"` with three cats and a heredoc is where that
+    happens."""
+    prompt = _capture_prompt(
+        tmp_path, "live", "010-do-it.md", "BODY-SENTINEL: the actual work.\n",
+        notices="# STANDING NOTICES\n1. NOTICES-SENTINEL\n",
+    )
+    assert "NOTICES-SENTINEL" in prompt, "the standing notices were dropped"
+    assert "BODY-SENTINEL" in prompt, "the directive body was dropped"
+    # Order matters: the header sits between them, adjacent to the body it
+    # frames, because the notices are tens of thousands of characters long.
+    assert prompt.index("NOTICES-SENTINEL") < prompt.index("YOU ARE LANE") < prompt.index(
+        "BODY-SENTINEL"
+    ), f"the header is not between the notices and the body:\n{prompt[:2000]}"
