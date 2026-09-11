@@ -292,3 +292,62 @@ class TestTheWinsSeriesConfig:
         config = get_league_config(slug)
         assert any(c.key == "make_playoffs" for c in config.columns)
         assert config.sport_keys
+
+
+class TestTheLadderQuery:
+    """The one seam the tests above cannot reach: the SQL itself.
+
+    `_load_wins_ladders` is the only part of this ship that talks to Postgres,
+    and every predicate in it is load-bearing in a way a reader would notice:
+
+    * drop `status = 'open'` and last season's settled ladder competes with this
+      one, which is the contest that makes a team show nothing;
+    * drop the series bound and the query walks `futures_markets` whole;
+    * drop the `current_probability IS NOT NULL` and an unpriced rung enters the
+      election as a `None` that `pick_wins_rung` has to defend against instead
+      of never seeing.
+
+    Compiling the statement is the honest instrument for that: it is a property
+    of the SQL, and no fixture can prove a predicate that is missing.
+    """
+
+    def _sql(self, series):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        from sqlalchemy.dialects import postgresql
+
+        from app.tasks.season_answers_projection import _load_wins_ladders
+
+        seen = {}
+
+        async def execute(stmt):
+            seen["sql"] = str(
+                stmt.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+            result = MagicMock()
+            result.all.return_value = []
+            return result
+
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=execute)
+        asyncio.run(_load_wins_ladders(db, series))
+        return seen.get("sql", "")
+
+    def test_the_query_is_bounded_to_open_markets_in_the_named_series(self):
+        sql = self._sql(["KXNFLWINS", "KXNBAWINS"])
+        assert "futures_markets.status = 'open'" in sql
+        # `%%`, not `%`: `literal_binds` renders for psycopg's pyformat
+        # paramstyle, which doubles the wildcard. The doubling is the
+        # COMPILER's, not the predicate's — asserting the single form here
+        # would red on a correct query.
+        assert "LIKE 'KXNFLWINS-%%'" in sql
+        assert "LIKE 'KXNBAWINS-%%'" in sql
+        assert "futures_outcomes.current_probability IS NOT NULL" in sql
+
+    def test_no_series_means_no_query_at_all(self):
+        """A league that was never wired must not scan the table to learn so."""
+        assert self._sql([]) == ""
