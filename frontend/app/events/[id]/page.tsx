@@ -1737,6 +1737,11 @@ export default function EventPage({ params }: EventPageProps) {
           // tennis map has nothing to put beside its pre-game quote, because
           // the scoreboard two cards up is counting sets.
           linescore={event.linescore}
+          // #5206: the same decision the hero draws "No result reported" from,
+          // handed down rather than re-derived. The map's own status chain has
+          // no branch for a suspended match and falls through to the branch that
+          // draws a forecast.
+          noResultReported={isSuspended}
         />
         </SectionErrorBoundary>
       )}
