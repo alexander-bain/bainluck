@@ -6572,6 +6572,20 @@ _EVENT_POOL_FETCH_LIMIT = 8
 #: a match from a season nobody is asking about.
 _LAST_MATCH_LOOKBACK_DAYS = 30
 
+#: T2-2 (#5059). How far FORWARD the "or-next" arm reaches for a team's next
+#: fixture when the 7-day upcoming pool returned nothing the query names.
+#:
+#: 🔴 THE NUMBER IS MEASURED, NOT CHOSEN. Production, 2026-09-11: of the 1,560
+#: teams with any future scheduled fixture, the next one falls within 7 days for
+#: 1,194, within 30 for 1,372, within 60 for 1,520 and **within 120 for 1,556 —
+#: 99.7%**. Only 4 teams in the whole database sit beyond it. 120 also clears the
+#: widest gap a major league actually shows: on that date every one of the 27 NBA
+#: teams was 39 days from opening night, and all 32 NHL teams were 8-27 days out.
+#: So the ceiling is three times the worst real offseason gap and still bounded —
+#: gotcha #41 wants both ends, and unbounded would answer a dissolved club with a
+#: fixture from a season nobody is asking about.
+_NEXT_MATCH_LOOKAHEAD_DAYS = 120
+
 #: The sport keys the scorer counts as prominent (`rank_key`'s third term).
 #: Imported rather than re-listed: two copies of this set is one copy that drifts,
 #: and the pool would then order by a definition of "prominent" the scorer no
@@ -7185,17 +7199,50 @@ async def typeahead_search(
         # #4506: the generic plan Postgres caches for this arm after five
         # executions costs 86% of an `nfl` keystroke on production. The context
         # manager says why, and restores `auto` before the futures stages run.
+        #
+        # T2-2 (#5059): both fallback arms run inside ONE guard. They are the
+        # same query shape — a parameterised text predicate with an abort-early
+        # `ORDER BY commence_time LIMIT n` — so the or-NEXT arm is exposed to
+        # exactly the plan-cache pathology #4506 measured at 618ms median, and a
+        # second `async with` would pay two more GUC round-trips on the hottest
+        # path to buy nothing.
         async with _forced_custom_plan(db, read_back=debug_timing) as _ta_plan:
-            _ta_last = (
-                await db.execute(_last_match_query(event_name_filter, now))
+            # NEXT BEFORE LAST, because Alex's rule is "the live game, else the
+            # next, else the last finished" and this is where the middle term
+            # lives (#5059). Only the rows that NAME the participant count as
+            # having answered — the same test the pool above was gated on, so a
+            # namesake in another league cannot suppress the or-LAST arm.
+            _ta_next = (
+                await db.execute(_next_match_query(event_name_filter, now))
             ).scalars().all()
+            _ta_next = [ev for ev in _ta_next if _ta_names_participant(ev)]
+            _ta_mark("next_match_query")
+            # SHORT-CIRCUITED, not merged. If the team has a real next fixture
+            # there is nothing for a finished game to answer, and skipping the
+            # second query keeps the common repaired case at the one-query cost
+            # this branch has always paid. A team with no future fixture at all
+            # (an eliminated club, a dissolved side) pays both and still gets
+            # #4411's answer.
+            _ta_last = []
+            if not _ta_next:
+                _ta_last = (
+                    await db.execute(_last_match_query(event_name_filter, now))
+                ).scalars().all()
+                _ta_last = [ev for ev in _ta_last if _ta_names_participant(ev)]
         _ta_last_match_plan = _ta_plan
-        _ta_mark("last_match_query")
+        # STAMPED ONLY WHEN IT RAN. An unconditional mark writes
+        # `last_match_query: 0` for an arm that was short-circuited, and "cost
+        # nothing" is a different claim from "never executed" — the same third
+        # state `_ta_last_match_plan`'s `None` is documented to preserve above.
+        # A probe that cannot tell them apart reads the repaired path as an
+        # or-LAST arm that got suspiciously fast.
+        if not _ta_next:
+            _ta_mark("last_match_query")
         # PREPENDED, not appended. `_ta_events[:_EVENT_POOL_SIZE]` truncates the
         # pool BEFORE anything is scored, so a Jannik match sitting behind four
         # esports fixtures would be cut on its way to the scorer and the ship
         # would fail in a way that looks like a ranking bug and is not one.
-        _ta_rows = [*(ev for ev in _ta_last if _ta_names_participant(ev)), *_ta_rows]
+        _ta_rows = [*_ta_next, *_ta_last, *_ta_rows]
 
     event_pool = []
     # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
@@ -18159,6 +18206,70 @@ def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:
     return tuple(
         o.name for o in market.outcomes
         if o.name and not _is_placeholder_outcome_name(o.name)
+    )
+
+
+def _next_match_query(event_name_filter, now: datetime):
+    """The "or-NEXT" arm of T2-2 (#5059): the team's next fixture, past the 7-day pool.
+
+    Module-level for the reason :func:`_last_match_query` is — the pool assembly
+    runs against a live session, so an arm left inline is an arm no CI job can
+    read. `tests/test_typeahead_reaches_the_next_fixture_5059.py` compiles this
+    and asserts the clauses that make it safe.
+
+    🔴 WHY THIS EXISTS AT ALL, when the upcoming pool already selects scheduled
+    games. That pool is bounded at `now + 7 days`, and Alex's rule for row 2 is
+    "the live game, else the NEXT, else the last finished". Measured on
+    production 2026-09-11, the 7-day bound deletes the middle term for whole
+    leagues at once: **every one of the 27 NBA teams and all 32 NHL teams** had
+    their next fixture outside the window, so `celtics` and `bruins` offered a
+    reader no game at all and #4411's or-LAST arm filled the slots with finished
+    ones. 366 of the 1,560 teams with a future fixture were in that state. The
+    Patriots specimen in #5059 is the same shape three days wide: they played
+    Thursday and next play in ten days, which is every Thursday-game NFL club
+    for three days a week.
+
+    🔴 WHY IT IS A SEPARATE, GATED ARM RATHER THAN JUST WIDENING THAT POOL TO
+    120 DAYS — this is the whole design and it is easy to undo by accident. The
+    upcoming pool feeds the scorer for EVERY query. Widening it would change the
+    candidate set for all of them: `lakers` would fetch games spread over six
+    weeks instead of the imminent ones, and the fetch limit would start cutting
+    relevant rows to make room for distant ones. This arm runs only when no row
+    already in the pool NAMES the query's participant — the broken case and
+    nothing else — so a query that was working cannot change. Ask of any future
+    edit here: which queries newly match?
+
+    ORDERING IS THE POINT OF THE `live_first_order` TERM. It mirrors the
+    upcoming pool exactly, so a live game outranks a future one and the served
+    status can never disagree with the sort (Q438). Ascending after that, because
+    "next" means the SOONEST — the descending order the or-LAST arm uses would
+    return this team's last game of the season.
+
+    Bounded at BOTH ends (gotcha #41). The floor is the upcoming pool's own
+    `now - 1h`, not `now`, so this arm is a strict superset of that pool in time
+    and a long-running live game cannot fall between the two. The ceiling is
+    :data:`_NEXT_MATCH_LOOKAHEAD_DAYS`, whose docstring shows the measurement.
+    """
+    return (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(
+            selectinload(Event.sport),
+            selectinload(Event.home_team),
+            selectinload(Event.away_team),
+        )
+        .where(
+            event_name_filter,
+            Event.status.in_(["live", "scheduled"]),
+            Event.commence_time >= now - timedelta(hours=1),
+            Event.commence_time <= now + timedelta(days=_NEXT_MATCH_LOOKAHEAD_DAYS),
+            not_a_proven_duplicate(),
+        )
+        .order_by(
+            live_first_order(now),
+            Event.commence_time.asc(),
+        )
+        .limit(_EVENT_POOL_FETCH_LIMIT)
     )
 
 

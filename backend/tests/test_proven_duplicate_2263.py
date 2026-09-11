@@ -479,7 +479,7 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         according to how the user navigated to it, off the same global identity
         finding.
 
-        EIGHT call sites, and the number is the assertion:
+        NINE call sites, and the number is the assertion:
 
           `/search`             `event_scope_conditions` — the list the two UNION
                                 recall arms, the outer entity query, the
@@ -496,14 +496,26 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
                                 here than anywhere else on this list: it selects
                                 on finished matches, and a finished twin has had
                                 its whole lifetime to acquire a second row.
+          `/typeahead`          `_next_match_query` — T2-2's "or-next" arm, the
+                                ninth. Added 2026-09-11 (#5059). A FOURTH recall
+                                path into the same dropdown, reached on the same
+                                gate as the or-last arm, and it needs the clause
+                                for a reason the others do not share: it reaches
+                                120 days forward, so it is the only search arm
+                                that selects on fixtures far enough out to still
+                                be accumulating provider rows. The `celtics`
+                                specimen measured while building it returned a
+                                twinned pair inside its own window (Celtic v
+                                Ferencváros listed twice, three hours apart).
           `/search-suggestions` live close games · starting soon · recent upsets
                                 — the search box's zero state, eight chips across
                                 four sources
 
-        The count went 7 -> 8 by ADDING a surface, never by dropping the clause
-        from one. If a future change makes this fail, check which of the two it
-        was before touching the number: this assertion exists to catch the
-        deletion, and bumping it to match a deletion is how such a guard dies.
+        The count went 7 -> 8 -> 9 by ADDING a surface each time, never by
+        dropping the clause from one. If a future change makes this fail, check
+        which of the two it was before touching the number: this assertion
+        exists to catch the deletion, and bumping it to match a deletion is how
+        such a guard dies.
 
         All three suggestion sources carry it, not only "starting soon" — the
         one a twin reaches today. "This query cannot return a tagged row anyway"
@@ -523,8 +535,8 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         from app.routes import events
 
         source = inspect.getsource(events)
-        assert source.count("not_a_proven_duplicate()") == 8, (
-            "one of the eight search-surface call sites is gone — see CERT-439"
+        assert source.count("not_a_proven_duplicate()") == 9, (
+            "one of the nine search-surface call sites is gone — see CERT-439"
         )
 
     def test_the_behavioural_search_gate_exists_and_is_wired_into_ci(self):

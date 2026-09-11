@@ -433,6 +433,34 @@ jobs:
             exit 1
           fi
 
+      - name: Typeahead or-NEXT fixture contract (real Postgres)
+        # T2-2 / #5059. `/typeahead`'s upcoming pool is bounded at now+7d, so
+        # "the live game, else the NEXT, else the last finished" lost its middle
+        # term for whole leagues at once: measured on production 2026-09-11, all
+        # 32 NHL and all 27 NBA teams — 366 teams across all sports — had no
+        # fixture inside the window, and the or-LAST arm filled the dropdown
+        # with finished games.
+        #
+        # The sibling unit file compiles the arm and asserts its clauses. It
+        # cannot prove the clause changes the ANSWER, and it cannot see the two
+        # ways this ship fails in production: the arm running for queries that
+        # already worked (which silently widens the candidate set for every
+        # keystroke on the endpoint), and the finished game staying beside the
+        # next one. Both are properties of which rows the route returns, so they
+        # need the route and a real database.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_next_fixture_pg.py \
+            -v -rs 2>&1 | tee /tmp/nextfixture.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/nextfixture.txt; then
+            echo "::error::or-NEXT typeahead contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Tennis twin sweep write/undo contract (real Postgres)
         # #2878 / CERT-2142. The sweep's whole effect is one jsonb element
         # appended to `events.event_tags`, and its idempotence claim lives
