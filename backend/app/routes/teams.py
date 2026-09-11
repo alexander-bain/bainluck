@@ -11,6 +11,7 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.lifecycle import served_event_status
+from app.utils.standings_shape import public_standings
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, or_, func
@@ -238,7 +239,10 @@ def _format_team(team: Team) -> dict:
         "logo_small": team.logo_url_small,
         "logo_large": team.logo_url_large,
         "record": team.current_record,
-        "standings": team.standings_data,
+        # `public_standings` drops write-dead keys (#4811): a pre-#4732
+        # `conf_rank` is a division place wearing a conference label, and this
+        # is the payload the team-page hero reads.
+        "standings": public_standings(team.standings_data),
         "season_stats": team.season_stats,
         "roster": team.roster_players,
     }

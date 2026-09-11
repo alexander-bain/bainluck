@@ -59,6 +59,7 @@ from app.utils.hero_probability import resolve_hero
 # which asks the settled question on its own account. The hero cascade itself
 # left with #3903 — see `utils/hero_probability`.
 from app.utils.settled_hero import resolve_settled_hero
+from app.utils.standings_shape import public_standings
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -17609,11 +17610,11 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
             if s.get("draws") or s.get("ties"):
                 record += f"-{s.get('draws') or s.get('ties')}"
             parts.append(record)
-        # Conference/division rank
-        if s.get("conf_rank"):
-            conf = s.get("conference", "")
-            parts.append(f"#{s['conf_rank']} {conf}".strip())
-        elif s.get("div_rank"):
+        # Division/league rank. `conf_rank` is NOT consulted: no writer has
+        # produced it since #4732, so every surviving value is a division place
+        # wearing a conference label (#4811). Reading it here preferred that
+        # residue over a fresh `div_rank`.
+        if s.get("div_rank"):
             div = s.get("division", "")
             parts.append(f"#{s['div_rank']} {div}".strip())
         elif s.get("league_rank"):
@@ -17647,8 +17648,10 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
         # Fighting for top seed
         if not stakes:
             try:
-                hr = int(hs.get("conf_rank") or hs.get("league_rank"))
-                ar = int(aws.get("conf_rank") or aws.get("league_rank"))
+                # `conf_rank` dropped from this pair (#4811): it is write-dead
+                # residue, and it was being preferred over `league_rank`.
+                hr = int(hs.get("league_rank"))
+                ar = int(aws.get("league_rank"))
                 if hr <= 3 and ar <= 3:
                     stakes = "Top seed matchup"
             except (ValueError, TypeError):
@@ -17705,7 +17708,9 @@ def _format_team_data(team) -> dict:
         data["abbreviation"] = team.abbreviation
     # Include standings if available
     if getattr(team, "standings_data", None):
-        data["standings"] = deepcopy(team.standings_data)
+        # Write-dead keys are stripped before the blob leaves the server
+        # (#4811) — see `app/utils/standings_shape`.
+        data["standings"] = public_standings(deepcopy(team.standings_data))
     # Include season stats if available
     if getattr(team, "season_stats", None):
         data["season_stats"] = deepcopy(team.season_stats)
