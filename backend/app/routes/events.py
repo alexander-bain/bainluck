@@ -11267,6 +11267,35 @@ def _is_team_stat_market(name: str) -> bool:
     ))
 
 
+#: A SCORING RACE: which side reaches a score first, or neither (#5133 defect A).
+#:
+#: Kalshi ships six per NFL game — `KXNFLRACE-26SEP09NESEA-{7,10,14,21,28,35}`,
+#: named "New Orleans vs Detroit: Race to 14 Points" — with three team-level
+#: outcomes: "Detroit reaches 14 points first", "New Orleans reaches 14 points
+#: first", "Neither team reaches 14 points".
+#:
+#: `_PLAYER_PROP_RE` matches the bare word "Points" and `_is_team_stat_market` is
+#: False (the text after the colon is not a LONE stat word), so every one of them
+#: classified `player_prop`. Measured on production 2026-09-11, 11 NFL events:
+#: 153 of 174 no-colon rows in `player_props[]` were these, and the web card
+#: rendered six of them as PLAYERS — stat groups headed "RACE TO 14 POINTS",
+#: "RACE TO 10 POINTS", … interleaved with Jahmyr Gibbs's yardage ladder. They
+#: reached `props_script` too, so THE SCRIPT printed the prop mark "Detroit
+#: reaches 14 points first".
+#:
+#: A race names no player and can never carry one, in any sport. The pattern is
+#: deliberately narrower than "race to": it requires the SCORE unit, so a
+#: hypothetical player race ("Race to 5 catches") is not swept up by grammar into
+#: a rule measured only on team scoring races. All 94 rows in the table on
+#: 2026-09-11 match it, and they are all Kalshi NFL.
+_SCORING_RACE_RE = re.compile(r"\brace to\s+\d+(?:\.\d+)?\s+points?\b", re.IGNORECASE)
+
+
+def _is_scoring_race_market(name: str) -> bool:
+    """True for "…: Race to 14 Points" — a team market, never a player prop."""
+    return bool(_SCORING_RACE_RE.search(name or ""))
+
+
 #: One inning, not a run of them. `\binning\b` matches "2nd Inning Total" and
 #: "1st Inning Winner" and CANNOT match "First 5 Innings Total" — the plural's
 #: trailing "s" is a word character, so the closing `\b` fails. That is the whole
@@ -11449,6 +11478,14 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     if any(x in lower for x in ("3-ball", "3ball", "three-ball", "three ball", "3 ball")):
         return "3ball"
 
+    # A scoring race is decided by its OWN name, before any other branch reads a
+    # stat word out of it (#5133 defect A). It sits here rather than beside the
+    # player-prop check it currently reaches because the family is a team market
+    # whatever else the title says — putting it later would leave the answer
+    # resting on "Race to 14 Points" happening to contain no over/under token.
+    if _is_scoring_race_market(name):
+        return "scoring_race"
+
     # Totals first — "Total Points" is a total, not a player prop
     if "total" in lower or "o/u" in lower:
         # ...but a NAMED PLAYER in front of the line makes it a player prop, which
@@ -11611,6 +11648,19 @@ _PM_PERIOD_SCOPES = frozenset({
     # can, which is what that guard's own comment says scope labels are for.
     "inning_total", "inning_spread", "inning_winner",
 })
+
+#: Market labels that price NEITHER arm of the game — dropped outright, not just
+#: refused the total.
+#:
+#: `scoring_race` is here for the reason #3948 is the standing lesson of this
+#: file: removing one contaminant is what makes the next one decide the answer.
+#: Before #5133 defect A a race wore `player_prop`, which `_PM_NON_GAME_TOTAL_SCOPES`
+#: already refuses the total. Reclassifying it to a label this pass treats as
+#: quantity-neutral would have handed "Detroit reaches 14 points first" to the
+#: projection pool, and `extract_spread_threshold` can read a 14 out of it.
+#: A race prices the game's total and its margin equally little, so it is dropped
+#: at the market level like a period is.
+_PM_MARKET_PRICES_NEITHER_ARM = _PM_PERIOD_SCOPES | frozenset({"scoring_race"})
 
 #: `_classify_game_market` labels that are a different QUANTITY from the game's
 #: combined total, and so may never price one (#3921). Each is a measured
@@ -13141,7 +13191,18 @@ async def _build_game_markets(
                 # pattern (e.g., "Patrick Mahomes Passing Yards") but wasn't
                 # caught by _classify_game_market because no "over/under" or
                 # "total" keyword was present.
-                if _PLAYER_PROP_RE.search(market.name) and not _is_team_stat_market(market.name):
+                # `_is_scoring_race_market` is repeated here on purpose: this
+                # rescue asks the same "does the name carry a stat word" question
+                # the classifier does, and answers it independently. Fixing only
+                # `_classify_game_market` moves a race from `player_prop` to
+                # `scoring_race` and this branch puts it straight back — the
+                # market name still matches `_PLAYER_PROP_RE` on "Points" and is
+                # still not a lone-stat-word team market (#5133 defect A).
+                if (
+                    _PLAYER_PROP_RE.search(market.name)
+                    and not _is_team_stat_market(market.name)
+                    and not _is_scoring_race_market(market.name)
+                ):
                     threshold = _extract_threshold(o.name)
                     name_lower = o.name.lower().strip()
                     is_over = (
@@ -16037,7 +16098,7 @@ async def get_event_odds_history(
             # Cowboys they contributed 35 of the 79 "total" contracts, at
             # thresholds a full game never sees. Step 7 routes exactly these
             # labels away from its game totals; this path never did.
-            if scope in _PM_PERIOD_SCOPES:
+            if scope in _PM_MARKET_PRICES_NEITHER_ARM:
                 continue
 
             # Decided once per market, not once per outcome: whether this
