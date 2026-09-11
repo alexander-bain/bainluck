@@ -1,13 +1,20 @@
 """Which provider is the source of record for a sport's event graph. #2867, D50.
 
-**SHIP: when a sport's seven days finally land, the flip that makes StatPal its
-source of record is one line in this file — and until then, this file is the
-thing that says out loud, per sport, that it has not happened.** (Pillar:
-MATCHING. Program step 6, riding the lane's ship: *every game exists on the site
-before any market lists it; nothing goes blank when ESPN does.*)
+**SHIP: the flip that makes StatPal a sport's source of record is one line in
+this file — and for every sport that has not flipped, this file is the thing
+that says out loud that it has not.** (Pillar: MATCHING. Program step 6, riding
+the lane's ship: *every game exists on the site before any market lists it;
+nothing goes blank when ESPN does.*)
 
-**Every sport here is `ESPN`. Nothing has flipped. Nothing flips by importing
-this module.**
+**`americanfootball_nfl` is `STATPAL` (#4954, 2026-09-11). Every other sport
+here is `ESPN`. Nothing flips by importing this module** — a flip is an edit to
+`AUTHORITY_BY_SPORT` below, and CI refuses one that arrives without its
+`FLIP_EVIDENCE` entry.
+
+Do not read the flipped line as "the site now runs on StatPal for football". It
+does not: on every pass where ESPN answers, football is processed exactly as it
+always was. What the line changes is what happens on a pass where ESPN does
+NOT answer — see `SWITCH_CONSUMERS` below, which says it precisely.
 
 WHY A FILE FOR A DICTIONARY THAT IS ALL ONE VALUE
 ═════════════════════════════════════════════════
@@ -35,18 +42,21 @@ may change.
 it is lane1's to build", and one now exists that is not lane1's and does not
 need to be. `utils/authority_failover` reads the switch to answer who serves a
 sport on a pass where ESPN went silent — a question about PROVIDER SELECTION,
-which is this lane's, not about event identity, which is lane1's. Every sport
-being `ESPN` still means today's behaviour is byte-for-byte what it was, and the
-failover's own gate (`flip_permitted`) is what decides whether ESPN's silence may
-be covered at all.
+which is this lane's, not about event identity, which is lane1's. On a pass
+where ESPN answers, every sport's behaviour is byte-for-byte what it was
+whatever this map says, and the failover's own gate (`flip_permitted`) is what
+decides whether ESPN's silence may be covered at all.
 
-**That gate no longer refuses every sport (D104 = A4, 2026-09-09).**
-`americanfootball_nfl` is in `FLIP_RULED_WITHOUT_STREAK` and is permitted without
-a certification streak, so on a pass where ESPN goes dark for football, StatPal's
-schedule and livescore writers now run. Every sport is still `ESPN` in the map
-above and that is not a contradiction: the map is the STANDING source of record
-and the gate is the FALLBACK, and on a pass where ESPN answers, football is
-processed exactly as it always was.
+**That gate no longer refuses every sport (D104 = A4, 2026-09-09), and football
+has now taken the second step as well (#4954).** Every key in
+`FLIP_RULED_WITHOUT_STREAK` is permitted without a certification streak, so on a
+pass where ESPN goes dark for one of them, StatPal's schedule and livescore
+writers run. **Permission is not the flip**: a sport can sit in that set for
+weeks holding `ESPN` above, because the set is about the GATE and the map is
+about the STANDING source of record. `americanfootball_nfl` now holds `STATPAL`
+in both — so an ESPN-dark football pass is reported as StatPal *standing*
+(`STANDING-STATPAL`, a serving state since #4434) rather than as an outage
+override, and a pass where BOTH are dark is `failover_uncovered` and alarms.
 
 It also does not count the seven days itself. `authority_streak.compute_streak`
 does that — it shipped with authority/021, it walks the durable ledger's own
@@ -74,8 +84,7 @@ from app.utils.authority_streak import REQUIRED_STREAK_DAYS, compute_streak
 ESPN = "espn"
 STATPAL = "statpal"
 
-#: What a sport falls back to when it is not named below, and what every named
-#: sport holds today.
+#: What a sport falls back to when it is not named below.
 #:
 #: ESPN, and not "unset". An unknown sport key must resolve to the behaviour the
 #: site has always had, not to a state the caller has to interpret — a typo in a
@@ -84,18 +93,21 @@ DEFAULT_AUTHORITY = ESPN
 
 #: **The switch. One line per sport, and a flip is a change to one of them.**
 #:
-#: Dark: every value is `ESPN`. A sport is listed here — rather than left to
-#: `DEFAULT_AUTHORITY` — because the authority lane has built a dark id join for
-#: it and is measuring it daily. Being listed says "this one is being watched",
-#: never "this one is close".
+#: A sport is listed here — rather than left to `DEFAULT_AUTHORITY` — because
+#: the authority lane has built a dark id join for it and is measuring it daily.
+#: Being listed says "this one is being watched", never "this one is close".
 #:
 #: Changing a value is not sufficient on its own and is not meant to be:
 #: `flip_permitted` has to say yes first, and D50's second half (a YOUR-TURN
 #: entry Alex has seen) is not a thing code can check. `test_authority_flip_switch`
 #: fails if a value here is `STATPAL` without the evidence recorded in
 #: `FLIP_EVIDENCE`, so the one-line change carries its receipts or CI stops it.
+#:
+#: **One value has moved: football, 2026-09-11 (#4954).** Read its receipts in
+#: `FLIP_EVIDENCE` below rather than inferring what it flipped on — it did not
+#: flip on seven days, and the entry says so in its own words.
 AUTHORITY_BY_SPORT: dict[str, str] = {
-    "americanfootball_nfl": ESPN,
+    "americanfootball_nfl": STATPAL,
     "basketball_nba": ESPN,
     "icehockey_nhl": ESPN,
     "baseball_mlb": ESPN,
@@ -528,17 +540,94 @@ DISCOVERY_PARSES_BUT_MINTS_NO_ID: dict[str, str] = {
     ),
 }
 
-#: For each sport that has flipped: the seven-day evidence it flipped on.
+#: For each sport that has flipped: what it flipped ON.
 #:
-#: Empty, because nothing has flipped. Each entry, when there is one, holds the
-#: `days` it flipped on — the durable ledger's own `days[]` entries, copied as
-#: they stood, so the evidence is the same objects `compute_streak` walked and
-#: not a retelling of them — and `your_turn`, naming the entry Alex saw.
+#: **Not "the seven-day evidence" any more, and the widening is D104's, not a
+#: relaxation.** This map was written when a flip could only be bought with a
+#: streak, so an entry held the `days` it flipped on — the durable ledger's own
+#: `days[]` entries, copied as they stood, so the evidence would be the same
+#: objects `compute_streak` walked and not a retelling of them. D104 = A4 (Alex,
+#: 2026-09-09) made a second currency legal for the top-tier leagues: a ruling
+#: instead of proof days. An entry therefore holds ONE of two things, and says
+#: which:
+#:
+#:   * `days` — the ledger entries, for a sport that bought its flip with a
+#:     streak. Copied, never re-derived from the published view: `counted_on` on
+#:     the agreement payload is a retelling and is not this.
+#:   * `ruled_without_streak` — the ruling, for a sport in
+#:     `FLIP_RULED_WITHOUT_STREAK`. `days` is ABSENT rather than `[]` on such an
+#:     entry, because an empty list reads as "we looked and there were none",
+#:     and that is not what happened: the days were never what was spent.
+#:
+#: Both shapes carry `your_turn`, naming the entry Alex saw (D50's second half),
+#: and `flipped_at`.
+#:
+#: `test_a_flipped_sport_must_carry_its_evidence` enforces the split, so a future
+#: flip cannot quietly take the ruled shape without being in the ruled set —
+#: which is the only way this widening could become a hole.
 #:
 #: The reason this is a separate map rather than a field on the switch: a flip
 #: back to ESPN must be one line and must not require deleting the evidence that
 #: the flip forward was earned. Rolling back is the move that has to be cheapest.
-FLIP_EVIDENCE: dict[str, dict[str, Any]] = {}
+FLIP_EVIDENCE: dict[str, dict[str, Any]] = {
+    "americanfootball_nfl": {
+        "flipped_at": "2026-09-11",
+        # No `days` key. NFL did not buy this flip with a streak — see above.
+        "ruled_without_streak": (
+            "D104 = A4, Alex, 2026-09-09 ~10:20am PT, in his words: \"I'm not "
+            "at all worried about StatPal having schedule coverage for "
+            "top-tier leagues. We don't need 7 days of proof. If there's "
+            "anything missing, it was a failure by us to fetch it correctly.\" "
+            "Fable-5's relay: no 7-day proof, no game floor — switch now. "
+            "#4954 is the ship; #2867 is the program."
+        ),
+        "your_turn": (
+            "YOUR-TURN.md, the LOOK entry reading \"football switches to "
+            "StatPal as its primary source (your D104 ruling 'switch now'; "
+            "authority proved the blank-page failure is gone, #4954). It flips "
+            "Fri 9/11 9am PT — not before tonight's game. Say 'flip now' or "
+            "'hold' to change that.\" Detail and the one-line undo: "
+            "alex-inbox/authority-113-football-can-switch-to-the-new-source-"
+            "now-and-i-proved-the-thing-that-stopped-it.md. Fired on silence "
+            "at the stamp (standing notice 36)."
+        ),
+        # Reported, and it gated NOTHING — recorded because "did the streak
+        # happen to be there anyway?" is the first thing a reader asks, and
+        # leaving them to guess invites the answer "so it flipped on seven
+        # days after all", which is not what happened. This is the PUBLISHED
+        # view (`streak` on `/api/admin/statpal/authority-agreement`), read
+        # once at the stamp below; it is deliberately not called `days`.
+        "streak_as_it_stood": {
+            "read_at": "2026-09-11T07:33:08Z",
+            "days": 7,
+            "required_days": 7,
+            "meets_flip_gate": True,
+            "since": "2026-09-05",
+            "through": "2026-09-11",
+            "bar_pct": 99.5,
+            "denominator": 321,
+            "unstable_days": ["2026-09-10"],
+            "note": (
+                "the first day NFL's own streak reached 7/7, which is a "
+                "coincidence of timing and not the reason for the flip"
+            ),
+        },
+        # The precondition that made the flip safe, as opposed to the ruling
+        # that made it wanted. Before #4434 a flipped football sport went BLANK
+        # during an ESPN outage: `STANDING_STATPAL` was in neither
+        # `FAILOVER_CODES` nor `BLANK_CODES`, the actor fell to its `else` and
+        # wrote nothing, and the sport counted as neither served nor uncovered.
+        # authority/085 measured that on 2026-09-09 and refused the flip on it.
+        "precondition": (
+            "#4434 (PR #4620, merged d700e288) made STANDING_STATPAL a serving "
+            "state: on an ESPN-dark pass a flipped sport dispatches both the "
+            "schedule and the livescore writer and counts `standing_serving`, "
+            "and a pass where BOTH sources are dark is `failover_uncovered` "
+            "and logs ERROR. Without it this flip was silent in both "
+            "directions (authority/085, 2026-09-09)."
+        ),
+    }
+}
 
 #: Sports Alex ruled may fail over to StatPal **without a certification streak**.
 #:
@@ -969,16 +1058,39 @@ def flip_permitted(
                 "gates a ruled sport."
             )
         )
+        # The closing clause is BRANCHED on what the switch actually says, and
+        # that is not a stylistic choice. It used to read "THE LIMIT: … still
+        # reads `{authority_for(...)}`" — a sentence whose subject was hardcoded
+        # ("a fallback BEHIND ESPN") beside a value that was interpolated. It was
+        # true for as long as every value was `ESPN`, and on the day football
+        # flipped (#4954) it began serving "this is a fallback BEHIND ESPN, not a
+        # standing source of record — `AUTHORITY_BY_SPORT` still reads
+        # `statpal`", which contradicts itself in one breath. #5139's class, one
+        # function over: prose that names a value the code can read.
+        if authority_for(sport_key) == STATPAL:
+            standing = (
+                "AND IT HAS FLIPPED: `AUTHORITY_BY_SPORT` reads `statpal` for "
+                f"{sport_key}, so StatPal is its STANDING source of record and "
+                "an ESPN-dark pass is reported as standing service rather than "
+                "as an outage override. On a pass where ESPN answers, nothing "
+                "here changes — the flip did not move the event graph."
+            )
+        else:
+            standing = (
+                "THE LIMIT: this is a fallback BEHIND ESPN, not a standing "
+                "source of record — `AUTHORITY_BY_SPORT` still reads "
+                f"`{authority_for(sport_key)}` for {sport_key}, so on a pass "
+                "where ESPN answers nothing here changes. A permission is not a "
+                "flip."
+            )
         return True, (
             f"{sport_key} may fail over to StatPal without a certification "
             "streak: Alex ruled D104 = A4 on 2026-09-09 — no proof days for the "
             "top-tier leagues, and a game StatPal lists that we lack is our "
             f"fetch bug to fix (#2867), not a gap in the venue. So {monitor}, "
             f"and the {REQUIRED_STREAK_DAYS}-day bar no longer gates this sport. "
-            "THE LIMIT: this is a fallback BEHIND ESPN, not a standing source of "
-            f"record — `AUTHORITY_BY_SPORT` still reads "
-            f"`{authority_for(sport_key)}`, so on a pass where ESPN answers "
-            "nothing here changes." + unruled_number
+            + standing
+            + unruled_number
         )
     if not GOVERNING_IDENTITY_NUMBERS.get(sport_key):
         # D63, asked here since D113 (Alex, 2026-09-10) instead of fourth.

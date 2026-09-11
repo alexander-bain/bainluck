@@ -37,7 +37,9 @@ from sqlalchemy.ext.compiler import compiles
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     ESPN,
+    FLIP_EVIDENCE,
     STATPAL,
+    authority_for,
     flip_permitted,
 )
 from app.utils.authority_agreement import SHADOW_STAMPERS
@@ -144,6 +146,47 @@ def still_gated(monkeypatch):
     specimen, so do not try to write one that does.
     """
     return register_specimen(monkeypatch, STILL_GATED)
+
+
+@pytest.fixture
+def nfl_as_candidate(monkeypatch):
+    """Pin `americanfootball_nfl` back to ESPN standing for one test. #4954.
+
+    **Every test that takes this fixture is about the FAILOVER CANDIDATE path**
+    — a sport ESPN is still the source of record for, whose standby may cover a
+    dark pass as a temporary override. That was NFL's real state when this file
+    was written, so the tests simply named it and let `decide` read the switch.
+
+    On 2026-09-11 #4954 flipped NFL, and those tests stopped being about the
+    candidate path without stopping being green: the standing path asks the same
+    standby questions in the same order and answers them the same way, so only
+    the outcomes where the two genuinely differ turned red. A test that changes
+    its subject and keeps its colour is worse than one that breaks.
+
+    So the subject is pinned rather than the expectations re-pointed. The
+    STANDING arm is not lost — it has its own suite in
+    `test_standing_statpal_is_a_serving_state_4434`, which is where a flipped
+    sport's behaviour belongs.
+
+    Per-test rather than autouse, for visibility and because this file's
+    censuses (`test_only_the_ruled_sports_can_fail_over_today`, and the flip
+    tripwire) must see the REAL switch — pinning it under them would delete
+    exactly what they check.
+    """
+    # Through the MODULE attribute, not this file's imported reference. When a
+    # test also takes `still_gated`, `register_specimen` has already rebound
+    # `app.config.authority_by_sport.AUTHORITY_BY_SPORT` to a fresh dict, and a
+    # `setitem` on the original object is written to something `authority_for`
+    # no longer reads. The assertion below is what turned that into an ERROR
+    # instead of a test that quietly measured the flipped sport.
+    import app.config.authority_by_sport as _config
+
+    monkeypatch.setitem(_config.AUTHORITY_BY_SPORT, NFL, ESPN)
+    assert _config.authority_for(NFL) == ESPN, (
+        "the pin did not take, so every assertion in the test taking this "
+        "fixture is about a flipped sport while claiming to be about a candidate"
+    )
+    return NFL
 
 
 def _shut_gate(sport_key: str) -> tuple[bool, str]:
@@ -256,9 +299,27 @@ def test_every_outcome_under_an_open_gate(
 
     Under the REAL gate opened by seven real days — so this is the behaviour the
     mechanism will actually have, not the behaviour of a stub.
+
+    **`standing=ESPN` IS PASSED EXPLICITLY, AND #4954 IS WHY.** This table is
+    the CANDIDATE table — the nine outcomes for a sport ESPN is still the
+    source of record for. It used to let `standing` default, which makes
+    `decide` read `authority_for(NFL)` out of the config; on 2026-09-11 that
+    value became `statpal` and the table quietly became a table about a
+    FLIPPED sport. Twelve of its thirteen rows went on passing, because the
+    standing path asks the same standby questions in the same order and gets
+    the same answers — only row 1 (ESPN answering) diverged and reported the
+    failure. A parameter table whose subject is read from mutable config can
+    change what it measures without changing colour, and twelve green rows is
+    what that looks like. The standing arm has its own table, in
+    `test_standing_statpal_is_a_serving_state_4434`.
     """
     decision = decide(
-        NFL, espn=espn, statpal=statpal, statpal_live=live, gate=_open_gate()
+        NFL,
+        espn=espn,
+        statpal=statpal,
+        statpal_live=live,
+        gate=_open_gate(),
+        standing=ESPN,
     )
     assert decision.code == expected
     assert decision.serving == serving
@@ -304,7 +365,7 @@ def test_a_flipped_sport_is_standing_not_failed_over(still_gated):
         )
 
 
-def test_the_gate_is_asked_before_the_standby_is_read(still_gated):
+def test_the_gate_is_asked_before_the_standby_is_read(still_gated, nfl_as_candidate):
     """The ordering the caller depends on to avoid a network call.
 
     `_decide_failovers` reads StatPal only when `decide` tells it the standby
@@ -339,33 +400,52 @@ def test_only_the_ruled_sports_can_fail_over_today():
     both directions over every sport on the row an operator reads. A ruling that
     quietly opened a sixth sport, or that failed to open the one it named, both
     fail here.
-    """
-    from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK
 
-    acted = set()
+    **THIRD STATE SINCE #4954.** A sport whose switch already reads `statpal`
+    is not "acting under the ruling" — it is served STANDING, `failed_over` is
+    False and the code is `STANDING-STATPAL`. Folding it into `acted` would
+    make the two-way check pass on a sport that reached the same outcome by a
+    different door; leaving it in the `else` makes it read as a defective
+    refusal. It gets its own bucket, and `covered` — the union — is the number
+    that actually answers "how many of our sports survive an ESPN outage".
+    """
+    from app.config.authority_by_sport import FLIP_RULED_WITHOUT_STREAK, STATPAL
+
+    acted, standing = set(), set()
     for sport_key in SHADOW_STAMPERS:
         gate = flip_permitted(sport_key, [])
         decision = would_fail_over_now(sport_key, gate)
         if decision.failed_over:
             acted.add(sport_key)
+        elif decision.serving == STATPAL:
+            standing.add(sport_key)
+            assert AUTHORITY_BY_SPORT.get(sport_key) == STATPAL, (
+                f"{sport_key} is served by StatPal standing but its switch "
+                f"does not say so: {AUTHORITY_BY_SPORT.get(sport_key)!r}"
+            )
+            assert sport_key in FLIP_EVIDENCE, (
+                f"{sport_key} is standing on StatPal with no FLIP_EVIDENCE"
+            )
         else:
             assert decision.code == NOT_GATED, (
                 f"{sport_key} refused for a reason other than the gate: "
                 f"{decision.code} / {decision.why}"
             )
 
-    assert acted == set(FLIP_RULED_WITHOUT_STREAK) & set(SHADOW_STAMPERS), (
-        "the set of sports that can fail over on an empty ledger is not the set "
-        f"Alex ruled: acted={sorted(acted)}, "
-        f"ruled={sorted(FLIP_RULED_WITHOUT_STREAK)}"
+    ruled = set(FLIP_RULED_WITHOUT_STREAK) & set(SHADOW_STAMPERS)
+    assert acted | standing == ruled, (
+        "the set of sports that survive an ESPN outage on an empty ledger is "
+        f"not the set Alex ruled: acted={sorted(acted)}, "
+        f"standing={sorted(standing)}, ruled={sorted(ruled)}"
     )
     assert acted, (
         "no sport acted at all — D104's ship is inert, which is the failure "
-        "this test was rewritten to catch"
+        "this test was rewritten to catch. If every ruled sport has since "
+        "flipped, this test needs a constructed candidate, not a deletion"
     )
 
 
-def test_and_it_is_not_inert_the_same_sport_fires_on_a_genuine_seven():
+def test_and_it_is_not_inert_the_same_sport_fires_on_a_genuine_seven(nfl_as_candidate):
     """The pair to the test above, and what stops it being vacuous.
 
     Without this, a `decide` hard-wired to refuse would pass — and would keep
@@ -378,10 +458,25 @@ def test_and_it_is_not_inert_the_same_sport_fires_on_a_genuine_seven():
     assert decision.serving == STATPAL
 
 
-def test_nothing_has_flipped_so_no_sport_is_standing_on_statpal():
-    """A tripwire on the other input. `would_fail_over_now` reads the switch;
-    if a value here became STATPAL the disclosure above would change meaning."""
-    assert set(AUTHORITY_BY_SPORT.values()) == {ESPN}
+def test_every_standing_sport_is_one_the_evidence_accounts_for():
+    """The tripwire fired, and this is what it was arming.
+
+    It read `set(AUTHORITY_BY_SPORT.values()) == {ESPN}` with the docstring
+    *"if a value here became STATPAL the disclosure above would change
+    meaning"*. On 2026-09-11 one did (#4954, football), and the disclosure did
+    change meaning — `would_fire_if_espn_went_dark` inverts to False for a
+    standing sport, which is why the row now publishes
+    `would_be_served_if_espn_went_dark` beside it.
+
+    Re-derived onto the invariant that outlives any particular flip: the
+    switch's non-ESPN values and `FLIP_EVIDENCE`'s keys are the same set, in
+    both directions. One without the other is either a flip with no receipts
+    or receipts for a flip that was rolled back and not recorded.
+    """
+    standing = sorted(k for k, v in AUTHORITY_BY_SPORT.items() if v != ESPN)
+    assert standing == sorted(FLIP_EVIDENCE), (
+        f"switch says {standing}, evidence says {sorted(FLIP_EVIDENCE)}"
+    )
 
 
 def test_the_disclosure_cannot_disagree_with_the_decision(still_gated):
@@ -401,7 +496,7 @@ def test_the_disclosure_cannot_disagree_with_the_decision(still_gated):
 # ── Deactivation, and the state that is deliberately not kept ───────────────
 
 
-def test_the_failover_ends_by_itself_because_nothing_was_stored():
+def test_the_failover_ends_by_itself_because_nothing_was_stored(nfl_as_candidate):
     """Deactivation is not a mechanism; it is the absence of one.
 
     A latch cleared on ESPN success could not reopen — ESPN returning with a
@@ -763,7 +858,7 @@ async def test_today_nothing_is_dispatched_and_a_receipt_is_still_written(
 
 @pytest.mark.asyncio
 async def test_with_a_genuine_seven_the_outage_dispatches_statpal(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, nfl_as_candidate
 ):
     """The ship, proven end to end at the actor — and the pair that stops the
     test above from passing against a mechanism that can never act.
@@ -795,7 +890,7 @@ async def test_with_a_genuine_seven_the_outage_dispatches_statpal(
 
 @pytest.mark.asyncio
 async def test_an_espn_slate_statpal_contradicts_also_dispatches(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, nfl_as_candidate
 ):
     """The empty-200 trap, all the way to the act.
 
@@ -833,7 +928,7 @@ async def test_an_espn_slate_statpal_contradicts_also_dispatches(
 
 @pytest.mark.asyncio
 async def test_a_failover_serves_in_line_and_dispatches_nothing(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, nfl_as_candidate
 ):
     """The act: StatPal's writers run INSIDE this pass, and no task is queued.
 
@@ -927,7 +1022,7 @@ async def test_a_failover_serves_in_line_and_dispatches_nothing(
 
 @pytest.mark.asyncio
 async def test_the_full_espn_pass_serves_a_dark_sport_and_the_score_advances(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, nfl_as_candidate
 ):
     """**CERT-2050's named regression.** The whole task, and a persisted advance.
 
@@ -1270,7 +1365,7 @@ def test_a_dark_standby_still_reads_dark_through_the_windowed_path():
 
 @pytest.mark.asyncio
 async def test_only_future_statpal_fixtures_do_not_dispatch_but_a_started_one_does(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, nfl_as_candidate
 ):
     """CERT-2040's named regression, end to end at the actor.
 
@@ -1392,7 +1487,7 @@ async def test_a_dark_live_endpoint_refuses_by_name_and_dispatches_nothing(
 
 @pytest.mark.asyncio
 async def test_a_healthy_live_endpoint_dispatches_both_halves(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, nfl_as_candidate
 ):
     """The control for the test above, and the second half of CERT-2044's
     regression: with `livescores` answering, the same state dispatches — and it
@@ -2183,7 +2278,7 @@ def test_the_control_all_three_of_those_sports_really_do_open_on_the_same_days()
 
 @pytest.mark.asyncio
 async def test_three_dark_sports_get_three_schedule_writes_and_one_live_write(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, nfl_as_candidate
 ):
     """**The named repair.** N sports served, ONE global livescore call.
 
@@ -2226,7 +2321,7 @@ async def test_three_dark_sports_get_three_schedule_writes_and_one_live_write(
 
 @pytest.mark.asyncio
 async def test_a_sport_the_gate_refuses_gets_no_schedule_write_and_is_not_counted(
-    monkeypatch, dispatches
+    monkeypatch, dispatches, nfl_as_candidate
 ):
     """The pairing that stops the test above passing against "serve everything".
 

@@ -44,6 +44,7 @@ from app.config.authority_by_sport import (
     DISCOVERY_SCHEDULED_SPORTS,
     ESPN,
     FLIP_EVIDENCE,
+    FLIP_RULED_WITHOUT_STREAK,
     STATPAL,
     authority_for,
     flip_permitted,
@@ -339,34 +340,140 @@ def test_the_summary_and_the_streak_counter_agree_on_seven():
 # ---------------------------------------------------------------------------
 
 
-def test_nothing_has_flipped():
-    """The whole switch is dark, and CI is where that stops being true quietly."""
+def test_a_flip_is_never_something_a_diff_can_do_quietly():
+    """CI is where a flip stops being able to happen without being seen.
+
+    This used to read `assert not flipped` — the whole switch was dark and the
+    test said so. #4954 flipped `americanfootball_nfl` on 2026-09-11 and the
+    tempting repair was to add it to an allowlist here, which would have turned
+    a guard into a register: the next flip would be one line in a literal, in a
+    diff, with nothing to notice it.
+
+    So the guard is re-derived onto the thing that was always the point. A
+    non-ESPN value is allowed EXACTLY when it carries D50's receipts, which
+    `test_a_flipped_sport_must_carry_its_evidence` below checks in full. What
+    this test still owns is the DEFAULT: an unlisted sport, a typo, an empty
+    string must never reach StatPal, whatever any listed sport now holds.
+    """
     flipped = sorted(k for k, v in AUTHORITY_BY_SPORT.items() if v != ESPN)
-    assert not flipped, (
-        f"{flipped} are set to a non-ESPN authority. A flip is Alex's under D50 "
-        "and needs a YOUR-TURN entry he has seen; it does not arrive in a diff"
+    undocumented = [k for k in flipped if k not in FLIP_EVIDENCE]
+    assert not undocumented, (
+        f"{undocumented} are set to a non-ESPN authority with no FLIP_EVIDENCE "
+        "entry. A flip is Alex's under D50 and needs a YOUR-TURN entry he has "
+        "seen; it does not arrive in a diff"
     )
     assert DEFAULT_AUTHORITY == ESPN
+    assert authority_for("a_sport_that_does_not_exist") == ESPN, (
+        "the default must not follow the flipped sports — an unknown key is a "
+        "typo to find, never a reason for a surface to change provider"
+    )
+
+
+def test_the_ruled_permission_does_not_call_a_flipped_sport_a_fallback():
+    """The D104 permission's closing clause follows the switch. #4954, #5139's class.
+
+    `flip_permitted`'s ruled branch used to end with a sentence whose SUBJECT
+    was hardcoded and whose VALUE was interpolated::
+
+        "THE LIMIT: this is a fallback BEHIND ESPN, not a standing source of
+         record — `AUTHORITY_BY_SPORT` still reads `{authority_for(sport_key)}`"
+
+    True for as long as every value was `espn`. On the day football flipped it
+    began serving *"a fallback BEHIND ESPN … still reads `statpal`"*, which
+    contradicts itself inside one sentence — and this string is SERVED, on
+    `/api/admin/statpal/authority-agreement`, to the operator deciding whether
+    anything has flipped.
+
+    A mutant that restored the single hardcoded branch survived the whole
+    authority suite, so the repair had no guard until this test. Graded on the
+    VERDICT PHRASE, never on a substring of the rule's name: `'D104' in why` is
+    true on the branch that says "this one is **not** among them".
+    """
+    flipped = sorted(
+        k
+        for k in FLIP_RULED_WITHOUT_STREAK
+        if AUTHORITY_BY_SPORT.get(k, DEFAULT_AUTHORITY) == STATPAL
+    )
+    standing_still = sorted(
+        k
+        for k in FLIP_RULED_WITHOUT_STREAK
+        if AUTHORITY_BY_SPORT.get(k, DEFAULT_AUTHORITY) == ESPN
+    )
+    assert flipped and standing_still, (
+        "this test needs one ruled sport on each side of the switch to grade "
+        f"both branches; flipped={flipped} standing={standing_still}"
+    )
+
+    for sport_key in flipped:
+        _, why = flip_permitted(sport_key, [])
+        assert "fallback BEHIND ESPN" not in why, (
+            f"{sport_key} has flipped and its permission still calls it a "
+            f"fallback behind ESPN: {why!r}"
+        )
+        assert "AND IT HAS FLIPPED" in why, (
+            f"{sport_key} has flipped and its permission does not say so: {why!r}"
+        )
+
+    for sport_key in standing_still:
+        _, why = flip_permitted(sport_key, [])
+        assert "fallback BEHIND ESPN" in why, (
+            f"{sport_key} has NOT flipped and its permission has stopped "
+            f"saying a permission is not a flip: {why!r}"
+        )
+        assert "AND IT HAS FLIPPED" not in why, (
+            f"{sport_key} has not flipped and its permission says it has: {why!r}"
+        )
 
 
 def test_a_flipped_sport_must_carry_its_evidence():
     """The one-line change brings its receipts, or CI stops it.
 
     This is the test that makes `FLIP_EVIDENCE` load-bearing rather than a
-    comment. It passes vacuously today — nothing is flipped — and it is the
-    reason the day something IS flipped cannot also be the day the evidence is
-    left for later.
+    comment. It used to pass vacuously — nothing was flipped. Since #4954
+    (`americanfootball_nfl`, 2026-09-11) it grades a real entry, and the
+    anti-vacuity assert below is what keeps it honest if a rollback empties the
+    map again.
+
+    **The two currencies (D104) are checked SEPARATELY, and that is the whole
+    guard.** A flip may be bought with a streak (`days`, the ledger's own
+    entries) or with a ruling (`ruled_without_streak`, for a key in
+    `FLIP_RULED_WITHOUT_STREAK`). What must never be possible is taking the
+    ruled shape without being in the ruled set: that would let any sport skip
+    its seven days by writing a sentence. `flip_permitted` would in fact refuse
+    such a sport — but only through an empty `days` list, which is the same
+    call an honest streak-flip makes, so the refusal alone does not say WHICH
+    currency was tendered. Asserting the shape is what says it.
     """
-    for sport_key, authority in AUTHORITY_BY_SPORT.items():
-        if authority != STATPAL:
-            continue
+    flipped = sorted(k for k, v in AUTHORITY_BY_SPORT.items() if v == STATPAL)
+    assert flipped, (
+        "no sport is flipped, so this test grades nothing. If a rollback did "
+        "that, say so here; do not leave it reading as a pass"
+    )
+    for sport_key in flipped:
         evidence = FLIP_EVIDENCE.get(sport_key)
         assert evidence, f"{sport_key} is flipped with no FLIP_EVIDENCE entry"
         assert evidence.get("your_turn"), (
             f"{sport_key} names no YOUR-TURN entry; D50's second half is not "
             "optional and not checkable anywhere else"
         )
-        permitted, why = flip_permitted(sport_key, evidence.get("days") or [])
+
+        ruled = evidence.get("ruled_without_streak")
+        days = evidence.get("days")
+        assert bool(ruled) != bool(days), (
+            f"{sport_key} tenders {'both' if ruled and days else 'neither'} "
+            "currency. An entry says what it flipped ON: `days` for a streak, "
+            "`ruled_without_streak` for a D104 ruling — one of them, named"
+        )
+        if ruled:
+            assert sport_key in FLIP_RULED_WITHOUT_STREAK, (
+                f"{sport_key} claims a D104 ruling bought its flip, but it is "
+                "not in FLIP_RULED_WITHOUT_STREAK. A sentence is not a ruling"
+            )
+            assert "D104" in ruled, (
+                f"{sport_key}'s ruled evidence does not name the ruling: {ruled!r}"
+            )
+
+        permitted, why = flip_permitted(sport_key, days or [])
         assert permitted, f"{sport_key} is flipped but its own evidence says: {why}"
 
 
@@ -744,23 +851,38 @@ def test_a_genuine_seven_now_reaches_the_gate_but_flips_nothing_by_itself():
     `flip_permitted` say yes — that is D50's sentence in code and it is the
     intended consequence of #3193, not a side effect of it.
 
-    **Saying yes is not flipping.** `AUTHORITY_BY_SPORT` still reads ESPN for
-    every sport; changing one is a separate edit that CI refuses without a
-    `FLIP_EVIDENCE` entry, and D50's second half — a YOUR-TURN entry Alex has
-    seen — is not a thing code can check at all. This test asserts both halves
-    together so that "the gate opened" can never be read as "the sport flipped".
+    **Saying yes is not flipping.** Changing a value in `AUTHORITY_BY_SPORT` is
+    a separate edit that CI refuses without a `FLIP_EVIDENCE` entry, and D50's
+    second half — a YOUR-TURN entry Alex has seen — is not a thing code can
+    check at all. This test asserts both halves together so that "the gate
+    opened" can never be read as "the sport flipped".
 
-    NFL's real clock is 1 of 7 as of 2026-09-05, so the earliest a genuine seven
-    exists is 2026-09-11. The run here is synthetic.
+    **The subject moved on 2026-09-11.** NFL's real clock was 1 of 7 on
+    2026-09-05, so the earliest a genuine seven existed was 2026-09-11 — and on
+    that day #4954 flipped it, not on the seven (D104 ruled it needed none).
+    Asserting `== ESPN` on NFL is therefore no longer available, and flipping
+    that expectation to `== STATPAL` would have destroyed the test: a gate that
+    says yes beside a switch that reads statpal proves nothing about whether
+    one caused the other.
+
+    So the second half is re-derived onto a sport whose gate is open and whose
+    switch has NOT moved — `basketball_nba`, ruled by D104 (#4493), permitted
+    without any streak at all, and still standing on ESPN. That is the same
+    proposition observed live rather than synthetically. The run is synthetic
+    on NFL only for the first half.
     """
     permitted, why = flip_permitted(
         "americanfootball_nfl", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
     )
     assert permitted, f"a genuine seven should reach the gate: {why!r}"
 
-    assert AUTHORITY_BY_SPORT["americanfootball_nfl"] == ESPN, (
+    open_gate, why_nba = flip_permitted("basketball_nba", [])
+    assert open_gate, f"NBA's gate is D104-open with no days: {why_nba!r}"
+    assert AUTHORITY_BY_SPORT["basketball_nba"] == ESPN, (
         "the gate opening must not move the switch — the flip is a separate, "
-        "evidenced, attended edit (D50)"
+        "evidenced, attended edit (D50). NBA's gate has been open since #4493 "
+        "and its switch has not moved; if that changed, re-derive this onto "
+        "another still-standing sport rather than deleting the assertion"
     )
 
 

@@ -31,9 +31,14 @@ flip is real, which is what D104 makes it.
 
 WHAT IS DELIBERATELY *NOT* HERE
 ═══════════════════════════════
-**The flip itself.** `AUTHORITY_BY_SPORT` stays `espn` for every sport and
-`test_the_switch_itself_still_did_not_move` pins that. This ship makes the
-standing path SAFE to flip; it does not flip it.
+**The flip itself.** This ship made the standing path SAFE to flip; it did not
+flip anything. `americanfootball_nfl` was flipped afterwards, on 2026-09-11, by
+#4954 — a separate PR carrying D50's receipts, and this file's precondition is
+what it names as having made it survivable.
+`test_the_flip_this_ship_made_safe_was_performed_by_a_different_ship` pins that
+separation (it was `test_the_switch_itself_still_did_not_move`, which asserted
+every value was `espn`; the sentence stopped being available on the day the
+guard succeeded).
 
 **The inversion.** Genuinely making StatPal the primary ingest means inverting
 `espn_sync`'s loops so StatPal is read first and ESPN backs it up. That is
@@ -48,6 +53,7 @@ import pytest
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     ESPN,
+    FLIP_EVIDENCE,
     STATPAL,
     flip_permitted,
 )
@@ -334,17 +340,41 @@ def test_nothing_changed_for_a_sport_that_has_not_flipped(espn, schedule, live):
         )
 
 
-def test_the_switch_itself_still_did_not_move():
-    """This ship makes the flip SAFE; it does not perform it.
+def test_the_flip_this_ship_made_safe_was_performed_by_a_different_ship():
+    """This ship made the flip SAFE; it did not perform it — and one has now happened.
 
-    Same guard as `TestTheSwitchItselfDidNotMove` in the D104 suites. If this
-    ever reds, someone flipped a sport in a PR that only claimed to make
-    flipping survivable.
+    Was `test_the_switch_itself_still_did_not_move`, asserting
+    `set(AUTHORITY_BY_SPORT.values()) == {ESPN}`. It existed so that "someone
+    flipped a sport in a PR that only claimed to make flipping survivable"
+    could not pass unseen.
+
+    #4954 flipped `americanfootball_nfl` on 2026-09-11, in a PR that claimed
+    exactly that and nothing else — which is the outcome this guard wanted, not
+    a breach of it. Re-derived onto the property that still separates the two:
+    **a sport in the switch carries FLIP_EVIDENCE, and this file's own
+    subject-matter (the standing-serving machinery) is not what put it there.**
+
+    The `precondition` assertion is the load-bearing half. It is how a reader
+    of THIS file learns that its ship is what made that flip survivable, and it
+    is what would red if a future flip were taken without it — the 2026-09-09
+    measurement (authority/085) was that a flip before #4434 went silently
+    blank during an ESPN outage.
     """
-    assert set(AUTHORITY_BY_SPORT.values()) == {ESPN}, (
-        "a sport was flipped to StatPal: "
-        f"{ {k: v for k, v in AUTHORITY_BY_SPORT.items() if v != ESPN} }"
-    )
+    flipped = {k: v for k, v in AUTHORITY_BY_SPORT.items() if v != ESPN}
+    for key in flipped:
+        evidence = FLIP_EVIDENCE.get(key)
+        assert evidence, (
+            f"{key} was flipped to StatPal with no FLIP_EVIDENCE entry — that "
+            "is a flip arriving in a diff, which is what this guard is for"
+        )
+        assert "#4434" in (evidence.get("precondition") or ""), (
+            f"{key} was flipped without naming #4434 as its precondition. "
+            "Before this ship, STANDING_STATPAL was in neither FAILOVER_CODES "
+            "nor BLANK_CODES and a flipped sport went blank during an ESPN "
+            "outage, counted as neither served nor uncovered (authority/085, "
+            "2026-09-09). A flip that does not know that is a flip taken on "
+            "the old measurement"
+        )
 
 
 # ── At the actor: the writers run, and the blank alarms ─────────────────────

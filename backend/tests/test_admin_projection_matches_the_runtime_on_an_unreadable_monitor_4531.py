@@ -82,9 +82,23 @@ from tests import test_authority_agreement_endpoint as _endpoint
 FakeSession = _endpoint.FakeSession
 call = _endpoint.call
 
-#: D104-ruled: the failover may fire with no streak, so an unreadable MONITOR
-#: must not refuse it.
-RULED = "americanfootball_nfl"
+#: D104-ruled AND NOT FLIPPED: the failover may fire with no streak, so an
+#: unreadable MONITOR must not refuse it.
+#:
+#: **Both halves are load-bearing, and the second is why this moved off
+#: `americanfootball_nfl` on 2026-09-11 (#4954).** A FLIPPED sport never reaches
+#: the gate at all — `decide` answers `STANDING-STATPAL` before the ledger's
+#: readability is a question — so it can neither exhibit #4531's defect nor
+#: prove its fix. Football spent one day being the specimen for a state it had
+#: left, and all three assertions here went red saying so, which is the right
+#: outcome: this file's subject is the projection of a CANDIDATE.
+#:
+#: `basketball_nba` is ruled (#4493) and standing on ESPN, so it is the real
+#: thing rather than a config pin. When it flips, move this to the next ruled
+#: sport still standing — the pool is `FLIP_RULED_WITHOUT_STREAK` minus
+#: `FLIP_EVIDENCE`, and `test_the_specimen_is_still_in_the_state_it_names`
+#: below fails loudly rather than letting the file measure the wrong thing.
+RULED = "basketball_nba"
 
 #: NOT ruled, so its refusal must survive unchanged — and must still carry the
 #: ledger's own failed-read reason rather than a streak verdict never computed.
@@ -124,6 +138,30 @@ async def _failover_rows(call):
     """`{sport_key: failover-block}` from a live call to the real endpoint."""
     out = await call(metrics={}, session=FakeSession())
     return {s["sport_key"]: s["authority"]["failover"] for s in out["sports"]}
+
+
+def test_the_specimen_is_still_in_the_state_it_names():
+    """`RULED` must be ruled AND standing, or every test below measures nothing.
+
+    Added with #4954. The specimen silently changed state once already — a
+    flipped sport reaches `STANDING-STATPAL` before the gate is asked, so the
+    unreadable-monitor branch this file exists to guard becomes unreachable for
+    it. That failure was loud here only because the expectations happened to
+    disagree; the general case is a specimen that drifts into a state where the
+    defect cannot occur and the file goes green forever.
+    """
+    assert RULED in switch.FLIP_RULED_WITHOUT_STREAK, (
+        f"{RULED} is not D104-ruled, so an unreadable monitor is SUPPOSED to "
+        "refuse it and the ship below is not being tested"
+    )
+    assert switch.authority_for(RULED) == switch.ESPN, (
+        f"{RULED} has flipped to StatPal, so it is served standing and never "
+        "reaches the gate — move the specimen to a ruled sport still standing "
+        f"on ESPN: {sorted(set(switch.FLIP_RULED_WITHOUT_STREAK) - set(switch.FLIP_EVIDENCE))}"
+    )
+    assert UNRULED not in switch.FLIP_RULED_WITHOUT_STREAK, (
+        f"{UNRULED} has been ruled, so the control below no longer controls"
+    )
 
 
 # ── The ship ────────────────────────────────────────────────────────────────
@@ -229,6 +267,17 @@ async def test_the_projection_is_unchanged_for_every_sport_when_the_monitor_read
     unreadable branch now *simulates*, so if the two branches had been collapsed
     into one this would still pass while the control above failed. Pinned
     against the gate's own answer for each sport.
+
+    **THE FIELD MOVED, NOT THE CLAIM (#4954).** This read
+    `would_fire_if_espn_went_dark == flip_permitted(...)` and that identity
+    broke on the day football flipped — not because the projection drifted from
+    the gate, but because `would_fire` means "an OVERRIDE fired", and a sport
+    whose standing source of record is already StatPal is covered without one.
+    `would_be_served_if_espn_went_dark` is the field that answers the question
+    this test is actually asking ("does the projection agree with the gate about
+    whether this sport survives an outage"), and it tracks `flip_permitted`
+    across all three states. Both are asserted, so the pair cannot silently
+    become the same boolean again.
     """
     _ledger_readable(monkeypatch, days=[])
 
@@ -236,10 +285,17 @@ async def test_the_projection_is_unchanged_for_every_sport_when_the_monitor_read
 
     for key in sorted(SHADOW_STAMPERS):
         expected_permitted, _ = switch.flip_permitted(key, [])
-        assert rows[key]["would_fire_if_espn_went_dark"] == expected_permitted, (
+        flipped = switch.authority_for(key) == switch.STATPAL
+        assert rows[key]["would_be_served_if_espn_went_dark"] == expected_permitted, (
             f"{key}'s projection on a READABLE ledger no longer matches "
             "`flip_permitted`'s own answer, so the fix to the unreadable branch "
             "changed the branch that was already right"
+        )
+        assert rows[key]["would_fire_if_espn_went_dark"] == (
+            expected_permitted and not flipped
+        ), (
+            f"{key} is flipped={flipped} and permitted={expected_permitted}; a "
+            "flipped sport is served STANDING and no override fires for it"
         )
         assert UNREADABLE_WHY not in rows[key]["why"], (
             f"{key} carries an unreadable-monitor note on a ledger that read fine"
