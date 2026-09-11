@@ -59,8 +59,15 @@ interface Harness {
    * Make the next nudge fail, the way a still-throttled server would.
    * `intervalMs` is the key's `refreshInterval` as swr would report it back
    * through `onError`, and must match the one the key was armed with.
+   * `retryAfterMs` is what the limiter advertised on THAT failure — omit it for
+   * an error carrying no instruction (#5134 needs the other branch, where a
+   * server that keeps answering 429 keeps re-arming the key).
    */
-  failNextNudge: (intervalMs?: unknown, cachedData?: unknown) => void;
+  failNextNudge: (
+    intervalMs?: unknown,
+    cachedData?: unknown,
+    retryAfterMs?: number,
+  ) => void;
   visible: boolean;
   online: boolean;
 }
@@ -81,6 +88,7 @@ function harness(): Harness {
     nudgeFails: false,
     nudgeFailInterval: POLL_MS as unknown,
     nudgeFailData: undefined as unknown,
+    nudgeFailRetryAfter: undefined as number | undefined,
     visible: true,
     online: true,
   };
@@ -95,7 +103,12 @@ function harness(): Harness {
         // swr calls the global `onError` from inside revalidate, BEFORE the
         // promise the caller is awaiting resolves. Reproducing that ordering is
         // the whole point of this fake.
-        recovery.recordError(key, throttled(), state.nudgeFailInterval, state.nudgeFailData);
+        recovery.recordError(
+          key,
+          throttled(state.nudgeFailRetryAfter),
+          state.nudgeFailInterval,
+          state.nudgeFailData,
+        );
       }
       return undefined;
     },
@@ -129,10 +142,11 @@ function harness(): Harness {
       await Promise.resolve();
       await Promise.resolve();
     },
-    failNextNudge(intervalMs = POLL_MS, cachedData = undefined) {
+    failNextNudge(intervalMs = POLL_MS, cachedData = undefined, retryAfterMs = undefined) {
       state.nudgeFails = true;
       state.nudgeFailInterval = intervalMs;
       state.nudgeFailData = cachedData;
+      state.nudgeFailRetryAfter = retryAfterMs;
     },
     get visible() {
       return state.visible;
@@ -303,6 +317,96 @@ describe("#5072 — the server's own instruction", () => {
     // upstream. Honouring it literally would leave a live page frozen for the
     // rest of the match — the exact outcome this issue exists to prevent.
     expect(recoveryDelayMs(POLL_MS, 0, 6 * 60 * 60 * 1000)).toBe(MAX_SERVER_WAIT_MS);
+  });
+});
+
+/**
+ * #5134 — THE LOAD INVARIANT HELD ONLY WHILE THE SERVER SAID NOTHING.
+ *
+ * `the load invariant` above proves "never faster than the key's own poll" on
+ * the `retryAfterMs === null` path, and `does not speed a slow key UP to the
+ * ceiling` picks 300_000 — the one slow value where the old ordering happened to
+ * give the right answer, because `min(300_000, 300_000)` is a no-op. One step
+ * slower and the same code broke the invariant, unasserted.
+ *
+ * These are the cases that reach the OTHER branch.
+ */
+describe("#5134 — a server instruction must never undercut a slow key's cadence", () => {
+  /**
+   * Every `refreshInterval` in the app above `MAX_SERVER_WAIT_MS`, by owner.
+   *
+   * Named individually rather than swept, because the point of the table is
+   * that these are REAL open tabs — and a reader-facing weather page, not just
+   * admin, is the worst of them. If one of these call sites changes cadence the
+   * table goes stale loudly rather than silently covering nothing.
+   */
+  const SLOW_KEYS_IN_THE_APP: ReadonlyArray<readonly [string, number]> = [
+    ["app/admin/page.tsx", 600_000],
+    ["components/weather/NaturalEvents.tsx", 3_600_000],
+    ["components/weather/RainForecast.tsx", 3_600_000],
+    ["components/weather/TemperatureMap.tsx", 3_600_000],
+    ["components/weather/WildCards.tsx", 21_600_000],
+    ["components/weather/ClimateDashboard.tsx", 21_600_000],
+  ];
+
+  it("schedules a throttled 10-minute key at ten minutes, not at the ceiling", () => {
+    // The issue's own case. Before the fix this returned MAX_SERVER_WAIT_MS,
+    // i.e. the key recovered twice as fast as it polls.
+    expect(recoveryDelayMs(600_000, 0, 30_000)).toBe(600_000);
+    expect(recoveryDelayMs(600_000, 0, 30_000)).not.toBe(MAX_SERVER_WAIT_MS);
+  });
+
+  it.each(SLOW_KEYS_IN_THE_APP)(
+    "%s (%dms) never recovers faster than it polls, whatever the limiter says",
+    (_owner, baseMs) => {
+      // A spread that brackets every value the limiter can produce (its window
+      // is fixed at 60s, so 1..60) plus the absurd ones that motivated the
+      // ceiling in the first place.
+      for (const retryAfterMs of [1, 1_000, 30_000, 60_000, 299_999, 300_000, 300_001, 6 * 60 * 60 * 1000]) {
+        for (const attempt of [0, 1, 5]) {
+          expect(recoveryDelayMs(baseMs, attempt, retryAfterMs)).toBeGreaterThanOrEqual(baseMs);
+        }
+      }
+    },
+  );
+
+  it("still honours the ceiling for keys that poll faster than it", () => {
+    // The ceiling has to keep doing its job for every ordinary key, or the fix
+    // would have traded one broken direction for the other: a live 32s page
+    // must not sleep for six hours because the limiter emitted nonsense.
+    expect(recoveryDelayMs(32_000, 0, 6 * 60 * 60 * 1000)).toBe(MAX_SERVER_WAIT_MS);
+    expect(recoveryDelayMs(60_000, 0, 900_000)).toBe(MAX_SERVER_WAIT_MS);
+  });
+
+  it("a throttled six-hour weather key waits six hours, end to end", () => {
+    // Harness level, not arithmetic: proves the scheduler actually arms at the
+    // number `recoveryDelayMs` computes, so the fix cannot be defeated by a
+    // second clamp somewhere between the two.
+    const h = harness();
+    const SIX_HOURS = 21_600_000;
+    h.recovery.recordError(KEY, throttled(30_000), SIX_HOURS);
+
+    expect(h.recovery.pendingDelayMs(KEY)).toBe(SIX_HOURS);
+    expect(h.scheduled).toEqual([SIX_HOURS]);
+  });
+
+  it("keeps waiting a full cadence on every repeat failure, not just the first", async () => {
+    // The undercut compounded: each nudge's own 429 re-armed the key at the
+    // same wrong number, so a persistently throttled six-hour key asked every
+    // five minutes indefinitely. Nothing in the first-failure assertions above
+    // would have caught that.
+    const h = harness();
+    const SIX_HOURS = 21_600_000;
+    h.recovery.recordError(KEY, throttled(30_000), SIX_HOURS);
+    for (let i = 0; i < 4; i++) {
+      h.failNextNudge(SIX_HOURS, undefined, 30_000);
+      await h.tick();
+    }
+
+    expect(h.scheduled.length).toBeGreaterThan(4);
+    for (const delay of h.scheduled) {
+      expect(delay).toBeGreaterThanOrEqual(SIX_HOURS);
+    }
   });
 });
 
