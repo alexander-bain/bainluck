@@ -22,6 +22,7 @@ Three properties carry the whole thing and each is guarded here:
   alone. The manifest is the discriminator; there is deliberately no
   `--allow-small`.
 """
+import collections
 import importlib.util
 import pathlib
 import re
@@ -624,6 +625,13 @@ def _every_refusal():
         stored=[False], **base)
     yield "a different defect", _legs(
         ticker="KXNBA1HSPREAD-26MAR18PORIND", names=name, stored=[True], **base)
+    # CERT-2642's survivor: clearable legs AND a TRUE the bug cannot explain, so
+    # the market is refused whole rather than cleared behind a standing blocker.
+    yield "a surviving TRUE locker", _legs(
+        **{**PORIND_1H_SPREAD,
+           "names": PORIND_1H_SPREAD["names"]
+                    + ["Portland wins the 1H by over 20.5 points"],
+           "stored": PORIND_1H_SPREAD["stored"] + [True]})
 
 
 def test_every_refusal_carries_a_stated_reason():
@@ -642,12 +650,19 @@ def test_every_refusal_carries_a_stated_reason():
 
 
 def test_the_refusal_paths_are_distinguishable_from_each_other():
-    """Six paths, six reasons — a shared string would merge two defects into one bucket."""
+    """Seven paths, seven reasons — a shared string merges two defects into one bucket.
+
+    6 -> 7 (CERT-2642): the surviving TRUE `game_score` locker. It is a distinct
+    refusal from "a different defect" even though that is what puts the leg in
+    the cohort — this one is about the MARKET being unrepairable, and reporting
+    them under one string would hide which markets are merely observed from
+    which are refused whole.
+    """
     reasons = set()
     for _label, legs in _every_refusal():
         _c, _u2, _s, refuse = repair.classify(legs)
         reasons.add(refuse[0]["refuse_reason"])
-    assert len(reasons) == 6, reasons
+    assert len(reasons) == 7, reasons
 
 
 def test_a_missing_linescore_refuses_rather_than_being_skipped():
@@ -783,3 +798,119 @@ def test_a_market_locked_by_a_venue_settlement_is_refused_whole():
     assert unlock == []
     assert len(refuse) == len(legs)
     assert all("strand" in leg["refuse_reason"] for leg in refuse)
+
+
+# --- CERT-2642: a market is the unit, and a survivor is a blocker ------------
+
+
+def test_market_with_clearable_rows_and_a_true_refusal_is_refused_whole_and_stays_untouched():
+    """🔴 THE BLOCK THIS ANSWERS (CERT-2642), and it is the SECOND locker.
+
+    `foreign_locker` asks only about a TRUE verdict from a source that is not
+    `game_score`. But every leg the candidate scan returns IS `game_score`, and
+    a leg can land in the REFUSAL cohort — "the bug does not explain the stored
+    verdict", which is #5237's bucket — while still being stored TRUE.
+
+    Such a leg is non-overwritable, is not cleared and is not unlocked, so it
+    survives the repair sitting in the producer's HAVING blocker set. The market
+    then comes out in exactly the state CERT-2631 blocked: legs cleared to
+    blank, and no route back. Worse than the first version, because this one
+    also spends a correct verdict on the unlock.
+
+    We may not clear it either: the bug does not explain it, so this repair has
+    no verdict to offer and blanking it would be destroying a verdict on a
+    guess. Refusing the market whole is the only honest move — and the market
+    must come out COMPLETELY untouched, not partially.
+    """
+    spec = dict(PORIND_1H_SPREAD)
+    # A stored TRUE the buggy reading cannot produce: Q1 was Portland by 4, so
+    # "by over 20.5" is False under the bug and False under the truth — yet it
+    # is stored TRUE. A different defect, and a locker.
+    spec["names"] = spec["names"] + ["Portland wins the 1H by over 20.5 points"]
+    spec["stored"] = spec["stored"] + [True]
+    legs = _legs(**spec)
+
+    # The market really would have had clearable legs without the survivor.
+    baseline_clear, baseline_unlock, _s, _r = repair.classify(_legs(**PORIND_1H_SPREAD))
+    assert baseline_clear and baseline_unlock, "fixture proves nothing otherwise"
+
+    clear, unlock, spare, refuse = repair.classify(legs)
+    assert clear == [], "cleared legs would be stranded behind the survivor"
+    assert unlock == [], "a correct verdict must not be spent on a blocked market"
+    assert spare == []
+    assert len(refuse) == len(legs), "the market is refused WHOLE or not at all"
+    assert all("cannot explain" in leg["refuse_reason"] for leg in refuse)
+
+
+def test_a_true_leg_the_bug_does_explain_is_still_unlockable():
+    """The refusal above must not swallow the ordinary case.
+
+    A TRUE leg the bug DOES explain and the truth agrees with is a correct
+    verdict standing in the doorway — that is the `unlock` cohort, and it is the
+    whole of CERT-2631's repair. If the new survivor check caught those too, the
+    repair would refuse every market it exists to fix.
+    """
+    clear, unlock, _spare, refuse = repair.classify(_legs(**PORIND_1H_SPREAD))
+    assert clear and unlock and not refuse
+
+
+def test_limit_never_splits_a_market_before_unlock():
+    """🔴 THE BLOCK'S SECOND FINDING (CERT-2642). `--limit` selects MARKETS.
+
+    `clear[:limit]` cut across a market, and the unlock then fired on the
+    partially-cleared remains. Under `--limit 1` a three-rung 2H total cleared
+    one wrong TRUE, unlocked the correct TRUE, and left another wrong TRUE
+    blocking — the run spent a correct verdict to buy re-eligibility that the
+    surviving blocker denies.
+    """
+    def _leg(mid, oid):
+        return {"market_id": mid, "outcome_id": oid}
+
+    three_rungs = [_leg(7, 1), _leg(7, 2), _leg(7, 3)]
+    second_market = [_leg(9, 4), _leg(9, 5)]
+    clear = three_rungs + second_market
+
+    # A market larger than the limit is taken WHOLE, never split.
+    picked = repair.select_whole_markets(clear, 1)
+    assert picked == three_rungs, (
+        "a limit smaller than the first market must still take that market "
+        "whole — a partial market is the state this repair prevents"
+    )
+
+    # And the boundary never lands mid-market.
+    for limit in range(1, len(clear) + 2):
+        picked = repair.select_whole_markets(clear, limit)
+        by_market = collections.Counter(leg["market_id"] for leg in picked)
+        for mid, n in by_market.items():
+            whole = sum(1 for leg in clear if leg["market_id"] == mid)
+            assert n == whole, (
+                f"limit={limit} took {n} of market {mid}'s {whole} clears — "
+                f"the unlock would then fire on a market still holding a "
+                f"wrong TRUE"
+            )
+
+    # Zero means no limit, not "nothing".
+    assert repair.select_whole_markets(clear, 0) == clear
+
+
+def test_a_declined_clear_withholds_that_markets_unlock():
+    """A CAS decline leaves a wrong TRUE standing, so the unlock is not owed.
+
+    `--limit` being market-atomic is not enough on its own: the forward write is
+    a compare-and-swap, so a leg re-graded between the plan and the write
+    declines. The market is then still blocked, and unlocking around the
+    survivor spends a correct verdict on re-eligibility it will not get.
+    """
+    planned = collections.Counter({7: 3, 9: 2})
+
+    # Everything landed on 9; one clear declined on 7.
+    fully = repair.markets_fully_cleared(planned, collections.Counter({7: 2, 9: 2}))
+    assert fully == {9}, "market 7 kept a wrong TRUE, so it gets no unlock"
+
+    # All landed.
+    assert repair.markets_fully_cleared(
+        planned, collections.Counter({7: 3, 9: 2})
+    ) == {7, 9}
+
+    # A market that cleared nothing at all is not "fully cleared" by vacuum.
+    assert repair.markets_fully_cleared(planned, collections.Counter()) == set()

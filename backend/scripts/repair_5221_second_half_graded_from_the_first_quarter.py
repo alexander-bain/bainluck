@@ -635,6 +635,32 @@ def classify(legs):
                 "repair may not clear (not `game_score`) — clearing here would "
                 "strand the cleared legs blank",
             )
+        # 🔴 THE SECOND LOCKER, AND IT IS INSIDE OUR OWN REFUSAL COHORT
+        # (CERT-2642). `foreign_locker` above only asks about a TRUE verdict
+        # from a source that is NOT `game_score`. But every leg in `legs` IS
+        # `game_score` (the candidate scan selects on it), and a leg can land in
+        # `refuse` — "the bug does not explain the stored verdict", #5237's
+        # bucket — while still being stored TRUE. That leg is non-overwritable,
+        # it is not cleared, it is not unlocked, and it therefore SURVIVES the
+        # repair sitting squarely in the producer's HAVING blocker set.
+        #
+        # The market then comes out exactly as CERT-2631 described: legs cleared
+        # to blank, and no route back. Measured on the block's own
+        # PORIND-derived probe — two clears and one unlock still left a blocker.
+        #
+        # We may not clear it, because we do not know what it should say: the
+        # bug does not explain it, so this repair has no verdict to offer and
+        # blanking it would be destroying a verdict on a guess. The only honest
+        # move is the same one `foreign_locker` gets — refuse the market whole.
+        survivors = [leg for leg in refuse if leg["stored_is_winner"]]
+        if survivors:
+            return [], [], [], _refuse(
+                legs,
+                "market keeps a TRUE `game_score` verdict this repair cannot "
+                "explain and may not clear (a DIFFERENT defect, #5237's "
+                "bucket) — it would stay in the producer's blocker set and "
+                "strand every leg we cleared",
+            )
         unlock = [leg for leg in spare if leg["stored_is_winner"]]
         spare = [leg for leg in spare if not leg["stored_is_winner"]]
     return clear, unlock, spare, refuse
@@ -705,6 +731,61 @@ async def reconcile_backup(session, outcome_ids) -> dict:
         await session.execute(text(SQL["bak_missing"]), {"ids": outcome_ids})
     ).scalar_one()
     return {"futures_outcomes": int(missing)}
+
+
+def select_whole_markets(clear, limit):
+    """The `--limit` slice, taken in WHOLE MARKETS (CERT-2642).
+
+    🔴 `clear[:limit]` cut across a market. Re-eligibility is a property of a
+    market, not of a leg: the producer readmits a market only when NO
+    non-overwritable TRUE verdict survives on it, so clearing some of a market's
+    wrong legs and unlocking its correct one leaves a blocker standing AND has
+    spent a correct verdict to do it. The block's probe was a three-rung 2H
+    total under `--limit 1`: one wrong TRUE cleared, the correct TRUE unlocked,
+    another wrong TRUE still blocking.
+
+    A market bigger than the limit is taken WHOLE rather than skipped. `--limit`
+    is a blast-radius control for a cautious operator, and the smallest safe
+    unit of this repair is one market — a `--limit 1` that returned nothing
+    would read as "there is nothing to do", which is the one thing it must never
+    say while work is outstanding.
+
+    Extracted from `run()` so it is provable without a database: the behaviour
+    it guarantees is the whole point of the required regression, and inline in
+    a 200-line async function only the real Postgres gate could have reached it
+    — and every real-Postgres gate in this repo skips in CI.
+    """
+    if not limit:
+        return list(clear)
+    by_market = collections.OrderedDict()
+    for leg in clear:
+        by_market.setdefault(int(leg["market_id"]), []).append(leg)
+    out = []
+    for legs_for_market in by_market.values():
+        if out and len(out) + len(legs_for_market) > limit:
+            break
+        out.extend(legs_for_market)
+    return out
+
+
+def markets_fully_cleared(planned_by_market, cleared_by_market):
+    """Markets whose EVERY planned clear actually landed (CERT-2642).
+
+    The unlock removes a CORRECT verdict, and it is only ever worth doing if it
+    buys re-eligibility. It does not if a wrong TRUE is still standing — and one
+    can be, even after `--limit` was made market-atomic, because the forward
+    write is a compare-and-swap: a leg re-graded between the plan and the write
+    DECLINES. That decline is the good case on its own terms, but it leaves the
+    market blocked, so unlocking around it spends a correct verdict for nothing.
+
+    Extracted for the same reason as `select_whole_markets`: inline in `run()`
+    only a real-Postgres gate reaches it, and those skip in CI.
+    """
+    return {
+        mid
+        for mid, planned in planned_by_market.items()
+        if cleared_by_market.get(mid, 0) == planned
+    }
 
 
 def plan(rows):
@@ -827,8 +908,19 @@ async def run(args) -> None:
                   f"first; {BAK_TABLE} must hold every clearable row.")
             return
 
-        doable = clear[: args.limit] if args.limit else clear
-        print(f"\n=== applying {len(doable)} of {len(clear)} ===")
+        # 🔴 `--limit` SELECTS MARKETS, NOT OUTCOMES (CERT-2642). The slice
+        # `clear[:limit]` cut across a market: a three-rung 2H total under
+        # `--limit 1` cleared one wrong TRUE, unlocked the correct TRUE, and
+        # left the OTHER wrong TRUE standing — a blocker the run had just paid
+        # a correct verdict to create. Re-eligibility is a property of a whole
+        # market, so the unit of work has to be one.
+        #
+        # A market larger than the limit is still taken WHOLE rather than
+        # skipped: half a market is the state this repair exists to prevent, and
+        # a `--limit 1` that did nothing would read as "nothing to do".
+        doable = select_whole_markets(clear, args.limit)
+        print(f"\n=== applying {len(doable)} of {len(clear)} "
+              f"({len({int(l['market_id']) for l in doable})} whole markets) ===")
 
         # Same transaction as the writes it describes, so a rolled-back clear
         # cannot leave a manifest row telling the restore to put a verdict back
@@ -837,6 +929,14 @@ async def run(args) -> None:
 
         now = datetime.now(timezone.utc)
         cleared, declined = 0, 0
+        # CERT-2642: the unlock is owed only to a market whose EVERY planned
+        # clear actually landed. A CAS decline is the good case, but it leaves a
+        # wrong verdict standing — and unlocking around it removes a correct
+        # verdict to buy re-eligibility that the surviving blocker denies anyway.
+        planned_by_market = collections.Counter(
+            int(leg["market_id"]) for leg in doable
+        )
+        cleared_by_market = collections.Counter()
         for leg in doable:
             res = await s.execute(text(SQL["clear"]),
                                   {"oid": int(leg["outcome_id"])})
@@ -852,12 +952,23 @@ async def run(args) -> None:
                 "now": now,
             })
             cleared += 1
+            cleared_by_market[int(leg["market_id"])] += 1
 
-        # THE UNLOCK, and only for markets this run actually cleared (CERT-2631).
-        # `--limit` may have stopped short of a market's clears, and unlocking a
-        # market whose wrong legs are still standing would remove a correct
-        # verdict to buy re-eligibility nothing is waiting on.
-        cleared_markets = {int(leg["market_id"]) for leg in doable}
+        # THE UNLOCK, and only for markets this run cleared COMPLETELY
+        # (CERT-2631, tightened by CERT-2642). Membership in `doable` was the
+        # old test and it was too weak in both directions: `--limit` could stop
+        # short of a market's clears, and a CAS decline could leave one standing
+        # inside a market that was fully selected. Both leave a wrong TRUE in
+        # the producer's blocker set, so the unlock buys nothing and costs a
+        # correct verdict. The limit is market-atomic now; this closes the
+        # decline path.
+        cleared_markets = markets_fully_cleared(
+            planned_by_market, cleared_by_market
+        )
+        skipped_partial = sorted(set(planned_by_market) - cleared_markets)
+        if skipped_partial:
+            print(f"           unlock SKIPPED for {len(skipped_partial)} market(s) "
+                  f"whose clears did not all land: {skipped_partial[:10]}")
         unlocked, unlock_declined = 0, 0
         for leg in unlock:
             if int(leg["market_id"]) not in cleared_markets:
