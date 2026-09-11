@@ -813,7 +813,31 @@ function DivergenceValue({
           {paired ? `${paired.mark}%` : pct(item.pregame_mark)} →
         </span>
       ) : (
-        <Pending note="script pending" />
+        // #5216: NOTHING, not `script pending`.
+        //
+        // "Script pending" is our word for a hole in our own data, and standing
+        // notice 34 bans exactly that class of string from a reader's screen:
+        // "if a number cannot be shown honestly, leave the space empty; do not
+        // explain the emptiness". The row keeps the thing a reader came for —
+        // its live price, one slot to the right — and simply has no arrow into
+        // it. There is no delta either, because `signedDelta` on a null mark is
+        // already null, so the row is complete and says only true things.
+        //
+        // THE DECISION IS #4530's, ONE FUNCTION UP, not a new one. `ScriptValue`
+        // dropped the identical chip (`pregame mark pending`) for the identical
+        // reason under D102. This is that ruling reaching the state it could not
+        // reach then: THE SCRIPT folds a markless row away, and THE DIVERGENCE
+        // cannot — an open window mid-game has a live price a reader wants, so
+        // folding it would hide real information. #4530's own answer is wrong
+        // here, which is why this is its own issue and not a wider grep.
+        //
+        // Newly worth doing because #5088 made it REACHABLE: measured on
+        // `/api/events/15308050/game-markets`, all 64 window rows carry
+        // `pregame_mark: null`, and until #5088 those rows only surfaced after
+        // full time, by which point the section is `graded` and this branch
+        // never ran. The ship put them on a LIVE page beside their settled
+        // siblings, where the section state is `divergence` and it does.
+        null
       )}
       <span className="font-mono text-sm font-semibold text-text-primary tabular-nums">
         {paired ? `${paired.current}%` : pct(item.current)}

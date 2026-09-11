@@ -302,8 +302,15 @@ describe("UX-P036: prop families and the unchanged-row drawer", () => {
   });
 
   test("a mark missing an endpoint is NOT 'unchanged' — it stays in plain sight", () => {
-    // Zero movement means measured-and-flat. A null endpoint is a pending chip,
-    // and burying it in the drawer would hide an honest gap.
+    // Zero movement means measured-and-flat. A null endpoint is a row we have
+    // no baseline for, and burying it in the drawer would hide a live price.
+    //
+    // #5216 (2026-09-11) took the third assertion's SUBJECT away, not its point.
+    // It used to read `toContain("script pending")` — the chip that row printed —
+    // and notice 34 has since removed that string from the reader's screen. The
+    // claim being made here was never about the chip: it is that the row stays in
+    // plain sight rather than folding. So it is now proven by the two things a
+    // reader actually sees on it, its name and its price.
     const items: PropMark[] = [
       { key: "M: Hits|mover", label: "Real mover", pregame_mark: 0.4, current: 0.6 },
       { key: "M: Hits|pending", label: "Pending row", pregame_mark: null, current: 0.5 },
@@ -311,7 +318,9 @@ describe("UX-P036: prop families and the unchanged-row drawer", () => {
     const html = renderToStaticMarkup(<PropsSection items={items} state="divergence" />);
     expect(html).not.toContain("unchanged");
     expect(html).not.toContain("<details");
-    expect(html).toContain("script pending");
+    expect(html).toContain("Pending row");
+    expect(html).toContain("50%");
+    expect(html).not.toContain("script pending");
   });
 
   test("THE SCRIPT and WHAT HIT group but never collapse (no movement notion)", () => {
