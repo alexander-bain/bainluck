@@ -1642,7 +1642,16 @@ def apply_discover_display_chain(
             pass  # Discover mode: let scores decide, no artificial event promotion
         else:
             _epct = 0.6 if not ctx.is_authenticated else 0.4
-            items = _ensure_feed_diversity(items, limit, event_pct=_epct)
+            # #4921 — the READER'S page, not the caller's page size. This stage
+            # was the last one in the chain still sized from the raw `limit`;
+            # every other stage below takes `min(20, limit)`. Because
+            # `_ensure_feed_diversity` scales BOTH its event quota and the span
+            # it rebuilds by interleaving from this number, a caller asking for
+            # 250 got a different ORDER than a caller asking for 40 — measured
+            # on production, limit=40 and limit=250 agreed on 2 of 40 ranks
+            # (max move +87) with 0 cards carrying a different score. Rank is
+            # not supposed to be a function of page size.
+            items = _ensure_feed_diversity(items, min(20, limit), event_pct=_epct)
 
     # The Discover-mode gate is spelled once here. In `get_feed` the identical
     # three-clause expression appeared three times (first-page, bundles, lead)
@@ -5971,7 +5980,14 @@ async def _discover_rank_phase_trace(
 
     post_event_mix_rank = post_event_demote_rank
     if event_pct is not None and event_pct >= 0.2:
-        feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=0.6)
+        # #4921 — the same `min(20, limit)` the served chain now takes. This
+        # trace exists to report the rank a market holds on the PAGE, so a
+        # window this stage sizes differently from the served chain would
+        # misreport every rank downstream of it. Line 5980 below already
+        # mirrors the served window; this call was the one that did not.
+        feed_items = _ensure_feed_diversity(
+            feed_items, min(20, limit), event_pct=0.6
+        )
         post_event_mix_rank = _rank_futures_market(feed_items, market_id)
 
     post_diversity_rank = post_event_mix_rank
