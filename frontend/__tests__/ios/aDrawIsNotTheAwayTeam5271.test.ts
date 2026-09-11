@@ -24,17 +24,18 @@
  * instead of filling it. The full measurement is in that file's docstring.
  *
  * WHY THIS FILE EXISTS AND `DrawPricedWinnerTests.swift` DOES NOT SUFFICE.
- * The Swift suite proves the rule. It cannot prove the VIEWS obey it: all six
+ * The Swift suite proves the rule. It cannot prove the VIEWS obey it: all seven
  * call sites are expressions inside SwiftUI bodies, invisible to XCTest.
  * Reverting any one of them to `1 - homeProb` leaves every Swift test green.
  * These assertions kill those mutants, and they run in CI, which compiles no
  * Swift at all (#4302).
  *
  * SCOPE, and it is deliberately the EVENT PAGE. The feed and search cards draw
- * the same complement from the same served field and are #5335, not this ship:
- * they are a different surface with its own card-family rules (notice 35), and
- * `IOS_CARD_SURFACES` below is asserted to still hold the old idiom so that
- * this file records the boundary rather than leaving it to be rediscovered.
+ * the same complement from the same served field and are #5363, not this ship:
+ * they are a different surface with its own card-family rules (notice 35). The
+ * last assertion below pins `EventCardView` as still being on the old reading,
+ * so this file RECORDS that boundary instead of leaving it to be rediscovered —
+ * whoever fixes #5363 deletes that test, which is the point.
  */
 
 import { readFileSync, existsSync } from "fs";
@@ -337,12 +338,12 @@ d("a draw is not the away team on iOS", () => {
 
   /**
    * THE BOUNDARY, recorded rather than left to be rediscovered. The card
-   * family draws the same complement off the same served field and is #5335 —
+   * family draws the same complement off the same served field and is #5363 —
    * a separate ship under notice 35's one-card-family rule. If someone fixes
    * those, this assertion fails and they delete it, which is the point: it
    * cannot silently stop describing the app.
    */
-  it("the card surfaces are knowingly still on the old reading (#5335)", () => {
+  it("the card surfaces are knowingly still on the old reading (#5363)", () => {
     const cards = readFileSync(
       join(IOS_ROOT, "Components/EventCardView.swift"),
       "utf8"
