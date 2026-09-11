@@ -41,7 +41,9 @@ const log = (...m) => console.error(`[${new Date().toISOString()}]`, ...m);
 // The two sentences the header must not say once nothing is arriving, and the shape of the honest
 // mark that replaces them. Matched on the rendered text, not on a class name.
 const PROMISE = 'Next update';
-const LIVE_PILL = 'LIVE';
+// Word-boundaried: "LIVE" as a pill, never the "live" inside `Live · Bain Luck blend` (which is a
+// different claim, #5069) and never a team or market name that happens to contain the letters.
+const LIVE_PILL = /\bLIVE\b/;
 
 // The sandbox reaches production through a proxy; without this the goto simply times out.
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
@@ -62,7 +64,7 @@ const read = async () => {
   const body = await page.evaluate(() => document.body.innerText);
   return {
     promise: body.includes(PROMISE),
-    livePill: /\bLIVE\b/.test(body.split('\n').slice(0, 40).join('\n')),
+    livePill: LIVE_PILL.test(body.split('\n').slice(0, 40).join('\n')),
     ageMark: /\b\d+[sm] ago\b/.test(body),
     head: body.slice(0, 320),
   };
