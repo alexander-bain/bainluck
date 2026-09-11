@@ -7139,6 +7139,22 @@ async def typeahead_search(
             # ("X at Y") and a query matching it proves only that the words are
             # on the row somewhere. #4411 promotes on what the row IS.
             "_participants": [event.home_team_name, event.away_team_name],
+            # #4986: the ROUTE's own verdict on the #4411 question, carried to
+            # the scorer instead of left to be recomputed there from a weaker
+            # input. `_participants` holds the two DISPLAY names, so a scorer
+            # reading only that can never learn that `niners` names the 49ers —
+            # the nickname is in the curated table, not in the name. The recall
+            # arm already knows (it is why the row is here at all), and until
+            # #4847 shipped, the question could not arise: no nickname query
+            # returned a game to mis-rank.
+            #
+            # 🔴 This must be `_ta_names_participant` and not a fresh test. The
+            # sport scope lives inside it, and a promotion test looser than the
+            # recall arm that fetched the row is exactly how `pats` would come
+            # to promote `St Kitts & Nevis Patriots` — see
+            # `_nickname_names_participant`, which says the same thing about
+            # its own half and is the reason that helper takes a `sport_key`.
+            "_names_participant": _ta_names_participant(event),
         })
 
     # 3. Futures (sports + non-sports, deduplicated)
@@ -7945,6 +7961,8 @@ async def typeahead_search(
         # #4411: same rule — the participants are what the row was PROMOTED on,
         # and both names are already inside `text`.
         _s.pop("_participants", None)
+        # #4986: the verdict computed from them, same rule again.
+        _s.pop("_names_participant", None)
 
     # The echo is taken from the SAME `Evidence` objects `_s_rank` just consumed,
     # keyed by payload identity — never rebuilt from the suggestion. A rebuild
@@ -18100,7 +18118,19 @@ def _typeahead_evidence(item: dict, q: str | None = None) -> "_SearchEvidence":
     if (
         q
         and kind == "event"
-        and query_names_participant(q, item.get("_participants") or ())
+        and (
+            # #4986: the route's verdict when it supplied one. It is a strict
+            # SUPERSET of the line below — the same `query_names_participant`
+            # plus the curated nicknames (`niners`, `pats`) that the recall arm
+            # matched on — so this can only ever promote MORE, never fewer, and
+            # never a row that arm would not have admitted.
+            item.get("_names_participant")
+            # The fallback is the whole rule for every caller that supplies no
+            # verdict: the fuzzy pool, the offline harness, the property suite.
+            # Kept rather than replaced, because a route that forgets the key
+            # should lose the nickname half and keep #4411, not lose both.
+            or query_names_participant(q, item.get("_participants") or ())
+        )
     ):
         # #4411: the query named the people playing, so this row is the entity
         # the reader asked for and not merely a row their words landed on.
