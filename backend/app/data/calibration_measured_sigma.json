@@ -69,38 +69,38 @@
       "variance_ratio_vs_board": 1.82
     },
     "kalshi/entertainment": {
-      "artifact": "artifacts/cal-p128/sigma-kalshi-entertainment.json",
+      "artifact": "artifacts/cal-p1113/sigma-kalshi-entertainment.json",
       "as_measured": {
         "bar": 3.0,
         "bootstrap_ci": [
-          4.21,
-          6.14
+          6.76,
+          9.47
         ],
-        "ece_exact": 5.12,
-        "ece_payload": 5.21,
+        "ece_exact": 7.89,
+        "ece_payload": 7.82,
         "established_at_gate": true,
-        "excess": 2.12,
-        "n": 8355,
-        "n_exact": 8471,
-        "payload_excess": 2.21,
-        "sigma_bootstrap": 4.337696753623455,
+        "excess": 4.89,
+        "n": 3850,
+        "n_exact": 3863,
+        "payload_excess": 4.82,
+        "sigma_bootstrap": 7.058374348031676,
         "sigma_gate": 2.0,
-        "sigma_row": 3.9024127101064034
+        "sigma_row": 6.078567012051442
       },
       "boot": 2000,
       "category": "entertainment",
-      "clusters": 1559,
-      "effective_n": 10328,
-      "exact_coverage": 1.0139,
-      "generated_at": "2026-08-29T00:36:47.978149+00:00",
-      "population_version": "q268",
-      "rows_per_cluster": 5.434,
-      "se_bootstrap_pp": 0.4887386372108833,
-      "se_market_pp": 1.2663301489672631,
-      "se_row_pp": 0.5432536631785919,
+      "clusters": 1460,
+      "effective_n": 5189,
+      "exact_coverage": 1.0034,
+      "generated_at": "2026-09-11T19:16:46.466890+00:00",
+      "population_version": "q269",
+      "rows_per_cluster": 2.646,
+      "se_bootstrap_pp": 0.6927940852788068,
+      "se_market_pp": 1.3085598064755344,
+      "se_row_pp": 0.8044659194025541,
       "seed": 20260829,
       "source": "kalshi",
-      "variance_ratio_vs_board": 0.809
+      "variance_ratio_vs_board": 0.742
     },
     "kalshi/golf": {
       "artifact": "artifacts/cal-p127/sigma-kalshi-golf.json",
@@ -545,38 +545,38 @@
       "variance_ratio_vs_board": 0.485
     },
     "polymarket/economics": {
-      "artifact": "artifacts/cal-p128/sigma-polymarket-economics.json",
+      "artifact": "artifacts/cal-p1113/sigma-polymarket-economics.json",
       "as_measured": {
         "bar": 3.0,
         "bootstrap_ci": [
-          3.3,
-          5.04
+          3.74,
+          5.36
         ],
-        "ece_exact": 3.91,
-        "ece_payload": 3.9,
+        "ece_exact": 4.48,
+        "ece_payload": 4.31,
         "established_at_gate": true,
-        "excess": 0.91,
-        "n": 12882,
-        "n_exact": 12952,
-        "payload_excess": 0.9,
-        "sigma_bootstrap": 2.0710819503081814,
+        "excess": 1.48,
+        "n": 9719,
+        "n_exact": 9773,
+        "payload_excess": 1.31,
+        "sigma_bootstrap": 3.5839171054742662,
         "sigma_gate": 2.0,
-        "sigma_row": 2.0712847414105098
+        "sigma_row": 2.9262111475421597
       },
       "boot": 2000,
       "category": "economics",
-      "clusters": 1700,
-      "effective_n": 12882,
-      "exact_coverage": 1.0054,
-      "generated_at": "2026-08-29T00:36:47.978149+00:00",
-      "population_version": "q268",
-      "rows_per_cluster": 7.619,
-      "se_bootstrap_pp": 0.4393838688346399,
-      "se_market_pp": 1.2126781251816647,
-      "se_row_pp": 0.4393408505391227,
+      "clusters": 1990,
+      "effective_n": 14571,
+      "exact_coverage": 1.0056,
+      "generated_at": "2026-09-11T19:16:46.466890+00:00",
+      "population_version": "q269",
+      "rows_per_cluster": 4.911,
+      "se_bootstrap_pp": 0.4129559798521482,
+      "se_market_pp": 1.1208395991555509,
+      "se_row_pp": 0.505773481603715,
       "seed": 20260829,
       "source": "polymarket",
-      "variance_ratio_vs_board": 1.0
+      "variance_ratio_vs_board": 0.667
     },
     "polymarket/esports": {
       "artifact": "artifacts/cal-p128/sigma-polymarket-esports.json",
