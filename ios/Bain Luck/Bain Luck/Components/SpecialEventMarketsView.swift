@@ -4,20 +4,24 @@ struct SpecialEventMarketsView: View {
     let markets: [GameMarketOther]
     let eventStatus: String?
 
-    private struct MarketCategory: Identifiable {
+    /// Internal, not `private`, for the reason given on `isWinProbabilityMarket`
+    /// below and pressed by CERT-2620: a guard that claims a market is REACHABLE
+    /// has to name the card it is reaching, and a test cannot name a card whose
+    /// type it cannot see.
+    struct MarketCategory: Identifiable {
         let id: String
         let title: String
         let subtitle: String
         var items: [MarketItem]
     }
 
-    private struct MarketItem: Identifiable {
+    struct MarketItem: Identifiable {
         let id: String
         let name: String
         var outcomes: [OutcomeEntry]
     }
 
-    private struct OutcomeEntry: Identifiable {
+    struct OutcomeEntry: Identifiable {
         var id: String { label }
         let label: String
         var prob: Double
@@ -44,7 +48,10 @@ struct SpecialEventMarketsView: View {
         return ("Other Markets", "additional markets")
     }
 
-    private static func isRedundantWithMarketMaps(_ m: GameMarketOther) -> Bool {
+    /// Internal for the same reason as `isWinProbabilityMarket` below (#5133):
+    /// `categories` applies BOTH filters, and a test that cannot tell which of
+    /// the two declined a row is a test that can be satisfied by the wrong one.
+    static func isRedundantWithMarketMaps(_ m: GameMarketOther) -> Bool {
         let lower = m.marketName.lowercased()
         let outLower = m.outcomeName.lowercased()
         if lower.contains("spread") || lower.contains("handicap") { return true }
@@ -53,10 +60,45 @@ struct SpecialEventMarketsView: View {
         return false
     }
 
-    private static func isWinProbabilityMarket(_ markets: [GameMarketOther]) -> Set<String> {
+    /// A SCORING RACE — "…: Race to 14 Points" — which side reaches a score
+    /// first.
+    ///
+    /// The web twin is `isScoringRaceMarket` in `frontend/lib/otherMarketGroups.ts`
+    /// and the server's is `_SCORING_RACE_RE` in `backend/app/routes/events.py`;
+    /// all three are the same pattern deliberately, because all three answer the
+    /// same question. Narrower than "race to" on purpose: the SCORE UNIT is
+    /// required, so a player race ("Race to 5 catches") — a shape nobody has
+    /// measured — is left out rather than swept in by grammar.
+    static func isScoringRaceMarket(_ name: String) -> Bool {
+        name.range(
+            of: #"\brace to\s+\d+(?:\.\d+)?\s+points?\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    /// Internal, not `private`, since #5133: a SwiftUI view's computed
+    /// properties are invisible to XCTest, so the only way this filter's
+    /// behaviour can be asserted in Swift at all is to let a test call it. Its
+    /// wiring into `categories` is pinned by the source scan in
+    /// `frontend/__tests__/ios/aScoringRaceStaysVisible5133.test.ts`.
+    static func isWinProbabilityMarket(_ markets: [GameMarketOther]) -> Set<String> {
         var winProbMarkets: Set<String> = []
         let byMarket = Dictionary(grouping: markets) { $0.marketName }
         for (name, outcomes) in byMarket {
+            // #5133 — a scoring race is a two-sided TEAM market that is not the
+            // moneyline: the hero answers "who wins", the race answers "who
+            // gets there first", and a game can be won by the side that lost
+            // the race. From inside this heuristic the two shapes are identical,
+            // so the race has to be named.
+            //
+            // MEASURED (`GET /api/events/14780145/game-markets`, 2026-09-11):
+            // Kalshi ships six races per NFL game; five serve THREE rows and
+            // survive this rule by accident, while `Race to 7 Points` serves
+            // TWO — 0.56 / 0.44 — because its third row ("Neither team reaches
+            // 7 points", 0.010) is dropped upstream. One race in six vanishing
+            // while its siblings render is not a rule a reader can learn.
+            if Self.isScoringRaceMarket(name) { continue }
+
             if outcomes.count == 2 {
                 let probs = outcomes.compactMap(\.probability)
                 if probs.count == 2, abs(probs[0] + probs[1] - 1.0) < 0.1 {
@@ -71,7 +113,10 @@ struct SpecialEventMarketsView: View {
         SettledQuote.isSettled(eventStatus)
     }
 
-    private var categories: [MarketCategory] {
+    /// Internal since CERT-2620, same reason as the types above: the overflow
+    /// guard has to build the REAL category list from the real wire rows and
+    /// find the real card, not re-implement the grouping and grade its own copy.
+    var categories: [MarketCategory] {
         let winProbNames = Self.isWinProbabilityMarket(markets)
         let filtered = markets.filter { !Self.isRedundantWithMarketMaps($0) && !winProbNames.contains($0.marketName) }
         // #2086. What used to sit here was a price-band DELETION on a finished
@@ -128,6 +173,29 @@ struct SpecialEventMarketsView: View {
             .sorted { (categoryOrder.firstIndex(of: $0.title) ?? 99) < (categoryOrder.firstIndex(of: $1.title) ?? 99) }
     }
 
+    /// How many cards a category shows before it collapses the rest.
+    ///
+    /// CERT-2620 measured what this cap actually costs: production event
+    /// 14780145 yields ELEVEN `Other Markets` cards, and `Race to 7 Points` —
+    /// the exact market #5133 exists to make visible — is card NINE. Moving it
+    /// out of the hero and into this section put it behind the cap instead, so
+    /// the reader gained nothing.
+    static let itemDisplayCap = 5
+
+    /// The cards a category actually renders.
+    ///
+    /// Split out of `body` because a SwiftUI view's body cannot be asserted on:
+    /// "the ninth card is reachable" is a claim about THIS function, so this is
+    /// where the guard can hold it. `body`'s use of it is pinned by the source
+    /// scan in `frontend/__tests__/ios/aScoringRaceStaysVisible5133.test.ts`.
+    static func displayedItems(_ items: [MarketItem], expanded: Bool) -> [MarketItem] {
+        expanded ? items : Array(items.prefix(itemDisplayCap))
+    }
+
+    /// Which categories the reader has opened. Empty is the D102 shape: the
+    /// overflow takes no real estate closed, and one tap opens it.
+    @State private var expandedCategories: Set<String> = []
+
     var body: some View {
         let cats = categories
         if cats.isEmpty { EmptyView() }
@@ -165,14 +233,37 @@ struct SpecialEventMarketsView: View {
                                     .foregroundStyle(.tertiary)
                             }
 
-                            ForEach(cat.items.prefix(5)) { item in
+                            let isExpanded = expandedCategories.contains(cat.id)
+                            ForEach(Self.displayedItems(cat.items, expanded: isExpanded)) { item in
                                 propMiniCard(item)
                             }
-                            if cat.items.count > 5 {
-                                Text("+\(cat.items.count - 5) more")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.tertiary)
+                            // CERT-2620 — this was `Text("+N more")`, which is
+                            // inert: the cards past the cap could not be reached
+                            // at all, so a market moved into this section from
+                            // somewhere worse was still invisible to a reader.
+                            if cat.items.count > Self.itemDisplayCap {
+                                Button {
+                                    if isExpanded { expandedCategories.remove(cat.id) }
+                                    else { expandedCategories.insert(cat.id) }
+                                } label: {
+                                    Text(
+                                        isExpanded
+                                            ? "Show less"
+                                            : "Show \(cat.items.count - Self.itemDisplayCap) more"
+                                    )
+                                    .font(.system(size: 11))
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(Color.accentColor)
                                     .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(
+                                    isExpanded
+                                        ? "Show fewer \(cat.title)"
+                                        : "Show \(cat.items.count - Self.itemDisplayCap) more \(cat.title)"
+                                )
                             }
                         }
                         .padding(12)

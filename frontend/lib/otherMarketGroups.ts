@@ -369,6 +369,23 @@ export function canonicalMatchupTitle(
   return `${home} vs ${away}`;
 }
 
+/**
+ * A SCORING RACE — "…: Race to 14 Points" — which side reaches a score first.
+ *
+ * The Swift twin is `SpecialEventMarketsView.isScoringRaceMarket` and the
+ * server's is `_SCORING_RACE_RE` in `backend/app/routes/events.py`; all three
+ * are the same pattern deliberately, because all three answer the same
+ * question ("is this row about a team reaching a score, not about a player and
+ * not about the final result").
+ *
+ * Narrower than "race to" on purpose: the SCORE UNIT is required, so a player
+ * race ("Race to 5 catches") — a shape nobody has measured — is left out rather
+ * than swept in by grammar.
+ */
+export function isScoringRaceMarket(marketName: string | null | undefined): boolean {
+  return /\brace to\s+\d+(?:\.\d+)?\s+points?\b/i.test(marketName ?? "");
+}
+
 /** Rows already covered by the market maps / hero above this section. */
 export function isRedundantWithMarketMaps(m: OtherMarketRow): boolean {
   const lower = (m.market_name || "").toLowerCase();
@@ -442,6 +459,21 @@ export function findWinProbMarkets(markets: OtherMarketRow[] | undefined | null)
     // well as by `isRedundantWithMarketMaps`, which is why the page had no
     // sided row left to fall back on.
     if (periodWinnerParts(name) !== null) continue;
+    // #5133 — and the same reasoning one question further out. A SCORING RACE
+    // ("New Orleans vs Detroit: Race to 7 Points") is a two-sided team market
+    // that is not the moneyline: the hero answers "who wins", the race answers
+    // "who gets there first", and a game can be won by the side that lost the
+    // race. The heuristic below cannot tell them apart, because from here they
+    // are the same shape.
+    //
+    // MEASURED, not hypothesised (`GET /api/events/14780145/game-markets`,
+    // 2026-09-11): Kalshi ships six races per NFL game, five of which serve
+    // THREE rows and survive this rule by accident. `Race to 7 Points` serves
+    // TWO — 0.56 / 0.44 — because its third row, "Neither team reaches 7
+    // points" at 0.010, is dropped upstream. So one race in six disappears
+    // while its five siblings render, which is the worst of both: not a
+    // consistent rule a reader could learn, just a gap.
+    if (isScoringRaceMarket(name)) continue;
 
     if (probs.length === 2 && Math.abs(probs[0] + probs[1] - 1.0) < 0.1) {
       winProb.add(name);
