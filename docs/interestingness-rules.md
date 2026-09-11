@@ -19,11 +19,42 @@ the same file (intent + provenance preserved until the signal lands).
 | R3 | Novel sports framings (nationality/region/aggregate angle) ⇒ interesting; not vanilla props | Classifier `compelling` **boost**, sports-gated | **Implemented** | `feed_market_quality._is_novel_sports_framing` |
 | R4 | "Non-intuitable odds" (odds a smart fan couldn't pre-guess) ⇒ boost | Scorer feature (priors-guessability) | **Filed** — needs novel entity-pair / specific-scenario detection | stub: `test_r4_...` |
 | R5 | Confirmed positive drivers: real-world story, contested/surprising odds, resolves-soon, marquee entity | Already in scorer + `_COMPELLING_RE` | **Implemented (pre-existing)** | `market_interestingness` signals + `_COMPELLING_RE` |
-| R6 | Resolved SPORTS ⇒ never surface (ESPN already gives him scores) | Classifier `suppress` | **Implemented** | `feed_market_quality._is_resolved_sports` |
+| R6 | Resolved SPORTS ⇒ never surface (ESPN already gives him scores) — **futures markets only; see the scope note below** | Classifier `suppress` | **Implemented, narrowed** | `feed_market_quality._is_resolved_sports` |
 | R7 | Same-theme markets should be GROUPED into one multi-angle card, not scattered | Product work: multi-angle cards over `group_id`/story_key | **Filed** — product item, bigger than a classifier tweak | stub: `test_r7_...` |
 | R8 | "#1 yes, #2 no" — number-one markets eligible; runner-up/#2+ downranked | Classifier `low_quality` | **Implemented** | `feed_market_quality._is_runner_up_rank` |
 | R9 | Bare numeric markets (box-office $, critic score) need a frame of reference | Enrichment: comparison/expectation baseline + grouping-for-comparison boost | **Filed** — needs enrichment | stub: `test_r9_...` |
 | R10 | Shape is secondary to VISUALIZATION — do NOT suppress threshold ladders by shape | Constraint: no shape-only ladder suppression | **Honored (constraint)** — R2 kills price-LEVEL *content*, not ladder *shape*; heat-strip viz track stands | n/a |
+
+## R6 scope — "never surface" is not the whole rule any more (#4681, #5100)
+
+R6 is stated as an editorial policy but is **implemented over futures markets alone**:
+`_is_resolved_sports(status, category)` reads a *market's* status and category and returns a
+`suppress` verdict. Game cards never reach it — they are judged by
+`feed.py::_filter_discover_event_noise`. The two halves have always been separate, and the prose
+above did not say so.
+
+Since then the game-card half has been deliberately narrowed, and the rule as written would now
+read as a licence to revert shipped behaviour:
+
+* **#4681 + standing notice 27 (the marquee axiom).** The completed arm in
+  `_filter_discover_event_noise` used to be unconditional, so it could not tell last night's Super
+  Bowl from a Tuesday Superettan fixture. `_recent_marquee_final_ids` now selects at most
+  `_DISCOVER_RECENT_FINAL_SLOTS = 2` finished **marquee** games per request, inside the client's own
+  fourteen-hour freshness window (D118), and both the noise filter and the demotion spare them.
+* **#5100.** Those two also get a seat in page one's back half
+  (`discover_final_seating.seat_marquee_finals`, floor `DISCOVER_FINAL_SEAT_FLOOR = 10`), because
+  surviving the filter while ranked 133rd of 135 is the same nothing as being dropped.
+
+**What is unchanged, and is the half of R6 that still governs:** the ordinary resolved-sports tail
+— MiLB, Superettan, Kleague and every other routine final — still never surfaces on Discover, and
+resolved sports *futures* are still `suppress`. Alex's reason for R6 stands for the mass; it was
+overturned only for the night's marquee result, and only for two cards.
+
+R1 ("resolved ⇒ downrank unless surprising and well-explained") is the rule the game-card side
+actually implements today, through `feed_scoring.apply_completed_freshness_decay` rather than
+through a surprise×explanation signal: a finished game keeps its full score for
+`COMPLETED_FRESH_HOURS = 1.5` and ramps to a 0.45 floor by `COMPLETED_DECAY_HOURS = 6.0`. #5100's
+seating is the bounded exception to that downrank, not a repeal of it — no score is touched.
 
 ## Verbatim provenance (abridged)
 
