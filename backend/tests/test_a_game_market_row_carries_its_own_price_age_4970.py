@@ -390,3 +390,174 @@ class TestTheLoadItself:
         assert sorted(captured["ids"]) == list(range(1, 10))
         # And with the loader stubbed empty, every leg is honestly dark.
         assert all(leg["observed_at"] is None for _p, leg in _priced_legs(payload))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CERT-2640: a TRANSFORMED price carries its INPUT's clock, not its own.
+#
+# The first presentation stamped every leg correctly at the point it was built
+# and then let two passes change the NUMBER while the stamp rode along
+# unchanged. Both produce a row whose `observed_at` describes a price the reader
+# is no longer being shown, and in one direction each the row reads FRESHER than
+# the truth — the only direction a reader cannot catch.
+# ─────────────────────────────────────────────────────────────────────────────
+
+THIRTY_HOURS = NOW - timedelta(hours=30)
+EIGHT_MINUTES = NOW - timedelta(minutes=8)
+
+
+def _cross_source_prop(*, kalshi_prob, poly_prob):
+    """Two venues quoting the SAME player+stat+threshold+side.
+
+    That tuple is step 9b's dedup key, so these two rows are averaged into one.
+    """
+    kalshi = _market(id=201, name="Celtics at Knicks: Jaylen Brown Points")
+    kalshi.source = "kalshi"
+    poly = _market(id=202, name="Celtics at Knicks: Jaylen Brown Points")
+    poly.source = "polymarket"
+    outcomes = [
+        _outcome(id=201, market_id=201, name="Jaylen Brown: 22+", prob=kalshi_prob),
+        _outcome(id=202, market_id=202, name="Jaylen Brown: 22+", prob=poly_prob),
+    ]
+    return [kalshi, poly], outcomes
+
+
+class TestABlendedPriceCarriesItsOldestContributorsClock:
+    """A merged prop is nobody's quote, so it cannot claim anybody's clock."""
+
+    @pytest.mark.parametrize(
+        "kalshi_seen,poly_seen,label",
+        [
+            (THIRTY_HOURS, EIGHT_MINUTES, "stale Kalshi is the representative"),
+            (EIGHT_MINUTES, THIRTY_HOURS, "fresh Kalshi is the representative"),
+        ],
+    )
+    def test_the_blend_reports_its_stalest_input_in_either_order(
+        self, kalshi_seen, poly_seen, label
+    ):
+        """🔴 The required regression, and the ORDER is the whole point.
+
+        `best` is chosen by SOURCE — Kalshi always wins — never by age. So the
+        two rows below serve the identical blended number, 50%, from the
+        identical pair of clocks, and differ only in which venue holds the stale
+        one. Before the repair the first case reported 30 h (pessimistic, and
+        visible) and the second reported 8 MINUTES over a number half a day
+        stale. A guard that pinned only one order would have passed on the
+        broken code half the time.
+        """
+        markets, outcomes = _cross_source_prop(kalshi_prob=0.60, poly_prob=0.40)
+        payload = _payload(
+            markets=markets,
+            outcomes=outcomes,
+            observations={201: kalshi_seen, 202: poly_seen},
+        )
+
+        props = payload["player_props"]
+        assert len(props) == 1, f"the two venues did not merge ({label})"
+        merged = props[0]
+        assert merged["source_count"] == 2
+        assert merged["over_probability"] == 0.50, "fixture is not exercising the blend"
+
+        assert merged["observed_at"] == THIRTY_HOURS.isoformat(), (
+            f"the blend claims a clock its stalest half cannot support ({label})"
+        )
+
+    def test_the_per_source_clocks_survive_the_merge(self):
+        """Preserved, not just collapsed: which side is stale is recoverable."""
+        markets, outcomes = _cross_source_prop(kalshi_prob=0.60, poly_prob=0.40)
+        payload = _payload(
+            markets=markets,
+            outcomes=outcomes,
+            observations={201: THIRTY_HOURS, 202: EIGHT_MINUTES},
+        )
+
+        by_source = payload["player_props"][0]["observed_at_by_source"]
+        assert by_source == {
+            "kalshi": THIRTY_HOURS.isoformat(),
+            "polymarket": EIGHT_MINUTES.isoformat(),
+        }
+
+    def test_one_unobserved_contributor_makes_the_blend_dark(self):
+        """Absent is not recent (gotcha #53).
+
+        A contributor with no priced snapshot has an UNKNOWN age, and unknown may
+        be older than everything else in the blend. Reporting the minimum of the
+        rest would publish a bound the data cannot support, so the row goes dark
+        instead of guessing.
+        """
+        markets, outcomes = _cross_source_prop(kalshi_prob=0.60, poly_prob=0.40)
+        payload = _payload(
+            markets=markets,
+            outcomes=outcomes,
+            observations={201: EIGHT_MINUTES, 202: None},
+        )
+
+        merged = payload["player_props"][0]
+        assert merged["source_count"] == 2, "fixture is not exercising the blend"
+        assert merged["observed_at"] is None
+
+
+def _two_total_rungs(*, low_prob, high_prob):
+    """Two game-total rungs on one curve — the monotonicity pass's subject."""
+    low = _market(id=301, name="Celtics at Knicks: Total Points")
+    high = _market(id=302, name="Celtics at Knicks: Total Points")
+    outcomes = [
+        _outcome(id=301, market_id=301, name="Over 210.5", prob=low_prob),
+        _outcome(id=302, market_id=302, name="Over 215.5", prob=high_prob),
+    ]
+    return [low, high], outcomes
+
+
+class TestACappedRungCarriesTheClockOfThePriceItNowShows:
+    def test_an_old_low_rung_capping_a_fresh_high_one_does_not_keep_the_fresh_clock(self):
+        """🔴 The required regression.
+
+        P(Over 215.5) may not exceed P(Over 210.5), so the 70% rung is rewritten
+        to the 60% the older rung was observed at. The row keeps its identity —
+        it is still the 215.5 line — but it no longer carries its own price, and
+        before the repair it kept its own five-minute-old stamp over a six-hour-old
+        number.
+        """
+        markets, outcomes = _two_total_rungs(low_prob=0.60, high_prob=0.70)
+        old, fresh = NOW - timedelta(hours=6), NOW - timedelta(minutes=5)
+        payload = _payload(
+            markets=markets,
+            outcomes=outcomes,
+            observations={301: old, 302: fresh},
+        )
+
+        rungs = {t["threshold"]: t for t in payload["totals"]}
+        assert set(rungs) == {210.5, 215.5}, f"fixture built {sorted(rungs)}"
+
+        capped = rungs[215.5]
+        assert capped["over_probability"] == 0.60, "the cap did not fire"
+        assert capped["observed_at"] == old.isoformat(), (
+            "the capped rung is serving the donor's price under its own fresh clock"
+        )
+        assert capped["observed_at_basis"] == "capped_to_sibling"
+
+        # The donor is untouched: it still shows its own price and its own clock.
+        assert rungs[210.5]["over_probability"] == 0.60
+        assert rungs[210.5]["observed_at"] == old.isoformat()
+        assert "observed_at_basis" not in rungs[210.5]
+
+    def test_a_rung_that_is_not_capped_keeps_its_own_clock_and_is_not_marked(self):
+        """The other side of the ratchet.
+
+        Without this, "stamp every rung with the previous one's clock" passes the
+        test above and destroys the field for every well-formed curve — the
+        repair would have become a second, quieter version of the same bug.
+        """
+        markets, outcomes = _two_total_rungs(low_prob=0.70, high_prob=0.55)
+        old, fresh = NOW - timedelta(hours=6), NOW - timedelta(minutes=5)
+        payload = _payload(
+            markets=markets,
+            outcomes=outcomes,
+            observations={301: old, 302: fresh},
+        )
+
+        rungs = {t["threshold"]: t for t in payload["totals"]}
+        high = rungs[215.5]
+        assert high["over_probability"] == 0.55, "this curve should not be capped"
+        assert high["observed_at"] == fresh.isoformat()
+        assert "observed_at_basis" not in high

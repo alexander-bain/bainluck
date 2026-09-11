@@ -12886,7 +12886,10 @@ async def _build_game_markets(
     # event of the last two days), one top-1 index probe each: 102 ms measured
     # on that event, on the REBUILD path only. See `utils/latest_observation.py`
     # for why this shape and not `max() ... GROUP BY`.
-    from app.utils.latest_observation import load_latest_observed_at
+    from app.utils.latest_observation import (
+        blended_observed_at,
+        load_latest_observed_at,
+    )
 
     _observed_at_by_outcome = await load_latest_observed_at(
         db, [o.id for o in outcomes]
@@ -13394,6 +13397,27 @@ async def _build_game_markets(
             if cur_prob is not None and prev_prob is not None and cur_prob > prev_prob:
                 capped = {**item}
                 capped[prob_key] = prev_prob
+                # 🔴 #4970 / CERT-2640: THE NUMBER IS NOW THE SIBLING'S, SO THE
+                # CLOCK IS THE SIBLING'S.
+                #
+                # `{**item}` copies this rung's own `observed_at`, and the line
+                # above then replaces its price with the PREVIOUS rung's. The row
+                # keeps its identity (its threshold, its name) but no longer
+                # carries its own price, so its own stamp has stopped describing
+                # anything served: an hour-old lower rung capping a
+                # freshly-observed higher one published the OLD probability under
+                # the NEW timestamp — again reading fresher than the truth, the
+                # one direction a reader cannot catch.
+                #
+                # The donor may itself be a capped row; taking its (already
+                # corrected) stamp is what makes a run of capped rungs report the
+                # clock of the price they all actually come from.
+                donor = result[-1]
+                capped["observed_at"] = donor.get("observed_at")
+                # Marked, not just carried: without this a capped rung is
+                # indistinguishable from one that was independently observed at
+                # the donor's time, and the two are not the same claim.
+                capped["observed_at_basis"] = "capped_to_sibling"
                 result.append(capped)
             else:
                 result.append(item)
@@ -13598,6 +13622,45 @@ async def _build_game_markets(
                 best["over_probability"] = avg_prob
                 best["all_sources"] = list({e.get("source") for e in entries})
                 best["source_count"] = len(entries)
+
+                # 🔴 #4970 / CERT-2640: THE PRICE IS NOW A BLEND, SO THE CLOCK
+                # MUST BE THE BLEND'S — NOT THE REPRESENTATIVE'S.
+                #
+                # `best` is chosen for its SOURCE (Kalshi wins), never for its
+                # age, and the line above replaced its price with the average of
+                # every contributor. Leaving `observed_at` alone therefore serves
+                # one contributor's clock against a number none of them quoted.
+                # Both directions are wrong and only one is detectable: a 30 h
+                # Kalshi price blended with an 8-minute Polymarket one reads
+                # "30 h" (pessimistic, visible), and the SAME PAIR with the ages
+                # swapped reads "8 minutes" over a number that is half a day
+                # stale — invisible, and the exact claim this field was added to
+                # make. The stamp follows the oldest contributor; see
+                # `blended_observed_at` for why one unknown clock yields None.
+                best["observed_at"] = blended_observed_at(
+                    [e.get("observed_at") for e in entries]
+                )
+                # The per-source clocks survive the merge, so a reader (and any
+                # later grader) can see WHICH side is the stale one instead of
+                # only that the blend is stale. Oldest wins within a source too:
+                # the dedup key can bind two markets from one venue.
+                by_source: dict[str, str] = {}
+                for e in entries:
+                    src, seen = e.get("source"), e.get("observed_at")
+                    if not src or seen is None:
+                        continue
+                    if src not in by_source:
+                        by_source[src] = seen
+                    else:
+                        # Through the helper, never `<` on the raw strings: ISO
+                        # text only sorts chronologically while every stamp
+                        # carries the same offset spelling, and one naive stamp
+                        # would silently invert the comparison.
+                        older = blended_observed_at([by_source[src], seen])
+                        if older is not None:
+                            by_source[src] = older
+                if by_source:
+                    best["observed_at_by_source"] = by_source
                 # #4189: the ONE filter in this function that MERGES rows rather
                 # than dropping or capping them, so the one place provenance has
                 # to be unioned. `best` is a single entry and carries a single

@@ -435,3 +435,76 @@ class TestItIsShared:
         assert "date_trunc" in source
         assert "TREND_DAYS" in source
         assert "MAX_SERIES_ROWS" in source
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CERT-2640 (#4970): the clock of a BLENDED price.
+#
+# `blended_observed_at` is where "when was this observed?" is answered for a
+# number no single venue ever quoted. The branches below are reachable from the
+# helper and NOT from the endpoint's fixtures, which is why they are guarded
+# here rather than only through the payload.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBlendedObservedAt:
+    """A blend is exactly as fresh as its stalest contributor, and no fresher."""
+
+    def test_the_oldest_contributor_wins(self):
+        from app.utils.latest_observation import blended_observed_at
+
+        old, new = "2026-05-16T17:30:00+00:00", "2026-05-17T23:22:00+00:00"
+        assert blended_observed_at([new, old]) == old
+        # Order in must not change the answer: the caller's list order is the
+        # dedup map's insertion order, which is the venues' arrival order.
+        assert blended_observed_at([old, new]) == old
+
+    def test_the_winning_stamp_is_returned_verbatim(self):
+        """Never a re-formatted spelling of a stamp the payload already carries.
+
+        A round trip through `datetime` would silently normalise `+00:00` to `Z`
+        (or drop microseconds) on the blended row only, so two rows observed at
+        the same instant would render as different strings.
+        """
+        from app.utils.latest_observation import blended_observed_at
+
+        exact = "2026-05-16T17:30:00.123456+00:00"
+        assert blended_observed_at([exact, "2026-05-17T23:22:00+00:00"]) == exact
+
+    def test_one_unknown_contributor_makes_the_whole_blend_unknown(self):
+        """🔴 Not the min of the rest — absent is not recent (gotcha #53).
+
+        The unknown contributor may be OLDER than every stamp present, so any
+        answer but `None` publishes a freshness bound the data cannot support.
+        """
+        from app.utils.latest_observation import blended_observed_at
+
+        assert blended_observed_at(["2026-05-17T23:22:00+00:00", None]) is None
+        assert blended_observed_at([None, "2026-05-17T23:22:00+00:00"]) is None
+
+    def test_an_unparseable_stamp_is_unknown_and_not_silently_dropped(self):
+        """Dropping it from the vote would let the survivors answer for it."""
+        from app.utils.latest_observation import blended_observed_at
+
+        assert blended_observed_at(["2026-05-17T23:22:00+00:00", "not a date"]) is None
+
+    def test_a_naive_stamp_does_not_raise(self):
+        """Comparing naive to aware raises `TypeError`, and a freshness display
+        may not be able to 500 an event page over a timezone. Naive reads as UTC,
+        so the older of the two still wins."""
+        from app.utils.latest_observation import blended_observed_at
+
+        assert (
+            blended_observed_at(["2026-05-16T17:30:00", "2026-05-17T23:22:00+00:00"])
+            == "2026-05-16T17:30:00"
+        )
+
+    def test_no_contributors_is_unknown_rather_than_an_index_error(self):
+        from app.utils.latest_observation import blended_observed_at
+
+        assert blended_observed_at([]) is None
+
+    def test_a_single_contributor_is_its_own_clock(self):
+        from app.utils.latest_observation import blended_observed_at
+
+        only = "2026-05-17T23:22:00+00:00"
+        assert blended_observed_at([only]) == only

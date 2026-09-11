@@ -78,13 +78,69 @@ is the aggregate's cost back again, wearing a safer-looking clause.
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Iterable
+from datetime import datetime, timezone
+from typing import Iterable, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FuturesOddsSnapshot, FuturesOutcome
+
+
+def _as_aware(stamp: str) -> Optional[datetime]:
+    """Parse an ISO stamp to an aware datetime, or ``None`` if unparseable.
+
+    A naive stamp is read as UTC rather than rejected: every producer in this
+    payload writes ``captured_at`` (``timestamptz``), but comparing a naive to
+    an aware datetime raises ``TypeError``, and a freshness display must not be
+    able to 500 a page over a timezone.
+    """
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def blended_observed_at(stamps: Iterable[Optional[str]]) -> Optional[str]:
+    """The honest ``observed_at`` for ONE number blended from several prices.
+
+    🔴 **A blend is only as fresh as its STALEST contributor, so the oldest
+    stamp wins.** The served number is not any contributor's price — it is a
+    function of all of them — so it cannot be newer than the oldest input that
+    shaped it. Serving the newest is the defect this exists to prevent: a 30 h
+    Kalshi price averaged with an 8-minute Polymarket one produces a number that
+    is half a day stale and would render as eight minutes old, which reads
+    FRESHER THAN THE TRUTH. The failure is silent and it is the direction a
+    reader cannot detect.
+
+    🔴 **One unknown contributor makes the blend's age unknown — ``None``, not
+    the min of the rest.** An absent stamp does not mean "recent"; it means the
+    outcome has no priced snapshot at all. Taking the minimum of the known ones
+    would publish a bound the data does not support, because the unknown one may
+    be older than all of them. Absent stays absent (gotcha #53) and the reader is
+    shown no age rather than a wrong one.
+
+    Returns the winning stamp **verbatim** as it was passed in, so the payload
+    never gains a re-formatted spelling of a stamp another field already carries.
+    """
+    values = list(stamps)
+    if not values:
+        return None
+
+    oldest: Optional[tuple[datetime, str]] = None
+    for stamp in values:
+        if stamp is None:
+            return None
+        parsed = _as_aware(stamp)
+        if parsed is None:
+            # Unparseable is unknown, and unknown poisons the blend exactly the
+            # way a missing one does — never silently dropped from the vote.
+            return None
+        if oldest is None or parsed < oldest[0]:
+            oldest = (parsed, stamp)
+
+    return oldest[1] if oldest is not None else None
 
 
 def latest_observed_at_subquery():
