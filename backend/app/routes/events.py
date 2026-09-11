@@ -6586,6 +6586,17 @@ _LAST_MATCH_LOOKBACK_DAYS = 30
 #: fixture from a season nobody is asking about.
 _NEXT_MATCH_LOOKAHEAD_DAYS = 120
 
+#: #5201: how many of the RESOLVED team's own fixtures the namesake arm prepends.
+#:
+#: One, because the ship is "your team's next game" and every row this arm adds
+#: competes with rows a query that was already working earned for itself. The
+#: arm fires precisely when the pool is full of somebody else's fixtures, so a
+#: larger number would spend the reader's four event slots on a team they can
+#: already see in slot 0 — and `live_first_order` + `commence_time ASC` means
+#: the one row taken is the live game if there is one and the soonest otherwise,
+#: which is the whole of Alex's "the live game, else the next".
+_LEAD_TEAM_FIXTURE_LIMIT = 1
+
 #: The sport keys the scorer counts as prominent (`rank_key`'s third term).
 #: Imported rather than re-listed: two copies of this set is one copy that drifts,
 #: and the pool would then order by a definition of "prominent" the scorer no
@@ -7244,6 +7255,85 @@ async def typeahead_search(
         # would fail in a way that looks like a ranking bug and is not one.
         _ta_rows = [*_ta_next, *_ta_last, *_ta_rows]
 
+    # #5201: the arm above admits only rows the query NAMES — and a NAMESAKE
+    # names it. `bruins` resolves Boston Bruins into slot 0 while the pool holds
+    # *San Diego State Aztecs at UCLA Bruins*, so `_ta_names_participant` is True,
+    # the gate never opens, and the reader is shown one club's card above another
+    # club's fixture. Boston's own next game (2026-09-30, three of them inside
+    # the horizon) was unreachable by any path. `celtics` is the same shape with
+    # Celtic FC.
+    #
+    # 🔴 ADDITIVE, AND THAT IS THE DESIGN. Nothing above is re-gated: every query
+    # that worked this morning fetches exactly the rows it fetched then, in the
+    # same order, and CERT-2392's meaning ("a pool full of somebody else is as
+    # empty as an empty pool") is untouched. This arm can only ADD the resolved
+    # team's own fixture when the pool has none — which is why it is safe to key
+    # it on a team the scorer has not ranked yet.
+    #
+    # WHICH QUERIES NEWLY MATCH (the question `_next_match_query`'s docstring
+    # tells every future edit here to ask): exactly those that resolve a team
+    # into the pool AND hold no fixture of that team. A query with no team at all
+    # — `sinner`, `alcaraz`, `us open`, every individual sport, which
+    # `_is_individual_sport` keeps out of the pool by design — leaves
+    # `_ta_lead_team` None and never reaches the arm. A team already answered by
+    # its own fixture short-circuits on the `any(...)` below at zero query cost.
+    #
+    # THE LEAD ROW IS `team_pool[0]`, not a fresh notion of "what the reader
+    # meant". The pool is ordered by prominence and then exactness precisely so
+    # that "the row the scorer would pick" is IN it (see the fetch above), and
+    # prominence is `rank_key`'s third term — the same signal the scorer uses to
+    # separate namesakes that are all MC0. Deriving a second answer here is how
+    # the card in slot 0 and the game beneath it would come to disagree again,
+    # which is the whole bug.
+    #
+    # Priced before it was chosen: EXPLAIN ANALYZE on production 2026-09-11 for
+    # Boston Bruins, 2.07ms execution / 4.03ms planning, every one of the four
+    # predicate arms an index scan (`ix_events_home_team_id`, `..._away_team_id`,
+    # `..._home_team_name`, `..._away_team_name` under one BitmapOr). It is NOT
+    # wrapped in `_forced_custom_plan` for the reason the arm above gives for not
+    # opening a second one: two more GUC round-trips on the hottest path. #4506's
+    # pathology is a generic plan chosen for a parameterised TEXT predicate; this
+    # arm has no text predicate, and its planning cost is already measured.
+    _ta_lead_team = team_pool[0] if team_pool else None
+
+    def _ta_is_lead_team_fixture(ev) -> bool:
+        """Does this row belong to the team the reader resolved?
+
+        The same disjunction the query uses, so the gate and the arm cannot
+        disagree about what counts as the team's own fixture — a gate looser
+        than its query fires forever, a gate tighter than its query never fires.
+        """
+        if _ta_lead_team is None:
+            return False
+        return (
+            ev.home_team_id == _ta_lead_team["team_id"]
+            or ev.away_team_id == _ta_lead_team["team_id"]
+            or ev.home_team_name == _ta_lead_team["text"]
+            or ev.away_team_name == _ta_lead_team["text"]
+        )
+
+    # `None` = the arm never ran, the third state `_ta_last_match_plan` above is
+    # documented to preserve (#4506): "ran and found nothing" is a different fact
+    # from "was never armed", and a probe that cannot tell them apart reads a
+    # team with no fixture at all as a repair that fired.
+    _ta_lead_team_row_ids: set[int] = set()
+    if _ta_lead_team is not None and not any(
+        _ta_is_lead_team_fixture(ev) for ev in _ta_rows
+    ):
+        _ta_lead_rows = (
+            await db.execute(
+                _lead_team_next_match_query(
+                    _ta_lead_team["team_id"], _ta_lead_team["text"], now
+                )
+            )
+        ).scalars().all()
+        _ta_mark("lead_team_next_match_query")
+        _ta_lead_team_row_ids = {ev.id for ev in _ta_lead_rows}
+        # PREPENDED, for the same reason the arm above prepends: the pool is
+        # truncated to `_EVENT_POOL_SIZE` before anything is scored, and this row
+        # exists only because four namesake fixtures were already ahead of it.
+        _ta_rows = [*_ta_lead_rows, *_ta_rows]
+
     event_pool = []
     # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
     # same first-round match twice, "Alcaraz at Faria 5:00 PM" beside "Carlos
@@ -7283,7 +7373,20 @@ async def typeahead_search(
             # to promote `St Kitts & Nevis Patriots` — see
             # `_nickname_names_participant`, which says the same thing about
             # its own half and is the reason that helper takes a `sport_key`.
-            "_names_participant": _ta_names_participant(event),
+            #
+            # #5201: OR the row was fetched BY THE READER'S OWN TEAM. The rule
+            # above is that a promotion test must never be LOOSER than the recall
+            # arm that fetched the row; `_lead_team_next_match_query` selects on
+            # `team_id` (or the team's exact full name) and nothing else, which
+            # is strictly TIGHTER than any name test — so this row is the
+            # participant's by construction. Without this clause the arm fetches
+            # Boston's game and then declines to promote it whenever the query is
+            # a nickname the token test does not accept ("celtic" naming "Boston
+            # Celtics"), and a row that is fetched but never promoted is cut by
+            # `_EVENT_POOL_SIZE` behind the namesakes it was added to answer.
+            "_names_participant": (
+                _ta_names_participant(event) or event.id in _ta_lead_team_row_ids
+            ),
         })
 
     # 3. Futures (sports + non-sports, deduplicated)
@@ -18270,6 +18373,81 @@ def _next_match_query(event_name_filter, now: datetime):
             Event.commence_time.asc(),
         )
         .limit(_EVENT_POOL_FETCH_LIMIT)
+    )
+
+
+def _lead_team_next_match_query(team_id: int, team_name: str, now: datetime):
+    """#5201: the RESOLVED team's own next fixture, found by identity not by text.
+
+    Module-level for the reason :func:`_next_match_query` is: the pool assembly
+    runs against a live session, so an arm left inline is an arm no CI job can
+    read. `tests/test_typeahead_reaches_the_resolved_teams_fixture_5201.py`
+    compiles this and asserts the clauses.
+
+    🔴 WHY A THIRD ARM RATHER THAN A WIDENING OF THE OR-NEXT ONE. That arm is
+    gated on "no row in the pool NAMES the query's participant", and a NAMESAKE
+    satisfies it. Measured on production 2026-09-11: `bruins` resolves **Boston
+    Bruins** into slot 0, the pool holds *San Diego State Aztecs at UCLA Bruins*,
+    `query_names_participant('bruins', ['San Diego State Aztecs', 'UCLA Bruins'])`
+    is True — so the gate never opens and Boston's own next game (2026-09-30, well
+    inside the 120-day horizon, one of three they have) is unreachable. The reader
+    is shown a team card for one club and a fixture belonging to another. The
+    gate asks "is there a fixture?" where the ship asks "is there THIS team's
+    fixture?", and no ranking change can promote a row nothing ever fetched.
+
+    🔴 WHY IT IS KEYED ON THE TEAM AND NOT ON THE QUERY TEXT — this is the whole
+    reason the repair is a new query rather than a filter over the existing one.
+    `_next_match_query` selects on the participant-name filter and takes the
+    eight soonest rows over 120 days. For `bruins` those eight are UCLA's weekly
+    football fixtures; Boston's game is nineteen days behind the last of them.
+    Post-filtering that result set can only ever return nothing here. The row has
+    to be SELECTED by identity or it is never fetched at all.
+
+    BOTH the id and the exact name, because neither alone reaches every row.
+    Measured on production 2026-09-11 over the 1,722 future fixtures inside the
+    horizon: 1,378 carry a `home_team_id`, and where one is set the display name
+    equals the team's own name on 1,374 of them (99.7%) — so the id is primary
+    and the name is not a substitute for it. Of the 344 rows with no
+    `home_team_id`, 81 still name a real team row exactly (`soccer_other` carries
+    143 id-less fixtures on its own), and those 81 are reachable by name and by
+    nothing else. The name arm is an EQUALITY, never a LIKE: the entire defect is
+    that "UCLA Bruins" contains the query, and a substring test here would
+    re-admit precisely the row this arm exists to step around.
+
+    Every other clause mirrors `_next_match_query` deliberately — the same
+    live-first ordering (Q438: the served status can never disagree with the
+    sort), the same `now - 1h` floor so a game that kicked off forty minutes ago
+    cannot fall between two arms, the same measured 120-day ceiling (gotcha #41
+    wants both ends), and the same `not_a_proven_duplicate()` (CERT-439), which
+    matters more here than anywhere: this arm reaches furthest out, over fixtures
+    still accumulating provider rows, and it takes only ONE row — so a twin that
+    sorts first is not a duplicate beside the answer, it IS the answer.
+    """
+    return (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(
+            selectinload(Event.sport),
+            selectinload(Event.home_team),
+            selectinload(Event.away_team),
+        )
+        .where(
+            or_(
+                Event.home_team_id == team_id,
+                Event.away_team_id == team_id,
+                Event.home_team_name == team_name,
+                Event.away_team_name == team_name,
+            ),
+            Event.status.in_(["live", "scheduled"]),
+            Event.commence_time >= now - timedelta(hours=1),
+            Event.commence_time <= now + timedelta(days=_NEXT_MATCH_LOOKAHEAD_DAYS),
+            not_a_proven_duplicate(),
+        )
+        .order_by(
+            live_first_order(now),
+            Event.commence_time.asc(),
+        )
+        .limit(_LEAD_TEAM_FIXTURE_LIMIT)
     )
 
 
