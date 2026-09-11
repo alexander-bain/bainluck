@@ -224,11 +224,15 @@ async def test_every_entry_is_labelled_with_its_source(merge_harness):
 
 
 def test_the_split_maps_the_types_the_feed_actually_emits():
-    """`event` -> events; `futures` and `bundle` -> markets.
+    """`event` -> events; `futures` -> markets; a bundle -> its MEMBERS.
 
-    The four type strings are the ones production emits for category feeds
+    The type strings are the ones production emits for category feeds
     (measured: baseball `{event: 2, futures: 41}`, tennis `{bundle: 1,
     futures: 10}`, politics `{futures: 97, bundle: 3}`).
+
+    The member-less bundle here contributes ZERO, matching the renderer's
+    ``?? []`` — see `test_tag_count_unfolds_bundle_members_like_category_page`
+    for the populated case and why folding it to one was wrong (CERT-2589).
     """
     items = [
         {"type": "event"},
@@ -239,8 +243,175 @@ def test_the_split_maps_the_types_the_feed_actually_emits():
 
     assert tag_counts_cache.split_rendered_items(items) == {
         "events": 2,
-        "futures": 2,
+        "futures": 1,
     }
+
+
+def test_tag_count_unfolds_bundle_members_like_category_page():
+    """CERT-2589's required repair, on the production-shaped payload it named.
+
+    A tagged production Tennis read is 8 futures plus one 3-member bundle. The
+    folded count published 9 markets while `categories/[slug]/page.tsx` — which
+    builds its header from ``flattenFeedBundles(allItems)`` and counts
+    ``type === "futures"`` over the flattened list — rendered and labelled 11.
+
+    Both numbers are asserted here, from ONE payload, so the tile count and the
+    page count cannot drift apart again: that drift IS the defect #4920 exists
+    to remove, and folding the bundle had merely pointed it the other way.
+    """
+    tennis = [{"type": "futures", "data": {"id": i}} for i in range(8)]
+    tennis.append(
+        {
+            "type": "bundle",
+            "data": {
+                "items": [
+                    {"type": "futures", "data": {"id": 100}},
+                    {"type": "futures", "data": {"id": 101}},
+                    {"type": "futures", "data": {"id": 102}},
+                ]
+            },
+        }
+    )
+
+    tile = tag_counts_cache.split_rendered_items(tennis)
+
+    assert tile == {"events": 0, "futures": 11}, (
+        "the tile must promise the 11 cards the page renders, not the 9 feed "
+        f"slots it arrived in — got {tile}"
+    )
+    # The page's own arithmetic, spelled out rather than asserted by identity:
+    # nine feed slots, one of which unfolds into three.
+    assert len(tennis) == 9
+    assert tile["futures"] == len(tennis) - 1 + 3
+
+
+def test_a_nested_bundle_unfolds_to_its_leaves():
+    """Recursion, not one level. A bundle inside a bundle still renders leaves."""
+    items = [
+        {
+            "type": "bundle",
+            "data": {
+                "items": [
+                    {"type": "futures"},
+                    {"type": "bundle", "data": {"items": [{"type": "futures"}] * 2}},
+                ]
+            },
+        }
+    ]
+    assert tag_counts_cache.split_rendered_items(items) == {
+        "events": 0,
+        "futures": 3,
+    }
+
+
+def test_an_event_inside_a_bundle_counts_as_an_event():
+    """The flattened list is split by type, so a bundled event is an event —
+    the header reads both numbers off the same flattened list."""
+    items = [
+        {
+            "type": "bundle",
+            "data": {"items": [{"type": "event"}, {"type": "futures"}]},
+        }
+    ]
+    assert tag_counts_cache.split_rendered_items(items) == {
+        "events": 1,
+        "futures": 1,
+    }
+
+
+def test_a_bundle_past_the_depth_cap_contributes_nothing():
+    """The renderer `continue`s past a too-deep bundle — it does NOT fall back
+    to counting the wrapper as one card.
+
+    Counting 1 there would over-promise by exactly the cards the reader never
+    gets, which is the bug class this ship removes.
+
+    THE NEST IS LITERAL AND THE CAP IS PINNED SEPARATELY, because the first
+    version built its fixture from ``_MAX_BUNDLE_DEPTH`` and so re-shaped itself
+    whenever the constant moved — it passed against a cap of 3 AND a cap of 4,
+    testing nothing about the number. Mutation R7 caught that. A test may assert
+    a constant or consume it, but not both.
+    """
+    assert tag_counts_cache._MAX_BUNDLE_DEPTH == 3, (
+        "the cap mirrors MAX_BUNDLE_DEPTH in lib/feedSections.ts; if that moved, "
+        "move it here and rebuild the literal nest below to match"
+    )
+
+    # Four bundles deep. The outer three recurse at depths 0, 1, 2; the fourth
+    # is reached at depth 3, hits the cap, and is dropped with its futures card.
+    nested = {
+        "type": "bundle",
+        "data": {
+            "items": [
+                {
+                    "type": "bundle",
+                    "data": {
+                        "items": [
+                            {
+                                "type": "bundle",
+                                "data": {
+                                    "items": [
+                                        {
+                                            "type": "bundle",
+                                            "data": {"items": [{"type": "futures"}]},
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    },
+                }
+            ]
+        },
+    }
+
+    assert tag_counts_cache.split_rendered_items([nested]) == {
+        "events": 0,
+        "futures": 0,
+    }, "a bundle at or past the depth cap renders nothing, so it counts nothing"
+
+
+def test_the_level_just_inside_the_cap_still_counts():
+    """The other side of the boundary, so the cap cannot be satisfied by simply
+    dropping everything nested. Three bundles deep: the third is reached at
+    depth 2, which is inside the cap, so its card survives."""
+    nested = {
+        "type": "bundle",
+        "data": {
+            "items": [
+                {
+                    "type": "bundle",
+                    "data": {"items": [{"type": "futures"}]},
+                }
+            ]
+        },
+    }
+
+    assert tag_counts_cache.split_rendered_items([nested]) == {
+        "events": 0,
+        "futures": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    "bundle,why",
+    [
+        ({"type": "bundle"}, "no data at all"),
+        ({"type": "bundle", "data": None}, "null data"),
+        ({"type": "bundle", "data": {}}, "no items key"),
+        ({"type": "bundle", "data": {"items": None}}, "null items"),
+        ({"type": "bundle", "data": {"items": "nope"}}, "items is not a list"),
+        ({"type": "bundle", "data": "nope"}, "data is not a dict"),
+    ],
+)
+def test_a_malformed_bundle_contributes_zero_not_one(bundle, why):
+    """``?? []`` semantics: the renderer draws nothing, so the tile promises
+    nothing. Counting the wrapper as one card would resurrect the over-promise
+    on exactly the payloads that are hardest to notice."""
+    assert tag_counts_cache.split_rendered_items([{"type": "futures"}, bundle]) == {
+        "events": 0,
+        "futures": 1,
+    }, why
 
 
 def test_an_empty_render_is_a_measured_zero_not_an_absence():

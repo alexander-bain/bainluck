@@ -143,14 +143,77 @@ def read(rc=None) -> tuple[dict[str, dict[str, int]], str | None]:
     return counts, created_at if isinstance(created_at, str) else None
 
 
+#: The frontend's own recursion backstop, mirrored (`lib/feedSections.ts`).
+#:
+#: A bundle at or past this depth contributes NOTHING to the page — the
+#: renderer `continue`s past it rather than falling back to counting the
+#: wrapper as one card — so a count that stopped at the cap and added 1 would
+#: over-promise by exactly the cards the reader never gets.
+_MAX_BUNDLE_DEPTH = 3
+
+
+def _flatten_bundles(items: list, depth: int = 0) -> list[dict]:
+    """The Python mirror of ``flattenFeedBundles`` in ``lib/feedSections.ts``.
+
+    Every clause here exists because the renderer has it, not because it is the
+    obvious way to count:
+
+    * a non-bundle passes through;
+    * a bundle at ``depth >= _MAX_BUNDLE_DEPTH`` is DROPPED, contributing zero;
+    * members come from ``data.items`` with ``?? []`` semantics, so a malformed
+      or member-less bundle contributes zero rather than one.
+
+    Kept as a mirror rather than shared because the two live on opposite sides
+    of the wire; the guard test pins them to the same production-shaped payload
+    so they cannot drift silently — and the FRONTEND half is pinned too, by
+    `__tests__/tagCountMirrorsFlattenBundles4920.test.ts`, which runs the real
+    `flattenFeedBundles` over that payload and gets the same 11.
+
+    ONE DELIBERATE DIVERGENCE, verified by running the renderer rather than
+    reading it: on a bundle whose ``data`` is absent or ``null`` the frontend
+    THROWS — ``(item.data as FeedBundleData).items`` casts a lie and the read
+    dies — whereas this contributes zero. Not reachable from our own backend
+    (all four emitters in ``discover_bundles.py`` set ``data``), so it is latent
+    fragility filed on its own rather than fixed inside this repair. Copying the
+    throw here would be strictly worse: a warmer that raised would abandon the
+    category, and leaving it unmeasured is already the correct fallback.
+    """
+    out: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "bundle":
+            out.append(item)
+            continue
+        if depth >= _MAX_BUNDLE_DEPTH:
+            continue
+        data = item.get("data")
+        members = (data or {}).get("items") if isinstance(data, dict) else None
+        if not isinstance(members, list):
+            members = []
+        out.extend(_flatten_bundles(members, depth + 1))
+    return out
+
+
 def split_rendered_items(items: Any) -> dict[str, int] | None:
     """Count one category's rendered feed items into the tile's two numbers.
 
-    ``event`` is the tile's "events"; ``futures`` and ``bundle`` are its
-    "markets" — a bundle is one card standing for a group of markets, and it is
-    counted as the ONE card a reader sees, because this number's whole job is to
-    predict the page. That makes "markets" a card count, which is the tile's
-    existing word for it and not a question this ship reopens.
+    COUNTS WHAT THE PAGE COUNTS, WHICH MEANS UNFOLDING BUNDLES (CERT-2589).
+    The first version of this counted a bundle as the ONE card it appears to be
+    and argued that "markets" was a card count. That was wrong about the page:
+    `categories/[slug]/page.tsx` builds its header from
+    ``flattenFeedBundles(allItems)`` and counts ``type === "futures"`` over the
+    FLATTENED list, because #2597 had already found the folded count promising
+    "18 markets" over a page showing 22.
+
+    So a bundle contributes its members, recursively. Measured on a tagged
+    production Tennis payload — 8 futures plus one 3-member bundle — the folded
+    count published 9 while the page rendered and labelled 11. Counting the
+    wrapper was the same defect this whole ship exists to remove, pointed the
+    other way: a number that does not survive being checked against its page.
+
+    ``event`` is the tile's "events" and ``futures`` its "markets", both read
+    AFTER flattening, exactly as the header does.
 
     Returns ``None`` for an unusable payload, so the caller can leave the
     category absent rather than publish a zero it would have to defend.
@@ -160,13 +223,11 @@ def split_rendered_items(items: Any) -> dict[str, int] | None:
 
     events = 0
     markets = 0
-    for item in items:
-        if not isinstance(item, dict):
-            continue
+    for item in _flatten_bundles(items):
         kind = item.get("type")
         if kind == "event":
             events += 1
-        elif kind in ("futures", "bundle"):
+        elif kind == "futures":
             markets += 1
 
     return {"events": events, "futures": markets}
