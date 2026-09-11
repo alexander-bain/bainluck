@@ -25,6 +25,7 @@ import {
   derivePeriod,
   selectGameTotalRungs,
   selectHalfTotalRungs,
+  ladderQuotesALine,
   TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
 
@@ -836,6 +837,13 @@ export default function MarketMapSection({
     for (const halfKey of TOTAL_MAP_HALVES) {
       const cleaned = selectHalfTotalRungs(allPeriod, halfKey);
       if (cleaned.length === 0) continue;
+
+      // #5013: this card IS its line — the headline, the marker and the band
+      // all come off the same ladder — so a ladder that has stopped quoting
+      // has nothing honest to draw and the half does not render. A finished
+      // game keeps its card: those ladders are settled by definition, and what
+      // that card carries is the half's actual score, not a forecast.
+      if (!isDone && !ladderQuotesALine(cleaned)) continue;
 
       const ouLine = cleaned.reduce((best, t) =>
         Math.abs(t.overProbability - 0.5) < Math.abs(best.overProbability - 0.5) ? t : best

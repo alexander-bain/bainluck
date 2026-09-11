@@ -503,6 +503,51 @@ export function selectHalfTotalRungs(
   return cleaned;
 }
 
+/**
+ * The band a rung has to reach for the ladder holding it to be quoting a line.
+ *
+ * #5013. On the SF@LAR opener the 2nd half points map printed "O/U 11" beside a
+ * 1st half of 25 and a projected game total of 48 — halves twelve points short
+ * of their own game, the marker jammed against the left edge of a 2 → 48+ axis
+ * and the whole band's weight in the leftmost bucket.
+ *
+ * The line under these cards is the rung whose over-probability is CLOSEST to
+ * 50%, and closest is not the same as crossing. A book that has emptied does
+ * not stop quoting — pricing falls through to the last trade, which prints
+ * ~0.99 under the step and ~0.01 above it. Every rung of such a ladder is 49
+ * points from a coin flip, so "closest to 50%" returns whichever rung the step
+ * happens to sit on, and the card prints it with exactly the confidence of a
+ * real line. Nothing downstream can tell the two apart: a dead ladder is
+ * monotone, spans the same thresholds, and fills the same axis.
+ *
+ * So the test is not the chosen rung, it is whether the ladder has an INTERIOR.
+ * A live ladder passes through the middle on its way down. Measured on the
+ * served payloads 2026-09-11: Denver@Kansas City's 2nd half runs 0.76, 0.71,
+ * 0.67, 0.54, 0.50, 0.48, 0.36, 0.30, and the SF@LAR 2nd half the venue itself
+ * held at kickoff runs 0.93 → 0.12 (snapshot 00:33:31Z, crossing at 24.5). A
+ * ladder with no rung between these bounds is a step function, and a step
+ * function does not know where the line is.
+ */
+export const LADDER_INTERIOR_MIN = 0.15;
+export const LADDER_INTERIOR_MAX = 0.85;
+
+/**
+ * Whether a totals ladder is quoting a line, rather than echoing a book that
+ * has stopped. Fewer than two rungs is not this function's call — the
+ * selectors above already refuse those — and an empty ladder answers false.
+ *
+ * PURE: no I/O, no React.
+ */
+export function ladderQuotesALine(
+  rungs: Array<{ overProbability: number }>
+): boolean {
+  return rungs.some(
+    (r) =>
+      r.overProbability >= LADDER_INTERIOR_MIN &&
+      r.overProbability <= LADDER_INTERIOR_MAX
+  );
+}
+
 /** The halves a totals map is ever built for, in the order the section draws them. */
 export const TOTAL_MAP_HALVES = ["1H", "2H"] as const;
 
