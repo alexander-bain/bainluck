@@ -610,7 +610,26 @@ export default function EventPage({ params }: EventPageProps) {
   // thing does not exist stops looking for it; a reader told we could not reach
   // it reloads, which is the correct thing to do for every failure here except
   // a real 404 — and that one no longer offers a retry button that cannot help.
-  if (eventError || !event) {
+  //
+  // #5016 — the gate is `!event`, NOT `eventError || !event`. Measured on
+  // production during SF@LAR, 2026-09-10: a tab opened at 5:39pm PT held a full
+  // live page — 61%–39%, the score, the chart — and at 5:56pm had been replaced
+  // by "Couldn't reach the server", still there 57 minutes later, while fresh
+  // loads of the same url rendered fine throughout.
+  //
+  // SWR KEEPS `data` WHEN A REVALIDATION FAILS. That is the whole point of
+  // stale-while-revalidate, and it means `eventError` being set says nothing
+  // about whether we have a page to draw — here `event` was populated and one
+  // line from being rendered when the `||` threw it away. A failed REFRESH is a
+  // freshness event, not an existence event, and the page already discloses
+  // freshness: `live · Ns ago` counts from the event's own observation stamp,
+  // so a page that stops updating goes visibly stale on its own and recovers
+  // invisibly the moment any poll succeeds. A page that has discarded its
+  // content needs a success AND a rerender before the reader gets anything.
+  //
+  // The reader this protects is the ordinary one: a phone on a game night, one
+  // request in a hundred lost to a lift, a tunnel or a wifi handoff.
+  if (!event) {
     const failure = describeLoadFailure(eventError, "event");
     return (
       <ErrorMessage
