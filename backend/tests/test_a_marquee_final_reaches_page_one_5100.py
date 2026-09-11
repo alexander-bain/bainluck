@@ -57,9 +57,7 @@ class TestTheSelectedFinalReachesPageOne:
         final = _final(14780138)
         items = _deck(finals_at={39: final})
 
-        out, meta = seat_marquee_finals(
-            items, {14780138}, first_page_size=FIRST_PAGE
-        )
+        out, meta = seat_marquee_finals(items, {14780138}, first_page_size=FIRST_PAGE)
 
         assert out.index(final) < FIRST_PAGE, (
             "the whole ship: a selected marquee final the reader would meet on "
@@ -85,9 +83,7 @@ class TestTheSelectedFinalReachesPageOne:
         first, second = _final(101), _final(102)
         items = _deck(finals_at={30: first, 35: second})
 
-        out, meta = seat_marquee_finals(
-            items, {101, 102}, first_page_size=FIRST_PAGE
-        )
+        out, meta = seat_marquee_finals(items, {101, 102}, first_page_size=FIRST_PAGE)
 
         assert out.index(first) == DISCOVER_FINAL_SEAT_FLOOR
         assert out.index(second) == DISCOVER_FINAL_SEAT_FLOOR + 1
@@ -294,6 +290,6 @@ def test_the_seat_position_never_moves_with_the_page_size(page_size):
     out, meta = seat_marquee_finals(items, {101}, first_page_size=page_size)
 
     assert meta["seated"] == 1, f"page_size={page_size} left the final unseated"
-    assert out.index(final) == DISCOVER_FINAL_SEAT_FLOOR, (
-        f"page_size={page_size} moved the seat off the fixed floor"
-    )
+    assert (
+        out.index(final) == DISCOVER_FINAL_SEAT_FLOOR
+    ), f"page_size={page_size} moved the seat off the fixed floor"

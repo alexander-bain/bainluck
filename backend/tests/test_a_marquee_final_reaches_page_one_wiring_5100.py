@@ -108,9 +108,7 @@ def _contested_pool(per_category: int = 8) -> list[dict]:
     pool: list[dict] = []
     for category in _POOL_CATEGORIES:
         for _ in range(per_category):
-            pool.append(
-                _futures(len(pool), category, 79.0 + (len(pool) % 11))
-            )
+            pool.append(_futures(len(pool), category, 79.0 + (len(pool) % 11)))
     return pool
 
 
@@ -148,9 +146,7 @@ def _final(
             "ei": {"score": 64},
             "home_team_data": {"logo": "h"},
             "away_team_data": {"logo": "a"},
-            "commence_time": (
-                NOW - timedelta(hours=hours_since_kickoff)
-            )
+            "commence_time": (NOW - timedelta(hours=hours_since_kickoff))
             .isoformat()
             .replace("+00:00", "Z"),
         },
