@@ -12,7 +12,10 @@
 // `rowState = item.settled ? "graded" : state`. Drop `settled` on the way in and
 // a closed-window row falls to the SECTION state and draws `DivergenceValue`,
 // which with `pregame_mark == null` renders `<Pending note="script pending" />`
-// and then `pct(item.current)`. A closed window deliberately carries NO price —
+// and then `pct(item.current)`. [#5216, 2026-09-11: that branch now renders
+// NOTHING — notice 34 — so the degraded row is an em dash with no chip beside
+// it. The paragraph is left as written because it is the record of what #5088
+// was fixing; only the counts below moved.] A closed window carries NO price —
 // that is #1735's whole point — and MEASURED on the real payload all 64 window
 // rows carry `pregame_mark: null` and `current: null` too, so the reader gets
 // "script pending" and an em dash where the result belongs. That is CERT-2535's blank row, reintroduced by
@@ -104,23 +107,36 @@ describe("#5088 a closed window shows its verdict while the game is live", () =>
   });
 
   // One section, two row states — the pair is the ship, not either row alone.
-  // Counted rather than matched: "script pending" belongs to the OPEN row and
-  // must appear exactly once, not twice.
+  //
+  // UPDATED BY #5216, as that issue asked. This counted 1: the OPEN sixth also
+  // has no pregame mark, so it printed "script pending" of its own, and this
+  // file PINNED that as expected while #5216 argued it should not exist. It is
+  // now 0 on both rows — the string is gone from the codebase's reader-facing
+  // surface (notice 34) and the open row shows its live price with no chip. The
+  // count is kept rather than replaced by `not.toContain` because the original
+  // reason for counting still stands: the closed row must not grow one either.
   test("both states render together: a verdict beside a live price", () => {
     const html = live([FIRST_FIVE, SIXTH]);
     expect(html).toContain("6–1 — hit");
     expect(html).toContain("40%");
-    expect(countOf(html, "script pending")).toBe(1);
+    expect(countOf(html, "script pending")).toBe(0);
   });
 
   // CONTROL, and the one that proves these tests are about `settled` rather
   // than about the fixture. Same rows with `settled` dropped — exactly what the
-  // unfixed mapping produces — and the closed window loses its verdict, gains a
-  // second "script pending" and renders an em dash where the result belongs.
+  // unfixed mapping produces — and the closed window loses its verdict and
+  // renders an em dash where the result belongs.
+  //
+  // #5216 took the "gains a second `script pending`" half of this control away,
+  // and it was the WEAKEST half: the string appeared on both the degraded row
+  // and its healthy sibling, so it never distinguished them. The two assertions
+  // that do — the verdict is gone, an em dash stands where it was — are
+  // untouched, and the count is kept at 0 so a reintroduction of the chip fails
+  // HERE as well as in the #5216 file.
   test("CONTROL: without `settled` the closed window degrades to a blank row", () => {
     const html = live([{ ...FIRST_FIVE, settled: undefined }, SIXTH]);
     expect(html).not.toContain("6–1 — hit");
-    expect(countOf(html, "script pending")).toBe(2);
+    expect(countOf(html, "script pending")).toBe(0);
     expect(html).toContain("—</span>");
   });
 });
