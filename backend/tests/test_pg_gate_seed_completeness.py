@@ -173,13 +173,33 @@ def test_pg_gate_inserts_supply_every_not_null_column(filename):
     )
 
     missing = []
+    unknown = []
     for table, provided in statements:
         assert table in Base.metadata.tables, (
             f"{filename} inserts into unknown table {table!r}"
         )
+        # #4914: a column that does not EXIST is the mirror of the omitted-column
+        # check below, and this file could not see it. `UndefinedColumnError` and
+        # `NotNullViolationError` both kill the gate before its first assertion,
+        # both are invisible without a Postgres, and both surface only in CI on a
+        # job `deploy` needs — the exact cost this file was written to avoid.
+        # Measured: `INSERT INTO sports (key, name, title, active)`, copied from a
+        # neighbouring gate, spent a full CI round trip proving that `sports` has
+        # no `title` column. The check below was green on that INSERT, because
+        # every NOT NULL column WAS supplied.
+        strays = provided - set(Base.metadata.tables[table].columns.keys())
+        if strays:
+            unknown.append((table, sorted(strays)))
         gap = _required(table) - provided
         if gap:
             missing.append((table, sorted(gap)))
+
+    assert not unknown, (
+        f"{filename} seeds with raw INSERT and names columns that do not exist: "
+        f"{unknown}. Same failure mode as the NOT NULL check below — the gate "
+        "dies before its first assertion and, being skipped without a Postgres, "
+        "reports it only in CI."
+    )
 
     assert not missing, (
         f"{filename} seeds with raw INSERT and omits NOT NULL columns with no "

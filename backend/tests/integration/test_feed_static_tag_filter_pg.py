@@ -85,8 +85,8 @@ async def _seed_tagged_rows(session):
         await session.execute(
             text(
                 """
-                INSERT INTO sports (key, name, title, active)
-                VALUES ('soccer_epl', 'EPL', 'EPL', TRUE)
+                INSERT INTO sports (key, name, active)
+                VALUES ('soccer_epl', 'EPL', TRUE)
                 RETURNING id
                 """
             )

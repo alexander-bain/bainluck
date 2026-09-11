@@ -109,8 +109,8 @@ async def _seed(session):
         await session.execute(
             text(
                 """
-                INSERT INTO sports (key, name, title, active)
-                VALUES ('tennis_atp', 'Tennis', 'Tennis', TRUE)
+                INSERT INTO sports (key, name, active)
+                VALUES ('tennis_atp', 'Tennis', TRUE)
                 RETURNING id
                 """
             )
