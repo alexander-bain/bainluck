@@ -367,9 +367,26 @@ SQL = {
               "SET is_winner = NULL, resolution_source = NULL "
               "WHERE id = :oid AND resolution_source = 'game_score' "
               "  AND is_winner IS TRUE",
+    # 🔴 THE CAS BINDS THE WINNER BIT, NOT JUST THE SOURCE (CERT-2649).
+    #
+    # `resolution_source = 'game_score'` alone is not a compare-and-swap on
+    # anything this repair decided. The FIXED producer re-grades under that same
+    # source — that is the whole point of unlocking the market — so the source
+    # is unchanged by exactly the event the CAS exists to detect. A leg planned
+    # as a wrong TRUE, corrected to a right FALSE by the producer between the
+    # plan and the write, matched the old predicate and was nulled: the repair
+    # erased the correct verdict it was built to make possible, and because the
+    # statement did not decline, the market still counted as fully cleared and
+    # was unlocked on a premise that no longer held.
+    #
+    # So the swap is keyed on the value read at plan time. `IS NOT DISTINCT
+    # FROM` rather than `=` because a NULL winner bit must compare equal to a
+    # NULL plan rather than yielding UNKNOWN; the explicit CAST gives asyncpg
+    # the type it cannot infer from a bare NULL parameter.
     "clear": "UPDATE futures_outcomes "
              "SET is_winner = NULL, resolution_source = NULL "
-             "WHERE id = :oid AND resolution_source = 'game_score'",
+             "WHERE id = :oid AND resolution_source = 'game_score' "
+             "  AND is_winner IS NOT DISTINCT FROM CAST(:was AS boolean)",
     "man_create": f"CREATE TABLE IF NOT EXISTS {MANIFEST_TABLE} ("
                   f"  outcome_id  integer PRIMARY KEY,"
                   f"  market_id   integer NOT NULL,"
@@ -939,11 +956,18 @@ async def run(args) -> None:
         cleared_by_market = collections.Counter()
         for leg in doable:
             res = await s.execute(text(SQL["clear"]),
-                                  {"oid": int(leg["outcome_id"])})
+                                  {"oid": int(leg["outcome_id"]),
+                                   "was": leg["stored_is_winner"]})
             if (res.rowcount or 0) == 0:
                 # The CAS declined: the row was re-graded between the plan and
                 # the write, which is the outcome this repair is trying to make
                 # possible. Report it, never force it, and write NO manifest row.
+                #
+                # The decline also withholds the unlock for this leg's whole
+                # market, because `cleared_by_market` never counts it and
+                # `markets_fully_cleared` therefore excludes the market. That is
+                # the blocker re-read CERT-2649 asked for: we do not unlock a
+                # market on a plan the database has already contradicted.
                 declined += 1
                 continue
             await s.execute(text(SQL["man_record"]), {

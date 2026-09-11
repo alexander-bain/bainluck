@@ -116,15 +116,137 @@ def test_every_statement_parses_as_postgres():
 
 
 def test_the_forward_write_is_a_compare_and_swap_on_the_value_it_removes():
-    """`resolution_source = 'game_score'` in the WHERE is the whole safety.
+    """The source is NOT the whole safety, and this test used to say it was.
 
-    Between the plan and the write the fixed producer can re-grade the row —
-    which is the outcome this repair exists to make possible. Without the CAS
-    the clear would delete that correct verdict and put the row back in the
-    ungraded pool it just left.
+    🔴 CERT-2649. The old assertion was the docstring's claim written out as a
+    substring, and it passed against a statement that swapped on nothing this
+    repair had decided: the FIXED producer re-grades under `game_score` too, so
+    the source is unchanged by exactly the event the CAS exists to detect. The
+    winner bit read at plan time is the value being removed, so it is the value
+    the swap has to key on.
     """
     sql = " ".join(repair.SQL["clear"].split())
     assert "WHERE id = :oid AND resolution_source = 'game_score'" in sql
+    assert "is_winner IS NOT DISTINCT FROM CAST(:was AS boolean)" in sql, (
+        "the swap must key on the winner bit the plan read, not only the source"
+    )
+
+
+def _sqlite_clear(sql, *, stored_now, planned, source_now="game_score"):
+    """Execute the repair's REAL `clear` statement and report (rowcount, row).
+
+    Not a re-implementation of the predicate: the statement text is taken from
+    the script, transpiled by `sqlglot` and run by SQLite, which implements
+    `IS NOT DISTINCT FROM` itself. Deleting the winner-bit clause from the
+    script therefore changes what this executes, which is the whole point —
+    a guard that merely greps for the clause cannot tell a live predicate from
+    a decorative one (the CERT-2648 lesson, applied to SQL instead of Python).
+    """
+    sqlglot = pytest.importorskip("sqlglot")
+    import sqlite3
+
+    stmt = sqlglot.transpile(sql, read="postgres", write="sqlite")[0]
+    stmt = stmt.replace(":oid", "?").replace(":was", "?")
+    named_binds = sql.count(":was")
+
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE futures_outcomes "
+                "(id int, is_winner, resolution_source text)")
+    con.execute("INSERT INTO futures_outcomes VALUES (1, ?, ?)",
+                (stored_now, source_now))
+    params = (1, planned) if named_binds else (1,)
+    cur = con.execute(stmt, params)
+    row = con.execute("SELECT is_winner, resolution_source "
+                      "FROM futures_outcomes WHERE id = 1").fetchone()
+    return cur.rowcount, row
+
+
+def test_a_same_source_regrade_of_the_winner_bit_declines_the_clear_and_survives():
+    """🔴 THE BLOCK THIS ANSWERS (CERT-2649), and it was a DESTRUCTIVE race.
+
+    A leg planned as a wrong TRUE, re-graded to a correct FALSE by the fixed
+    producer between the plan and the write — under the same `game_score`
+    source, because that is the source the producer writes. The old statement
+    matched it, nulled it, and returned rowcount 1, so:
+
+      * the correct verdict this repair exists to make possible was ERASED, and
+      * the clear did not register as declined, so the market counted as fully
+        cleared and was UNLOCKED on a premise the database had already denied.
+
+    Both halves are asserted here. The survival is read back off the row rather
+    than inferred from the rowcount, because "it declined" and "it declined and
+    left the row alone" are different claims.
+    """
+    # The race: planned TRUE, the producer has since written the correct FALSE.
+    rowcount, row = _sqlite_clear(repair.SQL["clear"], stored_now=False, planned=True)
+    assert rowcount == 0, "a same-source regrade must decline, not overwrite"
+    assert row == (0, "game_score"), (
+        "the producer's correct verdict must survive the declined clear intact"
+    )
+
+    # The NO leg of the same race: planned FALSE, re-graded to TRUE.
+    rowcount, row = _sqlite_clear(repair.SQL["clear"], stored_now=True, planned=False)
+    assert rowcount == 0
+    assert row == (1, "game_score")
+
+    # Unchanged since the plan — both legs still clear, or the repair is inert.
+    for stored in (True, False):
+        rowcount, row = _sqlite_clear(
+            repair.SQL["clear"], stored_now=stored, planned=stored)
+        assert rowcount == 1, "an unchanged row is exactly what this repair clears"
+        assert row == (None, None)
+
+    # A row another run already cleared is NULL, not the planned value: it
+    # declines rather than being counted a second time.
+    rowcount, _ = _sqlite_clear(
+        repair.SQL["clear"], stored_now=None, planned=True, source_now=None)
+    assert rowcount == 0
+
+    # AND THE DECLINE WITHHOLDS THE UNLOCK. This is the second half of the
+    # required repair: the market whose clear declined is not fully cleared, so
+    # it is never unlocked around the survivor.
+    planned_by_market = collections.Counter({7: 2})
+    cleared_by_market = collections.Counter({7: 1})   # one declined
+    assert repair.markets_fully_cleared(planned_by_market, cleared_by_market) == set()
+
+
+def test_the_apply_loop_really_passes_the_planned_winner_bit():
+    """A bound parameter the caller never supplies is a swap on a constant.
+
+    The statement can carry `:was` and still be keyed on nothing if the call
+    site passes a literal, or passes the row's CURRENT value instead of the one
+    the plan read. Asserted against the call's own AST rather than a substring,
+    because `"stored_is_winner"` appears in this script's printing code too.
+    """
+    import ast
+
+    src = pathlib.Path(repair.__file__).read_text()
+    calls = [
+        node for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Call)
+        and any(
+            isinstance(a, ast.Call)
+            and isinstance(a.func, ast.Name) and a.func.id == "text"
+            and any(
+                isinstance(s, ast.Subscript)
+                and isinstance(s.value, ast.Name) and s.value.id == "SQL"
+                and isinstance(s.slice, ast.Constant) and s.slice.value == "clear"
+                for s in ast.walk(a)
+            )
+            for a in node.args
+        )
+    ]
+    assert len(calls) == 1, f"expected one apply site for SQL['clear'], got {len(calls)}"
+
+    params = next(a for a in calls[0].args if isinstance(a, ast.Dict))
+    was = {
+        ast.unparse(v)
+        for k, v in zip(params.keys, params.values)
+        if isinstance(k, ast.Constant) and k.value == "was"
+    }
+    assert was == {"leg['stored_is_winner']"}, (
+        f"`was` must be the winner bit the PLAN read; got {was or 'nothing'}"
+    )
 
 
 def test_the_repair_writes_no_column_the_undo_does_not_restore():
