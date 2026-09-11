@@ -115,13 +115,36 @@ def _pool() -> list[dict]:
     return pool
 
 
+#: The event ratio these tests run at, and it is load-bearing — do NOT lower it.
+#:
+#: ``apply_discover_display_chain`` gates the stage this ship changes:
+#:
+#:     if event_pct is not None and event_pct < 0.2:
+#:         pass                      # no artificial event promotion
+#:     else:
+#:         items = _ensure_feed_diversity(items, DISCOVER_COMPOSITION_WINDOW, ...)
+#:
+#: ``_ensure_feed_diversity`` is the stage that scales its event quota and its
+#: interleave span from the window, so it is the one that made rank a function of
+#: page size. At ``event_pct=0.15`` — the value the sibling #5099 file uses,
+#: because it is testing the LEAD, not the window — that branch is skipped and
+#: this whole file goes inert: measured against the parent commit, all eight
+#: prefix rows PASSED at 0.15 and `test_prefix[7]` FAILED at 0.25. A test that
+#: cannot fail on the parent is not evidence, so the cell matters more than the
+#: assertions do.
+#:
+#: 0.25 is the only cell that satisfies both gates: ``>= 0.2`` so the diversity
+#: stage runs, and ``< 0.3`` so the chain is still in Discover mode.
+EVENT_PCT = 0.25
+
+
 def _serve(pool: list[dict], limit: int) -> list[dict]:
     """The REAL served chain, then the same slice ``get_feed`` applies."""
     items, _meta = apply_discover_display_chain(
         copy.deepcopy(pool),
         limit=limit,
         ctx=PersonalizationContext(),
-        event_pct=0.15,
+        event_pct=EVENT_PCT,
         now=NOW,
     )
     return items[:limit]
