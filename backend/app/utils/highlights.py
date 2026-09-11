@@ -219,10 +219,18 @@ SOCCER_REGULATION_MINUTES = 90
 #: distrust it. Same family as #3208, whose general lesson (never let a free-text
 #: field reach a numeric reader unanchored) this applies to the rest of the
 #: function.
+#:
+#: The weekday arm spells all 18 forms out. It was first written as a stem list
+#: with an optional `(?:day)?` suffix, which silently dropped the two weekdays
+#: whose full form is not stem+"day": `wed`+`nesday` and `sat`+`urday` both fail
+#: the trailing `\b`, so `Wednesday` and `Saturday` alone were never refused
+#: (#5386). A shorthand that covers 16 of 18 cases reads as complete, so the
+#: forms are enumerated and swept one by one in the guards.
 _SCHEDULED_DATETIME_RE = re.compile(
     r"\b(?:january|february|march|april|may|june|july|august|september|october"
     r"|november|december)\b"
-    r"|\b(?:mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat|sun)(?:day)?\b"
+    r"|\b(?:monday|mon|tuesday|tues|tue|wednesday|weds|wed|thursday|thurs|thur"
+    r"|thu|friday|fri|saturday|sat|sunday|sun)\b"
     r"|\b\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)\b"
 )
 
@@ -231,6 +239,14 @@ _SCHEDULED_DATETIME_RE = re.compile(
 #: LEADS the token, optionally behind one of baseball's half-inning qualifiers.
 #: An unanchored `re.search` is what let "September 10th" reach the period reader
 #: (#5012); it would find an ordinal anywhere in an arbitrary sentence.
+#:
+#: The qualifier list is MEASURED, not guessed. 49 live-card observations across
+#: a Friday first-pitch window (2026-09-11) served four shapes — `Top 1st` (14),
+#: `Bottom 1st` (4), `End 1st` (2), `Mid 1st` (1) — so `end` and `mid` are live
+#: production vocabulary, not defensive padding. Narrowing this list drops those
+#: two to the 0.5 "unknown mid-game" fallback at the bottom of the function: a
+#: 1st-inning game reporting 50% elapsed instead of 5.6%, which then feeds the
+#: late-game bonus in the feed ranking. All four are pinned in the guards (#5386).
 _ORDINAL_PERIOD_RE = re.compile(
     r"^(?:(?:top|bot|bottom|mid|middle|end|start)\s+(?:of\s+)?(?:the\s+)?)?"
     r"(\d{1,2})(?:st|nd|rd|th)\b"
