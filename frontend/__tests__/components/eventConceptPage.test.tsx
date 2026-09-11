@@ -89,7 +89,7 @@ const ENVELOPE = {
     },
     // L2-148: a per-round Top-N prop child tagged kind:"prop" that is NOT in the
     // props_script. It must surface via the secondary section-grouped EventProps
-    // ("More props") rather than vanishing.
+    // ("Other markets") rather than vanishing.
     {
       market_id: 44,
       market_name: "Round 1 Top 5: Scottie Scheffler",
@@ -252,8 +252,8 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     expect(html).toContain('id="props-script"');
     // ...AND a secondary section-grouped props block now renders alongside it,
     // under its own anchor + heading (not colliding with the primary "Props").
-    expect(html).toContain('id="more-props"');
-    expect(html).toContain("More props");
+    expect(html).toContain('id="other-markets"');
+    expect(html).toContain("Other markets");
     // The leftover round Top-N child (market_id 44, NOT in props_script) surfaces
     // under its backend section label instead of being dropped.
     expect(html).toContain("Round Top N");
@@ -263,6 +263,29 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     // block groups solely by the backend split, never the prop_type "By round"
     // fallback (which would signal an unclaimed leak).
     expect(html).not.toContain("By round");
+  });
+
+  // #4897 / D111. Alex ruled THE SCRIPT's fold reads "More props (N)". This page
+  // is the one surface where that fold and this secondary section render
+  // TOGETHER (golf: a props-script AND section-grouped round Top-N children), so
+  // it is the only place the two can collide — and it did: the nav pill, this
+  // heading and the fold toggle would all have read "More props", three controls
+  // with one name and two destinations.
+  //
+  // The guard is on the SECONDARY section's words, because that is the half that
+  // moved: the fold's wording is Alex's and is pinned by PropsSection4530's
+  // assertions. If anyone renames this back, that is the collision returning.
+  test("the secondary section never reuses the fold's words (#4897)", () => {
+    const html = renderToStaticMarkup(<EventConceptPage />);
+    // The section heading and its nav pill both read the disambiguated words...
+    expect(html).toContain(">Other markets<");
+    expect(html).toContain('id="other-markets"');
+    // ...and the fold's label appears nowhere as a heading on this page. (This
+    // fixture's props_script rows all carry a pregame_mark, so no fold renders
+    // here at all — which is exactly why any "More props" would be this section
+    // having taken the name back.)
+    expect(html).not.toContain(">More props<");
+    expect(html).not.toContain('id="more-props"');
   });
 
   test("reconstructs the API key from the domain/slug segments (L2-113)", () => {

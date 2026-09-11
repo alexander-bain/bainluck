@@ -231,8 +231,17 @@ function isUnchanged(item: PropMark): boolean {
  * fields differ by a median of 4pts and by up to 22.5pts (George Holani 30+:
  * script 36.5%, current 59%). Printing the live price under a section that
  * says "What the market expected before the event" would fabricate the script.
+ *
+ * D111 (Alex, 2026-09-10 10:35am PT) OVERRULES THE WORDING, NOT THE REASONING.
+ * The label is now "More props (N)". Everything above still holds and is why
+ * this is a rename rather than a re-litigation of #4530: "More props" is
+ * deliberately NEUTRAL — it claims nothing about whether the rows are traded or
+ * priced, which is exactly what sank "Untraded props" (false: 89 of 89 folded
+ * rows carried a live price) and what made "No opening price" accurate but
+ * diagnostic. A reader is told there are more props and how many; the reason
+ * they are folded is not their problem. The `current` fallback stays forbidden.
  */
-const NO_OPENING_PRICE_LABEL = "No opening price";
+const MORE_PROPS_LABEL = "More props";
 
 /**
  * A row THE SCRIPT holds no number for, and can therefore say nothing about.
@@ -456,7 +465,7 @@ function ScriptFold({
   return (
     <details className={className}>
       <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
-        {NO_OPENING_PRICE_LABEL} ({items.length})
+        {MORE_PROPS_LABEL} ({items.length})
       </summary>
       <div className="mt-1 space-y-2">{items.map(renderRow)}</div>
     </details>

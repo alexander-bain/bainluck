@@ -67,7 +67,7 @@ const CAPABILITY_SELECTORS: Record<Capability, string> = {
   field: "#leaderboard",
   chart: "#race svg, #path svg, #evolution svg",
   matchups: "#matchups, #head-to-head",
-  props: "#props-script, #props, #more-props",
+  props: "#props-script, #props, #other-markets",
   live_progress:
     '#bubble-watch, [aria-label="Live commentary"], #leaderboard [title^="Data as of"]',
   settled_what_hit: '#path, #props-script:has-text("What hit")',
