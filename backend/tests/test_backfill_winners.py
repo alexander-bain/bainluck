@@ -1932,12 +1932,73 @@ class TestTotalOutcomeRegrade:
             _regrade_kalshi_total_inversions, _resolve_winners_only,
         )
         rg = inspect.getsource(_regrade_kalshi_total_inversions)
-        assert "KX(NHL|NBA|MLB)TOTAL" in rg
+        assert ":league_re" in rg                    # #5055: scope is the constant
         assert "_total_outcome_is_winner(" in rg
         assert "bool(r.cur) == won" in rg            # write-on-change
         sql = rg[rg.index("text("):]
         assert "resolution_source" not in sql.split("UPDATE")[1] if "UPDATE" in sql else True
         assert "_regrade_kalshi_total_inversions(" in inspect.getsource(_resolve_winners_only)
+
+
+class TestTotalRegradeScopeRefusesPeriodSeries:
+    """#5055: the TOTAL re-grade rail may only widen onto FULL-GAME series.
+
+    The rail holds one score pair — the event's final `home_score`/`away_score` —
+    and `_TOTAL_RE` parses a first-half leg (``Over 59.5 1H points scored``)
+    just as happily as a full-game one. So a period series inside the scope
+    regex does not fail loudly; it silently grades every 1H rung against the
+    full-game total. Production carried 6,881 graded `KXNCAAMB1HTOTAL` rungs
+    when #5055 shipped, so this is a live hazard, not a hypothetical one.
+
+    The refusal is a property of the `^KX(...)TOTAL` anchoring rather than of
+    any denylist, which is exactly why it needs a test: the anchoring is easy to
+    dissolve by "just" relaxing the pattern to `^KX.*TOTAL`, and nothing else in
+    the suite would notice.
+    """
+
+    def _scope(self):
+        import re
+        from app.tasks.backfill_winners import _TOTAL_REGRADE_SCOPE_RE
+        return re.compile(_TOTAL_REGRADE_SCOPE_RE)
+
+    def test_full_game_series_are_in_scope(self):
+        scope = self._scope()
+        for ext in (
+            "KXNBATOTAL-26MAY04MINSAS",       # the original three (the control)
+            "KXMLBTOTAL-26JUL04NYYBOS",
+            "KXNHLTOTAL-26MAR18PITCAR",
+            "KXNCAAMBTOTAL-26MAR03VANMISS",   # #5055's largest block, 64.2% wrong
+            "KXEPLTOTAL-26AUG22ARSMCI",
+            "KXMLSTOTAL-26JUL19LAFCSEA",
+            "KXBRASILEIROTOTAL-26SEP01FLAPAL",
+        ):
+            assert scope.search(ext), f"{ext} should be re-graded"
+
+    def test_period_series_are_refused(self):
+        """The load-bearing half: these parse fine and would be graded WRONG."""
+        scope = self._scope()
+        for ext in (
+            "KXNCAAMB1HTOTAL-26MAR03VANMISS",  # 6,881 graded rungs in production
+            "KXNBA1HTOTAL-26MAY04MINSAS",
+            "KXNBA2HTOTAL-26APR29HOULAL",
+            "KXWNBA2HTOTAL-26JUL06GSWSH",
+            "KXWNBA3QTOTAL-26JUN28PDXWSH",
+            "KXMLBF5TOTAL-26JUL04NYYBOS",
+            "KXWBCF5TOTAL-26MAR12USAJPN",
+        ):
+            assert not scope.search(ext), (
+                f"{ext} is a PERIOD market — this rail only holds the full-game "
+                "score and would grade its legs against the wrong quantity"
+            )
+
+    def test_scope_is_anchored_and_not_a_wildcard(self):
+        """A wildcard between the prefix and TOTAL re-admits every period series."""
+        from app.tasks.backfill_winners import _TOTAL_REGRADE_SCOPE_RE
+        assert _TOTAL_REGRADE_SCOPE_RE.startswith("^KX(")
+        assert ")TOTAL" in _TOTAL_REGRADE_SCOPE_RE
+        assert ".*" not in _TOTAL_REGRADE_SCOPE_RE
+        for period in ("1H", "2H", "3Q", "F5"):
+            assert period not in _TOTAL_REGRADE_SCOPE_RE
 
 
 class TestResolverNoReInversion:

@@ -1944,6 +1944,40 @@ def _spread_outcome_is_winner(
     return margin > line
 
 
+#: #5055: the series the TOTAL re-grade rail (`_regrade_kalshi_total_inversions`)
+#: is allowed to recompute, as a league alternation spliced into `^KX(...)TOTAL`.
+#:
+#: THE ANCHORING IS THE SAFETY PROPERTY, not a formatting choice. `TOTAL` binds
+#: immediately after the league token, so `^KX(NCAAMB)TOTAL` matches
+#: `KXNCAAMBTOTAL-…` and CANNOT match `KXNCAAMB1HTOTAL-…`. That refusal is
+#: load-bearing: a first-half ladder's legs are named `Over 59.5 1H points
+#: scored`, which `_TOTAL_RE` HAPPILY parses, and this rail only ever holds the
+#: full-game score — so a period series in this list would grade every 1H leg
+#: against the wrong quantity. Measured 2026-09-10: 6,881 graded 1H rungs on
+#: `KXNCAAMB1HTOTAL` alone sit one careless `.*` away from exactly that.
+#: A period series (`1H`/`2H`/`1Q`…`4Q`/`F5`) is NEVER added here; it needs a
+#: period-score source, which is a different rail.
+#:
+#: Each league earned its place by measurement, not by looking similar to one
+#: that did. Rate of stored-vs-recomputed disagreement, production, 2026-09-10:
+#:   already in scope (the control): NBA 0.0% · MLB 0.2% · NHL 0.9%
+#:   added here:                     NCAAMB 64.2% (3,917 of 6,098 rungs) ·
+#:                                   BUNDESLIGA 55.7% · UCL 52.8% · UEL 51.6% ·
+#:                                   ALEAGUE 47.8% · EPL 47.7% · LIGUE1 47.4% ·
+#:                                   FACUP 45.0% · SERIEA 39.1% · BRASILEIRO
+#:                                   38.5% · LALIGA 37.3% · FIFA 33.3% ·
+#:                                   LIGAMX 31.6% · MLS 27.1% · NFL/NCAAF 0.0%
+#: The residue is the old complementary-flip bug (#947): the pre-fix resolver
+#: graded the first matching leg and flipped every sibling to `not won`, and
+#: `game_score` is not in OVERWRITABLE_WINNER_SOURCES_SQL, so the fix could not
+#: reach rows it had already written. 74% of the broken ladders still carry that
+#: writer's fingerprint — exactly one leg dissenting from all the others.
+_TOTAL_REGRADE_SCOPE_RE = (
+    "^KX(NHL|NBA|MLB|NFL|NCAAF|NCAAMB|MLS|EPL|BUNDESLIGA|LALIGA|SERIEA"
+    "|LIGUE1|UCL|UEL|LIGAMX|BRASILEIRO|ALEAGUE|FIFA|FACUP)TOTAL"
+)
+
+
 def _total_outcome_is_winner(outcome_name, home_score, away_score):
     """#945: grade ONE "Over/Under N ... scored" total outcome from the final score.
 
@@ -2844,8 +2878,22 @@ async def _regrade_kalshi_nhl_spread_inversions():
 
 
 async def _regrade_kalshi_total_inversions():
-    """#945: idempotent re-grade of Kalshi NHL/NBA/MLB TOTAL game_score outcomes
-    that are stale/inverted vs the linked event's final score.
+    """#945/#5055: idempotent re-grade of Kalshi full-game TOTAL game_score
+    outcomes that are stale/inverted vs the linked event's final score.
+
+    Scope is `_TOTAL_REGRADE_SCOPE_RE` — read its comment before adding a league,
+    because the `^KX(...)TOTAL` anchoring is what keeps PERIOD series out, and a
+    period series here would grade first-half legs against the full-game score.
+
+    #5055 widened the alternation from NHL/NBA/MLB to the measured-dirty
+    families. The three original leagues are the control that this rail works:
+    running every 2h since #945, they disagree with a recomputation on 0.0% /
+    0.2% / 0.9% of rungs, while college basketball — same bug, never in scope —
+    disagreed on 64.2%. Widening repairs 563 self-refuting ladders (~4,500
+    verdicts). The 368 that remain are named in #5055 and are NOT reachable
+    here: 224 are period markets needing a period-score source, 30 are tennis
+    `Total Games` (whose unit `_TOTAL_RE` does not parse), and the rest lack a
+    linked event score.
 
     Mirrors the spread re-grade (#939/#944). Kalshi TOTAL game_score `is_winner`
     was set by the old complementary-flip bug and/or against pre-#944-relink
@@ -2872,11 +2920,11 @@ async def _regrade_kalshi_total_inversions():
                 JOIN futures_markets fm ON fm.id = fo.market_id
                 JOIN events e ON e.id = fm.event_id
                 WHERE fm.source = 'kalshi'
-                  AND fm.external_id ~ '^KX(NHL|NBA|MLB)TOTAL'
+                  AND fm.external_id ~ :league_re
                   AND fo.resolution_source = 'game_score'
                   AND e.home_score IS NOT NULL
                   AND e.away_score IS NOT NULL
-            """))
+            """), {"league_re": _TOTAL_REGRADE_SCOPE_RE})
             for r in rows.all():
                 stats["checked"] += 1
                 won = _total_outcome_is_winner(r.oc_name, r.hs, r.as_)
