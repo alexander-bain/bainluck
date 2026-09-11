@@ -40,7 +40,11 @@ import QuantityGroup, { type QuantityRung } from "@/components/QuantityGroup";
 import { probabilityHeat } from "@/lib/probabilityColors";
 import { isLikelyPersonName, isPersonFieldDomain } from "@/lib/eventConceptDisplay";
 import EntityImage from "@/components/EntityImage";
-import { groupByPropFamily, type PropFamilyGroup } from "@/lib/propFamily";
+import {
+  groupByPropFamily,
+  type MatchupNames,
+  type PropFamilyGroup,
+} from "@/lib/propFamily";
 import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 import { renderedPercent } from "@/lib/renderedPercent";
 
@@ -113,6 +117,13 @@ interface PropsSectionProps {
    * non-person domains render text-only (unchanged).
    */
   domain?: string | null;
+  /**
+   * #4866: this event's two teams, so a matchup-level family can drop the
+   * "<away> vs <home>: " the venue puts in front of it — the matchup the hero
+   * one section up already states. Omitted on surfaces that have no two teams
+   * (the golf/combat concept page), where every family keeps its name.
+   */
+  matchup?: MatchupNames | null;
 }
 
 const STATE_META: Record<PropsState, { eyebrow: string; blurb: string }> = {
@@ -299,6 +310,7 @@ export default function PropsSection({
   eventStatus,
   title = "Props",
   domain = null,
+  matchup = null,
 }: PropsSectionProps) {
   if (!items || items.length === 0) return null;
 
@@ -326,7 +338,7 @@ export default function PropsSection({
   // that says 4+ WHAT. Marks whose key carries no family — the golf/combat
   // concept page builds them with a numeric market id — collapse to one unnamed
   // group and render through the ORIGINAL markup path below, unchanged.
-  const groups = groupByPropFamily(rows, (item) => item.key);
+  const groups = groupByPropFamily(rows, (item) => item.key, matchup);
   const grouped = !(groups.length === 1 && groups[0].name === null);
 
   const renderRow = (item: PropMark) =>
@@ -351,7 +363,10 @@ export default function PropsSection({
           <div className="space-y-4">
             {groups.map((group, i) => (
               <PropFamilyBlock
-                key={group.name ?? `unnamed-${i}`}
+                // Index-qualified: #4866 strips per family, so two distinct
+                // families can now collapse to the same display name and a
+                // bare name would be a duplicate React key.
+                key={`${group.name ?? "unnamed"}-${i}`}
                 group={group}
                 state={activeState}
                 renderRow={renderRow}
