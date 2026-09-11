@@ -2699,8 +2699,16 @@ async def _regrade_golf_extra_winners():
     sync block in _backfill_all_winners now guards against this AND re-grades,
     but that block lives deep in the 14-min pipeline and is starved before it
     runs (same #898 starvation that forced authoritative resolution to the top).
-    Running the idempotent re-grade here, in the fast resolve_winners task,
-    guarantees it executes.
+
+    DISPATCH (#5111, corrected 2026-09-11). This used to end "running the
+    idempotent re-grade here, in the fast resolve_winners task, guarantees it
+    executes" — and that guarantee was void from 2026-07-06, when the
+    resolve_winners beat was retired (#991), until #5111. The escape from #898
+    starvation was real and is preserved: the call now lives in
+    `_backfill_all_winners`'s resolver-hygiene block, which is in the
+    un-budget-guarded core section ABOVE the first `_cannot_afford` gate, so it
+    still cannot be starved by the maintenance tail. Moving it below that gate
+    would restore the exact bug this function was written to escape.
 
     Flips ONLY settlement_sync extras to False, and only on markets that retain
     an authoritative (leaderboard/api/datagolf/score) winner — never the
@@ -2906,9 +2914,24 @@ async def _regrade_kalshi_total_inversions():
 
     "Over/Under N scored" wins per gotcha #17 (OVER unless Under/No). Write-on-
     change; resolution_source STAYS game_score; never a bare reset (gotcha #21).
-    Bounded to the KXxxxTOTAL game_score cohort (#899). Runs in resolve_winners
-    (the fast every-2h path) so it forward-fixes and is idempotent. Do NOT trigger
-    the broad backfill_winners to refresh — its #755 re-null churns the cohort.
+    Bounded to the KXxxxTOTAL game_score cohort (#899).
+
+    DISPATCH (#5111, corrected 2026-09-11). This used to say "runs in
+    resolve_winners (the fast every-2h path)". That beat entry was retired
+    2026-07-06 (#991), so from then until #5111 this rail did not run AT ALL, and
+    #5055's widening repaired nothing. It is now called from
+    `_backfill_all_winners`'s resolver-hygiene block (every 6h), which is its only
+    live caller; `_resolve_winners_only` still calls it but nothing dispatches
+    that. If you remove the hygiene-block call, this rail goes dark again silently
+    — `test_dark_repairs_are_dispatched_5111` is what stops that.
+
+    The old warning here — "Do NOT trigger the broad backfill_winners to refresh
+    — its #755 re-null churns the cohort" — was half right, and the sentence four
+    lines above claiming the re-null "excludes plain TOTAL" was half wrong. Both
+    were reasoning about the league prefix. Measured 2026-09-11: the re-null is
+    unanchored over the whole external_id and reaches 611 of 14,337 cohort rungs
+    via accidental team-abbreviation substrings (`DE-TB-OS`, `SD-STL`). That is
+    #5116, and it is the re-null's defect, not this rail's.
     """
     stats = {"checked": 0, "flipped": 0, "errors": []}
     try:
@@ -7256,6 +7279,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         ("datagolf_early", lambda: dg_early_stats),
         ("date_passed_binaries", lambda: date_passed_stats),
         ("bywhen_ladder_collapse", lambda: bywhen_collapse_stats),
+        # #5111: the four repairs mirrored out of the retired `resolve_winners`
+        # path. They are listed here for the reason #4658/CERT-2465 gave: a phase
+        # that runs and reports nothing is indistinguishable from a phase that
+        # never ran — which is precisely how these four stayed dark for nine
+        # weeks without anyone noticing. Their counters are now the evidence the
+        # rails are dispatched at all, so `flipped`/`cleared` reaching the verdict
+        # is part of the fix, not decoration.
+        ("nhl_spread_regrade", lambda: nhl_spread_regrade_stats),
+        ("total_regrade", lambda: total_regrade_stats),
+        ("golf_extra_winner_regrade", lambda: golf_extra_winner_stats),
+        ("premature_open_cleared", lambda: premature_open_stats),
         ("candlestick_snapshots", lambda: candlestick_stats),
         ("trade_history", lambda: trade_stats),
         ("datagolf_makecut_fix", lambda: dg_makecut_fix_stats),
@@ -7567,6 +7601,34 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # idempotent set-based repairs; safe in the un-budget-guarded core section.
     date_passed_stats = await _grade_date_passed_binaries()
     bywhen_collapse_stats = await _collapse_bywhen_ladder_winners()
+    # #5111: the four repairs below had `_resolve_winners_only` as their ONLY
+    # caller, and that function reaches production through exactly one task —
+    # `app.tasks.resolve_winners`, whose beat entry was RETIRED 2026-07-06 (#991).
+    # So they have not executed since. The retirement note (`tasks/__init__.py`
+    # :5992) justified itself with "redundant — backfill_winners runs the same
+    # shared `_resolve_winners_only` path", and that premise is false: the
+    # scheduled task calls `_backfill_all_winners`, which re-invokes SOME of that
+    # function's repairs by hand. Six were mirrored one at a time (see the comment
+    # above, and the `_timed_sub` block in `score_resolution`); these four never
+    # were. They are the same class as the two mirrored above — cheap, idempotent,
+    # write-on-change, set-based, no venue I/O — so they belong in the same
+    # un-budget-guarded core section rather than behind a `_cannot_afford` gate.
+    #
+    # PLACEMENT IS BEFORE THE #755 RE-NULL (`ml_repair_stats`), and that is a
+    # measurement, not a preference. The re-null's regex is unanchored and
+    # case-insensitive over the WHOLE `external_id`, so it does reach 611 of the
+    # TOTAL re-grade's 14,337 production rungs — but every one of those is an
+    # accidental team-abbreviation substring spanning the two-team boundary
+    # (`DE-TB-OS`, `TOR-TB`, `SD-STL`, `B-REB-RI`, `CA-RKS-TET`). That is the
+    # re-null's own defect (#5116), not this rail's, and it churns those rows today
+    # with or without these calls; the other 95.7% of the cohort never meet it.
+    # Placing these AFTER the re-null instead would put them in the budget-guarded
+    # tail — the exact #898 starvation `_regrade_golf_extra_winners` was moved out
+    # of, and re-starving it is the one outcome that would reproduce this bug.
+    nhl_spread_regrade_stats = await _regrade_kalshi_nhl_spread_inversions()
+    total_regrade_stats = await _regrade_kalshi_total_inversions()
+    golf_extra_winner_stats = await _regrade_golf_extra_winners()
+    premature_open_stats = await _clear_premature_open_winners()
 
     if _cannot_afford("candlestick_trades"):
         return _partial_result("candlestick_trades")

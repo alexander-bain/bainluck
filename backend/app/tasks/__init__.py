@@ -5988,11 +5988,28 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=45, hour="3,9,15,21"),  # Every 6 hours, offset from mark-resolved
     },
     # #991: resolve-winners beat entry RETIRED 2026-07-06. The standalone task
-    # stopped being dispatched after 3 soft-limit failures (round 82) and is
-    # redundant — backfill_winners runs the same shared `_resolve_winners_only`
-    # path and covers the clean_resolution work at scale (~559K is_winner marks
-    # /2h, OPS-343). The task def is kept (dormant, unscheduled) for a cheap
-    # re-add. RE-ADD PATH if 2h freshness ever proves insufficient (watch feed
+    # stopped being dispatched after 3 soft-limit failures (round 82).
+    #
+    # #5111 (2026-09-11) CORRECTS THE JUSTIFICATION THAT FOLLOWED. This comment
+    # used to read "and is redundant — backfill_winners runs the same shared
+    # `_resolve_winners_only` path". IT DOES NOT. `app.tasks.backfill_winners`
+    # calls `_backfill_all_winners`, a DIFFERENT function that re-invokes some of
+    # `_resolve_winners_only`'s repairs by hand. Six had been mirrored one at a
+    # time; four had not, and those four therefore ran for the last time on
+    # 2026-07-06 and were dark for nine weeks — long enough for #5055 to be
+    # built, certified, merged and deployed against one of them with no effect.
+    # The four are now mirrored into `_backfill_all_winners`'s resolver-hygiene
+    # block and guarded by `test_dark_repairs_are_dispatched_5111`.
+    #
+    # THE GENERAL LESSON, because this comment is where the next person looks:
+    # retiring a beat retires EVERY repair reachable only through it. Before
+    # retiring one, diff the callee sets, and never write "redundant" about two
+    # functions without listing what each one calls. An outcome measurement
+    # cannot tell a live rail from a dead one that already finished its work.
+    #
+    # backfill_winners does cover the clean_resolution work at scale (~559K
+    # is_winner marks/2h, OPS-343). The task def is kept (dormant, unscheduled)
+    # for a cheap re-add. RE-ADD PATH if 2h freshness ever proves insufficient (watch feed
     # R6 resolved-suppression): re-add as a BOUNDED forward-only pass — small
     # limit + statement_timeout inner-op bound (NOT limit-only, which is a
     # non-fix per #969) on the realtime queue.
