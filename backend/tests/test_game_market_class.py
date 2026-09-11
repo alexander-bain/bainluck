@@ -101,3 +101,49 @@ def test_no_false_moneyline_from_substring():
     assert classify_game_market_class(
         "Winnipeg Jets Stanley Cup", None, "icehockey_nhl"
     ) != "moneyline"
+
+
+def test_a_team_name_that_is_not_english_is_still_a_game_winner():
+    """#5041 — the team-token class was ASCII, so accents read as "not a game".
+
+    MEASURED over every Polymarket market linked to an event commencing within
+    48h (1,096 markets / 210 events, production 2026-09-11): 257 are a bare
+    matchup carrying no sub-market qualifier, and 12 of them — 12 distinct
+    events, every one a real match winner — were classified `other` for their
+    diacritics alone. The bias ran one way: La Liga 2, Bundesliga, Liga MX,
+    Brasileirão, Serie B, and US college teams with a parenthesised state.
+
+    These are the production strings, not names invented from the pattern.
+    """
+    for name in (
+        "1. FC Köln vs. SV Werder Bremen",
+        "Club León FC vs. Atlético San Luis",
+        "Associação Chapecoense de Futebol vs. SC Internacional",
+        "SE Palmeiras vs. São Paulo FC",
+        "Cádiz CF vs. UD Las Palmas",
+        "Granada CF vs. Albacete Balompié",
+        "VfL Bochum vs. SpVgg Greuther Fürth",
+        "Holy Cross vs. Miami (OH)",
+    ):
+        assert is_bare_matchup(name), name
+        assert classify_game_market_class(name, None) == "moneyline", name
+
+
+def test_widening_the_team_class_did_not_admit_the_qualified_twins():
+    """The guard that rejects a sub-market is the ":"/" - " test, not the letters.
+
+    Every name here is the SAME fixture as above wearing a qualifier. If the
+    widened class starts swallowing the qualifier into the second team token,
+    a halftime or exact-score book becomes a game winner — which is the defect
+    on the other side of this change.
+    """
+    for name in (
+        "1. FC Köln vs. SV Werder Bremen - Exact Score",
+        "Club León FC vs. Atlético San Luis - Player Props",
+        "SE Palmeiras vs. São Paulo FC - Halftime Result",
+        "VfL Bochum vs. SpVgg Greuther Fürth: O/U 2.5",
+        "Cádiz CF vs. UD Las Palmas - More Markets",
+        "Holy Cross vs. Miami (OH) - Second Half Result",
+    ):
+        assert not is_bare_matchup(name), name
+        assert classify_game_market_class(name, None) != "moneyline", name

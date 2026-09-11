@@ -50,6 +50,7 @@ from app.utils.prediction_market_matching import (
 from app.utils.live_blend import (
     MarketOutcomes as _LiveBlendGroup,
     compute_source_home_probability as _compute_source_home_probability,
+    count_admissible_speakers,
     select_primary_market as _select_primary_market,
 )
 from app.utils import match_receipts as _receipts
@@ -3317,6 +3318,66 @@ _PHASE2B_EVENTS_PER_SOURCE = 75
 _PHASE2B_CURSOR_KEY_PREFIX = "phase2b:completed_catchup:cursor:"
 
 
+async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> bool:
+    """Drop a stored source leg no admissible market in the group can back (#5031).
+
+    THE GATE THAT ONLY REFUSES TO WRITE FREEZES THE OLD VALUE. `#5031`'s gate
+    stops a Polymarket Exact Score row from being stamped as the match winner,
+    and by itself that would have been the smaller half of a fix: the number the
+    derivative wrote LAST time is already in `win_probability_sources`, the page
+    renders that column and not this task, and a writer that returns None
+    changes nothing on it. Measured on production 2026-09-11 04:20Z, before this
+    existed: seven live events held a Polymarket leg written by a derivative
+    whose group holds no winner market at all, and three of them were already
+    frozen — the derivative had stopped resolving, so nothing would ever have
+    overwritten them. Event 15301219 sat at **0.070** from an Exact Score
+    `2 - 2` leg while Kalshi read 0.705 on the same match.
+
+    This is not a new invariant, it is #1163's with the definition of "backing"
+    corrected. That rule says a PM source key may only stand while a linked
+    market of that source backs it, and it counts rows. A group of nothing but
+    Player Props satisfies the count and backs nothing: the source has no
+    opinion about the winner to hold. So the count handed to the same pure
+    `prune_blend_source` is the count of markets ADMITTED TO SPEAK, and the two
+    failure modes are kept apart by `count_admissible_speakers` — structural
+    silence retires, a merely unpriced winner market does not (see its
+    docstring; retiring on the transient case would twitch the hero by a whole
+    source weight every fifteen minutes).
+
+    Returns True when a leg was retired. Core `update()` for the JSONB write
+    (gotcha #4), and the commit is this function's because the caller returns
+    before reaching its own.
+    """
+    from app.models.models import Event
+
+    if count_admissible_speakers(blend_group) > 0:
+        return False
+
+    result = await session.execute(
+        select(Event.win_probability_sources).where(Event.id == anchor.event_id)
+    )
+    new_wps, changed = prune_blend_source(result.scalar_one_or_none(), anchor.source, 0)
+    if not changed:
+        return False
+
+    await session.execute(
+        update(Event)
+        .where(Event.id == anchor.event_id)
+        .values(win_probability_sources=new_wps)
+    )
+    await session.commit()
+    funnel = stats.setdefault("funnel", {})
+    funnel["blend_source_retired_no_winner_market"] = (
+        funnel.get("blend_source_retired_no_winner_market", 0) + 1
+    )
+    logger.info(
+        "Retired %s blend leg on event %s — group holds no market admitted to "
+        "speak for the winner (%d linked markets)",
+        anchor.source, anchor.event_id, len(blend_group),
+    )
+    return True
+
+
 async def _phase2_persist_group_reading(
     session,
     group,
@@ -3373,15 +3434,15 @@ async def _phase2_persist_group_reading(
     for outcome_row in outcome_rows.scalars().all():
         outcomes_by_market.setdefault(outcome_row.market_id, []).append(outcome_row)
 
+    blend_group = [
+        _LiveBlendGroup(market=ref, outcomes=outcomes_by_market.get(ref.market_id, []))
+        for ref in refs
+    ]
     reading = _compute_source_home_probability(
-        [
-            _LiveBlendGroup(market=ref, outcomes=outcomes_by_market.get(ref.market_id, []))
-            for ref in refs
-        ],
-        anchor.home_team_name,
-        anchor.away_team_name,
+        blend_group, anchor.home_team_name, anchor.away_team_name,
     )
     if reading is None:
+        await _retire_unbacked_blend_source(session, anchor, blend_group, stats)
         return None
 
     outcome = reading.outcome

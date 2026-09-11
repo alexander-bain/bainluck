@@ -44,6 +44,7 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "names_a_contest_segment",
     "parse_period_number",
     "prop_window",
     "prop_window_closed",
@@ -427,3 +428,76 @@ def prop_window_closed(
         return False
 
     return current > closes_after
+
+
+# ---------------------------------------------------------------------------
+# Contest scope — a DIFFERENT question asked of overlapping vocabulary
+# ---------------------------------------------------------------------------
+
+# Segments this module's WINDOW ladder deliberately does not carry, because
+# carrying them there changes suppression. See `names_a_contest_segment`.
+#
+# The digit is required, and that is the whole guard: "Total Sets: O/U 2.5" is a
+# whole-match total and must stay unbounded, so only a unit token immediately
+# followed by its number counts. `\s*#?\s*` allows "Set 1", "Set #1", "Set1".
+_SEGMENT_RE = re.compile(
+    r"\b(?:set|map|leg|frame|period)s?\s*\#?\s*[1-9]\d?\b", re.IGNORECASE
+)
+
+# The compact quarter spelling. `_CLOCK_WINDOWS` carries `1q` and not `q1`; both
+# are real and Polymarket writes `Q1 Winner`. Neither can match "Quarterfinal" —
+# the digit must be adjacent to the q, and a quarterfinal is a WHOLE match.
+_COMPACT_QUARTER_RE = re.compile(r"\bq[1-4]\b", re.IGNORECASE)
+
+# "Halftime Result" is the first half's own book. `parse_period_scale` already
+# reads a PERIOD of "Halftime" as half 2; what has no entry is a market TITLE
+# saying it. Only the spelled forms — "HT" is two letters a team name can carry,
+# and "HT/FT Result" spans the full game anyway (`_SPANS_FULL_GAME_RE`).
+_HALFTIME_TITLE_RE = re.compile(r"\bhalf\s*-?\s*time\b", re.IGNORECASE)
+
+
+def names_a_contest_segment(name: str | None) -> bool:
+    """True if this title scopes itself to a SEGMENT rather than the whole contest.
+
+    NOT THE SAME QUESTION AS ``prop_window_closed``, and the difference is
+    load-bearing enough that CI proved it. Suppression asks "is this window
+    provably OVER, so stop quoting it"; this asks "is this book about the whole
+    contest, or about one piece of it". The vocabularies overlap almost
+    entirely, which is exactly why the first attempt at #4983's scope test tried
+    to answer the second question with :func:`prop_window_span` and had to be
+    withdrawn:
+
+      * adding tennis SETS to the window ladder suppressed the set-scope totals
+        on a settled tennis page — and ruling #3161 says those lines ARE the
+        card there (`TestTheMapIsNeverEmptiedToCleanIt`, plus
+        `test_the_set_one_winner_is_served_beside_its_siblings`). Two standing
+        guards, both red, on real production shapes.
+
+    So the window ladder is left exactly as it is, and this composes it rather
+    than copying it — a second private list is the #1951 drift failure, where
+    the copy does not throw when it disagrees, it just quietly answers
+    differently. `prop_window_span` supplies innings, halves, quarters, the `1H`
+    compact form AND the `_SPANS_FULL_GAME_RE` guard that keeps
+    "1st Half / Fulltime Result" a full-game market. Only the three things it
+    deliberately does not carry are added here, each with its reason above.
+
+    The OUTCOME name is never read, unlike `prop_window_span`'s optional
+    fallback. That is right for suppression, where the window may only appear
+    there, and wrong here: a full-match winner's outcomes are the two
+    competitors, and a title that does not scope itself is the contest's own
+    book whatever its outcomes are called.
+    """
+    text = (name or "").strip()
+    if not text:
+        return False
+    # The full-game guard first, for the same reason `prop_window_span` runs it
+    # first: a title naming a period AND the full game is not segment-scoped.
+    if _SPANS_FULL_GAME_RE.search(text):
+        return False
+    if prop_window_span(text) is not None:
+        return True
+    return bool(
+        _SEGMENT_RE.search(text)
+        or _COMPACT_QUARTER_RE.search(text)
+        or _HALFTIME_TITLE_RE.search(text)
+    )

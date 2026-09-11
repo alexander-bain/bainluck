@@ -73,14 +73,38 @@ def _arm(
     skips=None,
     marked=None,
     imminent=None,
+    names=None,
 ):
-    """Point the rail at scripted collaborators. No DB, no network, no Redis."""
+    """Point the rail at scripted collaborators. No DB, no network, no Redis.
+
+    ``names`` maps a market id to its ``(name, external_id)`` as the producer
+    wrote them. The headline/ladder split is then computed by calling the REAL
+    :func:`_is_headline_market` (#4983 repair, CERT-2564) rather than by handing
+    the rail an answer — a test that injects the partition it is checking proves
+    only that a set was plumbed through, and the first cut of this ship failed
+    for exactly that reason.
+
+    A market with no entry gets a bare-matchup name, which classifies as a
+    headline. That is the right default for the ~10,600 non-kickoff rows the
+    #3879 tests are about: they never reach the kickoff phases, so the split is
+    not what those tests are asserting.
+    """
     import app.services.polymarket_api as poly
+
+    def _identity(mid):
+        return (names or {}).get(mid, (f"Home {mid} vs. Away {mid}", f"0x{mid:04x}"))
 
     async def _select(*, stale_hours, limit):
         if selector_raises is not None:
             raise selector_raises
-        return list(candidates or []), stale, served, set(imminent or ())
+        rows = list(candidates or [])
+        return (
+            rows,
+            stale,
+            served,
+            set(imminent or ()),
+            {mid for mid, _ in rows if rail._is_headline_market(*_identity(mid))},
+        )
 
     monkeypatch.setattr(rail, "_select_stale_conditions", _select)
     monkeypatch.setattr(poly, "PolymarketAPIService", lambda *a, **k: service or _Service())

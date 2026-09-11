@@ -39,10 +39,28 @@ _LEAGUE_TAG_RE = re.compile(
 )
 
 # Team/participant token run: letters, spaces, and the punctuation that appears
-# INSIDE names (period, apostrophe, ampersand, internal hyphen). Deliberately
-# does NOT allow ":" or " - " (space-dash-space), which mark a sub-market
-# qualifier ("... : Total Runs", "... - Player Props").
-_TEAM = r"[A-Za-z0-9.'&][A-Za-z0-9 .'&/-]*?"
+# INSIDE names (period, apostrophe, ampersand, internal hyphen, and the
+# parenthesised disambiguator US college teams carry — "Miami (OH)").
+#
+# THE LETTER CLASS IS UNICODE, NOT ASCII (#5041). It used to read
+# `[A-Za-z0-9...]`, which silently answered "not a game winner" for every team
+# name with a diacritic: `1. FC Köln vs. SV Werder Bremen`, `Club León FC vs.
+# Atlético San Luis`, `Associação Chapecoense de Futebol vs. SC Internacional`,
+# `SE Palmeiras vs. São Paulo FC`. Measured over every Polymarket market linked
+# to an event commencing within 48h (1,096 markets / 210 events, 2026-09-11):
+# 257 are a bare matchup carrying no sub-market qualifier, and 12 of them —
+# across 12 distinct events, every one a real match winner — were refused for
+# their accents alone. The bias was systematic and it ran one way: La Liga 2,
+# Bundesliga, Liga MX, Brasileirão, Serie B, and college teams with a
+# parenthesised state.
+#
+# Widening the CLASS does not widen what is admitted, because the qualifier is
+# not rejected here — `is_bare_matchup` rejects ":" and " - " before this
+# pattern is ever tried (see the guard there, and the test that deletes it).
+# The shape is the original's, unchanged: one restricted opening character, then
+# a non-greedy run. Only the two character classes moved — `[^\W_]` is "letter or
+# digit, any script, never underscore", and the run adds "(" and ")".
+_TEAM = r"[^\W_][\w .'&/()-]*?"
 
 # "<Team> at|vs|v|@ <Team>" with nothing meaningful after the second team.
 _BARE_MATCHUP_RE = re.compile(
