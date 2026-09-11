@@ -11,7 +11,11 @@ import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
-import { applyLiveFrame, eventRefreshInterval } from "@/lib/eventLivePush";
+import {
+  applyLiveFrame,
+  eventFeedIsStalled,
+  eventRefreshInterval,
+} from "@/lib/eventLivePush";
 import LiveAgeStamp from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import LiveSparkline from "@/components/event/LiveSparkline";
@@ -768,6 +772,21 @@ export default function EventPage({ params }: EventPageProps) {
     commenceTime: event?.commence_time,
   });
 
+  // #4861 — and only where one actually IS landing. The ring above counts down
+  // a `setInterval` that ticks whether or not anything arrives, so on the page
+  // a reader left open it went on promising an update long after the payload
+  // stopped coming. `eventFeedIsStalled` carries the case and the measurement.
+  //
+  // Read during render rather than held in state on purpose: `countdown`
+  // already re-renders this component once a second, so the elapsed time is
+  // re-derived on the same tick the ring is drawn from, and there is no second
+  // timer to fall out of step with the first.
+  const feedStalled = eventFeedIsStalled({
+    hasError: Boolean(eventError),
+    msSinceLastLanding: Date.now() - lastRefresh,
+    refreshInterval,
+  });
+
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
   // null (or its "Score data is not available" message) inside a card shell,
@@ -898,9 +917,24 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         )}
 
+        {/* #4861 — the payload has stopped landing, so the header says how old
+            the number is instead of promising a new one. Same badge the pushed
+            branch uses: past its own stale boundary it drops the green and the
+            word "live" by itself, which is the whole disclosure. No second
+            component and no new sentence — standing notice 34. */}
+        {showRefreshCountdown && feedStalled && (
+          <div className="ml-auto flex items-center gap-3">
+            <LiveAgeStamp
+              updatedAt={heroStamp.stamp}
+              oldestFact={heroStamp.fact}
+              connected={false}
+            />
+          </div>
+        )}
+
         {/* Visual countdown timer — #3802 gates it on proximity, not just on
             "not finished and not pushed". */}
-        {showRefreshCountdown && (
+        {showRefreshCountdown && !feedStalled && (
           <div className="ml-auto flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {effectivelyLive && (

@@ -65,6 +65,68 @@ export function pushedRefreshIntervalIsHonest(
   return pushedInterval > 0 && pushedInterval < staleMs;
 }
 
+/**
+ * How many of the page's own poll intervals may pass with nothing landing
+ * before the header stops promising an update.
+ *
+ * Two, and it is derived rather than chosen: one missed interval is the
+ * ordinary shape of a slow response or a single dropped request, and calling
+ * that "stalled" would flicker the header on a healthy page. Two consecutive
+ * intervals cannot happen while the poll is working.
+ */
+export const STALLED_POLL_INTERVALS = 2;
+
+/**
+ * Is the open page still being fed the payload it is claiming to show live?
+ *
+ * ═══ THE BUG (#4861) ═══
+ *
+ * #5016 established that a failed refresh must not take the page away — SWR
+ * keeps `data` when a revalidation fails, and the reader should keep the last
+ * good page. This is the other half of that sentence: a page we keep must stop
+ * SAYING it is live.
+ *
+ * Measured on the SF@LAR opener, 2026-09-10, on a tab opened at 6:36pm PT and
+ * never touched. From halftime onward the event payload stopped landing, and
+ * eleven minutes AFTER the final whistle the header still read
+ * `LIVE · Next update: 11` over `48% – 52%`, on a game that had ended 7–27.
+ * The server was not at fault: it served `status: completed` and a settled hero
+ * throughout, and a fresh load of the same url in the same minute rendered
+ * Final correctly.
+ *
+ * What made it look alive is that the page's OTHER fetches were still landing.
+ * The hero's score comes from `historyData` (`lastChartPoint`), not from the
+ * event, so the score advanced 7–10 → 7–27 beside a probability frozen at the
+ * halftime value. A reader has no way to tell those two apart, and the header
+ * actively told them the opposite: a countdown ring driven by a `setInterval`
+ * that ticks whether or not anything arrives.
+ *
+ * ═══ WHY THE ERROR ALONE IS NOT ENOUGH ═══
+ *
+ * `hasError` catches the loud case (a 429, a refused fetch) the moment it
+ * happens. It does not catch the quiet one — a poll whose timer a mobile
+ * browser suspended when the tab stopped being frontmost, which is what an iPad
+ * left on a page through the end of a game is, and which produces no error at
+ * all because no request was ever made. Only the silence itself sees that, so
+ * both are asked and either is enough.
+ *
+ * The caller keeps polling either way. This decides what the header may
+ * PROMISE, never whether to try again — and it clears itself the moment
+ * anything lands, because `msSinceLastLanding` resets on success.
+ */
+export function eventFeedIsStalled(args: {
+  hasError: boolean;
+  msSinceLastLanding: number;
+  refreshInterval: number;
+}): boolean {
+  const { hasError, msSinceLastLanding, refreshInterval } = args;
+  if (hasError) return true;
+  // A non-positive interval means the caller is not polling on a clock at all,
+  // so silence proves nothing about it and this must not invent a verdict.
+  if (!(refreshInterval > 0)) return false;
+  return msSinceLastLanding > STALLED_POLL_INTERVALS * refreshInterval;
+}
+
 export interface LiveFrame {
   p: number;
   source: string;
