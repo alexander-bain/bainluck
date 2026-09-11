@@ -122,3 +122,64 @@ d("a two-sided scoring race stays visible on iOS", () => {
     expect(re.test("Race to 5 catches")).toBe(false);
   });
 });
+
+/**
+ * #5133 — CERT-2620's half, `5133-NATIVE-SCORING-RACE-OVERFLOW-IS-REACHABLE`.
+ *
+ * `NativeScoringRaceOverflowIsReachable5133Tests` proves `displayedItems` hands
+ * back the ninth, tenth and eleventh cards when asked to expand. It cannot
+ * prove `body` ASKS — a SwiftUI body is unreachable from XCTest, and the whole
+ * defect was a body that rendered `prefix(5)` and then an inert `Text`. So the
+ * two mutants that matter are pinned here, in a file CI actually runs.
+ */
+d("the scoring race is reachable past the category cap", () => {
+  const view = () => stripSwiftComments(readFileSync(VIEW, "utf8"));
+
+  it("the body renders through the seam the guard tests, not its own cap", () => {
+    const code = view();
+
+    expect(code).toMatch(
+      /ForEach\(Self\.displayedItems\(cat\.items, expanded: isExpanded\)\)/,
+    );
+    // THE DEFECT, spelled out so it cannot come back by accident.
+    expect(code).not.toMatch(/cat\.items\.prefix\(/);
+  });
+
+  it("the overflow is a control a reader can hit, not a caption", () => {
+    const code = view();
+    const overflow = /if cat\.items\.count > Self\.itemDisplayCap \{[\s\S]*?\n {28}\}/.exec(code);
+
+    expect(overflow).not.toBeNull();
+    const body = overflow![0];
+
+    // A Button, and one that mutates the state the seam reads.
+    expect(body).toMatch(/Button \{/);
+    expect(body).toMatch(/expandedCategories\.insert\(cat\.id\)/);
+    expect(body).toMatch(/expandedCategories\.remove\(cat\.id\)/);
+    // The old shape: a Text and nothing else.
+    expect(body).not.toMatch(/^\s*Text\("\+\\\(cat\.items\.count/m);
+  });
+
+  it("the cap is one named number, not a literal sprinkled through the view", () => {
+    const code = view();
+
+    expect(code).toMatch(/static let itemDisplayCap = 5/);
+    // `prefix(5)` / `> 5` anywhere in this view is the drift this catches.
+    expect(code).not.toMatch(/\.prefix\(5\)/);
+    expect(code).not.toMatch(/cat\.items\.count > 5/);
+  });
+
+  /**
+   * The control. Every assertion above is a `toMatch` against source text, and
+   * source text passes vacuously if the symbol it names does not exist at all —
+   * so assert the seam and its state are really declared.
+   */
+  it("the seam and its state exist", () => {
+    const code = view();
+
+    expect(code).toMatch(
+      /static func displayedItems\(_ items: \[MarketItem\], expanded: Bool\) -> \[MarketItem\]/,
+    );
+    expect(code).toMatch(/@State private var expandedCategories: Set<String> = \[\]/);
+  });
+});
