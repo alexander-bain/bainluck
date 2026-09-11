@@ -109,7 +109,7 @@ from app.utils.search_match_class import (
     query_names_participant,
 )
 from app.utils.blank_event_cards import not_a_blank_card
-from app.utils.feed_market_quality import has_no_real_price
+from app.utils.feed_market_quality import has_no_real_price, is_empty_book_midpoint
 from app.utils.proven_duplicates import (
     FoldedBlendView,
     folded_probability_sources_batch,
@@ -12924,6 +12924,25 @@ async def _build_game_markets(
 
     for market in markets:
         market_outcomes = outcomes_by_market.get(market.id, [])
+
+        # #5247: a price that is the midpoint of an EMPTY book is not a price, and the
+        # reader cannot tell — `game-markets` serves no bid/ask, so a manufactured
+        # "Not Completed 50%" on a semifinal being played reads exactly like a real
+        # coin flip. Drop those legs here, at the one place every section below draws
+        # from, so totals/spreads/props/other are covered by one rule instead of four.
+        #
+        # A leg, not a market: "Rangers vs Mariners - Player Props" carries real lines
+        # beside its unpriced ones, and dropping the card would take the real ones with
+        # it. A market whose legs are ALL empty-book then falls through the `if not
+        # market_outcomes` guard below and its card leaves entirely -- which is the
+        # specimen's case (one leg, one card) and the existing empty-state path.
+        market_outcomes = [
+            o for o in market_outcomes
+            if not is_empty_book_midpoint(
+                o.current_probability, o.current_yes_bid, o.current_yes_ask
+            )
+        ]
+
         if not market_outcomes:
             continue
 

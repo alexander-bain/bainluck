@@ -149,6 +149,72 @@ def fabricated_midpoint_sql(probability: str, yes_bid: str, yes_ask: str) -> str
     )
 
 
+# #5247: the EVENT PAGE's half of the same idea, and it is deliberately much narrower
+# than `is_fabricated_midpoint` above. That predicate's 0.20 spread was measured on the
+# FEED's 40 distribution cards; this population is different and the difference is not
+# academic. On the 2026-09-11 production window (events -1d..+3d) the 0.20 rule matches
+# 3,657 Kalshi outcomes across 159 events — and the samples are REAL LINES, not
+# phantoms: "Auburn over 19.5 points scored" quotes 0.79 bid / 0.99 ask, and a bid at
+# 79c is a buyer, not an empty book. Blanking those would have emptied a weekend of NFL
+# and CFB prop cards to fix one tennis card.
+#
+# What actually makes a midpoint meaningless is that BOTH sides sit at the extremes:
+# nobody will buy above ~2c and nobody will sell below ~98c, so the quote spans the
+# whole 0-1 range and its midpoint is arithmetic on "we have no idea". The specimen is
+# Zverev-Khachanov "Not Completed" — 0.02 / 0.99 -> 0.505, rendered to a reader as a
+# 50% coin flip on a semifinal actually being played. The same window holds
+# "Waterford FC 50% / Dundalk FC 50% / Draw 50%" — three legs of one question each at
+# 50%, summing to 150%, which is the tell that no book priced any of them.
+#
+# Contrast the rows this must NOT touch, both measured in that same window:
+#   - a real bid, wide book   0.79 / 0.99 -> 0.89   ("Auburn over 19.5")  KEPT
+#   - a real ask, no bid      0.01 / 0.36 -> 0.185  ("Cowboys 2H by 9.5+") KEPT
+#   - a settled/degenerate    0.00 / 1.00 -> 0.99   (price is NOT the midpoint) KEPT
+# The last line is why the midpoint equality is still required and not implied: an
+# empty book whose stored price is 0.99 got that number from somewhere else (a trade,
+# a stale capture) and is a different defect family (#4845), not this one.
+#
+# No trade check is needed and none is done — deliberately, so this stays a pure
+# function on three columns the serve path already holds and adds no query to a hot
+# endpoint. The midpoint equality IS the no-trade evidence: every ingest path that has
+# a trade price prefers it over the midpoint on a wide book (gotcha #19,
+# `polymarket.py` `has_real_trading`), so a price that is still EXACTLY the midpoint of
+# an empty book is one no trade ever informed.
+EMPTY_BOOK_MAX_BID = 0.02
+EMPTY_BOOK_MIN_ASK = 0.98
+
+
+def is_empty_book_midpoint(
+    probability: "float | None",
+    yes_bid: "float | None",
+    yes_ask: "float | None",
+) -> bool:
+    """True if this price is the midpoint of a book with nothing in it (#5247).
+
+    Three conditions, all required:
+      1. a two-sided quote exists (both bid and ask present),
+      2. it is empty on BOTH sides -- ``yes_bid <= EMPTY_BOOK_MAX_BID`` and
+         ``yes_ask >= EMPTY_BOOK_MIN_ASK``, so the quote bounds nothing, and
+      3. the stored probability IS that book's midpoint.
+
+    Unlike :func:`is_fabricated_midpoint`, a MISSING side is not treated as the widest
+    quote on that side. A one-sided book still carries information -- an ask at 36c
+    says nobody will sell below 36c -- and on the measured population those rows are
+    honest longshot lines. Both-null (a model price: DataGolf, odds_api, a derived
+    complement) has no book at all and is passed through untouched.
+
+    Callers refuse to SERVE the outcome rather than rewriting it; read-side only
+    (gotcha #21), and nothing here mutates a stored price.
+    """
+    if probability is None or yes_bid is None or yes_ask is None:
+        return False
+    bid = float(yes_bid)
+    ask = float(yes_ask)
+    if bid > EMPTY_BOOK_MAX_BID or ask < EMPTY_BOOK_MIN_ASK:
+        return False
+    return abs(float(probability) - (bid + ask) / 2) < _PHANTOM_MIDPOINT_TOLERANCE
+
+
 # A distribution over a MUTUALLY EXCLUSIVE field must still cover that field once the
 # phantoms are gone. Alex's ruling (2026-08-07, on #1574): drop the card. A gapped
 # exclusive ladder asserts something false by omission — Netflix keeping only its five
