@@ -76,7 +76,15 @@ from app.utils.sports_first_page_rails import (
     client_deletes_finished_card,
     swap_client_deleted_finished_off_first_page,
 )
-from app.utils.tonights_games import MARQUEE_PIN_KEY, compose_lead
+from app.utils.tonights_games import (
+    MARQUEE_PIN_KEY,
+    compose_lead,
+)
+
+# #4898 — borrowed, not re-implemented. The imminent-kickoff arm has to read a
+# `commence_time` the same way the lead pass it feeds reads it; a second parser
+# that agrees today is how the two windows drift apart later.
+from app.utils.tonights_games import _parse_dt as _parse_feed_datetime
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
     compute_aggregate_probability as _compute_aggregate_probability,
@@ -1268,6 +1276,118 @@ def _discover_event_is_marquee(item: dict) -> bool:
     return "tier:1" in (data.get("event_tags") or [])
 
 
+#: How many about-to-start marquee games Discover may carry at once (#4898).
+#:
+#: NOT UNBOUNDED, and the number that proves it is an NFL Sunday. Measured
+#: 2026-09-11 01:55Z against production's own schedule, the six hours from
+#: 2026-09-13 17:00Z hold TWELVE ``tier:1`` scheduled games — eight of them
+#: kicking off in the same minute. An arm that admitted every imminent marquee
+#: game would hand Discover a twelve-card NFL scoreboard on the one afternoon a
+#: reader is most likely to open it, which is exactly what
+#: ``_DISCOVER_RECENT_FINAL_SLOTS`` exists to prevent on the other arm.
+#:
+#: THREE, not two, because three is what the lead pass can actually seat:
+#: ``compose_lead`` takes ``MAX_LEAD = 3``. Admitting more than the lead can hold
+#: would put game cards on the page this ship has no way to surface; admitting
+#: fewer would leave a lead slot empty that the arm could have filled.
+_DISCOVER_IMMINENT_MARQUEE_SLOTS = 3
+
+#: How long before kickoff a marquee game becomes Discover material (#4898).
+#:
+#: Six hours is the ask on the record ("marquee in the top 3 from T-6h"), and it
+#: is deliberately WIDER than the lead pass's own ``SOON_WINDOW_HOURS = 4``. The
+#: two windows answer different questions: this one decides whether the card
+#: SURVIVES to the page at all, the lead one decides whether it LEADS. Between
+#: T-6h and T-4h the card is present and findable at its own score; from T-4h
+#: ``compose_lead`` seats it. Making this the NARROWER of the two would let the
+#: lead pass ask for a card the noise filter had already deleted — which is the
+#: precise shape of the defect this fixes, one window over.
+_DISCOVER_IMMINENT_KICKOFF_HOURS = 6
+
+#: The statuses ``tonights_games._is_eligible`` treats as "not started yet".
+#:
+#: Mirrored deliberately, empty string included. This arm decides what survives
+#: and the lead pass decides what leads, so any status the lead pass would seat
+#: and this arm would not is a card the lead pass can ask for after the filter
+#: has deleted it.
+_DISCOVER_IMMINENT_STATUSES = frozenset({"scheduled", "upcoming", "pre", ""})
+
+
+def _imminent_marquee_kickoff_ids(
+    feed_items: list[dict], now: datetime | None = None
+) -> set[int]:
+    """Event ids of the about-to-start marquee games Discover keeps this request.
+
+    #4898 — the mirror of :func:`_recent_marquee_final_ids` on the other side of
+    kickoff. D118 gave the finished marquee game a way back onto the page; the
+    SCHEDULED one still had none, and the reason is structural, not a tuning miss.
+
+    :func:`_is_discover_event_demotion_exception` reads excitement from
+    :func:`_discover_event_excitement_score`, which for an unsettled game is its
+    pre-demotion feed score — closeness, upset, lead changes, momentum. **A game
+    that has not kicked off has none of those by construction**, so it clears no
+    arm's floor, is capped to 35, and is then deleted by the noise filter's
+    ``< 45`` check. Measured on production: San Francisco @ Los Angeles Rams,
+    ``tier:1`` primetime, was absent from Discover at T-4h53m on 2026-09-10 and
+    was back at rank 2 with score 98 seven minutes after kickoff, with no code
+    change in between. The card was never unhealthy — the floors were asking a
+    scheduled game a question only a live game can answer.
+
+    So this arm does not try to score a pre-game card. It selects a bounded set
+    up front and hands the ids to both passes that would otherwise delete them:
+    the same one-set-two-consumers shape as the finals arm, for the same reason —
+    a card that survives only one of the two is still not on the page.
+
+    Conditions, each doing work no other one does:
+
+    * **Not started, and marquee** — ``tier:1`` only, via
+      :func:`_discover_event_is_marquee`. Tier 2 would re-open the flood that
+      function's own docstring measured on the finished arm.
+    * **Kickoff ahead of us and inside the window** — STRICTLY ahead, because a
+      start time in the past on a still-``scheduled`` row means the status is
+      lagging, not that the game is imminent. ``tonights_games`` rejects that
+      case for the identical reason and this arm must not disagree with the pass
+      it feeds.
+    * **Has team media** — the bar the live, suspended and lead arms all apply;
+      a crest-less card is not a game a reader recognises. As on the finals arm
+      this is NOT what bounds the population — the cap is.
+
+    Ranked by the pre-demotion display score, the same reading
+    :func:`_discover_event_excitement_score` takes for any unsettled game, so the
+    three that get in are the three the scorer already rates highest; tie-broken
+    by event id. **The tiebreak is load-bearing here in a way it is not on the
+    finals arm**: eight of NFL Sunday's twelve marquee games kick off in the same
+    minute, so without a total order the selected set would differ between two
+    requests one second apart.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    horizon = now + timedelta(hours=_DISCOVER_IMMINENT_KICKOFF_HOURS)
+
+    eligible: list[tuple[float, int]] = []
+    for item in feed_items:
+        if item.get("type") != "event":
+            continue
+        data = item.get("data") or {}
+        status = (data.get("status") or "").strip().lower()
+        if status not in _DISCOVER_IMMINENT_STATUSES:
+            continue
+        if not _discover_event_is_marquee(item):
+            continue
+        if not (data.get("home_team_data") or data.get("away_team_data")):
+            continue
+        commence = _parse_feed_datetime(data.get("commence_time"))
+        if commence is None or not (now < commence <= horizon):
+            continue
+        event_id = data.get("id")
+        if event_id is None:
+            continue
+        eligible.append((_discover_event_excitement_score(item), int(event_id)))
+
+    eligible.sort(key=lambda pair: (-pair[0], pair[1]))
+    return {event_id for _, event_id in eligible[:_DISCOVER_IMMINENT_MARQUEE_SLOTS]}
+
+
 def _recent_marquee_final_ids(
     feed_items: list[dict], now: datetime | None = None
 ) -> set[int]:
@@ -1337,10 +1457,20 @@ def _recent_marquee_final_ids(
     return {event_id for _, event_id in eligible[:_DISCOVER_RECENT_FINAL_SLOTS]}
 
 
-def _item_is_kept_final(item: dict, kept_final_ids: set[int]) -> bool:
-    if not kept_final_ids or item.get("type") != "event":
+def _item_is_in_kept_set(item: dict, kept_ids: set[int]) -> bool:
+    """Is this feed item one of the event ids an arm chose to keep?
+
+    One predicate, two callers (the finished arm and #4898's imminent-kickoff
+    arm). Written once rather than twice because this file's own finals docstring
+    names "two predicates that agree today" as the drift it keeps paying for.
+    """
+    if not kept_ids or item.get("type") != "event":
         return False
-    return (item.get("data") or {}).get("id") in kept_final_ids
+    return (item.get("data") or {}).get("id") in kept_ids
+
+
+def _item_is_kept_final(item: dict, kept_final_ids: set[int]) -> bool:
+    return _item_is_in_kept_set(item, kept_final_ids)
 
 
 def _stamp_marquee_finals(feed_items: list[dict], kept_final_ids: set[int]) -> None:
@@ -1375,11 +1505,23 @@ def _stamp_marquee_finals(feed_items: list[dict], kept_final_ids: set[int]) -> N
 
 
 def _demote_non_exceptional_discover_events(
-    feed_items: list[dict], kept_final_ids: set[int] | None = None
+    feed_items: list[dict],
+    kept_final_ids: set[int] | None = None,
+    kept_kickoff_ids: set[int] | None = None,
 ) -> None:
     kept = kept_final_ids or set()
+    kept_kickoff = kept_kickoff_ids or set()
     for item in feed_items:
         if item.get("type") != "event":
+            continue
+        # #4898 — a selected imminent marquee game is exceptional BY SELECTION,
+        # exactly as a kept final is. Skipping the cap here is not cosmetic: at
+        # T-35m the specimen's pre-demotion score was 75, comfortably over the
+        # noise filter's own 45 floor, and it was still deleted — because this
+        # pass caps it to 35 FIRST and only then does 35 < 45 bite. In the last
+        # hour before kickoff the demotion is the whole defect, and preserving
+        # the score is the whole fix.
+        if _item_is_in_kept_set(item, kept_kickoff):
             continue
         # #4681 — a kept marquee final is exceptional BY SELECTION, so it is not
         # re-judged here. It would fail: `_is_discover_event_demotion_exception`
@@ -1399,7 +1541,9 @@ def _demote_non_exceptional_discover_events(
 
 
 def _filter_discover_event_noise(
-    feed_items: list[dict], kept_final_ids: set[int] | None = None
+    feed_items: list[dict],
+    kept_final_ids: set[int] | None = None,
+    kept_kickoff_ids: set[int] | None = None,
 ) -> list[dict]:
     """Remove routine game cards from Discover mode after demotion.
 
@@ -1416,6 +1560,7 @@ def _filter_discover_event_noise(
     :func:`_recent_marquee_final_ids` and passed in.
     """
     kept = kept_final_ids or set()
+    kept_kickoff = kept_kickoff_ids or set()
     filtered: list[dict] = []
     for item in feed_items:
         if item.get("type") != "event":
@@ -1457,6 +1602,16 @@ def _filter_discover_event_noise(
         # therefore no media, and those keep falling through to the checks
         # below. This admits the match a reader was watching, not the mass.
         if status == EVENT_SUSPENDED and has_team_media:
+            filtered.append(item)
+            continue
+
+        # #4898 — the second half of the imminent-marquee arm, and it is NOT
+        # redundant with the demotion skip above. Preserving the score is enough
+        # only while the natural score already clears 45: measured on the
+        # specimen, 75 at T-35m (clears) but 40 at T-4h53m (does not). Without
+        # this branch the ship would quietly shrink to "the last hour or so"
+        # and would keep failing over the part of the window it was asked for.
+        if _item_is_in_kept_set(item, kept_kickoff):
             filtered.append(item)
             continue
 
@@ -1628,11 +1783,15 @@ def apply_discover_display_chain(
         # would cap these to 35 and the noise filter would delete them, and a
         # card that survives only one of the two is still not on the page.
         kept_final_ids = _recent_marquee_final_ids(items, now)
+        # #4898 — the same shape on the other side of kickoff, and chosen here
+        # for the same reason: both passes below would delete these cards, and
+        # surviving one of the two is not being on the page.
+        kept_kickoff_ids = _imminent_marquee_kickoff_ids(items, now)
         # D118 — and handed to a THIRD consumer, the browser. Stamped before the
         # noise filter runs so the flag rides the same dicts the filter keeps.
         _stamp_marquee_finals(items, kept_final_ids)
-        _demote_non_exceptional_discover_events(items, kept_final_ids)
-        items = _filter_discover_event_noise(items, kept_final_ids)
+        _demote_non_exceptional_discover_events(items, kept_final_ids, kept_kickoff_ids)
+        items = _filter_discover_event_noise(items, kept_final_ids, kept_kickoff_ids)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         items.sort(key=_rank_key, reverse=True)
         items = balance_discover_event_category_mix(items)
@@ -5970,8 +6129,13 @@ async def _discover_rank_phase_trace(
         # already a documented subset (no noise filter), but a subset that
         # demotes a card the page keeps would misreport the rank of every
         # futures market sitting beside it.
+        # #4898 — and the imminent-kickoff set for the same reason. Left off, the
+        # probe would cap a marquee pre-game card the served page keeps, and so
+        # misreport the rank of every futures market ranked against it.
         _demote_non_exceptional_discover_events(
-            feed_items, _recent_marquee_final_ids(feed_items, now)
+            feed_items,
+            _recent_marquee_final_ids(feed_items, now),
+            _imminent_marquee_kickoff_ids(feed_items, now),
         )
         feed_items.sort(
             key=_rank_key, reverse=True
