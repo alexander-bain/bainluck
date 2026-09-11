@@ -98,7 +98,6 @@ struct GamePlayCardView: View {
                                 .lineLimit(2)
                         } else {
                             let homeProb = Int((point.homeProb * 100).rounded())
-                            let awayProb = Int((point.awayProb * 100).rounded())
                             HStack(spacing: 0) {
                                 Text(homeShort)
                                     .font(.caption2)
@@ -107,16 +106,23 @@ struct GamePlayCardView: View {
                                     .font(.caption2)
                                     .fontWeight(.semibold)
                                     .foregroundStyle(homeTeamColor)
-                                Text(" — ")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Text(awayShort)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Text(" \(awayProb)%")
-                                    .font(.caption2)
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(awayTeamColor)
+                                // #5271 — the away half is drawn only where an
+                                // away price exists. `awayProb` was `1 - home`
+                                // at both of this point's construction sites,
+                                // and on a draw-priced sport that is the away
+                                // side's chances with the draw folded in.
+                                if let away = point.awayProb {
+                                    Text(" — ")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Text(awayShort)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Text(" \(Int((away * 100).rounded()))%")
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(awayTeamColor)
+                                }
                             }
                         }
                     }
@@ -143,7 +149,9 @@ struct GamePlayCardView: View {
 struct GamePlayPoint {
     let timestamp: String
     let homeProb: Double
-    let awayProb: Double
+    /// Nil where we hold no away price — a draw-priced sport, where the
+    /// complement this used to be is not the away side's chances (#5271).
+    let awayProb: Double?
     var homeScore: Int?
     var awayScore: Int?
     var period: String?

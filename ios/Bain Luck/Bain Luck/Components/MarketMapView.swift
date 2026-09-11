@@ -367,10 +367,18 @@ struct MarketMapView: View {
             + marginLadder(parsed.filter(\.isHome), isHome: true, abbr: hAbbr, color: homeColor)
 
         // Headline: favored team + win %
+        //
+        // #5271 — which side may be named is `DrawPricedWinner`'s call. Alex
+        // found this header printing `Al-Ittihad 99%` above a match its own
+        // card on the same page priced at 93%: naming the favourite reaches
+        // for `1 − P(home)` every time the home team is the underdog, and on a
+        // three-way market that figure is the away side's chances PLUS the
+        // draw's. A draw-priced sport names home, favourite or not.
         let headline: String = {
-            guard let homeProbability = homeWinProb, let awayProbability = awayWinProb else { return "" }
-            let favored = homeProbability > 0.5
-            return "\(favored ? hAbbr : aAbbr) \(Int(((favored ? homeProbability : awayProbability) * 100).rounded()))%"
+            guard let side = DrawPricedWinner.headlineSide(
+                away: awayWinProb, home: homeWinProb, sport: sportKey
+            ) else { return "" }
+            return "\(side.isHome ? hAbbr : aAbbr) \(Int((side.probability * 100).rounded()))%"
         }()
 
         // Markers

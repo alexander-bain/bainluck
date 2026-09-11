@@ -1598,7 +1598,11 @@ struct OddsChartView: View {
         selectedPlayPoint = GamePlayPoint(
             timestamp: nearest.date.ISO8601Format(),
             homeProb: nearest.probability,
-            awayProb: 1.0 - nearest.probability,
+            // #5271 — nil on a draw-priced sport rather than the complement.
+            awayProb: DrawPricedWinner.printablePair(
+                away: 1.0 - nearest.probability,
+                home: nearest.probability,
+                sport: sportKey)?.away,
             homeScore: nearest.homeScore,
             awayScore: nearest.awayScore,
             period: nearest.period,

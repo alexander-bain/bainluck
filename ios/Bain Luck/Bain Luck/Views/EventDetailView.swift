@@ -756,48 +756,104 @@ struct EventDetailView: View {
                                 .foregroundStyle(homeWon ? colors.home : colors.away)
                         }
                         // Pre-game odds as secondary context
-                        if let awayOpeningProbability = event.openingOdds?.awayProbability,
-                           let homeOpeningProbability = event.openingOdds?.homeProbability {
+                        if let opened = DrawPricedWinner.printablePair(
+                            away: event.openingOdds?.awayProbability,
+                            home: event.openingOdds?.homeProbability,
+                            sport: event.sport) {
                             // #2085 — `opening_odds` is a complement pair too
                             // (`opening_away_probability or round(1 - home, 4)`),
                             // and it carries NO served percents at any deploy, so
                             // this pair is always decided locally.
-                            let openDuel = renderedDuelPercents(
-                                away: awayOpeningProbability, home: homeOpeningProbability
-                            )
-                            Text("Opened \(formatProbability(awayOpeningProbability, renderedPercent: openDuel[0])) – \(formatProbability(homeOpeningProbability, renderedPercent: openDuel[1]))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            //
+                            // #5271 — which also makes it the same lie as the
+                            // hero's on a draw-priced sport, and it withholds
+                            // the same slot. Named here even though the verdict
+                            // above it is too: this branch sits under
+                            // "{Winner} Win", so nothing else in the column is
+                            // carrying the subject for it.
+                            if let awayOpen = opened.away {
+                                let openDuel = renderedDuelPercents(
+                                    away: awayOpen, home: opened.home
+                                )
+                                Text("Opened \(formatProbability(awayOpen, renderedPercent: openDuel[0])) – \(formatProbability(opened.home, renderedPercent: openDuel[1]))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                let named = TeamShortName.shortPair(
+                                    away: event.awayTeam, home: event.homeTeam
+                                )
+                                Text("Opened \(named.home) \(formatProbability(opened.home))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     } else if let odds = event.currentOdds,
-                              let away = odds.awayProbability,
-                              let home = odds.homeProbability {
+                              let pair = DrawPricedWinner.printablePair(
+                                away: odds.awayProbability,
+                                home: odds.homeProbability,
+                                sport: event.sport) {
+                        let home = pair.home
                         let oddsFontSize: CGFloat = sizeClass == .regular ? 36 : 28
-                        // #2085 — THE HERO PAIR. `current_odds.away_probability`
-                        // is `round(1 - home, 6)` on the backend, so rounding the
-                        // two sides independently printed 101 whenever
-                        // `home * 100` landed on a half-percent (34 of 414
-                        // scheduled/live events, measured 2026-08-21). It could
-                        // print 101; it could never print 99.
-                        //
-                        // BOTH SERVED OR NEITHER. A served away beside a locally
-                        // derived home re-opens the same 101 from the other side,
-                        // and an older deploy can carry one field and not the
-                        // other, so the pair falls back whole.
-                        let duelFallback = renderedDuelPercents(away: away, home: home)
-                        let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil
-                        let awayPct = bothServed ? odds.awayRenderedPercent : duelFallback[0]
-                        let homePct = bothServed ? odds.homeRenderedPercent : duelFallback[1]
-                        HStack(spacing: 8) {
-                            Text(formatProbability(away, renderedPercent: awayPct))
-                                .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
-                                .foregroundStyle(colors.away)
-                            Text("\u{2013}")
-                                .font(.title3)
-                                .foregroundStyle(.secondary.opacity(0.4))
-                            Text(formatProbability(home, renderedPercent: homePct))
-                                .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
-                                .foregroundStyle(colors.home)
+                        if let away = pair.away {
+                            // #2085 — THE HERO PAIR. `current_odds.away_probability`
+                            // is `round(1 - home, 6)` on the backend, so rounding the
+                            // two sides independently printed 101 whenever
+                            // `home * 100` landed on a half-percent (34 of 414
+                            // scheduled/live events, measured 2026-08-21). It could
+                            // print 101; it could never print 99.
+                            //
+                            // BOTH SERVED OR NEITHER. A served away beside a locally
+                            // derived home re-opens the same 101 from the other side,
+                            // and an older deploy can carry one field and not the
+                            // other, so the pair falls back whole.
+                            let duelFallback = renderedDuelPercents(away: away, home: home)
+                            let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil
+                            let awayPct = bothServed ? odds.awayRenderedPercent : duelFallback[0]
+                            let homePct = bothServed ? odds.homeRenderedPercent : duelFallback[1]
+                            HStack(spacing: 8) {
+                                Text(formatProbability(away, renderedPercent: awayPct))
+                                    .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(colors.away)
+                                Text("\u{2013}")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary.opacity(0.4))
+                                Text(formatProbability(home, renderedPercent: homePct))
+                                    .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(colors.home)
+                            }
+                        } else {
+                            // #5271 — a draw-priced sport. There is one price
+                            // here, it is the home side's, and the slot the
+                            // other number used to fill is withheld rather
+                            // than filled with `1 − home` (see
+                            // `DrawPricedWinner`).
+                            //
+                            // NAMED, because withholding one of a pair breaks
+                            // the thing that attributed the other: the two
+                            // numbers were read off the crests they sat
+                            // between, and a lone number centred between two
+                            // crests belongs to neither. The finished branch
+                            // above already names its subject this way, and
+                            // takes the PAIR to do it (#3430) — "Tigers" is
+                            // not a name when both sides shorten to it.
+                            //
+                            // Rounded here and not through `duelPercents`:
+                            // that contract exists to stop a PAIR summing to
+                            // 101, and its answer for one side can be
+                            // `100 − other`, which is a number about a
+                            // complement this branch is refusing to print.
+                            let named = TeamShortName.shortPair(
+                                away: event.awayTeam, home: event.homeTeam
+                            )
+                            VStack(spacing: 2) {
+                                Text(named.home)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(colors.home)
+                                    .lineLimit(1)
+                                Text(formatProbability(home))
+                                    .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(colors.home)
+                            }
                         }
                         // Trend indicator (change since opening).
                         //
@@ -814,21 +870,28 @@ struct EventDetailView: View {
                         // "home fell 27" and "away rose 27" are the same fact;
                         // reporting the riser means the caption is never a bare
                         // signed number and its colour always matches its subject.
+                        //
+                        // #5271 — and that equivalence is what a draw breaks, so
+                        // WHO to name is `DrawPricedWinner`'s call, not this
+                        // view's: on a three-way market the points home shed are
+                        // not points the away side gained, and the caption says
+                        // so by naming home and keeping the sign.
                         if let openingHome = event.openingOdds?.homeProbability,
                            abs(home - openingHome) > 0.02 {
-                            let homeDelta = home - openingHome
-                            let homeGained = homeDelta > 0
+                            let trend = DrawPricedWinner.trendSubject(
+                                homeDelta: home - openingHome, sport: event.sport
+                            )
                             // #3430 — #1830's whole fix was naming the team the
                             // delta belongs to. A label the other side shares
                             // un-names it again, so take the pair.
                             let movers = TeamShortName.shortPair(
                                 away: event.awayTeam, home: event.homeTeam
                             )
-                            let subject = homeGained ? movers.home : movers.away
-                            let points = Int((abs(homeDelta) * 100).rounded())
-                            Text("\(subject) +\(points)% since open")
+                            let subject = trend.isHome ? movers.home : movers.away
+                            let sign = trend.signedPoints < 0 ? "\u{2212}" : "+"
+                            Text("\(subject) \(sign)\(abs(trend.signedPoints))% since open")
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(homeGained ? colors.home : colors.away)
+                                .foregroundStyle(trend.isHome ? colors.home : colors.away)
                         }
                         // #490: hero confidence signal (1-3 bars), computed
                         // client-side from the win-prob source count + whether the
@@ -891,16 +954,29 @@ struct EventDetailView: View {
                     }
                     // Opening odds below probability for live games
                     if isLive,
-                       let opening = event.openingOdds,
-                       let awayOpen = opening.awayProbability,
-                       let homeOpen = opening.homeProbability {
+                       let opened = DrawPricedWinner.printablePair(
+                        away: event.openingOdds?.awayProbability,
+                        home: event.openingOdds?.homeProbability,
+                        sport: event.sport) {
                         // #2085 — the live game's opening line, same pair rule
-                        // as the settled branch above.
-                        let openDuel = renderedDuelPercents(away: awayOpen, home: homeOpen)
+                        // as the settled branch above, and #5271's withholding
+                        // with it.
                         HStack(spacing: 4) {
-                            Text("Opened \(formatProbability(awayOpen, renderedPercent: openDuel[0])) \u{2013} \(formatProbability(homeOpen, renderedPercent: openDuel[1]))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            if let awayOpen = opened.away {
+                                let openDuel = renderedDuelPercents(
+                                    away: awayOpen, home: opened.home
+                                )
+                                Text("Opened \(formatProbability(awayOpen, renderedPercent: openDuel[0])) \u{2013} \(formatProbability(opened.home, renderedPercent: openDuel[1]))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                let named = TeamShortName.shortPair(
+                                    away: event.awayTeam, home: event.homeTeam
+                                )
+                                Text("Opened \(named.home) \(formatProbability(opened.home))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -1207,7 +1283,7 @@ struct EventDetailView: View {
     private func sourceProbabilityRow(
         label: String,
         font: Font,
-        probabilities: (away: Double, home: Double),
+        probabilities: (away: Double?, home: Double),
         colors: (away: Color, home: Color),
         columns: EventSourceLabelColumn.Columns
     ) -> some View {
@@ -1248,19 +1324,27 @@ struct EventDetailView: View {
     /// the whole defect was a layout number that stopped describing its layout.
     @ViewBuilder
     private func probabilityBarAndNumbers(
-        _ probabilities: (away: Double, home: Double),
+        _ probabilities: (away: Double?, home: Double),
         colors: (away: Color, home: Color),
         columns: EventSourceLabelColumn.Columns
     ) -> some View {
+        // #5271 — a withheld away side still has a BAR, because the bar's two
+        // segments are a partition and the remainder is a true quantity: it is
+        // "this source does not have the home team winning". What it is not is
+        // the away team, so it loses the away team's colour along with its
+        // number and reads as the neutral rest of the whole.
         ProbabilityBar(
-            awayProb: probabilities.away, homeProb: probabilities.home,
-            awayColor: colors.away,
+            awayProb: probabilities.away ?? (1 - probabilities.home),
+            homeProb: probabilities.home,
+            awayColor: probabilities.away == nil
+                ? Color.secondary.opacity(0.25)
+                : colors.away,
             homeColor: colors.home,
             height: 6
         )
         .frame(maxWidth: .infinity)
 
-        Text(formatProbability(probabilities.away))
+        Text(formatProbabilityOrDash(probabilities.away))
             .font(.caption2.monospacedDigit())
             .frame(width: columns.numeric, alignment: .trailing)
         Text(formatProbability(probabilities.home))
@@ -1283,20 +1367,34 @@ struct EventDetailView: View {
         // call, because they are part of the cost the label clamps against. The
         // strings passed are the ones this list will actually print, from BOTH
         // columns: they share one width, so a `>99%` on either side binds both.
+        //
+        // #5271 — and the strings measured here are the ones the rows PRINT,
+        // which on a draw-priced sport is an em-dash where the away percent
+        // used to be. Measuring `1 - home` and then printing "—" would size
+        // this column against a string no row draws.
+        let printable = { (entry: WinProbSourceCatalog.Entry) in
+            DrawPricedWinner.printablePair(
+                away: 1 - entry.homeProbability,
+                home: entry.homeProbability,
+                sport: event.sport)
+        }
         let columns = EventSourceLabelColumn.columns(
             labels: entries.map(\.label),
             values: entries.flatMap {
-                [formatProbability(1 - $0.homeProbability), formatProbability($0.homeProbability)]
+                [formatProbabilityOrDash(printable($0)?.away),
+                 formatProbability($0.homeProbability)]
             },
             availableWidth: sourceRowWidth,
             typeSize: dynamicTypeSize)
         return VStack(spacing: 0) {
             ForEach(entries) { entry in
-                let homeProbability = entry.homeProbability
                 sourceProbabilityRow(
                     label: entry.label,
                     font: .caption.weight(.medium),
-                    probabilities: (away: 1 - homeProbability, home: homeProbability),
+                    probabilities: (
+                        away: printable(entry)?.away,
+                        home: entry.homeProbability
+                    ),
                     colors: colors,
                     columns: columns)
             }
@@ -1434,10 +1532,28 @@ struct EventDetailView: View {
         // wrong in both directions: `betonlineag` is 2 characters wider than
         // "BetOnline", `betmgm` 2 narrower than "BetMGM". The column and the row
         // read one array now, so they cannot describe different strings.
+        //
+        // #5271 — a book's away price is SERVED rather than derived here, so the
+        // hero's complement is not what is wrong with it. What is wrong is the
+        // same thing: on the Braunschweig–Dresden specimen BetMGM printed
+        // `53% 47%`, a pair summing to exactly 100 on a match that can be drawn.
+        // The book quotes three outcomes; the pair we store and serve is that
+        // quote normalised two ways with the draw discarded (#1011), so the 53%
+        // beside the away crest is not that team's chance of winning either.
+        //
+        // Withheld at DISPLAY time and not in `namedBookmakerRows`, so #4406's
+        // rule is untouched: a row still needs both prices to exist at all, and
+        // still always carries a number, because the home side always survives.
+        let printable = { (row: NamedBookmakerRow) in
+            DrawPricedWinner.printablePair(
+                away: row.probabilities.away,
+                home: row.probabilities.home,
+                sport: event.sport)
+        }
         let columns = EventSourceLabelColumn.columns(
             labels: rows.map(\.label),
             values: rows.flatMap { row -> [String] in
-                [formatProbability(row.probabilities.away),
+                [formatProbabilityOrDash(printable(row)?.away),
                  formatProbability(row.probabilities.home)]
             },
             availableWidth: sourceRowWidth,
@@ -1448,7 +1564,10 @@ struct EventDetailView: View {
                 sourceProbabilityRow(
                     label: row.label,
                     font: .caption,
-                    probabilities: row.probabilities,
+                    probabilities: (
+                        away: printable(row)?.away,
+                        home: row.probabilities.home
+                    ),
                     colors: colors,
                     columns: columns)
             }
@@ -1538,7 +1657,9 @@ struct EventDetailView: View {
         return GamePlayPoint(
             timestamp: lastEspn?.timestamp ?? lastWp?.timestamp ?? lastHist?.timestamp ?? "",
             homeProb: homeProb,
-            awayProb: 1.0 - homeProb,
+            // #5271 — nil on a draw-priced sport rather than the complement.
+            awayProb: DrawPricedWinner.printablePair(
+                away: 1.0 - homeProb, home: homeProb, sport: event.sport)?.away,
             homeScore: lastEspn?.homeScore ?? event.homeScore,
             awayScore: lastEspn?.awayScore ?? event.awayScore,
             period: lastEspn?.period,
