@@ -87,10 +87,34 @@ MANIFEST_TABLE = "bak_4923_repair_manifest"
 #: below is: it asks the manifest which one happened.
 SANITY_FLOOR = 1500
 
+#: THE SERIES FAMILY, AND NOTHING ELSE (#5023). A Kalshi ticker is
+#: `<series>-<date><club><club>`, and the grammar below may only ever be matched
+#: against the part before the first dash. `_ticker_period`
+#: (`app/tasks/backfill_winners.py`) has always done this —
+#: `series = ticker.split("-", 1)[0].lower()` — and its docstring names the
+#: hazard outright: 282 event-linked markets carry an accidental `1h` in the
+#: suffix, because `KXWTAMATCH-26JUL11HODCHA` is Hodzic vs Chan on the 11th.
+#:
+#: THE FIRST VERSION OF THIS FILE MATCHED THE WHOLE `external_id` AND THE
+#: SUFFIX BIT BACK, on production, on the run this script was written for. A
+#: day-of-month runs straight into a club code, so `2H` and `1Q` appear inside
+#: dates:
+#:
+#:     KXMLSSPREAD-26APR**22H**OUSD        day 22 + HOUston   whole-game spread
+#:     KXMLSBTTS-26MAY**02H**OUCOL         day 02 + HOUston   whole-game BTTS
+#:     KXNCAAMBTOTAL-26FEB**22H**CBUCK     day 22 + Holy Cross
+#:     KXNCAAMBSPREAD-26MAR**01Q**UINCAN   day 01 + QUINnipiac
+#:
+#: 70 correct verdicts across 12 markets were cleared that way — 57 whole-game
+#: and 13 halftime-derived first halves. A false positive here does not print a
+#: wrong answer, it silently deletes a right one, which is the harder bug to
+#: notice and the reason `_ticker_period` was careful. Mirroring a Python
+#: classifier into SQL means mirroring what it matches ON, not just its regex.
+_SERIES = "split_part(fm.external_id, '-', 1)"
+
 # THE COHORT. Every alternative names a PERIOD the final score cannot answer,
 # and each is the POSIX-ARE form of one alternative in `_ticker_period`'s regex
-# (`app/tasks/backfill_winners.py`) — the same four grammars measured over all
-# 899 event-linked Kalshi series.
+# — the same four grammars measured over all 899 event-linked Kalshi series.
 #
 # `(^|[^H])` is the head-to-head carve-out. `KXEPLH2H` and `KXEPLH2HFINISH` are
 # whole-game markets that contain the characters "2H"; a repair that clears them
@@ -99,15 +123,16 @@ SANITY_FLOOR = 1500
 # or the start of the string". Case-insensitive `~*` makes `[^H]` exclude both
 # cases.
 #
-# The F-family is anchored to the dash that begins the ticker's date suffix,
-# because `F5` is otherwise a substring of college-football families
-# (`KXNCAAF3QSPREAD` is NCAAF's third quarter — in scope, but via `[1-4]Q`).
-_COHORT = """
+# The F-family is anchored to the END of the series (`$`, where the whole-ticker
+# form needed the dash that begins the date suffix), because `F5` is otherwise a
+# substring of college-football families (`KXNCAAF3QSPREAD` is NCAAF's third
+# quarter — in scope, but via `[1-4]Q`).
+_COHORT = f"""
     fo.resolution_source = 'game_score'
-    AND (   fm.external_id ~* '(^|[^H])[12]H[A-Z]*BTTS'
-         OR fm.external_id ~* '(^|[^H])2H'
-         OR fm.external_id ~* '[1-4]Q'
-         OR fm.external_id ~* 'F[357](SPREAD|TOTAL)?-' )
+    AND (   {_SERIES} ~* '(^|[^H])[12]H[A-Z]*BTTS'
+         OR {_SERIES} ~* '(^|[^H])2H'
+         OR {_SERIES} ~* '[1-4]Q'
+         OR {_SERIES} ~* 'F[357](SPREAD|TOTAL)?$' )
 """
 
 #: One row per in-scope outcome, with enough of the market to make the printed
@@ -129,9 +154,9 @@ SELECT fo.id                AS outcome_id,
 #: table that can be compared with the filed numbers rather than one total.
 _CENSUS_SQL = f"""
 SELECT CASE
-         WHEN fm.external_id ~* '(^|[^H])[12]H[A-Z]*BTTS' THEN 'half_btts'
-         WHEN fm.external_id ~* '(^|[^H])2H'              THEN 'second_half'
-         WHEN fm.external_id ~* '[1-4]Q'                  THEN 'quarter'
+         WHEN {_SERIES} ~* '(^|[^H])[12]H[A-Z]*BTTS' THEN 'half_btts'
+         WHEN {_SERIES} ~* '(^|[^H])2H'              THEN 'second_half'
+         WHEN {_SERIES} ~* '[1-4]Q'                  THEN 'quarter'
          ELSE 'mlb_window'
        END                                     AS cohort,
        count(*)                                AS outcomes,

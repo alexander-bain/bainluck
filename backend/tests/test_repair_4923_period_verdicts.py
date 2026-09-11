@@ -132,8 +132,23 @@ _SQL_ALTERNATIVES = re.findall(r"~\*\s+'([^']+)'", repair._COHORT)
 
 
 def _sql_says_in_cohort(ticker: str) -> bool:
+    """What the cohort says about a ticker, matched the way the SQL matches it.
+
+    #5023: the SQL applies its grammar to `split_part(external_id, '-', 1)`, so
+    this helper must too. It used to match the whole ticker — which is exactly
+    what the statement itself did, and both were wrong together, so every case
+    in `COHORT_CASES` passed while production lost 70 correct verdicts. A parity
+    helper that mirrors the bug is not a parity helper, so the assertion below
+    pins the statement to the split rather than trusting this function to
+    remember it.
+    """
     assert len(_SQL_ALTERNATIVES) == 4, _SQL_ALTERNATIVES
-    return any(re.search(a, ticker, re.I) for a in _SQL_ALTERNATIVES)
+    assert repair._SERIES in repair._COHORT, (
+        "the cohort no longer matches on the series family — the ticker suffix "
+        "is a date and two club codes and WILL produce period tokens (#5023)"
+    )
+    series = ticker.split("-", 1)[0]
+    return any(re.search(a, series, re.I) for a in _SQL_ALTERNATIVES)
 
 
 #: Real event-linked Kalshi series (production, 2026-09-10), each with what the
@@ -211,6 +226,73 @@ def test_the_head_to_head_carve_out_is_the_reason_the_cohort_is_a_regex():
     """
     assert _sql_says_in_cohort("KXEPLH2H-26SEP09ARSCHE") is False
     assert _sql_says_in_cohort("KXEPL2H-26SEP09ARSCHE") is True
+
+
+#: The twelve production tickers the 2026-09-11 01:37Z run cleared and should
+#: not have (#5023), verbatim. Every one is a WHOLE-GAME or halftime-derived
+#: market whose verdict was correct; every one was matched on its date suffix,
+#: where a day-of-month runs straight into a club code. The `COHORT_CASES`
+#: fixtures above all carry the benign suffix `-26SEP09CHIMIA`, which is why
+#: they were green throughout — a hostile fixture is the only kind that tests
+#: this.
+DATE_SUFFIX_FALSE_POSITIVES = [
+    ("KXMLSSPREAD-26APR22HOUSD", "22H: day 22 + HOUston"),
+    ("KXMLSTOTAL-26APR22HOUSD", "22H: day 22 + HOUston"),
+    ("KXMLSBTTS-26APR22HOUSD", "22H: day 22 + HOUston"),
+    ("KXMLSBTTS-26MAY02HOUCOL", "02H: day 02 + HOUston"),
+    ("KXNCAAMBGAME-26FEB22HCBUCK", "22H: day 22 + Holy Cross"),
+    ("KXNCAAMBSPREAD-26FEB22HCBUCK", "22H: day 22 + Holy Cross"),
+    ("KXNCAAMBTOTAL-26FEB22HCBUCK", "22H: day 22 + Holy Cross"),
+    ("KXNCAAMBGAME-26MAR01QUINCAN", "01Q: day 01 + QUINnipiac"),
+    ("KXNCAAMBSPREAD-26MAR01QUINCAN", "01Q: day 01 + QUINnipiac"),
+    ("KXNCAAMBTOTAL-26MAR01QUINCAN", "01Q: day 01 + QUINnipiac"),
+    # 1H spread/winner: real period markets, but graded from the real halftime
+    # score, so they are out of the cohort on their own terms — and this suffix
+    # dragged them in regardless of that.
+    ("KXNBA1HSPREAD-26MAR02HOUWAS", "02H: day 02 + HOUston"),
+    ("KXNBA1HWINNER-26MAR02HOUWAS", "02H: day 02 + HOUston"),
+]
+
+
+@pytest.mark.parametrize("ticker,why", DATE_SUFFIX_FALSE_POSITIVES)
+def test_a_date_suffix_never_puts_a_market_in_the_cohort(ticker, why):
+    """The suffix is a date and two club codes. It is not a period. (#5023)"""
+    assert _sql_says_in_cohort(ticker) is False, (
+        f"{ticker} is back in the cohort via its suffix ({why}) — clearing it "
+        f"deletes a correct verdict, silently"
+    )
+
+
+@pytest.mark.parametrize("ticker,why", DATE_SUFFIX_FALSE_POSITIVES)
+def test_the_producer_always_read_these_tickers_correctly(ticker, why):
+    """`_ticker_period` splits on the first dash and always did.
+
+    The resolver shipped in #4923 never had this bug — only the repair's SQL
+    mirror of it did. If this ever fails, the producer has acquired the bug the
+    repair had, and 6,116 correct first-half grades are the population at risk.
+    """
+    period = bw._ticker_period(ticker)
+    if "1H" in ticker.split("-", 1)[0].upper():
+        assert period == "1h"          # a real period, refused for a real reason
+    else:
+        assert period is None, (
+            f"{ticker} is a whole-game market and the producer now calls it a "
+            f"period ({period}) — it would stop grading it at all"
+        )
+
+
+def test_the_undos_false_positive_scope_is_the_negation_of_the_cohort():
+    """`--outside-declared-cohort` must ask the repair's own question. (#5023)
+
+    Two files, one grammar. If the repair widens its cohort and the restore's
+    scope does not follow, the undo silently stops covering rows the repair
+    silently started clearing.
+    """
+    assert restore._DECLARED_COHORT.count("~*") == len(_SQL_ALTERNATIVES)
+    for alternative in _SQL_ALTERNATIVES:
+        assert alternative in restore._DECLARED_COHORT, alternative
+    assert restore._SERIES == repair._SERIES
+    assert restore._OUTSIDE_SCOPE.startswith("WHERE NOT ")
 
 
 # ---------------------------------------------------------------------------
