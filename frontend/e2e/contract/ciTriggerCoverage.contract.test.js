@@ -186,6 +186,111 @@ describe("CI trap #2: every pull request gets a CI run, whatever its base", () =
   });
 });
 
+/** The `deploy:` job's body, comments stripped, as one string. */
+function deployJob(text = readWorkflow()) {
+  const lines = codeOf(text).split("\n");
+  const start = lines.findIndex((l) => l === "  deploy:");
+  assert.notEqual(start, -1, "ci.yml has no top-level job named `deploy`.");
+  const rest = lines.slice(start + 1);
+  let end = rest.findIndex((l) => /^ {2}\S/.test(l));
+  if (end === -1) end = rest.length;
+  return rest.slice(0, end).join("\n");
+}
+
+/**
+ * THRU-F — the release queue may DELAY a deploy; it may never KILL one.
+ *
+ * ## The two cancellations, which are not the same act
+ *
+ * A concurrency group can cancel a deploy in two states, and they are worlds
+ * apart:
+ *
+ *   - **PENDING** — it holds the queue slot and has not started. Cancelling it
+ *     costs nothing and is the whole reason the group is here: it coalesces a
+ *     burst of merges down to one release of the newest sha instead of one
+ *     release per merge.
+ *   - **IN PROGRESS** — it is inside `git push heroku`. That push is not a
+ *     handshake. Heroku streams the entire build and release back over it, so
+ *     the job stays "in progress" for minutes *while production is changing*.
+ *
+ * `cancel-in-progress: true` did not distinguish them. Killing the second kind
+ * does not stop the deploy — once the ref moves, Heroku builds and releases
+ * server-side regardless — it removes only our ability to WATCH it. The release
+ * lands, the run reads `cancelled`, and the never-backwards guard's entire
+ * reconciliation path (re-read what is live, retry a proven fast-forward, fail
+ * closed on unprovable ancestry) never executes, because there is no job left
+ * to execute it. The outcome is a production change with no adjudicator.
+ *
+ * ## Why turning it off does not cost throughput
+ *
+ * `cancel-in-progress` does not govern the pending case at all. A concurrency
+ * group holds exactly ONE pending job, and a newly queued job always cancels
+ * the previously pending one. So the coalescing survives the flag being false:
+ * ten merges still cost at most two Heroku builds — the one already running,
+ * then the newest sha that queued behind it.
+ *
+ * ## Why the assertion is shaped this way
+ *
+ * The class is "a release must not be cancelled mid-flight", so the guard
+ * forbids the value `true` rather than demanding the literal `false`. Deleting
+ * the key is also safe (false is the default) and must not fail this test —
+ * a guard that reddens on a *safe* config gets deleted, not obeyed.
+ *
+ * The group itself is asserted separately and for the opposite reason: dropping
+ * `group: heroku-deploy`, or making it per-run with a `${{ }}` expression, would
+ * remove the serialization and let two `git push heroku` calls race — which is
+ * the failure the group exists to prevent and is not what this change loosens.
+ */
+describe("THRU-F: the deploy queue delays releases, it never kills one", () => {
+  it("deploy still serializes on a constant `heroku-deploy` concurrency group", () => {
+    const deploy = deployJob();
+
+    assert.match(
+      deploy,
+      /^\s+concurrency:$/m,
+      "the deploy job no longer declares a `concurrency:` block. Without one, two merges " +
+        "whose CI finishes together both run `git push heroku` at once and race over which " +
+        "release lands last."
+    );
+
+    const group = deploy.split("\n").find((l) => /^\s+group:/.test(l));
+    assert.notEqual(group, undefined, "deploy's `concurrency:` block has no `group:` key.");
+    assert.equal(
+      group.trim(),
+      "group: heroku-deploy",
+      `deploy's concurrency group is "${group.trim()}", not "group: heroku-deploy".`
+    );
+    assert.doesNotMatch(
+      group,
+      /\$\{\{/,
+      `deploy's concurrency group is templated ("${group.trim()}"). A group computed from the ` +
+        "run, sha or ref puts every deploy in a group of its own, which is the same as having " +
+        "no group: releases stop being serialized and can push to Heroku concurrently."
+    );
+  });
+
+  it("deploy is never cancelled in progress, because in progress means mid-release", () => {
+    const deploy = deployJob();
+    const flag = deploy.split("\n").find((l) => /^\s+cancel-in-progress:/.test(l));
+
+    // Absent is fine — false is the GitHub default. Only `true` is the defect.
+    if (flag === undefined) return;
+
+    assert.equal(
+      flag.trim(),
+      "cancel-in-progress: false",
+      `deploy sets "${flag.trim()}". A deploy job is "in progress" for the whole of ` +
+        "`git push heroku`, and Heroku streams the build and release back over that push — so " +
+        "cancelling it does not stop the release, it only throws away the job that was " +
+        "supposed to verify and reconcile it. Production changes, the run reads `cancelled`, " +
+        "and the never-backwards guard's rejection/ancestry/fail-closed path never runs.\n\n" +
+        "This does not need to be true to coalesce a merge burst: a concurrency group holds " +
+        "one pending job and a newly queued job already cancels the previously pending one, " +
+        "whatever this flag says. Delete the key or set it to false; do not set it to true."
+    );
+  });
+});
+
 /**
  * The SAME trap, in the other workflow that carried it (queue 367).
  *

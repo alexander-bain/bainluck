@@ -1961,9 +1961,42 @@ jobs:
     # stay able to SEE the guard, not merely have the guard be present.
     if: github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.release-required.outputs.required != 'false'
     runs-on: ubuntu-latest
+    # THRU-F: the group SERIALIZES releases; it must not KILL one mid-release.
+    #
+    # Two different things can be cancelled here, and only one of them is safe:
+    #
+    #   1. A PENDING deploy — a run that has the group's queue slot but has not
+    #      started. Cancelling it is free and is what keeps a merge burst from
+    #      turning into one Heroku build per merge.
+    #   2. An IN-PROGRESS deploy — a run inside `git push heroku`. That push is
+    #      not a handshake: Heroku streams the whole build and release back over
+    #      it, so the job sits "in progress" for MINUTES while production is
+    #      actually being changed.
+    #
+    # `cancel-in-progress: true` cancelled BOTH. Killing (2) does not stop the
+    # Heroku side — once the ref moves, the build and release run to completion
+    # server-side — it only removes our half of the conversation. The release
+    # still lands, the run reads `cancelled`, and every line of reconciliation
+    # below (the rejection branch, the ancestry re-read, the fail-closed refusal)
+    # is skipped, because there is no longer a job to run it. A deploy we cannot
+    # observe or adjudicate is worse than a deploy that waits.
+    #
+    # Setting it to `false` keeps (1) and drops (2): cancellation of a PENDING
+    # job is not governed by this flag at all. A concurrency group holds exactly
+    # one pending job, and a newly queued one always cancels the previously
+    # pending one — that coalescing is what we wanted from the flag, and we keep
+    # it for free. So a burst of ten merges still costs at most two Heroku
+    # builds (the one already running, then the newest queued sha), not ten.
+    #
+    # Release SELECTION is then made once, explicitly, by the never-backwards
+    # guard in the step below — which reads what is actually LIVE and skips when
+    # something newer is already deployed. That is one selection rule, applied
+    # when the slot is held, instead of two racing ones. `cancel-in-progress`
+    # was the second, blind selector: it chose by arrival time, could not see
+    # Heroku at all, and its only lever was to kill.
     concurrency:
       group: heroku-deploy
-      cancel-in-progress: true
+      cancel-in-progress: false
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
     steps:
@@ -1975,10 +2008,13 @@ jobs:
         run: |
           # Never-backwards guard (L2-57, reference point repaired for #3171).
           #
-          # The hazard is real: the deploy-job concurrency group only CANCELS an
-          # IN-PROGRESS deploy, so an OLDER commit's re-run whose deploy starts
-          # AFTER a newer commit already released is never cancelled and would
-          # rewind production (bitten twice: v3320=older landed after v3319=newer).
+          # The hazard is real: the concurrency group above only ever cancels a
+          # deploy that is still QUEUED, so an OLDER commit's re-run whose deploy
+          # starts AFTER a newer commit already released is never cancelled and
+          # would rewind production (bitten twice: v3320=older landed after
+          # v3319=newer). Serialization orders the releases; it does not decide
+          # which ones SHOULD release. That decision is this guard's, and this
+          # guard's alone — see the THRU-F note on the concurrency block.
           #
           # The original guard answered it by asking "am I the origin/master
           # tip?" — the wrong reference, because the tip is not what is live.
