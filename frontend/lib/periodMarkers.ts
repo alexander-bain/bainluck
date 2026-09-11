@@ -68,19 +68,56 @@ function keepLatestSession<T extends { timestamp: string }>(sorted: T[]): T[] {
  * BASEBALL IS DELIBERATELY ABSENT. A bare inning number cannot be completed
  * honestly — `T3` and `B3` are different moments and the digit does not say which
  * — so baseball keeps today's bare digit rather than gaining a fabricated half.
+ *
+ * #4955 — `regulation` IS NOT DECORATION; IT IS WHAT STOPS THE TABLE LYING.
+ * A sport's period numbering runs past regulation into overtime, and completing
+ * those with the regulation unit invents a period that does not exist: there is
+ * no `Q5` in football, no `P4` in hockey, no `3H` in soccer. Past regulation we
+ * return null and the caller's `?? s` leaves the bare digit — vague but true,
+ * which is the same trade the baseball carve-out above makes. Unbounded, this
+ * table turned an ambiguous label into a false one, the opposite direction from
+ * the rest of #4888.
+ *
+ * ORDER-SENSITIVE, and the first matching row WINS OUTRIGHT — a row that matches
+ * but is out of range returns null rather than falling through to a later row.
+ * `basketball_ncaab` (men's college, two 20-minute halves) is therefore tested
+ * before the `basketball_` row that gives everyone else quarters, and an NCAAB
+ * `3` reads bare rather than picking up `Q3` from the row below it.
+ *
+ * The patterns are ANCHORED PREFIXES, not substrings, and that is load-bearing
+ * here: `/^basketball_ncaab/` does not match `basketball_wncaab`, which plays
+ * quarters and must keep them. (`sport_keys.py` carries both keys.)
+ *
+ * Table and bound mirror the Swift twin, `ios/…/Utilities/PeriodLabel.swift`
+ * `barePeriodUnit` / `barePeriod` (#4888, PR #4925), so the two platforms read a
+ * bare digit the same way. One known divergence past regulation, flagged by
+ * native/107 and tracked under #1834, not introduced here: iOS falls through to
+ * its ordinal (`5` → `5th`) where web leaves the bare digit (`5`). Web cannot
+ * follow without contradicting its own plain-ordinal branch below, which
+ * normalizes `"3rd"` → `"3"`.
  */
-const BARE_PERIOD_UNIT: Array<[RegExp, (n: string) => string]> = [
-  [/^americanfootball_/i, (n) => `Q${n}`],
-  [/^basketball_/i, (n) => `Q${n}`],
-  [/^icehockey_/i, (n) => `P${n}`],
-  [/^soccer_/i, (n) => `${n}H`],
+const BARE_PERIOD_UNIT: Array<{
+  prefix: RegExp;
+  regulation: number;
+  format: (n: string) => string;
+}> = [
+  { prefix: /^americanfootball_/i, regulation: 4, format: (n) => `Q${n}` },
+  { prefix: /^icehockey_/i, regulation: 3, format: (n) => `P${n}` },
+  { prefix: /^soccer_/i, regulation: 2, format: (n) => `${n}H` },
+  { prefix: /^basketball_ncaab/i, regulation: 2, format: (n) => `${n}H` },
+  { prefix: /^basketball_/i, regulation: 4, format: (n) => `Q${n}` },
 ];
 
 /** The sport-aware completion of a bare period number, or null to leave it be. */
 function labelBarePeriod(n: string, sport?: string | null): string | null {
   if (!sport) return null;
-  for (const [prefix, format] of BARE_PERIOD_UNIT) {
-    if (prefix.test(sport)) return format(n);
+  // `n` reaches here only from a `^\d+$` match, so this cannot be NaN — but it
+  // CAN be 0, and `Q0` is as fabricated a period as `Q5`.
+  const num = Number(n);
+  if (!(num > 0)) return null;
+  for (const { prefix, regulation, format } of BARE_PERIOD_UNIT) {
+    if (!prefix.test(sport)) continue;
+    return num <= regulation ? format(n) : null;
   }
   return null;
 }
