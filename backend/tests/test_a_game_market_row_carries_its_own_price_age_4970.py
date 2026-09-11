@@ -462,20 +462,37 @@ class TestABlendedPriceCarriesItsOldestContributorsClock:
             f"the blend claims a clock its stalest half cannot support ({label})"
         )
 
-    def test_the_per_source_clocks_survive_the_merge(self):
-        """Preserved, not just collapsed: which side is stale is recoverable."""
+    @pytest.mark.parametrize(
+        "kalshi_seen,poly_seen,label",
+        [
+            (THIRTY_HOURS, EIGHT_MINUTES, "stale Kalshi is the representative"),
+            (EIGHT_MINUTES, THIRTY_HOURS, "fresh Kalshi is the representative"),
+        ],
+    )
+    def test_the_per_source_clocks_survive_the_merge(self, kalshi_seen, poly_seen, label):
+        """Preserved, not just collapsed: which side is stale is recoverable.
+
+        🔴 PARAMETRIZED BECAUSE THE UNPARAMETRIZED VERSION WAS VACUOUS. This test
+        used to pin only the first row, where the representative is ALSO the
+        stalest contributor — so writing the blended stamp onto `best` before
+        reading the contributors back overwrote Kalshi's clock with a value
+        identical to it, and the map came out right by accident. CERT-2647
+        blocked on the second row: with the ages swapped, both venues reported
+        30 h and the fresh side vanished. Same lesson as the blend test above,
+        one field deeper.
+        """
         markets, outcomes = _cross_source_prop(kalshi_prob=0.60, poly_prob=0.40)
         payload = _payload(
             markets=markets,
             outcomes=outcomes,
-            observations={201: THIRTY_HOURS, 202: EIGHT_MINUTES},
+            observations={201: kalshi_seen, 202: poly_seen},
         )
 
         by_source = payload["player_props"][0]["observed_at_by_source"]
         assert by_source == {
-            "kalshi": THIRTY_HOURS.isoformat(),
-            "polymarket": EIGHT_MINUTES.isoformat(),
-        }
+            "kalshi": kalshi_seen.isoformat(),
+            "polymarket": poly_seen.isoformat(),
+        }, f"a contributor's own clock did not survive the merge ({label})"
 
     def test_one_unobserved_contributor_makes_the_blend_dark(self):
         """Absent is not recent (gotcha #53).
@@ -561,3 +578,140 @@ class TestACappedRungCarriesTheClockOfThePriceItNowShows:
         assert high["over_probability"] == 0.55, "this curve should not be capped"
         assert high["observed_at"] == fresh.isoformat()
         assert "observed_at_basis" not in high
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔴 #4970 / CERT-2647 — THE SECOND BLOCK: A TRANSFORM THAT READS ITS OWN OUTPUT
+#
+# The first repair got both PRICES' clocks right and then lost the provenance
+# underneath them, in two places that are the same mistake wearing two faces:
+#
+#   THE BLEND wrote the merged stamp onto `best` — which IS one of `entries`,
+#   the same dict object — and only then walked `entries` to build the
+#   per-source map. The representative's own clock was already gone, so a fresh
+#   Kalshi price beside a stale Polymarket one reported BOTH venues as stale.
+#
+#   THE CAP took the donor's price and the donor's stamp, and kept the capped
+#   row's own `observed_at_by_source` — a breakdown of the price it had just
+#   discarded. One row, two contradictory observations, and the more specific
+#   one blamed the wrong venue.
+#
+# Both are "read every input before writing any of them". Neither is visible
+# unless the fixture makes the representative the FRESH side, which is why the
+# order is parametrized here and in the merge test above.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _blended_donor_and_capped_rung(*, kalshi_prob, poly_prob, high_prob):
+    """A cross-source blend at the low rung, single-source at the high rung.
+
+    Step 9b merges the low rung (so it is the only kind of row that HAS an
+    `observed_at_by_source` to donate); step 9c then caps the high rung to it.
+    That ordering is what makes donor provenance reachable at all.
+    """
+    kalshi_low = _market(id=401, name="Celtics at Knicks: Jayson Tatum Points")
+    kalshi_low.source = "kalshi"
+    poly_low = _market(id=402, name="Celtics at Knicks: Jayson Tatum Points")
+    poly_low.source = "polymarket"
+    kalshi_high = _market(id=403, name="Celtics at Knicks: Jayson Tatum Points")
+    kalshi_high.source = "kalshi"
+    outcomes = [
+        _outcome(id=401, market_id=401, name="Jayson Tatum: 22+", prob=kalshi_prob),
+        _outcome(id=402, market_id=402, name="Jayson Tatum: 22+", prob=poly_prob),
+        _outcome(id=403, market_id=403, name="Jayson Tatum: 26+", prob=high_prob),
+    ]
+    return [kalshi_low, poly_low, kalshi_high], outcomes
+
+
+class TestATransformNeverReadsItsOwnOutput:
+    """The required regression for CERT-2647, both halves."""
+
+    @pytest.mark.parametrize(
+        "kalshi_seen,poly_seen,label",
+        [
+            (THIRTY_HOURS, EIGHT_MINUTES, "stale Kalshi is the representative"),
+            (EIGHT_MINUTES, THIRTY_HOURS, "fresh Kalshi is the representative"),
+        ],
+    )
+    def test_per_source_clocks_survive_in_both_representative_age_orders_and_caps_copy_donor_provenance(
+        self, kalshi_seen, poly_seen, label
+    ):
+        """🔴 The cert's named regression.
+
+        One payload exercises both halves because they are one pipeline: the
+        merged 22+ rung is the donor, and the 26+ rung is capped to it. The
+        parametrized order is load-bearing — with the stale venue as the
+        representative the BROKEN code returns the right map by accident, so a
+        single-order guard would have passed on it half the time.
+        """
+        markets, outcomes = _blended_donor_and_capped_rung(
+            kalshi_prob=0.60, poly_prob=0.40, high_prob=0.70
+        )
+        fresh_high = NOW - timedelta(minutes=5)
+        payload = _payload(
+            markets=markets,
+            outcomes=outcomes,
+            observations={401: kalshi_seen, 402: poly_seen, 403: fresh_high},
+        )
+
+        rungs = {p["threshold"]: p for p in payload["player_props"]}
+        assert set(rungs) == {22.0, 26.0}, f"fixture built {sorted(rungs)}"
+
+        # ── Half one: the blend keeps every contributor's OWN clock.
+        donor = rungs[22.0]
+        assert donor["source_count"] == 2, "the two venues did not merge"
+        assert donor["over_probability"] == 0.50, "fixture is not exercising the blend"
+        assert donor["observed_at_by_source"] == {
+            "kalshi": kalshi_seen.isoformat(),
+            "polymarket": poly_seen.isoformat(),
+        }, f"the representative's own clock was overwritten before it was read ({label})"
+
+        # ── Half two: the capped rung's provenance is the DONOR's, not the
+        # discarded price's. `observed_at` and `observed_at_by_source` must
+        # describe one and the same observation.
+        capped = rungs[26.0]
+        assert capped["over_probability"] == 0.50, "the cap did not fire"
+        assert capped["observed_at_basis"] == "capped_to_sibling"
+        assert capped["observed_at"] == donor["observed_at"]
+        assert capped["observed_at_by_source"] == donor["observed_at_by_source"], (
+            f"the capped rung kept the source map of the price it discarded ({label})"
+        )
+        assert fresh_high.isoformat() not in capped["observed_at_by_source"].values(), (
+            "the discarded price's clock is still reachable on the served row"
+        )
+
+    def test_a_cap_from_a_single_source_donor_clears_a_stale_source_map(self):
+        """🔴 The over-application's mirror, and the case that is easy to miss.
+
+        When the donor has no breakdown of its own, "copy the donor's map" is a
+        no-op — and a no-op LEAVES the capped row's own map standing over a
+        price it no longer shows. Absent must beat wrong: the row goes down to
+        its aggregate stamp rather than keeping a specific claim that is false.
+        """
+        markets, outcomes = _blended_donor_and_capped_rung(
+            kalshi_prob=0.50, poly_prob=0.50, high_prob=0.70
+        )
+        # Make the HIGH rung the merged one and the LOW rung single-source, by
+        # moving the Polymarket quote onto the 26+ line.
+        markets[1].id = 402
+        outcomes[1].market_id = 402
+        outcomes[1].name = "Jayson Tatum: 26+"
+        fresh_high = NOW - timedelta(minutes=5)
+        payload = _payload(
+            markets=markets,
+            outcomes=outcomes,
+            observations={401: THIRTY_HOURS, 402: EIGHT_MINUTES, 403: fresh_high},
+        )
+
+        rungs = {p["threshold"]: p for p in payload["player_props"]}
+        capped = rungs.get(26.0)
+        assert capped is not None, f"fixture built {sorted(rungs)}"
+        # Asserted, never skipped-over: a conditional skip here would turn this
+        # guard off silently the day the fixture stops capping, which is exactly
+        # when it is needed.
+        assert capped["observed_at_basis"] == "capped_to_sibling", "the cap did not fire"
+        donor = rungs[22.0]
+        assert "observed_at_by_source" not in donor, "fixture donor is not single-source"
+        assert "observed_at_by_source" not in capped, (
+            "a single-source donor left the capped rung's discarded source map standing"
+        )

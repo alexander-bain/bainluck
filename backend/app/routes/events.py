@@ -13414,6 +13414,25 @@ async def _build_game_markets(
                 # clock of the price they all actually come from.
                 donor = result[-1]
                 capped["observed_at"] = donor.get("observed_at")
+                # 🔴 #4970 / CERT-2647: THE PER-SOURCE MAP IS PART OF THE CLOCK,
+                # SO IT MOVES WITH IT.
+                #
+                # `{**item}` copied this rung's own `observed_at_by_source`,
+                # which describes the price we just THREW AWAY. Carrying the
+                # donor's aggregate stamp while keeping the discarded price's
+                # venue breakdown leaves one row asserting two different
+                # observations — and the breakdown is the more specific of the
+                # two, so a reader who opens it is told the wrong venue is
+                # responsible. A donor with no breakdown of its own (the common
+                # single-source case) must CLEAR this rung's, never leave it
+                # standing: a stale map is a worse claim than no map (gotcha
+                # #53 — absent is not the same as recent, and here it is also
+                # not the same as "unchanged").
+                donor_by_source = donor.get("observed_at_by_source")
+                if donor_by_source is not None:
+                    capped["observed_at_by_source"] = donor_by_source
+                else:
+                    capped.pop("observed_at_by_source", None)
                 # Marked, not just carried: without this a capped rung is
                 # indistinguishable from one that was independently observed at
                 # the donor's time, and the two are not the same claim.
@@ -13623,6 +13642,20 @@ async def _build_game_markets(
                 best["all_sources"] = list({e.get("source") for e in entries})
                 best["source_count"] = len(entries)
 
+                # 🔴 #4970 / CERT-2647: READ EVERY CONTRIBUTOR'S CLOCK BEFORE
+                # WRITING ANY OF THEM. `best` IS one of `entries` — the same
+                # dict object, not a copy — so the moment the blended stamp is
+                # assigned below, the representative's own clock is GONE from
+                # the input this pass still has to read. The first repair wrote
+                # first and read after, and the per-source map it built then
+                # reported the blend's oldest stamp for BOTH venues: a fresh
+                # Kalshi price alongside a stale Polymarket one came back as two
+                # stale clocks, which is the precise claim the map exists to
+                # make recoverable. Snapshot, then transform.
+                contributor_clocks = [
+                    (e.get("source"), e.get("observed_at")) for e in entries
+                ]
+
                 # 🔴 #4970 / CERT-2640: THE PRICE IS NOW A BLEND, SO THE CLOCK
                 # MUST BE THE BLEND'S — NOT THE REPRESENTATIVE'S.
                 #
@@ -13638,15 +13671,14 @@ async def _build_game_markets(
                 # make. The stamp follows the oldest contributor; see
                 # `blended_observed_at` for why one unknown clock yields None.
                 best["observed_at"] = blended_observed_at(
-                    [e.get("observed_at") for e in entries]
+                    [seen for _src, seen in contributor_clocks]
                 )
                 # The per-source clocks survive the merge, so a reader (and any
                 # later grader) can see WHICH side is the stale one instead of
                 # only that the blend is stale. Oldest wins within a source too:
                 # the dedup key can bind two markets from one venue.
                 by_source: dict[str, str] = {}
-                for e in entries:
-                    src, seen = e.get("source"), e.get("observed_at")
+                for src, seen in contributor_clocks:
                     if not src or seen is None:
                         continue
                     if src not in by_source:
