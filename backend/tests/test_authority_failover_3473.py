@@ -2230,24 +2230,46 @@ async def test_a_sport_the_gate_refuses_gets_no_schedule_write_and_is_not_counte
 ):
     """The pairing that stops the test above passing against "serve everything".
 
-    Baseball is ESPN-dark in the same pass and `flip_permitted` refuses it — no
-    governing identity number (D63). Three sports are served, four went dark,
-    and the single live write is still one call covering the three that were.
+    A fourth sport is ESPN-dark in the same pass and `flip_permitted` refuses it.
+    Three sports are served, four went dark, and the single live write is still
+    one call covering the three that were.
+
+    THE CONTROL SPORT CHANGED ON #4436, and the reason is worth keeping. It was
+    `baseball_mlb`, refused on the D63 governing-number branch — and D113 (Alex,
+    2026-09-10) ruled MLB past that branch, so the control started being SERVED
+    and this test went red for the correct behaviour. The replacement is
+    `cricket_ipl`, which has no shadow stamper at all: there is no id join to
+    fail over onto, which is a refusal no ruling about proof days can retire.
+
+    The lesson, since this is the second time this control has had to move: a
+    negative control borrowed from the live config is only as durable as the
+    config's worst-case ruling. Pick the branch that cannot be ruled away — "we
+    have nothing to serve from" — not the one that merely happens to refuse
+    today. That is also why the assertion below names the refusal REASON: a
+    control that silently starts refusing for a different reason is a test that
+    has stopped measuring what it says.
     """
     from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
 
     calls = _three_dark_sports_wiring(monkeypatch)
-    assert flip_permitted("baseball_mlb", SEVEN_MEETS_DAYS)[0] is False, (
-        "the control is broken: baseball now opens on seven days, so this test "
-        "is no longer about a refused sport"
+    refused = "cricket_ipl"
+    permitted, why = flip_permitted(refused, SEVEN_MEETS_DAYS)
+    assert permitted is False, (
+        f"the control is broken: {refused} now opens on seven days, so this "
+        f"test is no longer about a refused sport. {why}"
+    )
+    assert "no shadow stamper" in why, (
+        f"{refused} is still refused, but no longer for the structural reason "
+        f"this control was chosen for — re-pick the control, do not retune the "
+        f"assertion: {why}"
     )
 
     stats = {"errors": []}
     await _act_on_failovers(
-        await _decide_failovers({}, THREE_DARK | {"baseball_mlb"}, stats), stats
+        await _decide_failovers({}, THREE_DARK | {refused}, stats), stats
     )
 
-    assert "schedule:baseball_mlb" not in calls, calls
+    assert f"schedule:{refused}" not in calls, calls
     assert calls.count("live") == 1, calls
     assert stats["failover_serving"] == 3
     assert stats["failover_live_sports_covered"] == 3, (
