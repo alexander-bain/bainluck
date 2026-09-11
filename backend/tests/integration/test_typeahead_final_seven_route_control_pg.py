@@ -44,6 +44,23 @@ which is worse than no assertion. The team card's position is already pinned by
 `test_typeahead_a_nickname_leads_with_the_game_4986.py` against the real scorer.
 What that file cannot do is run the pool, and that is all this one adds.
 
+## 🔴 IT NEEDS BOTH SHIPS IN THE TREE, and its first run proved it
+
+This file asserts #4914 and #4986 through one route call, so it is green only on
+a tree carrying both. On this branch's first push it ran on a base that predates
+the #4986 merge (`ae877d3b`) and reported, correctly:
+
+    ['SF 49ers vs LA Rams: 2nd Quarter Winner',
+     'SF 49ers vs LA Rams: 1st Half Total',
+     'SF 49ers vs LA Rams: 1st Half Spread',
+     'SF 49ers vs LA Rams: Team Total',
+     'San Francisco 49ers at Los Angeles Rams']    <- the game, LAST
+
+That is the #4986 screenshot, reproduced from a live pool by a guard whose whole
+purpose is to notice it — the four other assertions passed, so the failure was
+the specific one it was built to catch. **A red here is not automatically a
+tooling problem: read the order it prints before touching the file.**
+
 ## Wiring
 
 Opt-in on ``SEARCH_TEST_DATABASE_URL``; CI's ``search-recall`` job provides a

@@ -4232,14 +4232,33 @@ def _origin_for_log(request: Optional[Request]) -> str:
     that stamps, so `'user'` here is an assertion the system is making, not an
     absence being read as one. `_request_is_automation`'s own direction is the
     same and for the same reason: it fails toward logging.
+
+    🔴 THE LOCAL IS `header_value` AND NOT `raw`, WHICH IS NOT A STYLE CHOICE —
+    AND THIS PARAGRAPH DOES NOT SPELL THE LINE IT IS ABOUT, FOR THE SAME REASON.
+    `scripts/evals/search_origin_channel_mutations.py`'s M9 anchors on the header
+    read inside `_request_is_automation`, as a verbatim source line beginning
+    `raw =`. Any second copy of that line ANYWHERE in this file — a real read, or
+    a docstring quoting it to explain itself — makes the anchor non-unique, and
+    the harness then refuses M9 as HARNESS-FAIL: the mutant that proves the
+    origin channel is read under the right name silently stops running. CI's
+    residue scan caught the duplicate read on this branch's first push and the
+    quotation in this very comment on its second.
+
+    The de-duplicating refactor is real and is not available cheaply: one shared
+    reader, or `_request_is_automation` expressed in terms of this function
+    (`automation == _origin_for_log(request) != _ORIGIN_USER`, provably
+    equivalent including the exception path). Either removes the needle from the
+    function M9 names, so it needs that harness re-targeted in the same change,
+    and that file is latency's. A different local name costs nothing and keeps
+    both guards live.
     """
-    raw = None
+    header_value = None
     if request is not None:
         try:
-            raw = request.headers.get(_ORIGIN_HEADER)
+            header_value = request.headers.get(_ORIGIN_HEADER)
         except Exception:  # noqa: BLE001 — a header read never breaks search
-            raw = None
-    value = (raw or "").strip().lower() or _ORIGIN_USER
+            header_value = None
+    value = (header_value or "").strip().lower() or _ORIGIN_USER
     return value[:64]
 
 
