@@ -1034,6 +1034,22 @@ async def _process_event_batch(
                     poly_metadata["polymarket_event_id"] = event.id
                 if event.title:
                     poly_metadata["event_title"] = event.title
+                # #4965: THE VENUE'S OWN FIXTURE INSTANT, kept because
+                # `commence_time` above cannot carry it — that column is fed by
+                # Gamma's `startDate`, which is the LISTING stamp (the three
+                # Rangers/Mariners fixtures all read 13:00Z on the day each was
+                # listed). Without this the matcher has no signal that tells one
+                # date of a series from the next, and it linked three of them to
+                # one event row. Stored rather than written over `commence_time`
+                # because that column has many other readers; the linkage guard
+                # is the one that needs the truth, so the truth goes where only
+                # it looks. No backfill task: `market_metadata` is rewritten on
+                # the on-conflict path below, so every existing row picks this up
+                # on the next hourly poll.
+                if event.game_start_time:
+                    poly_metadata["venue_game_start"] = (
+                        event.game_start_time.isoformat()
+                    )
                 if event.neg_risk:
                     poly_metadata["neg_risk"] = True
                 if len(event.markets) > 1:

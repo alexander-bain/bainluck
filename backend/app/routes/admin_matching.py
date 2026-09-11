@@ -2231,6 +2231,7 @@ async def prediction_market_force_link(
         _find_matching_event,
         _check_duplicate_kalshi_linkage_reason,
         _REFUSAL_EVENT_DATE,
+        _REFUSAL_VENUE_FIXTURE,
     )
     from app.utils.match_receipts import (
         PHASE_ADMIN_REPAIR,
@@ -2414,9 +2415,20 @@ async def prediction_market_force_link(
         # there first — so the person who just ran the tool by hand was told the
         # link was refused and left to guess which. One name bound once, read by
         # the response and the receipt, and they cannot drift.
+        #
+        # #4965 adds a THIRD arm, ``_REFUSAL_VENUE_FIXTURE`` — a Polymarket
+        # market whose venue fixture instant is a different game from the
+        # event's. It is a DATE conflict in exactly the sense this enum names
+        # ("this market's own referent disagrees with the event we picked"), not
+        # a sibling already holding the row, so it maps with the date arm. The
+        # ``else`` is left as the sibling case rather than widened, because that
+        # catch-all is what filed the first two arms under one reason; the
+        # sentinel `test_the_guard_arms_are_still_only_two` in
+        # test_force_link_receipt_3755.py exists to fail the next time an arm is
+        # added without a decision being made here.
         duplicate_reason = (
             REJECT_EVENT_DATE_CONFLICT
-            if refusal == _REFUSAL_EVENT_DATE
+            if refusal in (_REFUSAL_EVENT_DATE, _REFUSAL_VENUE_FIXTURE)
             else REJECT_ALREADY_LINKED_ELSEWHERE
         )
         return {

@@ -619,6 +619,34 @@ except Exception:  # pragma: no cover - no tzdata on the platform
 # three call sites).
 _REFUSAL_EVENT_DATE = "event_date"      # (a) #1811: ticker date vs the event
 _REFUSAL_SIBLING_DATE = "sibling_date"  # (b) pre-existing: vs a sibling ticker
+_REFUSAL_VENUE_FIXTURE = "venue_fixture"  # (c) #4965: PM fixture vs the event
+
+#: #4965 — how far a Polymarket market's own fixture instant may sit from the
+#: candidate event's ``commence_time`` before the two cannot be the same game.
+#:
+#: The same ±3h the Kalshi HHMM arm uses, and for a stronger reason: this is not
+#: a wall clock needing a timezone, it is the venue's own UTC instant
+#: (``startTime`` / ``gameStartTime``), and measured against production it
+#: matches our schedule sources EXACTLY — event 15308638 commence
+#: 2026-09-10T20:10:00Z against Gamma 964211 ``startTime`` 2026-09-10T20:10:00Z,
+#: event 15308640 17:05:00Z against 964210 17:05:00Z. The tolerance is therefore
+#: slack for a rescheduled first pitch, not for a unit mismatch.
+#:
+#: It has to be well under 24h and is: consecutive fixtures in a series are a
+#: day apart, which is what the guard must tell apart. #4965's own specimens sit
+#: 24h and 48h out.
+_PM_FIXTURE_MAX_DIFF_HOURS = 3
+
+#: Which funnel counter a refusal increments. A mapping rather than the
+#: two-armed conditional it replaces, because that conditional's ELSE meant
+#: "sibling ticker" — so a third reason added to it would have been counted as a
+#: Kalshi sibling collision and #4965's mechanism would have been invisible in
+#: the funnel it is supposed to show up in. Callers prefix for their phase.
+_FUNNEL_KEY_BY_REFUSAL = {
+    _REFUSAL_EVENT_DATE: "event_date_linkage_blocked",
+    _REFUSAL_VENUE_FIXTURE: "venue_fixture_linkage_blocked",
+    _REFUSAL_SIBLING_DATE: "duplicate_linkage_blocked",
+}
 
 
 def _is_combat_kalshi_prefix(prefix: str) -> bool:
@@ -718,15 +746,94 @@ async def _event_commence_time(session, event_id: int):
     return value if isinstance(value, datetime) else None
 
 
+def venue_game_start(market):
+    """A Polymarket market's own fixture instant, tz-aware UTC, or None.
+
+    Reads ``market_metadata['venue_game_start']`` — Gamma's ``startTime`` /
+    ``gameStartTime``, stamped at ingest by ``tasks.polymarket``. See that stamp
+    for why ``commence_time`` cannot answer this: it carries Gamma's
+    ``startDate``, the LISTING time, which for three consecutive fixtures of one
+    series read 13:00Z on three days a week before any of them was played.
+
+    Returns None for every "no signal" case — no metadata, a row ingested before
+    the stamp existed, an unparseable value — because the guard above it must
+    fail OPEN. A market that has not yet been re-polled is indistinguishable
+    here from one the venue gives no fixture time for, and neither is grounds to
+    refuse a link.
+    """
+    meta = getattr(market, "market_metadata", None)
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("venue_game_start")
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(
+            raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+        )
+    except (ValueError, TypeError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+async def _check_polymarket_fixture_reason(session, event_id: int, market):
+    """Why linking this Polymarket market to ``event_id`` must be refused.
+
+    #4965. Polymarket publishes ONE game market per date, and all of a series
+    carry the identical ``name`` ("Texas Rangers vs. Seattle Mariners"). The
+    matcher's only time reference for a Polymarket market was
+    ``commence_time`` — Gamma's listing stamp — so nothing distinguished
+    Monday's market from Wednesday's, and three dates of one series linked to a
+    single event row. The blend then read whichever leg it found first: on event
+    15308638 that was the Sep 8 market, already settled at Texas 0.986, rendered
+    as **1.4% against a 26-30% six-source consensus**.
+
+    Compares the venue's own UTC fixture instant against the candidate event's
+    ``commence_time``. Fails OPEN whenever either side is missing — an
+    over-refusing guard silently drops real markets, which is worse than the
+    duplicate it would prevent.
+    """
+    fixture = venue_game_start(market)
+    if fixture is None:
+        return None  # no signal — see the docstring on venue_game_start
+
+    event_commence = await _event_commence_time(session, event_id)
+    if event_commence is None:
+        return None  # no signal on the event side either
+
+    ec = (
+        event_commence if event_commence.tzinfo
+        else event_commence.replace(tzinfo=timezone.utc)
+    )
+    diff_hours = abs((fixture - ec).total_seconds()) / 3600
+    if diff_hours > _PM_FIXTURE_MAX_DIFF_HOURS:
+        logger.warning(
+            "Venue-fixture linkage blocked (#4965): polymarket %s (fixture=%s) "
+            "would link to event %d (commence=%s) — %.1fh apart, so these are "
+            "different games",
+            market.external_id, fixture.isoformat(), event_id,
+            ec.isoformat(), diff_hours,
+        )
+        return _REFUSAL_VENUE_FIXTURE
+    return None
+
+
 async def _check_duplicate_kalshi_linkage_reason(
     session, event_id: int, market, ticker_game_date,
 ) -> str | None:
     """Why linking this Kalshi market to ``event_id`` must be refused, if it must.
 
     Returns None to PROCEED, or one of ``_REFUSAL_EVENT_DATE`` /
-    ``_REFUSAL_SIBLING_DATE`` to SKIP.
+    ``_REFUSAL_SIBLING_DATE`` / ``_REFUSAL_VENUE_FIXTURE`` to SKIP.
 
-    Two independent comparisons, both live here:
+    Despite the name this is the linkage guard for BOTH venues: a Polymarket
+    market is answered by :func:`_check_polymarket_fixture_reason` (arm (c),
+    #4965) and returns before any of the Kalshi logic below. The name is kept
+    because three call sites and their funnel keys carry it.
+
+    Two independent comparisons for Kalshi, both live here:
 
       (a) #1811 — this market's TICKER DATE vs the CANDIDATE EVENT's
           commence_time. Applies to every Kalshi ticker class with a parseable
@@ -742,8 +849,15 @@ async def _check_duplicate_kalshi_linkage_reason(
     """
     from app.models.models import FuturesMarket
 
+    # ── (c) #4965: a Polymarket game market vs the candidate event ───────────
+    # Its own arm rather than a branch of (a) because the SIGNAL is different in
+    # kind: Kalshi states its referent in the ticker, Polymarket states it in an
+    # explicit UTC instant the venue publishes beside the market.
+    if market.source == "polymarket":
+        return await _check_polymarket_fixture_reason(session, event_id, market)
+
     if market.source != "kalshi":
-        return None  # Only guard Kalshi markets
+        return None  # Only guard Kalshi and Polymarket markets
 
     ext = (market.external_id or "").lower()
     prefix = ext.split("-")[0] if "-" in ext else ext
@@ -1318,19 +1432,17 @@ async def _try_link_market(
             if receipt is not None:
                 receipt.reject(
                     _receipts.REJECT_EVENT_DATE_CONFLICT
-                    if refusal == _REFUSAL_EVENT_DATE
+                    if refusal in (_REFUSAL_EVENT_DATE, _REFUSAL_VENUE_FIXTURE)
                     else _receipts.REJECT_ALREADY_LINKED_ELSEWHERE,
                     refused_event_id=matched_event["event_id"],
                     refusal=refusal,
                 )
-            # Two mechanisms, two counters (#1811): "duplicate_linkage_blocked"
-            # stays the SIBLING-ticker case so its history is comparable;
-            # "event_date_linkage_blocked" is the widened ticker-vs-event case.
-            key = (
-                "event_date_linkage_blocked"
-                if refusal == _REFUSAL_EVENT_DATE
-                else "duplicate_linkage_blocked"
-            )
+            # Three mechanisms, three counters (#1811, #4965):
+            # "duplicate_linkage_blocked" stays the SIBLING-ticker case so its
+            # history is comparable; "event_date_linkage_blocked" is the widened
+            # ticker-vs-event case; "venue_fixture_linkage_blocked" is the
+            # Polymarket fixture-instant case.
+            key = _FUNNEL_KEY_BY_REFUSAL.get(refusal, "duplicate_linkage_blocked")
             stats["funnel"].setdefault(key, 0)
             stats["funnel"][key] += 1
             matched_event = None
@@ -3064,10 +3176,8 @@ async def _phase15_revalidate(
                 )
                 if refusal:
                     relink_blocked = True
-                    key = (
-                        "phase15_event_date_linkage_blocked"
-                        if refusal == _REFUSAL_EVENT_DATE
-                        else "phase15_duplicate_linkage_blocked"
+                    key = "phase15_" + _FUNNEL_KEY_BY_REFUSAL.get(
+                        refusal, "duplicate_linkage_blocked"
                     )
                     stats["funnel"].setdefault(key, 0)
                     stats["funnel"][key] += 1
@@ -6091,11 +6201,9 @@ async def _backfill_historical_links(batch_size: int = 100):
                         matched["event_id"],
                     )
                     # This stats dict has no "funnel" sub-dict; the counters are
-                    # top-level here but keep the same (a)/(b) split (#1811).
-                    key = (
-                        "event_date_linkage_blocked"
-                        if refusal == _REFUSAL_EVENT_DATE
-                        else "duplicate_linkage_blocked"
+                    # top-level here but keep the same split (#1811, #4965).
+                    key = _FUNNEL_KEY_BY_REFUSAL.get(
+                        refusal, "duplicate_linkage_blocked"
                     )
                     stats.setdefault(key, 0)
                     stats[key] += 1
