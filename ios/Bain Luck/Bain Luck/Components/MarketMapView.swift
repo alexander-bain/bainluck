@@ -526,6 +526,18 @@ struct MarketMapView: View {
             return homeScoreValue + awayScoreValue
         }()
 
+        // #4907 — the same read, mid-game, for the per-rung live grade only. It
+        // is deliberately NOT merged into `settledTotal`: that value also picks
+        // the ladder WINDOW and builds the FINAL marker, and a total that is still
+        // moving may do neither. See `liveTotalLadderResult` for why only the
+        // cleared rungs can be decided from it.
+        let liveTotalSoFar = MarketMapRail.liveGradableTotal(
+            isLive: isLive,
+            scoreboardCountsTheUnit: scoreboardIsComparable,
+            homeScore: scoredHomeScore,
+            awayScore: scoredAwayScore
+        )
+
         // #3823 — before the result, the lowest lines; after it, the lines the
         // result actually decided. `settledLadderWindow` carries the argument.
         let ladderLimit = 6
@@ -542,6 +554,15 @@ struct MarketMapView: View {
                 result: settledTotal.map {
                     MarketMapRail.totalLadderResult(
                         threshold: thresholds[i].threshold, finalTotal: $0
+                    )
+                } ?? liveTotalSoFar.flatMap {
+                    // #4907 — fallback, never an override: after the final,
+                    // `settledTotal` decides every rung and `liveTotalSoFar` is
+                    // nil regardless (`isLive` and `isDone` are exclusive).
+                    MarketMapRail.liveTotalLadderResult(
+                        threshold: thresholds[i].threshold,
+                        scoreSoFar: $0,
+                        marketName: thresholds[i].marketName
                     )
                 }
             )
@@ -607,7 +628,13 @@ struct MarketMapView: View {
         )
         let rangeMin = bounds.min
         let rangeMax = bounds.max
-        let density = MarketMapRail.densityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
+        // The rail's density rule wants only the line and its price; #4907's
+        // `marketName` member is dropped here rather than widening a signature
+        // three other tested call sites share.
+        let density = MarketMapRail.densityFromThresholds(
+            thresholds.map { ($0.threshold, $0.overProb) },
+            rangeMin: rangeMin, rangeMax: rangeMax, segments: 14
+        )
         // #3576 — whether that density is data or a placeholder. The rule lives
         // in `MarketMapRail` so it can be asserted without rasterising a view.
         // #4692 — and it is asked of the HEIGHTS, the same array the rail is
@@ -794,7 +821,13 @@ struct MarketMapView: View {
         )
         let rangeMin = bounds.min
         let rangeMax = bounds.max
-        let density = MarketMapRail.densityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
+        // The rail's density rule wants only the line and its price; #4907's
+        // `marketName` member is dropped here rather than widening a signature
+        // three other tested call sites share.
+        let density = MarketMapRail.densityFromThresholds(
+            thresholds.map { ($0.threshold, $0.overProb) },
+            rangeMin: rangeMin, rangeMax: rangeMax, segments: 14
+        )
         // #3576 — the full map's rule, on the half map's identical flat array,
         // and since #4692 asked of the same heights the full map asks of.
         let hasDistribution = MarketMapRail.totalRailHasDistribution(density: density)
@@ -1206,13 +1239,21 @@ struct MarketMapView: View {
         )
     }
 
-    private func extractTotalThresholds(_ outcomes: [GameMarketOutcome]) -> [(threshold: Double, overProb: Double)] {
+    /// #4907 gave each rung its `marketName`. The live grade may only fire on a
+    /// rung whose own name does not claim a sub-contest
+    /// (``MarketMapRail/liveTotalLadderResult(threshold:scoreSoFar:marketName:)``),
+    /// and that question is answerable here and nowhere downstream — the tuple
+    /// used to drop the name on the floor. Nothing else reads the new member, so
+    /// no existing rung changes.
+    private func extractTotalThresholds(
+        _ outcomes: [GameMarketOutcome]
+    ) -> [(threshold: Double, overProb: Double, marketName: String?)] {
         outcomes.compactMap { t in
             let name = t.outcomeName.lowercased()
             guard name.contains("over") else { return nil }
             let threshold = t.threshold ?? Self.extractNumber(from: t.outcomeName)
             guard let th = threshold else { return nil }
-            return (th, t.overProbability ?? t.probability ?? 0.5)
+            return (th, t.overProbability ?? t.probability ?? 0.5, t.marketName)
         }
         .sorted(by: { $0.threshold < $1.threshold })
     }

@@ -529,6 +529,122 @@ enum MarketMapRail {
         return .push
     }
 
+    /// What a totals rung has ALREADY decided, while the game is still being
+    /// played — the mid-game half of ``totalLadderResult(threshold:finalTotal:)``.
+    ///
+    /// #4907. THE PHOTOGRAPH: Slavia Praha **1 – 1** RC Lens, `live`, 81',
+    /// `artifacts-native-020/n101-ucl-15296765-props-retry.png`. Two goals had
+    /// been scored and the Goals map offered `Over 0.5 — 96%` and
+    /// `Over 1.5 — 82%`: a price on a thing that had already happened.
+    ///
+    /// 🔴 **ONLY `.over` IS DECIDABLE MID-GAME, WHICH IS WHY THIS RETURNS AN
+    /// OPTIONAL AND ITS SETTLED SIBLING DOES NOT.** The score in every sport this
+    /// ladder is drawn for is monotone non-decreasing, so a rung the game has
+    /// cleared can never un-clear and `HIT` is safe to print with the game still
+    /// running. The other two verdicts are NOT available: an uncleared rung can
+    /// still be cleared, so `.under` would be a forecast wearing a verdict's
+    /// clothes, and `.push` needs a total that has stopped moving. Those rungs
+    /// keep their percentage, which is the correct thing for them to show. So a
+    /// live ladder reads `HIT · HIT · 60% · 38%`, and the reader can see both what
+    /// is already true and what is still open.
+    ///
+    /// 🔴 **`>` NOT `>=`, AND HERE IT IS LOAD-BEARING RATHER THAN ACADEMIC.** On
+    /// the settled sibling the distinction is the documented-unreachable push
+    /// (95,821 of 95,821 served legs are half-lines). Here `>=` would be wrong on
+    /// *reachable* data even so: a game sitting exactly ON an integer line has not
+    /// cleared it — `Over 7` at 7 goals is still open, because the eighth can
+    /// arrive. Equality mid-game is not a push; it is an undecided rung.
+    ///
+    /// 🟠 **THE SUB-CONTEST GATE IS NOT DEFENSIVE — IT IS MEASURED REACHABLE.**
+    /// ``matchScopeLadderIndices(marketNames:)`` is deliberately FAIL-OPEN: where
+    /// every rung names a sub-contest, it keeps them all rather than empty the
+    /// card. The comparator this function is handed is a WHOLE-CONTEST score, so
+    /// on such a ladder it would grade `1st Half Total Points Over 24.5` against
+    /// the full-game 31 and print `HIT` for a half that scored 10. Measured on
+    /// production 2026-09-11 — events whose linked `O/U`/`total` markets are
+    /// *entirely* sub-contest-scoped, by sport:
+    ///
+    /// ```
+    /// tennis_other 173 · soccer_other 57 · tennis_atp 20 · tennis_wta 9
+    /// soccer_italy_serie_a 7 · basketball_ncaab 7 · baseball_other 6
+    /// americanfootball_other 4 · esports_other 4 · … (18 sports)
+    /// ```
+    ///
+    /// The tennis rows are already stopped one gate earlier by
+    /// ``SportVocab/scoreboardCountsTheUnit`` (that scoreboard counts SETS), but
+    /// **~99 of them are not tennis** — soccer, basketball, baseball and NFL, all
+    /// sports whose scoreboard counts exactly the unit these rungs are quoted in.
+    /// Nothing else would stop them, so the gate lives inside this function rather
+    /// than at its call sites: a caller cannot grade a rung without handing over
+    /// the name that says whether it may.
+    ///
+    /// 🟠 **THE SETTLED SIBLING HAS THIS SAME HOLE AND IS NOT FIXED HERE.** Those
+    /// same ~99 ladders mis-grade after the final too, by the identical route.
+    /// That is a change to shipped, graded behaviour on a different trigger, and
+    /// `totalLadderResult` is shared with the margin ladder, so the fix is not a
+    /// one-liner in the same place. FILED as **#5251**, with the measurement above
+    /// as its evidence, rather than folded in here.
+    ///
+    /// 🔴 **DO NOT REUSE THIS FOR THE MARGIN LADDER.** `totalLadderResult` is
+    /// shared with it (#3852: a margin ladder is two totals ladders), and that
+    /// sharing does NOT extend to this function, because the reduction it rests on
+    /// breaks live: a margin is not monotone. A side leading by 10 has not cleared
+    /// `+7.5` — the lead can shrink. `MarketMapView.marginLadder` therefore grades
+    /// only on `settledMargin`, deliberately.
+    ///
+    /// - Parameters:
+    ///   - threshold: the rung's line.
+    ///   - scoreSoFar: the combined score right now, from the SAME
+    ///     `scoreboardCounts`-gated pair the card's settled grade reads.
+    ///   - marketName: the rung's own market name, for the gate above. A nil or
+    ///     empty name is treated as whole-contest, matching
+    ///     ``namesASubContestScope(_:)``'s own fail-open.
+    /// - Returns: `.over` once the score has passed the line, `nil` while the rung
+    ///   is still open — never `.under` or `.push`.
+    static func liveTotalLadderResult(
+        threshold: Double,
+        scoreSoFar: Int,
+        marketName: String?
+    ) -> TotalLadderResult? {
+        guard !namesASubContestScope(marketName) else { return nil }
+        return Double(scoreSoFar) > threshold ? .over : nil
+    }
+
+    /// The combined score a card may hand to
+    /// ``liveTotalLadderResult(threshold:scoreSoFar:marketName:)``, or nil if it
+    /// may not grade live at all.
+    ///
+    /// #4907. Both ladder cards had written this guard out longhand, four lines
+    /// each, which is the shape #3554 is filed on — one rule, two
+    /// implementations, free to drift. It is one function because each clause is
+    /// load-bearing and a card that quietly loses one is the bug arriving back:
+    ///
+    /// 🔴 **`isLive`, NOT "has a score".** A SUSPENDED game has a score too, and
+    /// grading it is #4018's class — an abandoned match wearing verdicts for a
+    /// result nobody will ever certify. #4907 is scoped to live games precisely
+    /// because #4829/#4018 are the abandoned-game case and are a different
+    /// trigger with a different answer. `EventState.canStillBeGraded` is NOT the
+    /// predicate here: it is true for a scheduled game, which has no score to
+    /// grade with.
+    ///
+    /// 🔴 **`scoreboardCountsTheUnit`.** The whole reason ``actualTotal``-style
+    /// gates exist: a tennis scoreboard counts SETS, so its 1–1 must never be
+    /// compared to a ladder quoted in GAMES. This is the same gate the settled
+    /// path reads, deliberately, so the two cannot disagree about whether a card
+    /// may grade at all — only about when.
+    ///
+    /// - Returns: `homeScore + awayScore` when every gate passes, else nil.
+    static func liveGradableTotal(
+        isLive: Bool,
+        scoreboardCountsTheUnit: Bool,
+        homeScore: Int?,
+        awayScore: Int?
+    ) -> Int? {
+        guard isLive, scoreboardCountsTheUnit,
+              let home = homeScore, let away = awayScore else { return nil }
+        return home + away
+    }
+
     /// The word a graded row prints in the value column.
     ///
     /// All four characters wide, deliberately: the column they share with
@@ -602,6 +718,60 @@ enum MarketMapRail {
         case .settled: return SettledQuote.prefix.uppercased()
         case .graded: return nil
         }
+    }
+
+    /// The caption ONE ROW prints — ``spectrumRungCaption(finalTotal:isSettled:)``
+    /// plus the two gates that used to sit inline in `TotalPointsSpectrumView`.
+    ///
+    /// #4907. The card-level function above cannot answer this on its own any
+    /// more, and the reason is worth stating: it takes the CARD's `finalTotal`, so
+    /// its answer is the same for every rung. That was sound while the only grade
+    /// was the settled one — a final decides all the rungs at once, so "all
+    /// captioned" and "none captioned" were the only reachable states. A live
+    /// grade is per ROW: the cleared rungs are decided and the rest are still
+    /// open. Feeding a row's own verdict in is what keeps `PRE-GAME` off a row
+    /// that already says `HIT`, which is #3850's contradiction — a tense and a
+    /// verdict in one row — arriving from the other direction.
+    ///
+    /// Lifted here rather than left as an `if` in the view for the reason the rest
+    /// of this file exists: the view is SwiftUI and cannot be asserted without
+    /// rasterising it, and this is now the third clause of a rule that has been
+    /// wrong twice (#3850, #4018). `rungResult == nil` restates the contract the
+    /// card-level function already documents — "non-nil finalTotal ⇒ nil caption:
+    /// the verdict badge owns the row" — at the granularity the badge now has.
+    ///
+    /// 🟠 **THE `canStillBeGraded` CLAUSE IS #4018's, MOVED HERE VERBATIM IN
+    /// MEANING.** No `PRE-GAME` chip on a game that can never be graded. Steering
+    /// an abandoned game to `fullView` is what made it reachable: the ladder
+    /// captions every rung from ``SpectrumTense``, which reads `isSettled` — "is
+    /// it over?" — so a suspended match came out `.projected` and wore four
+    /// `PRE-GAME` chips where the old layout wore one `PRE-GAME LINE`. Removing
+    /// one falsehood must not quadruple its smaller sibling.
+    ///
+    /// The chip is suppressed rather than re-worded, and ``SpectrumTense`` is
+    /// deliberately NOT given a fourth case for it. The `.settled` arm is the near
+    /// miss — "over, but this card cannot grade" fits an abandoned game exactly —
+    /// but the words it prints are "Settled scoring" / "SETTLED", and Alex's
+    /// standing ruling is that settled means settled: a game with no result
+    /// settled nothing. Naming that state is a copy decision, so the two remaining
+    /// "Projected …" headings on that card (and the Runs map's identical subtitle)
+    /// are ROUTED, not guessed:
+    /// `alex-inbox/native-090b-2146PT-…-one-card-needs-your-call.md`.
+    ///
+    /// - Parameters:
+    ///   - finalTotal: the card's graded total, or nil. As above.
+    ///   - isSettled: whether the event is over — the card's own predicate.
+    ///   - canStillBeGraded: #4018's gate, above.
+    ///   - rungResult: THIS row's verdict, settled or live. Non-nil ⇒ no caption.
+    static func spectrumRowCaption(
+        finalTotal: Int?,
+        isSettled: Bool,
+        canStillBeGraded: Bool,
+        rungResult: TotalLadderResult?
+    ) -> String? {
+        guard rungResult == nil else { return nil }
+        guard canStillBeGraded || isSettled else { return nil }
+        return spectrumRungCaption(finalTotal: finalTotal, isSettled: isSettled)
     }
 
     /// Which slice of a settled game's totals ladder is worth printing.
