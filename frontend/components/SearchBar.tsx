@@ -474,7 +474,13 @@ export default function SearchBar({
               </span>
 
               <div className="flex-1 min-w-0">
-                <div className="text-sm text-text-primary truncate">
+                {/* #5197: two lines, not one. `truncate` cut every one of five
+                    consecutive rows to the identical "New York Mets vs. New
+                    York Yank…" — the shared matchup is 36 characters and the
+                    row holds ~30, so the distinguishing tail ("7th Inning
+                    Winner") was exactly what went. Unlike #4866 the matchup
+                    cannot be dropped here: a dropdown has no page context. */}
+                <div className="text-sm text-text-primary line-clamp-2" data-testid="search-suggestion-title">
                   {suggestionDisplayText(suggestion)}
                 </div>
                 {(() => {

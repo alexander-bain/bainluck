@@ -265,7 +265,9 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
               {s.type === "hub" && (s.emoji || "\u{1F3DF}")}
             </span>
             <div className="flex-1 min-w-0">
-              <div className="text-base text-text-primary truncate">
+              {/* #5197: two lines, not one — see the note in SearchBar.tsx.
+                  This is the surface the defect was shot on (390px). */}
+              <div className="text-base text-text-primary line-clamp-2" data-testid="search-suggestion-title">
                 {suggestionDisplayText(s)}
               </div>
               {(() => {
