@@ -29,7 +29,9 @@ import {
   suggestionDisplayText,
   suggestionSubtitle,
   suggestionTypeLabel,
+  teamSeasonAnswers,
   toPercent,
+  TEAM_SEASON_ANSWER_LIMIT,
 } from "../../lib/searchSuggestionDisplay";
 
 /** A fixed instant. Never `new Date()` — see the header note. */
@@ -353,5 +355,105 @@ describe("the real production payload", () => {
     const answer = futuresAnswer(LIVE[5]);
     expect(answer?.second?.name).toBe("NRFI");
     expect(isMovementWorthShowing(answer?.second?.movement ?? 0)).toBe(true);
+  });
+});
+
+/**
+ * T2-1 (#5058) — the team row answers the season question without being opened.
+ *
+ * The server elects WHICH threshold is named and in what order the two facts
+ * read; this layer only decides what can be rendered honestly. So the tests
+ * here are about refusals: a fact that would print as `NaN%`, `0%` from a
+ * missing number, or a blank label is dropped, because a reader cannot tell a
+ * broken number from a real one and both look like our opinion.
+ */
+describe("a team row's season answers (#5058)", () => {
+  const PATRIOTS = suggestion({
+    type: "team",
+    text: "New England Patriots",
+    team_id: 11,
+    sport_key: "americanfootball_nfl",
+    season_answers: [
+      { key: "season_wins", label: "10+ regular-season wins", probability: 0.465, threshold: 10 },
+      { key: "make_playoffs", label: "Make Playoffs", probability: 0.4905 },
+    ],
+  });
+
+  test("both facts reach the subtitle, in the order the server sent", () => {
+    const sub = suggestionSubtitle(PATRIOTS, NOW);
+    expect(sub?.kind).toBe("team-season");
+    expect(sub && "answers" in sub && sub.answers.map((a) => a.label)).toEqual([
+      "10+ regular-season wins",
+      "Make Playoffs",
+    ]);
+  });
+
+  test("the numbers a reader sees are the server's, rounded once", () => {
+    const sub = suggestionSubtitle(PATRIOTS, NOW);
+    const answers = sub && "answers" in sub ? sub.answers : [];
+    expect(answers.map((a) => toPercent(a.probability))).toEqual([47, 49]);
+  });
+
+  test("a team with no answers keeps the row it always had", () => {
+    const bare = suggestion({ type: "team", text: "Dallas Baptist Patriots", team_id: 894 });
+    expect(suggestionSubtitle(bare, NOW)).toBeNull();
+    expect(teamSeasonAnswers(bare)).toEqual([]);
+  });
+
+  test("an empty list is a row with no second line, never an empty one", () => {
+    const empty = suggestion({ type: "team", text: "Somewhere United", season_answers: [] });
+    expect(suggestionSubtitle(empty, NOW)).toBeNull();
+  });
+
+  test.each([
+    ["a number that is not a number", NaN],
+    ["a probability above one", 1.4],
+    ["a negative probability", -0.2],
+  ])("%s is dropped rather than printed", (_label, probability) => {
+    const broken = suggestion({
+      type: "team",
+      text: "New England Patriots",
+      season_answers: [
+        { key: "season_wins", label: "10+ regular-season wins", probability } as never,
+        { key: "make_playoffs", label: "Make Playoffs", probability: 0.4905 },
+      ],
+    });
+    expect(teamSeasonAnswers(broken).map((a) => a.key)).toEqual(["make_playoffs"]);
+  });
+
+  test("a fact with no label is dropped", () => {
+    const unlabelled = suggestion({
+      type: "team",
+      text: "New England Patriots",
+      season_answers: [
+        { key: "season_wins", label: "", probability: 0.465 } as never,
+        { key: "make_playoffs", label: "Make Playoffs", probability: 0.4905 },
+      ],
+    });
+    expect(teamSeasonAnswers(unlabelled).map((a) => a.key)).toEqual(["make_playoffs"]);
+  });
+
+  test("a third fact does not silently appear on a two-fact row", () => {
+    const three = suggestion({
+      type: "team",
+      text: "New England Patriots",
+      season_answers: [
+        { key: "season_wins", label: "10+ regular-season wins", probability: 0.465 },
+        { key: "make_playoffs", label: "Make Playoffs", probability: 0.4905 },
+        { key: "season_wins", label: "Win the division", probability: 0.315 },
+      ],
+    });
+    expect(teamSeasonAnswers(three)).toHaveLength(TEAM_SEASON_ANSWER_LIMIT);
+  });
+
+  test("season answers on a non-team row are ignored", () => {
+    const futures = suggestion({
+      type: "futures",
+      text: "NFL Super Bowl Winner",
+      season_answers: [
+        { key: "make_playoffs", label: "Make Playoffs", probability: 0.4905 },
+      ],
+    });
+    expect(teamSeasonAnswers(futures)).toEqual([]);
   });
 });

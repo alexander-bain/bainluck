@@ -536,6 +536,28 @@ export interface TypeaheadSuggestion {
   market_type_label?: string;
   // #993 Slice A: the answer, carried into the dropdown (top 3, #23-normalized)
   top_outcomes?: TypeaheadOutcome[];
+  // T2-1 (#5058): the season answers a team row carries, already in reading
+  // order and already elected server-side. Absent — not empty — when the team
+  // has none.
+  season_answers?: TeamSeasonAnswer[];
+}
+
+/**
+ * One season fact on a team row (T2-1 / #5058). `label` is authored by the
+ * backend and rendered verbatim: the threshold it names ("10+ regular-season
+ * wins") is chosen from the venue's own ladder, so re-deriving the wording here
+ * would be a second opinion about which question is being answered.
+ */
+export interface TeamSeasonAnswer {
+  key: "season_wins" | "make_playoffs";
+  label: string;
+  probability: number;
+  threshold?: number;
+  season?: string | null;
+  market_id?: number | null;
+  outcome_id?: number | null;
+  observed_at?: string | null;
+  sources?: { source?: string | null; probability?: number | null; market_name?: string | null }[];
 }
 
 /** Lean outcome shape carried by typeahead futures suggestions (#993). */

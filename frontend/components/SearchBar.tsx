@@ -503,6 +503,25 @@ export default function SearchBar({
                       </div>
                     );
                   }
+                  if (sub.kind === "team-season") {
+                    // T2-1 (#5058): the friend's task answered without a click.
+                    return (
+                      <div
+                        className="text-xs text-text-secondary truncate"
+                        data-testid="search-team-season"
+                      >
+                        {sub.answers.map((a, i) => (
+                          <span key={a.key}>
+                            {i > 0 && <span className="text-text-muted">{" · "}</span>}
+                            {a.label}{" "}
+                            <span className="text-text-primary font-medium">
+                              {toPercent(a.probability)}%
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  }
                   if (sub.kind === "futures-label") {
                     return <div className="text-xs text-accent-brand">{sub.text}</div>;
                   }
