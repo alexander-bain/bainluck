@@ -26,7 +26,7 @@ httpx>=0.28.1
 orjson>=3.10.0
 
 # Kalshi WebSocket (real-time prices + settlement push)
-websockets>=13.0
+websockets>=17.1
 cryptography>=42.0.0
 
 # Background Tasks
