@@ -371,6 +371,10 @@ class TestTheSnapshotCarriesIt:
 
         This tuple is MEANT to rot. Changing the wire shape should fail here and
         be fixed by bumping the version in the same commit.
+
+        Rotted once, as designed: `(3, 30, 12, 2)` -> `(4, 31, 12, 2)` for
+        #4758's `opening_baseline_at`, the second derived market column. This
+        test is the reason that bump is in the same commit as the column.
         """
         shape = (
             fms.SNAPSHOT_SCHEMA_VERSION,
@@ -378,7 +382,7 @@ class TestTheSnapshotCarriesIt:
             len(fms.OUTCOME_COLUMNS),
             len(fms.SPORT_COLUMNS),
         )
-        assert shape == (3, 30, 12, 2), (
+        assert shape == (4, 31, 12, 2), (
             "the snapshot wire shape changed. Bump `SNAPSHOT_SCHEMA_VERSION` "
             "(it is part of the shared cache key, so the bump is what stops this "
             "build reading a predecessor's rows) and update this tuple."

@@ -210,39 +210,29 @@ def test_the_rebuilt_outcomes_do_not_carry_the_stamp_they_were_folded_from():
         assert "opening_captured_at" not in outcome.__dict__
 
 
-def test_the_wire_shape_and_its_version_move_together():
-    """A shape change without a version bump is the failure, so pin the PAIR.
+def test_the_new_derived_column_is_appended_not_inserted():
+    """Derived columns are POSITIONAL, and only appending is safe.
 
-    🔴 WRITTEN THIS WAY BECAUSE THE OBVIOUS TEST IS A TAUTOLOGY. The first draft
-    built its "predecessor" as `{"v": SNAPSHOT_SCHEMA_VERSION - 1, ...}` and
-    asserted it was refused — which stays green when the bump is reverted,
-    because the arithmetic follows the constant. Mutation-checked: reverting
-    `SNAPSHOT_SCHEMA_VERSION = 4` to `3` left all sixteen tests in this file
-    passing.
+    Inserting `opening_baseline_at` BEFORE `price_polled_at` keeps the arity and
+    changes the meaning of every value after it — the exact case the snapshot
+    module's own note says the version, not arity, is there to stop.
 
-    A LITERAL on both sides is what closes that. Adding a column without a bump
-    fails on the width; bumping without a shape change fails on the version;
-    and either failure names the other half, which is the pairing the module's
-    own note describes ("the version guards the shape a row CLAIMS, per-row
-    arity guards the shape it HAS, and neither is the other's backstop").
-
-    v4 = 29 loaded market columns + 2 derived (`price_polled_at`,
-    `opening_baseline_at`), 12 outcome columns, 2 sport columns.
+    🔴 THE VERSION/SHAPE PAIRING IS NOT ASSERTED HERE, AND THAT IS DELIBERATE.
+    This file's first draft grew its own copy of it and got the shape of the
+    test wrong twice over: a "predecessor" built as
+    `{"v": SNAPSHOT_SCHEMA_VERSION - 1}` is arithmetic that follows the
+    constant, so reverting the bump left all sixteen tests green (mutation M4);
+    and the pinned-literal replacement turned out to duplicate a guard that has
+    existed since CERT-949 —
+    `test_my_stuff_price_freshness_cert949.py::TestTheSnapshotCarriesIt::
+    test_the_version_moves_when_the_row_shape_does`, which caught this ship's
+    bump correctly and is where that tuple lives. Two copies of one convention
+    is how the two copies drift, so the duplicate was deleted rather than kept
+    "for completeness".
     """
-    assert (
-        fms.SNAPSHOT_SCHEMA_VERSION,
-        len(fms.MARKET_ROW_COLUMNS),
-        len(fms.OUTCOME_COLUMNS),
-        len(fms.SPORT_COLUMNS),
-    ) == (4, 31, 12, 2), (
-        "the shared wire changed shape or version. Both must move: an in-flight "
-        "entry of the old shape read under the old version tag is a market row "
-        "of the wrong width, and `zip` truncates rather than raising."
-    )
-    assert fms.DERIVED_MARKET_COLUMNS[-1] == "opening_baseline_at", (
-        "derived columns are POSITIONAL; inserting one before this changes the "
-        "meaning of every value after it while keeping the arity"
-    )
+    assert fms.DERIVED_MARKET_COLUMNS[-1] == "opening_baseline_at"
+    assert fms.MARKET_ROW_COLUMNS[-1] == "opening_baseline_at"
+    assert fms.MARKET_ROW_COLUMNS[: len(fms.MARKET_COLUMNS)] == fms.MARKET_COLUMNS
 
 
 def test_every_outcome_column_a_build_time_fold_reads_is_actually_loaded():
