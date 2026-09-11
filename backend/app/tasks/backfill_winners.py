@@ -2134,6 +2134,53 @@ _TOTAL_REGRADE_SCOPE_RE = (
 )
 
 
+#: #5116: WHICH KALSHI MARKETS THE #755 MONEYLINE RE-NULL IS ALLOWED TO REACH.
+#:
+#: The re-null (`ml_repair`, two call sites) clears `is_winner`/`resolution_source`
+#: on markets the moneyline resolver graded as game-winners when they are really
+#: team totals, spreads or props, so the correct resolvers can re-grade them. It
+#: identified them by matching a token list against the WHOLE `external_id`, and
+#: seven of those tokens are two or three letters (`tb`, `ks`, `stl`, `ast`, `reb`,
+#: `hit`, `f5`). A Kalshi ticker is `SERIES-EVENT[-STRIKE]`, and the EVENT segment
+#: concatenates the two team abbreviations — so those tokens appeared by accident
+#: ACROSS THE TEAM BOUNDARY in plain full-game markets: `KXMLBTOTAL-26APR171915
+#: DE|TB|OS` (Detroit+Boston), `KXNHLTOTAL-26FEB25TOR|TB` (Tampa Bay),
+#: `KXMLSTOTAL-26MAR01SD|STL`, `KXEPLTOTAL-26FEB21B|RE|BRI` (Brentford-Brighton
+#: matching an NBA rebounds token). Those rows lost a CORRECT verdict every cycle.
+#:
+#: Measured on production 2026-09-11 12:4xZ over all 42,593 Kalshi `game_score`
+#: outcomes: the old whole-id form matched 26,726; this form matches 26,054.
+#: The 672-row difference is 16 families, ALL of them full-game — `*GAME`
+#: (moneyline), `*TOTAL`, `*BTTS` — and a 40-row sample checked against the linked
+#: event's final score was graded CORRECTLY in every case. Nothing is newly
+#: matched (0 adds), so the change only stops damage.
+#:
+#: The market family is the segment BEFORE the first `-`, so that is where the
+#: collision-prone short tokens are anchored. The long tokens stay unanchored
+#: because at least one real family DOES carry its leg type after the dash —
+#: `KXNCAAMBSGP-26APR04ILLCONNSPREAD` (same-game parlay) exists in
+#: `futures_markets`. No such row is at `game_score` today, so both forms measure
+#: identically (26,054 either way); the split costs nothing and keeps that family
+#: reachable if the score resolver ever grades one.
+#:
+#: The union of the two lists is exactly the original twenty tokens — this is an
+#: anchoring change, never a narrowing of intent. `test_ml_repair_anchoring_5116`
+#: asserts that, and asserts the production false positives above stay unmatched.
+_ML_REPAIR_TOKENS_ANCHORED = "(pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|rfi|f5)"
+_ML_REPAIR_TOKENS_FREE = (
+    "(teamtotal|spread|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention)"
+)
+#: The predicate itself, so the two call sites cannot drift apart again.
+_ML_REPAIR_NON_MONEYLINE_SQL = (
+    "(fm.external_id ~* :ml_free_re"
+    " OR split_part(fm.external_id, '-', 1) ~* :ml_anchored_re)"
+)
+_ML_REPAIR_PARAMS = {
+    "ml_free_re": _ML_REPAIR_TOKENS_FREE,
+    "ml_anchored_re": _ML_REPAIR_TOKENS_ANCHORED,
+}
+
+
 def _total_outcome_is_winner(outcome_name, home_score, away_score):
     """#945: grade ONE "Over/Under N ... scored" total outcome from the final score.
 
@@ -3168,10 +3215,13 @@ async def _regrade_kalshi_total_inversions():
     The old warning here — "Do NOT trigger the broad backfill_winners to refresh
     — its #755 re-null churns the cohort" — was half right, and the sentence four
     lines above claiming the re-null "excludes plain TOTAL" was half wrong. Both
-    were reasoning about the league prefix. Measured 2026-09-11: the re-null is
-    unanchored over the whole external_id and reaches 611 of 14,337 cohort rungs
-    via accidental team-abbreviation substrings (`DE-TB-OS`, `SD-STL`). That is
-    #5116, and it is the re-null's defect, not this rail's.
+    were reasoning about the league prefix. Measured 2026-09-11: the re-null was
+    unanchored over the whole external_id and reached 611 of 14,337 cohort rungs
+    via accidental team-abbreviation substrings (`DE-TB-OS`, `SD-STL`). That was
+    #5116, the re-null's defect and not this rail's; it is FIXED — the re-null now
+    anchors its short tokens to the ticker's family segment
+    (`_ML_REPAIR_NON_MONEYLINE_SQL`), so this cohort is no longer churned and the
+    old warning no longer applies.
     """
     stats = {"checked": 0, "flipped": 0, "errors": []}
     try:
@@ -6902,15 +6952,15 @@ async def _resolve_winners_only(limit: int = 2000):
     # Moneyline repair
     try:
         async with get_task_session() as session:
-            r = await session.execute(text("""
+            r = await session.execute(text(f"""
                     UPDATE futures_outcomes fo
                     SET is_winner = NULL, resolution_source = NULL
                     FROM futures_markets fm
                     WHERE fo.market_id = fm.id
                       AND fm.source = 'kalshi'
                       AND fo.resolution_source = 'game_score'
-                      AND fm.external_id ~* '(teamtotal|spread|pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention|rfi|f5)'
-                """))
+                      AND {_ML_REPAIR_NON_MONEYLINE_SQL}
+                """), _ML_REPAIR_PARAMS)
             stats["ml_repair"] = r.rowcount
             await session.commit()
     except Exception as e:
@@ -8381,15 +8431,15 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     ml_repair_stats = {"nulled": 0, "errors": []}
     try:
         async with get_task_session() as session:
-            r = await session.execute(text("""
+            r = await session.execute(text(f"""
                     UPDATE futures_outcomes fo
                     SET is_winner = NULL, resolution_source = NULL
                     FROM futures_markets fm
                     WHERE fo.market_id = fm.id
                       AND fm.source = 'kalshi'
                       AND fo.resolution_source = 'game_score'
-                      AND fm.external_id ~* '(teamtotal|spread|pts|reb|ast|3pt|blk|stl|hrr|hit|tb|ks|1hwinner|2hwinner|1htotal|2htotal|1hspread|mention|rfi|f5)'
-                """))
+                      AND {_ML_REPAIR_NON_MONEYLINE_SQL}
+                """), _ML_REPAIR_PARAMS)
             ml_repair_stats["nulled"] = r.rowcount
             await session.commit()
             if r.rowcount > 0:
