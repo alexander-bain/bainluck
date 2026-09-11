@@ -567,14 +567,24 @@ def test_the_football_board_does_make_one():
 async def test_a_live_baseball_row_keeps_the_inning_in_game_clock(monkeypatch):
     """The regression this repair exists to stop.
 
-    The row starts with the inning `mlb_sync` wrote for the live badge. StatPal
-    serves the half-inning as its status and NO clock field. The period should
-    advance; `game_clock` must be left exactly as it was, because the venue said
-    nothing about it.
+    The row starts with the inning form `mlb_sync` INTENDS for the live badge.
+    StatPal serves the half-inning as its status and NO clock field. The period
+    should advance; `game_clock` must be left exactly as it was, because the
+    venue said nothing about it.
 
     NOT vacuous: the row starts with a non-empty `game_clock`, so an assignment
     of `None` is observable here. (A clearing test that starts from an already
     empty column cannot fail — the trap that let CERT-2569's defect through.)
+
+    ON THE SEED (#5334, authority/143): `"Top 8"` is a value production has
+    never held. `mlb_sync`'s `event.game_clock` write is guarded on
+    `mlb_game.inning is not None`, and that field is never populated — 0 of
+    11,488 `source='mlb'` snapshots in 14 days carry `inning`, against 11,488
+    carrying `mlb_game_pk` from the same line-group. What MLB rows actually
+    carry is ESPN's `'0:00'`, on 193 of 193 rows that have a clock at all. The
+    proposition under test is the same either way — the pre-existing value
+    survives, whatever wrote it — so this case stays as the general form, and
+    the case below drives the value production really holds.
     """
     now = datetime.now(timezone.utc)
     fx = _Fixture(
@@ -593,9 +603,56 @@ async def test_a_live_baseball_row_keeps_the_inning_in_game_clock(monkeypatch):
     )
     assert rows[0].period == "Top 8th"
     assert rows[0].game_clock == "Top 8", (
-        "StatPal blanked the inning mlb_sync wrote for the live badge — the "
-        "baseball board has no `timer` key, so its silence is structural and "
-        "must not be read as a cleared clock"
+        "StatPal blanked a clock it never claimed — the baseball board has no "
+        "`timer` key, so its silence is structural and must not be read as a "
+        "cleared clock"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_live_baseball_row_keeps_the_clock_production_actually_holds(
+    monkeypatch,
+):
+    """The same guard, driven on the value MLB rows really carry (#5334).
+
+    The case above seeds `"Top 8"`, the inning form `mlb_sync` intends. That
+    write has never fired, so the column it protects has never held that value.
+    Production holds ESPN's `'0:00'` instead — baseball has no clock and ESPN
+    serves the field anyway — on 193 of 193 MLB rows that carry a clock.
+
+    This matters beyond tidiness. The guard's recorded rationale in
+    `statpal_sync.py` justifies itself by an inning in `Event.game_clock` that
+    is not there, so a reader who checks the premise finds it false. The guard
+    is still RIGHT: StatPal must not write a clock for a sport whose board keeps
+    none, whatever `mlb_sync` does or stops doing. Pinning the real value here
+    means removing the gate reds a test seeded from production rather than one
+    seeded from a premise that has already gone stale.
+
+    NOT vacuous, and for a sharper reason than the case above: `'0:00'` is
+    exactly the string `_zero_clock_is_not_a_clock` normalises AWAY on the
+    parser side, so a writer that round-tripped the venue's silence through
+    that normalisation would land `None` here and this would fail.
+    """
+    now = datetime.now(timezone.utc)
+    fx = _Fixture(
+        now - timedelta(hours=1),
+        "Chicago Cubs",
+        "Pittsburgh Pirates",
+        raw_status="Bottom 6th",
+        game_clock=None,
+        clock_field_served=False,
+    )
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[fx],
+        events=[("Chicago Cubs", "Pittsburgh Pirates", "0:00")],
+        sport_key="baseball_mlb",
+    )
+    assert rows[0].period == "Bottom 6th"
+    assert rows[0].game_clock == "0:00", (
+        "StatPal overwrote the clock ESPN wrote for a baseball row — the "
+        "baseball board serves no `timer` key, so it has made no claim about "
+        "this column and must leave it alone (CERT-2574)"
     )
 
 
