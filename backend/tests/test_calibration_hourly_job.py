@@ -133,6 +133,43 @@ def test_the_live_schedule_still_carries_the_beat_by_default():
     assert entry["options"]["queue"] == "heavy"
 
 
+def test_the_app_boots_with_the_switch_on():
+    """A SUBPROCESS, because the switch is applied at IMPORT time.
+
+    This is the branch that only ever runs in production, on the one occasion
+    that matters: the moment Alex sets the config var. Every other test in this
+    file drives `apply_calibration_beat_switch` as a function, which cannot
+    catch an import-time failure — and there is a real one available. Later in
+    the same module, `_EXPIRING_WARMER_BEATS` indexes `beat_schedule[name]`
+    DIRECTLY and deliberately raises on a missing key ("a renamed beat must fail
+    loudly here"). If the calibration entry ever joins that list, removing it
+    would `KeyError` at import and the app would not boot — with the switch on,
+    in production, at the worst possible moment.
+
+    So: boot it for real, with the var set, and assert the app imports.
+    """
+    import subprocess
+
+    env = dict(os.environ, CALIBRATION_BEAT_DISABLED="1")
+    proc = subprocess.run(
+        [
+            sys.executable, "-c",
+            "from app.tasks import celery_app, CALIBRATION_BEAT_ENTRY\n"
+            "s = celery_app.conf.beat_schedule\n"
+            "assert CALIBRATION_BEAT_ENTRY not in s, 'switch did not remove the entry'\n"
+            "assert len(s) > 100, f'schedule collapsed to {len(s)} entries'\n"
+            "from app.main import app\n"
+            "print('OK', len(s), len(app.routes))\n"
+        ],
+        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=300,
+    )
+
+    assert proc.returncode == 0, (
+        f"the app does not boot with CALIBRATION_BEAT_DISABLED=1:\n{proc.stderr[-3000:]}"
+    )
+    assert proc.stdout.startswith("OK ")
+
+
 # ---------------------------------------------------------------------------
 # 2. The one-off runs the build HERE. It must never hand it back to heavy.
 # ---------------------------------------------------------------------------
