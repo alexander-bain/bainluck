@@ -128,6 +128,139 @@ export function stripSharedFamilyPrefix(names: string[]): string[] {
   return names.map((n) => (n.startsWith(prefix) ? n.slice(prefix.length).trim() : n));
 }
 
+/**
+ * Tokens of a suffix that a reader would MISS if it were dropped: anything
+ * carrying a digit (a line, a threshold, an inning number) and anything that
+ * opens with a capital (a team, a player, a competition).
+ *
+ * Lowercase connective words ("runs in the", "to win", "points") are not on this
+ * list, and that asymmetry is the whole design: dropping "runs in the first 5
+ * innings" from a rung under a header that says FIRST 5 INNINGS TOTAL costs the
+ * reader nothing, while dropping "-1.5" from `Atlanta -1.5` costs them the line.
+ */
+const LABEL_TOKEN = /[A-Za-z0-9][A-Za-z0-9.+-]*/g;
+
+function suffixTokenIsLoadBearing(token: string): boolean {
+  return /\d/.test(token) || /^[A-Z]/.test(token);
+}
+
+/**
+ * The boilerplate suffix shared by every LABEL inside one named family — the
+ * words each row spends its width restating from the header standing over it.
+ *
+ * #5191: on `/events/15308050` at 390px, all seven rungs of FIRST 5 INNINGS
+ * TOTAL render `Over 0.5 runs in the first 5 inn…` — measured 7 of 7 clipped,
+ * with the only distinguishing part (`0.5`, `1.5`, …) the part that survives.
+ * The header already says *first 5 innings total*; the row says it again and
+ * then ellipses.
+ *
+ * Three conditions, all necessary, mirroring {@link sharedFamilyPrefix}:
+ *
+ *  1. **The family must have a name.** The words being dropped have to land
+ *     somewhere a reader can still see them, and that somewhere is the header.
+ *     An unnamed group (the golf/combat concept page, keyed by numeric market
+ *     id) never strips.
+ *  2. **Two or more distinct labels.** Sharedness across siblings is the only
+ *     evidence that trailing words are boilerplate rather than meaning.
+ *  3. **The suffix must start at a space, must name at least one word the
+ *     header names, and must carry no load-bearing token the header does not.**
+ *     The middle clause is what makes this a REDUNDANCY rule rather than a
+ *     shortening rule: ` runs` is safely droppable from "Over 4.5 Atlanta runs"
+ *     by the third clause alone, but under a header reading TEAM TOTAL the page
+ *     never says "runs" again, so it stays. The raw longest common suffix of
+ *     "Over 0.5 runs…" and "Over 1.5 runs…" is `.5 runs in the first 5 innings`
+ *     — it cuts a number in half — so it is advanced to the first word boundary
+ *     inside it. And `Atlanta -1.5 first 5 innings` / `Atlanta -2.5 first 5
+ *     innings` is exactly the case that must NOT lose its handicap: there the
+ *     header (FIRST 5 SPREAD) says `5`, so ` first 5 innings` goes and `-1.5`
+ *     stays. Were both legs on the SAME handicap the common suffix would reach
+ *     it, and the rule retreats one boundary rather than refusing — see the loop.
+ *
+ * Returns "" when there is nothing safe to strip. Measured on the Tampa Bay @
+ * Atlanta payload (269 rows, 91 families): fires on 19 families / 54 rows, and
+ * touches no player-prop family — those labels ("Under", "Griffin Jax: 6+")
+ * share no suffix at all.
+ */
+export function sharedLabelSuffix(labels: string[], groupName: string | null): string {
+  const head = groupName?.trim();
+  if (!head) return "";
+
+  const distinct = Array.from(new Set(labels));
+  if (distinct.length < 2) return "";
+
+  // Longest common character suffix across all labels.
+  let common = distinct[0];
+  for (const label of distinct.slice(1)) {
+    let i = 0;
+    while (
+      i < common.length &&
+      i < label.length &&
+      common[common.length - 1 - i] === label[label.length - 1 - i]
+    ) {
+      i += 1;
+    }
+    common = common.slice(common.length - i);
+    if (!common) return "";
+  }
+
+  // A label that IS the shared phrase means these labels are not parallel, and
+  // every retreat from here produces fragments ("first" / "Over 0.5 first").
+  // Leave such a family alone entirely.
+  if (distinct.some((l) => l.trim() === common.trim())) return "";
+
+  const headTokens = new Set(
+    (head.match(LABEL_TOKEN) ?? []).map((t) => t.toLowerCase()),
+  );
+  const safe = (suffix: string) => {
+    if (!suffix.trim()) return false;
+    // Never strip a label down to nothing (same guard as sharedFamilyPrefix).
+    if (distinct.some((l) => l.slice(0, l.length - suffix.length).trim().length === 0)) {
+      return false;
+    }
+    const tokens = suffix.match(LABEL_TOKEN) ?? [];
+    // ANCHORED: the suffix has to be words the header is already saying, so at
+    // least one of them must appear there. Without this, ` runs` comes off
+    // "Over 4.5 Atlanta runs" under a header reading TEAM TOTAL — a phrase the
+    // page never repeats, deleted for no reader's benefit.
+    if (!tokens.some((t) => headTokens.has(t.toLowerCase()))) return false;
+    // And nothing a reader would miss goes with it.
+    return tokens.every(
+      (t) => !suffixTokenIsLoadBearing(t) || headTokens.has(t.toLowerCase()),
+    );
+  };
+
+  // Walk the word boundaries INSIDE the common suffix, longest first, and take
+  // the first candidate that is safe. Starting at a boundary is what stops us
+  // cutting a word — or a number — in half: the raw common suffix of "Over 0.5
+  // runs…" and "Over 1.5 runs…" is `.5 runs in the first 5 innings`.
+  //
+  // Longest-first RETREATS rather than refusing outright, and that matters on
+  // the shape it was written for: two spread legs on the same handicap share
+  // ` -1.5 first 5 innings`, whose first candidate carries a number the header
+  // does not name. Retreating one boundary yields ` first 5 innings`, which the
+  // header does name — so the row loses the boilerplate and keeps its line.
+  for (let at = common.indexOf(" "); at >= 0; at = common.indexOf(" ", at + 1)) {
+    const candidate = common.slice(at);
+    if (safe(candidate)) return candidate;
+  }
+  return "";
+}
+
+/**
+ * Apply {@link sharedLabelSuffix} to one family's labels. Index-preserving, so
+ * callers can zip the result against their own ordering.
+ */
+export function stripSharedLabelSuffix(
+  labels: string[],
+  groupName: string | null,
+): string[] {
+  const suffix = sharedLabelSuffix(labels, groupName);
+  if (!suffix) return labels;
+  return labels.map((l) =>
+    l.endsWith(suffix) ? l.slice(0, l.length - suffix.length).trim() : l,
+  );
+}
+
 /** This event's two teams, as the page already knows them. */
 export interface MatchupNames {
   home?: string | null;

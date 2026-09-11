@@ -42,6 +42,7 @@ import { isLikelyPersonName, isPersonFieldDomain } from "@/lib/eventConceptDispl
 import EntityImage from "@/components/EntityImage";
 import {
   groupByPropFamily,
+  stripSharedLabelSuffix,
   type MatchupNames,
   type PropFamilyGroup,
 } from "@/lib/propFamily";
@@ -213,6 +214,33 @@ function pct(p: number | null | undefined): string {
  * different questions — pairing those would invent a complement.
  */
 const EMPTY_PAIR_PERCENTS: ReadonlyMap<PropMark["key"], number> = new Map();
+
+/**
+ * #5191 — the rung that spends its whole width restating its own header.
+ *
+ * Decided ONCE per family, here, for the reason #5240 and #5296 are: the rule
+ * needs every sibling label in hand, and a row that had to find its own siblings
+ * would be a second place this rule lives. The row is handed a finished string.
+ *
+ * Empty for every family the rule refuses (see `sharedLabelSuffix`) and for
+ * the unnamed group, so an absent entry means "render the label as it arrived".
+ */
+const EMPTY_LABEL_OVERRIDES: ReadonlyMap<PropMark["key"], string> = new Map();
+
+function familyLabelOverrides(
+  groups: ReadonlyArray<{ name: string | null; items: PropMark[] }>,
+): Map<PropMark["key"], string> {
+  const byKey = new Map<PropMark["key"], string>();
+  for (const group of groups) {
+    if (group.name == null) continue;
+    const labels = group.items.map((i) => i.label);
+    const stripped = stripSharedLabelSuffix(labels, group.name);
+    group.items.forEach((item, i) => {
+      if (stripped[i] !== labels[i]) byKey.set(item.key, stripped[i]);
+    });
+  }
+  return byKey;
+}
 
 function scriptPairPercents(
   groups: ReadonlyArray<{ name: string | null; items: PropMark[] }>,
@@ -517,9 +545,19 @@ export default function PropsSection({
   const divergencePairs =
     activeState === "divergence" ? divergencePairPercents(groups) : EMPTY_DIVERGENCE_PAIRS;
 
+  // #5191: the same "decide it where the whole family is in hand" shape, for the
+  // words rather than the numbers. State-independent — a rung restates its header
+  // in THE SCRIPT, THE DIVERGENCE and WHAT HIT alike.
+  const labelOverrides = grouped ? familyLabelOverrides(groups) : EMPTY_LABEL_OVERRIDES;
+
   const renderRow = (item: PropMark) =>
     isBinaryBarMark(item) ? (
-      <BinaryBarRow key={item.key} item={item} state={activeState} />
+      <BinaryBarRow
+        key={item.key}
+        item={item}
+        state={activeState}
+        displayLabel={labelOverrides.get(item.key)}
+      />
     ) : (
       <PropRow
         key={item.key}
@@ -527,6 +565,7 @@ export default function PropsSection({
         state={activeState}
         pairedPercent={pairPercents.get(item.key)}
         pairedDivergence={divergencePairs.get(item.key)}
+        displayLabel={labelOverrides.get(item.key)}
       />
     );
 
@@ -715,6 +754,7 @@ function PropRow({
   state,
   pairedPercent,
   pairedDivergence,
+  displayLabel,
 }: {
   item: PropMark;
   state: PropsState;
@@ -724,6 +764,9 @@ function PropRow({
   /** #5296: the same, for THE DIVERGENCE's three numbers — the two levels and the
    *  badge between them, decided together so they cannot contradict each other. */
   pairedDivergence?: DivergencePair;
+  /** #5191: the label with the words its own header already says removed. Absent
+   *  whenever the family rule refuses, and absence means "print `item.label`". */
+  displayLabel?: string;
 }) {
   // L2-123 / #199: a family with no honest price renders one quiet pending label
   // ("Opens after Round N" / "No market yet") in every state — never a fabricated
@@ -735,7 +778,9 @@ function PropRow({
   const rowState: PropsState = item.settled ? "graded" : state;
   return (
     <div className="flex items-center gap-3 py-2 border-b border-surface-elevated last:border-0">
-      <span className="flex-1 min-w-0 text-sm text-text-primary truncate">{item.label}</span>
+      <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
+        {displayLabel ?? item.label}
+      </span>
       {pending ? (
         <Pending note={pending} />
       ) : (
@@ -881,7 +926,17 @@ function GradedValue({ item }: { item: PropMark }) {
 // visible without reading a number.
 // ---------------------------------------------------------------------------
 
-function BinaryBarRow({ item, state }: { item: PropMark; state: PropsState }) {
+function BinaryBarRow({
+  item,
+  state,
+  displayLabel,
+}: {
+  item: PropMark;
+  state: PropsState;
+  /** #5191, as PropRow. `question` still wins where a mark carries one — that row
+   *  never printed its label, so the family rule has nothing to say about it. */
+  displayLabel?: string;
+}) {
   const cur = item.current;
   const mark = item.pregame_mark;
   const heat = probabilityHeat(cur);
@@ -891,7 +946,7 @@ function BinaryBarRow({ item, state }: { item: PropMark; state: PropsState }) {
     <div className="py-2 border-b border-surface-elevated last:border-0">
       <div className="flex items-center gap-3">
         <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
-          {item.question ?? item.label}
+          {item.question ?? displayLabel ?? item.label}
         </span>
         {state === "graded" ? (
           <GradedValue item={item} />
