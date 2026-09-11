@@ -1882,6 +1882,14 @@ export default function EventPage({ params }: EventPageProps) {
                   current: p.current ?? null,
                   graded_result: verified.graded_result,
                   graded_label: verified.graded_label,
+                  // #5088: a window that closed mid-game is settled on its own
+                  // while the section is still live. Without this the row falls
+                  // to the SECTION state and `DivergenceValue` renders
+                  // "script pending" + an em dash — because a closed window
+                  // deliberately carries no price (#1735), so `pregame_mark` and
+                  // `current` are both null. That is CERT-2535's blank row,
+                  // reintroduced by the change that lifted CERT-2535's gate.
+                  settled: p.settled ?? null,
                 };
               })
               // #3874: drop the undecomposed-child-title rows (gotcha #18) — the

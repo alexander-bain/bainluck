@@ -1208,6 +1208,12 @@ export interface GameMarketsResponse {
     current: number | null;
     graded_result?: "hit" | "miss" | "push" | null;
     graded_label?: string | null;
+    // #5088: this row is settled ON ITS OWN, while the event is still live — a
+    // first-five-innings window that closed in the sixth. `PropsSection` already
+    // branches on it (`rowState = item.settled ? "graded" : state`) and the golf
+    // concept page has carried it since The Open; the GAME page's payload type
+    // never declared it, so the mapping could not thread it through.
+    settled?: boolean | null;
   }[];
 }
 
