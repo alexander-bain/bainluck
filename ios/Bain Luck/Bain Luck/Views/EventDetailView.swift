@@ -147,25 +147,74 @@ struct EventDetailView: View {
         #endif
     }
 
+    /// The title's rungs, or nil before a score exists to protect.
+    private var titleRungs: EventNavTitle.Rungs? {
+        guard let event = vm.event,
+              let hs = event.homeScore, let as_ = event.awayScore else { return nil }
+        // #4880 — this joined the raw pair with no guard at all, so the title
+        // read "… • 25' 25'" on every live soccer match.
+        let state = PeriodLabel.liveStatusText(
+            period: event.espn?.period, gameClock: event.espn?.gameClock) ?? ""
+        return EventNavTitle.rungs(
+            away: event.awayTeam, home: event.homeTeam,
+            awayScore: as_, homeScore: hs,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            state: state
+        )
+    }
+
+    /// The flat title. Still what the bar shows on macOS, and on every platform
+    /// it is what a pushed view's back button and VoiceOver read — so it stays
+    /// the WIDEST rung, which is the whole sentence.
     private var dynamicTitle: String {
         guard let event = vm.event else { return "Game Details" }
-        // #3430 — the two sides of ONE matchup, so the pair rule decides. Read
-        // alone, "Tigers" names Clemson perfectly well; this title read
-        // "Tigers 10 - Tigers 51" because LSU are the Tigers too.
-        let (away, home) = TeamShortName.shortPair(
+        if let rungs = titleRungs { return (rungs.withState ?? rungs.labelled).text }
+        return EventNavTitle.scoreless(
             away: event.awayTeam, home: event.homeTeam,
             awayServed: event.awayTeamData?.abbreviation,
             homeServed: event.homeTeamData?.abbreviation
         )
-        if let hs = event.homeScore, let as_ = event.awayScore {
-            // #4880 — this joined the raw pair with no guard at all, so the title
-            // read "… • 25' 25'" on every live soccer match.
-            let state = PeriodLabel.liveStatusText(
-                period: event.espn?.period, gameClock: event.espn?.gameClock) ?? ""
-            return "\(away) \(as_) - \(home) \(hs)" + (state.isEmpty ? "" : " • \(state)")
-        }
-        return "\(away) vs \(home)"
     }
+
+    #if os(iOS)
+    /// #4900 — the inline title, laid out rather than truncated.
+    ///
+    /// `ViewThatFits` walks the rungs widest-first and takes the first that the
+    /// bar can actually hold; the bar measures, because no character count
+    /// here can (the four photographed specimens broke between 16 and 24
+    /// characters in the same bar). The floor is rendered as PARTS with the two
+    /// numbers at a higher layout priority than the two names, so even a club
+    /// whose three-glyph code somehow does not fit loses letters off a name and
+    /// never a digit off a score — which is the defect this exists to end.
+    @ViewBuilder
+    private var navTitleView: some View {
+        if let rungs = titleRungs {
+            ViewThatFits(in: .horizontal) {
+                if let full = rungs.withState {
+                    Text(full.text).font(.headline).lineLimit(1)
+                }
+                Text(rungs.labelled.text).font(.headline).lineLimit(1)
+                scoreProtectedTitle(rungs.compact)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(dynamicTitle)
+        } else {
+            Text(dynamicTitle).font(.headline).lineLimit(1)
+        }
+    }
+
+    private func scoreProtectedTitle(_ c: EventNavTitle.Candidate) -> some View {
+        HStack(spacing: 4) {
+            Text(c.away).lineLimit(1).truncationMode(.tail)
+            Text(c.awayScore).layoutPriority(1)
+            Text("-").layoutPriority(1)
+            Text(c.home).lineLimit(1).truncationMode(.tail)
+            Text(c.homeScore).layoutPriority(1)
+        }
+        .font(.headline)
+    }
+    #endif
 
     private var shareURL: URL {
         URL(string: eventShareURL(eventId)) ?? bainLuckFallbackURL
@@ -178,6 +227,11 @@ struct EventDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                #if os(iOS)
+                ToolbarItem(placement: .principal) {
+                    navTitleView
+                }
+                #endif
                 // Manual-refresh ring only when a real auto-refresh is running
                 // (live). vm.load() stamps lastLoadedAt, so the countdown resets
                 // honestly on completion.
