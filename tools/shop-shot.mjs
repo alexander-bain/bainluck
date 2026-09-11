@@ -87,7 +87,18 @@ clearStaleArtifact(out);
 
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
-if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>');
+// 2026-09-11 (ux/1200): A LOCALHOST TARGET NEVER GETS `<-loopback>`.
+// That flag REMOVES Chromium's implicit loopback bypass, so a page served by a
+// local `npm run start` is fetched through the sandbox proxy, which answers 503.
+// The shot then comes out as an empty document — `docHeight=75` — and a lane
+// reading it sees "the section I just built is not there". The proxy is still
+// needed even for a local page, because the page itself fetches
+// api.bainluck.com; only the bypass override has to go.
+const localTarget = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])([:/]|$)/.test(url);
+if (proxy) {
+  args.push(`--proxy-server=${proxy}`);
+  if (!localTarget) args.push('--proxy-bypass-list=<-loopback>');
+}
 
 const browser = await chromium.launch({ args });
 let ok = false;
