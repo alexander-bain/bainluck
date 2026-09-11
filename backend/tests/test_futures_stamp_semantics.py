@@ -516,9 +516,21 @@ PRICE_CHANGE_STAMPERS = {
     # only one that write makes. Through the shared helper for the reason above:
     # this is now the third Kalshi path that can move the column, and a fourth
     # reading of "the price moved" is what #1951 forbids.
-    "app/tasks/kalshi.py": 4,
+    # 4 -> 5 (#5246 / CERT-2637): `_create_settled_market`'s conflict path. That
+    # arm is a RESOLUTION write, and since #5246 it carries the resolved price —
+    # 1.0 or 0.0 — beside the verdict, because a leg the venue has called must
+    # not keep the last number anyone paid for it. Through the shared helper for
+    # the reason above; a settled price is still a price MOVE.
+    "app/tasks/kalshi.py": 5,
     "app/tasks/polymarket.py": 3,
     "app/tasks/futures.py": 1,
+    # #5246 / CERT-2637: `_backfill_kalshi_winners`' Core update. It is one of
+    # the LIVE Kalshi settlement graders — the first version of #5246 patched
+    # only the retired `_resolve_winners_only` and was inert on every path a
+    # reader's row travels. The raw-SQL graders in this file maintain the same
+    # column through `settled_price_set_sql`, which spells the identical
+    # predicate in SQL because a `text()` UPDATE cannot take a Core clause.
+    "app/tasks/backfill_winners.py": 1,
     # #2199. Its one price write carries the conditional change-stamp beside the
     # unconditional touch-stamp, so a refreshed-but-unmoved price does not read
     # as a move — `routes/playoffs.py` drops an outcome from the grid on a stale

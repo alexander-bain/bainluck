@@ -93,9 +93,9 @@ def _task_module_code():
 
 
 def _price_set(price):
-    from app.tasks.backfill_winners import _SETTLED_PRICE_SET_SQL
+    from app.utils.settled_price import settled_price_set_sql
 
-    return _SETTLED_PRICE_SET_SQL(price)
+    return settled_price_set_sql(price)
 
 
 def _settlement_call_sites():
@@ -111,7 +111,8 @@ def _settlement_call_sites():
     where the repo proves it, and this asserts only that both call sites exist
     and ask for DIFFERENT prices.
     """
-    return re.findall(r'_SETTLED_PRICE_SET_SQL\("([01]\.0)"\)', _task_module_source())
+    return re.findall(r"settled_price_set_sql\(SETTLED_(YES|NO)_PRICE\)",
+                      _task_module_source())
 
 
 @pytest.mark.parametrize("price", ["0.0", "1.0"])
@@ -149,7 +150,10 @@ def test_both_settlement_call_sites_ask_for_the_price():
     a sweep that prices only half of what it grades.
     """
     sites = _settlement_call_sites()
-    assert sorted(sites) == ["0.0", "1.0"], sites
+    # Six now, not two: the retired sweep's pair plus the two LIVE graders'
+    # pairs (CERT-2637). Both prices must appear, and neither may vanish.
+    assert set(sites) == {"YES", "NO"}, sites
+    assert sites.count("YES") == sites.count("NO") == 3, sites
 
 
 def test_the_change_stamp_compares_against_the_price_being_written():
@@ -194,6 +198,187 @@ def test_the_settling_sweep_still_refuses_to_overwrite_a_better_verdict():
     from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES_SQL
 
     assert "api_settlement" not in OVERWRITABLE_WINNER_SOURCES_SQL
+
+
+# --- CERT-2637: EVERY live Kalshi settlement writer, not the one I read first --
+
+
+#: Every function that stamps `resolution_source = 'api_settlement'` on a Kalshi
+#: outcome, hand-classified 2026-09-11 against the live call graph. The first
+#: version of #5246 patched ONE of these — `_resolve_winners_only`, which is
+#: retired — and was therefore inert on every path a reader's row travels.
+#:
+#: Pinned as a set, not a count, so a new settlement writer fails this by NAME
+#: rather than by arithmetic somebody has to interpret.
+LIVE_KALSHI_SETTLEMENT_WRITERS = {
+    "app/tasks/backfill_winners.py": {
+        "_backfill_kalshi_winners",
+        "_backfill_kalshi_winners_targeted",
+        "_backfill_kalshi_winners_via_markets",
+        "_resolve_winners_only",
+    },
+    "app/tasks/kalshi.py": {
+        "_backfill_candlestick_snapshots",
+        "_backfill_from_settled_events",
+        "_create_settled_market",
+    },
+}
+
+#: Settlement writers in the same files that are NOT Kalshi and are NOT fixed
+#: here. Named rather than filtered out, so the census below still SEES them and
+#: a Kalshi writer cannot hide by being mistaken for one of these.
+#:
+#: Polymarket is deliberately a separate ship, on evidence rather than
+#: convenience: `polymarket_condition_refresh` grades off `outcomePrices` at
+#: `>= 0.95` / `<= 0.05`, so a settled Polymarket leg already carries a
+#: near-terminal price rather than a frozen mid-market quote. That is a
+#: materially different starting state and wants its own measurement before
+#: anything writes a hard 0 or 1 over it. The DATA half of #5246 covers both —
+#: the repair clears any `api_settlement` loser on an open market whatever its
+#: source — so this gap is forward-only, and it is tracked.
+NON_KALSHI_SETTLEMENT_WRITERS = {
+    "app/tasks/backfill_winners.py": {"_backfill_polymarket_winners_from_api"},
+    "app/tasks/kalshi.py": set(),
+}
+
+
+def _settlement_writers(path):
+    """`{function name: source}` for every function writing `api_settlement`.
+
+    Parsed with `ast` rather than grepped so a function is attributed to the
+    function it is actually IN — the sites are 3–5 levels of nesting deep inside
+    500-line task bodies, and a line-number heuristic mis-attributes them.
+    """
+    import ast
+
+    src = open(path).read()
+    tree = ast.parse(src)
+    lines = src.split("\n")
+    hits = [
+        i + 1
+        for i, line in enumerate(lines)
+        if "api_settlement" in line and "resolution_source" in line
+    ]
+    funcs = sorted(
+        (n.lineno, n.end_lineno, n.name)
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    out = {}
+    for h in hits:
+        enclosing = [f for f in funcs if f[0] <= h <= f[1]]
+        if not enclosing:
+            continue
+        lo, hi, name = enclosing[-1]
+        out.setdefault(name, "\n".join(lines[lo - 1 : hi]))
+    return out
+
+
+def test_the_settlement_writer_census_has_not_moved():
+    """Positive control. A scan that finds nothing passes the test below.
+
+    If this fails, a Kalshi settlement writer was added, removed or renamed —
+    classify it by hand and add it to the set, because the test below can only
+    police writers it knows about.
+    """
+    for path, expected in LIVE_KALSHI_SETTLEMENT_WRITERS.items():
+        found = set(_settlement_writers(path))
+        assert found == expected | NON_KALSHI_SETTLEMENT_WRITERS[path], path
+
+
+def test_every_live_kalshi_api_settlement_writer_sets_terminal_price():
+    """🔴 THE BLOCK THIS ANSWERS (CERT-2637).
+
+    The first version added the price to the settling UPDATEs in
+    `_resolve_winners_only` — which is RETIRED. `_backfill_all_winners` reaches
+    `_backfill_kalshi_winners`, `_backfill_kalshi_winners_targeted` and
+    `_backfill_kalshi_winners_via_markets`; the four-times-daily
+    `kalshi._backfill_from_settled_events` grades on its own schedule; and
+    `_create_settled_market` mints already-graded rows. Every one of them stamped
+    `api_settlement` and left the price behind, so the ship was inert where it
+    mattered — and worse than inert once the price-refresh refusal landed, since
+    that made the residue those paths keep creating permanently unreachable.
+
+    A settlement writer is a POPULATION, not a place. This asserts over the
+    population.
+    """
+    for path, names in LIVE_KALSHI_SETTLEMENT_WRITERS.items():
+        writers = _settlement_writers(path)
+        for name in names:
+            body = writers[name]
+            # Three legal routes, and the FIRST TWO ARE THE POINT. A raw
+            # `text()` UPDATE splices `settled_price_set_sql`, a Core update
+            # splats `settled_price_values`; both guarantee all three columns by
+            # construction, and neither leaves the literal column names in the
+            # source for a scan to find. The third — spelling the columns out —
+            # is only reachable where the price depends on a bind param the
+            # helper cannot see (`kalshi._backfill_candlestick_snapshots`), and
+            # it is held to naming all three.
+            via_helper = (
+                "settled_price_set_sql(" in body or "settled_price_values(" in body
+            )
+            spelled_out = all(
+                col in body
+                for col in ("current_probability",
+                            "current_american_odds",
+                            "price_changed_at")
+            )
+            assert via_helper or spelled_out, (
+                f"{path}::{name} stamps api_settlement without writing a "
+                f"terminal price — the leg keeps the last number anyone paid "
+                f"for a contract that is over, and no poll can ever correct it"
+            )
+            assert "price_changed_at" in body or via_helper, (
+                f"{path}::{name} moves the price without the #2024 change stamp"
+            )
+
+
+def test_both_sides_of_every_settlement_are_priced():
+    """YES and NO, in every writer that spells the two branches separately.
+
+    A writer that priced only the winners would leave exactly #5246's
+    population — the eliminated field — untouched, which is the whole defect.
+    """
+    for path, names in LIVE_KALSHI_SETTLEMENT_WRITERS.items():
+        for name, body in _settlement_writers(path).items():
+            if name not in names:
+                continue
+            if "is_winner = true" in body or "is_winner=true" in body:
+                assert "SETTLED_YES_PRICE" in body or "1.0" in body, f"{path}::{name}"
+            if "is_winner = false" in body or "is_winner=false" in body:
+                assert "SETTLED_NO_PRICE" in body or "0.0" in body, f"{path}::{name}"
+            # A writer that spells one branch and not the other is the exact
+            # half-fix this cert blocked: pricing winners while the eliminated
+            # field — #5246's whole population — keeps its residue.
+            if "SETTLED_YES_PRICE" in body:
+                assert "SETTLED_NO_PRICE" in body, f"{path}::{name}: YES only"
+
+
+def test_the_undeclared_refusal_survives_the_price_write():
+    """Pricing a settlement must not start pricing a NON-settlement.
+
+    `gradeable_winner` returns None for `result=""` and `result="scalar"`, and
+    every writer must still skip those rather than zero their price on a grade
+    the venue never gave. This is the interaction that made CAL-P1004 worth
+    fixing in the same ship rather than filing.
+    """
+    from app.utils import kalshi_market_status as kms
+
+    assert kms.gradeable_winner("finalized", "scalar") is None
+    assert kms.gradeable_winner("active", "") is None
+    for path in LIVE_KALSHI_SETTLEMENT_WRITERS:
+        writers = _settlement_writers(path)
+        for name in LIVE_KALSHI_SETTLEMENT_WRITERS[path]:
+            body = writers[name]
+            # Either the writer asks the three-state helper itself, or its
+            # caller has already partitioned on it and the writer only ever
+            # receives a decided list.
+            assert (
+                "gradeable_winner" in body
+                or "graded_columns" in body
+                or "yes_tickers" in body
+                or "yes_t" in body
+            ), f"{path}::{name} reaches a grade with no three-state route"
 
 
 # --- the durability guard: a graded leg is not a quotable leg ----------------

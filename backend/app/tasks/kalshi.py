@@ -42,6 +42,11 @@ from app.utils.event_completion import (  # noqa: E402  # #3544
     KALSHI_OCCURRENCE_COMMENCE_SOURCE,
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.settled_price import (  # noqa: E402  # #5246
+    SETTLED_NO_PRICE,
+    SETTLED_YES_PRICE,
+    settled_price_set_sql,
+)
 from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
 # #2927: imports nothing but stdlib (same rule as sport_keys.py), so it is safe
 # at module scope — the alarm below needs it outside the task body.
@@ -4463,7 +4468,19 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                                 wr = await session.execute(
                                     text("""
                                         UPDATE futures_outcomes
-                                        SET is_winner = :w, resolution_source = 'api_settlement'
+                                        SET is_winner = :w, resolution_source = 'api_settlement',
+                                            -- #5246 / CERT-2637. The grade is a BIND
+                                            -- PARAM here, so the price has to follow the
+                                            -- same param rather than a literal: two
+                                            -- statements keyed off one `:w` cannot
+                                            -- disagree, a literal could.
+                                            current_probability = CASE WHEN :w THEN 1.0 ELSE 0.0 END,
+                                            current_american_odds = NULL,
+                                            price_changed_at = CASE
+                                                WHEN current_probability IS DISTINCT FROM
+                                                     CAST(CASE WHEN :w THEN 1.0 ELSE 0.0 END
+                                                          AS numeric(7,6))
+                                                THEN NOW() ELSE price_changed_at END
                                         WHERE external_id = :t
                                           AND (resolution_source IS NULL
                                                OR resolution_source IN
@@ -5063,7 +5080,8 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             r_yes = await session.execute(
                                 text("""
                                     UPDATE futures_outcomes fo
-                                    SET is_winner = true, resolution_source = 'api_settlement'
+                                    SET is_winner = true, resolution_source = 'api_settlement',
+                                        """ + settled_price_set_sql(SETTLED_YES_PRICE) + """
                                     FROM futures_markets fm
                                     WHERE fo.market_id = fm.id AND fm.source = 'kalshi'
                                       AND fo.external_id = ANY(:tickers)
@@ -5081,7 +5099,8 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             r_no = await session.execute(
                                 text("""
                                     UPDATE futures_outcomes fo
-                                    SET is_winner = false, resolution_source = 'api_settlement'
+                                    SET is_winner = false, resolution_source = 'api_settlement',
+                                        """ + settled_price_set_sql(SETTLED_NO_PRICE) + """
                                     FROM futures_markets fm
                                     WHERE fo.market_id = fm.id AND fm.source = 'kalshi'
                                       AND fo.external_id = ANY(:tickers)
@@ -5769,6 +5788,14 @@ async def _create_settled_market(
         # correctly protected every row that already existed. Ungraded now
         # stores SQL NULL on both columns: "the venue has not answered" is a
         # value we write, not a value we decline to write.
+        # #5246 / CERT-2637. This path CREATES rows that are already graded, so
+        # it can mint the defect rather than merely fail to fix it: without this,
+        # a settled leg is born holding `last_price` — the last number anyone
+        # paid for a contract that is over — and no poll can ever correct it.
+        # When the venue has answered, the price IS the answer.
+        if graded_cols:
+            prob = 1.0 if graded_cols["is_winner"] else 0.0
+            american = None
         base_stmt = pg_insert(FuturesOutcome).values(
             market_id=market_id,
             external_id=m.ticker,
@@ -5796,6 +5823,17 @@ async def _create_settled_market(
                     "is_winner": graded_cols["is_winner"],
                     "resolution_source": graded_cols["resolution_source"],
                     "last_updated": func.now(),
+                    # #5246: the conflict path is a RESOLUTION write, so it
+                    # carries the resolved price too. `price_changed_at` goes
+                    # through the shared #2024 predicate rather than a second
+                    # copy of it.
+                    "current_probability": prob,
+                    "current_american_odds": None,
+                    "price_changed_at": price_changed_at_value(
+                        FuturesOutcome.current_probability,
+                        FuturesOutcome.price_changed_at,
+                        prob,
+                    ),
                 },
             )
         else:
