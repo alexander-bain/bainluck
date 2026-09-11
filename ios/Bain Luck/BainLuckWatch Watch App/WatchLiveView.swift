@@ -168,7 +168,9 @@ final class WatchLiveViewModel: ObservableObject {
                 let awayProb = 1.0 - homeProb
                 let homeAbbrev = e.homeTeamData?.abbreviation ?? String(homeTeam.split(separator: " ").last ?? "")
                 let awayAbbrev = e.awayTeamData?.abbreviation ?? String(awayTeam.split(separator: " ").last ?? "")
-                let clockParts = [e.espn?.period, e.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }
+                // #4880 — see `PeriodLabel.liveStatusText`.
+                let clockText = PeriodLabel.liveStatusText(
+                    period: e.espn?.period, gameClock: e.espn?.gameClock)
                 return WatchLiveGame(
                     id: e.id,
                     homeAbbrev: homeAbbrev,
@@ -179,7 +181,7 @@ final class WatchLiveViewModel: ObservableObject {
                     awayScore: e.awayScore,
                     homeColor: e.homeTeamData?.primaryColor,
                     awayColor: e.awayTeamData?.primaryColor,
-                    gameClock: clockParts.isEmpty ? nil : clockParts.joined(separator: " "),
+                    gameClock: clockText,
                     sportLabel: e.sportName ?? e.sport ?? ""
                 )
             }

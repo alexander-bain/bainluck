@@ -161,7 +161,9 @@ struct MenuBarView: View {
                     awayScore: event.awayScore,
                     homeProb: homePct,
                     awayProb: awayPct,
-                    period: [event.espn?.period, event.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " "),
+                    // #4880 — see `PeriodLabel.liveStatusText`.
+                    period: PeriodLabel.liveStatusText(
+                        period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "",
                     sport: event.sportName ?? event.sport ?? ""
                 )
             }

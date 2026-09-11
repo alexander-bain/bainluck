@@ -18,6 +18,19 @@ import { join } from "path";
 
 const IOS_ROOT = join(__dirname, "../../../ios/Bain Luck/Bain Luck");
 const CANONICAL = join(IOS_ROOT, "Utilities/PeriodLabel.swift");
+
+/**
+ * #4880 — the two targets this ratchet could never see.
+ *
+ * `IOS_ROOT` is ONE target deep. The watch app and the widget are SIBLINGS of
+ * that directory, not children, so three of the six call sites that printed
+ * `23' 23'` were structurally outside every scan in this file and always had
+ * been. Measured 2026-09-10: 189 .swift in the app, 14 in the watch, 5 in the
+ * widget.
+ */
+const WATCH_ROOT = join(__dirname, "../../../ios/Bain Luck/BainLuckWatch Watch App");
+const WIDGET_ROOT = join(__dirname, "../../../ios/Bain Luck/BainLuckWidget");
+const ALL_TARGET_ROOTS = [IOS_ROOT, WATCH_ROOT, WIDGET_ROOT];
 const CONSUMERS = [
   join(IOS_ROOT, "Components/OddsChartView.swift"),
   join(IOS_ROOT, "Components/ScoreDifferentialChartView.swift"),
@@ -217,5 +230,99 @@ d("iOS period labels have exactly one implementation", () => {
       "21st",
       "22nd",
     ]);
+  });
+});
+
+/**
+ * #4880 — a period printed BESIDE its clock, across all three targets.
+ *
+ * The block above asserts there is one implementation of "what do I call this
+ * period string". That already held when the hero capsule read **`23' 23'`** on
+ * every live soccer match, because the defect is not a second implementation —
+ * it is six callers JOINING the shared label to the clock themselves, and
+ * soccer serves `period` EQUAL to `game_clock` (`"25'"` / `"25'"`).
+ *
+ * So the tell here is the join, not the label. Two things are asserted that the
+ * block above cannot: that the join happens in exactly one place, and that the
+ * scan reaches the watch and the widget, where three of the six sites live.
+ */
+const CANONICAL_JOIN = "PeriodLabel.liveStatusText(";
+
+/** The six sites that printed the pair, by target. Named so a revert is loud. */
+const PAIR_PRINTERS: Array<[string, string]> = [
+  [join(IOS_ROOT, "Components/StatusBadge.swift"), "the hero capsule and every feed card"],
+  [join(IOS_ROOT, "Views/EventDetailView.swift"), "the nav title and share text"],
+  [join(IOS_ROOT, "Views/MenuBarView.swift"), "the macOS menu bar"],
+  [join(WATCH_ROOT, "WatchFeedModels.swift"), "the watch feed row's clockText"],
+  [join(WATCH_ROOT, "WatchLiveView.swift"), "the watch live game row"],
+  [join(WIDGET_ROOT, "WidgetAPIClient.swift"), "the widget"],
+];
+
+/**
+ * An array literal holding BOTH halves of the pair — `[event.espn?.period,
+ * event.espn?.gameClock]` — which is the exact shape all six sites had. The
+ * `[^\]]*` bound keeps it to one literal so an unrelated `period` earlier in the
+ * file cannot pair with a `gameClock` later.
+ */
+const RAW_JOIN = /\[[^\]]*\bperiod\b[^\]]*\bgameClock\b[^\]]*\]/;
+
+const iosTargetsPresent = ALL_TARGET_ROOTS.every((root) => existsSync(root));
+const t = iosTargetsPresent ? describe : describe.skip;
+
+t("a live period is printed beside its clock in exactly one place (#4880)", () => {
+  it("the shared rule takes BOTH strings, because only it can see the collision", () => {
+    const canonical = readFileSync(CANONICAL, "utf8");
+    expect(canonical).toMatch(/static func liveStatusText\(period: String\?, gameClock: String\?\)/);
+    // Equality, not containment. `liveBadgeLabel` strips a clock PREFIX, which
+    // is what football sends; soccer's period IS the clock, with no separator
+    // to find, and that is the case the old guard could not express.
+    expect(canonical).toMatch(/caseInsensitiveCompare\(clock\)/);
+  });
+
+  it.each(PAIR_PRINTERS)("%s delegates the join (%s)", (path) => {
+    const src = readFileSync(path, "utf8");
+    expect(src).toContain(CANONICAL_JOIN);
+  });
+
+  it("no Swift file in ANY target joins the pair itself — discovered, not listed", () => {
+    const offenders: string[] = [];
+
+    for (const root of ALL_TARGET_ROOTS) {
+      for (const path of swiftFiles(root)) {
+        if (path === CANONICAL) continue;
+        const code = stripComments(readFileSync(path, "utf8"));
+        if (RAW_JOIN.test(code)) {
+          offenders.push(`${path} — joins period to gameClock instead of calling liveStatusText`);
+        }
+        // `liveBadgeLabel` is handed ONE string and cannot see what is printed
+        // next to it. Outside the canonical file, asking for it is asking for
+        // the half of the rule that produced this defect.
+        if (/liveBadgeLabel/.test(code)) {
+          offenders.push(`${path} — calls liveBadgeLabel directly; use liveStatusText`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("the watch and the widget are actually reached", () => {
+    // The blind spot itself, asserted. If a refactor moves these directories
+    // the scan above must fail loudly rather than silently scan nothing —
+    // "an empty scan reads as a clean pass" is this file's own thesis.
+    for (const root of [WATCH_ROOT, WIDGET_ROOT]) {
+      expect(swiftFiles(root).length).toBeGreaterThan(0);
+    }
+    expect(swiftFiles(WATCH_ROOT).some((p) => p.endsWith("WatchLiveView.swift"))).toBe(true);
+    expect(swiftFiles(WIDGET_ROOT).some((p) => p.endsWith("WidgetAPIClient.swift"))).toBe(true);
+  });
+
+  it("the join check can actually fail", () => {
+    // Feed it the exact code that shipped `23' 23'`.
+    const drifted = stripComments(`
+      let parts = [event.espn?.period, event.espn?.gameClock].compactMap { $0 }
+      return parts.joined(separator: " ")
+    `);
+    expect(RAW_JOIN.test(drifted)).toBe(true);
   });
 });

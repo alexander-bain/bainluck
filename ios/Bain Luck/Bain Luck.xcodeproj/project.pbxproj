@@ -100,6 +100,7 @@
 				Models/EventModels.swift,
 				Models/FeedModels.swift,
 				Models/PredictionModels.swift,
+				Utilities/PeriodLabel.swift,
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 		};
@@ -150,8 +151,23 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Models/PredictionModels.swift,
+				Utilities/PeriodLabel.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
+		};
+		A7C0000000000000000000B1 /* Exceptions for "Bain Luck" folder in "BainLuckWidget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Utilities/PeriodLabel.swift,
+			);
+			target = A7C0000000000000000000F1 /* BainLuckWidget */;
+		};
+		A7C0000000000000000000B2 /* Exceptions for "Bain Luck" folder in "BainLuckTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Utilities/PeriodLabel.swift,
+			);
+			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -185,6 +201,8 @@
 			exceptions = (
 				A707F8062FA91A3700A4D63C /* Exceptions for "Bain Luck" folder in "BainLuckWatch Watch App" target */,
 				A7C0000000000000000000DF /* Exceptions for "Bain Luck" folder in "BainLuckComplication" target */,
+				A7C0000000000000000000B1 /* Exceptions for "Bain Luck" folder in "BainLuckWidget" target */,
+				A7C0000000000000000000B2 /* Exceptions for "Bain Luck" folder in "BainLuckTests" target */,
 			);
 			path = "Bain Luck";
 			sourceTree = "<group>";
