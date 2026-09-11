@@ -6,9 +6,9 @@
 cycle asks the venue about. Everything the ship claims is in those two WHERE
 clauses:
 
-    -- band 1, new in #4057
+    -- band 1, new in #4057, grade test corrected in #5146
     COALESCE(fm.settled_at, fm.resolution_date) BETWEEN NOW() - :floor AND NOW()
-    AND NOT EXISTS (an outcome with is_winner IS NOT NULL)
+    AND NOT EXISTS (an outcome with is_winner IS TRUE)
     AND EXISTS (an outcome that is neither authoritative nor ungradeable_result)
     ORDER BY MAX(COALESCE(fm.settled_at, fm.resolution_date)) DESC LIMIT :fresh
 
@@ -39,6 +39,27 @@ Measured through `/api/admin/db-query` on 2026-09-10 11:05–11:40Z:
 * the recency band's population is **2,886** tickers over 3 days, **180** per
   6-hour cycle against a 400-ticker band — 2.2x headroom, so the band cannot be
   outrun by ordinary inflow.
+
+## what this corpus got WRONG for its first day, and why the shape matters (#5146)
+
+Every "blank" row below used to be seeded `is_winner = NULL`, and the graded arm
+`is_winner = true`. Production has almost none of the first shape:
+`futures_outcomes.is_winner` is `nullable=True, default=False,
+server_default=text("false")`, so a leg no grader has touched stores **FALSE**.
+NULL is the *rare* state — mostly #1852's retraction.
+
+So the shipped clause `NOT EXISTS (is_winner IS NOT NULL)` read the column's own
+DEFAULT as a grade, and one untouched leg hid the whole market from this band.
+Measured 2026-09-11 07:30–07:55Z inside the band's own 3-day window: the old
+clause made **2,416** tickers eligible, `IS TRUE` makes **7,927** — 5,511 (70%)
+of freshly-settled tickers could never enter the fast lane, and waited on band
+2's ~11-day wrap. `KXNFLPASSTDS-26SEP10SFLAR` (SF–LA Rams, 2026-09-10) was 9/9
+`finalized` at Kalshi with three `yes` results while every stored leg sat at
+`is_winner=false, resolution_source=NULL`.
+
+`default_false` and `mixed_default` below are that shape. Both are seeded with
+EXPLICIT `False` rather than by omitting the column, so the arm tests the clause
+and not the seeding path.
 
 ## the corpus, and what each row can fail on
 
@@ -110,7 +131,9 @@ def _corpus() -> list[tuple]:
     # Distinct to the minute on purpose: the ordering arm below asserts an exact
     # list, and two rows sharing a timestamp would make it a coin toss.
     half_hour = now - timedelta(minutes=30)
+    forty = now - timedelta(minutes=40)
     three_quarters = now - timedelta(minutes=45)
+    fifty = now - timedelta(minutes=50)
     hour = now - timedelta(hours=1)
     two_hours = now - timedelta(hours=2)
     nine_days = now - timedelta(days=9)
@@ -137,11 +160,36 @@ def _corpus() -> list[tuple]:
         ),
         ("polymarket", "polymarket", "resolved", "III-26SEP10", hour, hour, blank),
         ("still_open", "kalshi", "open", "JJJ-26SEP10", hour, hour, blank),
+        # #5146 — the shape 70% of production is actually in. Every leg carries
+        # the server default FALSE and no grader has ever spoken. Under the old
+        # `is_winner IS NOT NULL` clause this row is invisible to the band, and
+        # `KKK` sorts below the cursor so the tail cannot reach it either: it is
+        # the row that waits ~11 days while the venue holds the answer.
+        (
+            "default_false", "kalshi", "resolved", "KKK-26SEP10", forty, forty,
+            [("leg-a", False, None), ("leg-b", False, None)],
+        ),
+        # ONE untouched leg was enough to hide a market — the SF–LA Rams shape,
+        # where some legs were retracted and the rest still hold the default.
+        # `all_losers` is the dominant source on this cohort in production
+        # (11,636 in-window legs) and is non-authoritative, so the second clause
+        # still passes and only the grade test decides this row.
+        (
+            "mixed_default", "kalshi", "resolved", "LLL-26SEP10", fifty, fifty,
+            [("leg-a", None, None), ("leg-b", False, "all_losers")],
+        ),
     ]
 
 
 #: What the recency band must return, newest first, when nothing caps it.
-EXPECTED_FRESH = ["AAA-26SEP10", "CCC-26SEP10", "BBB-26SEP10", "ZZZ-26SEP10"]
+EXPECTED_FRESH = [
+    "AAA-26SEP10",
+    "KKK-26SEP10",
+    "CCC-26SEP10",
+    "LLL-26SEP10",
+    "BBB-26SEP10",
+    "ZZZ-26SEP10",
+]
 
 
 @pytest.fixture
@@ -251,6 +299,38 @@ async def test_a_market_that_settled_below_the_cursor_is_selected_this_cycle(pg_
 
 @needs_postgres
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ticker,shape",
+    [
+        ("KKK-26SEP10", "every leg carries the server default FALSE"),
+        ("LLL-26SEP10", "one leg NULL, one leg the default FALSE + all_losers"),
+    ],
+)
+async def test_an_ungraded_market_whose_legs_hold_the_default_false_is_selected(
+    pg_engine, ticker, shape
+):
+    """#5146 — the ship. `is_winner` defaults to FALSE, so this IS "no result".
+
+    `futures_outcomes.is_winner` is `default=False, server_default=text("false")`,
+    so a leg no grader has touched reads FALSE, not NULL. Under the shipped-then
+    clause `NOT EXISTS (is_winner IS NOT NULL)` both of these rows were excluded
+    from the fast lane — 70% of freshly-settled production tickers — and fell to
+    the tail band's ~11-day wrap while the venue already held the answer.
+
+    Both tickers sort BELOW the cursor, so the tail cannot cover for the band;
+    without that, a green here would not distinguish the two paths.
+    """
+    fresh, tail = await _select(pg_engine, limit=2000)
+
+    assert ticker in fresh, shape
+    assert ticker not in tail, (
+        "the tail band is cursor-bound; if it can reach this ticker the arm no "
+        "longer proves the recency band is what selects it"
+    )
+
+
+@needs_postgres
+@pytest.mark.asyncio
 async def test_the_recency_band_is_ordered_by_settlement_time_not_by_ticker(pg_engine):
     """Newest first, and by the COALESCE — not by the alphabet, not by schedule.
 
@@ -337,6 +417,12 @@ _SCHEDULE_ONLY_WINDOW = (
 )
 _BLANK = (
     "AND NOT EXISTS (SELECT 1 FROM futures_outcomes fo "
+    "WHERE fo.market_id = fm.id AND fo.is_winner IS TRUE)"
+)
+#: The clause as it shipped from #4057 until #5146 — kept so the regression is
+#: EXECUTED against this server rather than described in a comment.
+_BLANK_IS_NOT_NULL = (
+    "AND NOT EXISTS (SELECT 1 FROM futures_outcomes fo "
     "WHERE fo.market_id = fm.id AND fo.is_winner IS NOT NULL)"
 )
 _GRADEABLE = (
@@ -404,6 +490,27 @@ async def test_a_schedule_only_window_drops_the_row_production_is_made_of(pg_eng
 @pytest.mark.asyncio
 async def test_dropping_the_blank_test_sweeps_in_an_already_graded_market(pg_engine):
     assert "FFF-26SEP10" in await _mutated(pg_engine, blank="")
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_pre_5146_grade_test_hides_the_default_false_rows(pg_engine):
+    """The regression, executed — not asserted about.
+
+    Running the OLD clause against this same seeded server must drop exactly the
+    two default-FALSE rows and keep everything else. If a later edit reverts the
+    grade test, the ship arm above goes red and this arm explains why in one
+    line: the column's default was read as a grade.
+    """
+    got = await _mutated(pg_engine, blank=_BLANK_IS_NOT_NULL)
+
+    assert "KKK-26SEP10" not in got
+    assert "LLL-26SEP10" not in got
+    assert got == [t for t in EXPECTED_FRESH if t not in {"KKK-26SEP10", "LLL-26SEP10"}], (
+        "the old clause must differ from the shipped one on the default-FALSE "
+        "rows and on NOTHING else — otherwise this arm is measuring some other "
+        "change and the 2,416-vs-7,927 production split is not what it explains"
+    )
 
 
 @needs_postgres
