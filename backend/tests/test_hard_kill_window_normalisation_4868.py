@@ -173,6 +173,59 @@ class TestWhenItCannotNormaliseItSaysSoAndKeepsTheOldNumber:
             "raw_unnormalised:window_too_short",
         )
 
+    @pytest.mark.parametrize("terminal", ["successes", "failures", "incompletes"])
+    @pytest.mark.parametrize("window_s", [1, 30, 599])
+    def test_a_too_young_positive_terminal_window_falls_back_instead_of_erasing_kills(
+        self, terminal, window_s
+    ):
+        """CERT-2609's BLOCK, and it was right. The floor was applied to the
+        STARTS window only, so a terminal counter one second into its own
+        independent rollover turned 1 event into a 3,600/h rate — and that rate
+        ERASED a mature hard-kill signal while still labelling the answer
+        `window_normalised`. Measured before the repair, all three reproduced::
+
+            10 starts / 3600s  +  1 success    / 1s   -> 0   (raw 9)
+            10 starts / 3600s  +  1 incomplete / 30s  -> 0   (raw 9)
+            10 starts / 3600s  +  1 failure    / 599s -> 4   (raw 9)
+
+        This is the over-correction direction — suppressing real kills — which is
+        the one that matters, because a kill this field fails to report is a job
+        dying unseen. The counters roll independently, so the rollover is not a
+        contrived state: it happens to every terminal key once a day.
+        """
+        counts = {"starts": 10, terminal: 1}
+        windows = {"starts_window_s": 3600, f"{terminal}_window_s": window_s}
+        value, basis = normalised_hard_kills_24h(counts, windows, 9)
+        assert value == 9, "the raw kill signal must survive, not be erased"
+        assert basis == "raw_unnormalised:window_too_short"
+
+    def test_the_floor_is_the_same_number_for_starts_and_for_terminals(self):
+        """The asymmetry WAS the bug, so the symmetry is the guard. A terminal
+        window exactly at the floor normalises; one second under it falls back."""
+        at_floor = normalised_hard_kills_24h(
+            {"starts": 10, "successes": 1},
+            {"starts_window_s": 3600, "successes_window_s": _HARD_KILL_MIN_WINDOW_S},
+            9,
+        )
+        assert at_floor[1] == "window_normalised"
+        under = normalised_hard_kills_24h(
+            {"starts": 10, "successes": 1},
+            {"starts_window_s": 3600,
+             "successes_window_s": _HARD_KILL_MIN_WINDOW_S - 1},
+            9,
+        )
+        assert under == (9, "raw_unnormalised:window_too_short")
+
+    def test_a_zero_terminal_still_needs_no_window_after_the_floor_repair(self):
+        """The repair must not have re-broken the real hard-kill shape by
+        demanding a window from a counter that has none because it has never
+        incremented."""
+        assert normalised_hard_kills_24h(
+            {"starts": 40, "successes": 0, "failures": 0, "incompletes": 0},
+            {"starts_window_s": 7200},
+            40,
+        ) == (40, "window_normalised")
+
     def test_a_missing_starts_window_falls_back_rather_than_dividing_by_none(self):
         assert normalised_hard_kills_24h(
             {"starts": 9, "successes": 2}, {}, 7

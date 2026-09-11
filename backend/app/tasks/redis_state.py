@@ -1761,6 +1761,10 @@ def normalised_hard_kills_24h(counts: dict, windows: dict, raw_diff: int):
 
     if starts <= 0:
         return 0, "window_normalised"
+    # The floor applies to EVERY positive counter below, not only this one —
+    # CERT-2609. A rate is only a rate over a window old enough to have held
+    # more than one event, and that is as true of a terminal counter as of
+    # starts. See the block in the loop for what the asymmetry cost.
     if not starts_window or starts_window < _HARD_KILL_MIN_WINDOW_S:
         return raw_diff, "raw_unnormalised:window_too_short"
 
@@ -1772,6 +1776,22 @@ def normalised_hard_kills_24h(counts: dict, windows: dict, raw_diff: int):
         window = windows.get(f"{label}_window_s")
         if not window or window <= 0:
             return raw_diff, "raw_unnormalised:window_unmeasurable"
+        # CERT-2609 repair `4868-TERMINAL-WINDOW-FLOOR`. The floor has to apply
+        # to EVERY positive counter, not just starts, and the asymmetry was a
+        # real hole rather than a tidiness point: the counters roll
+        # independently, so a terminal key one second into its own new window
+        # turns 1 event into a 3,600/h rate and that rate ERASES a mature kill
+        # signal — while still labelling the answer `window_normalised`.
+        #
+        #     10 starts / 3600s  +  1 success / 1s    -> 0   (raw 9)
+        #     10 starts / 3600s  +  1 incomplete / 30s -> 0   (raw 9)
+        #     10 starts / 3600s  +  1 failure / 599s   -> 4   (raw 9)
+        #
+        # All three reproduced before the fix. This is the over-correction
+        # direction — suppressing real kills — which is the one that matters,
+        # because a kill this field fails to report is a job dying unseen.
+        if window < _HARD_KILL_MIN_WINDOW_S:
+            return raw_diff, "raw_unnormalised:window_too_short"
         terminal_rate += count / (window / 3600.0)
 
     starts_hours = starts_window / 3600.0
