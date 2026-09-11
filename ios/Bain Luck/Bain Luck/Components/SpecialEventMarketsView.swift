@@ -44,7 +44,10 @@ struct SpecialEventMarketsView: View {
         return ("Other Markets", "additional markets")
     }
 
-    private static func isRedundantWithMarketMaps(_ m: GameMarketOther) -> Bool {
+    /// Internal for the same reason as `isWinProbabilityMarket` below (#5133):
+    /// `categories` applies BOTH filters, and a test that cannot tell which of
+    /// the two declined a row is a test that can be satisfied by the wrong one.
+    static func isRedundantWithMarketMaps(_ m: GameMarketOther) -> Bool {
         let lower = m.marketName.lowercased()
         let outLower = m.outcomeName.lowercased()
         if lower.contains("spread") || lower.contains("handicap") { return true }
@@ -53,10 +56,45 @@ struct SpecialEventMarketsView: View {
         return false
     }
 
-    private static func isWinProbabilityMarket(_ markets: [GameMarketOther]) -> Set<String> {
+    /// A SCORING RACE — "…: Race to 14 Points" — which side reaches a score
+    /// first.
+    ///
+    /// The web twin is `isScoringRaceMarket` in `frontend/lib/otherMarketGroups.ts`
+    /// and the server's is `_SCORING_RACE_RE` in `backend/app/routes/events.py`;
+    /// all three are the same pattern deliberately, because all three answer the
+    /// same question. Narrower than "race to" on purpose: the SCORE UNIT is
+    /// required, so a player race ("Race to 5 catches") — a shape nobody has
+    /// measured — is left out rather than swept in by grammar.
+    static func isScoringRaceMarket(_ name: String) -> Bool {
+        name.range(
+            of: #"\brace to\s+\d+(?:\.\d+)?\s+points?\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    /// Internal, not `private`, since #5133: a SwiftUI view's computed
+    /// properties are invisible to XCTest, so the only way this filter's
+    /// behaviour can be asserted in Swift at all is to let a test call it. Its
+    /// wiring into `categories` is pinned by the source scan in
+    /// `frontend/__tests__/ios/aScoringRaceStaysVisible5133.test.ts`.
+    static func isWinProbabilityMarket(_ markets: [GameMarketOther]) -> Set<String> {
         var winProbMarkets: Set<String> = []
         let byMarket = Dictionary(grouping: markets) { $0.marketName }
         for (name, outcomes) in byMarket {
+            // #5133 — a scoring race is a two-sided TEAM market that is not the
+            // moneyline: the hero answers "who wins", the race answers "who
+            // gets there first", and a game can be won by the side that lost
+            // the race. From inside this heuristic the two shapes are identical,
+            // so the race has to be named.
+            //
+            // MEASURED (`GET /api/events/14780145/game-markets`, 2026-09-11):
+            // Kalshi ships six races per NFL game; five serve THREE rows and
+            // survive this rule by accident, while `Race to 7 Points` serves
+            // TWO — 0.56 / 0.44 — because its third row ("Neither team reaches
+            // 7 points", 0.010) is dropped upstream. One race in six vanishing
+            // while its siblings render is not a rule a reader can learn.
+            if Self.isScoringRaceMarket(name) { continue }
+
             if outcomes.count == 2 {
                 let probs = outcomes.compactMap(\.probability)
                 if probs.count == 2, abs(probs[0] + probs[1] - 1.0) < 0.1 {
