@@ -138,12 +138,60 @@ supersedes_scan () {
   # only ever says CERT-2619, and the shorter id inherits the longer one's
   # review. `-w` anchors the END of the match, so CERT-261 followed by `9` is
   # not a match while CERT-2619 followed by a space is.
-  SUP_ROWS="$($GREP -nw "supersedes.*$cert" "$ledger" | $GREP -v "| $cert --")"
+  #
+  # THE WORD IS NOT ALWAYS "supersedes" (#5264). Matched literally and
+  # case-sensitively, this screen and the test below missed the three commonest
+  # ways the ledger actually writes a supersession, so the rows never reached
+  # the screen at all and the verdict came back `clean` — a PASS on a superseded
+  # cert, which is the one thing notice 18 exists to prevent. Measured over the
+  # real ledger: 18 real supersessions read `clean`. All verbatim:
+  #
+  #   superseding CERT-770.                    23 certs, the commonest real form
+  #   SUPERSEDES CERT-858                      caps; case alone loses these
+  #   supersede CERT-1871,  Supersedes: CERT-2309
+  #   supersedes CERT-913/914                  slash list — the TAIL id
+  #   CERT-2042 GREEN is superseded by CERT-2043 BLOCK    inverse, 7 occurrences
+  #
+  # So: case-insensitive, verb `supersed(es|e|ing)`, and the inverse phrasing as
+  # a second alternative with `[^0-9]` guarding the id (`-w` anchors the whole
+  # match, and in that branch the id is not at the end).
+  #
+  # Widening the SCREEN cannot cause a false STOP — a screened row with no
+  # declaration is `review`, which is a WARN that prints the row. Only the TEST
+  # below STOPs. Measured: 103 certs leave `clean` (29 to `declared`, 74 to
+  # `review`) and NOTHING moves toward `clean`.
+  # The `/${num}` alternative is load-bearing and easy to leave out: in
+  # `supersedes CERT-9130/9140` the string `CERT-9140` never appears, so without
+  # it the tail id does not reach the screen at all and comes back `clean` — the
+  # fail-open this whole block is about, one level down. A selftest case caught
+  # exactly that.
+  #
+  # `-w` had to go with it. It anchors on the character before the MATCH, and in
+  # `CERT-9130/9140` the character before `/9140` is a digit, so `-w` threw the
+  # slash tail away — the id would have gone on reading `clean`. The boundary is
+  # written out instead: `([^0-9]|$)` after the id does the same job as `-w` did
+  # (CERT-261 followed by `9` is not CERT-261) and does it in both shapes.
+  SUP_ROWS="$($GREP -niE "supersed(es|e|ing).*$cert([^0-9]|\$)|supersed(es|e|ing).*/${cert#CERT-}([^0-9]|\$)|$cert[^0-9].*supersede(d)? by" "$ledger" | $GREP -v "| $cert --")"
   # `grep -c .` over an empty string is 0; `printf '%s'` adds no trailing line.
   SUP_N="$(printf '%s' "$SUP_ROWS" | $GREP -c . )"
   # TEST: the declaration form notice 12 mandates. `-w` so CERT-261 never
   # matches CERT-2619 and CERT-2619 never matches CERT-26190.
-  SUP_DECL="$($GREP -oE 'supersedes:? *CERT-[0-9]+' "$ledger" | $GREP -cw "$cert")"
+  #
+  # Same three widenings, and the id may be a slash-list TAIL — `supersedes
+  # CERT-913/914` declares a supersede of 914 and never spells `CERT-914`, so
+  # the count matches `/914` too, with `-w` keeping it off CERT-9140.
+  #
+  # This one CAN false-STOP, so it stays tight: the verb, an optional colon,
+  # spaces, then the id IMMEDIATELY. Any intervening word makes it prose and it
+  # falls through to `review` — which is what keeps the sentences ABOUT the
+  # check out of it (`supersedes scan for CERT-893`, `supersedes rows naming
+  # CERT-2217`, `notice 18 **tight** supersedes — 0 for CERT-2300/2301/…`).
+  # Audited: all 34 newly-`declared` ids are the canonical form, zero prose.
+  # A declaration may carry more than one id: `SUPERSEDES CERT-913 AND CERT-914`
+  # and `supersedes CERT-9130/9140` each declare two. Both continuations stay
+  # inside the tight form — the list may only grow by `/N` or `and CERT-N`, so
+  # no ordinary word can creep in and turn prose into a STOP.
+  SUP_DECL="$($GREP -oiE 'supersed(es|e|ing):? *CERT-[0-9]+((/[0-9]+)|(,? +and +CERT-[0-9]+))*' "$ledger" | $GREP -ciE "$cert([^0-9]|\$)|/${cert#CERT-}([^0-9]|\$)")"
   if [ "${SUP_N:-0}" -eq 0 ]; then
     SUP_VERDICT=clean
   elif [ "${SUP_DECL:-0}" -gt 0 ]; then
@@ -262,6 +310,58 @@ FIXEOF
     "supersedes_scan CERT-2619 '$fx/clean.md'; [ \"\$SUP_VERDICT\" = clean ]"
   check "notice 18: an id absent from the ledger is clean" \
     "supersedes_scan CERT-9999 '$fx/clean.md'; [ \"\$SUP_VERDICT\" = clean ]"
+
+  # ── notice 18, THE FAIL-OPEN (#5264). The word is not always "supersedes".
+  # Matched literally and case-sensitively, each row below returned `clean` — a
+  # PASS on a superseded cert. 18 real ones read `clean` on the live ledger.
+  # Every fixture row is verbatim shape, ids as they really are.
+  cat > "$fx/failopen.md" <<'FIXEOF'
+| CERT-0799 -- SUBJECT | GREEN | Token granted for `9a6a014c`, superseding CERT-770. |
+| CERT-0861 -- SUBJECT | GREEN -- TOKEN GRANTED; SUPERSEDES CERT-858 | a connected live tennis page. |
+| CERT-1872 -- SUBJECT | GREEN | this row is here to supersede CERT-1871, and it says so. |
+| CERT-2310 -- SUBJECT | GREEN | Supersedes: CERT-2309. |
+| CERT-0915 -- SUBJECT | BLOCK | SUPERSEDES CERT-913 AND CERT-914 on the same sha. |
+| CERT-0916 -- SUBJECT | BLOCK | supersedes CERT-9130/9140 together. |
+| CERT-2043 -- SUBJECT | BLOCK | CERT-2042 GREEN is superseded by CERT-2043 BLOCK, so notice 18 refuses. |
+FIXEOF
+  check "n18 fail-open: 'superseding CERT-N' is declared, not clean (CERT-770)" \
+    "supersedes_scan CERT-770 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" = declared ]"
+  check "n18 fail-open: CAPS 'SUPERSEDES CERT-N' is declared (CERT-858)" \
+    "supersedes_scan CERT-858 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" = declared ]"
+  check "n18 fail-open: bare 'supersede CERT-N' is declared (CERT-1871)" \
+    "supersedes_scan CERT-1871 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" = declared ]"
+  check "n18 fail-open: 'Supersedes: CERT-N' capitalised is declared (CERT-2309)" \
+    "supersedes_scan CERT-2309 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" = declared ]"
+  check "n18 fail-open: an AND list declares BOTH ids (CERT-913, CERT-914)" \
+    "supersedes_scan CERT-913 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" = declared ] && supersedes_scan CERT-914 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" = declared ]"
+  check "n18 fail-open: a slash list declares its TAIL id (CERT-9140)" \
+    "supersedes_scan CERT-9140 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" = declared ]"
+  check "n18 fail-open: the inverse 'CERT-N ... superseded by' is not clean (CERT-2042)" \
+    "supersedes_scan CERT-2042 '$fx/failopen.md'; [ \"\$SUP_VERDICT\" != clean ]"
+
+  # The widening must not re-import the false STOPs it was built beside. A
+  # sentence ABOUT the check names the id after the verb with a word in between;
+  # that is prose and must fall through to review, never declared. All three
+  # shapes are verbatim from the real ledger.
+  cat > "$fx/mention.md" <<'FIXEOF'
+| CERT-2320 -- SUBJECT | MERGED | notice 18 **tight** supersedes -- 0 for CERT-2300/2301/2306; notice 28 completed/success. |
+| CERT-2321 -- SUBJECT | MERGED | notice 18 = 0 word-anchored `supersedes` rows for CERT-2154. |
+| CERT-2322 -- SUBJECT | GREEN | the same expression finds the live supersedes targets CERT-894/901/903. |
+FIXEOF
+  for _m in 2300 2301 2306 2154 894 901 903; do
+    check "n18 fail-open: prose ABOUT the check is review, never a STOP (CERT-$_m)" \
+      "supersedes_scan CERT-$_m '$fx/mention.md'; [ \"\$SUP_VERDICT\" != declared ]"
+  done
+
+  # `-w` still has to keep a short id off a longer one, in BOTH the widened
+  # screen and the widened slash-list count.
+  cat > "$fx/bounds2.md" <<'FIXEOF'
+| CERT-9500 -- SUBJECT | GREEN | superseding CERT-2619 and nothing else. |
+FIXEOF
+  check "n18 fail-open: the widened screen keeps CERT-261 off CERT-2619" \
+    "supersedes_scan CERT-261 '$fx/bounds2.md'; [ \"\$SUP_VERDICT\" = clean ]"
+  check "n18 fail-open: the widened screen still declares the full id (CERT-2619)" \
+    "supersedes_scan CERT-2619 '$fx/bounds2.md'; [ \"\$SUP_VERDICT\" = declared ]"
 
   # ── notice 13, behavioural (#5252). A repaired ship has a BLOCK row and a
   # GREEN row on ONE sha; the id we print and scan must come off the GREEN.
