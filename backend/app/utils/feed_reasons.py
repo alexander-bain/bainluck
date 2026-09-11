@@ -698,8 +698,8 @@ class BinaryCardCopy(NamedTuple):
     context_summary: str
 
 
-def binary_affirmative_probability(outcomes: list[dict]) -> Optional[float]:
-    """The AFFIRMATIVE probability when these outcomes are a yes/no question.
+def binary_affirmative_outcome(outcomes: list[dict]) -> Optional[dict]:
+    """The AFFIRMATIVE outcome dict when these outcomes are a yes/no question.
 
     Returns None for a genuine field — every market for which the "leads"
     templates are the right ones. Two shapes count as a yes/no question:
@@ -712,6 +712,13 @@ def binary_affirmative_probability(outcomes: list[dict]) -> Optional[float]:
     Takes the RAW outcome dicts, i.e. before `humanize_binary_outcome_name`
     rewrites a bare "Yes" into a restatement of the question — after that
     rewrite the pair is no longer recognisable as yes/no.
+
+    #4758 — the ROW, not just its probability. `compose_binary_card_copy`
+    composes every one of its sentences against the affirmative side, so a
+    caller that needs a second fact about that side (its opening price, its
+    move) must be able to reach the same row this function already identifies,
+    rather than re-deriving "which one is the affirmative" beside it and
+    drifting.
     """
     usable = [
         outcome
@@ -719,14 +726,26 @@ def binary_affirmative_probability(outcomes: list[dict]) -> Optional[float]:
         if isinstance(outcome, dict) and outcome.get("probability") is not None
     ]
     if len(usable) == 1 and len(outcomes or []) == 1:
-        return float(usable[0]["probability"])
+        return usable[0]
     if len(usable) == 2:
         by_side = {
             (outcome.get("name") or "").strip().lower(): outcome for outcome in usable
         }
         if set(by_side) == {"yes", "no"}:
-            return float(by_side["yes"]["probability"])
+            return by_side["yes"]
     return None
+
+
+def binary_affirmative_probability(outcomes: list[dict]) -> Optional[float]:
+    """The AFFIRMATIVE probability when these outcomes are a yes/no question.
+
+    The probability half of `binary_affirmative_outcome`; see it for which
+    shapes count as a yes/no question and why the raw names are what it reads.
+    """
+    affirmative = binary_affirmative_outcome(outcomes)
+    if affirmative is None:
+        return None
+    return float(affirmative["probability"])
 
 
 def _points(value: float) -> str:

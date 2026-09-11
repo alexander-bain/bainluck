@@ -154,28 +154,45 @@ OUTCOME_COLUMNS: tuple[str, ...] = (
     "external_id",
 )
 
-# D1 clause a (#4066) wanted `opening_captured_at` here — the day an opening
-# price was taken, which is what turns "moved 37.5 points from opening" into a
-# fact about a calendar. IT IS REFUSED, on the same measurement as
-# `last_updated` below and for the same reason: one timestamp per outcome, over
-# 6,904 outcomes, grew the fixture's envelope from 2,928,973 B to 3,289,739 B
-# (+12%) and the validator node count from 115,133 to 122,028. Every hard cap
-# still passed with headroom; what failed is the pair of calibration tests that
-# hold the fixture to the MEASURED production artifact, and re-deriving those
-# constants from a fixture I had just changed would turn the file into a
-# fixture testing itself — which is precisely the decoration LAT-P221 was
-# written to end.
+# D1 clause a (#4066) wanted `opening_captured_at` HERE, on the outcome row —
+# the day an opening price was taken, which is what turns "moved 37.5 points
+# from opening" into a fact about a calendar. IT IS STILL REFUSED IN THIS
+# TUPLE, on the same measurement as `last_updated` below and for the same
+# reason: one timestamp per outcome, over 6,904 outcomes, grew the fixture's
+# envelope from 2,928,973 B to 3,289,739 B (+12%) and the validator node count
+# from 115,133 to 122,028. Every hard cap still passed with headroom; what
+# failed is the pair of calibration tests that hold the fixture to the MEASURED
+# production artifact, and re-deriving those constants from a fixture I had
+# just changed would turn the file into a fixture testing itself — which is
+# precisely the decoration LAT-P221 was written to end.
 #
-# A market-level date was measured as the cheap alternative and REFUSED on the
-# data, not on taste: across the 93,481 top-5 outcomes of open markets that
-# carry an opening (production 2026-09-08), `opening_captured_at` sits within a
-# day of the market's own `created_at` for only 80,483 of them (86%), a mean
-# 4.41 days apart and a maximum of 214.9 days. Publishing `created_at` as "the
-# opening date" would date one card in seven wrongly, some by months.
+# Borrowing the market's own `created_at` as the date was measured as the cheap
+# alternative and REFUSED on the data, not on taste: across the 93,481 top-5
+# outcomes of open markets that carry an opening (production 2026-09-08),
+# `opening_captured_at` sits within a day of `created_at` for only 80,483 of
+# them (86%), a mean 4.41 days apart and a maximum of 214.9 days. Publishing
+# `created_at` as "the opening date" would date one card in seven wrongly, some
+# by months.
 #
-# So the dated sentence exists and is tested in `feed_reasons`, and stays
-# unfed until the baseline it needs is built. Until then the undated form is
-# not published at all — see the demotion note in `generate_futures_reason`.
+# 🟢 #4758 — THE BASELINE IS NOW BUILT, AND IT IS NEITHER OF THOSE TWO THINGS.
+# The column is LOADED (`OUTCOME_LOAD_ONLY_EXTRA`) and folded at build time into
+# ONE derived market value, `opening_baseline_at`, published only when every
+# outcome of the market that carries a stamp carries the SAME one. That is what
+# makes it exact rather than cheap: the fold cannot date an outcome by another
+# outcome's stamp, because a market whose outcomes disagree publishes nothing
+# and stays exactly as silent as it is today.
+#
+# MEASURED on production 2026-09-11, open markets with a future
+# `resolution_date` that carry any stamp (30,944 markets): 26,310 (85.0%) have
+# exactly one distinct `opening_captured_at` and are dated by this fold; 4,634
+# disagree (mean spread 4.0 days, max 217.9) and are not. On the two-outcome
+# markets — the yes/no shape whose copy is composed by
+# `compose_binary_card_copy` — it is 13,886 of 14,196 (97.8%).
+#
+# The wire cost is one datetime per MARKET, not per outcome: +700 nodes on the
+# LAT-P221 fixture (115,133 -> 115,833) against a 200,000 cap, and an envelope
+# delta inside that file's +/-10% band. The +12% refusal above is what this is
+# the alternative TO, and it is why the outcome tuple did not grow.
 
 # ux/1070 item 5 wanted a price AGE, and `last_updated` is deliberately NOT in
 # the outcome tuple above. It was added there once, and two guards in a row
@@ -224,7 +241,13 @@ OUTCOME_COLUMNS: tuple[str, ...] = (
 #: route's cold build. Adding the column to the outcome SELECT that is already
 #: fetching those rows is inside that statement's own run-to-run noise
 #: (base 493/741/426 ms vs wide 531/242/292 ms, interleaved).
-OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = ("last_updated",)
+#:
+#: `opening_captured_at` joins it for #4758, under the same rule and the same
+#: economics: it is read once per market at BUILD time by
+#: `_opening_baseline_at`, and the per-outcome value never needs to reach a
+#: reader. It rides the outcome SELECT that is already fetching these rows, so
+#: it is the free half of the measurement above, not a second query.
+OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = ("last_updated", "opening_captured_at")
 
 #: Market-level values that are COMPUTED for the artifact, not loaded from the
 #: `futures_markets` row.
@@ -248,7 +271,12 @@ OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = ("last_updated",)
 #: far narrower overlap than "any write", and it lands on markets that have just
 #: RESOLVED, i.e. the ones a `resolution_date`-in-the-future window already
 #: excludes.
-DERIVED_MARKET_COLUMNS: tuple[str, ...] = ("price_polled_at",)
+#: `opening_baseline_at` (#4758) is the market's single opening-capture instant
+#: — the day "up 83 points since ___" is measured FROM — or `None` when its
+#: outcomes do not agree on one. See the long note above `OUTCOME_COLUMNS` for
+#: why it is folded to one value per market instead of carried per outcome, and
+#: for the production coverage the fold buys.
+DERIVED_MARKET_COLUMNS: tuple[str, ...] = ("price_polled_at", "opening_baseline_at")
 
 #: The full positional market row on the wire: loaded columns, then derived ones.
 #: Building/validating/rebuilding all go through this, so the appended block can
@@ -285,7 +313,15 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: market row one value SHORT, and the reader must not decide that every market
 #: has an unknown price age for the life of that entry. Under v3 those entries
 #: are simply never read and expire under their own TTL.
-SNAPSHOT_SCHEMA_VERSION = 3
+#:
+#: v4 — `opening_baseline_at` appended to the same derived block (#4758), for
+#: exactly the reason v3 was bumped: an in-flight v3 entry is one value short,
+#: and reading it would tell the copy layer that no market on the cached path
+#: has a dated opening while the build path knows the date — a DIFFERENT feed,
+#: which is the failure this module exists to make impossible. Arity would in
+#: fact reject those rows too (30 values against 31); the version is what makes
+#: the rejection intentional rather than incidental.
+SNAPSHOT_SCHEMA_VERSION = 4
 
 
 class _Snapshot:
@@ -391,6 +427,63 @@ def _price_polled_at(outcomes: Iterable[Any]) -> Any:
     return max(stamps) if stamps else None
 
 
+def _opening_baseline_at(outcomes: Iterable[Any]) -> Any:
+    """The market's one opening-capture instant, or `None` if it has no ONE.
+
+    #4758. The copy layer needs to name the day a lifetime move is measured
+    from — `format_baseline_date` in `feed_reasons`, and the branches gated on
+    it — and until this fold existed there was no carrier for that day at all,
+    so the dated sentence was unreachable and four of the fourteen bundle rows
+    page one served on 2026-09-11 rendered with no caption whatsoever.
+
+    🔴 THE UNANIMITY RULE IS THE WHOLE POINT, NOT A DEFENSIVE EXTRA. A market
+    whose outcomes carry two different opening dates has no single answer to
+    "since when?", and the two ways of pretending otherwise were both measured
+    and both refused (see the note above `OUTCOME_COLUMNS`): borrowing
+    `created_at` dates one market in seven wrongly, and picking one outcome's
+    stamp for the whole market dates the OTHER outcomes by a day they were not
+    captured on. Publishing nothing keeps such a market exactly as silent as it
+    is today, which is the honest state and not a regression.
+
+    Outcomes with no stamp are ignored rather than treated as a disagreement:
+    the question is whether the stamps that EXIST agree, and a leg that was
+    never stamped is not evidence that they do not.
+
+    `__dict__.get`, never `getattr`, for this module's usual reason — a
+    deferred attribute lazy-loads and raises `MissingGreenlet` on this async
+    path (gotcha #42). A projection that stops loading the column therefore
+    degrades to `None`, "we do not know", which is exclusion at every consumer.
+    """
+    stamps = {
+        stamp
+        for stamp in (o.__dict__.get("opening_captured_at") for o in outcomes)
+        if stamp is not None
+    }
+    if len(stamps) != 1:
+        return None
+    return next(iter(stamps))
+
+
+def opening_baseline_stamp(market: Any) -> Any:
+    """`opening_baseline_at` for a market on EITHER carrier shape (#4758).
+
+    The same two carriers as `price_poll_stamp`, in the same order and for the
+    same reason: a market rebuilt by `from_plain` has the value already folded
+    onto its row and outcomes that do not carry the column at all, while a
+    market from a plain ORM query has no derived column and outcomes that DO
+    carry it because `market_load_options()` projects it. Reading the folded
+    value first and falling back to the fold makes each carrier authoritative
+    exactly where it is the one that exists.
+
+    A snapshot written by a pre-v4 build has neither, and reads `None` — but it
+    cannot reach this function anyway, because the schema version rejects it.
+    """
+    state = market.__dict__
+    if "opening_baseline_at" in state:
+        return state["opening_baseline_at"]
+    return _opening_baseline_at(state.get("outcomes") or [])
+
+
 def price_poll_stamp(market: Any) -> Any:
     """`price_polled_at` for a market on EITHER carrier shape (UX-P251).
 
@@ -438,14 +531,19 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
 
     This is also where `DERIVED_MARKET_COLUMNS` are folded — the one moment in
     the request when the hydrated outcome rows exist and their price-poll stamps
-    can be reduced to one value per market. A market with no outcomes, or one
-    whose stamps are all `NULL`, gets `None`: "we do not know", which every
-    consumer must read as not-fresh rather than fresh (gotcha #53).
+    and opening-capture stamps can each be reduced to one value per market. A
+    market with no outcomes, or one whose stamps are all `NULL`, gets `None`:
+    "we do not know", which every consumer must read as not-fresh rather than
+    fresh (gotcha #53), and which for `opening_baseline_at` also covers the
+    market whose outcomes disagree about their opening day.
     """
     # Keyed by column NAME and read by name below, so a derived column added to
     # the tuple without a producer here is a `KeyError` at build time rather
     # than a row of the wrong width that the validator then rejects forever.
-    producers = {"price_polled_at": _price_polled_at}
+    producers = {
+        "price_polled_at": _price_polled_at,
+        "opening_baseline_at": _opening_baseline_at,
+    }
     rows: list[list[Any]] = []
     for market in markets:
         state = market.__dict__
@@ -557,6 +655,7 @@ __all__ = [
     "FuturesOutcomeSnapshot",
     "SportSnapshot",
     "market_load_options",
+    "opening_baseline_stamp",
     "price_poll_stamp",
     "to_plain",
     "from_plain",

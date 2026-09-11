@@ -146,6 +146,7 @@ from app.utils.feed_market_quality import (
 )
 from app.utils.feed_reasons import (
     generate_event_reason,
+    binary_affirmative_outcome,
     binary_affirmative_probability,
     generate_futures_context_summary,
     generate_futures_headline,
@@ -5340,15 +5341,23 @@ from app.utils.market_staleness import (
     prices_have_stopped as _prices_have_stopped,
 )
 
-# Bound at MODULE scope deliberately, not called as
+# Both bound at MODULE scope deliberately, not called as
 # `_futures_snapshot.price_poll_stamp(...)`: `test_futures_market_snapshot_lat_p174`
 # walks the scoring loop's AST to prove every market attribute it reads is on the
 # snapshot, and it refuses — by design — a call whose callee it cannot name, since
 # a market escaping into an unresolvable callee is exactly where an unprojected
 # read would hide. A plain module-level name is followable; an attribute call is
-# not. (Gotcha #7: never re-import this inside a function — a local rebind raises
+# not. (Gotcha #7: never re-import these inside a function — a local rebind raises
 # UnboundLocalError at request time, not at import time.)
-from app.utils.futures_market_snapshot import price_poll_stamp as _price_poll_stamp
+#
+# `opening_baseline_stamp` (#4758) is reached one hop further out, from
+# `_biggest_move_from_opening`, and the same analyser follows it there: the
+# market is passed positionally into a module-level name, which is exactly the
+# escape it is built to trace rather than refuse.
+from app.utils.futures_market_snapshot import (
+    opening_baseline_stamp,
+    price_poll_stamp as _price_poll_stamp,
+)
 
 
 def _market_base_trace(market: FuturesMarket, now: datetime) -> dict:
@@ -5652,8 +5661,9 @@ def _top_outcomes_for_trace(
 
 def _biggest_move_from_opening(
     outcomes_data: list[dict],
+    market: Any = None,
 ) -> tuple[str | None, float | None, datetime | None]:
-    """The largest move against opening, WITH the day that opening was taken.
+    """The lifetime move a card may talk about, WITH the day it is measured from.
 
     D1 clause a (#4066). Three serving paths computed the first two of these
     inline, in three identical loops. The THIRD value is the one that decides
@@ -5661,20 +5671,47 @@ def _biggest_move_from_opening(
     opening has no date is not a fact about this morning — so it is returned
     from the same place rather than bolted onto three loops that can drift.
 
-    🔴 IT READS A KEY, NOT AN ATTRIBUTE, AND TODAY THAT KEY IS NEVER PRESENT.
-    `opening_captured_at` is deliberately NOT in the outcome projection — see
-    the refusal recorded in `app/utils/futures_market_snapshot.py`, which prices
-    it at +12% on the shared `futures.market_load` wire. Reading it off the ORM
-    row instead is not a workaround: it is an unprojected lazy load inside the
+    🟢 #4758 — THE DATE NOW EXISTS, AND IT COMES OFF THE MARKET, NOT THE OUTCOME.
+    This function used to read `outcome["opening_captured_at"]`, a key the
+    projection deliberately never carried (+12% of a size-capped shared
+    artifact for one timestamp per outcome), so `opened_at` was unconditionally
+    `None`, every branch gated on it was unreachable, and a market whose only
+    signal was a lifetime move rendered with NO caption at all — four of the
+    fourteen bundle rows page one served on 2026-09-11. `opening_baseline_stamp`
+    reads the market-level fold instead: one datetime per market, published only
+    when the market's outcomes agree on one, `None` otherwise. Reading the
+    outcome key here again would be an unprojected lazy load inside the
     per-item serializer, i.e. MissingGreenlet and a futures pool of zero
-    (CERT-622, gotcha #42). `tests/test_feed_outcome_projection_cert622.py`
-    caught exactly that on the first draft of this function. So the date is
-    absent, the dated sentence does not fire, and the undated one is not
-    published either — which is the honest state until the baseline is built.
+    (CERT-622, gotcha #42), which is what
+    `tests/test_feed_outcome_projection_cert622.py` caught on the first draft.
+
+    🔴 A YES/NO QUESTION'S LIFETIME MOVE IS THE AFFIRMATIVE'S, NOT THE BIGGEST.
+    `compose_binary_card_copy` states the move against the AFFIRMATIVE's own
+    probability ("Up 84 points since Jul 6 — now 7% chance") and is given a
+    magnitude with no side attached, so handing it the biggest mover inverts the
+    sentence on every binary whose `No` row is the one that travelled. Measured
+    on production 2026-09-11: `Putin out as President of Russia by December 31,
+    2026?` opened `Yes` at 90.5% and trades at 6.5%, and `No` — the row sorted
+    first, therefore the biggest-mover pick — is +84.0. The dated branch was
+    unreachable, so this has never been served; making it reachable without
+    resolving the side would have shipped "Up 84.0 points … now 7% chance",
+    which is exactly backwards. So for a yes/no shape the affirmative's own move
+    is the answer, by construction and not by tie-break.
+    (`top_mover_change` reaches the same composer with the same blindness on the
+    "today" branch, which IS live — filed separately, not repaired here.)
     """
+    opened_at: datetime | None = opening_baseline_stamp(market) if market else None
+
+    affirmative = binary_affirmative_outcome(outcomes_data)
+    if affirmative is not None:
+        opening = affirmative.get("opening_probability")
+        current = affirmative.get("probability")
+        if opening is None or current is None:
+            return affirmative.get("name"), None, opened_at
+        return affirmative.get("name"), current - opening, opened_at
+
     name: str | None = None
     change: float | None = None
-    opened_at: datetime | None = None
     for outcome in outcomes_data:
         opening = outcome.get("opening_probability")
         current = outcome.get("probability")
@@ -5684,7 +5721,6 @@ def _biggest_move_from_opening(
         if change is None or abs(move) > abs(change):
             name = outcome.get("name")
             change = move
-            opened_at = outcome.get("opening_captured_at")
     return name, change, opened_at
 
 
@@ -6116,7 +6152,7 @@ def _score_market_trace(
         top_surprise_name,
         top_surprise_change,
         top_surprise_opened_at,
-    ) = _biggest_move_from_opening(outcomes_data)
+    ) = _biggest_move_from_opening(outcomes_data, market)
 
     # D1 clause b (#4066) — computed from the RAW outcome names, before any
     # humanization; a yes/no question has no field and takes no "leads" copy.
@@ -8588,7 +8624,7 @@ async def _score_sports_mode_futures(
             top_surprise_name,
             top_surprise_change,
             top_surprise_opened_at,
-        ) = _biggest_move_from_opening(outcomes_data)
+        ) = _biggest_move_from_opening(outcomes_data, market)
 
         # #4146 — THE PRINTED PERCENTS ARE COMPUTED BEFORE THE SENTENCES, because
         # the sentences have to state them. This block used to sit below the three
@@ -9930,7 +9966,7 @@ async def _score_futures(
                 top_surprise_name,
                 top_surprise_change,
                 top_surprise_opened_at,
-            ) = _biggest_move_from_opening(outcomes_data)
+            ) = _biggest_move_from_opening(outcomes_data, market)
 
             # D1 clause b (#4066) — read the RAW names, before humanization.
             # #4146 — THE PRINTED PERCENTS ARE COMPUTED BEFORE THE SENTENCES,

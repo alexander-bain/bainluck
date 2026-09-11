@@ -95,7 +95,28 @@ NULL_RATE = 0.25
 #: baseline must never become a way of quietly absorbing growth, so the two are
 #: deliberately separate assertions: this one says "the shape moved", the other
 #: says "the shape is still safe". Flagged by CERT-1856 as a follow-up.
-MEASURED_NODES = 115_133
+#:
+#: Re-measured 2026-09-11 for #4758's `opening_baseline_at`, the second derived
+#: market column: 115,133 -> 115,863. The delta is +730 and it DECOMPOSES, which
+#: is the only reason it is accepted rather than copied off a red run:
+#:
+#:   +700  one derived value per market — market row values go 21,000 -> 21,700
+#:         over 700 rows, i.e. exactly one column's worth and nothing else.
+#:    +30  the fixture's own RNG stream. `_row_at_kinds` draws `rng.random()` for
+#:         every NULLABLE column before it looks at the kind, so a 31st market
+#:         column consumes one extra draw per row and shifts everything built
+#:         after it. Ten `market_metadata` cells flip from `None` to a populated
+#:         dict (526 -> 536), and a 3-value dict counts 4 nodes against the 1 a
+#:         `None` costs: 10 x 3.
+#:
+#: That second term is worth stating rather than absorbing, because it means the
+#: count above is a function of the shape AND of this file's fixed seed — a
+#: future column will not move it by a round number either, and a delta that
+#: does NOT decompose is the drift this assertion exists to catch.
+#:
+#: The budget assertion below is UNCHANGED and still has room: 115,863 against a
+#: 200,000 cap is 58%, and the 1.5x alarm sits at 133,333.
+MEASURED_NODES = 115_863
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -206,7 +227,7 @@ def _row_at_kinds(
 #: which is the whole reason the loaded kinds are introspected in the first
 #: place. `price_polled_at` is a `datetime`, and a datetime is a TAGGED value on
 #: this wire (~31 bytes of codec around it), so it must be measured as one.
-_DERIVED_KINDS = {"price_polled_at": "dt"}
+_DERIVED_KINDS = {"price_polled_at": "dt", "opening_baseline_at": "dt"}
 
 
 def _production_scale_payload() -> dict:
