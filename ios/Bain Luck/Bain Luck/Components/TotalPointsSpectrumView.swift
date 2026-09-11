@@ -119,6 +119,29 @@ struct TotalPointsSpectrumView: View {
         return h + a
     }
 
+    /// The combined score a rung may be graded against WHILE the game is on.
+    ///
+    /// #4907. Deliberately a separate property from ``actualTotal`` rather than a
+    /// relaxation of its `isDone`: the two answer different questions and only one
+    /// of them may reach `finalStrip`, the heading vocabulary or
+    /// ``ladderIndices(sortedThresholds:finalTotal:limit:)``. Widening
+    /// `actualTotal` would have printed "Final combined goals" over a match in its
+    /// 81st minute and re-windowed the ladder onto the step of a total that is
+    /// still moving. Everything except the per-rung verdict stays keyed on the
+    /// final, which is the only thing that can settle a card.
+    ///
+    /// The gates are `actualTotal`'s own, with `isLive` swapped for `isDone` —
+    /// `countsTheUnit` most of all, since it is what keeps a tennis scoreboard
+    /// (which counts SETS) away from a games ladder.
+    private var liveTotalSoFar: Int? {
+        MarketMapRail.liveGradableTotal(
+            isLive: isLive,
+            scoreboardCountsTheUnit: countsTheUnit,
+            homeScore: homeScore,
+            awayScore: awayScore
+        )
+    }
+
     var body: some View {
         if thresholds.isEmpty { EmptyView() }
         // #4018 — `canStillBeGraded` GATES THE LAYOUT CHOICE, NOT JUST THE STRIP,
@@ -505,8 +528,24 @@ struct TotalPointsSpectrumView: View {
     private func ladderRow(_ item: GameMarketOutcome) -> some View {
         let prob = item.overProbability ?? 0
         let threshold = item.threshold ?? 0
+        // #4907 — a rung the score has ALREADY cleared reads as hit while the game
+        // is still on, instead of pricing a thing that has happened. The live
+        // grade is the fallback, never an override: a finished game keeps
+        // `totalLadderResult`'s three-way verdict, and `liveTotalSoFar` is nil
+        // there anyway (`isLive` and `isDone` cannot both hold).
+        //
+        // 🔴 `item.threshold`, NOT the `threshold` above. That one defaults a
+        // missing line to `0` so the row can still draw "0+", and any positive
+        // score is greater than 0 — grading through it would stamp `HIT` on every
+        // rung whose line failed to parse. A rung with no line is not gradeable.
         let result = actualTotal.map {
             MarketMapRail.totalLadderResult(threshold: threshold, finalTotal: $0)
+        } ?? liveTotalSoFar.flatMap { soFar in
+            item.threshold.flatMap {
+                MarketMapRail.liveTotalLadderResult(
+                    threshold: $0, scoreSoFar: soFar, marketName: item.marketName
+                )
+            }
         }
 
         return VStack(spacing: 0) {
@@ -516,30 +555,19 @@ struct TotalPointsSpectrumView: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .frame(width: 50, alignment: .leading)
 
-                // #4018 — NO `PRE-GAME` CHIP ON A GAME THAT CAN NEVER BE GRADED.
-                // Steering an abandoned game to `fullView` (see `body`) is what
-                // makes this reachable: the ladder captions every rung from
-                // `SpectrumTense`, and that enum reads `isSettled: isDone` — "is
-                // it over?" — so a suspended match came out `.projected` and wore
-                // four `PRE-GAME` chips where the old layout wore one
-                // `PRE-GAME LINE`. Removing one falsehood must not quadruple its
-                // smaller sibling.
-                //
-                // The chip is suppressed rather than re-worded, and the tense
-                // enum is deliberately NOT given a fourth case here. Its
-                // `.settled` arm is the near miss — "over, but this card cannot
-                // grade" fits an abandoned game exactly — but the words it prints
-                // are "Settled scoring" / "SETTLED", and Alex's standing ruling is
-                // that settled means settled: a game with no result settled
-                // nothing. Naming that state is a copy decision, so the two
-                // remaining "Projected …" headings on this card (and the Runs
-                // map's identical subtitle one card up) are ROUTED, not guessed:
-                // alex-inbox/native-090b-2146PT-…-one-card-needs-your-call.md.
-                // A nil caption is an already-supported outcome — `.graded`
-                // returns one — so this draws a shape the ladder ships today.
-                if canStillBeGraded || isDone,
-                   let caption = MarketMapRail.spectrumRungCaption(
-                    finalTotal: actualTotal, isSettled: isDone
+                // Whether this row is captioned at all, and with which word, is
+                // ``MarketMapRail/spectrumRowCaption(finalTotal:isSettled:canStillBeGraded:rungResult:)``
+                // — all three clauses, with the reasoning for each. #4018 put the
+                // `canStillBeGraded` gate here as an inline `if`; #4907 needed a
+                // third clause (a row that already says `HIT` wears no tense) and
+                // moved the whole decision to where it can be asserted without
+                // rasterising this view. The `.settled` copy question that #4018
+                // routed to Alex is recorded there too.
+                if let caption = MarketMapRail.spectrumRowCaption(
+                    finalTotal: actualTotal,
+                    isSettled: isDone,
+                    canStillBeGraded: canStillBeGraded,
+                    rungResult: result
                 ) {
                     Text(caption)
                         .font(Self.captionFont)
