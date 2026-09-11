@@ -27,6 +27,7 @@ Every script is driven through its own `--dry-run`, so nothing here opens a
 Terminal window, kills a process, or writes into the live handoff tree.
 """
 
+import contextlib
 import os
 import re
 import shutil
@@ -2397,10 +2398,11 @@ def _capture_prompt(tmp_path, lane, directive_name, body, notices="# NOTICES\n1.
         )
         return capture.read_text()
     finally:
-        try:
+        # Already gone, or not ours to signal — either way there is nothing left
+        # to kill. `suppress` rather than `except: pass` so the intent is the
+        # statement (and CodeQL's py/empty-except has nothing to report).
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
         proc.wait(timeout=30)
 
 
