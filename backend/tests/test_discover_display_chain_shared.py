@@ -500,18 +500,28 @@ class TestRankDoesNotDependOnPageSize:
         events = sum(1 for kind, _ in page_one if kind == "event")
         assert events >= 12, f"page one carried only {events} events"
 
-    def test_a_caller_asking_for_less_than_a_page_keeps_its_narrower_window(self):
-        # `min(20, limit)` must not WIDEN a small caller's window, only cap a
-        # large one. The discriminator is where the interleave STOPS: a limit=10
-        # caller rebuilds ten slots and score order resumes at slot 11, so
-        # ranks 11-20 are the futures that swept the top on score. Under a
-        # 20-wide window those same ranks would still be interleaved.
-        beyond_the_window = self._order(10)[10:20]
-        assert all(kind == "futures" for kind, _ in beyond_the_window), (
-            "slots past a limit=10 caller's window were still interleaved: "
-            f"{beyond_the_window}"
+    def test_a_caller_asking_for_less_than_a_page_composes_the_same_window(self):
+        # REVERSED BY #5101, deliberately — this assertion used to read
+        # "keeps its narrower window", on the reasoning that `min(20, limit)`
+        # "must not WIDEN a small caller's window, only cap a large one".
+        #
+        # That was #4921's choice and it is the half of the defect #4921 did not
+        # fix: `min(20, 7)` is 7, so every size BELOW 20 still sized its window
+        # from the caller and could compose a different ORDER than the first 7 of
+        # a 250-item request. #5101 is chartered to finish it — "a fixed
+        # composition window independent of the requested slice" — so the narrow
+        # window is now the bug, not the contract, and `DISCOVER_COMPOSITION_WINDOW`
+        # is a constant rather than a `min`.
+        #
+        # This also restores the class's own stated principle in the docstring
+        # above: assert the INVARIANT (rank is not a function of page size), not
+        # the constant. The old row asserted the constant.
+        assert self._order(10)[:10] == self._order(20)[:10], (
+            "a limit=10 caller composed a different first ten than a limit=20 caller"
         )
-        # And the same ranks under a 20-wide window are NOT all futures, which
-        # is what makes the assertion above a discriminator rather than a
-        # restatement of the pool.
-        assert not all(kind == "futures" for kind, _ in self._order(20)[10:20])
+        # The discriminator: the first ten are interleaved, not the raw score
+        # order that a narrow window would have left behind. Without this the
+        # assertion above would also pass if the stage simply stopped running.
+        assert not all(kind == "futures" for kind, _ in self._order(10)[:10]), (
+            "the first ten were pure score order — the diversity stage did not run"
+        )
