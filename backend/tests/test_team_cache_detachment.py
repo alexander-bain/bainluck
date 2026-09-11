@@ -64,7 +64,11 @@ def _team(**over) -> Team:
         "logo_url_large": "https://example.test/car-large.png",
         "current_record": "9-8",
         "alternate_names": ["Panthers"],
-        "standings_data": {"wins": 9, "losses": 8, "conf_rank": 3, "conference": "NFC"},
+        # `league_rank`, not `conf_rank`: the latter is write-dead since #4732
+        # and is stripped at the serving boundary (#4811). This fixture only
+        # needs *a* top-3 rank so the stakes line fires — the subject of these
+        # tests is rollback survival, not which rank field is read.
+        "standings_data": {"wins": 9, "losses": 8, "league_rank": 3, "conference": "NFC"},
         "season_stats": {"ppg": 21.4},
     }
     fields.update(over)
@@ -205,7 +209,7 @@ async def test_standings_context_also_survives_the_rollback():
             slug="atlanta-falcons",
             abbreviation="ATL",
             alternate_names=["Falcons"],
-            standings_data={"wins": 8, "losses": 9, "conf_rank": 2, "conference": "NFC"},
+            standings_data={"wins": 8, "losses": 9, "league_rank": 2, "conference": "NFC"},
         ),
     ]
     session = _persistent(rows)
