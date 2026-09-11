@@ -322,6 +322,7 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     Returns True if any field changed.
     """
     from app.models.models import Event
+    from app.tasks.espn_sync import _sanitize_period
 
     changed = False
 
@@ -360,9 +361,33 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
         event.game_clock = ee.clock
         changed = True
 
-    # Update period
-    if ee.status_detail and event.period != ee.status_detail:
-        event.period = ee.status_detail
+    # Update period.
+    #
+    # #5390 (#5012 layer 2): ESPN keeps its PRE-GAME status detail — "Thu,
+    # September 10th at 8:35 PM EDT", or the short "5/23 - TBD" — in
+    # status_detail until its first in-game update lands, which is a window of
+    # a few minutes on every kickoff. A raw copy therefore stores a DATE in a
+    # column that the pace estimator, the served `game_period` and the
+    # Discover badge all read as a period; "September 10th" parsed as period
+    # 10 and badged a 0-0 NFL game "Overtime".
+    #
+    # Two rules, and the second is why this is not a one-line sanitize:
+    #   - refuse the date, never store it;
+    #   - never blank a real period. ESPN is not the only writer here
+    #     (mlb_sync and statpal_sync write this column too) and it is the
+    #     slowest, so it routinely still says "pre-game" while MLB already
+    #     says "Top 1st". Overwriting that with None would trade one wrong
+    #     answer for a missing one.
+    # A date already stored is cleared rather than frozen, so the column
+    # self-heals on the next sync and needs no migration.
+    _new_period = _sanitize_period(ee.status_detail)
+    if _new_period:
+        if event.period != _new_period:
+            event.period = _new_period
+            changed = True
+    elif ee.status_detail and event.period is not None and _sanitize_period(event.period) is None:
+        # Both sides are the same class of garbage — drop ours.
+        event.period = None
         changed = True
 
     # Update scores + capture ScoreSnapshot for score differential chart
@@ -663,7 +688,9 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
             home_score=ee.home_score,
             away_score=ee.away_score,
             game_clock=ee.clock,
-            period=ee.status_detail,
+            # #5390: a snapshot's period is served back out (events.py `snap.period`),
+            # so a pre-game date is as wrong here as it is on the event row.
+            period=_sanitize_period(ee.status_detail),
         )
         session.add(snapshot)
         stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
@@ -811,6 +838,7 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
     Other sources (Odds API, StatPal) will find it later via the Event Registry.
     """
     from app.models.models import Event, ESPNSnapshot
+    from app.tasks.espn_sync import _sanitize_period
 
     matched_espn_ids = set()
     for event in our_events:
@@ -914,7 +942,7 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                     home_score=ee.home_score,
                     away_score=ee.away_score,
                     game_clock=ee.clock,
-                    period=ee.status_detail,
+                    period=_sanitize_period(ee.status_detail),  # #5390
                 )
                 session.add(snapshot)
 
@@ -1343,7 +1371,7 @@ async def backfill_missing_scores(session, stats):
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Team
     from app.tasks.config import ESPN_SPORT_MAPPING
-    from app.tasks.espn_sync import get_event_name_variations
+    from app.tasks.espn_sync import get_event_name_variations, _sanitize_period
     from app.utils.name_normalization import names_match as _canonical_names_match
     from sqlalchemy.orm import selectinload
 
@@ -1447,8 +1475,9 @@ async def backfill_missing_scores(session, stats):
                         if ee.home_score is not None:
                             ev.home_score = ee.home_score
                             ev.away_score = ee.away_score
-                            if ee.status_detail:
-                                ev.period = ee.status_detail
+                            _bf_period = _sanitize_period(ee.status_detail)  # #5390
+                            if _bf_period:
+                                ev.period = _bf_period
                             # #2693 CERT-784: `not ev.espn_id` asks whether THIS
                             # row has one and never whether another row already
                             # holds it — the exact question #2017 exists to add.

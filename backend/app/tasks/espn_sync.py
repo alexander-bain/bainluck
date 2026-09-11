@@ -53,8 +53,17 @@ def espn_names_match(our_names: list[str], espn_team) -> bool:
 
 # Pre-game status_detail strings like "Wed, March 25th at 10:00 PM EDT"
 # should not be stored as period values in game_state.
+#
+# #5390: ESPN writes the pre-game detail in two shapes, and this pattern only
+# knew the long one. The short numeric form ("5/23 - TBD") reached production
+# and sat in `events.period`. The `\d{1,2}/\d{1,2}` branch requires a digit on
+# BOTH sides of the slash, which is what keeps it off the real period
+# vocabulary — "Final/10", "Final/2OT" and "Final/SO" all carry a letter
+# before the slash. Measured against the whole `events` table, the branch
+# newly matches 5 rows and every one of them is a date.
 _PREGAME_DATE_RE = re.compile(
-    r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b",
+    r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b"
+    r"|\b\d{1,2}/\d{1,2}\b",
     re.IGNORECASE,
 )
 
