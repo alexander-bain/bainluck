@@ -294,10 +294,38 @@ def test_head_is_single_after_this_migration(round_trip):
     result = _alembic(round_trip["url"], "current")
     assert result.returncode == 0, result.stderr
     assert THIS_REVISION in result.stdout, result.stdout
-    # `current` prints one line per head; more than one head means a branch.
+
+    # `heads` prints one line per head; more than one means a BRANCH, and a
+    # branch is what fails the release phase.
+    #
+    # DELIBERATELY `heads` AND NOT `current`'s `(head)` MARKER, which is what
+    # this read used to be. That marker is present only while THIS_REVISION is
+    # still the TIP of the chain, so the assertion was not "the graph has one
+    # head" — it was "no migration has ever been added after this one", and the
+    # two are indistinguishable right up until someone adds one. #1916's
+    # `search_log_origin` did exactly that: a correctly chained, single-headed
+    # nullable column, whose only crime was existing downstream. It reddened
+    # here with `got: []` — ZERO heads, which reads like a broken graph and is
+    # in fact a healthy one seen through the wrong question.
+    #
+    # THIS EXACT REPAIR HAS A PRECEDENT AND IT IS THIS MIGRATION'S OWN PARENT.
+    # `test_uq_event_espn_id_migration.py::test_is_an_ancestor_of_the_single_head`
+    # was once `test_is_the_single_head`, and it failed for a reason that had
+    # nothing to do with it when `containers_phase1` chained on. Its conclusion,
+    # written there: state the property generally so the next migration does not
+    # have to come back here. This is that conclusion applied one link along.
+    #
+    # The DB-read intent above is untouched: `current` still proves this
+    # revision is what the migrated database is actually at, and reachability
+    # is guarded generally by that sibling and by
+    # `test_alembic.py::TestAlembicSingleHead` — not re-copied here, because a
+    # third copy of one rule is three verdicts and the repaired copy hides the
+    # broken one.
+    heads = _alembic(round_trip["url"], "heads")
+    assert heads.returncode == 0, heads.stderr
     head_lines = [
         line
-        for line in result.stdout.splitlines()
+        for line in heads.stdout.splitlines()
         if line.strip() and "(head)" in line
     ]
     assert len(head_lines) == 1, f"expected a single head, got: {head_lines}"
