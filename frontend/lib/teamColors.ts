@@ -72,6 +72,79 @@ export function ensureHash(color: string | null | undefined): string {
 }
 
 /**
+ * #5165 — A BRAND COLOUR IS A FILL. IT IS NOT A TEXT COLOUR.
+ *
+ * `GamePlayCard` painted the score and the win probability in the team's own
+ * `primary_color` with no floor, and the site is light-mode only with
+ * `--surface-card: #FFFFFF`. Vancouver Whitecaps' stored primary is `#ffffff`,
+ * so on `/events/15298474` a 3–0 win rendered as `- 0` and the winner's `100%`
+ * was simply not there: white text on a white card.
+ *
+ * THE DEFECT IS INVISIBLE TO ALMOST EVERY TEST WE WRITE. Every character was in
+ * the DOM, correct and in the right order. `toHaveTextContent("3")` passes, an
+ * accessibility snapshot of text content passes, and the numbers are readable to
+ * a screen reader. Only the pixels are wrong. That is why a guard for this class
+ * has to assert the RESOLVED COLOUR, never the text.
+ *
+ * WHY A STANDARD RATHER THAN A TUNED CUTOFF. Measured over production `teams`
+ * (1,452 rows carrying a colour, 644 distinct, untruncated): the contrast
+ * distribution has no natural gap. It runs 1.00:1 (`#ffffff`, 26 teams) through
+ * the yellows and golds (`#ffff00` 1.07, `#FACF08` 1.50, `#fdb927` 1.73) into the
+ * pale blues and tans with nothing to cut on. Any hand-picked number would be a
+ * number someone picked. So this uses WCAG's floor for UI text instead, and the
+ * cost of each alternative was measured rather than guessed:
+ *
+ *     floor    teams recoloured    share
+ *     1.5:1                  39     2.7%   (only the literally invisible)
+ *     2.0:1                  83     5.7%
+ *     3.0:1                 146    10.1%   ← chosen (WCAG UI/large-text minimum)
+ *     4.5:1                 240    16.5%   (WCAG AA for small text)
+ *
+ * A recoloured team is not a degraded rendering: it falls back to
+ * `--text-secondary`, which is exactly what a team with NO stored colour already
+ * gets on the same card, so the result is the ordinary appearance rather than a
+ * new one. Raising this to AA is a design decision with a measured price and one
+ * line of code; it is deliberately not taken inside a bug fix.
+ */
+export const MIN_TEXT_CONTRAST_VS_SURFACE = 3;
+
+/** WCAG relative luminance of a hex colour, or null when it cannot be parsed. */
+export function relativeLuminance(hex: string | null | undefined): number | null {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return null;
+  const channel = (v: number) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const [r, g, b] = rgb.split(" ").map(Number);
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+/**
+ * The WCAG contrast ratio of a hex colour against the card surface
+ * (`--surface-card`, `#FFFFFF` — the site is light-mode only), or null when the
+ * colour cannot be parsed. 1 means identical to the surface: invisible.
+ */
+export function contrastVsCardSurface(hex: string | null | undefined): number | null {
+  const l = relativeLuminance(hex);
+  return l === null ? null : 1.05 / (l + 0.05);
+}
+
+/**
+ * A team colour that is safe to render TEXT in, or the fallback.
+ *
+ * Returns `undefined` for an absent or unparseable colour so the caller's
+ * existing `|| "var(--text-secondary)"` keeps its current meaning — this is a
+ * floor added under existing behaviour, not a replacement for it.
+ */
+export function teamTextColor(hex: string | null | undefined): string | undefined {
+  if (!hex) return undefined;
+  const ratio = contrastVsCardSurface(hex);
+  if (ratio === null) return undefined;
+  return ratio >= MIN_TEXT_CONTRAST_VS_SURFACE ? hex : undefined;
+}
+
+/**
  * Returns a CSS rgba() string from a hex color with opacity.
  * Useful for team-colored backgrounds, borders, and shadows.
  *

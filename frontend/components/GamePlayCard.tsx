@@ -3,6 +3,8 @@
 import { format, parseISO } from "date-fns";
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { teamShortNames } from "@/lib/teamShortName";
+import { teamTextColor } from "@/lib/teamColors";
 import type { ActiveChartPoint } from "@/lib/types";
 
 interface GamePlayCardProps {
@@ -76,9 +78,23 @@ export default function GamePlayCard({
   const homeProb = homePct ?? Math.round(point.homeProb * 100);
   const awayProb = awayPct ?? Math.round(point.awayProb * 100);
 
-  // Short team names (last word of full name, e.g., "Boston Celtics" → "Celtics")
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+  // #2936 — the ninth copy of the last-word rule, and the one directly under a
+  // hero that had already been fixed. `split(" ").pop()` collapses 6,335 of
+  // 9,754 teams onto a shared final word: this card called Vancouver Whitecaps
+  // FC "FC" three inches below a hero correctly reading "Vancouver Whitecaps FC"
+  // (`/events/15298474`, 2026-09-11). `FC` alone is 115 teams and `W` is every
+  // women's side in the database.
+  //
+  // Decided for BOTH sides at once, which is the contract and not a convenience:
+  // `teamShortNames` is what stops a pair rendering "FC — FC". Calling the
+  // single-name helper twice would reintroduce exactly the collision the buckets
+  // in #2936 are made of.
+  //
+  // #2936 stays OPEN — this is one call site of many, not the fix for the class.
+  const { home: homeShort, away: awayShort } = teamShortNames(
+    { name: homeTeam },
+    { name: awayTeam },
+  );
 
   // live/055 (#2815) — THE EIGHTH INSTANCE OF THE #1620 SHAPE, and the first one
   // this card noticed. It composed `[period, clock].join(" ")` raw, so it never
@@ -134,13 +150,13 @@ export default function GamePlayCard({
               {homeTeamLogo && (
                 <img src={homeTeamLogo} alt="" width={14} height={14} className="w-3.5 h-3.5 object-contain" />
               )}
-              <span style={{ color: homeTeamColor || "var(--text-secondary)" }}>
+              <span style={{ color: teamTextColor(homeTeamColor) || "var(--text-secondary)" }}>
                 {point.homeScore}
               </span>
             </span>
             <span className="text-text-muted text-xs">-</span>
             <span className="flex items-center gap-1">
-              <span style={{ color: awayTeamColor || "var(--text-secondary)" }}>
+              <span style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
                 {point.awayScore}
               </span>
               {awayTeamLogo && (
@@ -179,12 +195,12 @@ export default function GamePlayCard({
           ) : (
             <p className="text-xs text-text-muted" data-testid="game-play-card-probability">
               {homeShort}{" "}
-              <span className="font-semibold" style={{ color: homeTeamColor || "var(--text-secondary)" }}>
+              <span className="font-semibold" style={{ color: teamTextColor(homeTeamColor) || "var(--text-secondary)" }}>
                 {homeProb}%
               </span>
               {" — "}
               {awayShort}{" "}
-              <span className="font-semibold" style={{ color: awayTeamColor || "var(--text-secondary)" }}>
+              <span className="font-semibold" style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
                 {awayProb}%
               </span>
             </p>
