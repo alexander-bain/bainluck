@@ -17,13 +17,34 @@ The grade landed and the price did not. Three things had to be true at once:
      `finalized` market and every price site refuses a None.
 
 WHY THESE ARE STRING GUARDS AND NOT DATABASE GUARDS. Every real-Postgres gate in
-this repo is env-gated (`CALIBRATION_TEST_DATABASE_URL`, `SEARCH_TEST_DATABASE_URL`
-and friends) and SKIPS in CI, which has no Postgres service. A skipped guard is
-not a guard. So these read the composed statement the task actually executes —
-`settled_grade_update_sql` and `ELIGIBLE_OUTCOMES_SQL` are the objects passed to
-`text()` at the call site, not re-derivations of them — which is the only form
-that can fail in CI when the producer regresses.
+this repo is env-gated (`CALIBRATION_TEST_DATABASE_URL` in 24 files,
+`SEARCH_TEST_DATABASE_URL` in 122) and SKIPS in CI, which has no Postgres
+service. A skipped guard is not a guard. So these read the real objects the call
+sites splice — `_SETTLED_PRICE_SET_SQL`'s return value and `ELIGIBLE_OUTCOMES_SQL`
+— never a re-derivation of them.
+
+🔴 AND THEY ARE NOT WHOLE-STATEMENT GUARDS, WHICH THEY WERE FOR ONE CI RUN. The
+first draft hoisted both settling UPDATEs into a `settled_grade_update_sql()`
+helper precisely so a test could read the composed string. Three of this repo's
+existing guards went red at once, and every one of them was right:
+
+  * `test_kalshi_forward_capture_grade_p1004` — the helper needed a
+    `won = result == "yes"` line to pick a branch, and that is the two-state
+    grade CAL-P1004 exists to keep out of this file (it maps `""` and `"scalar"`
+    onto "this outcome lost", at the top authority rung).
+  * `test_touch_stamp_provenance_live077` — moving `last_updated=NOW()` inside a
+    helper put it where that scan cannot classify it.
+  * `test_duplicate_condition_leg_never_wins_q487` — its positive control counts
+    the in-class SQL concatenations by hand-classified site, and merging two into
+    one shrank the population, which is how a source-scan guard goes vacuous.
+
+The statements are inline because this repo READS them inline. So the
+composition is proved where the repo already proves it, and the guard below
+asserts only what is genuinely new: the clause's content, and that both call
+sites splice it with DIFFERENT prices.
 """
+
+import re
 
 import pytest
 
@@ -31,46 +52,104 @@ import pytest
 # --- the producer: the grade and the price are one settlement ----------------
 
 
-@pytest.mark.parametrize(
-    "result,expected_winner,expected_price",
-    [("no", "is_winner=false", "current_probability=0.0"),
-     ("yes", "is_winner=true", "current_probability=1.0")],
-)
-def test_settlement_writes_the_price_beside_the_verdict(
-    result, expected_winner, expected_price
-):
-    """The statement that grades a settled Kalshi leg also prices it.
+def _task_module_source():
+    """The source of the `backfill_winners` MODULE — never the Celery task.
 
-    This is the whole of #5246's producer half: before the fix these UPDATEs set
-    `is_winner` and `resolution_source` and left `current_probability` holding a
-    dead player's last quote.
+    🔴 `from app.tasks import backfill_winners` does NOT reliably give the
+    module. `app/tasks/__init__.py` defines a Celery task of the same name, so
+    the attribute on the package is a `celery.local.PromiseProxy` whose
+    `inspect.getsource` is the 427-character task wrapper — in which every
+    pattern below finds nothing and every `not in` assertion passes.
+
+    It is worse than a plain bug because it is ORDER-DEPENDENT: importing the
+    module anywhere earlier in the process also binds it as an attribute of the
+    package, so the `from` form yields the real module in a full run and the
+    proxy when the file runs alone. That is a guard that passes both ways —
+    green in CI, vacuous under sharding, and unfalsifiable by re-running it.
+
+    `importlib.import_module` names the module and cannot resolve to the task.
     """
-    from app.tasks.backfill_winners import settled_grade_update_sql
+    import importlib
+    import inspect
 
-    sql = settled_grade_update_sql(result)
-    assert expected_winner in sql
-    assert expected_price in sql
+    return inspect.getsource(importlib.import_module("app.tasks.backfill_winners"))
+
+
+def _task_module_code():
+    """`_task_module_source()` with comments stripped.
+
+    A source scan that reads PROSE grades the prose. This file's own first
+    version of the CAL-P1004 assertion below failed on the comment that
+    *explains* the fix — the string `rs == "yes"` appears there describing what
+    the code used to be. Mirrors `test_kalshi_forward_capture_grade_p1004`'s
+    `_code_lines`, which strips for the same reason and says so.
+    """
+    out = []
+    for line in _task_module_source().splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        out.append(line.split("  #")[0])
+    return "\n".join(out)
+
+
+def _price_set(price):
+    from app.tasks.backfill_winners import _SETTLED_PRICE_SET_SQL
+
+    return _SETTLED_PRICE_SET_SQL(price)
+
+
+def _settlement_call_sites():
+    """The two `_SETTLED_PRICE_SET_SQL(...)` arguments in the settled-events sweep.
+
+    A source scan, deliberately, and in the same form the three guards that
+    already police this file use (`test_duplicate_condition_leg_never_wins_q487`
+    reads it with `ast`, `test_touch_stamp_provenance_live077` and
+    `test_kalshi_forward_capture_grade_p1004` read it as text). The first draft
+    of this ship hoisted both UPDATEs into a helper so a test could read the
+    composed string, and all three of those guards went red — the statements are
+    inline because this repo reads them inline. So the composition is proved
+    where the repo proves it, and this asserts only that both call sites exist
+    and ask for DIFFERENT prices.
+    """
+    return re.findall(r'_SETTLED_PRICE_SET_SQL\("([01]\.0)"\)', _task_module_source())
+
+
+@pytest.mark.parametrize("price", ["0.0", "1.0"])
+def test_the_settlement_price_clause_writes_the_price(price):
+    """The clause the settling UPDATEs splice in writes the settlement price.
+
+    This is #5246's producer half: before the fix those UPDATEs set `is_winner`
+    and `resolution_source` and left `current_probability` holding a dead
+    player's last quote.
+    """
+    sql = _price_set(price)
+    assert f"current_probability={price}" in sql
     assert "current_american_odds=NULL" in sql
-    assert "resolution_source='api_settlement'" in sql
 
 
-def test_the_two_results_do_not_write_the_same_price():
-    """A winner settles at 1.0 and a loser at 0.0, and they are not each other.
+def test_the_two_settlement_prices_are_not_each_other():
+    """A winner settles at 1.0 and a loser at 0.0.
 
-    Pinned as its own assertion because the parametrised test above passes on a
-    mutant that returns the loser statement for both arguments — each case only
-    ever reads its own substring, and `current_probability=0.0` is present in a
-    statement that also wrongly says `is_winner=true`.
+    Pinned separately because the parametrised test above passes on a mutant
+    that returns the same clause for both arguments — each case only ever reads
+    its own substring.
     """
-    from app.tasks.backfill_winners import settled_grade_update_sql
+    assert _price_set("1.0") != _price_set("0.0")
+    assert "current_probability=1.0" in _price_set("1.0")
+    assert "current_probability=0.0" not in _price_set("1.0")
+    assert "current_probability=0.0" in _price_set("0.0")
+    assert "current_probability=1.0" not in _price_set("0.0")
 
-    yes_sql = settled_grade_update_sql("yes")
-    no_sql = settled_grade_update_sql("no")
-    assert yes_sql != no_sql
-    assert "current_probability=1.0" in yes_sql
-    assert "current_probability=0.0" not in yes_sql
-    assert "current_probability=0.0" in no_sql
-    assert "current_probability=1.0" not in no_sql
+
+def test_both_settlement_call_sites_ask_for_the_price():
+    """The YES branch and the NO branch each splice the clause, with DIFFERENT prices.
+
+    The positive control for the source scan above: a refactor that drops one
+    call site, or points both at the same price, fails here rather than shipping
+    a sweep that prices only half of what it grades.
+    """
+    sites = _settlement_call_sites()
+    assert sorted(sites) == ["0.0", "1.0"], sites
 
 
 def test_the_change_stamp_compares_against_the_price_being_written():
@@ -83,13 +162,11 @@ def test_the_change_stamp_compares_against_the_price_being_written():
     `app/utils/price_change_stamp.py` exists: a provider float and its rounded
     stored form are otherwise never equal.
     """
-    from app.tasks.backfill_winners import settled_grade_update_sql
-
-    for result, price in (("yes", "1.0"), ("no", "0.0")):
-        sql = settled_grade_update_sql(result)
+    for price in ("1.0", "0.0"):
+        sql = _price_set(price)
         assert (
             f"IS DISTINCT FROM CAST({price} AS numeric(7,6))" in sql
-        ), f"{result}: change stamp must compare against the price it writes"
+        ), f"{price}: change stamp must compare against the price it writes"
         assert "ELSE fo.price_changed_at END" in sql
 
 
@@ -101,35 +178,21 @@ def test_settlement_never_widens_past_the_venues_own_two_answers():
     keeps it that way — including against a future caller that decides to pass a
     "probability we are fairly confident about".
     """
-    from app.tasks.backfill_winners import (
-        _SETTLED_PRICE_SET_SQL,
-        settled_grade_update_sql,
-    )
-
     for bad in ("0.5", "0", "1", "", "0.0; DROP TABLE futures_outcomes"):
         with pytest.raises(ValueError):
-            _SETTLED_PRICE_SET_SQL(bad)
-    for bad in ("YES", "won", "", "no'"):
-        with pytest.raises(ValueError):
-            settled_grade_update_sql(bad)
+            _price_set(bad)
 
 
-def test_settlement_still_refuses_to_overwrite_a_better_verdict():
-    """The pre-existing WHERE survives the fix.
+def test_the_settling_sweep_still_refuses_to_overwrite_a_better_verdict():
+    """#5246 adds columns to the SET clause; it must not loosen who is eligible.
 
-    #5246 adds columns to the SET clause; it must not loosen who is eligible.
     An already-`api_settlement` row is not in `OVERWRITABLE_WINNER_SOURCES_SQL`,
     which is also why the repair script and this producer are independent of
-    each other — the fix cannot reach the 11,740 rows already carrying residue,
-    and the repair cannot be undone by the fix.
+    each other — the fix cannot reach the rows already carrying residue, and the
+    repair cannot be undone by the fix.
     """
-    from app.tasks.backfill_winners import settled_grade_update_sql
     from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES_SQL
 
-    for result in ("yes", "no"):
-        sql = settled_grade_update_sql(result)
-        assert "fo.resolution_source IS NULL" in sql
-        assert OVERWRITABLE_WINNER_SOURCES_SQL in sql
     assert "api_settlement" not in OVERWRITABLE_WINNER_SOURCES_SQL
 
 
@@ -350,3 +413,52 @@ def test_the_repair_stays_inside_open_markets():
     from scripts.repair_5246_settled_outcomes_still_carrying_a_price import SQL
 
     assert "status = 'open'" in SQL["scan"]
+
+
+# --- CAL-P1004, found from #5246: an undeclared market is not a loss ---------
+
+
+def test_the_settled_sweep_grades_through_the_three_state_helper():
+    """The settled-events sweep asks `gradeable_winner`, not `rs == "yes"`.
+
+    This was the last of this file's four Kalshi graders still carrying the
+    two-state form, and it escaped `test_kalshi_forward_capture_grade_p1004`'s
+    scan on a NAME — that pattern is `result\\w* == "yes"` and the local here was
+    called `rs`. Pinned by behaviour rather than by that pattern so the next
+    rename cannot slip through the same gap.
+    """
+    src = _task_module_code()
+    assert 'rs == "yes"' not in src
+    assert 'rs is not None' not in src
+    assert "kms.gradeable_winner(" in src
+    # The skip is COUNTED, not silent — gotcha #53.
+    assert 'settled_stats["undeclared"] += 1' in src
+
+
+@pytest.mark.parametrize(
+    "status,result,expected",
+    [
+        ("finalized", "yes", True),
+        ("finalized", "no", False),
+        ("determined", "yes", True),
+        # The two that used to be graded as LOSSES at the top authority rung.
+        ("finalized", "scalar", None),
+        ("closed", "", None),
+        ("active", "", None),
+        ("inactive", "", None),
+        # A stray result on a status the measured table says carries none.
+        ("closed", "yes", None),
+    ],
+)
+def test_only_a_declared_result_reaches_a_verdict(status, result, expected):
+    """`""` and `"scalar"` are absences, and an absence is not a loss.
+
+    Measured on CAL-P053's sample, `scalar` was 39 of 204 results — roughly one
+    settled market in five. Every one of them was recorded as "this outcome
+    lost". #5246 made that worse before it made it better: the sweep now writes
+    `current_probability = 0` beside the verdict, so an undeclared market would
+    have had its price zeroed on a grade the venue never gave.
+    """
+    from app.utils import kalshi_market_status as kms
+
+    assert kms.gradeable_winner(status, result) is expected

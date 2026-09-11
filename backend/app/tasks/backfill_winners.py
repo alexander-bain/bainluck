@@ -110,34 +110,6 @@ def _SETTLED_PRICE_SET_SQL(price: str) -> str:
     """
 
 
-def settled_grade_update_sql(result: str) -> str:
-    """The whole `UPDATE` the Kalshi settled-events sweep runs, for one result.
-
-    Built here rather than inline at the call site so the statement the task
-    actually executes is the statement a test can read. CI has no Postgres — the
-    real-database gates in this repo are all env-gated and SKIP there — so a
-    guard on this SQL is only worth anything if it inspects the composed string
-    instead of re-deriving it, and re-deriving it in the test is how a producer
-    fix passes its own guard while shipping nothing (#5246's own lesson from the
-    mutation sweep: bind the half of the fix that matters).
-
-    :param result: Kalshi's own ``result`` for the market — ``"yes"`` or ``"no"``.
-    """
-    if result not in ("yes", "no"):
-        raise ValueError(f"kalshi result must be 'yes' or 'no', got {result!r}")
-    won = result == "yes"
-    return (
-        "UPDATE futures_outcomes fo SET "
-        f"is_winner={'true' if won else 'false'}, "
-        "resolution_source='api_settlement', last_updated=NOW(), "
-        + _SETTLED_PRICE_SET_SQL("1.0" if won else "0.0")
-        + " WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL"
-        " OR fo.resolution_source IN " + OVERWRITABLE_WINNER_SOURCES_SQL + ")"
-        # Q487: external_id is NOT unique.
-        " AND " + DUPLICATE_CONDITION_LEG_SQL
-    )
-
-
 #: #4057: HOW MUCH OF THE KALSHI SETTLEMENT SWEEP IS RESERVED FOR WHAT JUST SETTLED.
 #:
 #: The sweep below walks `external_id ASC` from a Redis cursor, 2,000 tickers a
@@ -7483,7 +7455,14 @@ async def _resolve_winners_only(limit: int = 2000):
             """))
             _top_series = [r[0] for r in _sr.all()]
         logger.info("resolve_winners: discovered %d series with unresolved outcomes", len(_top_series))
-        settled_stats = {"pages": 0, "resolved": 0, "series_scanned": 0}
+        settled_stats = {
+            "pages": 0,
+            "resolved": 0,
+            "series_scanned": 0,
+            # CAL-P1004: markets the venue has not called (`result` "" or
+            # "scalar"). Previously graded as losses; now skipped and counted.
+            "undeclared": 0,
+        }
         service2 = KalshiAPIService()
         try:
             for series in _top_series:
@@ -7513,19 +7492,66 @@ async def _resolve_winners_only(limit: int = 2000):
                     for ev in events:
                         for mkt in ev.get("markets") or []:
                             tk = mkt.get("ticker", "")
-                            rs = mkt.get("result")
-                            if tk and rs is not None:
-                                (yes_t if rs == "yes" else no_t).append(tk)
+                            if not tk:
+                                continue
+                            # CAL-P1004, found from #5246. This was
+                            # `rs is not None` + `rs == "yes" else no_t`, which is
+                            # the two-state grade `kms.gradeable_winner` exists to
+                            # replace — and the only one of this file's four Kalshi
+                            # graders still carrying it. It escaped
+                            # `test_kalshi_forward_capture_grade_p1004`'s scan on a
+                            # NAME: that pattern is `result\w* == "yes"` and the
+                            # local here was called `rs`.
+                            #
+                            # It is not cosmetic. `result` is the empty STRING for a
+                            # market the venue has not called, and `"scalar"` for one
+                            # that settles on a number — measured at 39 of 204 results
+                            # on CAL-P053's sample, roughly one settled market in five.
+                            # Both are `is not None`, so both went to `no_t` and were
+                            # written `is_winner=false` at `api_settlement`, the top
+                            # authority rung, which `is_downgrade` then protects from
+                            # correction.
+                            #
+                            # #5246 is why it had to be fixed HERE rather than filed:
+                            # this sweep now writes `current_probability = 0` beside
+                            # the verdict, so an undeclared market would have had its
+                            # price zeroed on the strength of a grade the venue never
+                            # gave. The fix makes the consequence worse; it does not
+                            # get to leave it.
+                            won = kms.gradeable_winner(
+                                mkt.get("status"), mkt.get("result")
+                            )
+                            if won is None:
+                                # Counted, never silent: an absence must not be
+                                # recorded as a fact (gotcha #53), and a population
+                                # nobody counts is one nobody notices.
+                                settled_stats["undeclared"] += 1
+                                continue
+                            (yes_t if won else no_t).append(tk)
                     page_resolved = 0
                     async with get_task_session() as sess:
                         if yes_t:
                             r = await sess.execute(
-                                text(settled_grade_update_sql("yes")), {"t": yes_t}
+                                text("""
+                                UPDATE futures_outcomes fo SET is_winner=true, resolution_source='api_settlement', last_updated=NOW(),
+                                """ + _SETTLED_PRICE_SET_SQL("1.0") + """
+                                WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                -- Q487: external_id is NOT unique.
+                                AND """ + DUPLICATE_CONDITION_LEG_SQL + """
+                            """),
+                                {"t": yes_t},
                             )
                             page_resolved += r.rowcount
                         if no_t:
                             r = await sess.execute(
-                                text(settled_grade_update_sql("no")), {"t": no_t}
+                                text("""
+                                UPDATE futures_outcomes fo SET is_winner=false, resolution_source='api_settlement', last_updated=NOW(),
+                                """ + _SETTLED_PRICE_SET_SQL("0.0") + """
+                                WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                -- Q487: external_id is NOT unique.
+                                AND """ + DUPLICATE_CONDITION_LEG_SQL + """
+                            """),
+                                {"t": no_t},
                             )
                             page_resolved += r.rowcount
                         await sess.commit()
