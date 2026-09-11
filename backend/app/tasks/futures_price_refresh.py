@@ -417,15 +417,26 @@ VALUE_POOL_LIMIT = 4_500
 TIER1_POOL_LIMIT = 4_000
 
 #: Fraction of a pool limit that must remain unused for the pool to be
-#: considered safely sized. Asserted against the production populations recorded
-#: above, so a measurement that drifts into the limit fails a test rather than
-#: quietly truncating a sweep.
+#: considered safely sized. Read in two places on purpose: the guard test
+#: asserts it against the production populations recorded above, and
+#: :func:`_scan_candidates` asserts it against the population *at run time*.
+#:
+#: A CI constant can only ever catch someone LOWERING a limit; it cannot see a
+#: population growing underneath a limit nobody touched, which is the way this
+#: actually fails. Hence both.
 _POOL_LIMIT_HEADROOM_MIN = 0.02
 
-#: Stats key set when a pool came back exactly at its limit — i.e. the LIMIT,
-#: not the population, decided the pool. See :data:`TIER1_POOL_LIMIT`.
+#: Stats keys set when a pool came back exactly at its limit — the LIMIT, not
+#: the population, decided who was eligible. See :data:`TIER1_POOL_LIMIT`.
 _STAT_TIER1_POOL_HIT = "tier1_pool_hit"
 _STAT_VALUE_POOL_HIT = "value_pool_hit"
+
+#: 🔴 THE ONE THAT ARRIVES IN TIME. A ``*_pool_hit`` says the pool truncated,
+#: which means markets were ALREADY starved on this run — it is a post-mortem,
+#: not a warning. This fires while the pool is merely inside
+#: :data:`_POOL_LIMIT_HEADROOM_MIN` of its limit, i.e. before anything is lost,
+#: which is the only point at which raising the limit is still cheap.
+_STAT_POOL_HEADROOM_LOW = "pool_headroom_low"
 
 #: Polymarket ids per Gamma ``/events?id=..&id=..`` request. Verified against the
 #: live API 2026-08-25: repeated ``id`` params return the full nested markets
@@ -772,10 +783,17 @@ async def _scan_candidates(
         value_size, tier1_size = int(rows[0][6]), int(rows[0][7])
         stats["value_pool_size"] = value_size
         stats["tier1_pool_size"] = tier1_size
-        if value_size >= value_pool_limit:
-            stats[_STAT_VALUE_POOL_HIT] = True
-        if tier1_size >= tier1_pool_limit:
-            stats[_STAT_TIER1_POOL_HIT] = True
+        low = []
+        for name, size, limit, hit_key in (
+            ("value", value_size, value_pool_limit, _STAT_VALUE_POOL_HIT),
+            ("tier1", tier1_size, tier1_pool_limit, _STAT_TIER1_POOL_HIT),
+        ):
+            if size >= limit:
+                stats[hit_key] = True
+            elif size > limit * (1 - _POOL_LIMIT_HEADROOM_MIN):
+                low.append(f"{name} {size}/{limit}")
+        if low:
+            stats[_STAT_POOL_HEADROOM_LOW] = ", ".join(low)
     return _rows_to_markets(rows, arm=_ARM_CLASS)
 
 

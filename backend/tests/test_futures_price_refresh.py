@@ -448,11 +448,47 @@ class TestThePoolReportsWhenTheLimitDecided:
 
     async def test_a_pool_under_its_limit_raises_nothing(self):
         _, stats = await self._scan(
-            [self._row(1, 10, 49)], value_pool_limit=100, tier1_pool_limit=50
+            [self._row(1, 10, 20)], value_pool_limit=100, tier1_pool_limit=50
         )
         assert fpr._STAT_TIER1_POOL_HIT not in stats
         assert fpr._STAT_VALUE_POOL_HIT not in stats
-        assert stats["tier1_pool_size"] == 49
+        assert fpr._STAT_POOL_HEADROOM_LOW not in stats
+        assert stats["tier1_pool_size"] == 20
+
+    async def test_approaching_the_limit_warns_before_anything_is_lost(self):
+        """A `*_pool_hit` is a post-mortem: at the limit, rows are ALREADY gone.
+
+        99 of 100 leaves 1% headroom against a declared 2% minimum, and nothing
+        has been truncated yet — the only moment at which raising the limit is
+        still free. This is the signal that arrives in time.
+        """
+        _, stats = await self._scan(
+            [self._row(1, 10, 99)], value_pool_limit=1_000, tier1_pool_limit=100
+        )
+        assert fpr._STAT_TIER1_POOL_HIT not in stats, "nothing truncated yet"
+        assert "tier1 99/100" in stats[fpr._STAT_POOL_HEADROOM_LOW]
+        assert "value" not in stats[fpr._STAT_POOL_HEADROOM_LOW]
+
+    async def test_exactly_the_declared_headroom_is_not_low(self):
+        """The boundary, pinned so the runtime check and the CI guard agree.
+
+        98 of 100 leaves exactly 2%, which MEETS `_POOL_LIMIT_HEADROOM_MIN`.
+        `TestTier1PoolIsSizedAboveItsPopulation` accepts the same margin with
+        `headroom >= _POOL_LIMIT_HEADROOM_MIN`; if these two ever disagree about
+        the boundary, a pool passes CI and warns in production, or the reverse.
+        """
+        _, stats = await self._scan(
+            [self._row(1, 10, 98)], value_pool_limit=1_000, tier1_pool_limit=100
+        )
+        assert fpr._STAT_POOL_HEADROOM_LOW not in stats
+
+    async def test_a_pool_at_its_limit_is_a_hit_not_merely_low(self):
+        """The two states are distinct and must not collapse into one."""
+        _, stats = await self._scan(
+            [self._row(1, 10, 50)], value_pool_limit=100, tier1_pool_limit=50
+        )
+        assert stats[fpr._STAT_TIER1_POOL_HIT] is True
+        assert fpr._STAT_POOL_HEADROOM_LOW not in stats
 
     async def test_zero_candidates_does_not_report_an_empty_pool(self):
         """The quiet-night trap, and the reason the sizes are not defaulted.
