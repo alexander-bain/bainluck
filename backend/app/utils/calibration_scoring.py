@@ -83,6 +83,8 @@ and nothing is renamed in place; the mapping is asserted by
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -133,6 +135,88 @@ SIGMA_GATE = 2.0
 HEADLINE_TARGET_PP = 2.0
 
 
+# ---------------------------------------------------------------------------
+# THE METHOD ID — D134 (Alex, 2026-09-11)
+# ---------------------------------------------------------------------------
+# "Every grading/blending/calibration calculation carries a versioned METHOD id;
+# a METHODOLOGY LEDGER ... is kept forever and published with the accuracy page
+# ... As long as we can inform a skeptical auditor of what changes we've made to
+# our calculations, we can't be accused of anything nefarious if we are only
+# trying to make the calculations better over time."
+#
+# A published cell already says WHICH POPULATION it was scored on
+# (``population_version``). It did not say WHICH METHOD scored it, and the two
+# are independent: the same rows graded under a different bar, a different
+# ``SIGMA_GATE`` or a different carry rule are a different number. Without a
+# method id, every figure this board has ever published is indistinguishable
+# from every other, and "regrade under the old method" — the thing D134 says the
+# retained evidence exists to make possible — has nothing to name.
+#
+# TWO FIELDS, AND THE SECOND ONE IS WHY THIS WORKS. ``version`` is set by hand
+# and is what a ledger entry cites. ``fingerprint`` is DERIVED from the deciding
+# constants themselves. A guard test pins the pair, so a constant cannot move
+# without the fingerprint moving, and the fingerprint cannot move without
+# somebody bumping the version and writing the ledger entry that explains it.
+# A hand-set version alone would be a promise; the pair is a mechanism.
+
+#: The id a methodology-ledger entry cites. Bump this — never edit it in place —
+#: whenever :func:`scoring_policy_fingerprint` changes, and add the ledger entry
+#: in the same commit. ``m1`` is the method in force since D62 (2026-09-04, the
+#: measured sigma decides); changes BEFORE the scheme existed are narrated in the
+#: ledger rather than numbered, because inventing ids for them retroactively
+#: would imply a precision the record does not have.
+SCORING_POLICY_VERSION = "m1"
+
+#: When ``SCORING_POLICY_VERSION`` came into force — the D62 deploy, not the day
+#: the id was added. Dated from the ruling so the ledger and the wire agree.
+SCORING_POLICY_IN_FORCE_SINCE = "2026-09-04"
+
+
+def scoring_policy_material() -> dict:
+    """Every constant that can change a published verdict, in one dict.
+
+    THE SCOPE IS THE CLAIM. What is in here is what the fingerprint can defend;
+    what is not in here can change silently, so the omissions are named rather
+    than left to be discovered:
+
+    * **``classify``'s ``odds_api`` prefix rule is CODE, not a constant**, and no
+      hash of values can see it. A change there re-classes cells into a different
+      bar without moving the fingerprint. It is the one deciding rule this guard
+      does not cover, and it is called out in the ledger for that reason.
+    * The fold (``CELL_KEYS``) and the bin count are shape, not thresholds; they
+      change WHICH cells exist rather than how one is judged, and the payload's
+      own ``population_version`` already moves when they do.
+
+    ``sorted`` on the category set and ``sort_keys`` on the dump make this stable
+    across processes — a fingerprint that depended on set iteration order would
+    differ between two dynos scoring the same board, which is worse than none.
+    """
+    return {
+        "bar_pp": BAR_PP,
+        "class_bars_pp": dict(CLASS_BARS_PP),
+        "game_categories": sorted(GAME_CATEGORIES),
+        "min_cell_n": MIN_CELL_N,
+        "sigma_gate": SIGMA_GATE,
+        "headline_target_pp": HEADLINE_TARGET_PP,
+        "se_convention_pp": SE_CONVENTION_PP,
+        # From the sibling leaf, because they decide too: these two bands say
+        # which measured entries are allowed to set a cell's sigma at all, so a
+        # change to either regrades cells without touching a threshold here.
+        "cell_drift_band": list(sigma_ledger.CELL_DRIFT_BAND),
+        "coverage_band": list(sigma_ledger.COVERAGE_BAND),
+    }
+
+
+def scoring_policy_fingerprint() -> str:
+    """12 hex of sha256 over :func:`scoring_policy_material`.
+
+    Deliberately NOT :func:`hash` — that is salted per process (``PYTHONHASHSEED``)
+    and would give a different answer on every dyno for the same method.
+    """
+    blob = json.dumps(scoring_policy_material(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
 def classify(source: str, category: str) -> str:
     """The cohort class of a published cell. Structural, never numeric."""
     if (source or "").startswith("odds_api"):
@@ -145,9 +229,17 @@ def bar_for(source: str, category: str) -> float:
     return CLASS_BARS_PP[classify(source, category)]
 
 
+#: The numerator of the board's binomial standard-error convention, in pp. Named
+#: rather than inlined for one reason: it DECIDES — it sets every cell's sigma on
+#: the estimate basis — and :func:`scoring_policy_fingerprint` can only cover a
+#: value that has a name. A literal buried in a function body is a deciding
+#: constant that no guard can see.
+SE_CONVENTION_PP = 50.0
+
+
 def cell_se_pp(n: int) -> float:
     """Standard error of a cell's ECE in pp. ``50/sqrt(n)``, the board's convention."""
-    return 50.0 / math.sqrt(n) if n > 0 else float("inf")
+    return SE_CONVENTION_PP / math.sqrt(n) if n > 0 else float("inf")
 
 
 # ---------------------------------------------------------------------------
@@ -660,6 +752,16 @@ def scorecard(
         # a needle copied out of `scorecard` alone must still carry its date.
         "generated_at": payload.get("generated_at"),
         "population_version": payload.get("population_version"),
+        # D134: WHICH POPULATION is already here; this is WHICH METHOD. Beside
+        # `population_version` rather than inside `bar` on purpose — the two are
+        # the pair that identifies a published number, and a consumer that
+        # copies the needle out should not have to reach into a nested block to
+        # find half of its provenance.
+        "scoring_policy": {
+            "version": SCORING_POLICY_VERSION,
+            "fingerprint": scoring_policy_fingerprint(),
+            "in_force_since": SCORING_POLICY_IN_FORCE_SINCE,
+        },
         # THE NEEDLE. `cells_total` is the MATERIAL count — the denominator of
         # the number Alex reads — and `cells_scored` is every folded cell. See
         # the module docstring for why the two names differ from the script's.
