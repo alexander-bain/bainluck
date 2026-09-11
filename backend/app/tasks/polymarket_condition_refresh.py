@@ -167,7 +167,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 #: Condition ids per Gamma request, and the write path itself. Both are shared
 #: with the register rail rather than restated: the batch size is a property of
@@ -176,6 +176,8 @@ from typing import Any
 #: market mean for these rows".
 from app.tasks.tournament_price_refresh import BATCH_SIZE
 from app.utils.futures_liveness import LIVE_MARKET_SQL, writable_leg_sql
+from app.utils.game_market_class import classify_game_market_class
+from app.utils.prediction_market_matching import _strip_category_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -333,34 +335,35 @@ KICKOFF_TAIL_HOURS = 6
 #: direction.
 KICKOFF_STALE_MINUTES = 45
 
-#: A kickoff market costing at most this many condition ids is a HEADLINE market
-#: — the game-level moneyline/spread/total a reader sees first — as opposed to a
-#: prop LADDER, which is addressed by every leg (#4827) and can cost up to 47.
-#:
-#: WHY THE CLASS HAS TO BE SPLIT AT ALL (#4983). Ordering inside the kickoff
-#: class is the ONLY thing that decides who is ever served, because there is no
-#: rotation to fall back on: :data:`_KICKOFF_ATTEMPT_TTL_SECONDS` is 45 minutes
-#: against a 60-minute beat, so every kickoff marker has expired by the next
-#: beat by design (that is this constant's whole point). A row the budget passes
-#: over is therefore passed over on EVERY beat until its kickoff goes by — not
-#: deferred, dropped.
-#:
-#: Under a strict `kickoff ASC` that is paid for in the worst possible currency:
-#: one game's 47-id prop ladder is served ahead of the next game's 1-id headline
-#: market. MEASURED at the Saturday peak — 165 ladder markets, 14% of the class,
-#: carry 1,644 ids, 51% of its whole demand; the ≤3h slice alone is 1,342 ids
-#: against a 1,000-id budget, so admission provably ran out INSIDE the games
-#: about to be played. The ≤3h HEADLINE markets are only 696 ids and fit with
-#: room to spare. So the class is served headline-first, each half in kickoff
-#: order, and every imminent game gets its headline number before any game gets
-#: its ladder.
-#:
-#: 3 rather than 1: 501 of 588 kickoff markets cost exactly 1 id and another 53
-#: cost 2-3 (a handful of game markets carry a draw leg or a suffixed pair), and
-#: the 4+ band is where prop ladders start. Chosen off the measured distribution,
-#: not off a market-name pattern, because the budget is denominated in ids and
-#: cost is the thing being rationed.
-KICKOFF_HEADLINE_MAX_IDS = 3
+# WHY THE KICKOFF CLASS HAS TO BE SPLIT AT ALL (#4983). Ordering inside the
+# kickoff class is the ONLY thing that decides who is ever served, because there
+# is no rotation to fall back on: `_KICKOFF_ATTEMPT_TTL_SECONDS` is 45 minutes
+# against a 60-minute beat, so every kickoff marker has expired by the next beat
+# by design (that is `KICKOFF_STALE_MINUTES`' whole point). A row the budget
+# passes over is therefore passed over on EVERY beat until its kickoff goes by —
+# not deferred, dropped.
+#
+# Under a strict `kickoff ASC` that is paid for in the worst possible currency:
+# one game's 47-id prop ladder is served ahead of the next game's 1-id headline
+# market. MEASURED at the Saturday peak — 165 ladder markets, 14% of the class,
+# carry 1,644 ids, 51% of its whole demand; the ≤3h slice alone is 1,342 ids
+# against a 1,000-id budget, so admission provably ran out INSIDE the games about
+# to be played. The ≤3h HEADLINE markets are only 696 ids and fit with room to
+# spare. So the class is served headline-first, each half in kickoff order, and
+# every imminent game gets its headline number before any game gets its ladder.
+#
+# WHICH HALF A MARKET IS IN IS A QUESTION OF SEMANTICS, NOT COST — and the first
+# cut of this ship got that wrong (CERT-2564). It read
+# `len(cids) <= KICKOFF_HEADLINE_MAX_IDS = 3`, justified off the measured cost
+# distribution: 501 of 588 kickoff markets cost exactly 1 id, and the 4+ band is
+# where prop ladders start. The distribution was real and the inference from it
+# was wrong. Every decomposed Polymarket sub-market is producer-written with a
+# bare condition-id external id, player props included, so a prop costs one id
+# too — and the cost test called it a headline. Under a saturated budget a one-id
+# prop could still be served ahead of another game's one-id moneyline, which is
+# the starvation this ship exists to end, rebuilt inside the fix for it. The
+# split now asks `_is_headline_market`, which asks the one shared recognizer. No
+# constant survives here because there is no threshold to tune.
 
 #: Condition ids held back from the kickoff class so the #3879 backlog drain can
 #: never be zeroed by it — #4983's containment half.
@@ -530,6 +533,7 @@ _CANDIDATE_SQL = f"""
     WITH pool AS MATERIALIZED (
         SELECT fm.id,
                fm.external_id,
+               fm.name,
                {_KICKOFF_SQL.strip()} AS kickoff,
                (
                     fm.market_tier IN (1, 2)
@@ -549,7 +553,15 @@ _CANDIDATE_SQL = f"""
            p.priority,
            COUNT(*) OVER () AS stale_markets,
            (SELECT COUNT(*) FROM pool) AS served_markets,
-           (p.kickoff IS NOT NULL) AS imminent
+           (p.kickoff IS NOT NULL) AS imminent,
+           -- #4983 repair: the headline/ladder split is decided in Python by the
+           -- shared `classify_game_market_class`, so the two inputs it reads
+           -- travel with the row. Classifying in SQL would be a second copy of a
+           -- recognizer that already exists (the #1951 drift failure), and the
+           -- name is the only signal that separates a game's own number from a
+           -- prop on the same game.
+           p.name,
+           p.external_id
       FROM pool p
       JOIN LATERAL (
             SELECT MIN(COALESCE(fo.last_updated, TIMESTAMP WITH TIME ZONE 'epoch')) AS stalest,
@@ -666,10 +678,47 @@ def _pack_batches(
     return batches
 
 
+def _is_headline_market(name: Optional[str], external_id: Optional[str]) -> bool:
+    """Whether this market carries the GAME's own number rather than a prop.
+
+    #4983 repair (CERT-2564). This used to be `len(cids) <= 3` — a market was
+    called a headline if it was CHEAP. That reads as a proxy for shape and is
+    not one: every decomposed Polymarket sub-market, player props included, is
+    producer-written with a bare condition-id external id and so costs exactly
+    one request id. The cost test therefore called a one-id player prop a
+    headline and let it precede another game's one-id moneyline under a
+    saturated budget — the exact starvation #4983 exists to end, re-created
+    inside the fix for it.
+
+    Cost cannot answer this question because cost is not the question: the
+    budget is denominated in ids, but the ORDER is a claim about what a reader
+    needs first, and that is semantics. So it is asked of the one shared
+    recognizer, `classify_game_market_class` — the same one
+    `live_blend._admissible_as_fallback` uses to decide whether a market may
+    speak for its source, which is the same judgement one rail earlier.
+
+    Headline = the game-level book a reader sees on the card: `moneyline`,
+    `spread`, `total`. Ladder = `player_prop`, `team_prop`, and `other`. `other`
+    falls to the ladder half deliberately: it is the class for a name this rail
+    could not read, and demoting an unreadable name costs it a later slot in the
+    same beat, while promoting one would let anything unparseable outrank a game
+    that is about to start.
+
+    The prefix strip is the shared parser's, not a second copy of its list, for
+    the reason `_admissible_as_fallback` gives: Polymarket's tournament prefixes
+    (`US Open ATP: A vs B`) are not the league tags the classifier's own
+    stripper knows, and a re-implementation here would not throw when it
+    disagreed — it would quietly answer differently.
+    """
+    return classify_game_market_class(
+        _strip_category_prefix(name or ""), external_id or None
+    ) in ("moneyline", "spread", "total")
+
+
 async def _select_stale_conditions(
     *, stale_hours: int, limit: int
-) -> tuple[list[tuple[int, list[str]]], int, int, set[int]]:
-    """``([(market_id, [cid, …]), …], stale_markets, served_markets, imminent)``.
+) -> tuple[list[tuple[int, list[str]]], int, int, set[int], set[int]]:
+    """``([(market_id, [cid, …]), …], stale_markets, served_markets, imminent, headline)``.
 
     #4896 / CERT-2546: the fourth element is the set of KICKOFF market ids, and
     it travels because the attempt marker needs it — a kickoff row's marker must
@@ -677,6 +726,13 @@ async def _select_stale_conditions(
     gate and the shorter window is decoration. Returned as a set rather than
     folded into the tuples so ``_pack_batches`` and the admission loop keep the
     two-element shape #4827 gave them.
+
+    #4983 repair: the FIFTH element is the set of HEADLINE market ids, and it
+    rides here for the same reason and in the same shape — ``_is_headline_market``
+    needs the row's name and external id, which live in the selector and nowhere
+    downstream, and folding them into the tuples would change a shape two other
+    call sites depend on. Computed over every candidate, not just the imminent
+    ones, so the set means one thing everywhere it is read.
 
     Ordered kickoff-first, then priority-first, then stalest-first, which is the
     whole starvation argument: within a class the row that has waited longest is
@@ -711,7 +767,7 @@ async def _select_stale_conditions(
         # the census must not silently read zero on a healthy run. Asked
         # separately only in this branch, where it is one cheap scan a run that
         # is otherwise doing no work at all.
-        return [], 0, await _served_market_count(), set()
+        return [], 0, await _served_market_count(), set(), set()
     return (
         # `list(r[1] or ())` — asyncpg hands an ARRAY back as a list already, but
         # the copy is what stops a driver-owned buffer travelling into the batch
@@ -721,6 +777,7 @@ async def _select_stale_conditions(
         int(rows[0][3]),
         int(rows[0][4]),
         {r[0] for r in rows if r[5]},
+        {r[0] for r in rows if _is_headline_market(r[6], r[7])},
     )
 
 
@@ -813,6 +870,7 @@ async def _refresh_stale_polymarket_conditions(
             stale_markets,
             served_markets,
             imminent_ids,
+            headline_ids,
         ) = await _select_stale_conditions(
             stale_hours=stale_hours, limit=min(CANDIDATE_LIMIT, max(budget, 1) * 3)
         )
@@ -854,8 +912,9 @@ async def _refresh_stale_polymarket_conditions(
     # stalest-first ordering — the fixed point the attempt markers exist to break.
     #
     # #4983: THE SAME RULE, NOW APPLIED PER PHASE, because one ordering could not
-    # express two different scarcities at once. See :data:`KICKOFF_HEADLINE_MAX_IDS`
-    # for the measurement; the shape is:
+    # express two different scarcities at once. See the block above
+    # :data:`DRAIN_RESERVE_IDS` for the measurement and :func:`_is_headline_market`
+    # for what puts a market in which half; the shape is:
     #
     #   1. kickoff HEADLINE markets  — every imminent game's game-level number,
     #   2. kickoff LADDER markets    — the same games' prop ladders,
@@ -875,12 +934,12 @@ async def _refresh_stale_polymarket_conditions(
     kickoff_headline = [
         (mid, cids)
         for mid, cids in eligible
-        if mid in imminent_ids and len(cids) <= KICKOFF_HEADLINE_MAX_IDS
+        if mid in imminent_ids and mid in headline_ids
     ]
     kickoff_ladder = [
         (mid, cids)
         for mid, cids in eligible
-        if mid in imminent_ids and len(cids) > KICKOFF_HEADLINE_MAX_IDS
+        if mid in imminent_ids and mid not in headline_ids
     ]
     drain = [(mid, cids) for mid, cids in eligible if mid not in imminent_ids]
 

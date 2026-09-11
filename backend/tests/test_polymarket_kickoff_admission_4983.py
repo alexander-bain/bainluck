@@ -49,6 +49,22 @@ def _ids(n, tag):
     return [f"0x{tag}{i:04d}" for i in range(n)]
 
 
+def _prop(mid, player):
+    """A producer-shaped player prop: a real Polymarket prop NAME, one bare cid.
+
+    The shape is the whole point of CERT-2564. Polymarket writes every decomposed
+    sub-market with a bare condition-id external id, props included, so a prop is
+    indistinguishable from a game winner by COST — both are one id. Only the name
+    separates them.
+    """
+    return {mid: (f"{player}: Anytime Goalscorer", f"0x{mid:064x}")}
+
+
+def _winner(mid, home, away):
+    """A producer-shaped game winner: the bare matchup title, one bare cid."""
+    return {mid: (f"{home} vs. {away}", f"0x{mid:064x}")}
+
+
 def _admitted(service, candidates):
     """Which market ids this run actually asked Gamma for.
 
@@ -92,6 +108,9 @@ class TestTheImminentGameGetsItsOwnNumberFirst:
             stale=len(candidates),
             served=100,
             imminent={mid for mid, _ in candidates},
+            # The ladder is a ladder because of what it IS, not what it costs
+            # (CERT-2564). Everything else takes the default bare-matchup name.
+            names=_prop(2, "Son Heung-min"),
             service=svc,
         )
 
@@ -107,6 +126,53 @@ class TestTheImminentGameGetsItsOwnNumberFirst:
         )
         assert stats["kickoff_headline_shortfall"] == 0
         assert 2 not in admitted, "the 70-id ladder must not displace 11 headlines"
+        assert stats["kickoff_ladder_due"] == 0
+        assert stats["kickoff_ladder_shortfall"] == 1
+
+    async def test_one_id_player_prop_cannot_precede_one_id_game_winner_under_saturated_budget(
+        self, monkeypatch
+    ):
+        """THE REPAIR TEST (CERT-2564). Cost cannot tell these two apart; semantics can.
+
+        The first cut of this ship split the class on `len(cids) <= 3`. Both rows
+        here cost exactly ONE id — which is what every producer-written
+        Polymarket sub-market costs, props included — so that rule called them
+        both headlines, left them in one pool in kickoff order, and served the
+        prop. It then reported `headline_due=1 / shortfall=1` while doing it,
+        so the counters agreed with themselves and disagreed with the ship.
+
+        The prop is ordered FIRST, so kickoff order alone would take it, and the
+        budget admits exactly one market. Nothing but the headline/ladder split
+        can put the game's own number ahead of another game's prop here.
+        """
+        candidates = [
+            (1, _ids(1, "p")),  # kicks off soonest — but it is a PROP
+            (2, _ids(1, "w")),  # the next game's own number
+        ]
+        svc = _Service()
+        _arm(
+            monkeypatch,
+            candidates=candidates,
+            stale=2,
+            served=100,
+            imminent={1, 2},
+            names={**_prop(1, "Erling Haaland"), **_winner(2, "Arsenal", "Chelsea")},
+            service=svc,
+        )
+
+        # One id of capacity: the reserve clamps to 1 // 5 == 0, so the kickoff
+        # cap is the whole budget and exactly one one-id market fits.
+        stats = await rail._refresh_stale_polymarket_conditions(condition_budget=1)
+
+        admitted = _admitted(svc, candidates)
+        assert admitted == [2], (
+            "the game's own number must be served before another game's prop; "
+            f"admitted {admitted} (a cost-based split admits [1], the prop)"
+        )
+        # The counters have to agree with the admission, not merely be non-zero:
+        # the cost split reported headline_due=1 while serving the prop.
+        assert stats["kickoff_headline_due"] == 1
+        assert stats["kickoff_headline_shortfall"] == 0
         assert stats["kickoff_ladder_due"] == 0
         assert stats["kickoff_ladder_shortfall"] == 1
 
@@ -127,6 +193,11 @@ class TestTheImminentGameGetsItsOwnNumberFirst:
             stale=3,
             served=100,
             imminent={1, 2, 3},
+            names={
+                **_prop(1, "Bukayo Saka"),
+                **_prop(2, "Cole Palmer"),
+                **_prop(3, "Kai Havertz"),
+            },
             service=svc,
         )
 
@@ -280,6 +351,7 @@ class TestTheInvariantsThisChangeHadToPreserve:
             stale=3,
             served=100,
             imminent={1, 2},
+            names={**_prop(1, "Mohamed Salah"), **_prop(2, "Darwin Núñez")},
             writer=_writes,
         )
 
@@ -333,8 +405,30 @@ class TestTheInvariantsThisChangeHadToPreserve:
 class TestTheSizingConstantsSayWhatWasMeasured:
     """A wrong figure in a sizing constant's docstring is how a budget is mis-sized."""
 
-    def test_the_headline_threshold_sits_where_the_distribution_splits(self):
-        assert rail.KICKOFF_HEADLINE_MAX_IDS == 3
+    def test_the_cost_based_threshold_is_gone_and_cannot_come_back(self):
+        """CERT-2564: `len(cids) <= 3` called a one-id player prop a headline.
+
+        The constant is not merely unused — it is retired, because any value of
+        it is wrong. Asserting its absence is what stops the next session
+        reintroducing a "cheap means game-level" rule that reads plausible and
+        measures false.
+        """
+        assert not hasattr(rail, "KICKOFF_HEADLINE_MAX_IDS")
+
+    def test_the_split_is_semantic_and_uses_the_one_shared_recognizer(self):
+        """A prop and a game winner that cost the SAME must land in different halves."""
+        cid = "0x" + "ab" * 32  # producer shape: a bare condition id, for both
+        assert rail._is_headline_market("Arsenal vs. Chelsea", cid) is True
+        assert rail._is_headline_market("Erling Haaland: Anytime Goalscorer", cid) is False
+        # The game-level books a reader sees on the card are all headlines.
+        assert rail._is_headline_market("Gauff vs. Rybakina: Match O/U 23.5", cid) is True
+        # An unreadable name falls to the ladder half — a later slot in the same
+        # beat, never ahead of a game that is about to start.
+        assert rail._is_headline_market("", cid) is False
+        # #5041: the recognizer this delegates to must read a name that is not
+        # English, or this split silently demotes whole leagues to the ladder.
+        assert rail._is_headline_market("1. FC Köln vs. SV Werder Bremen", cid) is True
+        assert rail._is_headline_market("Club León FC vs. Atlético San Luis", cid) is True
 
     def test_the_reserve_is_a_fifth_of_the_production_budget(self):
         assert rail.DRAIN_RESERVE_IDS == 200
