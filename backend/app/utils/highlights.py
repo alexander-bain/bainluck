@@ -338,6 +338,9 @@ class EventFlags:
     # the row carries no score, which is never the same as "no".
     underdog_is_leading: Optional[bool] = None
     someone_is_leading: Optional[bool] = None
+    # #5047 — how much doubt the market has left in an upset the scoreboard has
+    # already earned. Tri-state for the same reason: None is "cannot say".
+    upset_is_no_longer_in_doubt: Optional[bool] = None
 
 
 def underdog_leads(
@@ -386,6 +389,58 @@ def score_is_decided(
     if home_score is None or away_score is None:
         return None
     return home_score != away_score
+
+
+def upset_is_no_longer_in_doubt(
+    opening_home_prob: Optional[float],
+    current_home_prob: Optional[float],
+) -> Optional[bool]:
+    """Does the market say the pre-game UNDERDOG has this won? (#5047)
+
+    #4580 gave the upset capsule a DIRECTION gate — the scoreboard has to agree
+    that the underdog is ahead. It never gave it a DECIDEDNESS gate, so the same
+    two words came out at 3-1 in the second half and at 24-7 with 12:05 left in
+    the 4th. On production 2026-09-11 02:51Z that was Discover rank 2: SF @ LAR,
+    "Upset brewing", 7-24, the favourite at 5%, and ``signal:blowout`` sitting on
+    the very same payload. One card saying both "this might happen" and "this is
+    over".
+
+    Asking the price is legitimate HERE and only here. #4580's doctrine is that a
+    price move must never *produce* a sentence about the field; this answers the
+    narrower question of how much doubt the market has left, and it is read only
+    after ``underdog_leads`` has already earned the branch off the scoreboard.
+
+    Deliberately NOT ``flags.is_blowout``, though the two agree on every card
+    that can reach the capsule TODAY. ``is_blowout`` is the same 0.85 threshold
+    read without a direction, and it is only equivalent here because
+    ``favorite_switched`` has already forced the pre-game underdog above 0.50 —
+    i.e. the equivalence is a property of the *caller*, not of the flag. Read
+    direction-free it is wrong in the obvious case: a 1-0 lead three minutes into
+    a 92%-favourite's game leaves the favourite near 86%, which is a blowout by
+    that flag while the upset is the opposite of decided. A capsule that means
+    "the underdog has it won" should ask that question, so that loosening the
+    branch above cannot silently turn the label into a lie.
+
+    Basis note: "who was the underdog" is read from ``opening_home_prob``, the
+    same input ``underdog_leads`` uses — NOT from the ``opening_favorite`` string
+    that ``favorite_switched`` reads. Two derivations of one fact is how the
+    capsule and the badge drifted apart in the first place (#4580).
+
+    Tri-state, matching its two siblings above:
+
+    * ``True``  — the pre-game underdog is now at or past ``BLOWOUT_THRESHOLD``.
+    * ``False`` — the market still has real doubt in it.
+    * ``None``  — unanswerable: a price is missing, or the game opened a pick'em
+      and has no underdog for the question to be about.
+    """
+    if opening_home_prob is None or current_home_prob is None:
+        return None
+    if opening_home_prob == 0.5:
+        # No underdog for anyone to be.
+        return None
+    home_is_underdog = opening_home_prob < 0.5
+    underdog_prob_now = current_home_prob if home_is_underdog else 1 - current_home_prob
+    return underdog_prob_now >= BLOWOUT_THRESHOLD
 
 
 @dataclass
@@ -635,6 +690,10 @@ def compute_highlight(
     # badge describe the same card.
     flags.underdog_is_leading = underdog_leads(opening_home_prob, home_score, away_score)
     flags.someone_is_leading = score_is_decided(home_score, away_score)
+    # #5047 — and read the price ONCE too, for the same no-drift reason.
+    flags.upset_is_no_longer_in_doubt = upset_is_no_longer_in_doubt(
+        opening_home_prob, current_home_prob
+    )
 
     # Ensure commence_time is timezone-aware
     if commence_time.tzinfo is None:
@@ -926,7 +985,17 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
     # unknown-score rows too (41 of 64 live rows have no score): it asserts only
     # the thing we can actually see.
     if flags.is_live and flags.favorite_switched:
-        return "Upset brewing" if flags.underdog_is_leading is True else "Odds moved"
+        if flags.underdog_is_leading is not True:
+            return "Odds moved"
+        # #5047 — and once the market has no doubt left, "brewing" is the wrong
+        # tense. SF @ LAR on 2026-09-11 was rank 2 on Discover reading "Upset
+        # brewing" at 24-7 with 12:05 left in the 4th, the favourite at 5%, while
+        # `signal:blowout` sat on the same payload. Both replacements keep the
+        # word "upset", which is what `_DISCOVER_EVENT_EXCEPTION_KEYWORDS`
+        # matches on, so neither moves the card's rank.
+        if flags.upset_is_no_longer_in_doubt is True:
+            return "Upset underway"
+        return "Upset brewing"
     if flags.is_live and flags.has_lead_changes:
         return "Lead change"
     if flags.is_live and flags.is_very_close:
