@@ -40,18 +40,71 @@ with the renderers checked, not by accident.
 # Keys that no writer produces any more and that no client may be shown.
 WRITE_DEAD_STANDINGS_KEYS = ("conf_rank",)
 
+# Keys that hold a real, correctly-labelled rank — and are still unsupported
+# before a team has played. See `standings_show_no_games_played`.
+RANK_KEYS_NEEDING_A_PLAYED_GAME = ("div_rank", "league_rank")
+
+
+def standings_show_no_games_played(standings) -> bool:
+    """True only when this row PROVES the team has played nothing.
+
+    #5377. Measured on production 2026-09-11, the morning before NFL week 1:
+    30 of 32 teams were 0-0 and ALL 30 carried a `div_rank` 1-4, so the AFC
+    South's four identical 0-0 records were served as Titans #1, Colts #2,
+    Jaguars #3, Texans #4 — an order nothing that happened on a field produced.
+    The two teams with an earned rank were the two who had played Thursday
+    (NE 0-1, SEA 1-0).
+
+    PROVES is the whole contract. Returns False whenever the record cannot be
+    read, so an unmeasurable row keeps whatever the caller would have shown
+    anyway — this suppresses the case we can demonstrate, never one we merely
+    failed to measure. The three ways a row fails to prove it: a missing
+    `wins`/`losses` key, a value that will not coerce to an int, or any
+    non-zero win/loss/draw/tie.
+    """
+    if not isinstance(standings, dict):
+        return False
+    wins, losses = standings.get("wins"), standings.get("losses")
+    if wins is None or losses is None:
+        return False
+    try:
+        if int(wins) or int(losses):
+            return False
+        # A draw is a game played even though it moves neither W nor L, so a
+        # 0-0-1 soccer side is NOT fresh. Both spellings are checked because
+        # the writer stores whichever the venue used.
+        for key in ("draws", "ties"):
+            value = standings.get(key)
+            if value is not None and int(value):
+                return False
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _dropped_keys(standings) -> tuple:
+    """Every key `public_standings` must withhold from this row."""
+    dropped = tuple(WRITE_DEAD_STANDINGS_KEYS)
+    # #5377. A rank is dropped for its CONTENT, not its name — the same key is
+    # served untouched the moment the team has played once. That is the
+    # difference from `conf_rank`, which is wrong on every row forever.
+    if standings_show_no_games_played(standings):
+        dropped += RANK_KEYS_NEEDING_A_PLAYED_GAME
+    return dropped
+
 
 def public_standings(standings):
-    """Return `standings` without any write-dead key.
+    """Return `standings` without any key this row may not be shown by.
 
-    A no-op for the 124 of 137 rows that never carried one: the same object is
-    returned, so the common path allocates nothing.
+    A no-op for the rows that carry none of them: the same object is returned,
+    so the common path allocates nothing.
 
     Never mutates the argument — these dicts are live SQLAlchemy JSONB values,
     and mutating one in place is the silent-write failure of gotcha #4.
     """
     if not isinstance(standings, dict):
         return standings
-    if not any(key in standings for key in WRITE_DEAD_STANDINGS_KEYS):
+    dropped = _dropped_keys(standings)
+    if not any(key in standings for key in dropped):
         return standings
-    return {k: v for k, v in standings.items() if k not in WRITE_DEAD_STANDINGS_KEYS}
+    return {k: v for k, v in standings.items() if k not in dropped}
