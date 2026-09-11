@@ -318,6 +318,7 @@ def reserve_headline_slot(
     headline_market_ids,
     *,
     cap: int = MAX_HEADLINE_SLOTS,
+    floor: int = 0,
 ) -> list:
     """Move up to `cap` already-earned headline markets to the FRONT of `ranked`.
 
@@ -359,6 +360,32 @@ def reserve_headline_slot(
     Reserving after truncation would rescue the visible case and lose the invisible
     one, and the invisible one is the reported bug.
 
+    `floor` — THE RESERVATION RUNS INSIDE THE ORDERING POLICY, NOT OVER IT
+    (#4614, #5059's decision B: "a later headline promotion can never override
+    entity/game ordering"). The reservation's whole justification is that the
+    scorer discards a decision made on STRICTER evidence than the scorer has —
+    tier 1, a whole-word outcome match, a probability floor and a volume floor.
+    That argument holds against a name match. It does NOT hold against a row the
+    query RESOLVED, and shipping it as an unconditional hoist made it say the
+    opposite of what it was for. Measured on production 2026-09-11:
+
+        q=yankees   [MLB World Series Champion 2026, New York Yankees, game, …]
+                     ^ MC4, the WORST class on the page, above an MC0 team card
+
+    `red sox` had the same shape. The reservation had taken slot 0 from the team
+    card whose name the user had typed in full — #4614 exactly, and the mirror of
+    the defect this function was built to fix.
+
+    So the caller passes the length of the leading entity block
+    (`search_match_class.entity_prefix_len`) and the reservation inserts AFTER
+    it: the resolved entity and its games keep the slots the scorer gave them,
+    and the contender is reserved out of what remains — still ahead of every
+    prop, which is the origin case (CERT-718: `Sabalenka` ships props first and
+    no entity block, so the floor is 0 and the hoist is unchanged).
+
+    A floor of 0 — the default, and what every caller that does not rank by class
+    passes — restores the previous behaviour byte for byte.
+
     Pure and total: unknown ids, an empty list, a `cap` of zero and payloads of
     any shape are all no-ops that return `ranked` unchanged. Relative order among
     everything else is preserved, so the scorer's result still governs slots 2..n.
@@ -369,19 +396,30 @@ def reserve_headline_slot(
     if not wanted:
         return ranked
 
-    front: list = []
-    rest: list = []
-    for item in ranked:
+    floor = max(0, min(int(floor), len(ranked)))
+
+    # Indices, not membership: a page can hold two rows that compare equal, and
+    # rebuilding `rest` by value would drop the wrong one.
+    front_idx: list[int] = []
+    for i, item in enumerate(ranked):
+        # `i >= floor` — a contender that is ALREADY inside the protected block
+        # is where the scorer put it. Moving it would be a no-op at best and a
+        # reorder of the entity block at worst, so it is left alone.
         if (
-            len(front) < cap
+            len(front_idx) < cap
+            and i >= floor
             and isinstance(item, dict)
             and item.get("type") == "futures"
             and item.get("market_id") in wanted
         ):
-            front.append(item)
-        else:
-            rest.append(item)
+            front_idx.append(i)
 
-    if not front:
+    if not front_idx:
         return ranked
-    return front + rest
+
+    taken = set(front_idx)
+    front = [ranked[i] for i in front_idx]
+    rest = [item for i, item in enumerate(ranked) if i not in taken]
+    # No contender was drawn from `rest[:floor]` (the `i >= floor` guard), so
+    # this slice is still exactly the entity block the caller measured.
+    return rest[:floor] + front + rest[floor:]
