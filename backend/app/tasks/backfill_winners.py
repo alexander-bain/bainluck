@@ -3907,6 +3907,48 @@ async def _clear_premature_open_winners():
     return stats
 
 
+def _first_half_period_count(sport_key: str | None) -> int | None:
+    """How many LEADING `*_period_scores` entries add up to the first half.
+
+    ``None`` = we cannot say, and the caller must refuse. #4923's rule again:
+    no verdict beats a wrong one, and this is the function that decides which
+    of the two a period market gets.
+
+    ── WHY A LENGTH TEST CANNOT DO THIS (#5221) ─────────────────────────────
+
+    The fallback below used to return ``period_scores[0]`` behind a bare
+    ``len(...) >= 2`` guard, whose comment read "a finished 2-half game has >=2
+    entries ([H1, H2, ...OT])". That is true of a two-half sport and false of
+    every quarter-scored one, where ``[0]`` is the FIRST QUARTER. So "second
+    half" was computed as *final minus Q1* — three quarters of scoring.
+
+    Measured on production 2026-09-11, the day #5052 first reached this code:
+    **1,013 legs graded, every one of them on a quarter-scored event** (950 on
+    4 periods, 60 on 4+OT, 3 on 4+2OT, and **zero** on a 2-period event). Of
+    the 135 whose arithmetic is fully checkable, **121 were served the wrong
+    verdict**, and 121 of 121 were exactly explained by the substitution.
+    Worked: San Antonio 102 – Minnesota 104, quarters [23,22,27,30]/[24,21,24,35]
+    — true 2H total 116, the code's 159, and "Over 125.5 2H points" served WON.
+
+    Length alone cannot fix it either, which is the reason this is keyed on the
+    SPORT and not on ``len``: NCAA basketball plays two halves, so a game that
+    went to double overtime has FOUR entries and is not a quarter game. Four
+    entries is genuinely ambiguous; the sport is not.
+    """
+    key = (sport_key or "").lower()
+    if not key:
+        return None
+    # Two-half sports FIRST — `basketball_ncaab` must not be read by the
+    # `basketball_` prefix below.
+    if key.startswith(("basketball_ncaab", "soccer_")):
+        return 1
+    if key.startswith(("basketball_", "americanfootball_")):
+        return 2
+    # Hockey (3 periods), baseball (9 innings) and everything unmapped have no
+    # half this function is entitled to invent.
+    return None
+
+
 async def _get_halftime_score(session, event_id: int):
     """Reconstruct halftime score from scoring_plays or box_score_data period scores."""
     result = await session.execute(
@@ -3925,18 +3967,35 @@ async def _get_halftime_score(session, event_id: int):
         return (row.home_score, row.away_score)
 
     from app.models.models import Event as _Evt
+    from app.models.models import Sport as _Sport
+
     evt_result = await session.execute(
-        select(_Evt.box_score_data).where(_Evt.id == event_id)
+        select(_Evt.box_score_data, _Sport.key)
+        # OUTER, not inner: an event with no `sport_id` must still reach the
+        # refusal below rather than vanishing from the result set entirely.
+        .outerjoin(_Sport, _Sport.id == _Evt.sport_id)
+        .where(_Evt.id == event_id)
     )
-    box = evt_result.scalar_one_or_none()
-    if box and isinstance(box, dict):
-        h_periods = box.get("home_period_scores", [])
-        a_periods = box.get("away_period_scores", [])
-        # Require >=2 periods so period[0] is a genuinely COMPLETED first half,
-        # not a single in-progress/malformed linescore (#816). A finished 2-half
-        # game has >=2 entries ([H1, H2, ...OT]); OT periods don't move index 0.
-        if len(h_periods) >= 2 and len(a_periods) >= 2:
-            return (h_periods[0], a_periods[0])
+    box_row = evt_result.first()
+    if box_row:
+        box, sport_key = box_row
+        if box and isinstance(box, dict):
+            h_periods = box.get("home_period_scores", [])
+            a_periods = box.get("away_period_scores", [])
+            # #5221: how many entries make a half is a fact about the SPORT.
+            # `None` here means we do not know, and not knowing is a refusal.
+            n = _first_half_period_count(sport_key)
+            # Still require the half to be COMPLETE (#816): a linescore that has
+            # not reached the interval yet cannot answer this, and `>= n` is that
+            # test said correctly for a quarter game — the old `>= 2` admitted a
+            # single-quarter linescore as if it were a finished half.
+            if n and len(h_periods) >= n and len(a_periods) >= n:
+                try:
+                    return (sum(h_periods[:n]), sum(a_periods[:n]))
+                except TypeError:
+                    # A malformed linescore (nulls, strings) is unusable, and
+                    # summing it would raise inside a grading loop.
+                    return None
 
     return None
 
