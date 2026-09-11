@@ -382,6 +382,156 @@ def test_start_lanes_does_not_open_a_SECOND_measurement_bus(tmp_path):
     )
 
 
+def run_lib(expr, env=None):
+    """Run one expression against the real lane-launch-lib.sh.
+
+    The claim functions are exercised HERE, and not only through start-lanes.sh,
+    because the property that matters is "two callers, exactly one winner" — and
+    driving two Terminal-opening launchers at each other is precisely the
+    timing-dependent test this fix exists to make unnecessary. Sourcing the lib
+    gives the same functions the launcher calls, with no window and no clock.
+    """
+    full = dict(os.environ)
+    full.update(env or {})
+    p = subprocess.run(
+        ["bash", "-c", f'. "{LIB}"; {expr}'],
+        capture_output=True, text=True, env=full, timeout=60,
+    )
+    return p.returncode, p.stdout + p.stderr
+
+
+def test_claim_bus_start_refuses_a_second_caller_while_the_first_is_alive(tmp_path):
+    """The exclusion arm: one live holder, one claim that must fail.
+
+    Deterministic by construction — the holder is a real live process, so the
+    pid-alive test has exactly one answer and no sleep can change it.
+    """
+    lock = tmp_path / "bus.lock"
+    holder = subprocess.Popen(["sleep", "30"])
+    try:
+        lock.mkdir()
+        (lock / "pid").write_text(f"{holder.pid}\n")
+        rc, out = run_lib(f'claim_bus_start "{lock}"')
+    finally:
+        holder.kill()
+        holder.wait()
+    assert rc == 1, (
+        "a second start-lanes.sh took the bus-start claim while the first was "
+        f"still bringing a bus up — that is the duplicate bus (#4956):\n{out}"
+    )
+
+
+def test_claim_bus_start_takes_over_a_dead_holders_claim(tmp_path):
+    """A holder killed mid-launch must not make the bus permanently unstartable.
+
+    Staleness is the PID-ALIVE TEST AND NOTHING ELSE (ruling 008) — no mtime, no
+    heartbeat. The corpse's pid is a pid that has genuinely exited, so there is
+    nothing timing-dependent to get wrong.
+    """
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    lock = tmp_path / "bus.lock"
+    lock.mkdir()
+    (lock / "pid").write_text(f"{dead.pid}\n")
+
+    rc, out = run_lib(f'claim_bus_start "{lock}"')
+    assert rc == 0, f"a dead holder wedged the claim for ever:\n{out}"
+    assert (lock / "pid").read_text().strip() != str(dead.pid), (
+        "the claim was granted but still records the DEAD holder's pid, so the "
+        "next caller reads a stale owner it cannot distinguish from a live one"
+    )
+
+
+def test_claim_bus_start_takes_over_a_claim_with_no_pid_file(tmp_path):
+    """The holder died BETWEEN `mkdir` and the pid write.
+
+    An unreadable owner is not evidence of a live one, and treating it as live
+    would wedge the bus on a crash whose whole window is two statements wide.
+    """
+    lock = tmp_path / "bus.lock"
+    lock.mkdir()
+    rc, out = run_lib(f'claim_bus_start "{lock}"')
+    assert rc == 0, f"a pid-less claim directory wedged the bus:\n{out}"
+
+
+def test_claim_bus_start_fails_OPEN_when_the_claim_cannot_be_taken(tmp_path):
+    """The direction that matters more than the bug being fixed.
+
+    A missing parent is the ordinary case, not an exotic one: CI has no
+    `~/bainluck`, and `--dry-run` skips the block that would create `runner-pids`.
+    If an untakeable claim read as "someone else is launching", the fleet would
+    boot with NO measurement bus — a silent hole in the M-R record, which is the
+    failure #4941 was filed for. Two buses are noisy and recoverable; zero is not.
+    """
+    lock = tmp_path / "absent" / "deeper" / "bus.lock"
+    rc, out = run_lib(f'claim_bus_start "{lock}"')
+    assert rc == 0, (
+        "an unwritable claim path read as 'another run holds it', so a fleet on a "
+        f"read-only or unprovisioned tree would come up with no bus at all:\n{out}"
+    )
+    assert not lock.exists()
+
+
+def test_start_lanes_skips_the_bus_when_another_run_holds_the_start_claim(tmp_path):
+    """The race, end to end, with the bus genuinely NOT yet visible.
+
+    This is the case `count_running` alone cannot see and the reason the claim has
+    to outlive the launch: no bus process exists, so the old guard's read returns
+    0 and it would launch a second one. The claim is what declines.
+
+    Its partner arm is `test_start_lanes_releases_the_bus_start_claim` below —
+    same conf, same lock path, no holder, and the bus IS launched. Without that
+    pair this test would also pass against a launcher that never starts a bus.
+    """
+    bus = fake_script(tmp_path, "bus-runner.sh")
+    conf = write_conf(tmp_path, {}, graders=0, bus=bus)
+    lock = tmp_path / "bus.lock"
+
+    holder = subprocess.Popen(["sleep", "30"])
+    try:
+        lock.mkdir()
+        (lock / "pid").write_text(f"{holder.pid}\n")
+        rc, out = run(START, "--dry-run", env={
+            "LANES_CONF": str(conf), "BUS_START_LOCK": str(lock),
+        })
+    finally:
+        holder.kill()
+        holder.wait()
+
+    assert rc == 0, out
+    assert "another start-lanes.sh is bringing one up" in out, out
+    launched = re.findall(r"would open Terminal window: (.+)$", out, re.M)
+    assert str(bus) not in launched, (
+        "start-lanes.sh launched a bus while another invocation was already "
+        f"bringing one up — the #4956 race, reproduced:\n{out}"
+    )
+    assert "0 measurement bus" in out, (
+        f"the tally counts a bus window it did not open:\n{out}"
+    )
+
+
+def test_start_lanes_releases_the_bus_start_claim(tmp_path):
+    """A claim held past the run would make every LATER run skip the bus.
+
+    Also the positive arm for the test above: identical conf and lock path with no
+    holder, and here the bus is launched — so "declined" is a property of the
+    claim, not of the fixture.
+    """
+    bus = fake_script(tmp_path, "bus-runner.sh")
+    conf = write_conf(tmp_path, {}, graders=0, bus=bus)
+    lock = tmp_path / "bus.lock"
+
+    rc, out = run(START, "--dry-run", env={
+        "LANES_CONF": str(conf), "BUS_START_LOCK": str(lock),
+    })
+    assert rc == 0, out
+    assert str(bus) in out, f"an unclaimed bus must still be opened:\n{out}"
+    assert not lock.exists(), (
+        "start-lanes.sh exited still holding the bus-start claim; the next run "
+        "reads a live-looking owner and skips the bus"
+    )
+
+
 def test_start_lanes_survives_a_checkout_with_no_bus_runner(tmp_path):
     """An older checkout must still bring up every lane and grader.
 
