@@ -180,6 +180,17 @@ ENTITY_EVENT_KIND = "entity_event"
 #: is why #4411's promotion had to exist separately rather than as this one.
 ENTITY_TEAM_KIND = "entity_team"
 
+#: The RESOLVED half of `KIND_ORDER` — every kind at or above `entity_event` in
+#: precedence (concept 0, hub 1, entity_team 2, entity_event 3). A row of one of
+#: these kinds earned its place by naming the thing the user typed: the query IS
+#: the team's name (#4551), or it names the people playing (#4411). The kinds
+#: BELOW it — futures 4, and the UNPROMOTED `event` 5 / `team` 6 — are rows the
+#: query merely landed on.
+#:
+#: The boundary is expressed as a rank rather than a set of kind strings so it
+#: cannot drift from `KIND_ORDER`: a kind reordered there moves this with it.
+ENTITY_KIND_MAX_RANK = KIND_ORDER[ENTITY_EVENT_KIND]
+
 # --- the knobs -------------------------------------------------------------
 # FIVE knobs, against a ratified ceiling of eight. Every default here is
 # PROVISIONAL until the measured run, and a move is accepted only if net flips
@@ -772,6 +783,67 @@ def evidence_from_wire(payload: dict) -> Evidence:
     )
 
 
+def rank_with_keys(
+    query: str, candidates: list[tuple[Evidence, object]]
+) -> list[tuple[tuple, object]]:
+    """`rank`, but each surviving payload keeps the key it was sorted on.
+
+    WHY THIS EXISTS RATHER THAN A SECOND `rank_key` PASS AT THE CALL SITE
+    (#4614). A caller that needs to know how the scorer ordered the page — the
+    typeahead's headline reservation does, so that it can refuse to jump a
+    resolved entity — could rebuild the keys itself from the same evidence. It
+    would get the right answer today and be a second rule tomorrow: the full key
+    is NOT `rank_key`'s tuple, it is that tuple behind the plural-namesake
+    penalty, which is a property of the whole candidate SET and so cannot be
+    recomputed one row at a time. Two derivations that can disagree is the exact
+    class of bug the evidence echo in `typeahead_search` exists to eliminate one
+    level up, so the ordering is derived ONCE here and read by both consumers.
+
+    The key's shape is `(namesake, *rank_key(...))`; `FULL_KEY_KIND_RANK_INDEX`
+    names the one field a consumer reads, so the tuple can grow a term without
+    silently re-aiming anybody's index.
+    """
+    gate = any(_query_lands_strictly(query, ev) for ev, _ in candidates)
+    keyed = []
+    for i, (ev, payload) in enumerate(candidates):
+        k = rank_key(query, ev)
+        if k is None:
+            continue
+        namesake = 1 if (gate and _lands_only_by_plural_fold(query, ev)) else 0
+        keyed.append(((namesake, *k), i, payload))
+    keyed.sort(key=lambda row: (row[0], row[1]))
+    return [(key, payload) for key, _, payload in keyed]
+
+
+#: Where `kind_rank` sits inside the full key `rank_with_keys` returns —
+#: `(namesake, mc, kind_rank, ...)`. Named because a consumer indexing a tuple
+#: by a literal is how a key that grows a term re-aims a guard silently.
+FULL_KEY_KIND_RANK_INDEX = 2
+
+
+def entity_prefix_len(keyed: list[tuple[tuple, object]]) -> int:
+    """How many rows at the FRONT of a ranked page are resolved-entity rows.
+
+    The scorer sorts by class then kind, so these rows are contiguous at the top
+    by construction — the count is a scan, not a search. Consumers use it as a
+    FLOOR: a later reordering may rearrange what follows, but it may not lift a
+    row above the entity block the scorer already settled (#4614, #5059 — "a
+    later headline promotion can never override entity/game ordering").
+
+    Total: an empty page, a key too short to carry a kind, and a page whose first
+    row is already unresolved all return 0, which restores the caller's previous
+    behaviour exactly.
+    """
+    n = 0
+    for key, _payload in keyed:
+        if len(key) <= FULL_KEY_KIND_RANK_INDEX:
+            break
+        if key[FULL_KEY_KIND_RANK_INDEX] > ENTITY_KIND_MAX_RANK:
+            break
+        n += 1
+    return n
+
+
 def rank(query: str, candidates: list[tuple[Evidence, object]]) -> list[object]:
     """Rank `(evidence, payload)` pairs, dropping every UNRANKABLE one.
 
@@ -784,13 +856,4 @@ def rank(query: str, candidates: list[tuple[Evidence, object]]) -> list[object]:
     gate is what keeps `yankee` working. When the gate is closed — the ordinary
     case — every penalty is 0 and this returns exactly what it always did.
     """
-    gate = any(_query_lands_strictly(query, ev) for ev, _ in candidates)
-    keyed = []
-    for i, (ev, payload) in enumerate(candidates):
-        k = rank_key(query, ev)
-        if k is None:
-            continue
-        namesake = 1 if (gate and _lands_only_by_plural_fold(query, ev)) else 0
-        keyed.append(((namesake, *k), i, payload))
-    keyed.sort(key=lambda row: (row[0], row[1]))
-    return [payload for _, _, payload in keyed]
+    return [payload for _key, payload in rank_with_keys(query, candidates)]

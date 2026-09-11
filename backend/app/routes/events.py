@@ -8067,7 +8067,10 @@ async def typeahead_search(
     # promise to show something irrelevant when nothing relevant matched. Recall
     # is untouched — the pools are exactly as they were, and the scorer only
     # reorders and drops derived-only concepts (see `search_match_class`).
-    from app.utils.search_match_class import rank as _s_rank
+    from app.utils.search_match_class import (
+        entity_prefix_len as _s_entity_prefix_len,
+        rank_with_keys as _s_rank_with_keys,
+    )
 
     _ta_mark("fuzzy_and_concepts")
     _ta_candidates = [
@@ -8080,8 +8083,16 @@ async def typeahead_search(
     # slice it would rescue a winner that ranked 6th and lose one that ranked 8th,
     # and the 8th is the reported bug. `reserve_headline_slot` is a no-op on the
     # empty id set, so a query that earned no contender pays nothing here.
+    #
+    # ...and it runs BENEATH the entity block rather than over it (#4614). The
+    # keys come back from the scorer instead of being recomputed here: the full
+    # key carries the plural-namesake penalty, which is a property of the whole
+    # candidate set, so a second per-row derivation would be a second rule.
+    _ta_keyed = _s_rank_with_keys(q, _ta_candidates)
     suggestions = reserve_headline_slot(
-        _s_rank(q, _ta_candidates), _ta_headline_ids
+        [_payload for _key, _payload in _ta_keyed],
+        _ta_headline_ids,
+        floor=_s_entity_prefix_len(_ta_keyed),
     )[:7]
     _ta_mark("rank")
 
