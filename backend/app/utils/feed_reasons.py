@@ -1407,6 +1407,30 @@ def generate_futures_context_summary(
                 return "Resolves within a month"
             if leader:
                 return leader
+            # #5329 — the last rung, and it has to be NON-EMPTY. Returning ""
+            # here does not suppress the echo, it promotes it: the caption
+            # chain is `firstMeaningful([context_summary, headline, reason,
+            # hook_description])` on both clients, so an empty context summary
+            # hands the same restated question back through the next link.
+            #
+            # Reached when the outcome label was too weak to name (so the
+            # headline used the market as context) AND there is no leader
+            # clause to swap in, because the leader is that same weak label.
+            # One page-one bundle row in eighteen: the reader saw "Russia x
+            # Ukraine ceasefire agreement by...?" and then, directly beneath
+            # it, "Russia x Ukraine ceasefire agreement by... shifted since
+            # May 14".
+            #
+            # Composed from the timestamp, not sliced off the headline: the
+            # name in there has already been through `_short_market_name`, so
+            # a string strip leaves its ellipsis behind.
+            since_opening = format_baseline_date(top_surprise_opened_at, now=now)
+            if (
+                since_opening
+                and top_surprise_change is not None
+                and ("major_surprise" in reasons or "moderate_surprise" in reasons)
+            ):
+                return f"Shifted since {since_opening}"
         if leader and len(headline) < 80:
             lower_headline = headline.lower()
             lower_leader = leader_name.lower() if leader_name else ""
