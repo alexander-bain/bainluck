@@ -1365,10 +1365,75 @@ async def _sync_statpal_livescores() -> dict:
                     updated = False
 
                     # Update period/clock from StatPal raw_status (e.g., "Q3", "1H", "HT")
+                    #
+                    # #5017: compose the SAME string ESPN writes, so a flipped
+                    # sport reads identically to an unflipped one. ESPN sets
+                    # `event.period = ee.status_detail`, which is the compound
+                    # `'14:53 - 3rd Quarter'`; StatPal serves the two halves
+                    # separately (`timer` + `status`), so joining them gives
+                    # byte-identical output and the front end needs no change
+                    # (`trustedLiveClock` suppresses the duplicate clock only
+                    # when the period spells it out, which this does).
+                    #
+                    # The clock is written BESIDE the period deliberately. A
+                    # period-only fix would advance the quarter while
+                    # `game_clock` stayed frozen at whatever ESPN last wrote
+                    # before the flip — and a frozen label reads as stale, but a
+                    # frozen clock reads as CURRENT. That is worse than the bug.
+                    # `getattr`: this writer consumes duck-typed fixtures from
+                    # several construction paths, and the line below already
+                    # reads `raw_status` defensively for the same reason.
+                    fixture_clock = getattr(fixture, "game_clock", None)
                     if fixture.raw_status and fixture.raw_status not in ("live", "Live"):
-                        if event.period != fixture.raw_status:
-                            event.period = fixture.raw_status
+                        # Guard on the clock being non-empty, not on liveness:
+                        # halftime is genuinely live and genuinely has no clock,
+                        # so one guard is not enough (#5017).
+                        new_period = (
+                            f"{fixture_clock} - {fixture.raw_status}"
+                            if fixture_clock
+                            else fixture.raw_status
+                        )
+                        if event.period != new_period:
+                            event.period = new_period
                             updated = True
+
+                        # CLEAR THE CLOCK WHEN THE VENUE CLEARS IT (CERT-2569),
+                        # BUT ONLY WHERE THE VENUE KEEPS A CLOCK AT ALL.
+                        #
+                        # Within this branch the assignment is deliberately NOT
+                        # guarded on `fixture_clock` being truthy. On a row the
+                        # venue is actively labelling as in-progress, the venue
+                        # is authoritative for the clock INCLUDING its absence:
+                        # football's halftime and terminal both arrive with
+                        # `timer=''` (measured). Guarding on truthiness
+                        # reintroduces, at halftime, the exact bug this ship
+                        # exists to fix — the period would advance to
+                        # `'Halftime'` while `game_clock` kept the last
+                        # quarter's value, and `trustedLiveClock` preserves
+                        # both, so the reader sees a running-looking clock the
+                        # venue had already cleared. A stale label degrades
+                        # visibly; a stale clock lies quietly.
+                        #
+                        # It IS guarded on the venue serving a clock field for
+                        # this sport, which is a different question and the one
+                        # `game_clock` alone cannot answer. Baseball's board has
+                        # no `timer` key at all (it carries `outs` there), so
+                        # its silence is structural, not a cleared clock — and
+                        # `mlb_sync` deliberately writes the inning into
+                        # `Event.game_clock` for the live badge. Without this
+                        # guard, #5017's own widening of `_normalize_status`
+                        # (which newly makes MLB's `'Top 8th'` read as live)
+                        # would have this beat blank that inning every 60s.
+                        # Same lesson as CERT-2569, one layer down: absent and
+                        # empty are different claims.
+                        #
+                        # `getattr` for the same reason as `fixture_clock`
+                        # above: duck-typed fixtures reach this writer, and they
+                        # make no claim about the clock.
+                        if getattr(fixture, "clock_field_served", False):
+                            if event.game_clock != fixture_clock:
+                                event.game_clock = fixture_clock
+                                updated = True
 
                     # Update scores
                     if fixture.home_score is not None and fixture.home_score != event.home_score:

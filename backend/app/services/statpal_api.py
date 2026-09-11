@@ -83,6 +83,38 @@ class StatPalFixture:
     end_time: Optional[datetime] = None
     status: str = "scheduled"  # scheduled, live, finished, postponed, cancelled
     raw_status: Optional[str] = None  # original status before normalization (e.g., "Q3", "1H", "HT")
+    # The game clock, from the live board's `timer` key (#5017). We received it
+    # on every live read since StatPal was wired up and discarded it before it
+    # reached this dataclass, which is why "StatPal serves no clock" survived
+    # three sessions: an unmodelled field is absent from the dataclass, from
+    # every grep, and from the DB, so our own instruments all agreed.
+    #
+    # Measured shape: `'7:16'` on an in-progress NFL row, ticking. On rows where
+    # it does not apply it is the EMPTY STRING on football and ABSENT on
+    # baseball — never a useful value — so the parse normalises both to None
+    # rather than store `''`, which an `isnot(None)` coverage count would read
+    # as a populated clock.
+    game_clock: Optional[str] = None
+    #: Whether the venue's board carries a clock FIELD for this sport at all —
+    #: NOT whether that field currently holds a value. The two are different
+    #: claims and `game_clock` cannot express the difference, because
+    #: `_clean_game_clock` normalises absent, `''` and `'0:00'` to the same
+    #: `None` (deliberately — see that function).
+    #:
+    #: The writer needs the difference. Measured at both boards (#5017):
+    #: football's game object carries `timer` and EMPTIES it at halftime and at
+    #: the terminal, so an empty timer there is the venue saying "the clock has
+    #: stopped" — authoritative, and our column should follow it to NULL
+    #: (CERT-2569). Baseball's game object has no `timer` key at all; it carries
+    #: `outs` where football carries `timer`. The venue is not clearing a clock,
+    #: it has no concept of one, and `mlb_sync` deliberately uses
+    #: `Event.game_clock` to carry the inning for the live badge. Reading
+    #: baseball's structural silence as a cleared clock would blank that.
+    #:
+    #: Defaults False so a construction path that never saw a payload — the
+    #: soccer and tennis parsers below, and duck-typed fixtures in tests — makes
+    #: no claim about the clock and the writer leaves the column alone.
+    clock_field_served: bool = False
     home_score: Optional[int] = None
     away_score: Optional[int] = None
     home_q_scores: Optional[dict] = None  # {"q1": 24, "q2": 31, ...}
@@ -1813,6 +1845,10 @@ class StatPalAPIService(BaseAPIClient):
             end_time=end_time,
             status=status,
             raw_status=status_raw_str if status == "live" else None,
+            game_clock=_clean_game_clock(item.get("timer")) if status == "live" else None,
+            # Asked of the PAYLOAD, not of the sport: the board says which
+            # sports it clocks, so nothing here enumerates sport names.
+            clock_field_served="timer" in item,
             home_score=home_score,
             away_score=away_score,
             home_q_scores=home_q_scores,
@@ -2147,14 +2183,63 @@ def _parse_datetime(val) -> Optional[datetime]:
     return None
 
 
+#: StatPal's live boards label the in-progress half in FULL WORDS, while the
+#: `_normalize_status` live tuple below holds only the ABBREVIATIONS (`q2`,
+#: `ht`, `2nd`). Measured at the venue (#5017, standing notice 26): NFL serves
+#: `'2nd Quarter'`/`'3rd Quarter'`/`'4th Quarter'`/`'Halftime'` and MLB serves
+#: `'Top 8th'`/`'Bottom 8th'` — every one of which fell through to the
+#: passthrough and so was never `live`.
+#:
+#: These are PATTERNS rather than a longer tuple on purpose. The families are
+#: open: enumerating the six strings that happened to be observed while a game
+#: was in that state repeats the bug (a vocabulary census is only complete for
+#: the states it caught occupied). The grammar — an ordinal followed by a period
+#: noun, or a half-inning qualifier followed by an ordinal — is what is stable.
+_LIVE_ORDINAL_PERIOD_RE = re.compile(
+    r"^\d+(?:st|nd|rd|th)\s+(?:quarter|period|half|inning)$"
+)
+_LIVE_HALF_INNING_RE = re.compile(
+    r"^(?:top|bottom|middle|end)\s+(?:of\s+)?\d+(?:st|nd|rd|th)$"
+)
+
+
+#: A clock that has run out is not a clock. StatPal clears the timer at
+#: halftime and at the terminal by sending `''` (football) or omitting the key
+#: (baseball) — but a literal `'0:00'` must reach the DB as NULL too, because
+#: `''` renders as nothing while `'0:00'` renders as a running clock stopped on
+#: zero. live/141 photographed exactly that on production: `Halftime · 0:00`
+#: under a pulsing LIVE badge (#5049).
+_ZERO_CLOCKS = {"0:00", "00:00", "0.00", "0", "00:00:00"}
+
+
+def _clean_game_clock(raw) -> Optional[str]:
+    """Normalise a venue game clock to a real value or None.
+
+    Absent, empty and zero all mean "no clock". Storing `''` or `'0:00'` would
+    be counted as a populated clock by `admin_providers.py`'s
+    `Event.game_clock.isnot(None)` coverage query, so the monitor would report
+    clock coverage for rows that either display nothing or display a lie.
+    """
+    value = str(raw or "").strip()
+    if not value or value in _ZERO_CLOCKS:
+        return None
+    return value
+
+
 def _normalize_status(status: str) -> str:
     """Normalize game status strings to our standard statuses."""
     s = status.lower().strip()
 
+    # Long-form in-progress labels, matched by family (see the patterns above).
+    # Checked before the tuples so a future full-word label cannot fall through
+    # to the passthrough the way the observed six did.
+    if _LIVE_ORDINAL_PERIOD_RE.match(s) or _LIVE_HALF_INNING_RE.match(s):
+        return "live"
+
     # Map to our status vocabulary
     if s in ("scheduled", "not started", "ns", "tbd", "time tbd"):
         return "scheduled"
-    if s in ("live", "in progress", "1h", "2h", "ht", "et", "p", "bt",
+    if s in ("live", "in progress", "halftime", "overtime", "1h", "2h", "ht", "et", "p", "bt",
              "q1", "q2", "q3", "q4", "ot",
              "s1", "s2", "s3", "s4", "s5", "set 1", "set 2", "set 3", "set 4", "set 5",
              "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th",

@@ -1021,6 +1021,11 @@ class TestSyncHelpers:
             away_team_name = "Los Angeles Lakers"
             status = "live"
             period = None
+            # #5017: the livescores writer writes the period and the clock as a
+            # PAIR, so a double that models only one of them hides the half it
+            # omits — which is how the halftime stale-clock defect (CERT-2569)
+            # reached a cert in the first place.
+            game_clock = None
             home_score = 88
             away_score = 85
             statpal_fixture_id = None
