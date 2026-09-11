@@ -36,9 +36,61 @@ Measured through `/api/admin/db-query` on 2026-09-10 11:05–11:40Z:
   **29,556 of them (79%)** carry a `resolution_date` older than 3 days or none —
   which is why the recency signal is `COALESCE(settled_at, resolution_date)` and
   not the schedule alone;
-* the recency band's population is **2,886** tickers over 3 days, **180** per
-  6-hour cycle against a 400-ticker band — 2.2x headroom, so the band cannot be
-  outrun by ordinary inflow.
+* the recency band's population was **2,886** tickers over 3 days, **180** per
+  6-hour cycle against a 400-ticker band — 2.2x headroom, so the band could not
+  be outrun by ordinary inflow. **That claim is retired; see below.**
+
+### the headroom claim above is DEAD, and it was never the right question (#5152)
+
+Re-measured 2026-09-11 10:45–10:55Z, after #5146 corrected the grade test, running
+the shipped band-1 statement itself rather than a paraphrase of it. The 2,886 was
+a count of the population the OLD clause could see; under `IS TRUE` the same
+window holds **7,625** distinct tickers, so the "2.2x headroom" is not merely
+smaller — it is measuring a pool that no longer exists.
+
+But replacing 2.2x with a worse ratio would repeat the original mistake, because
+the population is not uniform and a ratio assumes it is. Distinct eligible
+tickers by 6-hour cycle-age:
+
+    cycle  -0    73     -6    243
+    cycle  -1   282     -7   1523
+    cycle  -2    31     -8   1153
+    cycle  -3   259     -9   1671
+    cycle  -4    58    -10   2074
+    cycle  -5   109    -11    149
+
+Two facts follow, and they point opposite ways:
+
+* **Ordinary inflow does not outrun the band.** The two newest cycles hold 355
+  tickers against 400 slots. Nothing that settled in the last 12 hours is being
+  crowded out, which is what "last night's game is graded by morning" actually
+  depends on.
+* **84% of the pool is unreachable by construction, not by capacity.** 6,421
+  tickers sit in the single 24-hour block at cycles -7..-10. The band is
+  newest-first with a hard `LIMIT 400`, and the cumulative count from cycle -0
+  crosses 400 inside cycle -3 — so the band reaches back roughly 18–24 hours and
+  can never see that block at all. It ages out of `_FRESH_SETTLEMENT_FLOOR_DAYS`
+  and falls to band 2's ~11-day alphabetical wrap.
+
+That block is not the cohort the venue has nothing to say about. Bucketing it by
+whether a cycle has ever received a venue answer for the ticker: **1,911 never
+touched, 4,478 carrying only a non-authoritative source, 180 asked-partial** — so
+6,389 of 6,569 have never had an authoritative answer, and 97% have never been
+asked at all.
+
+Two consequences a later reader should not have to re-derive:
+
+* `_FRESH_SETTLEMENT_FLOOR_DAYS = 3` is currently **inert**. The `LIMIT` binds at
+  ~24 hours, so the 72-hour floor never decides anything. Widening the floor
+  would change nothing; only the ordering or the limit can.
+* Raising `_FRESH_SETTLEMENT_MAX_SHARE` — #5152's candidate fix — does not
+  address this. Doubling the band to 800 would still cover ~12% of that block,
+  and it takes the budget from band 2, which is the only thing that ever drains
+  it. The defect is a starvation shape, not a capacity shape.
+
+The 400 slots the band does take are healthy and should not be re-aimed on
+suspicion: they spread over **197 distinct series** with no series above 4%, and
+only 50 of 400 are high-frequency (15-minute / hourly) tickers.
 
 ## what this corpus got WRONG for its first day, and why the shape matters (#5146)
 
