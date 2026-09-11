@@ -33,6 +33,17 @@
  * basketball, hockey, soccer), the overtime-number row, and the end-to-end
  * `derivePeriodBoundaries` row. The eight controls are green on BOTH sides, which
  * is what makes them controls rather than filler.
+ *
+ * AMENDED BY #4955 (ux/1191). The overtime-number row above was one of those
+ * seven reds and now asserts the OPPOSITE — a bare `5` stays `5` rather than
+ * becoming `Q5`, because a completion past regulation states a period that does
+ * not exist. So the "7 failed of 15" measurement is no longer reproducible from
+ * this file as it now stands: replayed against #4888's parent today it would read
+ * 6 failed, 9 passed, the overtime row having moved from red to green. The
+ * original number is left standing above because it is the record of what #4888
+ * measured when it shipped, not a claim about this file's present contents. The
+ * bound's own red-first measurement (10 of 18) is in
+ * `periodMarkersRegulation4955.test.ts`.
  */
 
 import { derivePeriodBoundaries, normalizePeriodLabel } from "../../lib/periodMarkers";
@@ -61,11 +72,25 @@ describe("#4888 a bare period number names its own unit", () => {
     expect(normalizePeriodLabel("2", "soccer_epl")).toBe("2H");
   });
 
-  test("overtime numbers complete too — a 5th 'quarter' is still Q5 here", () => {
-    // The unit is what the sport counts in; the fix does not try to be clever
-    // about whether period 5 is regulation. ESPN sends OT as its own string
-    // ("Overtime"), which an earlier branch already handles.
-    expect(normalizePeriodLabel("5", "americanfootball_nfl")).toBe("Q5");
+  test("overtime numbers do NOT complete — REVERSED by #4955, see below", () => {
+    // THIS ASSERTION USED TO READ `.toBe("Q5")`, and the reversal is the point
+    // rather than a tidy-up, so it is edited in place rather than deleted.
+    //
+    // #4888 pinned `Q5` deliberately: "the unit is what the sport counts in; the
+    // fix does not try to be clever about whether period 5 is regulation. ESPN
+    // sends OT as its own string ('Overtime'), which an earlier branch already
+    // handles." The second sentence is the load-bearing one and it is a claim
+    // about the DATA, not the mapping — it says a bare `5` never arrives. But the
+    // bare-digit path exists precisely because ESPN's box-score fallback does not
+    // send the verbose string (that is the whole of #4888: event 14780138 served
+    // `"2"`, `"3"`, `"4"` from `espn_box`), so nothing guarantees the fallback
+    // spells overtime out when it spelled the quarters as digits.
+    //
+    // If it does arrive, `Q5` is not ambiguous-but-true like the bare digit it
+    // replaced — it is false, since football has no fifth quarter. #4955 rules
+    // that a completion is made only inside regulation. Bound, table and the full
+    // reasoning: `periodMarkersRegulation4955.test.ts`.
+    expect(normalizePeriodLabel("5", "americanfootball_nfl")).toBe("5");
   });
 
   // ---- the leave-it-alone half: equally load-bearing ----
