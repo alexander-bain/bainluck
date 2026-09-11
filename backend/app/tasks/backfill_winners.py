@@ -1863,38 +1863,76 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     return stats
 
 
+#: A margin leg — "{team} wins [the 2H] by over|more than N points" — and the
+#: two capture groups every consumer reads: (1) the team, (2) the line.
+#:
+#: CERT-2603 WIDENED IT, from "by over" with an optional `the 1H` infix to any
+#: period infix and either phrasing. #5052 taught this module to rebuild a
+#: second-half score, and a parser that cannot read the legs is a reconstructor
+#: with nothing to grade: of the 4,410 2H spread legs on production it read
+#: ZERO. The three shapes it now reads are the only three that exist, measured
+#: 2026-09-11 by collapsing every digit in every 2H spread leg's name:
+#:     1,968 legs / 246 mkts  "{team} wins the 2H by over N points"
+#:     1,851 legs / 104 mkts  "{team} wins 2H by over N points"
+#:       591 legs / 297 mkts  "{team} wins the 2H by more than N goals"
+#:
+#: THE PERIOD INFIX IS SAFE BECAUSE THE TICKER, NOT THE NAME, PICKS THE SCORE.
+#: A period name graded against a full-game score is #4923 verbatim, so the
+#: question was measured rather than reasoned about: across all 125,865 margin
+#: legs on production, the period token in the NAME and the period token in the
+#: TICKER agree in every single row (25,881 H/H · 10,564 Q/Q · 89,372 none/none
+#: · 48 F5). There is no leg that says "2H" on a full-game ticker. Quarters and
+#: F5 are read by this pattern and still never graded here — `_ticker_period`
+#: sends them to `refused_period` above the spread branch, and the only other
+#: caller (`_resolve_kalshi_period_props`) holds a real per-period score.
+#:
+#: "BY MORE THAN" IS THE SAME QUESTION AS "BY OVER", and that is measured too,
+#: not assumed: graded against Kalshi's OWN `api_settlement` verdicts on the 304
+#: full-game "by more than" legs that carry one, this parser plus
+#: `_spread_outcome_is_winner` agrees on 302 (99.3%). Both disagreements are one
+#: event (`KXCONMEBOLSUDSPREAD-26SEP10CIETOR`) whose stored home/away
+#: orientation contradicts the venue's own grades — an event-graph defect that
+#: hits the "by over" legs it already grades identically, filed separately.
+#: That population is #4236's, and reading it here is what closes #4236's
+#: grading half.
 _SPREAD_RE = re.compile(
-    r"(.+?) wins(?: the 1H)? by over (\d+\.?\d*)\s+(?:points|runs|goals)",
+    r"(.+?) wins(?:\s+(?:the\s+)?[1-4]\s*(?:H|Q|HALF)\b)?"
+    r" by (?:over|more than) (\d+\.?\d*)\s+(?:points|runs|goals)",
     re.IGNORECASE,
 )
 
 #: #5052: "this leg states a MARGIN THRESHOLD", deliberately WIDER than
-#: `_SPREAD_RE` — it is the set of legs the team-name winner fallbacks must
-#: never touch, not the set they can grade.
+#: `_SPREAD_RE` — it is the set of legs the team-name winner fallbacks and the
+#: team-total grader must never touch, not the set anything can grade.
 #:
-#: WHY IT IS NOT `_SPREAD_RE`. Measured on production 2026-09-11: Kalshi phrases
-#: period spreads two ways, and `_SPREAD_RE` reads exactly one of them. It wants
-#: "wins by over N" with an optional `the 1H` infix, so of 21,492 1H legs it can
-#: read the 17,540 "by over" ones and none of the 3,931 "by more than" ones
-#: (that gap is #4236, 913 events, and it is NOT fixed here); of 4,410 2H legs
-#: it reads NONE, because every 2H phrasing carries a `2H` infix the pattern has
-#: no branch for — "Bayern Munich wins the 2H by more than 1.5 goals".
+#: WHY IT IS STILL NOT `_SPREAD_RE`, now that `_SPREAD_RE` reads every shape
+#: production currently carries. The two patterns answer different questions.
+#: `_SPREAD_RE` asks "can I grade this leg?"; this one asks "is this leg a
+#: margin question at all?" — and the guard has to keep answering yes for the
+#: phrasings the grader has NOT been taught, because those are exactly the legs
+#: that would otherwise be answered by something that grades a different
+#: question. A leg reading "wins the second half by more than 1.5 goals", or
+#: any unit outside points/runs/goals, is unreadable today and must stay blank
+#: rather than become a winner verdict.
 #:
+#: THE HAZARD IS NOT HYPOTHETICAL AND IT IS NOT ONLY THE WINNER FALLBACK.
 #: An unreadable margin leg used to be harmless: it fell through to `no_parse`.
-#: #5052 makes it dangerous, because a 2H market that now reconstructs a score
-#: can reach the 2- and 3-outcome team-name fallbacks below, and those grade
-#: "did this team win the segment" — a question the leg is NOT asking. On a half
-#: that finished 1–0, "wins the 2H by more than 1.5 goals" is FALSE for both
-#: sides, while the fallback would write True for the winner. That is a
-#: fabricated verdict stamped `game_score`, which is not in
-#: OVERWRITABLE_WINNER_SOURCES_SQL and therefore PERMANENT (#4923, gotcha #21).
+#: #5052 made it dangerous, because a 2H market that now reconstructs a score
+#: reaches graders that answer "did this team win the segment" or "did this
+#: team score over N" — neither of which is what the leg asks. On a half that
+#: finished 1–0, "wins the 2H by more than 1.5 goals" is FALSE for both sides
+#: while the winner fallback would write True for the winner. Measured on the
+#: pre-repair branch, `_team_total_outcome_is_winner` did the same thing from
+#: the other direction: it read "Chicago Bears wins the 2H by over 9.5 points"
+#: as a TEAM called "Chicago Bears wins the 2H by" with a 9.5 line and returned
+#: True on a 10–3 half whose real answer is False. `game_score` is not in
+#: OVERWRITABLE_WINNER_SOURCES_SQL, so either verdict would be PERMANENT
+#: (#4923, gotcha #21).
 #:
-#: Measured before adding this: 0 of 3,788 legs on the 1,894 two-outcome 1H
-#: spread markets carry a `game_score` grade today, so nothing is being
-#: fabricated right now — but only because those soccer events have no
-#: reconstructable halftime, which is an accident of the data, not a guarantee.
-#: This makes the guarantee structural: no reconstructor can turn a margin
-#: question into a winner answer.
+#: Both doors are now shut structurally: `_SPREAD_RE` reads the 3,819 "by over"
+#: 2H legs so they are graded on their own margin, and this pattern refuses the
+#: residue at both graders. No reconstructor can turn a margin question into a
+#: winner answer or a team-total answer.
 _MARGIN_CLAIM_RE = re.compile(
     r"\bwins\b.*\bby (?:over|more than)\s+\d",
     re.IGNORECASE,
@@ -2244,6 +2282,17 @@ def _team_total_outcome_is_winner(
     if home_score is None or away_score is None:
         return None
     if _SPREAD_RE.search(outcome_name or ""):
+        return None
+    # CERT-2603: the SAME refusal, for the margin legs `_SPREAD_RE` cannot read.
+    # The line above was the whole defence and it is only as wide as the grader,
+    # so a phrasing the grader has not been taught walked straight into
+    # `_TEAM_TOTAL_RE` — whose `(.+?)` happily swallows the margin clause into
+    # the TEAM name. Measured on the pre-repair branch: "Chicago Bears wins the
+    # 2H by over 9.5 points" parsed as team "Chicago Bears wins the 2H by",
+    # line 9.5, and returned True on a 10–3 half whose answer is False. 3,819
+    # such legs became reachable the moment #5052 made 2H scores rebuildable.
+    # Widening `_SPREAD_RE` closes those 3,819; this closes the class.
+    if _MARGIN_CLAIM_RE.search(outcome_name or ""):
         return None
     tm = _TEAM_TOTAL_RE.match(outcome_name or "")
     if not tm:

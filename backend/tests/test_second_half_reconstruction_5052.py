@@ -192,17 +192,139 @@ class TestMarginClaimGuard:
         """
         assert bw._MARGIN_CLAIM_RE.search(name) is None
 
-    def test_the_guard_is_wider_than_the_grader(self):
-        """The point of a separate pattern, in one assertion.
+    @pytest.mark.parametrize(
+        "unreadable",
+        [
+            # a spelled-out period — the infix branch is [1-4]H/Q/HALF only
+            "Chicago Fire wins the second half by more than 1.5 goals",
+            # a unit outside points/runs/goals
+            "Alcaraz wins by more than 1.5 sets",
+            # a period the pattern has no branch for
+            "Boston wins the 3rd period by over 1.5 goals",
+        ],
+    )
+    def test_the_guard_is_wider_than_the_grader(self, unreadable):
+        """The point of a separate pattern, and why it survives CERT-2603.
 
-        `_SPREAD_RE` can read 17,540 of the 21,492 1H legs and NONE of the
-        4,410 2H legs (measured on production 2026-09-11) — the 2H phrasings
-        all carry an infix it has no branch for. So the set of margin legs the
-        grader cannot read is non-empty, and it is exactly the set that must
-        not fall through to a winner fallback. #4236 is the open issue for
-        teaching the grader the "by more than" form; it is NOT fixed here, and
-        until it is, this guard is what keeps those legs honestly blank.
+        The grader now reads every margin shape production carries, so the
+        temptation is to collapse the two patterns into one. They answer
+        different questions: `_SPREAD_RE` asks "can I grade this leg", this asks
+        "is this a margin question at all" — and only the second can be right
+        about a phrasing nobody has taught the first. Every specimen here is
+        unreadable and must therefore stay blank; a collapsed pair would hand
+        each one to a winner fallback that grades "did this team win", stamped
+        `game_score` and permanent.
         """
-        unreadable = "Bayern Munich wins the 2H by more than 1.5 goals"
         assert bw._SPREAD_RE.search(unreadable) is None
         assert bw._MARGIN_CLAIM_RE.search(unreadable) is not None
+
+
+class TestTheGraderReadsEveryProductionShape:
+    """CERT-2603 — `_SPREAD_RE` against the shapes that actually exist.
+
+    Measured 2026-09-11 by collapsing every digit in every 2H spread leg name
+    on production: three shapes, 4,410 legs, and the pre-repair pattern read
+    none of them. A reconstructor whose parser cannot read its own population
+    grades nothing, which is what the first presentation of #5052 shipped.
+    """
+
+    #: (name, team, line) — the first three rows are the entire 2H population;
+    #: the rest are the full-game and 1H shapes that must not regress.
+    SHAPES = [
+        ("Chicago Bears wins the 2H by over 9.5 points", "Chicago Bears", 9.5),
+        ("GB Packers wins 2H by over 9.5 points", "GB Packers", 9.5),
+        ("Bayern Munich wins the 2H by more than 1.5 goals", "Bayern Munich", 1.5),
+        ("New York wins by over 29.5 points", "New York", 29.5),
+        ("Detroit wins the 1H by over 9.5 points", "Detroit", 9.5),
+        ("Real Madrid wins by more than 1.5 goals", "Real Madrid", 1.5),
+        ("Los Angeles A wins by over 3.5 runs", "Los Angeles A", 3.5),
+        ("Spurs wins 2Q by over 3.5 points", "Spurs", 3.5),
+    ]
+
+    @pytest.mark.parametrize("name,team,line", SHAPES)
+    def test_the_team_and_the_line_are_read_off_the_name(self, name, team, line):
+        """Both groups, because both are consumed.
+
+        Every caller reads group(1) as the team and group(2) as the line, so a
+        widening that matched but captured the margin clause into the team name
+        would parse, pick no side, and silently refuse the leg.
+        """
+        m = bw._SPREAD_RE.search(name)
+        assert m is not None
+        assert m.group(1) == team
+        assert float(m.group(2)) == line
+
+    def test_a_quarter_leg_parses_but_is_never_graded_here(self):
+        """The pattern reads quarters; the GATE is what refuses them.
+
+        10,564 "wins NQ by over N points" legs exist and none has a
+        reconstructor. Two independent things must stay true: this pattern may
+        read them (so the team-total grader keeps refusing them), and
+        `_RECONSTRUCTABLE_PERIODS` must keep them out of the resolver — because
+        grading a quarter against the full-game score is #4923 verbatim.
+        """
+        assert bw._SPREAD_RE.search("Spurs wins 2Q by over 3.5 points") is not None
+        assert bw._ticker_period("KXNBA2QSPREAD-26SEP09BOSLAL") == "2q"
+        assert "2q" not in bw._RECONSTRUCTABLE_PERIODS
+
+
+class TestTheTeamTotalGraderRefusesMarginLegs:
+    """CERT-2603 — the other door into a fabricated verdict.
+
+    `_team_total_outcome_is_winner` runs BEFORE the spread branch and refused
+    margin legs only through `_SPREAD_RE`. `_TEAM_TOTAL_RE`'s `(.+?)` swallows
+    a margin clause into the team name, so any phrasing the grader could not
+    read was graded as a TEAM TOTAL — the team's score against the margin line.
+    """
+
+    def test_a_second_half_margin_leg_is_not_a_team_total(self):
+        """The measured specimen, at the boundary that makes the two disagree.
+
+        A 10–3 half: the Bears' 2H score is 10 and their 2H margin is 7, so a
+        9.5 line reads True as a team total and False as the spread it is. On
+        the pre-repair branch this returned True.
+        """
+        assert bw._team_total_outcome_is_winner(
+            "Chicago Bears wins the 2H by over 9.5 points",
+            "Chicago Bears", "Green Bay Packers", 10, 3,
+        ) is None
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # a spelled-out period, with the "by over" phrasing that makes
+            # `_TEAM_TOTAL_RE` bite
+            "Chicago Fire wins the second half by over 1.5 goals",
+            "Chicago Fire wins in the 2nd half by over 9.5 points",
+            "Chicago Fire wins the 3rd period by over 2.5 runs",
+        ],
+    )
+    def test_the_refusal_covers_the_shapes_the_grader_cannot_read(self, name):
+        """Wider than `_SPREAD_RE` on purpose — that gap WAS the leak.
+
+        THE FIRST ASSERTION IS THE ANTI-VACUITY ONE and it is not decoration.
+        The first version of this test used "by more than" phrasings, which
+        `_TEAM_TOTAL_RE` cannot match at all — so the function returned None
+        for an unrelated reason and the whole test passed with the guard
+        DELETED. Only a name this grader would otherwise read can prove the
+        refusal does anything, so each specimen asserts that it is a genuine
+        bypass before asserting that it is refused.
+        """
+        assert bw._TEAM_TOTAL_RE.match(name) is not None, "vacuous specimen"
+        assert bw._SPREAD_RE.search(name) is None, "the other guard covers this"
+        assert bw._team_total_outcome_is_winner(
+            name, "Chicago Fire", "Inter Miami CF", 10, 3
+        ) is None
+
+    def test_a_real_team_total_is_still_graded(self):
+        """The control. A guard that refuses everything is not a guard.
+
+        CERT-499's 56 stranded `A's` legs are what this branch exists to grade;
+        over-refusing here strands them again, silently and permanently.
+        """
+        assert bw._team_total_outcome_is_winner(
+            "Los Angeles A over 3.5 runs", "Los Angeles A", "Houston Astros", 5, 2
+        ) is True
+        assert bw._team_total_outcome_is_winner(
+            "Houston Astros over 3.5 runs", "Los Angeles A", "Houston Astros", 5, 2
+        ) is False
