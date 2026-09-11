@@ -1334,8 +1334,15 @@ async def polymarket_stale_open(
         raw = get_redis_client().get(SYNC_SUMMARY_KEY)
         if raw:
             last_sync = _json.loads(raw)
-    except Exception as exc:  # a dead cache must not take the census with it
-        last_sync = {"error": str(exc)[:120]}
+    except Exception:  # a dead cache must not take the census with it
+        # The DISTINCTION is what matters here, not the exception text: "the
+        # sync has not reported" and "the cache could not be read" are
+        # different facts and the caller must be able to tell them apart. The
+        # detail goes to the log, never into the response — returning
+        # `str(exc)` put a stack-trace-derived string on an HTTP body (CodeQL:
+        # information exposure through an exception).
+        logger.exception("stale-open needle: SYNC_SUMMARY_KEY read failed")
+        last_sync = {"error": "cache_unavailable"}
 
     return {
         "stale_open": census.stale_open,

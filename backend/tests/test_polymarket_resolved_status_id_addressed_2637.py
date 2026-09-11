@@ -621,7 +621,7 @@ class TestTheRunReportsTheClassItExistsToDrain:
         class #2637 named must not read as progress against it, and a run that
         resolves nothing must say so in the same units as the bug report
         (gotcha #53)."""
-        h = _Harness([MIXED_EVENT]).install(monkeypatch, stale_open=32090)
+        _Harness([MIXED_EVENT]).install(monkeypatch, stale_open=32090)
 
         stats = await poly_mod._sync_polymarket_resolved_status()
 
@@ -633,7 +633,7 @@ class TestTheRunReportsTheClassItExistsToDrain:
     ):
         """"Swept everything and found nothing left" and "gave up early" are
         different runs and must not return the same shape."""
-        h = _Harness([MIXED_EVENT]).install(monkeypatch)
+        _Harness([MIXED_EVENT]).install(monkeypatch)
 
         stats = await poly_mod._sync_polymarket_resolved_status()
 
@@ -720,3 +720,69 @@ class TestOneDefinitionOfWhichGammaEventAnswersForARow:
         from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
         assert GAMMA_EVENT_ID_EXPR in _POLY_EVENT_ID_SQL
+
+
+@pytest.mark.asyncio
+class TestTheNeedleNeverPutsAnExceptionOnTheWire:
+    """The needle reports a dead cache WITHOUT quoting the exception.
+
+    CodeQL flagged the first form of this branch as information exposure: it
+    returned ``{"error": str(exc)[:120]}``, so a stack-trace-derived string
+    reached an HTTP body. The distinction the branch exists for is real and is
+    kept — "the sync has not reported" and "the cache could not be read" are
+    different facts (gotcha #53) — but it is now carried by a FIXED token, with
+    the detail logged server-side.
+
+    Guarding the class, not the string: the assertion is that the exception's
+    own text is absent from the whole serialized response, so re-introducing
+    any variant of `str(exc)` fails here regardless of how it is spelled.
+    """
+
+    async def _call(self, monkeypatch, redis_factory):
+        import app.routes.admin_data_quality as adq
+        import app.tasks.redis_state as redis_state
+
+        monkeypatch.setattr(adq, "_check_admin_secret", lambda *a, **k: None)
+        monkeypatch.setattr(redis_state, "get_redis_client", redis_factory)
+
+        class _Row:
+            def one(self):
+                return (32090, 22092, 0, None)
+
+        class _DB:
+            async def execute(self, *a, **k):
+                return _Row()
+
+        return await adq.polymarket_stale_open(
+            request=None, secret="x", db=_DB()
+        )
+
+    async def test_a_dead_cache_does_not_leak_the_exception_text(
+        self, monkeypatch
+    ):
+        marker = "psycopg2 OperationalError at 10.0.0.7:6379 TRACE-a1b2c3"
+
+        def _boom():
+            raise RuntimeError(marker)
+
+        out = await self._call(monkeypatch, _boom)
+
+        assert marker not in json.dumps(out, default=str), (
+            "the exception's text reached the response body — this is the "
+            f"CodeQL information-exposure finding, re-introduced. out={out}"
+        )
+        assert out["last_sync"] == {"error": "cache_unavailable"}, out
+
+    async def test_the_census_still_answers_when_the_cache_is_dead(
+        self, monkeypatch
+    ):
+        """A dead cache must not take the census with it — the number the bug
+        was filed in still has to come back."""
+
+        def _boom():
+            raise RuntimeError("cache down")
+
+        out = await self._call(monkeypatch, _boom)
+
+        assert out["stale_open"] == 32090, out
+        assert out["issue"] == 2637, out
