@@ -480,6 +480,107 @@ async def test_one_failing_category_does_not_wipe_its_siblings(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_visible_browse_categories_survive_the_measurement_cap(monkeypatch):
+    """CERT-2593's required repair: a small displayed tile is still MEASURED.
+
+    The selection is ordered biggest-candidate-first, so a cap set to "more than
+    the number of visible tiles" excludes the SMALLEST ones — which is the exact
+    population most likely to be a door onto an empty page. Measured on
+    production 2026-09-11 with the old cap of 32: 46 positive candidates, with
+    `aussierules` 33rd (candidate 3) and `horse_racing` 42nd (candidate 1). Both
+    are displayed Browse tiles; both went unmeasured, so their false counts
+    survived and the measured-zero tile could never disappear.
+
+    The population here is >32 on purpose, with the two real specimens at the
+    bottom of it, so this test fails against the old cap and passes against one
+    that clears the whole candidate set.
+    """
+    from app.tasks import tag_counts_warm
+    from app.routes import feed as feed_module
+
+    # 44 large filler categories plus the two small real ones = 46, matching the
+    # measured production population.
+    candidates = {
+        f"filler_{i:02d}": {"events": 0, "futures": 500 - i} for i in range(44)
+    }
+    candidates["aussierules"] = {"events": 1, "futures": 2}
+    candidates["horse_racing"] = {"events": 1, "futures": 0}
+    assert len(candidates) > 32, "the cap only bites above 32; keep this population big"
+
+    async def _fake_candidates(_db):
+        return candidates
+
+    monkeypatch.setattr(feed_module, "_candidate_tag_counts", _fake_candidates)
+
+    class _NullSession:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(
+        "app.tasks.base.get_task_session", lambda *a, **k: _NullSession()
+    )
+
+    selected = await tag_counts_warm._candidate_categories()
+
+    assert "aussierules" in selected, (
+        "a displayed tile with a candidate total of 3 sorts near the bottom and "
+        "must still be measured — it is the kind of tile that is empty"
+    )
+    assert "horse_racing" in selected, (
+        "the measured-zero specimen: unmeasured, its tile keeps advertising 1 "
+        "and #2627 can never remove it"
+    )
+    assert len(selected) == len(candidates), "nothing in the population is dropped"
+
+
+@pytest.mark.asyncio
+async def test_a_cap_that_does_bind_says_so(monkeypatch):
+    """A silent cap is the defect; a cap is fine (gotcha #53).
+
+    If the classifier ever emits more categories than the cap, the pass must not
+    quietly leave tiles on their candidate counts.
+    """
+    from app.tasks import tag_counts_warm
+    from app.routes import feed as feed_module
+
+    over = tag_counts_warm.MAX_CATEGORIES + 5
+    candidates = {f"c_{i:03d}": {"events": 0, "futures": over - i} for i in range(over)}
+
+    async def _fake_candidates(_db):
+        return candidates
+
+    monkeypatch.setattr(feed_module, "_candidate_tag_counts", _fake_candidates)
+
+    class _NullSession:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(
+        "app.tasks.base.get_task_session", lambda *a, **k: _NullSession()
+    )
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        tag_counts_warm.logger,
+        "warning",
+        lambda msg, *a, **k: warnings.append(msg % a if a else msg),
+    )
+
+    selected = await tag_counts_warm._candidate_categories()
+
+    assert len(selected) == tag_counts_warm.MAX_CATEGORIES
+    assert warnings, "a binding cap must be loud, never silent"
+    assert "candidate counts" in warnings[0]
+    assert "5 of" in warnings[0], f"it names the cost: {warnings[0]}"
+
+
+@pytest.mark.asyncio
 async def test_a_pass_that_measures_nothing_does_not_publish(monkeypatch):
     """Zero yield reads FAILED and leaves the previous publish alone (#53)."""
     from app.tasks import tag_counts_warm
@@ -594,8 +695,17 @@ def test_the_pass_is_bounded_in_both_directions():
         tag_counts_warm.PER_CATEGORY_TIMEOUT_SECONDS
         < tag_counts_warm.PASS_BUDGET_SECONDS
     )
-    # Enough room for every tile `/categories` can display (28 measured).
-    assert tag_counts_warm.MAX_CATEGORIES >= 28
+    # Enough room for every POSITIVE CANDIDATE, not merely for the count of
+    # visible tiles. `>= 28` was the old assertion and it was the bug written
+    # down: the cap is applied to a biggest-first ordering of ALL candidates, so
+    # "28 tiles fit in 32" says nothing about whether those 28 are the 32.
+    # Measured on production 2026-09-11: 46 positive candidates, with two
+    # displayed tiles at ranks 33 and 42.
+    assert tag_counts_warm.MAX_CATEGORIES >= 46, (
+        "the cap must clear the whole candidate population, or it silently "
+        "excludes the SMALLEST tiles — which is exactly the population most "
+        "likely to be empty behind a false count (CERT-2593)"
+    )
 
 
 @pytest.mark.asyncio

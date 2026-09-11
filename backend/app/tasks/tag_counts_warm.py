@@ -83,10 +83,29 @@ PER_CATEGORY_TIMEOUT_SECONDS = 25
 PASS_BUDGET_SECONDS = 240
 
 #: The most categories one pass will measure, ordered by candidate total
-#: descending (the biggest liars first) then by name. 46 categories exist;
-#: 32 covers every tile `/categories` can display today (28) with headroom,
-#: and bounds the pass whatever the classifier starts emitting.
-MAX_CATEGORIES = 32
+#: descending (the biggest liars first) then by name.
+#:
+#: SIXTY-FOUR, AND THE OLD 32 WAS WRONG FOR A REASON WORTH KEEPING (CERT-2593).
+#: Its comment argued "32 covers every tile `/categories` can display today (28)
+#: with headroom" — which counts the visible tiles and never checks that they
+#: are the ones inside the cap. They are not. Ordered biggest-first, the small
+#: tiles sort to the BOTTOM, so the cap excluded precisely the visible ones it
+#: claimed to cover. Measured on production 2026-09-11 07:2xZ, 46 positive
+#: candidates: `aussierules` ranks 33rd (total 3) and `horse_racing` 42nd
+#: (total 1) — both displayed Browse tiles, both never measured, so their false
+#: counts survived and the measured-zero tile could never disappear.
+#:
+#: A count is not a membership proof. Rather than mirror the frontend's
+#: `SPORT_CATEGORIES` list here — a second source of truth for what is displayed,
+#: which is the drift this module exists to end — the omission source is removed:
+#: the cap is lifted clear of the real population so it stops being the binding
+#: constraint, and `PASS_BUDGET_SECONDS` remains the actual bound on a pathological
+#: pass. 64 covers today's 46 with ~39% headroom; at the measured ~1 s per
+#: category that is ~46 s against a 240 s budget, a ~5x margin.
+#:
+#: It is still a cap, so it can still bind — and if it ever does, it says so
+#: (see `_candidate_categories`). A silent cap is the defect, not a cap.
+MAX_CATEGORIES = 64
 
 #: How many consecutive lost deliveries may pass before a reader is uncovered.
 #: Four, matching `futures_categories_warm`: `background` was measured
@@ -218,7 +237,26 @@ async def _candidate_categories() -> list[str]:
         counts.items(),
         key=lambda kv: (-(kv[1].get("events", 0) + kv[1].get("futures", 0)), kv[0]),
     )
-    return [cat for cat, _ in ranked[:MAX_CATEGORIES]]
+    selected = [cat for cat, _ in ranked[:MAX_CATEGORIES]]
+
+    # NO SILENT CAP (gotcha #53, and CERT-2593's whole finding). Truncating here
+    # leaves a tile serving its candidate count forever with nothing saying so —
+    # and because the order is biggest-first, whatever is dropped is by
+    # construction a SMALL tile, which is the kind a reader is most likely to
+    # find empty. If the cap ever binds again, it is loud and it names the cost.
+    dropped = len(ranked) - len(selected)
+    if dropped:
+        logger.warning(
+            "tag_counts_warm: %d of %d candidate categories fall outside "
+            "MAX_CATEGORIES=%d and will keep serving their candidate counts — "
+            "smallest first, so these are the tiles most likely to be empty: %s",
+            dropped,
+            len(ranked),
+            MAX_CATEGORIES,
+            [cat for cat, _ in ranked[MAX_CATEGORIES:]],
+        )
+
+    return selected
 
 
 async def _warm_tag_counts(rc=None) -> dict[str, Any]:
