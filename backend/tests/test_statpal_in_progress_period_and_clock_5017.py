@@ -284,7 +284,13 @@ async def _run_livescores(
     sync_session.add(sport)
     sync_session.flush()
     event_ids = []
-    for home, away, preset_clock in events:
+    for spec in events:
+        # 3-tuple `(home, away, clock)` is the shape every earlier test uses; a
+        # 4th element presets `period` as well. The terminal tests need both
+        # columns populated up front, because what they assert is that NEITHER
+        # moves — and a column that starts empty cannot show that (#5079).
+        home, away, preset_clock = spec[0], spec[1], spec[2]
+        preset_period = spec[3] if len(spec) > 3 else None
         row = Event(
             sport_id=sport.id,
             home_team_name=home,
@@ -292,6 +298,7 @@ async def _run_livescores(
             commence_time=now - timedelta(hours=1),
             status="live",
             game_clock=preset_clock,
+            period=preset_period,
         )
         sync_session.add(row)
         sync_session.flush()
@@ -432,14 +439,29 @@ async def test_halftime_clears_prior_live_clock(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_quarter_transition_clears_a_stale_clock_too(monkeypatch):
-    """The same rule at a non-halftime boundary, so the fix is not halftime-shaped."""
+    """The same rule at a non-halftime boundary, so the fix is not halftime-shaped.
+
+    #5079: this drove `raw_status="Final"` — a TERMINAL label, which is neither
+    a quarter transition (the name's claim) nor a shape the parser can produce
+    (`_parse_single_fixture` sets `raw_status = … if status == "live" else None`,
+    so a real `Final` row arrives with `raw_status=None` and never enters this
+    branch at all). The fixture is now built by the real parser from the
+    between-quarters shape the board actually serves: an in-progress label with
+    the timer emptied. The terminal case is a different question and has its
+    own section below.
+    """
     now = datetime.now(timezone.utc)
+    parsed = _parse(_live_item(status="4th Quarter", timer=""))
+    assert parsed is not None and parsed.raw_status == "4th Quarter", (
+        "the parser must still produce this shape, or the test below is fiction"
+    )
     fx = _Fixture(
         now - timedelta(hours=1),
         "Los Angeles Rams",
         "San Francisco 49ers",
-        raw_status="Final",
-        game_clock=None,
+        raw_status=parsed.raw_status,
+        game_clock=parsed.game_clock,
+        clock_field_served=parsed.clock_field_served,
     )
     rows = await _run_livescores(
         monkeypatch,
@@ -447,7 +469,7 @@ async def test_a_quarter_transition_clears_a_stale_clock_too(monkeypatch):
         events=[("Los Angeles Rams", "San Francisco 49ers", "12:05")],
     )
     assert rows[0].game_clock is None
-    assert rows[0].period == "Final"
+    assert rows[0].period == "4th Quarter"
 
 
 @pytest.mark.parametrize("zero", ["0:00", "00:00", "0.00", "0"])
@@ -670,3 +692,140 @@ def test_the_tennis_parser_makes_no_clock_claim_either():
     fx = StatPalAPIService()._parse_tennis_match(item, {"id": "5", "name": "US Open"})
     assert fx is not None
     assert fx.clock_field_served is False
+
+
+# ---------------------------------------------------------------------------
+# 5. The TERMINAL row, driven from the parser's own output (#5079)
+# ---------------------------------------------------------------------------
+#
+# Every writer test above hand-builds `_Fixture`. That is fine for in-progress
+# labels, which the parser really does produce — but it let a terminal test
+# assert a rule for `raw_status="Final"`, a shape `_parse_single_fixture`
+# cannot emit. So the terminal path's real behaviour was never proven.
+#
+# These drive the RECORDED live board (`statpal_nfl_livescores_20260903.json`,
+# four genuine `status='Final'` rows) through the real parser and hand the
+# result to the real writer. The finding they pin is deliberately not
+# "the clock is cleared" — it is what actually happens, which is nothing.
+
+
+def _recorded_terminal_fixtures():
+    """The four `Final` rows from the recorded NFL live board, really parsed."""
+    import json
+    from pathlib import Path
+
+    from app.services.statpal_api import StatPalAPIService
+
+    payload = json.loads(
+        (
+            Path(__file__).parent / "fixtures" / "statpal_nfl_livescores_20260903.json"
+        ).read_text()
+    )
+    return StatPalAPIService()._parse_fixtures(payload, "nfl")
+
+
+def test_the_recorded_terminal_board_parses_to_no_status_and_no_clock():
+    """The premise, measured rather than assumed.
+
+    A real `Final` row reaches the writer with `raw_status=None` — which is the
+    whole reason the writer's period/clock block is skipped on it.
+
+    It also carries `clock_field_served=False`, and that is a SECOND terminal
+    shape worth naming: #5079 predicted `timer=''` (which is what the board
+    serves at the instant a game goes final, measured 03:27Z on 9/11). This
+    settled board omits the `timer` key altogether. The two disagree about
+    `clock_field_served` and agree about everything the writer reads.
+    """
+    fixtures = _recorded_terminal_fixtures()
+    assert len(fixtures) == 4, "the recorded board should hold four finished games"
+    for fx in fixtures:
+        assert fx.status == "finished"
+        assert fx.raw_status is None, (
+            "a terminal row must not carry a raw_status — the writer's whole "
+            "period/clock branch is gated on it"
+        )
+        assert fx.game_clock is None
+        assert fx.clock_field_served is False
+
+
+def test_the_two_terminal_shapes_agree_on_what_the_writer_reads():
+    """`timer=''` and no `timer` key at all must reach the writer identically.
+
+    Only the second is in the recorded board, so without this the first — the
+    shape a game actually passes through as it goes final — is untested.
+    """
+    at_the_whistle = _parse(_live_item(status="Final", timer=""))
+    settled = _parse(_live_item(status="Final"))
+    del_key = _live_item(status="Final")
+    del del_key["timer"]
+    settled_no_key = _parse(del_key)
+
+    for fx in (at_the_whistle, settled, settled_no_key):
+        assert fx is not None
+        assert fx.status == "finished"
+        assert fx.raw_status is None
+        assert fx.game_clock is None
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_row_leaves_the_period_and_clock_exactly_as_it_found_them(
+    monkeypatch,
+):
+    """THE FINDING, pinned rather than asserted to be correct.
+
+    Our row is still `status='live'` (the livescores writer only ever selects
+    those) and carries the period and clock ESPN last wrote mid-game. StatPal's
+    board has already gone `Final`. The writer advances the SCORE and leaves the
+    period and the clock untouched — so for as long as our row stays live, the
+    card pairs a final score with a running-looking third-quarter clock.
+
+    That window is closed by a different writer, not this one: measured on
+    production over the last 7 days (authority/121), completed rows carry
+    ESPN's terminal write — `period='Final'`, `game_clock='0:00'` for
+    NFL/NCAAF/MLB, `period='FT'` for soccer. So this is p3 and pinned as
+    behaviour, not filed as a defect.
+
+    Its DURATION is unmeasured, and deliberately not described as short here.
+    The window is "our row still says live after the venue said Final", and
+    rows do linger: measured 06:20Z on 9/11, live rows sat 4.2h (MiLB) and 6.1h
+    (ATP) past their own commence_time. Neither sport reaches this writer, so
+    that is a bound on nothing — which is the point. Whoever needs the duration
+    for NFL/MLB must measure it during a slate, not infer it from here.
+
+    NOT VACUOUS: both columns start populated and DIFFERENT from what a
+    clearing writer would leave, so an assignment of either `None` or the
+    fixture's own values is observable here. (The trap that let CERT-2569's
+    defect through was a clearing test whose column started empty.)
+    """
+    now = datetime.now(timezone.utc)
+    terminal = next(
+        f
+        for f in _recorded_terminal_fixtures()
+        if f.home_team == "Buffalo Bills"
+    )
+    terminal.start_time = now - timedelta(hours=1)
+
+    rows = await _run_livescores(
+        monkeypatch,
+        fixtures=[terminal],
+        events=[
+            (
+                "Buffalo Bills",
+                "Pittsburgh Steelers",
+                "7:16",           # game_clock ESPN last wrote
+                "7:16 - 3rd Quarter",  # period ESPN last wrote
+            )
+        ],
+    )
+    assert rows[0].period == "7:16 - 3rd Quarter", (
+        "the terminal row must not rewrite the period — it carries no "
+        "raw_status, so the writer's period branch never runs"
+    )
+    assert rows[0].game_clock == "7:16", (
+        "and it must not clear the clock either: same skipped branch. If this "
+        "ever fails, the writer grew a terminal path and #5079's question "
+        "needs re-asking"
+    )
+    # The half that DOES move, which is what makes the pairing observable.
+    assert rows[0].home_score == 28
+    assert rows[0].away_score == 27
