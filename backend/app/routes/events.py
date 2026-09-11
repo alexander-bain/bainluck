@@ -11619,6 +11619,48 @@ _PROP_NAME_STAT_SINGLES = [
     "strikeouts", "rebounds", "assists", "points", "blocks", "steals",
     "goals", "saves", "hits", "rbis",
 ]
+# #5097 — PITCHER-SIDE PHRASES, AND WHY THEY ARE MATCHED LONGEST-FIRST.
+#
+# Every phrase here CONTAINS one of the batter singles above ("hits allowed"
+# contains "hits", "home runs allowed" contains "home runs"), and they contain
+# each other: "home runs allowed" extends "runs allowed", and "earned runs
+# allowed" would match "runs allowed" while meaning something else. Under
+# first-match-wins a pitcher's "Hits Allowed" prop was graded off the BATTER's
+# hit total — measured on the unfixed tree as 1.0 (his own hits) where the
+# right answer was 7, and as a confident 0.0 (his own home runs) on a "Home Runs
+# Allowed" prop, which publishes a red MISS off the wrong statistic.
+#
+# So the RULE is the fix, not the hand-ordering: longest phrase wins, exactly as
+# `_prop_stats_for_ticker` resolves colliding ticker prefixes (#1728). Adding a
+# phrase here can never re-break the ordering.
+_PROP_NAME_STAT_PITCHING = sorted(
+    [
+        ("home runs allowed", "pitching home runs allowed"),
+        ("earned runs", "earned runs"),
+        ("hits allowed", "pitching hits allowed"),
+        ("walks allowed", "pitching walks allowed"),
+        ("runs allowed", "pitching runs allowed"),
+        ("strikeouts allowed", "pitching strikeouts"),
+    ],
+    key=lambda pair: len(pair[0]),
+    reverse=True,
+)
+# #5097 — stats whose name is TRUE OF BOTH SIDES of a baseball box score, with
+# no "allowed" in the market name to tell them apart.
+#
+# `backfill_winners.py` already carries #1990's warning for the ticker table:
+# pointing KXMLBKS back at the bare "strikeouts" key "would grade every pitcher
+# prop off a BATTER's K count". The NAME path below is pointed at exactly that
+# key, and it fails safe today only because a pitcher usually has no batting
+# line. Where a player has both — a two-way player, an NL pitcher who batted —
+# the unfixed tree graded `Strikeouts O/U 6.5` off his batting strikeouts and
+# published a confident verdict.
+#
+# The resolution is per-PLAYER, not per-name, because the name genuinely does
+# not say. One side present ⇒ that side. BOTH present ⇒ REFUSE: the row stays
+# pending, because no verdict beats a wrong one (#1728), and T3-2's acceptance
+# is zero false grades.
+_BATTER_PITCHER_TWIN_STATS = {"strikeouts": "pitching strikeouts"}
 
 
 def _build_prop_grade_context(event) -> Optional[dict]:
@@ -11656,9 +11698,18 @@ def _build_prop_grade_context(event) -> Optional[dict]:
     }
 
 
-def _prop_stat_keys(market, ctx: dict) -> Optional[list]:
+def _prop_stat_keys(market, ctx: dict, player_stats: Optional[dict] = None) -> Optional[list]:
     """Determine the ESPN box-score stat key(s) for a player-prop market.
-    Ticker prefix is authoritative; falls back to parsing the market name."""
+
+    Ticker prefix is authoritative; falls back to parsing the market name.
+
+    ``player_stats`` is the box-score line of the player the row is about, when
+    the caller has already resolved it. It is only consulted for the handful of
+    stat names that are true of a batter AND a pitcher
+    (`_BATTER_PITCHER_TWIN_STATS`), where the market name alone cannot say which
+    is meant — see that constant. Passing None keeps the historical batter-side
+    reading, so a caller that has no player yet is unchanged.
+    """
     ticker_lower = (getattr(market, "external_id", None) or "").lower()
     from_ticker = ctx["stats_for_ticker"](ticker_lower)
     if from_ticker:
@@ -11667,10 +11718,29 @@ def _prop_stat_keys(market, ctx: dict) -> Optional[list]:
     for phrase, stats in _PROP_NAME_STAT_COMBOS:
         if phrase in name_lower:
             return list(stats)
+    # #5097: before the batter singles, because each of these CONTAINS one.
+    for phrase, stat in _PROP_NAME_STAT_PITCHING:
+        if phrase in name_lower:
+            return [stat]
     for stat in _PROP_NAME_STAT_SINGLES:
         if stat in name_lower:
-            return [stat]
+            return _disambiguate_twin_stat(stat, player_stats)
     return None
+
+
+def _disambiguate_twin_stat(stat: str, player_stats: Optional[dict]) -> Optional[list]:
+    """#5097: pick the batter or the pitcher key, or refuse if both are there."""
+    pitching = _BATTER_PITCHER_TWIN_STATS.get(stat)
+    if pitching is None or not isinstance(player_stats, dict):
+        return [stat]
+    has_batting = player_stats.get(stat) is not None
+    has_pitching = player_stats.get(pitching) is not None
+    if has_batting and has_pitching:
+        # The name does not say, and both answers exist. Withhold.
+        return None
+    if has_pitching:
+        return [pitching]
+    return [stat]
 
 
 def _settled_grade_fields(market, outcome) -> dict:
@@ -11732,9 +11802,12 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
     }
     if ctx is None:
         return result
-    stat_keys = _prop_stat_keys(market, ctx)
-    if not stat_keys:
-        return result
+    # #5097: the PLAYER is resolved before the stat key, because for the handful
+    # of names that are true of a batter and a pitcher alike, which key to read
+    # is a fact about the player's own line and not about the market name.
+    # Nothing else about this order matters — a row with no player was withheld
+    # before and is withheld now, one branch earlier.
+    #
     # WHERE THE PLAYER'S NAME LIVES IS PER-SOURCE (#1976 §2; same assumption
     # class as UX-P097's line-placement bug). Kalshi puts the player in the
     # OUTCOME ("Jayson Tatum: 30+") and leaves the market generic; Polymarket
@@ -11773,6 +11846,9 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
         if isinstance(player_stats, dict):
             break
     if not isinstance(player_stats, dict):
+        return result
+    stat_keys = _prop_stat_keys(market, ctx, player_stats)
+    if not stat_keys:
         return result
     # #1728: `found = any leg resolved` published a PARTIAL sum as a confident
     # actual — a "Hits + Runs + RBIs" prop whose rbis leg was missing rendered
