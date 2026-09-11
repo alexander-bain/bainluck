@@ -51,7 +51,7 @@ neither may end up importing the other through it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 
 # Bumped when the MEANING of a stored record changes, so a reader can tell a
@@ -110,6 +110,29 @@ MARKET_DERIVED_SOURCES = frozenset({"kalshi", "polymarket"})
 
 
 @dataclass(frozen=True)
+class MarketRef:
+    """One market that contributed to a reading — our row and the venue's id.
+
+    The same evidence pointer `EligibilityRecord` carries for the speaker, in a
+    form that can appear more than once. Deliberately not a bare int: an id with
+    no venue id beside it cannot be checked against the venue, and the whole
+    purpose of the record is to be gradeable after the fact rather than only
+    re-derivable.
+    """
+
+    market_id: Optional[int] = None
+    source_market_id: Optional[str] = None
+
+    def to_entry(self) -> dict:
+        entry: dict[str, Any] = {}
+        if self.market_id is not None:
+            entry["market_id"] = self.market_id
+        if self.source_market_id is not None:
+            entry["source_market_id"] = self.source_market_id
+        return entry
+
+
+@dataclass(frozen=True)
 class EligibilityRecord:
     """What a named rule asserted about the reading it admitted.
 
@@ -118,6 +141,21 @@ class EligibilityRecord:
     edited. ``market_id`` and ``source_market_id`` are the evidence pointer — our
     row and the venue's own id for it — and they are what make an
     already-written entry gradeable after the fact rather than only re-derivable.
+
+    ``contributors`` is CERT-2646's repair, and it exists because a reading is
+    not always the price of ONE market. `compute_source_home_probability` devigs
+    — it averages the speaker with a sibling that prices the same question from
+    the other side — and a record naming only `market_id` then substantiates a
+    COMPOSITE with one of its two halves. The grader's probe: an admitted 60%
+    winner averaged with a gate-refused 20% First-Team-to-Score derivative served
+    40%, stamped `verified` / `full_event_winner`, naming only the winner. Every
+    market that moved the number is named here, or the number is not verified.
+
+    It is present only when the reading IS a composite. A single-market reading
+    is already fully named by ``market_id``, and repeating it would grow every
+    row in the column to restate what is beside it. So a reader's rule is:
+    the contributors are ``contributors`` if present, else ``[market_id]`` —
+    `contributing_market_ids` is that rule, and nobody should re-implement it.
 
     ``semantic_type`` is reserved and left ``None`` by every writer today: CU-1
     (#5273) is open, so `semantic_market_type` / `market_metadata.
@@ -132,6 +170,7 @@ class EligibilityRecord:
     market_id: Optional[int] = None
     source_market_id: Optional[str] = None
     semantic_type: Optional[str] = None
+    contributors: Optional[tuple["MarketRef", ...]] = None
     version: int = ELIGIBILITY_RECORD_VERSION
 
     def to_entry(self) -> dict:
@@ -154,7 +193,25 @@ class EligibilityRecord:
             record["source_market_id"] = self.source_market_id
         if self.semantic_type is not None:
             record["semantic_type"] = self.semantic_type
+        if self.contributors:
+            record["contributors"] = [c.to_entry() for c in self.contributors]
         return record
+
+
+def contributing_market_ids(record: Optional["EligibilityRecord"]) -> list[int]:
+    """Every market id behind this reading — THE reader's rule, in one place.
+
+    ``contributors`` if the reading is a composite, else the single
+    ``market_id``. A census asking "is every market behind this number
+    admissible?" must walk this and not `market_id`, because a devigged reading
+    has two halves and naming one of them is how CERT-2646 was blocked. Written
+    once here so a caller cannot half-remember it.
+    """
+    if record is None:
+        return []
+    if record.contributors:
+        return [c.market_id for c in record.contributors if c.market_id is not None]
+    return [record.market_id] if record.market_id is not None else []
 
 
 def verified_record(
@@ -163,6 +220,7 @@ def verified_record(
     market_id: Optional[int] = None,
     source_market_id: Optional[str] = None,
     scope: str = SCOPE_FULL_EVENT_WINNER,
+    contributors: Optional[Sequence[MarketRef]] = None,
 ) -> EligibilityRecord:
     """The record a gate mints when it has ADMITTED a reading.
 
@@ -172,13 +230,22 @@ def verified_record(
     substantiated by a market that did not produce it. That distinction is
     CERT-767's lesson and `_phase2_persist_group_reading` already honours it for
     the snapshot's `game_state`.
+
+    ``contributors`` names EVERY market that moved the number, and is required
+    of a composite (CERT-2646). It is stored only when it says more than
+    ``market_id`` already does — a one-element list naming the speaker is
+    dropped, since `contributing_market_ids` reads that case off ``market_id``.
+    A caller that devigs and passes nothing here mints a record that claims a
+    composite was produced by one market, which is the defect, not a shortcut.
     """
+    refs = tuple(contributors or ())
     return EligibilityRecord(
         status=VERIFIED,
         scope=scope,
         rule=rule,
         market_id=market_id,
         source_market_id=source_market_id,
+        contributors=refs if len(refs) > 1 else None,
     )
 
 
@@ -251,6 +318,29 @@ def from_entry(raw: Any) -> Optional[EligibilityRecord]:
     if isinstance(market_id, bool) or not isinstance(market_id, int):
         market_id = None
 
+    # Same never-raises discipline as everything above: a contributors list that
+    # is not a list, or holds an entry that is not a dict, degrades to "no list"
+    # rather than throwing on the request path. A record whose composite evidence
+    # is unreadable falls back to the single `market_id`, which is a WEAKER claim
+    # than the writer made — never a stronger one.
+    contributors: Optional[tuple[MarketRef, ...]] = None
+    raw_contributors = record.get("contributors")
+    if isinstance(raw_contributors, list):
+        refs = []
+        for item in raw_contributors:
+            if not isinstance(item, dict):
+                continue
+            ref_id = item.get("market_id")
+            if isinstance(ref_id, bool) or not isinstance(ref_id, int):
+                ref_id = None
+            ref_source = item.get("source_market_id")
+            if not isinstance(ref_source, str) or not ref_source:
+                ref_source = None
+            if ref_id is None and ref_source is None:
+                continue
+            refs.append(MarketRef(market_id=ref_id, source_market_id=ref_source))
+        contributors = tuple(refs) or None
+
     return EligibilityRecord(
         status=status,
         scope=_text("scope"),
@@ -258,6 +348,7 @@ def from_entry(raw: Any) -> Optional[EligibilityRecord]:
         market_id=market_id,
         source_market_id=_text("source_market_id"),
         semantic_type=_text("semantic_type"),
+        contributors=contributors,
         version=version,
     )
 

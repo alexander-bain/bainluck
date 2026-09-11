@@ -58,6 +58,8 @@ from app.utils.probability_eligibility import (
     SCOPE_FULL_EVENT_WINNER,
     UNVERIFIED,
     VERIFIED,
+    MarketRef,
+    contributing_market_ids,
     from_entry,
     grade_entry,
     grade_sources,
@@ -568,3 +570,147 @@ class TestTheServedPayload:
         )
         assert served["kalshi"]["value"] == 0.6
         assert served["kalshi"]["evidence_status"] == UNVERIFIED
+
+
+# =============================================================================
+# CERT-2646's repair — 5311-EVERY-CONTRIBUTOR-IS-GATED-AND-RECORDED
+# =============================================================================
+
+
+class TestEveryDevigContributorIsGatedAndRecorded:
+    """A composite is not the price of the market that happened to speak first.
+
+    `compute_source_home_probability` DEVIGS: with two markets in the group it
+    averages the speaker with a sibling pricing the same question from the other
+    side. That half was gated for Kalshi and NOT AT ALL for anything else, while
+    the record named only the speaker. The grader's probe: an admitted 60%
+    winner averaged with a gate-refused 20% First-Team-to-Score derivative served
+    **40%**, `devigged=True`, stamped `verified` / `full_event_winner`, naming
+    only the winner — a composite substantiated by one of its two halves, which
+    is the exact class #5311 exists to end.
+    """
+
+    def _winner_plus_derivative(self):
+        # The derivative is the OLDEST row, so it wins `select_primary_market`
+        # and the winner is reached only by falling through — the #5031 shape.
+        derivative = MarketOutcomes(
+            market=_Market(1, f"{HOME} vs. {AWAY} - First Team to Score"),
+            outcomes=[_Outcome(0, HOME, 0.20), _Outcome(1, AWAY, 0.80)],
+        )
+        winner = MarketOutcomes(
+            market=_Market(9, f"{HOME} vs. {AWAY}", external_id="0xa85e"),
+            outcomes=[_Outcome(0, HOME, 0.60), _Outcome(1, AWAY, 0.40)],
+        )
+        return [derivative, winner]
+
+    def test_the_refused_derivative_really_would_have_moved_the_number(self):
+        """Non-vacuity, and it is the whole reason this class is not green by
+        accident: if the derivative's 0.20 could not reach the average anyway,
+        the gate below would be untested.
+
+        Same group, same prices, with ONLY the derivative's NAME changed to one
+        the class recognizer admits. The number becomes 0.40 — the grader's
+        probe exactly. So 0.20 is reachable, and the gate is the one thing
+        holding it out."""
+        from app.utils.live_blend import admissible_as_blend_speaker
+
+        derivative, winner = self._winner_plus_derivative()
+        assert not admissible_as_blend_speaker(derivative.market, is_primary=False)
+
+        derivative.market.name = f"{HOME} vs. {AWAY}"  # now a bare matchup
+        assert admissible_as_blend_speaker(derivative.market, is_primary=False)
+
+        reading = compute_source_home_probability([derivative, winner], HOME, AWAY)
+        assert reading.devigged is True
+        assert reading.home_probability == pytest.approx(0.40)
+
+    def test_a_gate_refused_derivative_never_devigs_the_winner(self):
+        """60% + refused 20% is 60%, not 40%. The probe, pinned."""
+        reading = compute_source_home_probability(
+            self._winner_plus_derivative(), HOME, AWAY
+        )
+
+        assert reading is not None
+        assert reading.home_probability == pytest.approx(0.60)
+        assert reading.devigged is False
+
+    def test_and_the_record_does_not_claim_a_second_contributor(self):
+        """A single-market reading names one market and carries no list."""
+        reading = compute_source_home_probability(
+            self._winner_plus_derivative(), HOME, AWAY
+        )
+
+        record = reading.eligibility
+        assert record.status == VERIFIED
+        assert record.market_id == 9
+        assert record.contributors is None
+        assert contributing_market_ids(record) == [9]
+        assert "contributors" not in record.to_entry()
+
+    # ── The other half: a genuine devig must name BOTH ───────────────────────
+
+    def _two_winner_lines(self):
+        return [
+            MarketOutcomes(
+                market=_Market(1, f"{HOME} vs. {AWAY}", external_id="0xaaa"),
+                outcomes=[_Outcome(0, HOME, 0.62), _Outcome(1, AWAY, 0.38)],
+            ),
+            MarketOutcomes(
+                market=_Market(2, f"{HOME} vs. {AWAY}", external_id="0xbbb"),
+                outcomes=[_Outcome(0, HOME, 0.58), _Outcome(1, AWAY, 0.42)],
+            ),
+        ]
+
+    def test_a_genuine_two_winner_devig_still_happens(self):
+        """The gate must not retire the devig it was added to protect."""
+        reading = compute_source_home_probability(self._two_winner_lines(), HOME, AWAY)
+
+        assert reading is not None
+        assert reading.devigged is True
+        assert reading.home_probability == pytest.approx(0.60)  # (0.62 + 0.58) / 2
+
+    def test_and_the_record_names_every_market_that_moved_the_number(self):
+        reading = compute_source_home_probability(self._two_winner_lines(), HOME, AWAY)
+        record = reading.eligibility
+
+        assert record.status == VERIFIED
+        assert record.contributors == (
+            MarketRef(market_id=1, source_market_id="0xaaa"),
+            MarketRef(market_id=2, source_market_id="0xbbb"),
+        )
+        assert contributing_market_ids(record) == [1, 2]
+
+    def test_the_composites_contributors_survive_a_write_and_a_read(self):
+        """The evidence has to be there for a census, which reads the JSONB —
+        not the dataclass the writer happened to hold."""
+        reading = compute_source_home_probability(self._two_winner_lines(), HOME, AWAY)
+
+        stored = stamp_source_reading(
+            {}, source="polymarket", value=reading.home_probability,
+            now=NOW, eligibility=reading.eligibility,
+        )
+        round_tripped = from_entry(stored["polymarket"])
+
+        assert contributing_market_ids(round_tripped) == [1, 2]
+        assert round_tripped.status == VERIFIED
+
+    # ── The per-source asymmetry the repair had to preserve ──────────────────
+
+    def test_a_kalshi_sibling_is_still_judged_on_its_ticker_not_its_name(self):
+        """MEASURED, and the reason the repair is a dispatch rather than one
+        call: the class recognizer reads False on `Fight Night: Silva vs
+        Delgado` (`KXUFCFIGHT-…`) because the colon stops the title being a bare
+        matchup and no winner word appears. It is a real fight winner. Gating
+        Kalshi siblings with `admissible_as_blend_speaker` would retire it and
+        every card like it — #5031's own measured regression, one step over."""
+        from app.utils.live_blend import (
+            admissible_as_blend_speaker,
+            is_game_winner_market,
+        )
+
+        ufc = _Market(
+            3, "Fight Night: Silva vs Delgado",
+            source="kalshi", external_id="KXUFCFIGHT-26SEP12SILDEL",
+        )
+        assert is_game_winner_market(ufc) is True
+        assert admissible_as_blend_speaker(ufc, is_primary=False) is False
