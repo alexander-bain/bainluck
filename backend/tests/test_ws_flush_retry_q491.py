@@ -149,8 +149,14 @@ def _install_socket(monkeypatch, frames, gate=None, gated=(), ack=None):
 
 
 class _Result:
-    def __init__(self, rows):
+    #: `rowcount` because a real `CursorResult` has one and #5411's settled-row
+    #: guard reads it to tell a write that LANDED from one the guard refused.
+    #: The writes this fake accepts are the ones that landed, so 1 is the honest
+    #: value here; the refusal case is exercised against a real engine in
+    #: `test_a_settled_leg_takes_no_live_price_5411.py`, not simulated here.
+    def __init__(self, rows, rowcount=1):
         self._rows = rows
+        self.rowcount = rowcount
 
     def all(self):
         return list(self._rows)

@@ -73,6 +73,7 @@ async def _run_kalshi_ws_consumer():
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
 
     api_key_id = os.getenv("KALSHI_API_KEY_ID")
     has_key = os.getenv("KALSHI_RSA_PRIVATE_KEY") or os.getenv("KALSHI_PRIVATE_KEY_PATH")
@@ -165,6 +166,11 @@ async def _run_kalshi_ws_consumer():
         # "we gave up and a price is gone".
         "final_flush_retries": 0,
         "final_flush_dropped": 0,
+        # #5411: buffered prices the settled-row guard REFUSED to write. Counted
+        # separately from `price_updates` so a refusal is a number and not an
+        # absence — "it returned" is not "it wrote" (gotcha #53). A refusal is
+        # terminal, not an error: the entry leaves the buffer like any other.
+        "settled_declined": 0,
     }
 
     # -- Buffered price updates --
@@ -194,12 +200,49 @@ async def _run_kalshi_ws_consumer():
         # failure mode — exception, cancellation, or a hard kill between the two
         # — can lose a price the buffer was holding. Nothing needs to be
         # "put back", because it was never taken away.
+        declined = 0
         try:
             async with get_task_session() as session:
                 for outcome_id, prob in batch.items():
-                    await session.execute(
+                    result = await session.execute(
                         update(FuturesOutcome)
-                        .where(FuturesOutcome.id == outcome_id)
+                        .where(
+                            FuturesOutcome.id == outcome_id,
+                            # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is
+                            # worth exactly 1 or 0, and #5246 made every reachable
+                            # settlement writer say so. This socket had never heard
+                            # of settlement: it wrote `current_probability`
+                            # unconditionally, so 189 of the 6,895 rows that
+                            # repair cleared were re-priced within 55 minutes (one
+                            # burst, 22:48-22:52Z on 9/11) and eliminated players
+                            # went back to showing a live number. The invariant was
+                            # enforced on ENTRY and not on UPDATE.
+                            #
+                            # The refusal is the TIER-3 set, not `IS NOT NULL`, and
+                            # the distinction is the whole correctness of it: the
+                            # two live US Open finalists carry `ungradeable_result`
+                            # (tier 1 — a RETRACTION meaning the venue never called
+                            # it, explicitly reversible by evidence), so refusing
+                            # every graded-looking row would have FROZEN the two
+                            # rows that most need to move. Guess-family and NULL
+                            # rows stay writable for the same reason.
+                            #
+                            # `or_` with an explicit NULL arm because the column is
+                            # nullable and `NOT IN (...)` is NULL — not TRUE — for
+                            # a NULL source, which would silently refuse every
+                            # ungraded row in the book.
+                            #
+                            # Mirrors `polymarket_ws`'s `is_authoritative` skip
+                            # (its line 84); that socket has always had this guard
+                            # and this one has not, which is why the two behaved
+                            # differently on the same class of row.
+                            or_(
+                                FuturesOutcome.resolution_source.is_(None),
+                                FuturesOutcome.resolution_source.notin_(
+                                    sorted(AUTHORITATIVE_SOURCES)
+                                ),
+                            ),
+                        )
                         .values(
                             current_probability=prob,
                             # This socket IS a live writer of this row, so it
@@ -216,8 +259,16 @@ async def _run_kalshi_ws_consumer():
                             ),
                         )
                     )
+                    # #5411 — a settled row matches the id and fails the guard, so
+                    # the statement affects 0 rows. (A row deleted between
+                    # subscription and flush lands here too; both are honestly "a
+                    # buffered price that did not become a stored price", which is
+                    # what this counter is named for.)
+                    if result.rowcount == 0:
+                        declined += 1
             stats["flushes"] += 1
-            stats["price_updates"] += len(batch)
+            stats["price_updates"] += len(batch) - declined
+            stats["settled_declined"] += declined
         except Exception:
             # Q491 — the batch is still in `price_buffer`, so the next flush
             # retries it. Before Q491 the buffer was drained up front and a
