@@ -47,6 +47,45 @@ function keepLatestSession<T extends { timestamp: string }>(sorted: T[]): T[] {
 }
 
 /**
+ * #4888 — WHAT A BARE PERIOD NUMBER MEANS, BY SPORT.
+ *
+ * ESPN's box-score fallback stores the period as a bare digit: the NFL season
+ * opener (event 14780138) serves `period_markers` of exactly `"2"`, `"3"`, `"4"`,
+ * source `espn_box`. Every branch of `normalizePeriodLabel` misses a bare digit
+ * except the "already short" test, whose alternation ends in `\d+` and returns it
+ * unchanged — so the chart drew dashed rules labelled `3` and `4` and a reader had
+ * no way to learn they meant quarters. (Alex, 2026-09-09 iPad pass, item 6.)
+ *
+ * `"3"` alone is genuinely ambiguous — Q3 in football/basketball, P3 in hockey,
+ * the 3rd inning in baseball — so the unit cannot be guessed inside a helper that
+ * only sees the string. The caller knows the sport; this table is what it buys.
+ *
+ * WHY THIS LIVES HERE rather than reusing `lib/sportCategories.ts`: that module
+ * answers "which tab does this league belong under", and its categories split pro
+ * from college (`nfl`, `ncaaf`) in a way that has nothing to do with periods.
+ * What a period number means is period knowledge, and it is four rows.
+ *
+ * BASEBALL IS DELIBERATELY ABSENT. A bare inning number cannot be completed
+ * honestly — `T3` and `B3` are different moments and the digit does not say which
+ * — so baseball keeps today's bare digit rather than gaining a fabricated half.
+ */
+const BARE_PERIOD_UNIT: Array<[RegExp, (n: string) => string]> = [
+  [/^americanfootball_/i, (n) => `Q${n}`],
+  [/^basketball_/i, (n) => `Q${n}`],
+  [/^icehockey_/i, (n) => `P${n}`],
+  [/^soccer_/i, (n) => `${n}H`],
+];
+
+/** The sport-aware completion of a bare period number, or null to leave it be. */
+function labelBarePeriod(n: string, sport?: string | null): string | null {
+  if (!sport) return null;
+  for (const [prefix, format] of BARE_PERIOD_UNIT) {
+    if (prefix.test(sport)) return format(n);
+  }
+  return null;
+}
+
+/**
  * Normalize ESPN's verbose period strings into short chart labels.
  *
  * Basketball/Football: "1st Quarter" -> "Q1", "Halftime" -> "HT"
@@ -54,8 +93,12 @@ function keepLatestSession<T extends { timestamp: string }>(sorted: T[]): T[] {
  * Baseball: "Top 3rd" / "Bottom 3rd" -> "3"
  * Soccer: "1st Half" -> "1H", "2nd Half" -> "2H"
  * Generic: "Overtime" -> "OT"
+ *
+ * @param sport — the event's sport key (`americanfootball_nfl`, …). Optional and
+ *   BACKWARD-COMPATIBLE: without it a bare period number renders exactly as it
+ *   does today, so no existing caller changes behaviour by not passing it.
  */
-export function normalizePeriodLabel(raw: string): string {
+export function normalizePeriodLabel(raw: string, sport?: string | null): string {
   if (!raw) return "";
   let s = raw.trim();
 
@@ -108,6 +151,13 @@ export function normalizePeriodLabel(raw: string): string {
   const ordMatch = s.match(/^(\d+)(?:st|nd|rd|th)$/i);
   if (ordMatch) return ordMatch[1];
 
+  // #4888: a BARE number is the one member of the "already short" set below that
+  // does not name its own unit — `Q1`, `P2`, `1H`, `OT`, `HT` all do. Complete it
+  // from the sport when we know it; fall through to the old behaviour when we
+  // don't, or when the sport has no honest completion (baseball).
+  const bare = s.match(/^(\d+)$/);
+  if (bare) return labelBarePeriod(bare[1], sport) ?? s;
+
   // Already short like "Q1", "P2", "1H", "OT"
   if (/^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$/i.test(s)) return s.toUpperCase();
 
@@ -142,6 +192,8 @@ export function derivePeriodBoundaries(
   scoringPlays?: ScoringPlay[],
   commenceTime?: string,
   periodMarkers?: Array<{ timestamp: string; period: string }>,
+  /** #4888: event sport key, so a bare period number can name its own unit. */
+  sport?: string | null,
 ): PeriodBoundary[] {
   // Top priority: backend-computed period markers from scoring_plays table.
   // These come from StatPal play-by-play and have period info on every play,
@@ -155,7 +207,7 @@ export function derivePeriodBoundaries(
     );
     const firstSeen = new Map<string, string>();
     for (const m of sorted) {
-      const label = normalizePeriodLabel(m.period);
+      const label = normalizePeriodLabel(m.period, sport);
       if (label && !firstSeen.has(label)) {
         firstSeen.set(label, m.timestamp);
       }
@@ -171,19 +223,19 @@ export function derivePeriodBoundaries(
   // ESPN history timestamps come from a separate table (ESPNSnapshot) and may not
   // have matching entries in the chart data when win_prob_snapshots deduped them.
   if (winProbHistory) {
-    const boundaries = deriveBoundariesFromWinProb(winProbHistory);
+    const boundaries = deriveBoundariesFromWinProb(winProbHistory, sport);
     if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   // Fallback to ESPN history (explicit period field, different table)
   if (espnHistory && espnHistory.length > 1) {
-    const boundaries = deriveBoundariesFromEspn(espnHistory);
+    const boundaries = deriveBoundariesFromEspn(espnHistory, sport);
     if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   // Try scoring plays
   if (scoringPlays && scoringPlays.length > 1) {
-    const boundaries = deriveBoundariesFromScoringPlays(scoringPlays);
+    const boundaries = deriveBoundariesFromScoringPlays(scoringPlays, sport);
     if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
@@ -215,7 +267,7 @@ function applyCommenceTime(
   return result;
 }
 
-function deriveBoundariesFromEspn(history: ESPNHistoryPoint[]): PeriodBoundary[] {
+function deriveBoundariesFromEspn(history: ESPNHistoryPoint[], sport?: string | null): PeriodBoundary[] {
   // Sort by timestamp, then drop any stale earlier-game segment (L2-163).
   const sorted = keepLatestSession(
     [...history].sort(
@@ -228,7 +280,7 @@ function deriveBoundariesFromEspn(history: ESPNHistoryPoint[]): PeriodBoundary[]
 
   for (const point of sorted) {
     if (!point.period) continue;
-    const label = normalizePeriodLabel(point.period);
+    const label = normalizePeriodLabel(point.period, sport);
     if (!label) continue;
     if (!firstSeen.has(label)) {
       firstSeen.set(label, point.timestamp);
@@ -244,7 +296,8 @@ function deriveBoundariesFromEspn(history: ESPNHistoryPoint[]): PeriodBoundary[]
 }
 
 function deriveBoundariesFromWinProb(
-  winProbHistory: Record<string, WinProbHistoryPoint[]>
+  winProbHistory: Record<string, WinProbHistoryPoint[]>,
+  sport?: string | null,
 ): PeriodBoundary[] {
   // Merge all sources, extract period from game_state
   const allPoints: { timestamp: string; period: string }[] = [];
@@ -287,7 +340,7 @@ function deriveBoundariesFromWinProb(
   const firstSeen = new Map<string, string>();
 
   for (const point of session) {
-    const label = normalizePeriodLabel(point.period);
+    const label = normalizePeriodLabel(point.period, sport);
     if (!label) continue;
     if (!firstSeen.has(label)) {
       firstSeen.set(label, point.timestamp);
@@ -299,7 +352,7 @@ function deriveBoundariesFromWinProb(
     .map(([label, timestamp]) => ({ timestamp, label }));
 }
 
-function deriveBoundariesFromScoringPlays(plays: ScoringPlay[]): PeriodBoundary[] {
+function deriveBoundariesFromScoringPlays(plays: ScoringPlay[], sport?: string | null): PeriodBoundary[] {
   // Group scoring plays by period, use earliest timestamp per unique period.
   // Drop any stale earlier-game segment first (L2-163).
   const sorted = keepLatestSession(
@@ -314,7 +367,7 @@ function deriveBoundariesFromScoringPlays(plays: ScoringPlay[]): PeriodBoundary[
 
   for (const play of sorted) {
     if (!play.period) continue;
-    const label = normalizePeriodLabel(play.period);
+    const label = normalizePeriodLabel(play.period, sport);
     if (!label) continue;
     if (!firstSeen.has(label)) {
       firstSeen.set(label, play.timestamp);
