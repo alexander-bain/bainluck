@@ -724,9 +724,16 @@ class TestGameMarketsPopulatedShape:
         # spelled out, because a row that stamped the WRONG market would let a
         # container's suppression reach somebody else's row, and a self-derived
         # expectation could not tell the difference.
+        # #4970: every priced leg states when its price was last OBSERVED.
+        # `None` here because this fixture seeds no `futures_odds_snapshots`
+        # rows, and an outcome that was never priced says so rather than
+        # borrowing a fresh-looking time from somewhere else. Its presence in
+        # this whole-dict contract is the part that matters: it proves the key
+        # survives the full HTTP serialization path, not just the build.
         assert spread == {
             "market_name": "Celtics at 76ers Spread",
             "outcome_name": "Celtics -4.5",
+            "observed_at": None,
             "threshold": 4.5,
             "probability": 0.54,
             "source": "kalshi",

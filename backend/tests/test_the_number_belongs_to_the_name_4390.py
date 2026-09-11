@@ -156,6 +156,9 @@ def _db_for(event, markets, outcomes):
             _make_result(all_rows=[]),    # polymarket parent groups
             _make_result(rows=[]),        # unlinked fallback
             _make_result(rows=outcomes),
+            # #4970 — `load_latest_observed_at`, the newest priced observation per
+            # outcome. Positional contract, so it appears even when empty.
+            _make_result(all_rows=[]),
         ]
     )
     return db

@@ -12861,6 +12861,50 @@ async def _build_game_markets(
     )
     outcomes = outcomes_result.scalars().all()
 
+    # 4b. WHEN each of those prices was last actually OBSERVED (#4970 / D132).
+    #
+    # Every priced leg below carries `observed_at`, so a reader can see that the
+    # spread is eight minutes old while the moneyline is thirty hours old. The
+    # value is an ABSOLUTE ISO stamp and never a computed age: this payload is
+    # cached (30 s live, 1 h final in Redis, and the L1 memo holds a FINAL body
+    # for the life of the process), so a relative `age_hours` would freeze at
+    # build time and read fresher than the truth for as long as the entry
+    # survives. The client derives the age — `stalenessLabel()` already does.
+    #
+    # 🔴 `FuturesOutcome.last_updated` IS THE WRONG FIELD AND IT IS RIGHT THERE.
+    # It is already on these loaded rows and costs nothing, which is exactly why
+    # it is a trap: it is bumped by ANY write to the outcome — settlement
+    # backfill, calibration, volume, rank — not only by observing a price. On
+    # events 15308640 / 15309206 / 15308638, measured 2026-09-11 over 1,074
+    # outcomes, **890 of them (83%) carry a `last_updated` more than 30 minutes
+    # newer than their newest real observation**; mean gap 6.7 h, worst 25.75 h.
+    # Serving it would have claimed a day-old dark price was fresh, which is the
+    # defect this field exists to expose.
+    #
+    # A snapshot row exists only because a price was read, so `captured_at` is
+    # the question asked directly. Bounded id list (550 outcomes on the busiest
+    # event of the last two days), one top-1 index probe each: 102 ms measured
+    # on that event, on the REBUILD path only. See `utils/latest_observation.py`
+    # for why this shape and not `max() ... GROUP BY`.
+    from app.utils.latest_observation import (
+        blended_observed_at,
+        load_latest_observed_at,
+    )
+
+    _observed_at_by_outcome = await load_latest_observed_at(
+        db, [o.id for o in outcomes]
+    )
+
+    def _observed(outcome) -> Optional[str]:
+        """This leg's newest observation, ISO, or ``None`` if never observed.
+
+        Absent means absent (gotcha #53): an outcome with no priced snapshot is
+        missing from the mapping, and `None` travels to the reader as "no age
+        to show" rather than as a fresh one.
+        """
+        seen = _observed_at_by_outcome.get(outcome.id)
+        return seen.isoformat() if seen is not None else None
+
     # Build market_id → market lookup
     market_map = {m.id: m for m in markets}
 
@@ -13006,6 +13050,7 @@ async def _build_game_markets(
                     pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
+                        "observed_at": _observed(o),
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": tt_opening_over,
@@ -13030,6 +13075,7 @@ async def _build_game_markets(
                     "market_type": market_type,
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     **_settled_grade_fields(market, o),
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
@@ -13073,6 +13119,7 @@ async def _build_game_markets(
                 pp = {
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     "threshold": threshold,
                     "over_probability": round(over_prob, 4),
                     "opening_over_probability": opening_over,
@@ -13096,6 +13143,7 @@ async def _build_game_markets(
                 row = {
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
@@ -13136,6 +13184,7 @@ async def _build_game_markets(
                 period_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
@@ -13154,6 +13203,7 @@ async def _build_game_markets(
                     outcomes_list.append({
                         "name": o.name,
                         "probability": round(prob, 4),
+                        "observed_at": _observed(o),
                         **_settled_grade_fields(market, o),
                     })
             if outcomes_list:
@@ -13196,6 +13246,7 @@ async def _build_game_markets(
                         pp = {
                             "market_name": market.name,
                             "outcome_name": o.name,
+                            "observed_at": _observed(o),
                             "threshold": threshold,
                             "over_probability": round(over_prob, 4),
                             "opening_over_probability": opening_over,
@@ -13240,6 +13291,7 @@ async def _build_game_markets(
                     pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
+                        "observed_at": _observed(o),
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": opening_over,
@@ -13254,6 +13306,7 @@ async def _build_game_markets(
                 other_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
+                    "observed_at": _observed(o),
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o),
@@ -13344,6 +13397,46 @@ async def _build_game_markets(
             if cur_prob is not None and prev_prob is not None and cur_prob > prev_prob:
                 capped = {**item}
                 capped[prob_key] = prev_prob
+                # 🔴 #4970 / CERT-2640: THE NUMBER IS NOW THE SIBLING'S, SO THE
+                # CLOCK IS THE SIBLING'S.
+                #
+                # `{**item}` copies this rung's own `observed_at`, and the line
+                # above then replaces its price with the PREVIOUS rung's. The row
+                # keeps its identity (its threshold, its name) but no longer
+                # carries its own price, so its own stamp has stopped describing
+                # anything served: an hour-old lower rung capping a
+                # freshly-observed higher one published the OLD probability under
+                # the NEW timestamp — again reading fresher than the truth, the
+                # one direction a reader cannot catch.
+                #
+                # The donor may itself be a capped row; taking its (already
+                # corrected) stamp is what makes a run of capped rungs report the
+                # clock of the price they all actually come from.
+                donor = result[-1]
+                capped["observed_at"] = donor.get("observed_at")
+                # 🔴 #4970 / CERT-2647: THE PER-SOURCE MAP IS PART OF THE CLOCK,
+                # SO IT MOVES WITH IT.
+                #
+                # `{**item}` copied this rung's own `observed_at_by_source`,
+                # which describes the price we just THREW AWAY. Carrying the
+                # donor's aggregate stamp while keeping the discarded price's
+                # venue breakdown leaves one row asserting two different
+                # observations — and the breakdown is the more specific of the
+                # two, so a reader who opens it is told the wrong venue is
+                # responsible. A donor with no breakdown of its own (the common
+                # single-source case) must CLEAR this rung's, never leave it
+                # standing: a stale map is a worse claim than no map (gotcha
+                # #53 — absent is not the same as recent, and here it is also
+                # not the same as "unchanged").
+                donor_by_source = donor.get("observed_at_by_source")
+                if donor_by_source is not None:
+                    capped["observed_at_by_source"] = donor_by_source
+                else:
+                    capped.pop("observed_at_by_source", None)
+                # Marked, not just carried: without this a capped rung is
+                # indistinguishable from one that was independently observed at
+                # the donor's time, and the two are not the same claim.
+                capped["observed_at_basis"] = "capped_to_sibling"
                 result.append(capped)
             else:
                 result.append(item)
@@ -13615,6 +13708,58 @@ async def _build_game_markets(
                 best["over_probability"] = avg_prob
                 best["all_sources"] = list({e.get("source") for e in entries})
                 best["source_count"] = len(entries)
+
+                # 🔴 #4970 / CERT-2647: READ EVERY CONTRIBUTOR'S CLOCK BEFORE
+                # WRITING ANY OF THEM. `best` IS one of `entries` — the same
+                # dict object, not a copy — so the moment the blended stamp is
+                # assigned below, the representative's own clock is GONE from
+                # the input this pass still has to read. The first repair wrote
+                # first and read after, and the per-source map it built then
+                # reported the blend's oldest stamp for BOTH venues: a fresh
+                # Kalshi price alongside a stale Polymarket one came back as two
+                # stale clocks, which is the precise claim the map exists to
+                # make recoverable. Snapshot, then transform.
+                contributor_clocks = [
+                    (e.get("source"), e.get("observed_at")) for e in entries
+                ]
+
+                # 🔴 #4970 / CERT-2640: THE PRICE IS NOW A BLEND, SO THE CLOCK
+                # MUST BE THE BLEND'S — NOT THE REPRESENTATIVE'S.
+                #
+                # `best` is chosen for its SOURCE (Kalshi wins), never for its
+                # age, and the line above replaced its price with the average of
+                # every contributor. Leaving `observed_at` alone therefore serves
+                # one contributor's clock against a number none of them quoted.
+                # Both directions are wrong and only one is detectable: a 30 h
+                # Kalshi price blended with an 8-minute Polymarket one reads
+                # "30 h" (pessimistic, visible), and the SAME PAIR with the ages
+                # swapped reads "8 minutes" over a number that is half a day
+                # stale — invisible, and the exact claim this field was added to
+                # make. The stamp follows the oldest contributor; see
+                # `blended_observed_at` for why one unknown clock yields None.
+                best["observed_at"] = blended_observed_at(
+                    [seen for _src, seen in contributor_clocks]
+                )
+                # The per-source clocks survive the merge, so a reader (and any
+                # later grader) can see WHICH side is the stale one instead of
+                # only that the blend is stale. Oldest wins within a source too:
+                # the dedup key can bind two markets from one venue.
+                by_source: dict[str, str] = {}
+                for src, seen in contributor_clocks:
+                    if not src or seen is None:
+                        continue
+                    if src not in by_source:
+                        by_source[src] = seen
+                    else:
+                        # Through the helper, never `<` on the raw strings: ISO
+                        # text only sorts chronologically while every stamp
+                        # carries the same offset spelling, and one naive stamp
+                        # would silently invert the comparison.
+                        older = blended_observed_at([by_source[src], seen])
+                        if older is not None:
+                            by_source[src] = older
+                if by_source:
+                    best["observed_at_by_source"] = by_source
                 # #4189: the ONE filter in this function that MERGES rows rather
                 # than dropping or capping them, so the one place provenance has
                 # to be unioned. `best` is a single entry and carries a single

@@ -329,6 +329,13 @@ def _build_payload():
 
     async def execute(stmt, *args, **kwargs):
         sql = str(stmt).lower()
+        # #4970 — `load_latest_observed_at` reads futures_outcomes JOINed to a
+        # correlated futures_odds_snapshots probe, so it matches the outcomes
+        # branch below and MUST be tested first. These rows carry no observation
+        # (this fixture is about which rungs reach the rail, not their age), so
+        # every leg serves `observed_at: None`.
+        if "futures_odds_snapshots" in sql:
+            return _list([])
         if "futures_outcomes" in sql:
             return _list(outcomes)
         if "futures_markets" in sql:
