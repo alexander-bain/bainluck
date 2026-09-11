@@ -912,7 +912,7 @@ async def sync_espn_live_events(
 
     from app.services import get_espn_service, llm
     from app.models import Venue
-    from app.tasks.espn_sync import _sanitize_period
+    from app.utils.game_state import _sanitize_period
     from app.utils.espn_id_stamp import REFUSED, STAMPED, stamp_espn_id_if_unheld
 
     espn = get_espn_service()

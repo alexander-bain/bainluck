@@ -57,11 +57,13 @@ point-in-time scan can never see it. Sunday's NFL slate is the next exposure —
 
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 from app.services.espn_api import ESPNAPIService
-from app.tasks.espn_sync import _sanitize_period
+from app.tasks.espn_sync import _sanitize_period as _sanitize_period_reexport
+from app.utils.game_state import _sanitize_period
 from app.utils.espn_helpers import update_event_fields_from_espn
 
 from tests.test_espn_api_parsing import LIVE_EVENT
@@ -236,6 +238,16 @@ class TestTheSanitizer:
         assert not month_names_only.search(THE_SHORT_FORM)
         assert _sanitize_period(THE_SHORT_FORM) is None
 
+    def test_the_espn_sync_reexport_is_the_same_object(self):
+        # #5390 moved the helper to a leaf module (`utils/game_state`) so the
+        # five call sites stop reaching back into `tasks.espn_sync` — a real
+        # cycle, since that module imports `espn_helpers` in turn, and CodeQL
+        # flagged three `py/cyclic-import` alerts when this ship added more.
+        # `tasks.espn_sync` re-exports it for existing importers; this pins the
+        # shim to the SAME object, so the two can never drift into two
+        # predicates disagreeing about what a period is.
+        assert _sanitize_period_reexport is _sanitize_period
+
     def test_a_slash_needs_digits_on_both_sides(self):
         # Stated as a property, so widening the constant re-derives it.
         assert _sanitize_period("Final/10") == "Final/10"
@@ -250,8 +262,6 @@ class TestTheSanitizer:
 
 class TestNoSiteCopiesTheDetailRaw:
     def test_no_period_field_is_assigned_the_raw_status_detail(self):
-        from pathlib import Path
-
         import app.routes.admin_providers as admin_providers
         import app.utils.espn_helpers as espn_helpers
 

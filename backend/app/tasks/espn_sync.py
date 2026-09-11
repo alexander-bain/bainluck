@@ -51,30 +51,22 @@ def espn_names_match(our_names: list[str], espn_team) -> bool:
     return False
 
 
-# Pre-game status_detail strings like "Wed, March 25th at 10:00 PM EDT"
-# should not be stored as period values in game_state.
+# `_sanitize_period` and its pattern moved to `app/utils/game_state.py` in #5390
+# and are re-exported here so every existing importer keeps working.
 #
-# #5390: ESPN writes the pre-game detail in two shapes, and this pattern only
-# knew the long one. The short numeric form ("5/23 - TBD") reached production
-# and sat in `events.period`. The `\d{1,2}/\d{1,2}` branch requires a digit on
-# BOTH sides of the slash, which is what keeps it off the real period
-# vocabulary — "Final/10", "Final/2OT" and "Final/SO" all carry a letter
-# before the slash. Measured against the whole `events` table, the branch
-# newly matches 5 rows and every one of them is a date.
-_PREGAME_DATE_RE = re.compile(
-    r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b"
-    r"|\b\d{1,2}/\d{1,2}\b",
-    re.IGNORECASE,
+# WHY THEY MOVED. The predicate is a pure statement about period strings, which
+# is what `game_state` already is (`normalize_live_game_state` lives beside it)
+# and that module imports nothing but `re`. Their old home here made every
+# caller in `utils/espn_helpers.py` reach BACK into `app.tasks.espn_sync` — a
+# genuine cycle, since this module imports `espn_helpers` in turn — which is
+# why all five call sites used function-local imports to dodge it. CodeQL
+# flagged three of them (`py/cyclic-import`) the moment #5390 added more.
+# A leaf home removes the cycle instead of tiptoeing around it, and the five
+# sites now share one module-level import.
+from app.utils.game_state import (  # noqa: F401
+    _PREGAME_DATE_RE,
+    _sanitize_period,
 )
-
-
-def _sanitize_period(status_detail: str | None) -> str | None:
-    """Return status_detail if it looks like a game period, else None."""
-    if not status_detail:
-        return None
-    if _PREGAME_DATE_RE.search(status_detail):
-        return None
-    return status_detail
 
 
 async def _enrich_events_metadata(limit: int = 50):

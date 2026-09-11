@@ -13,6 +13,9 @@ from sqlalchemy import select, update as _sql_update
 # live/048 — the state ladder's two doors (EVENT-GRAPH-DOCTRINE §R). Safe to
 # import here: `event_completion` imports nothing but `datetime`.
 from app.utils.event_completion import authority_may_settle, play_resumes
+# #5390: the period-string predicate lives in a leaf module, so this is a
+# plain module-level import rather than five function-local ones dodging a cycle.
+from app.utils.game_state import _sanitize_period
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import (
     select_authorized_espn_candidate as _select_authorized_espn_candidate,
@@ -322,7 +325,6 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     Returns True if any field changed.
     """
     from app.models.models import Event
-    from app.tasks.espn_sync import _sanitize_period
 
     changed = False
 
@@ -584,7 +586,6 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     Returns True if any change was made.
     """
     from app.models.models import Event, ESPNSnapshot
-    from app.tasks.espn_sync import _sanitize_period
 
     if ee.home_win_probability is None:
         return False
@@ -734,7 +735,6 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     Returns True if stat_model was computed and written.
     """
     from app.models.models import Event
-    from app.tasks.espn_sync import _sanitize_period
 
     has_game_progress = ee.clock or sport_key.startswith("baseball_")
     if ee.status != "in" or ee.home_score is None or ee.away_score is None or not has_game_progress:
@@ -838,7 +838,6 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
     Other sources (Odds API, StatPal) will find it later via the Event Registry.
     """
     from app.models.models import Event, ESPNSnapshot
-    from app.tasks.espn_sync import _sanitize_period
 
     matched_espn_ids = set()
     for event in our_events:
@@ -1371,7 +1370,7 @@ async def backfill_missing_scores(session, stats):
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Team
     from app.tasks.config import ESPN_SPORT_MAPPING
-    from app.tasks.espn_sync import get_event_name_variations, _sanitize_period
+    from app.tasks.espn_sync import get_event_name_variations
     from app.utils.name_normalization import names_match as _canonical_names_match
     from sqlalchemy.orm import selectinload
 
