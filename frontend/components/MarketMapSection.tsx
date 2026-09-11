@@ -843,7 +843,18 @@ export default function MarketMapSection({
       // has nothing honest to draw and the half does not render. A finished
       // game keeps its card: those ladders are settled by definition, and what
       // that card carries is the half's actual score, not a forecast.
-      if (!isDone && !ladderQuotesALine(cleaned)) continue;
+      //
+      // #5143: and the PRE-GAME tile is a forecast, so `isDone` must not carry
+      // it through. On SF@LAR (`/events/14632820`, Final 27-7) both halves
+      // printed `PRE-GAME 8` inside a game whose own card printed `PRE-GAME 41`
+      // — the same 8 twice, off two unrelated ladders. Both had settled to a
+      // step (1H `7.5→0.99 … 17.5→0.01`, 2H `7.5→0.99 … 21.5→0.01`), every rung
+      // is ~49 points from a coin flip, and the closest-to-50% reduce below
+      // therefore keeps the FIRST — the lowest threshold. 7.5 rounds to 8.
+      // The full-game card escapes only because it has a real line to fall back
+      // on (`overUnder ?? ouLine.threshold`); a half has none.
+      const quotesALine = ladderQuotesALine(cleaned);
+      if (!isDone && !quotesALine) continue;
 
       const ouLine = cleaned.reduce((best, t) =>
         Math.abs(t.overProbability - 0.5) < Math.abs(best.overProbability - 0.5) ? t : best
@@ -886,14 +897,20 @@ export default function MarketMapSection({
         }
       }
 
-      // Pre-game O/U
-      halfTotalMarkers.push({
-        key: "pre",
-        value: ouLine.threshold,
-        type: "pre",
-        label: "Pre-game",
-        displayValue: String(Math.round(ouLine.threshold)),
-      });
+      // Pre-game O/U — only where the ladder is actually quoting one. #5143:
+      // on a settled ladder `ouLine` is the lowest rung rather than a line, and
+      // a tile labelled "Pre-game" is a claim about what was expected. The card
+      // keeps its FINAL below, which is the half's real score and the whole
+      // reason #5013 let a finished game keep the card at all.
+      if (quotesALine) {
+        halfTotalMarkers.push({
+          key: "pre",
+          value: ouLine.threshold,
+          type: "pre",
+          label: "Pre-game",
+          displayValue: String(Math.round(ouLine.threshold)),
+        });
+      }
 
       // Final actual for completed games
       if (isDone && halfScores) {
