@@ -16,9 +16,14 @@ The backup is a full row snapshot: it records what each outcome WAS and cannot
 record that this script is what changed it. Restoring from the backup alone
 means asking "does the live row differ from its backup?", which is also true of
 a row the fixed producer has re-graded since — and the undo would then replace a
-correct second-half verdict with the final-minus-Q1 one this repair existed to
-remove. The manifest holds one row per SUCCESSFUL clear, so it is the only
-record of what this script actually did.
+correct half verdict with the first-quarter one this repair existed to remove.
+The manifest holds one row per SUCCESSFUL clear, so it is the only record of
+what this script actually did.
+
+#5236 folded the FIRST-half cohort into the repair; nothing here changed for it.
+The manifest is a list of outcome ids and this script writes back exactly the
+two columns the repair cleared, so which period a row's market asked about is
+not a fact the undo needs to know.
 
 THE COMPARE-AND-SWAP IS "STILL UNGRADED", not "still NULL is_winner".
 `resolution_source IS NULL` is the test, because that is the column every reader

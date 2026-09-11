@@ -364,3 +364,303 @@ def test_the_plan_groups_by_market_before_it_classifies():
     assert len(clear) + len(spare) + len(refuse) == 4
     assert {leg["outcome_name"] for leg in clear} == {
         "Golden State", "Boston", "Over 125.5 2H points scored"}
+
+
+# ===========================================================================
+# #5236 — the FIRST-half half of the same helper, four times the population
+#
+# `_get_halftime_score` has two callers. #5221 was opened on the 2H one, where
+# the bug reads as "final minus three quarters"; the 1H one hands the same
+# number back unsubtracted and reads as "the first quarter IS the first half".
+# Every fixture below is a production row, so a change of mind about the
+# arithmetic fails against the game that was actually played.
+# ===========================================================================
+
+#: KXNBA1HSPREAD-26MAR18PORIND. Indiana at home. Q1 is 33-37, so at the quarter
+#: Portland lead by 4 and no line above 5.5 has been crossed; the real first
+#: half is 62-79 and Portland lead by SEVENTEEN. A reader is told Portland
+#: failed to cover 5.5 in a half they won by 17.
+PORIND_1H_SPREAD = dict(
+    ticker="KXNBA1HSPREAD-26MAR18PORIND",
+    names=["Portland wins the 1H by over 5.5 points",
+           "Portland wins the 1H by over 8.5 points",
+           "Portland wins the 1H by over 2.5 points",
+           "Indiana wins the 1H by over 1.5 points"],
+    stored=[False, False, True, False],
+    home="Indiana Pacers", away="Portland Trail Blazers",
+    final=(119, 127), periods=([33, 29, 24, 33], [37, 42, 26, 22]),
+)
+
+#: KXNBA1HWINNER-26FEB19ORLSAC and KXNBA1HTOTAL-26FEB19ORLSAC — one game, two
+#: shapes. Sacramento at home. Q1 is 28-18 to Sacramento; the first half is
+#: 55-64 to Orlando, and 119 points were scored in it against 46 in the quarter.
+ORLSAC = dict(
+    home="Sacramento Kings", away="Orlando Magic",
+    final=(94, 131), periods=([28, 27, 29, 10], [18, 46, 38, 29]),
+)
+
+
+def test_a_first_half_spread_the_first_quarter_flattered_is_cleared():
+    """The #5236 ship: Portland won the half by 17 and we say they missed 5.5."""
+    clear, spare, refuse = repair.classify(_legs(**PORIND_1H_SPREAD))
+    assert {leg["outcome_name"] for leg in clear} == {
+        "Portland wins the 1H by over 5.5 points",
+        "Portland wins the 1H by over 8.5 points",
+    }
+    assert not refuse
+    # Over 2.5 was cleared by the quarter too, and Indiana never led — right for
+    # the wrong reason, and this repair does not un-say a right answer.
+    assert {leg["outcome_name"] for leg in spare} == {
+        "Portland wins the 1H by over 2.5 points",
+        "Indiana wins the 1H by over 1.5 points",
+    }
+
+
+def test_a_first_half_winner_names_the_team_that_led_at_the_quarter():
+    """Sacramento is served as the 1H winner of a half Orlando won 64-55."""
+    legs = _legs(ticker="KXNBA1HWINNER-26FEB19ORLSAC",
+                 names=["Orlando", "Sacramento", "Tie"],
+                 stored=[False, True, False], **ORLSAC)
+    clear, spare, refuse = repair.classify(legs)
+    assert {leg["outcome_name"] for leg in clear} == {"Orlando", "Sacramento"}
+    assert [leg["outcome_name"] for leg in spare] == ["Tie"]
+    assert not refuse
+
+
+def test_a_first_half_total_ladder_clears_only_the_lines_the_half_crosses():
+    """46 points in Q1, 119 in the half — the ladder splits at 119, not at 46.
+
+    The rungs above 119 are served `False` and that is CORRECT; a repair that
+    cleared the whole ladder because the market was mis-graded would un-say
+    three right answers to fix five.
+    """
+    lines = [105.5, 108.5, 111.5, 114.5, 117.5, 120.5, 123.5, 126.5]
+    legs = _legs(ticker="KXNBA1HTOTAL-26FEB19ORLSAC",
+                 names=[f"Over {x} 1H points scored" for x in lines],
+                 stored=[False] * len(lines), **ORLSAC)
+    clear, spare, refuse = repair.classify(legs)
+    assert [leg["outcome_name"] for leg in clear] == [
+        f"Over {x} 1H points scored" for x in (105.5, 108.5, 111.5, 114.5, 117.5)]
+    assert [leg["outcome_name"] for leg in spare] == [
+        f"Over {x} 1H points scored" for x in (120.5, 123.5, 126.5)]
+    assert not refuse
+
+
+def test_the_total_fixtures_are_not_vacuous():
+    """`_TOTAL_RE` needs the full grammar; a bare `Over 105.5` parses to None.
+
+    Three fixtures in this file's #5221 half were written short and passed
+    GREEN because an unparseable leg refuses the market, which looks like a
+    deliberate refusal. Assert the producer's own parser actually reads the
+    names above, so the ladder test is measuring grading and not parsing.
+    """
+    from app.tasks.backfill_winners import _total_outcome_is_winner
+
+    assert _total_outcome_is_winner("Over 105.5 1H points scored", 55, 64) is True
+    assert _total_outcome_is_winner("Over 126.5 1H points scored", 55, 64) is False
+    assert _total_outcome_is_winner("Over 105.5", 55, 64) is None
+
+
+def test_a_correct_first_half_verdict_is_never_cleared():
+    """The post-deploy hazard on the 1H path, which is the bigger population.
+
+    Once the fix is live it writes CORRECT 1H verdicts carrying the same
+    `game_score`, on the same sports, on events with the same missing plays.
+    Only the arithmetic separates them.
+    """
+    legs = _legs(ticker="KXNBA1HWINNER-26FEB19ORLSAC",
+                 names=["Orlando", "Sacramento", "Tie"],
+                 stored=[True, False, False], **ORLSAC)  # Orlando really won it
+    clear, spare, refuse = repair.classify(legs)
+    assert clear == []
+
+
+def test_a_two_half_sport_is_untouchable_on_the_first_half_path_too():
+    """1,998 correct NCAAB rows sit in the 1H cohort and none may be cleared.
+
+    Not by an exclusion list: `_first_half_period_count` is 1 for `ncaab` and
+    the bug WAS the constant 1, so the two readings are the same expression and
+    the admission test can never be satisfied. Measured control: 0 clears in
+    2,008 production NCAAB rows.
+    """
+    legs = _legs(ticker="KXNCAAMB1HSPREAD-26MAR07VTUVA",
+                 names=["Portland wins the 1H by over 5.5 points"],
+                 stored=[False],
+                 home="Indiana Pacers", away="Portland Trail Blazers",
+                 final=(119, 127), periods=([33, 29, 24, 33], [37, 42, 26, 22]),
+                 sport="basketball_ncaab")
+    clear, _, _ = repair.classify(legs)
+    assert clear == []
+
+
+@pytest.mark.parametrize("period", ["1h", "2h"])
+@pytest.mark.parametrize("periods,final", [
+    ([33, 29, 24, 33], 119),
+    ([28, 27, 29, 10], 94),
+    ([10, 0, 0, 0], 10),
+    ([7, 7, 3, 7, 6], 30),      # overtime
+    ([50, 41], 91),             # a genuine two-entry linescore
+])
+def test_the_bug_is_the_constant_one_and_that_is_a_property(period, periods, final):
+    """`buggy(x) == correct(x, n=1)` — the whole argument in one line.
+
+    This is why two-half sports are safe without an exclusion list, why the
+    same fix repairs both callers, and why the repair's 2H numbers did not move
+    when the scan widened. If this identity ever breaks, the docstring's
+    reasoning is wrong and every claim resting on it needs re-deriving.
+    """
+    assert (repair.buggy_period_score(period, periods, final)
+            == repair.correct_period_score(period, 1, periods, final))
+
+
+def test_the_buggy_reading_keeps_the_old_len_two_guard():
+    """The pre-fix code refused a one-entry linescore, so the reproduction must.
+
+    Admitting it would let the admission test claim this bug wrote a row it
+    never touched — and a wrongly-admitted row is a wrongly-cleared verdict.
+    """
+    assert repair.buggy_period_score("1h", [33], 119) is None
+    assert repair.buggy_period_score("2h", [33], 119) is None
+    assert repair.buggy_period_score("1h", [33, 29], 119) == 33
+
+
+def test_a_first_half_needs_no_final_score_and_a_second_half_does():
+    """A 1H score is the linescore's own prefix; a 2H one is a subtraction."""
+    assert repair.correct_period_score("1h", 2, [33, 29, 24, 33], None) == 62
+    assert repair.correct_period_score("2h", 2, [33, 29, 24, 33], None) is None
+    assert repair.correct_period_score("2h", 2, [33, 29, 24, 33], 119) == 57
+
+
+def test_a_short_linescore_cannot_answer_for_a_two_quarter_half():
+    """`>= n`, not `>= 2` — the old guard admitted one quarter as a whole half."""
+    assert repair.correct_period_score("1h", 2, [33], 119) is None
+    assert repair.correct_period_score("1h", 1, [33], 119) == 33
+
+
+# ---------------------------------------------------------------------------
+# which period a ticker asks about is the PRODUCER's call, not this script's
+# ---------------------------------------------------------------------------
+
+def test_the_period_is_decided_by_the_producers_own_classifier():
+    """`_PLAN_SQL`'s regex is a candidate net; `_ticker_period` is the authority.
+
+    Two readings of "is this a period market" is the drift `_ticker_period` was
+    extracted to end (#4923). Widening the SQL must not be able to change what
+    gets graded, so the Python side refuses anything the producer does not call
+    a reconstructable half — including a quarter, which has no reconstructor at
+    all (`_RECONSTRUCTABLE_PERIODS`).
+    """
+    for ticker in ("KXEPLH2H-26MAR18ARSCHE",     # head-to-head, a whole game
+                   "KXNBA1QSPREAD-26MAR18PORIND",  # a quarter, never rebuilt
+                   "KXMLBF5TOTAL-26MAR18BOSNYY"):  # first five innings
+        legs = _legs(ticker=ticker,
+                     names=["Portland wins the 1H by over 5.5 points"],
+                     stored=[False], **{k: v for k, v in
+                                        PORIND_1H_SPREAD.items()
+                                        if k in ("home", "away", "final",
+                                                 "periods")})
+        clear, spare, refuse = repair.classify(legs)
+        assert clear == [] and spare == [], ticker
+        assert "_ticker_period" in refuse[0]["refuse_reason"], ticker
+
+
+def test_the_candidate_regex_admits_both_halves_and_still_carves_out_h2h():
+    """Tested against the string the script actually ships, not a copy of it."""
+    found = re.search(r"~\* '([^']+)'", repair._PLAN_SQL)
+    assert found, "the candidate scan no longer has a period regex"
+    pattern = re.compile(found.group(1), re.IGNORECASE)
+
+    for series in ("KXNBA1HSPREAD", "KXNBA2HTOTAL", "KXNCAAMB1HWINNER",
+                   "KXNFL1HSPREAD", "KXNCAAF2HSPREAD"):
+        assert pattern.search(series), series
+    for series in ("KXEPLH2H", "KXMLSSPREAD", "KXNBAGAME"):
+        assert not pattern.search(series), series
+
+
+# ---------------------------------------------------------------------------
+# a refusal reported only as a count is where the next defect hides
+# ---------------------------------------------------------------------------
+
+def _every_refusal():
+    """One market down each refusal path in `classify`."""
+    base = {k: v for k, v in PORIND_1H_SPREAD.items()
+            if k in ("home", "away", "final", "periods")}
+    name = ["Portland wins the 1H by over 5.5 points"]
+    yield "not a half", _legs(ticker="KXEPLH2H-26MAR18ARSCHE", names=name,
+                              stored=[False], **base)
+    yield "no half for the sport", _legs(
+        ticker="KXNBA1HSPREAD-26MAR18PORIND", names=name, stored=[False],
+        **{**base, }, sport="icehockey_nhl")
+    yield "unreadable linescore", _legs(
+        ticker="KXNBA1HSPREAD-26MAR18PORIND", names=name, stored=[False],
+        **{**base, "periods": (None, None)})
+    yield "unreconstructable", _legs(
+        ticker="KXNBA1HSPREAD-26MAR18PORIND", names=name, stored=[False],
+        **{**base, "periods": ([33], [37])})
+    yield "no grader", _legs(
+        ticker="KXNBA1HSPREAD-26MAR18PORIND", names=["a name nothing parses"],
+        stored=[False], **base)
+    yield "a different defect", _legs(
+        ticker="KXNBA1HSPREAD-26MAR18PORIND", names=name, stored=[True], **base)
+
+
+def test_every_refusal_carries_a_stated_reason():
+    """The report groups by `refuse_reason`; an unstamped path reads as "unstated".
+
+    #5237 and #5243 were both found by reading that grouping rather than the
+    clears, so a refusal path that forgets to say why is a defect this script
+    would go on to bury once per run.
+    """
+    for label, legs in _every_refusal():
+        clear, spare, refuse = repair.classify(legs)
+        assert refuse, f"{label}: expected a refusal, got clear={clear} spare={spare}"
+        for leg in refuse:
+            assert leg.get("refuse_reason"), label
+            assert leg["refuse_reason"] != "unstated", label
+
+
+def test_the_refusal_paths_are_distinguishable_from_each_other():
+    """Six paths, six reasons — a shared string would merge two defects into one bucket."""
+    reasons = set()
+    for _label, legs in _every_refusal():
+        _c, _s, refuse = repair.classify(legs)
+        reasons.add(refuse[0]["refuse_reason"])
+    assert len(reasons) == 6, reasons
+
+
+def test_a_missing_linescore_refuses_rather_than_being_skipped():
+    """The #5243 specimen: six completed NFL events hold no box score at all.
+
+    They carry a served `game_score` verdict anyway. This repair cannot say
+    what wrote it, so it must neither clear it nor drop it silently.
+    """
+    legs = _legs(ticker="KXNFL1HSPREAD-26AUG06CARARI",
+                 names=["Arizona wins 1H by over 2.5"], stored=[True],
+                 home="Arizona Cardinals", away="Carolina Panthers",
+                 final=(33, 30), periods=(None, None),
+                 sport="americanfootball_nfl_preseason")
+    clear, spare, refuse = repair.classify(legs)
+    assert clear == [] and spare == []
+    assert "linescore" in refuse[0]["refuse_reason"]
+
+
+# ---------------------------------------------------------------------------
+# the floor moved with the cohort
+# ---------------------------------------------------------------------------
+
+def test_the_sanity_floor_would_catch_a_regression_to_the_2h_only_cohort():
+    """If the scan ever narrows back to `2H`, the plan is 248 and must REFUSE.
+
+    That is the failure mode the fold creates: a filter that still works
+    perfectly on a fifth of the population, and whose output looks like a
+    successful run. The floor is what turns it into a stop.
+    """
+    assert repair.SANITY_FLOOR > 248
+    verdict = repair.explain_small_plan(248, 0)
+    assert verdict.startswith("FILTER BROKE")
+
+
+def test_a_drained_backlog_still_reads_as_drained_at_the_new_floor():
+    """The discriminator must not become a false alarm just because the floor rose."""
+    verdict = repair.explain_small_plan(8, 1550)
+    assert verdict.startswith("ALREADY APPLIED")
