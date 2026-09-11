@@ -433,9 +433,20 @@ function PropFamilyBlock({
   const moved = collapsible ? listed.filter((i) => !isUnchanged(i)) : listed;
   const unchanged = collapsible ? listed.filter(isUnchanged) : [];
 
+  // #5241: when the fold takes the WHOLE family — the common case for a two-leg
+  // O/U family with no baseline on either leg, 27 of 110 families across three
+  // MLB pages — the header was left standing over nothing but the toggle. Two
+  // lines to say what one can, and D102's own cost model is "taking no real
+  // estate when closed". So the family name becomes the disclosure's own label
+  // ("Ozzie Albies: Home Runs O/U 0.5 (2)") instead of a caption above it.
+  // Nothing is dropped, nothing is promoted, and a family with any listed row
+  // renders exactly as before.
+  const foldIsWholeFamily =
+    moved.length === 0 && unchanged.length === 0 && folded.length > 0;
+
   return (
     <div>
-      {group.name && (
+      {group.name && !foldIsWholeFamily && (
         <div className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary mb-1">
           {group.name}
         </div>
@@ -453,6 +464,7 @@ function PropFamilyBlock({
         items={folded}
         renderRow={renderRow}
         className={moved.length > 0 || unchanged.length > 0 ? "mt-1.5" : ""}
+        familyName={foldIsWholeFamily ? group.name : null}
       />
     </div>
   );
@@ -471,16 +483,27 @@ function ScriptFold({
   items,
   renderRow,
   className = "",
+  familyName = null,
 }: {
   items: PropMark[];
   renderRow: (item: PropMark) => ReactNode;
   className?: string;
+  /** #5241: set only when the fold IS the whole family, so the family name is
+   *  the disclosure's label rather than a header standing over it. Null keeps
+   *  the neutral D111 wording for every partially-folded family. */
+  familyName?: string | null;
 }) {
   if (items.length === 0) return null;
   return (
     <details className={className}>
-      <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
-        {MORE_PROPS_LABEL} ({items.length})
+      <summary
+        className={`cursor-pointer select-none py-1 text-[11px] ${
+          familyName
+            ? "font-semibold uppercase tracking-wide text-text-secondary"
+            : "text-text-muted"
+        }`}
+      >
+        {familyName ?? MORE_PROPS_LABEL} ({items.length})
       </summary>
       <div className="mt-1 space-y-2">{items.map(renderRow)}</div>
     </details>
