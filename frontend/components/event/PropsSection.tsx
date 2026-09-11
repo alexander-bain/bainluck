@@ -46,7 +46,7 @@ import {
   type PropFamilyGroup,
 } from "@/lib/propFamily";
 import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
-import { renderedPercent } from "@/lib/renderedPercent";
+import { renderedPercent, renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 
 export type PropsState = "script" | "divergence" | "graded";
 
@@ -169,6 +169,60 @@ export function deriveState(eventStatus?: string | null): PropsState {
 function pct(p: number | null | undefined): string {
   const whole = renderedPercent(p);
   return whole == null ? "—" : `${whole}%`;
+}
+
+/**
+ * #5240 — THE SCRIPT printed 46% of its pairs summing to 101%.
+ *
+ * `OZZIE ALBIES: TOTAL BASES O/U 3.5` read `Under 92% / Over 9%` on
+ * `/events/15309636` at 390px: two complementary answers to one question, adding
+ * to more than certainty. Measured across three pre-match MLB games, **38 of 83**
+ * families carrying two `pregame_mark` values rendered a sum ≠ 100, every one +1.
+ *
+ * The legs are EXACT complements on the wire — `_build_props_script` writes the
+ * under leg as `1 - over`, so `0.915 + 0.085` is precisely 1.0. The pair was
+ * broken at render: `pct` rounds each leg independently, and both land on the
+ * same `.5` boundary, which `Math.round` takes upward. Marks are quoted on a
+ * half-percent grid, which is why the rate is so high rather than incidental.
+ *
+ * This is NOT gotcha #23 (independent binaries that legitimately sum past 100).
+ * These are two sides of one question, correct on the wire.
+ *
+ * `renderedPercent.ts` already models exactly this — "a surface prints a CARD and
+ * a card has a SUM" (#2060) — so this adds no fourth rounding rule; it routes the
+ * family through the contract's existing pair helper. `renderedOutcomeRowPercents`
+ * (not `renderedCardPercents`) because THE DIVERGENCE re-ranks rows by movement:
+ * the card helper rounds index 0 and derives index 1, so a re-sort would print a
+ * different pair for the same numbers. The duel helper anchors on the FAVOURITE
+ * whatever position it arrives in, so the printed pair cannot depend on the order.
+ *
+ * SCOPED TO THE SCRIPT, deliberately. `current` has the same defect (42 of 110
+ * pairs, 38%) but THE DIVERGENCE also prints a DELTA, and #2951's rule is that a
+ * printed delta must be the difference of the PRINTED levels. Correcting those
+ * levels without correcting the badge would make the row contradict itself — the
+ * defect #2951 exists to prevent — so that half is its own ship, not a wider grep.
+ * THE SCRIPT prints one number and no delta, so it has no such consumer.
+ *
+ * Only NAMED families pair. The unnamed group is the golf/combat concept page,
+ * where each mark is its own market and two rows standing together are two
+ * different questions — pairing those would invent a complement.
+ */
+const EMPTY_PAIR_PERCENTS: ReadonlyMap<PropMark["key"], number> = new Map();
+
+function scriptPairPercents(
+  groups: ReadonlyArray<{ name: string | null; items: PropMark[] }>,
+): Map<PropMark["key"], number> {
+  const byKey = new Map<PropMark["key"], number>();
+  for (const group of groups) {
+    if (group.name == null) continue;
+    const marked = group.items.filter((i) => i.pregame_mark != null);
+    if (marked.length !== 2) continue;
+    const [a, b] = renderedOutcomeRowPercents(marked.map((i) => i.pregame_mark));
+    if (a == null || b == null) continue;
+    byKey.set(marked[0].key, a);
+    byKey.set(marked[1].key, b);
+  }
+  return byKey;
 }
 
 /**
@@ -341,11 +395,22 @@ export default function PropsSection({
   const groups = groupByPropFamily(rows, (item) => item.key, matchup);
   const grouped = !(groups.length === 1 && groups[0].name === null);
 
+  // #5240: decided ONCE for the whole family, here, where both legs are in hand.
+  // The row is handed the finished number, not the pair — a row that had to find
+  // its own sibling would be a second place this rule lives.
+  const pairPercents =
+    activeState === "script" ? scriptPairPercents(groups) : EMPTY_PAIR_PERCENTS;
+
   const renderRow = (item: PropMark) =>
     isBinaryBarMark(item) ? (
       <BinaryBarRow key={item.key} item={item} state={activeState} />
     ) : (
-      <PropRow key={item.key} item={item} state={activeState} />
+      <PropRow
+        key={item.key}
+        item={item}
+        state={activeState}
+        pairedPercent={pairPercents.get(item.key)}
+      />
     );
 
   return (
@@ -491,7 +556,17 @@ function ScriptFold({
 // Rows — legacy contract, unchanged (game props + pending + no-price marks).
 // ---------------------------------------------------------------------------
 
-function PropRow({ item, state }: { item: PropMark; state: PropsState }) {
+function PropRow({
+  item,
+  state,
+  pairedPercent,
+}: {
+  item: PropMark;
+  state: PropsState;
+  /** #5240: this leg's whole percent, decided with its sibling. Absent for any
+   *  row that is not half of a two-leg family — those round as they always did. */
+  pairedPercent?: number;
+}) {
   // L2-123 / #199: a family with no honest price renders one quiet pending label
   // ("Opens after Round N" / "No market yet") in every state — never a fabricated
   // number, never a crowned arbitrary leader, never blank.
@@ -507,7 +582,9 @@ function PropRow({ item, state }: { item: PropMark; state: PropsState }) {
         <Pending note={pending} />
       ) : (
         <>
-          {rowState === "script" && <ScriptValue item={item} />}
+          {rowState === "script" && (
+            <ScriptValue item={item} pairedPercent={pairedPercent} />
+          )}
           {rowState === "divergence" && <DivergenceValue item={item} />}
           {rowState === "graded" && <GradedValue item={item} />}
         </>
@@ -523,7 +600,13 @@ function Pending({ note }: { note: string }) {
   );
 }
 
-function ScriptValue({ item }: { item: PropMark }) {
+function ScriptValue({
+  item,
+  pairedPercent,
+}: {
+  item: PropMark;
+  pairedPercent?: number;
+}) {
   if (item.pregame_mark == null) {
     // #195 seam: neither a pinned commence-time mark nor an opening price.
     //
@@ -543,7 +626,9 @@ function ScriptValue({ item }: { item: PropMark }) {
   }
   return (
     <span className="font-mono text-sm font-semibold text-text-primary tabular-nums shrink-0">
-      {pct(item.pregame_mark)}
+      {/* #5240: the family's decision when this row is half of a pair, this
+          row's own rounding when it is not. */}
+      {pairedPercent != null ? `${pairedPercent}%` : pct(item.pregame_mark)}
     </span>
   );
 }
