@@ -231,14 +231,23 @@ VIEW_MUTATIONS: list[dict] = [
     },
     {
         "id": "M10-ios-live-opening-line-left-bare",
-        "needle": """                        let openDuel = renderedDuelPercents(away: awayOpen, home: homeOpen)
-                        HStack(spacing: 4) {
-                            Text("Opened \\(formatProbability(awayOpen, renderedPercent: openDuel[0])) \\u{2013} \\(formatProbability(homeOpen, renderedPercent: openDuel[1]))")""",
-        "replacement": """                        HStack(spacing: 4) {
-                            Text("Opened \\(formatProbability(awayOpen)) \\u{2013} \\(formatProbability(homeOpen))")""",
+        # RE-TARGETED for #5271. The live caption now asks `DrawPricedWinner`
+        # whether it may print a pair at all before deciding one, so the duel
+        # call moved inside an `if let awayOpen = opened.away` and `homeOpen`
+        # became `opened.home`. The mutation is unchanged in substance — strip
+        # the overrides from the LIVE line and leave the settled one correct.
+        "needle": """                                let openDuel = renderedDuelPercents(
+                                    away: awayOpen, home: opened.home
+                                )
+                                Text("Opened \\(formatProbability(awayOpen, renderedPercent: openDuel[0])) \\u{2013} \\(formatProbability(opened.home, renderedPercent: openDuel[1]))")""",
+        "replacement": """                                Text("Opened \\(formatProbability(awayOpen)) \\u{2013} \\(formatProbability(opened.home))")""",
         "why": "HALF THE FIX. The settled branch's opening line stays fixed and the "
         "LIVE one regresses — the exact asymmetry a hand-edit produces, and "
-        "the reason the guard names both call sites instead of counting one.",
+        "the reason the guard names both call sites instead of counting one. "
+        "Since #5271 the two branches bind identical names, so the guard can no "
+        "longer tell them apart by spelling and counts two of each instead — "
+        "which is why this needle is the whole three-line block and not the "
+        "`Text(...)` line, whose text now appears twice.",
         "property": "both opening lines are covered, not just the settled one",
     },
 ]
