@@ -541,8 +541,29 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
     // captioning every rung `PRE-GAME` — otherwise the fix trades one false
     // pre-game line for four. Asserted here rather than in its own block because
     // the two lines are one change: neither is correct without the other.
+    //
+    // #4907 MOVED THIS GATE, IT DID NOT REMOVE IT. The caption decision needed a
+    // third clause (a rung the live score has already cleared says `HIT`, and a
+    // row cannot wear a verdict and a tense at once), so all three clauses now
+    // live in `MarketMapRail.spectrumRowCaption` where they can be asserted
+    // without rasterising the view. #4018's property is unchanged and is pinned
+    // at BOTH ends below — which is strictly stronger than the single inline
+    // match this replaces, because that one could not see a caller passing a
+    // literal.
     expect(code).toMatch(
-      /if canStillBeGraded \|\| isDone,\s*let caption = MarketMapRail\.spectrumRungCaption\(/,
+      /let caption = MarketMapRail\.spectrumRowCaption\(/,
+    );
+    expect(code).toMatch(/canStillBeGraded: canStillBeGraded/);
+    expect(code).toMatch(/isSettled: isDone/);
+    // KILLS THE MUTANT: `canStillBeGraded: true` at the call site, which would
+    // hand an abandoned game its chips back with the rule left intact.
+    expect(code).not.toMatch(/canStillBeGraded: (?:true|false)/);
+    // And the rule itself still refuses a game that can never be graded.
+    const rail = stripComments(
+      readFileSync(join(IOS_ROOT, "Utilities/MarketMapRail.swift"), "utf8"),
+    );
+    expect(rail).toMatch(
+      /func spectrumRowCaption\([^)]*\)[^{]*\{[\s\S]*?guard canStillBeGraded \|\| isSettled else \{ return nil \}/,
     );
     // Stated as a ban as well: the `&&` form cannot come back by itself, and a
     // positive-only assertion would still pass if someone added a second,
