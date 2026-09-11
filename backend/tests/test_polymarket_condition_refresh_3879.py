@@ -72,6 +72,7 @@ def _arm(
     writer=None,
     skips=None,
     marked=None,
+    imminent=None,
 ):
     """Point the rail at scripted collaborators. No DB, no network, no Redis."""
     import app.services.polymarket_api as poly
@@ -79,7 +80,7 @@ def _arm(
     async def _select(*, stale_hours, limit):
         if selector_raises is not None:
             raise selector_raises
-        return list(candidates or []), stale, served
+        return list(candidates or []), stale, served, set(imminent or ())
 
     monkeypatch.setattr(rail, "_select_stale_conditions", _select)
     monkeypatch.setattr(poly, "PolymarketAPIService", lambda *a, **k: service or _Service())
@@ -87,7 +88,13 @@ def _arm(
     # `marked is not None`, never `marked or []`: an empty list is falsy, and the
     # `or` form would quietly extend a throwaway list and report no marks at all.
     sink = marked if marked is not None else []
-    monkeypatch.setattr(rail, "_mark_attempted", lambda ids: sink.extend(ids))
+    # #4896: the real `_mark_attempted` takes the imminent set as a second
+    # argument so it can pick a TTL per market. The double records the ids the
+    # rail marked; which TTL each got is asserted directly against the real
+    # function in `TestAnImminentGameReentersEachBeat`.
+    monkeypatch.setattr(
+        rail, "_mark_attempted", lambda ids, imminent_ids=frozenset(): sink.extend(ids)
+    )
     if writer is not None:
         monkeypatch.setattr(tournament_rail, "_write_refreshed_prices", writer)
 
@@ -276,6 +283,94 @@ class TestOneBadBatchCannotWipeTheRun:
         assert verdict_for("polymarket_condition_refresh", stats).is_green is False
 
 
+class TestAnImminentGameReentersEachBeat:
+    """CERT-2546's required repair: an ordering key alone does not set a cadence.
+
+    #4896's first cut led the queue with imminent games and stopped there. But
+    leading only decides who goes first among rows that are ELIGIBLE, and both
+    eligibility gates were sized for the 12-hour producer window — the selector's
+    `stalest <` test and the attempt marker, which `_ATTEMPT_TTL_SECONDS` pins to
+    the same 12 hours. A game reached once therefore vanished for eleven of the
+    next twelve hourly beats and could be 12 hours stale at kickoff, against an
+    acceptance of under an hour.
+
+    Both halves are guarded here. The SQL half — a warm imminent row re-entering
+    while a warm ordinary row does not — is executed against real Postgres in
+    `tests/integration/test_polymarket_kickoff_ordering_pg.py`, because a CASE in
+    a WHERE clause is not something a string assertion can evaluate.
+    """
+
+    def test_imminent_game_reenters_on_the_next_hourly_beat(self):
+        """The eligibility window for a kickoff row is under the beat interval.
+
+        Asserted as the inequality rather than against the literal 45, because
+        the property that matters is "strictly less than an hour" — a bound set
+        to exactly 60 makes whether the next beat sees the row depend on which
+        of the two fires first.
+        """
+        assert rail.KICKOFF_STALE_MINUTES < 60, (
+            "a kickoff row must become eligible again INSIDE the hourly beat "
+            "interval, or leading the queue buys it one refresh and no cadence"
+        )
+        # And the marker cannot outlive that window, or the marker IS the
+        # window and the shorter one is decoration.
+        assert rail._KICKOFF_ATTEMPT_TTL_SECONDS <= rail.KICKOFF_STALE_MINUTES * 60
+        assert rail._KICKOFF_ATTEMPT_TTL_SECONDS < rail._ATTEMPT_TTL_SECONDS
+
+    def test_the_marker_ttl_is_chosen_per_market_not_per_call(self):
+        """A batch legitimately mixes the two classes — `_pack_batches` groups on
+        id count, not on urgency — so one TTL for the call would give whichever
+        class lost the coin toss the wrong cadence."""
+        seen: dict[int, int] = {}
+
+        class _Pipe:
+            def setex(self, key, ttl, _val):
+                seen[int(key.rsplit(":", 1)[1])] = ttl
+
+            def execute(self):
+                return None
+
+        class _RC:
+            def pipeline(self):
+                return _Pipe()
+
+        import app.tasks.redis_state as redis_state
+
+        original = redis_state.get_redis_client
+        redis_state.get_redis_client = lambda **kw: _RC()
+        try:
+            rail._mark_attempted([11, 22, 33], {22})
+        finally:
+            redis_state.get_redis_client = original
+
+        assert seen[22] == rail._KICKOFF_ATTEMPT_TTL_SECONDS, (
+            "the imminent market in a mixed batch did not get the short TTL"
+        )
+        assert seen[11] == rail._ATTEMPT_TTL_SECONDS
+        assert seen[33] == rail._ATTEMPT_TTL_SECONDS
+
+    def test_the_selector_gates_staleness_on_the_kickoff_class(self):
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert (
+            f"WHEN p.kickoff IS NOT NULL THEN make_interval(mins => "
+            f"{rail.KICKOFF_STALE_MINUTES})" in sql
+        ), "the staleness gate does not branch on the kickoff class"
+        assert "ELSE make_interval(hours => :stale_hours)" in sql, (
+            "the ordinary class must keep the 12-hour producer window"
+        )
+
+    def test_the_imminent_set_travels_to_the_marker(self):
+        """The flag is selected and carried, not recomputed downstream — two
+        answers to "is this row imminent" is how they come to disagree."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "(p.kickoff IS NOT NULL) AS imminent" in sql
+
+        import inspect
+
+        source = inspect.getsource(rail._refresh_stale_polymarket_conditions)
+        assert "_mark_attempted([mid for mid, _ in batch], imminent_ids)" in source
+
+
 class TestTheOrderingCannotStarveItsOwnTail:
     """A stalest-first ordering over a population it cannot always write is a
     fixed point waiting to happen: the rows that fail come back to the head of
@@ -426,9 +521,123 @@ class TestTheOrderingIsAcceptanceOneMadeMechanical:
 
     def test_priority_leads_and_the_stalest_of_a_class_is_next(self):
         """Within a class it is stalest-first, which is what stops a member of
-        that class being passed over twice for the same reason."""
+        that class being passed over twice for the same reason.
+
+        #4896 put one key in front of this and changed nothing else: the tail of
+        the ORDER BY is asserted whole, so a change to either surviving key
+        still fails here.
+        """
         sql = " ".join(rail._CANDIDATE_SQL.split())
-        assert "ORDER BY p.priority DESC, s.stalest ASC" in sql
+        assert "p.priority DESC, s.stalest ASC" in sql
+
+    def test_a_game_about_to_be_played_leads_even_that(self):
+        """#4896: staleness cannot express urgency.
+
+        A 90-day-old election price is always "staler" than a game starting in
+        two hours, so under a budget the game is a permanent loss. Measured
+        2026-09-10 20:5xZ: `Pegula vs Sabalenka` (on court 23:00Z) ranked 7,947
+        of 10,675 and `Rybakina vs Gauff` 10,667, both below `CANDIDATE_LIMIT`
+        3,600 — unselectable, not merely starved, because a Polymarket game
+        market carries tier 5 and a `resolution_date` a WEEK after the fixture
+        so neither arm of `priority` fires.
+
+        That the key SORTS correctly is proved against real Postgres in
+        `tests/integration/test_polymarket_kickoff_ordering_pg.py`; this is the
+        guard that stops it being deleted.
+        """
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert (
+            "ORDER BY p.kickoff ASC NULLS LAST, p.priority DESC, s.stalest ASC" in sql
+        )
+
+    def test_the_kickoff_key_reads_the_event_clock_not_the_market_one(self):
+        """The whole point: `resolution_date` is a padded venue window for a
+        game market, and the event row already knows when the game starts."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert " ".join(rail._KICKOFF_SQL.split()) in sql
+        assert "e.commence_time" in sql
+        assert "e.completed_at IS NULL" in sql
+        assert f"make_interval(hours => {rail.KICKOFF_LEAD_HOURS})" in sql
+        assert f"make_interval(hours => {rail.KICKOFF_TAIL_HOURS})" in sql
+
+    def test_the_events_join_cannot_shrink_the_pool(self):
+        """6,337 of the pool are futures with no event at all. An inner join
+        would drop every one of them and the census would report the loss as a
+        healthy smaller number."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "LEFT JOIN events e ON e.id = fm.event_id" in sql
+
+    def test_the_horizon_is_the_full_twenty_four_hours_the_issue_names(self):
+        """CERT-2549's guard: the lead may not be narrowed to fit the budget.
+
+        #4896's acceptance is "every event kicking off within 24h". A cut of
+        this ship set 12 because the 24h class costs 656 ids a beat of a
+        1,000-id `CONDITION_BUDGET` — which met the bar for the last half-day
+        and quietly dropped games 12-24h out back onto the ordinary 12-hour
+        window. Narrowing the horizon to fit the budget is amending the
+        acceptance, not meeting it, so the floor is asserted here and the far
+        edge is exercised behaviourally by
+        `test_game_twenty_hours_from_kickoff_reenters_on_the_next_hourly_beat`.
+        """
+        assert rail.KICKOFF_LEAD_HOURS >= 24, (
+            "#4896 requires every game inside 24h to hold the game cadence; a "
+            "shorter lead leaves the 12-24h band on the ordinary window"
+        )
+        assert 0 < rail.KICKOFF_TAIL_HOURS <= rail.KICKOFF_LEAD_HOURS
+
+    def test_the_kickoff_class_still_fits_inside_one_run(self):
+        """The cost of that horizon, stated as a bound rather than buried.
+
+        MEASURED on the live pool, production 2026-09-10 22:1xZ, per BEAT with
+        `KICKOFF_STALE_MINUTES` in force:
+
+             6h -> 130 markets / 341 ids   12h -> 137 / 348   24h -> 230 / 656
+
+        656 of 1,000 is two thirds of every run, leaving ~344 for #4827's
+        backlog rotation. That is the accepted trade — the rotation is a
+        transient catch-up and the kickoff class is permanent — but it only
+        holds while the class still FITS. The eligibility window is what sets
+        the class's per-beat size, so it is the thing guarded: shortening it
+        further multiplies the cost, and at some point the drain reaches zero
+        and this rail does nothing but re-read tonight's games.
+        """
+        assert rail.KICKOFF_STALE_MINUTES >= 45, (
+            "a shorter kickoff window re-admits the class more often than "
+            "hourly and eats the backlog drain; 45 min already re-admits it "
+            "on every beat, which is all the acceptance asks for"
+        )
+        assert rail.KICKOFF_STALE_MINUTES < 60
+
+    def test_the_budget_still_leaves_the_backlog_drain_a_real_share(self):
+        """The other half of the trade, and the half nothing else asserts.
+
+        `test_the_kickoff_class_still_fits_inside_one_run` pins the window that
+        sizes the class. It cannot see the other operand: `CONDITION_BUDGET` is
+        what the class is spent AGAINST, and lowering it starves #4827's drain
+        just as surely as widening the horizon does. At the measured 24h cost
+        the two numbers are 656 and 1,000, and nothing in this file would fire
+        if the budget were cut to 700 and the drain silently went to ~44 ids a
+        beat over a ~54,000-id population — which is the rail doing nothing but
+        re-reading tonight's games, the exact failure the blocked cut was
+        blocked for.
+
+        So the guard is on the DIFFERENCE, not on either constant alone.
+        """
+        # MEASURED, production 2026-09-10 22:1xZ, 24h lead, per beat. The upper
+        # end of the observed 539-656 range, because a floor argued from the
+        # cheap end of a range is not a floor.
+        KICKOFF_CLASS_IDS_MEASURED = 656
+        # What the drain needs to stay a drain rather than a rounding error.
+        DRAIN_FLOOR_IDS = 300
+
+        drain = rail.CONDITION_BUDGET - KICKOFF_CLASS_IDS_MEASURED
+        assert drain >= DRAIN_FLOOR_IDS, (
+            f"the kickoff class costs ~{KICKOFF_CLASS_IDS_MEASURED} ids a beat "
+            f"and CONDITION_BUDGET is {rail.CONDITION_BUDGET}, leaving {drain} "
+            f"for #4827's backlog rotation — below the {DRAIN_FLOOR_IDS} floor. "
+            "Either raise the budget or re-measure the class; do NOT narrow "
+            "KICKOFF_LEAD_HOURS, which is what CERT-2549 blocked."
+        )
 
     def test_the_budget_and_the_window_are_one_sizing(self):
         """1,200 x 12 = 14,400 against the 13,746 served markets measured on

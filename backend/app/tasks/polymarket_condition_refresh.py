@@ -253,6 +253,75 @@ CONDITION_BUDGET = 1_000
 #: 9,281 legs sit in the ≤2d bucket (#3879's own table).
 IMMINENT_DAYS = 2
 
+#: How far ahead of a linked event's own START this rail treats its markets as
+#: the most urgent thing in the pool. See :data:`_KICKOFF_SQL` for why the
+#: market's ``resolution_date`` cannot answer this question.
+#:
+#: 24 BECAUSE #4896's ACCEPTANCE SAYS 24 — "for every event kicking off within
+#: 24h ... no ungraded leg older than the game's own refresh cadence (target
+#: <1h, matching Kalshi)". A previous cut of this constant read 12, which met
+#: that bar for the last half-day before kickoff and left games 12-24h out on
+#: the ordinary 12-hour window. CERT-2549 blocked it, correctly: narrowing the
+#: horizon to fit the budget is amending the acceptance, not meeting it.
+#:
+#: WHAT IT COSTS, MEASURED rather than assumed, production 2026-09-10 22:1xZ,
+#: with :data:`KICKOFF_STALE_MINUTES` in force — STEADY-STATE per-beat cost,
+#: what the class spends on EVERY beat:
+#:
+#:      lead    markets   ids/beat   % of CONDITION_BUDGET   left for the drain
+#:       6 h      130        341            34.1%                   659
+#:      12 h      137        348            34.8%                   652
+#:      24 h      230        656            65.6%                   344
+#:
+#: THE ABSOLUTE FIGURE MOVES and is quoted as a range rather than a point: the
+#: same 24h class read 656 ids at 22:1xZ and 539 at 22:2xZ, because games leave
+#: through :data:`KICKOFF_TAIL_HOURS` as the window slides. The lead comparison
+#: above is a single-moment comparison, which is what makes it a fair one; the
+#: standing cost is ~540-660 ids a beat.
+#:
+#: So this is not free and the number is stated rather than buried: the kickoff
+#: class takes roughly two thirds of each run and #4827's backlog rotation keeps
+#: the remaining ~340-460 ids an hour. That rotation is a TRANSIENT catch-up over a
+#: ~54,000-id population while this class is permanent, so the trade is "the
+#: backlog drains slower for a few days, and no game a reader can open is ever
+#: stale". The drain rate is its own follow-up; it is not solved by shortening
+#: the horizon, which is what the blocked cut tried.
+KICKOFF_LEAD_HOURS = 24
+
+#: How long AFTER its start an uncompleted event stays in that class. A game in
+#: progress is the single most-read blend on the site, and ``completed_at`` is
+#: the primary exit — this bound only stops a row whose ``completed_at`` never
+#: arrives from claiming the head of the queue forever, the same fixed point
+#: :data:`_ATTEMPT_TTL_SECONDS` exists to break.
+KICKOFF_TAIL_HOURS = 6
+
+#: How stale a KICKOFF row may get before this rail re-reads it — the whole
+#: second half of #4896, and CERT-2546's required repair.
+#:
+#: 🔴 AN ORDERING KEY ALONE DOES NOT SET A CADENCE, and the first cut of #4896
+#: shipped believing it did. Leading the queue only decides who goes first among
+#: the rows that are ELIGIBLE, and both eligibility gates were sized for the
+#: 12-hour producer window: the selector's own ``stalest <`` test, and the
+#: attempt marker, which :data:`_ATTEMPT_TTL_SECONDS` pins to the same 12 hours.
+#: So a game reached once left the pool for eleven of the next twelve hourly
+#: beats and could be up to 12 hours stale at kickoff — against #4896's stated
+#: acceptance of under an hour, matching what Kalshi already does on the same
+#: events. Ordering fixed WHICH row is taken and left WHEN untouched.
+#:
+#: 45 minutes rather than 60 because the bound has to be strictly under the beat
+#: interval: at exactly 60 a row refreshed at :08 becomes eligible at :08, and
+#: whether the next beat sees it depends on which of the two fires first. 45
+#: leaves a quarter-hour of margin and still means every hourly beat re-admits
+#: the whole class.
+#:
+#: WHAT IT COSTS, MEASURED rather than assumed: the kickoff class is 72 markets
+#: / 277 condition ids, so re-admitting it EVERY beat spends 277 of the 1,000-id
+#: :data:`CONDITION_BUDGET` and leaves ~723 for the backlog drain. That is the
+#: same figure the ordering key was sized against — the class was always meant
+#: to be swept whole every hour, and until this constant existed it simply was
+#: not.
+KICKOFF_STALE_MINUTES = 45
+
 #: Wall budget for the fetch/write loop, checked BETWEEN batches so a run always
 #: stops on a whole market (see the unit-of-work note in the module docstring).
 #: Well under the task's 300s soft limit, leaving room for the selector.
@@ -273,6 +342,20 @@ _ATTEMPT_KEY_PREFIX = "bainluck:polymarket_condition_refresh:attempted:"
 #: not that rail's: the two sweep overlapping rows on different budgets, and a
 #: shared marker would silently make each one's coverage depend on the other's.
 _ATTEMPT_TTL_SECONDS = SERVED_STALE_HOURS * 3600
+
+#: The same marker for a kickoff row, and it tracks
+#: :data:`KICKOFF_STALE_MINUTES` for the same reason the constant above tracks
+#: :data:`SERVED_STALE_HOURS`: a marker that outlives its own eligibility window
+#: IS the eligibility window, and then the shorter one is decoration. Both
+#: gates have to agree or the stricter one silently wins — which is exactly the
+#: half-leg gap #4840 closed one level down, in the same file.
+#:
+#: The starvation argument the marker exists for still holds, and is bounded
+#: rather than argued away: an imminent market the venue will not price does
+#: re-present every beat, but the whole class is 277 ids against a 1,000-id
+#: budget, so the worst case costs a quarter of a run and cannot hold the tail.
+#: Retrying a game that is about to start is the correct trade at that price.
+_KICKOFF_ATTEMPT_TTL_SECONDS = KICKOFF_STALE_MINUTES * 60
 
 
 def _attempt_key(market_id: int) -> str:
@@ -338,10 +421,43 @@ _ADDRESSABLE_LEG_SQL = f"""
               )
 """
 
+#: THE EVENT'S OWN CLOCK, because the market's does not answer this question.
+#:
+#: ``priority`` above asks the MARKET when it resolves. For a Polymarket game
+#: market that field is a padded venue window, not the fixture: measured
+#: 2026-09-10 20:5xZ, ``Pegula vs Sabalenka`` (US Open semi-final, court
+#: 23:00Z that night) carried ``resolution_date`` 2026-09-17, ``Rybakina vs
+#: Gauff`` (02:00Z) carried 2026-09-18, and ``Rockies @ Yankees`` (23:05Z)
+#: carried 2026-09-16 — all a full WEEK late, all ``market_tier`` 5, so every
+#: arm of ``priority`` read false for a game about to be played. They ranked
+#: 7,947 / 10,667 / 7,670 of 10,675 stale candidates, below ``CANDIDATE_LIMIT``
+#: 3,600 — not merely starved but never selectable at all. The event row knew
+#: the right time the whole while.
+#:
+#: So the key is the LINKED EVENT's ``commence_time`` and it is NULL for every
+#: row that is not a game about to be played, which is what lets it sit in front
+#: of the existing ordering without disturbing it: ``ASC NULLS LAST`` puts the
+#: 73 imminent markets first, soonest kickoff first, and ties every other row at
+#: NULL so they fall through to ``priority DESC, stalest ASC`` exactly as before.
+#:
+#: ``completed_at IS NULL`` is the primary exit and :data:`KICKOFF_TAIL_HOURS`
+#: the backstop. A market with no event (``event_id IS NULL`` — 6,337 of the
+#: pool, the futures) LEFT JOINs to NULL and is untouched by this.
+_KICKOFF_SQL = f"""
+               CASE
+                 WHEN e.commence_time IS NOT NULL
+                  AND e.completed_at IS NULL
+                  AND e.commence_time <= NOW() + make_interval(hours => {KICKOFF_LEAD_HOURS})
+                  AND e.commence_time >  NOW() - make_interval(hours => {KICKOFF_TAIL_HOURS})
+                 THEN e.commence_time
+               END
+"""
+
 _CANDIDATE_SQL = f"""
     WITH pool AS MATERIALIZED (
         SELECT fm.id,
                fm.external_id,
+               {_KICKOFF_SQL.strip()} AS kickoff,
                (
                     fm.market_tier IN (1, 2)
                  OR (
@@ -350,6 +466,7 @@ _CANDIDATE_SQL = f"""
                     )
                ) AS priority
           FROM futures_markets fm
+          LEFT JOIN events e ON e.id = fm.event_id
          WHERE fm.source = 'polymarket'
            AND {_ADDRESSABLE_LEG_SQL.strip()}
            AND {LIVE_MARKET_SQL}
@@ -358,7 +475,8 @@ _CANDIDATE_SQL = f"""
            s.request_ids,
            p.priority,
            COUNT(*) OVER () AS stale_markets,
-           (SELECT COUNT(*) FROM pool) AS served_markets
+           (SELECT COUNT(*) FROM pool) AS served_markets,
+           (p.kickoff IS NOT NULL) AS imminent
       FROM pool p
       JOIN LATERAL (
             SELECT MIN(COALESCE(fo.last_updated, TIMESTAMP WITH TIME ZONE 'epoch')) AS stalest,
@@ -372,9 +490,13 @@ _CANDIDATE_SQL = f"""
              WHERE fo.market_id = p.id
                AND {writable_leg_sql("fo")}
            ) s ON TRUE
-     WHERE s.stalest < NOW() - make_interval(hours => :stale_hours)
+     WHERE s.stalest < NOW() - CASE
+                                 WHEN p.kickoff IS NOT NULL
+                                 THEN make_interval(mins => {KICKOFF_STALE_MINUTES})
+                                 ELSE make_interval(hours => :stale_hours)
+                               END
        AND COALESCE(ARRAY_LENGTH(s.request_ids, 1), 0) > 0
-     ORDER BY p.priority DESC, s.stalest ASC
+     ORDER BY p.kickoff ASC NULLS LAST, p.priority DESC, s.stalest ASC
      LIMIT :limit
 """
 
@@ -407,17 +529,30 @@ def _load_attempt_skips(market_ids: list[int]) -> set[int]:
     return {mid for mid, val in zip(market_ids, values) if val}
 
 
-def _mark_attempted(market_ids: list[int]) -> None:
-    """Record an ATTEMPT, not a success — see ``_ATTEMPT_TTL_SECONDS``."""
+def _mark_attempted(market_ids: list[int], imminent: set[int] | None = None) -> None:
+    """Record an ATTEMPT, not a success — see ``_ATTEMPT_TTL_SECONDS``.
+
+    #4896 / CERT-2546: a kickoff row's marker expires on
+    :data:`_KICKOFF_ATTEMPT_TTL_SECONDS` instead, so it is eligible again on the
+    next hourly beat rather than the next half-day. The TTL is chosen per market
+    rather than per call because one batch legitimately mixes the two classes —
+    ``_pack_batches`` groups on id count, not on urgency.
+    """
     if not market_ids:
         return
+    imminent = imminent or set()
     try:
         from app.tasks.redis_state import get_redis_client
 
         rc = get_redis_client(socket_timeout=2.0, socket_connect_timeout=2.0)
         pipe = rc.pipeline()
         for mid in market_ids:
-            pipe.setex(_attempt_key(mid), _ATTEMPT_TTL_SECONDS, "1")
+            ttl = (
+                _KICKOFF_ATTEMPT_TTL_SECONDS
+                if mid in imminent
+                else _ATTEMPT_TTL_SECONDS
+            )
+            pipe.setex(_attempt_key(mid), ttl, "1")
         pipe.execute()
     except Exception:  # noqa: BLE001
         pass
@@ -460,12 +595,28 @@ def _pack_batches(
 
 async def _select_stale_conditions(
     *, stale_hours: int, limit: int
-) -> tuple[list[tuple[int, list[str]]], int, int]:
-    """``([(market_id, [condition_id, …]), …], stale_markets, served_markets)``.
+) -> tuple[list[tuple[int, list[str]]], int, int, set[int]]:
+    """``([(market_id, [cid, …]), …], stale_markets, served_markets, imminent)``.
 
-    Ordered priority-first and then stalest-first, which is the whole starvation
-    argument: within a class the row that has waited longest is always next, so
-    no member of a class can be passed over twice for the same reason.
+    #4896 / CERT-2546: the fourth element is the set of KICKOFF market ids, and
+    it travels because the attempt marker needs it — a kickoff row's marker must
+    expire inside its own 45-minute window or the marker becomes the eligibility
+    gate and the shorter window is decoration. Returned as a set rather than
+    folded into the tuples so ``_pack_batches`` and the admission loop keep the
+    two-element shape #4827 gave them.
+
+    Ordered kickoff-first, then priority-first, then stalest-first, which is the
+    whole starvation argument: within a class the row that has waited longest is
+    always next, so no member of a class can be passed over twice for the same
+    reason.
+
+    #4896 put the kickoff key in front of that, and it is the only key here that
+    is not about waiting. Staleness cannot express urgency — a 90-day-old
+    election price is always "staler" than a game starting in two hours, and
+    under a budget that is a permanent loss for the game. The kickoff key is
+    NULL for everything that is not a linked event about to be played
+    (:data:`_KICKOFF_SQL`), so it re-orders 73 rows and leaves the argument
+    above governing the other ~10,600.
 
     #4827: the second element is a LIST because a ladder is addressed by its
     legs. It holds exactly one id for every row this rail swept before the
@@ -487,7 +638,7 @@ async def _select_stale_conditions(
         # the census must not silently read zero on a healthy run. Asked
         # separately only in this branch, where it is one cheap scan a run that
         # is otherwise doing no work at all.
-        return [], 0, await _served_market_count()
+        return [], 0, await _served_market_count(), set()
     return (
         # `list(r[1] or ())` — asyncpg hands an ARRAY back as a list already, but
         # the copy is what stops a driver-owned buffer travelling into the batch
@@ -496,6 +647,7 @@ async def _select_stale_conditions(
         [(r[0], list(r[1] or ())) for r in rows],
         int(rows[0][3]),
         int(rows[0][4]),
+        {r[0] for r in rows if r[5]},
     )
 
 
@@ -573,7 +725,12 @@ async def _refresh_stale_polymarket_conditions(
     }
 
     try:
-        candidates, stale_markets, served_markets = await _select_stale_conditions(
+        (
+            candidates,
+            stale_markets,
+            served_markets,
+            imminent_ids,
+        ) = await _select_stale_conditions(
             stale_hours=stale_hours, limit=min(CANDIDATE_LIMIT, max(budget, 1) * 3)
         )
     # (This comment is load bearing for `scan_mutation_residue.py` Pass B —
@@ -661,7 +818,7 @@ async def _refresh_stale_polymarket_conditions(
         # re-present at the head of a stalest-first ordering on the next run and
         # hold the tail behind them forever. An ATTEMPT is recorded because it
         # was attempted.
-        _mark_attempted([mid for mid, _ in batch])
+        _mark_attempted([mid for mid, _ in batch], imminent_ids)
         try:
             markets = await service.get_markets_by_conditions(
                 conditions,

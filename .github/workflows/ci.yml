@@ -1270,6 +1270,30 @@ jobs:
             exit 1
           fi
 
+      - name: "#4896 A game about to be played leads the refresh queue (real Postgres)"
+        # The unit file asserts the ORDER BY as a string, which stops the key
+        # being deleted but cannot tell you whether it SORTS the way the
+        # sentence claims. Three parts of it are evaluated only by a server: a
+        # LEFT JOIN that must not multiply the pool, a CASE that must return
+        # NULL for every row that is not a game, and `ASC NULLS LAST`, whose
+        # whole job is to leave ~10,600 rows where they were. A `NULLS FIRST`
+        # typo would sort every futures market ahead of every game and no row
+        # count would notice.
+        #
+        # The file carries its own red control: the same statement with the one
+        # key removed, which must put the 90-day-old futures market first. If
+        # that control stops reproducing the defect the gate is decoration, and
+        # it fails rather than passing quietly.
+        # Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_kickoff_ordering_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/kickofforder4896.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kickofforder4896.txt; then
+            echo "::error::#4896 kickoff-ordering gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2927 containers migration round trip (real Postgres)"
         # Migration `containers_phase1`, authorised by Alex's verbatim "go 2927"
         # — a go whose terms are "additive, nothing altered, nothing dropped,
