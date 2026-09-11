@@ -13,6 +13,7 @@ from sqlalchemy import select, update as _sql_update
 # live/048 — the state ladder's two doors (EVENT-GRAPH-DOCTRINE §R). Safe to
 # import here: `event_completion` imports nothing but `datetime`.
 from app.utils.event_completion import authority_may_settle, play_resumes
+from app.utils.score_observation import stamp_score_observation
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import (
     select_authorized_espn_candidate as _select_authorized_espn_candidate,
@@ -316,10 +317,20 @@ def match_event_to_espn(event, espn_events, espn_by_id, claimed_espn_ids, espn_n
 # Live event field updates
 # ---------------------------------------------------------------------------
 
-async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, stats):
+async def update_event_fields_from_espn(
+    session, event, ee, claimed_espn_ids, stats, *, observed_at=None,
+):
     """Update clock, scores, broadcast, importance, and commence_time from ESPN.
 
     Returns True if any field changed.
+
+    `observed_at` is the clock of the pass that read this ESPN payload, used to
+    stamp `Event.score_observed_at` (#4571). It is the CALLER's clock, not
+    `now()` taken here, because this function runs once per event across a
+    batch and a per-row clock would report each row as freshly observed at the
+    moment we happened to process it. Omitted → no stamp is written and the
+    score's age stays unknown, which is the pre-#4571 behaviour; the live call
+    site passes it, and `test_score_observation_4571.py` pins that it does.
     """
     from app.models.models import Event
 
@@ -375,6 +386,23 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
         event.away_score = ee.away_score
         changed = True
         score_changed = True
+
+    # THE OBSERVATION STAMP, OUTSIDE BOTH GUARDS ABOVE (#4571).
+    #
+    # Not `if score_changed` — that would answer "when did the score last
+    # move", and the row that most needs an age is the 0-0 game this writer
+    # confirms every 60s and never changes. #4571's specimen is exactly that
+    # row. Gated only on ESPN having stated a score at all, which is the
+    # same condition the writes are gated on.
+    #
+    # `changed` is deliberately NOT set: the stamp persists anyway
+    # (`get_task_session` commits on exit, so the ORM flushes this dirty
+    # attribute), and flipping `changed` here would report every live row as
+    # updated on every pass and rewrite the meaning of `fields_changed` for
+    # every counter downstream of it.
+    if ee.home_score is not None or ee.away_score is not None:
+        stamp_score_observation(event, source="espn", observed_at=observed_at)
+
     if score_changed and ee.home_score is not None and ee.away_score is not None:
         from app.models.models import ScoreSnapshot
         session.add(ScoreSnapshot(
@@ -1352,7 +1380,8 @@ async def backfill_missing_scores(session, stats):
             return False
         return any(_canonical_names_match(name, espn_name) for name in our_names if name)
 
-    score_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    _observed_at = datetime.now(timezone.utc)
+    score_cutoff = _observed_at - timedelta(days=7)
     missing_scores_result = await session.execute(
         select(Event)
         .options(selectinload(Event.sport))
@@ -1447,6 +1476,11 @@ async def backfill_missing_scores(session, stats):
                         if ee.home_score is not None:
                             ev.home_score = ee.home_score
                             ev.away_score = ee.away_score
+                            # This rail fills rows that had NO score at all, so
+                            # the stamp is the first one they carry (#4571).
+                            stamp_score_observation(
+                                ev, source="espn", observed_at=_observed_at,
+                            )
                             if ee.status_detail:
                                 ev.period = ee.status_detail
                             # #2693 CERT-784: `not ev.espn_id` asks whether THIS

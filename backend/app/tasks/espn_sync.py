@@ -22,6 +22,10 @@ from app.utils.event_completion import (
     AUTHORITY_BACKFILL_STATUSES,
 )
 from app.utils.team_binding_invariant import accept_team_binding
+from app.utils.score_observation import (
+    clear_score_observation,
+    stamp_score_observation,
+)
 from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
     names_match as _canonical_names_match,
@@ -907,6 +911,13 @@ async def _settle_authority_stragglers(session, espn, now, stats, update_fields_
         # for every other sport (gotcha #42).
         try:
             board = await espn.get_scoreboard(sport_key, date=board_date)
+            # The observation clock for every score THIS board writes (#4571).
+            # One value per payload, taken at the read, for the same reason the
+            # ordinary pass takes one: every row settled below came off this
+            # single response, so stamping per row would call the last straggler
+            # fresher than the first. Each group is its own fetch, so each group
+            # gets its own stamp rather than sharing the pass-level `now`.
+            board_observed_at = datetime.now(timezone.utc)
         except Exception as e:
             stats["errors"].append(
                 f"straggler_fetch_{sport_key}_{board_date}: {str(e)}"
@@ -934,7 +945,8 @@ async def _settle_authority_stragglers(session, espn, now, stats, update_fields_
             was = event.status
             try:
                 await update_fields_fn(
-                    session, event, matched, claimed_espn_ids, stats
+                    session, event, matched, claimed_espn_ids, stats,
+                    observed_at=board_observed_at,
                 )
             except Exception as e:
                 stats["errors"].append(f"straggler_update_{event.id}: {str(e)}")
@@ -1023,6 +1035,11 @@ async def _process_live_sport(
     """
     from app.models.models import Event, Team
     from sqlalchemy import and_, or_
+
+    # The observation clock for every score this pass writes (#4571). Taken
+    # once, here, because `espn_events` was already fetched before this
+    # function was called — every row below is being read off that one payload.
+    espn_observed_at = datetime.now(timezone.utc)
 
     events_result = await session.execute(
         select(Event)
@@ -1128,8 +1145,15 @@ async def _process_live_sport(
             session, home_team, away_team, ee, sport_key, identity_cache,
         )
 
-        # Update clock, scores, broadcast, importance, commence_time
-        fields_changed = await update_fields_fn(session, event, ee, claimed_espn_ids, stats)
+        # Update clock, scores, broadcast, importance, commence_time.
+        # `observed_at` is THIS PASS's clock — the moment we read ESPN's
+        # scoreboard — and it is one value for the whole batch on purpose
+        # (#4571): taking `now()` per row would stamp the last event in a slow
+        # pass as fresher than the first, when both came off the same payload.
+        fields_changed = await update_fields_fn(
+            session, event, ee, claimed_espn_ids, stats,
+            observed_at=espn_observed_at,
+        )
         if fields_changed:
             changed = True
 
@@ -1695,7 +1719,11 @@ async def _backfill_box_scores(
                         scoring_plays = context.get("scoring_plays", [])
                         scores = context.get("scores", {})
 
-                        now_str = datetime.now(timezone.utc).isoformat()
+                        # One clock, two renderings — the box-score payload
+                        # wants the string, the #4571 stamp wants the datetime.
+                        # Derived rather than re-read so they can never disagree.
+                        _observed_at = datetime.now(timezone.utc)
+                        now_str = _observed_at.isoformat()
 
                         _fix = _corrected_final_score(
                             event.home_score,
@@ -1706,6 +1734,12 @@ async def _backfill_box_scores(
                         )
                         if _fix is not None:
                             event.home_score, event.away_score = _fix
+                            # #4571 — a corrected FINAL score is still a score
+                            # this pass observed, and a settled row that shows
+                            # one should be able to say when it was read.
+                            stamp_score_observation(
+                                event, source="espn", observed_at=_observed_at,
+                            )
                             stats["scores_backfilled"] += 1
 
                         if box_score or scoring_plays:
@@ -2376,6 +2410,9 @@ async def _transition_event_statuses_impl() -> dict:
                 event.status = "live"
             event.home_score = None
             event.away_score = None
+            # The stamp describes the score, so it goes with it (#4571) — a
+            # surviving stamp is a fresh-looking age over a NULL.
+            clear_score_observation(event)
             stats["repaired_bogus_completed"] += 1
 
         # --- Repair: SETTLED with a FUTURE commence_time → un-settle ---
@@ -2407,6 +2444,7 @@ async def _transition_event_statuses_impl() -> dict:
                 event.completed_at = None
                 event.home_score = None
                 event.away_score = None
+                clear_score_observation(event)  # #4571, as above
                 stats["unsettled_future_commence"] += 1
 
         # `held_derived_start` is in the trigger and in the message: a guard that
@@ -2991,6 +3029,15 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                             before[0], before[1],
                             event.home_score, event.away_score,
                         )
+
+                # THE SET SCORE'S OWN AGE (#4571), on the same unconditional
+                # footing as the games line below and for the same stated
+                # reason: `reason is None` means the authority READ this
+                # match's score, and the rows it agrees with produce no
+                # `changes` at all — they are also the rows whose age a page
+                # can otherwise never state.
+                if score["reason"] is None:
+                    stamp_score_observation(event, source="espn", observed_at=now)
 
                 # ═══ AND THE GAMES UNDER IT (live/073) ═══
                 #
