@@ -42,6 +42,7 @@
  */
 
 import { formatLinescore } from "./marketMapUtils";
+import { teamShortNames } from "./teamShortName";
 import {
   resultScoreLine,
   type ScoreLineKind,
@@ -125,11 +126,11 @@ function normalizeName(name: string): string {
 /**
  * The surname a PERSON is known by — `Carballes Baena`, not `Baena`.
  *
- * Deliberately different from the `split(" ").pop()` the hero applies to a
- * TEAM, and the difference is not cosmetic in either direction: `.pop()` on a
- * two-part Spanish surname drops half of it, and `slice(1)` on "Los Angeles
- * Lakers" yields "Angeles Lakers". Each rule is right for its own kind of
- * competitor, so the resolver picks by authority rather than picking one and
+ * Deliberately different from the `teamShortNames` rule rung 1 applies to a
+ * TEAM, and the difference is not cosmetic in either direction: a last-word
+ * rule on a two-part Spanish surname drops half of it, and `slice(1)` on "Los
+ * Angeles Lakers" yields "Angeles Lakers". Each rule is right for its own kind
+ * of competitor, so the resolver picks by authority rather than picking one and
  * living with the wrong half of the cases.
  */
 function surnameOf(displayName: string): string {
@@ -300,8 +301,34 @@ export function resolveEventOutcome(
       sets && sets.length > 0
         ? formatLinescore(sets, { reversed: winnerSide === "away" })
         : null;
+    // #5135: the name is SHORTENED BY THE SHARED HELPER, not by a fourth copy
+    // of the last-word rule.
+    //
+    // This slot carried a bare `team.split(" ").pop()`, so a settled MLS page
+    // read "FC Won" — the club-type token, which names nobody. #4250 fixed that
+    // class in `teamShortName` and this call site never asked it; the guard
+    // existed three files away for exactly this input. Measured on production
+    // 2026-09-11 over all 622 settled-and-decided events of the previous 7
+    // days: 84 (13.5%) printed a token that is not a name — `FC` 35, `City` 9,
+    // `United` 8, `IF`, `Town`, `II`, `05`, `SK` — every one of them soccer.
+    //
+    // The PAIR form rather than `teamShortName` alone, because both competitors
+    // are already in hand and the pair sees the one thing a single side cannot:
+    // two teams shortening to the SAME word. The same population holds LSU
+    // Tigers v Clemson Tigers and Dinamo Moscow v Spartak Moscow, which one at
+    // a time crown "Tigers" and "Moscow" — a hero naming a winner that is
+    // equally the loser. That is the mascot case `teamShortNames` documents as
+    // the one college fixtures would eventually produce; they have.
+    //
+    // No abbreviation is passed because the event row carries none here. That
+    // is the helper's RESCUE branch only, and it costs nothing when it never
+    // fires: every other branch already returns a name the team is called.
+    const { home: homeShort, away: awayShort } = teamShortNames(
+      { name: homeTeam },
+      { name: awayTeam }
+    );
     return {
-      winnerName: team.split(" ").pop() || team,
+      winnerName: (winnerSide === "home" ? homeShort : awayShort) || team,
       winnerSide,
       resultLine: line,
       resultExplanation: line ? `${line}, winner's games first.` : null,

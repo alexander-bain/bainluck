@@ -423,3 +423,151 @@ describe("#3619 — the settled hero's pregame line has no grammatical number", 
     expect(text).not.toContain("%");
   });
 });
+
+/**
+ * #5135 — THE SETTLED HERO SAYS "FC WON".
+ *
+ * authority/125's mystery-shop of `/events/15298474` (Vancouver Whitecaps FC
+ * 3-0 LA Galaxy, MLS, settled) on 2026-09-10:
+ *
+ *     FC / WON / 90% pregame
+ *
+ * Rung 1 shortened the winner with a bare `team.split(" ").pop()` — a FOURTH
+ * copy of the last-word rule, and the only one that never got #4250's guard.
+ * `teamShortName` has rejected a non-distinctive trailing token since then and
+ * `eventOutcome.ts` did not import it, so the fix existed three files away from
+ * the call site that needed it. The repair is to ask the shared helper.
+ *
+ * ═══ SCALE, MEASURED ═══
+ *
+ * Production `db-query`, 2026-09-11, all 622 settled-and-decided events of the
+ * previous 7 days (the whole population, not a sample): 84 (13.5%) printed a
+ * token that names nobody — `FC` 35, `City` 9, `United` 8, plus `IF`, `SC`,
+ * `Town`, `Albion`, `Rovers`, `SK`, `FK`, `II`, `05`, `AFC`. All soccer.
+ *
+ * The issue's own figure was 58, and it says so: it counts the `length <= 2`
+ * clause alone, because that is the half reproducible in SQL. The other 26 are
+ * `CLUB_TYPE_SUFFIXES`, and they are why the second arm below is not a
+ * flourish — a fix tested only on `FC` would leave "City Won" shipping.
+ *
+ * ═══ WHY THE PAIR FORM ═══
+ *
+ * `teamShortNames` rather than `teamShortName`, because both competitors are
+ * already in this function's hand and the pair sees what one side cannot: two
+ * teams shortening to the SAME word. The same 622 hold LSU Tigers v Clemson
+ * Tigers and Dinamo Moscow v Spartak Moscow — distinctive tokens, so the
+ * non-distinctive clause never fires, and one at a time they crown "Tigers"
+ * and "Moscow". A hero naming a winner that is equally the loser is the same
+ * defect wearing a different mechanism, and the helper already refuses it.
+ *
+ * ═══ WHY THESE ARE NOT VACUOUS ═══
+ *
+ * Verified red by restoring `winnerName: team.split(" ").pop() || team` and
+ * re-running: the specimen, the club-suffix arm and the collision arm all fail
+ * (`FC`, `City`, `Tigers`). The two controls pass in BOTH states on purpose —
+ * they are the regression half, pinning that 90% of names still shorten and
+ * that rung 2 was not dragged along with rung 1.
+ */
+describe("#5135 — the settled winner is a name, not a club-type token", () => {
+  it("names the club on the page authority shot", () => {
+    const outcome = resolveEventOutcome({
+      isFinished: true,
+      homeTeam: "Vancouver Whitecaps FC",
+      awayTeam: "LA Galaxy",
+      homeScore: 3,
+      awayScore: 0,
+    });
+
+    expect(outcome!.authority).toBe("score");
+    expect(outcome!.winnerName).toBe("Vancouver Whitecaps FC");
+
+    // The defect as a reader met it, asserted on the RENDERED hero rather than
+    // on the resolver alone: the component prints `winnerName` verbatim, so
+    // this is the sentence on the page.
+    const html = renderHero(outcome, { hasNumericScore: true });
+    expect(visibleText(html)).toContain("Vancouver Whitecaps FC");
+    // The refusal is asserted on `data-winner` rather than on the sentence,
+    // because the CORRECT sentence — "Vancouver Whitecaps FC Won" — ends in the
+    // very token the defect printed. A "does not contain FC" arm is red on the
+    // fix and green on the bug, which is the wrong way round.
+    expect(html).toContain('data-winner="Vancouver Whitecaps FC"');
+    expect(html).not.toContain('data-winner="FC"');
+  });
+
+  it("covers the club-suffix half the issue's 58 could not count", () => {
+    // The 26 events `length <= 2` misses. Three or more letters, so the clause
+    // that catches "FC" is one letter too short for every one of them.
+    const cases: [string, string, string][] = [
+      ["Manchester City", "Fulham", "Manchester City"],
+      ["West Ham United", "Everton", "West Ham United"],
+      ["Northampton Town", "Barnet", "Northampton Town"],
+      ["Barrow AFC", "Crewe Alexandra", "Barrow AFC"],
+      ["VfB Stuttgart II", "Hallescher FC", "VfB Stuttgart II"],
+      ["FSV Mainz 05", "Werder Bremen", "FSV Mainz 05"],
+    ];
+    for (const [home, away, expected] of cases) {
+      const outcome = resolveEventOutcome({
+        isFinished: true,
+        homeTeam: home,
+        awayTeam: away,
+        homeScore: 2,
+        awayScore: 1,
+      });
+      expect(outcome!.winnerName).toBe(expected);
+    }
+  });
+
+  it("refuses to crown a word that names the loser just as well", () => {
+    // Both sides shorten to "Tigers"; the token is distinctive, so no clause
+    // above fires and only the PAIR can see it. Real fixture in the measured
+    // population.
+    const outcome = resolveEventOutcome({
+      isFinished: true,
+      homeTeam: "LSU Tigers",
+      awayTeam: "Clemson Tigers",
+      homeScore: 24,
+      awayScore: 17,
+    });
+
+    expect(outcome!.winnerName).toBe("LSU Tigers");
+    const html = renderHero(outcome, { hasNumericScore: true });
+    expect(html).toContain('data-winner="LSU Tigers"');
+    expect(html).not.toContain('data-winner="Tigers"');
+  });
+
+  it("THE CONTROL: the American convention still shortens", () => {
+    // 90% of the population, and the reason this is a guard rather than a
+    // deletion of the last-word rule: "Los Angeles Lakers" -> "Lakers" is what
+    // a reader wants, and a repair that returned the full name everywhere
+    // would pass every arm above while making the hero worse.
+    const outcome = resolveEventOutcome({
+      isFinished: true,
+      homeTeam: "Los Angeles Lakers",
+      awayTeam: "Boston Celtics",
+      homeScore: 112,
+      awayScore: 108,
+    });
+    expect(outcome!.winnerName).toBe("Lakers");
+
+    const away = resolveEventOutcome({
+      isFinished: true,
+      homeTeam: "Los Angeles Lakers",
+      awayTeam: "Boston Celtics",
+      homeScore: 100,
+      awayScore: 108,
+    });
+    expect(away!.winnerName).toBe("Celtics");
+  });
+
+  it("THE CONTROL: rung 2 still names a PERSON by surname", () => {
+    // `surnameOf` is a different rule for a different kind of competitor and
+    // this change must not reach it: a team helper applied to "Stan Wawrinka"
+    // would hand back "Wawrinka" by luck and "Carballes Baena" wrongly.
+    const outcome = resolveEventOutcome({
+      ...TENNIS_EVENT,
+      tournamentResult: WAWRINKA_BERRETTINI,
+    });
+    expect(outcome!.authority).toBe("tournament");
+    expect(outcome!.winnerName).toBe("Berrettini");
+  });
+});
