@@ -63,6 +63,67 @@ REPO_SLUG="alexander-bain/bainluck"
 LEDGER="${MERGE_GATE_LEDGER:-$HOME/bainluck/.claude/handoff/CODEX-CERT-LOG.md}"
 GREP=/usr/bin/grep
 
+# ─────────────────────────────────────────────────────────────────────────────
+# supersedes_hits <CERT-N> <ledger>  — notice 18's predicate, as a function so
+# the selftest can exercise it on a fixture with no network.
+#
+# Prints one `<line>: <clause>` per hit and nothing at all when clean; the CALLER
+# reads the count. Printing the CLAUSE rather than a bare count is half the fix:
+# the ledger is free prose and no regex separates USE from MENTION perfectly, so
+# the operator must be able to see the sentence that refused them. A number alone
+# is unresolvable, and it held a granted token for four sessions.
+#
+# Three shapes, all measured against the real 2,800-row ledger:
+#
+#   A  supersedes / superseding / supersede [:] CERT-N        the ordinary clause
+#   B  supersedes CERT-913/914                                 slash list, tail ids
+#   C  CERT-N ... superseded by ...                            the inverse phrasing
+#
+# and two hard-won constraints:
+#
+#   the gap is `[^.;|]{0,40}` — SENTENCE-SCOPED. The old form was `supersedes.*
+#   CERT-N`, and `.*` spans sentences inside one markdown table cell. A cert-bus
+#   STATUS row is a multi-subject paragraph on ONE line, so any cert merely
+#   MENTIONED in the same row as any supersedes clause was refused. Over the
+#   ledger that is 226 of 285 refusals — including rows whose own text reads
+#   "no later ledger row names CERT-N after the word supersedes", i.e. the gate
+#   tripping on its own compliance sentence.
+#
+#   the clause is then dropped if it contains a quote, an `=`, or the word "for".
+#   Those mark the word being NAMED rather than used — "notice 18 **tight**
+#   supersedes — 0 for CERT-2300/2301/...", "0 word-anchored `supersedes` rows
+#   for CERT-2154/2155". Without this the tightened form re-refuses six certs on
+#   sentences that say zero rows supersede them.
+#
+# It is not only looser than the old form. `supersedes` was matched literally and
+# case-sensitively, so `superseding CERT-770`, `SUPERSEDES CERT-858` and
+# `supersede CERT-1871` — the commonest ways a real supersession is actually
+# written — were MISSED: 30 shas could have merged on a superseded cert with a
+# PASS from this gate. Case-insensitive, and the verb is `supersed(es|e|ing)`.
+#
+# KNOWN RESIDUAL: `CERT-907`. One positive-control sentence reads "the same
+# expression finds the live supersedes targets CERT-894/901/903/907/..." — a
+# mention with no quote, no `=` and no "for". It still refuses, and it now prints
+# that sentence, which is the point: a legible wrong answer costs seconds, an
+# illegible one cost four sessions. Do not add "targets" to the mention list;
+# over-fitting the regex to one sentence is how the fail-open crept in.
+supersedes_hits () {
+  local cert_id="$1" ledger="$2" n re mention line ln body clause
+  n="${cert_id#CERT-}"
+  re="supersed(es|e|ing)[^.;|]{0,40}CERT-$n([^0-9]|\$)"
+  re="$re|supersed(es|e|ing)[^.;|]{0,40}CERT-[0-9]+(/[0-9]+)*/$n([^0-9]|\$)"
+  re="$re|CERT-$n[^.;|]{0,60}supersede(d)? by"
+  mention='[`"'"'"'=]|(^|[^a-zA-Z])for([^a-zA-Z]|$)'
+  # `grep -n` prefixes `<line>:`; the own-row filter runs on the whole line, and
+  # `| CERT-N --` is a literal in a BRE, so no escaping is needed.
+  while IFS= read -r line; do
+    ln="${line%%:*}"; body="${line#*:}"
+    clause="$(printf '%s\n' "$body" | $GREP -oiE "$re" | $GREP -viE "$mention" | head -1)"
+    [ -n "$clause" ] && printf '%s: %s\n' "$ln" "$clause"
+  done < <($GREP -niE "$re" "$ledger" 2>/dev/null | $GREP -v "| $cert_id --")
+  return 0
+}
+
 if [ -z "$SHA_IN" ]; then
   echo "usage: tools/merge-gate.sh <sha> [<repo-path>]" >&2
   echo "       tools/merge-gate.sh --selftest" >&2
@@ -124,9 +185,55 @@ if [ "$SHA_IN" = "--selftest" ]; then
   check "check-runs is gated on the EXIT CODE, not on empty stdout" \
     "/usr/bin/grep -q 'refusal_rc' '$self'"
 
-  # Notice 18: a repair row cites its own id after "supersedes".
-  check "the supersedes scan excludes the cert's own row" \
-    "/usr/bin/grep -q -- '-vc \"| \$CERT_ID --\"' '$self'"
+  # ── notice 18, BEHAVIOURALLY ────────────────────────────────────────────────
+  # A source-scan ("does the file contain this pattern?") is what the previous
+  # version of this check did, and it went on passing while the predicate itself
+  # both over-refused 226 certs and let 30 real supersessions through. So: run
+  # the real function against a fixture ledger. Every row below is a shape taken
+  # verbatim from CODEX-CERT-LOG.md, with the ids renumbered into a 9xxx range.
+  fix="$(mktemp -t merge-gate-fixture)"
+  cat > "$fix" <<'FIXTURE'
+| CERT-9001 -- OWN-ROW | 2026-01-01 00:00Z | lane (repairs CERT-9000) | **GREEN** | supersedes: CERT-9001 is this row's own self-citation. |
+| CERT-9100 -- BUS-STATUS | 2026-01-01 01:00Z | cert bus | **DRAINED** | CERT-9001, CERT-9002, and superseding CERT-9004 are banked. CERT-9003 supersedes CERT-9002, whose token is not merge authority; required repair remains. CERT-9001 token stands. |
+| CERT-9101 -- LIST-AND | 2026-01-01 02:00Z | lane | **BLOCK** | SUPERSEDES CERT-9005 AND CERT-9006 on the same sha. |
+| CERT-9102 -- LIST-SLASH | 2026-01-01 03:00Z | lane | **BLOCK** | supersedes CERT-9007/9008 together. |
+| CERT-9103 -- COMPLIANCE | 2026-01-01 04:00Z | integrator | **MERGED** | notice 18 **tight** supersedes -- 0 for CERT-9009/9010; notice 28 completed/success. |
+| CERT-9104 -- COMPLIANCE-QUOTED | 2026-01-01 05:00Z | integrator | **MERGED** | notice 18 = 0 word-anchored `supersedes` rows for CERT-9011. |
+| CERT-9105 -- INVERSE | 2026-01-01 06:00Z | lane | **BLOCK** | CERT-9012 GREEN is superseded by CERT-9013 BLOCK, so notice 18 refuses. |
+| CERT-9106 -- SLASH-NOISE | 2026-01-01 07:00Z | lane | **GREEN** | supersedes it under notices 12/9014 and native/9015. |
+FIXTURE
+  n18 () { supersedes_hits "CERT-$1" "$fix" | /usr/bin/grep -c '' ; }
+
+  # The bug that held a granted token for four sessions: `supersedes.*CERT-N` is
+  # line-scoped, and a bus STATUS row is a multi-subject paragraph on one line.
+  check "n18: a cert merely MENTIONED in a supersedes row is NOT refused (CERT-9001)" \
+    "[ \"\$(n18 9001)\" -eq 0 ]"
+  check "n18: the real object of 'supersedes' IS refused (CERT-9002)" \
+    "[ \"\$(n18 9002)\" -ge 1 ]"
+  # Case-sensitivity and the verb form: the old grep matched only lowercase
+  # `supersedes`, so these three commonest real phrasings all passed.
+  check "n18: 'superseding CERT-N' is refused (CERT-9004)" \
+    "[ \"\$(n18 9004)\" -ge 1 ]"
+  check "n18: 'SUPERSEDES ... AND CERT-N' refuses BOTH ids (CERT-9005, CERT-9006)" \
+    "[ \"\$(n18 9005)\" -ge 1 ] && [ \"\$(n18 9006)\" -ge 1 ]"
+  check "n18: a slash list refuses its TAIL ids (CERT-9007, CERT-9008)" \
+    "[ \"\$(n18 9007)\" -ge 1 ] && [ \"\$(n18 9008)\" -ge 1 ]"
+  check "n18: the inverse 'CERT-N ... superseded by' is refused (CERT-9012)" \
+    "[ \"\$(n18 9012)\" -ge 1 ]"
+  # Use vs mention: a row REPORTING a clean notice-18 check must not trip it.
+  check "n18: '<verb> -- 0 for CERT-N' is a report, not a clause (CERT-9009/9010)" \
+    "[ \"\$(n18 9009)\" -eq 0 ] && [ \"\$(n18 9010)\" -eq 0 ]"
+  check "n18: a backquoted \`supersedes\` + 'rows for' is a report (CERT-9011)" \
+    "[ \"\$(n18 9011)\" -eq 0 ]"
+  # A bare `/N` must only continue a CERT- chain; "notices 12/9014" is not one.
+  check "n18: a slash in ordinary prose is not an id (CERT-9014, CERT-9015)" \
+    "[ \"\$(n18 9014)\" -eq 0 ] && [ \"\$(n18 9015)\" -eq 0 ]"
+  # The whole reason the count was not enough.
+  check "n18: a hit prints the CLAUSE, not just a count" \
+    "supersedes_hits CERT-9004 '$fix' | /usr/bin/grep -qi 'superseding CERT-9004'"
+  check "n18: a clean cert prints nothing at all" \
+    "[ -z \"\$(supersedes_hits CERT-9001 '$fix')\" ]"
+  rm -f "$fix"
 
   check "rev-parse is verified, not trusted to be empty on failure" \
     "/usr/bin/grep -q 'rev-parse --verify --quiet' '$self'"
@@ -233,16 +340,23 @@ fi
 # notice 18 — a later row naming this cert after "supersedes" revokes nothing by
 # itself, but it means DO NOT MERGE and DO NOT REVERT; the orchestrator rules.
 #
-# The mechanized form excludes the cert's OWN row, because a repair row cites
-# its own id after "supersedes" and the plain grep therefore fires a false STOP
-# on precisely the certs that grade first (notice 8b).
+# The predicate is `supersedes_hits` at the top of this file — sentence-scoped,
+# case-insensitive, use/mention filtered, and it PRINTS THE CLAUSE. It excludes
+# the cert's OWN row, because a repair row cites its own id after "supersedes"
+# and the plain grep therefore fires a false STOP on precisely the certs that
+# grade first (notice 8b).
 # ─────────────────────────────────────────────────────────────────────────────
 if [ -n "$CERT_ID" ] && [ -r "$LEDGER" ]; then
-  sup="$($GREP -n "supersedes.*$CERT_ID" "$LEDGER" | $GREP -vc "| $CERT_ID --")"
-  if [ "${sup:-0}" -eq 0 ]; then
+  sup_hits="$(supersedes_hits "$CERT_ID" "$LEDGER")"
+  if [ -z "$sup_hits" ]; then
     pass "notice 18 supersedes" "0 later rows name $CERT_ID after 'supersedes'"
   else
-    stop "notice 18 supersedes" "$sup row(s) supersede $CERT_ID — write the orchestrator, do not merge, do not revert"
+    stop "notice 18 supersedes" "$(printf '%s' "$sup_hits" | $GREP -c '') row(s) supersede $CERT_ID — write the orchestrator, do not merge, do not revert"
+    # The clause, always. Notice 18's instruction is to hand the row to the
+    # orchestrator; you cannot hand over a count.
+    printf '%s\n' "$sup_hits" | while IFS= read -r h; do
+      printf '        ledger line %s\n' "$h"
+    done
   fi
 else
   warn "notice 18 supersedes" "no cert id resolved — skipped (expected for Tier A)"
