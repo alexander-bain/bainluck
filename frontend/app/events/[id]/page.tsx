@@ -1329,9 +1329,22 @@ export default function EventPage({ params }: EventPageProps) {
                   tennis match it is a fabricated scoreline in a unit the sport
                   does not have. An undeclared sport gets the same silence, by
                   design — see `UNSCORED_IN_POINTS`. */}
+              {/* #5257: and gated on there still being a result to forecast.
+                  The old test was a DENYLIST of two terminal states, so a
+                  `suspended` event — and a `scheduled` one long past its own
+                  kickoff — fell straight through it and printed a projected
+                  final under this card's own "No result reported" badge. This
+                  is #5206's defect one card up, and #4018's line applies as
+                  verbatim as it did there: a forecast and a result are two
+                  questions and they get two predicates. `isSuspended` is the
+                  page's ONE `hasNoReportedResult` answer (computed above, #4015)
+                  and is the same one the badge four lines up is drawn from, so
+                  the card can no longer ask the question one way and answer it
+                  the other. */}
               {sportVocab(event.sport || undefined).hasDerivedSpread &&
                 historyData?.pm_spread_data?.projected_final &&
                 event.status !== "completed" && event.status !== "closed" &&
+                !isSuspended &&
                 historyData.pm_spread_data.projected_final.home_score > 0 &&
                 historyData.pm_spread_data.projected_final.away_score > 0 && (
                 <div className="mt-1.5">
