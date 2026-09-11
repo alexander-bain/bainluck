@@ -184,7 +184,13 @@ class TestCorrelation:
         try:
             sql = _sql(_outer_query_joining_events_shape())
         except InvalidRequestError as exc:  # pragma: no cover - the red state
-            pytest.fail(f"the predicate decorrelated inside a joined query: {exc}")
+            # `raise`, not `pytest.fail`: CodeQL cannot see that `pytest.fail`
+            # is NoReturn and flags `sql` below as possibly-unbound (1 error on
+            # PR #5026). An explicit raise is terminating to any reader, human
+            # or analyser, and reports the same thing.
+            raise AssertionError(
+                f"the predicate decorrelated inside a joined query: {exc}"
+            ) from exc
         assert "NOT (EXISTS" in sql, sql
         assert "FROM events" in sql, sql
 
