@@ -30,6 +30,14 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     let ei: EIData?
     let pulse: EIData?
     let eventTags: [String]?
+    /// #4915 — the server's own verdict on a settled game: `"home" | "away" |
+    /// "draw"`, decoded from `hero_settled_result` by `.convertFromSnakeCase`.
+    ///
+    /// The route OMITS the key on a game it cannot grade (`resolve_settled_hero`
+    /// returns nothing), so absent is an ordinary state and this is optional
+    /// rather than defaulted. Read it through `EventOutcome.resolve` — never
+    /// branch on the raw string, or the third outcome goes missing again.
+    let heroSettledResult: String?
 }
 
 // MARK: - Standings Context
