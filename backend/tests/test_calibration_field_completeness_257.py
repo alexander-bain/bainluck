@@ -259,9 +259,13 @@ class _FakeDB:
         # Queue 300B adds the session-identity tag, which is the same shape of
         # problem: a non-query statement that would otherwise eat the futures row
         # and shift every subsequent assertion onto the wrong result.
+        # #5085 adds `SET LOCAL plan_cache_mode = 'force_custom_plan'` beside the
+        # statement timeout, once per unit — the same shape again: a non-query
+        # statement that would otherwise eat the futures row.
         text_form = str(statement).lower()
         if (
             "statement_timeout" in text_form
+            or "plan_cache_mode" in text_form
             or "advisory" in text_form
             or "set_config" in text_form
         ):
