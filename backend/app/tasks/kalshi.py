@@ -1673,6 +1673,25 @@ async def _poll_kalshi_markets():
                                 opening_probability=opening_prob,
                                 opening_american_odds=opening_american,
                                 opening_captured_at=opening_at,
+                                # #5401, and the same defect CAL-P1004R found one
+                                # column over: the CONFLICT arm records the basis
+                                # (`update_set["opening_source"]`, a few lines
+                                # above) and the INSERT arm did not. So a leg
+                                # whose opening was captured on the poller's FIRST
+                                # sighting — the common case for a 150-runner golf
+                                # field, where most legs are seen once and never
+                                # re-polled while tradeable — was born carrying a
+                                # real opening price and NO record of where it came
+                                # from, indistinguishable from the untagged
+                                # historical rows that predate this column.
+                                #
+                                # The conditional mirrors `opening_prob` exactly:
+                                # the basis is written when, and only when, an
+                                # opening is written. Same value the conflict arm
+                                # uses, because it is the same measurement.
+                                opening_source=(
+                                    "bid_ask_midpoint" if has_real_trading else None
+                                ),
                                 rank=rank,
                                 # CAL-P1004R (CERT-948, extended to this site).
                                 # `graded_cols` reached only `update_set`, so the

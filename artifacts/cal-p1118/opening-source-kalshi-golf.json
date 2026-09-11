@@ -1,0 +1,352 @@
+{
+  "cell": "kalshi/golf",
+  "high_band": 0.8,
+  "elapsed_s": 113.6,
+  "irreducible_chunks": 0,
+  "rows": [
+    {
+      "opening_source": "(none)",
+      "verdict": "kept_complete_field",
+      "band": "hi",
+      "n": 1,
+      "won": 1,
+      "implied": 0.82
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "kept_complete_field",
+      "band": "lo",
+      "n": 2021,
+      "won": 82,
+      "implied": 90.43
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "kept_multi",
+      "band": "hi",
+      "n": 385,
+      "won": 68,
+      "implied": 355.71
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "kept_multi",
+      "band": "lo",
+      "n": 10203,
+      "won": 1215,
+      "implied": 2052.06
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "kept_rn1",
+      "band": "hi",
+      "n": 32,
+      "won": 32,
+      "implied": 31.67
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "kept_rn1",
+      "band": "lo",
+      "n": 289,
+      "won": 125,
+      "implied": 121.07
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x01_illiquid",
+      "band": "hi",
+      "n": 60,
+      "won": 0,
+      "implied": 56.71
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x01_illiquid",
+      "band": "lo",
+      "n": 1596,
+      "won": 10,
+      "implied": 134.14
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x06_golf_placeholder",
+      "band": "hi",
+      "n": 879,
+      "won": 16,
+      "implied": 824.85
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x12_field_incomplete",
+      "band": "hi",
+      "n": 1,
+      "won": 0,
+      "implied": 0.89
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x12_field_incomplete",
+      "band": "lo",
+      "n": 608,
+      "won": 4,
+      "implied": 58.57
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x13_multi_extreme_tail",
+      "band": "hi",
+      "n": 756,
+      "won": 610,
+      "implied": 747.88
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x13_multi_extreme_tail",
+      "band": "lo",
+      "n": 596,
+      "won": 1,
+      "implied": 1.06
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x14_multi_modal_price",
+      "band": "hi",
+      "n": 34,
+      "won": 0,
+      "implied": 31.28
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x14_multi_modal_price",
+      "band": "lo",
+      "n": 1495,
+      "won": 76,
+      "implied": 323.79
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "hi",
+      "n": 30,
+      "won": 30,
+      "implied": 29.65
+    },
+    {
+      "opening_source": "(none)",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "lo",
+      "n": 275,
+      "won": 107,
+      "implied": 107.87
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "kept_complete_field",
+      "band": "hi",
+      "n": 2,
+      "won": 2,
+      "implied": 1.71
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "kept_complete_field",
+      "band": "lo",
+      "n": 191,
+      "won": 16,
+      "implied": 7.11
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "kept_multi",
+      "band": "hi",
+      "n": 123,
+      "won": 107,
+      "implied": 108.54
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "kept_multi",
+      "band": "lo",
+      "n": 7198,
+      "won": 1321,
+      "implied": 1250.93
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "kept_rn1",
+      "band": "hi",
+      "n": 164,
+      "won": 164,
+      "implied": 162.05
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "kept_rn1",
+      "band": "lo",
+      "n": 10,
+      "won": 4,
+      "implied": 2.87
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "x06_golf_placeholder",
+      "band": "hi",
+      "n": 5,
+      "won": 4,
+      "implied": 4.83
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "x12_field_incomplete",
+      "band": "lo",
+      "n": 78,
+      "won": 3,
+      "implied": 3.68
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "x13_multi_extreme_tail",
+      "band": "hi",
+      "n": 535,
+      "won": 535,
+      "implied": 531.15
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "x13_multi_extreme_tail",
+      "band": "lo",
+      "n": 918,
+      "won": 5,
+      "implied": 2.24
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "x14_multi_modal_price",
+      "band": "lo",
+      "n": 185,
+      "won": 17,
+      "implied": 27.06
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "hi",
+      "n": 17,
+      "won": 17,
+      "implied": 16.89
+    },
+    {
+      "opening_source": "bid_ask_midpoint",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "lo",
+      "n": 2,
+      "won": 1,
+      "implied": 1.02
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "kept_complete_field",
+      "band": "lo",
+      "n": 902,
+      "won": 13,
+      "implied": 13.93
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "kept_multi",
+      "band": "hi",
+      "n": 5,
+      "won": 5,
+      "implied": 4.38
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "kept_multi",
+      "band": "lo",
+      "n": 604,
+      "won": 234,
+      "implied": 246.45
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "kept_rn1",
+      "band": "hi",
+      "n": 1,
+      "won": 1,
+      "implied": 0.94
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "kept_rn1",
+      "band": "lo",
+      "n": 10,
+      "won": 5,
+      "implied": 4.96
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "x01_illiquid",
+      "band": "hi",
+      "n": 397,
+      "won": 0,
+      "implied": 363.4
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "x01_illiquid",
+      "band": "lo",
+      "n": 1104,
+      "won": 0,
+      "implied": 33.97
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "x06_golf_placeholder",
+      "band": "hi",
+      "n": 417,
+      "won": 6,
+      "implied": 388.83
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "x12_field_incomplete",
+      "band": "lo",
+      "n": 148,
+      "won": 1,
+      "implied": 9.99
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "x13_multi_extreme_tail",
+      "band": "hi",
+      "n": 39,
+      "won": 39,
+      "implied": 38.8
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "x13_multi_extreme_tail",
+      "band": "lo",
+      "n": 16,
+      "won": 0,
+      "implied": 0.02
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "x14_multi_modal_price",
+      "band": "lo",
+      "n": 4,
+      "won": 2,
+      "implied": 1.03
+    },
+    {
+      "opening_source": "first_snapshot",
+      "verdict": "x15_not_the_rn1_representative",
+      "band": "lo",
+      "n": 12,
+      "won": 5,
+      "implied": 4.88
+    }
+  ]
+}
