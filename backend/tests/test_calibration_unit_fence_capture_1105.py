@@ -30,6 +30,7 @@ from app.tasks.calibration_beat_gauge_sampler import (
     CAPTURED_PREFIXES,
     GAUGE_CAPTURE_VERSION,
     UNIT_BOUND_PREFIX,
+    UNIT_CANCELLED_PREFIX,
     UNIT_FENCE_ABSENT_CAPTURE,
     UNIT_FENCE_CAPTURE_VERSION,
     UNIT_FENCE_STEMS,
@@ -51,6 +52,15 @@ LEDGER = {
     "staged:unit_bound_ms:events": 540_000,
     "staged:unit_bound_headroom_ms:events": 0,
     "staged:unit_worst_reason:unmeasured:events": 1,
+    # The two the live 04:37:37Z beat carried, verbatim: 872,162 ms between them,
+    # 64% of that beat's window, banking nothing.
+    "staged:unit_cancelled:2ef60c20f4565d00": 452_166,
+    "staged:unit_cancelled:8f51d074f376b4df": 419_996,
+    "staged:unit_cancelled_after_ms": 419_996,
+    "staged:prior_unit_ms": 105_177,
+    # The plural COUNT, a different gauge, captured by fixed name. Present so the
+    # prefix below is proven not to be reaching it.
+    "staged:units_cancelled": 2,
 }
 
 
@@ -61,6 +71,48 @@ def test_the_fence_keys_survive_capture():
     for key in LEDGER:
         if key.startswith(("staged:unit_bound", "staged:unit_worst")):
             assert key in captured, f"{key} was dropped at capture — the CAL-P1105 defect"
+
+
+def test_the_per_unit_cancellation_keys_survive_capture():
+    """The hash half. ``staged:unit_cancelled:<chunk key>`` is what lets a reader
+    ask whether it is the SAME unit failing every beat — the question that
+    decides whether the affected slice of the partition can finish at all."""
+    captured, _missing = select_gauges(LEDGER)
+
+    assert captured["staged:unit_cancelled:2ef60c20f4565d00"] == 452_166
+    assert captured["staged:unit_cancelled:8f51d074f376b4df"] == 419_996
+    assert captured["staged:unit_cancelled_after_ms"] == 419_996
+    assert captured["staged:prior_unit_ms"] == 105_177
+
+
+def test_the_cancelled_prefix_does_not_swallow_the_plural_count():
+    """``staged:units_cancelled`` is the COUNT and a different gauge, captured by
+    fixed name. If the prefix ever reached it, a rename on either side would
+    silently merge a count into the per-unit map."""
+    assert not "staged:units_cancelled".startswith(UNIT_CANCELLED_PREFIX)
+
+    captured, _missing = select_gauges(LEDGER)
+    assert captured["staged:units_cancelled"] == 2
+
+
+def test_the_cancelled_prefix_still_matches_the_frozen_writer():
+    """CAL-P993's rule is "read the constant off the module that emits it". This
+    emitter is ``precompute_calibration.py``, which ruling 009 freezes, so there
+    is no constant to import and adding one would spend a bank wipe on a string.
+    This reads the writer's SOURCE instead and fails if the literal moves.
+
+    When the freeze lifts: promote ``UNIT_CANCELLED_PREFIX`` to an import and
+    delete this test.
+    """
+    from app.tasks import precompute_calibration
+
+    src = Path(inspect.getsourcefile(precompute_calibration)).read_text()
+    emitted = set(re.findall(r'record_gauge\(\s*f?"(staged:unit_cancelled[^"{]*)', src))
+
+    assert emitted, "the writer no longer records any staged:unit_cancelled gauge"
+    assert all(name.startswith(UNIT_CANCELLED_PREFIX) for name in emitted), (
+        f"writer emits {sorted(emitted)}, which {UNIT_CANCELLED_PREFIX!r} does not cover"
+    )
 
 
 def test_the_prefixes_are_read_off_the_module_that_emits_them():

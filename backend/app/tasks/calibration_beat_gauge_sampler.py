@@ -297,6 +297,35 @@ def _unit_fence_prefixes() -> tuple[str, str]:
 
 UNIT_BOUND_PREFIX, UNIT_WORST_PREFIX = _unit_fence_prefixes()
 
+#: The SEVENTH prefix, added by CAL-P1105 beside the fence: WHICH unit was
+#: cancelled, and after how long.
+#:
+#: 🔴 THE ONE KEY THAT NAMES THE EXPENSIVE UNIT, AND THE RING DROPPED IT TOO. The
+#: producer writes ``staged:unit_cancelled:{chunk.key}`` — a per-unit hash — and
+#: ``staged:unit_cancelled_after_ms`` beside it. Read off the live ledger at
+#: 2026-09-11T04:37:37Z, one beat carried
+#: ``staged:unit_cancelled:2ef60c20f4565d00 = 452,166`` and
+#: ``staged:unit_cancelled:8f51d074f376b4df = 419,996``: two units, 872,162 ms
+#: between them, **64% of that beat's 1,356,468 ms**, banking nothing, while the
+#: five units that did complete cost 83,661 ms each.
+#:
+#: Without the hash the ring can say a beat cancelled two units; with it, a
+#: reader can ask the only question that matters next — whether it is the SAME
+#: two units every beat (a permanent obstruction on one slice of the partition)
+#: or a rotating tail. That question decides whether the walk can finish at all,
+#: and it has been unanswerable for as long as the ring has existed.
+#:
+#: A RETYPED LITERAL, and this one has no choice: the emitter is
+#: ``precompute_calibration.py``, which ruling 009 freezes, so CAL-P993's
+#: read-it-off-the-producer rule is unavailable exactly as it was for
+#: :data:`CURSOR_PREFIX`. ``test_the_cancelled_prefix_still_matches_the_frozen_writer``
+#: reads the writer's source and fails if the literal moves — the same protection,
+#: paid for differently. When the freeze lifts: promote this to an import.
+#:
+#: Deliberately NOT a prefix of ``staged:units_cancelled`` (plural), the COUNT,
+#: which is already captured by name in :data:`OPERATIONAL_GAUGES`.
+UNIT_CANCELLED_PREFIX = "staged:unit_cancelled"
+
 #: Every prefix ``select_gauges`` scans for. One tuple so a third prefix is one
 #: line here and nowhere else.
 CAPTURED_PREFIXES = (
@@ -306,6 +335,7 @@ CAPTURED_PREFIXES = (
     UNIT_COST_REASON_PREFIX,
     UNIT_BOUND_PREFIX,
     UNIT_WORST_PREFIX,
+    UNIT_CANCELLED_PREFIX,
 )
 
 #: The FOURTH capture rule, added by CAL-P1030 (#3454) — and the first one that
@@ -479,6 +509,12 @@ OPERATIONAL_GAUGES = (
     "staged:window_left_ms",
     "staged:cursor_resume",
     "staged:units_cancelled",
+    # CAL-P1105. CAL-P081's admission reference (#2052) — the PREVIOUS beat's
+    # mean unit cost, which ``_unit_fits_in_window`` takes the max of against the
+    # carried worst before admitting a unit at all. Captured beside the fence it
+    # feeds, so a reader can see the number that let a unit in next to the bound
+    # that then cancelled it. A fixed name, so it belongs in this tuple.
+    "staged:prior_unit_ms",
     # CAL-P1030 (#3454). The rebuild's most destructive event, and the one its
     # telemetry could not show. ``retain_planned_units``' CAL-P034 FAIL-CLOSED
     # arm discards EVERY banked unit — building bank AND serving bank — when any
