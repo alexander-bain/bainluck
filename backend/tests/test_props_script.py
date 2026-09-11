@@ -54,7 +54,7 @@ class TestBuildPropsScript:
             "over_probability": 0.55,
             "pregame_mark": 0.50,
         }]
-        script = _build_props_script(props, event_is_finished=False)
+        script = _build_props_script(props)
         assert len(script) == 1
         row = script[0]
         assert row["label"] == "Aaron Judge: 1+"
@@ -73,14 +73,14 @@ class TestBuildPropsScript:
             "hit": True,
             "actual": 2,
         }]
-        row = _build_props_script(props, event_is_finished=True)[0]
+        row = _build_props_script(props)[0]
         assert row["graded_result"] == "hit"
         assert row["graded_label"] == "2 — hit"
 
     def test_graded_miss_maps(self):
         props = [{"market_name": "M", "outcome_name": "o", "over_probability": 0.1,
                   "pregame_mark": 0.5, "hit": False, "actual": 0}]
-        row = _build_props_script(props, event_is_finished=True)[0]
+        row = _build_props_script(props)[0]
         assert row["graded_result"] == "miss"
         assert row["graded_label"] == "0 — miss"
 
@@ -89,7 +89,7 @@ class TestBuildPropsScript:
         props = [{"market_name": "M", "outcome_name": "o", "over_probability": 0.9,
                   "pregame_mark": 0.5, "is_winner": True,
                   "resolution_source": "api_settlement"}]
-        row = _build_props_script(props, event_is_finished=True)[0]
+        row = _build_props_script(props)[0]
         assert row["graded_result"] == "hit"
         # No box-score actual → no numeric label.
         assert row["graded_label"] is None
@@ -103,7 +103,7 @@ class TestBuildPropsScript:
                   "over_probability": 0.8, "pregame_mark": 0.5,
                   "hit": None, "is_winner": False, "resolution_source": None,
                   "actual": None}]
-        row = _build_props_script(props, event_is_finished=True)[0]
+        row = _build_props_script(props)[0]
         assert row["graded_result"] is None
         assert row["graded_label"] is None
 
@@ -112,20 +112,53 @@ class TestBuildPropsScript:
         props = [{"market_name": "M", "outcome_name": "o", "over_probability": 0.2,
                   "pregame_mark": 0.5, "is_winner": False,
                   "resolution_source": "api_settlement"}]
-        row = _build_props_script(props, event_is_finished=True)[0]
+        row = _build_props_script(props)[0]
         assert row["graded_result"] == "miss"
 
-    def test_not_finished_never_grades_even_with_hit_present(self):
+    def test_a_typed_hit_grades_without_any_event_level_permission(self):
+        """#5088 / T3-2, WITHDRAWING `test_not_finished_never_grades_even_with_hit_present`.
+
+        That guard asserted the builder refused a typed `hit` unless the caller
+        said the whole EVENT was finished, which is the defect this ship is: a
+        question the third inning answered waited for the ninth. The builder now
+        has no event-level input at all — the row's own evidence is the trigger —
+        so the withdrawn assertion is not merely relaxed, it is unstatable.
+
+        Who may set `hit` is unchanged and is where the safety lives:
+        `_grade_settled_prop` (settled events only) and `_grade_closed_windows`
+        (a window `prop_window_closed` has proven is over).
+        """
         props = [{"market_name": "M", "outcome_name": "o", "over_probability": 0.9,
                   "pregame_mark": 0.5, "hit": True, "actual": 2}]
-        row = _build_props_script(props, event_is_finished=False)[0]
-        assert row["graded_result"] is None
+        row = _build_props_script(props)[0]
+        assert row["graded_result"] == "hit"
+        assert row["graded_label"] == "2 — hit"
+
+    def test_a_graded_row_is_settled_and_an_ungraded_one_is_not(self):
+        """`settled` is the per-ROW override PropsSection already reads.
+
+        `rowState = item.settled ? "graded" : state` — so a row that carries a
+        verdict renders WHAT HIT even while the section is still in script or
+        divergence state. Both directions are asserted, because a flag that is
+        always true reads exactly like a working one on the graded row.
+        """
+        graded, pending = _build_props_script([
+            {"market_name": "M", "outcome_name": "graded", "over_probability": 0.9,
+             "pregame_mark": 0.5, "hit": True, "actual": 2},
+            {"market_name": "M", "outcome_name": "pending", "over_probability": 0.6,
+             "pregame_mark": 0.5, "hit": None, "is_winner": False,
+             "resolution_source": None},
+        ])
+        assert graded["settled"] is True
+        assert pending["settled"] is False
+        # And the pending row is pending, not lost — the #2089 statement.
+        assert pending["graded_result"] is None
 
     def test_empty_props_yields_empty_script(self):
-        assert _build_props_script([], event_is_finished=True) == []
+        assert _build_props_script([]) == []
 
     def test_missing_pregame_and_current_are_none_not_error(self):
         props = [{"market_name": "M", "outcome_name": "o"}]
-        row = _build_props_script(props, event_is_finished=False)[0]
+        row = _build_props_script(props)[0]
         assert row["pregame_mark"] is None
         assert row["current"] is None

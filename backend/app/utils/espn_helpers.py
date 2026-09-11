@@ -1200,7 +1200,43 @@ async def fetch_completed_box_scores(session, stats):
 
 
 async def fetch_live_box_scores(session, stats):
-    """Fourth pass: update box scores for live events (every 2 minutes)."""
+    """Fourth pass: update box scores for live events (every 2 minutes).
+
+    #5088 — THIS PASS IS WHERE A LIVE LINE SCORE COMES FROM, AND IT WAS DROPPING IT.
+
+    ``get_event_context`` returns four things and this function persisted three.
+    ``context["scores"]`` carries ``home_period_scores`` / ``away_period_scores``
+    — ESPN's per-period line score, populated while the game is in progress —
+    and the settled writer (``espn_sync._backfill_box_scores``) has always kept
+    it. This one never read the key, so the only line score in the database was
+    the one fetched AFTER full time.
+
+    Measured on production 2026-09-11: of the 46 MLB events completed in the
+    trailing four days that carry ``box_score_data``, **46 have period scores
+    and all 46 were fetched strictly after ``completed_at`` — zero at or before
+    it**. That is why ``_grade_closed_windows`` could only ever grade a finished
+    game: mid-game its one input did not exist. The route's ability to say "the
+    third inning is over and here is its result" begins here.
+
+    THE ORDER IS STALENESS, NOT KICKOFF, BECAUSE NEWEST-FIRST STARVED THE SHIP
+    -------------------------------------------------------------------------
+    The query took the 10 most recently STARTED live events every minute, and
+    the 2-minute staleness filter below then discarded the ones it had just
+    fetched — so on alternate minutes the pass did nothing at all, and an event
+    outside the newest ten was never reached however long it ran. Measured over
+    the trailing week, 42 of 166 live hours carried more than 10 concurrent
+    ESPN-linked live events and the peak was 54, so at peak 44 games were
+    unreachable.
+
+    Newest-first is also backwards for THIS ship specifically: the games with
+    the most closed windows are the ones furthest into themselves, which is
+    exactly the tail the ordering dropped.
+
+    Ordering by ``fetched_at`` (nulls — never fetched — first) makes the same
+    10 slots a round-robin over every live event instead of a fixed window on
+    ten of them. It costs no additional ESPN calls: the limit and the 2-minute
+    staleness rule are both unchanged.
+    """
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event
     from app.tasks.config import ESPN_SPORT_MAPPING
@@ -1216,7 +1252,10 @@ async def fetch_live_box_scores(session, stats):
             Event.status == "live",
             Event.espn_id.isnot(None),
         )
-        .order_by(Event.commence_time.desc())
+        .order_by(
+            Event.box_score_data["fetched_at"].astext.asc().nullsfirst(),
+            Event.commence_time.desc(),
+        )
         .limit(10)
     )
     live_box_events = live_box_result.scalars().all()
@@ -1256,6 +1295,7 @@ async def fetch_live_box_scores(session, stats):
                     continue
                 box_data = context.get("box_score", {})
                 scoring_plays = context.get("scoring_plays", [])
+                scores = context.get("scores") or {}
                 now_str = datetime.now(timezone.utc).isoformat()
                 if box_data or scoring_plays:
                     bsd = {
@@ -1265,6 +1305,18 @@ async def fetch_live_box_scores(session, stats):
                         "scoring_plays": scoring_plays,
                         "live": True,
                     }
+                    # #5088: the same two keys, written the same way, as the
+                    # settled writer in `espn_sync._backfill_box_scores`. The
+                    # LAST entry of a live line score is the period currently
+                    # being played and is therefore partial — every reader of
+                    # these arrays must prove the period is over before summing
+                    # it, which `prop_window_closed` does for the one reader
+                    # that consumes them mid-game.
+                    if scores.get("home_period_scores"):
+                        bsd["home_period_scores"] = scores["home_period_scores"]
+                        bsd["away_period_scores"] = scores.get(
+                            "away_period_scores", []
+                        )
                     await session.execute(
                         _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
                         {"bsd": _json_mod.dumps(bsd), "eid": ev.id},

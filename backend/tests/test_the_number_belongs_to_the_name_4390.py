@@ -261,7 +261,7 @@ class TestRowsThatWereAlreadyTrueDoNotMove:
             "pregame_mark": 0.50,
             "_inverted": False,
         }]
-        row = _build_props_script(props, event_is_finished=False)[0]
+        row = _build_props_script(props)[0]
         assert row["pregame_mark"] == 0.50
         assert row["current"] == 0.55
 
@@ -274,7 +274,7 @@ class TestRowsThatWereAlreadyTrueDoNotMove:
             "over_probability": 0.55,
             "pregame_mark": 0.50,
         }]
-        row = _build_props_script(props, event_is_finished=False)[0]
+        row = _build_props_script(props)[0]
         assert row["pregame_mark"] == 0.50
         assert row["current"] == 0.55
 
@@ -299,7 +299,7 @@ class TestTheOverUnderPair:
             {"market_name": "Soto: Home Runs O/U 1.5", "outcome_name": "Under",
              "over_probability": 0.40, "pregame_mark": 0.42, "_inverted": True},
         ]
-        over, under = _build_props_script(props, event_is_finished=False)
+        over, under = _build_props_script(props)
         assert (over["pregame_mark"], over["current"]) == (0.42, 0.40)
         assert (under["pregame_mark"], under["current"]) == (0.58, 0.60)
 
@@ -313,7 +313,7 @@ class TestGradingIsNotTouched:
             "over_probability": 0.20, "pregame_mark": 0.30,
             "_inverted": True, "hit": True, "actual": 6,
         }]
-        row = _build_props_script(props, event_is_finished=True)[0]
+        row = _build_props_script(props)[0]
         assert row["graded_result"] == "hit"
         assert row["graded_label"] == "6 — hit"
         # …and the price still moved onto the leg's own axis.
@@ -325,14 +325,14 @@ class TestAbsentNumbersStayAbsent:
 
     def test_none_survives_the_flip(self):
         props = [{"market_name": "M", "outcome_name": "No", "_inverted": True}]
-        row = _build_props_script(props, event_is_finished=False)[0]
+        row = _build_props_script(props)[0]
         assert row["pregame_mark"] is None
         assert row["current"] is None
 
     def test_a_half_priced_inverted_row_flips_only_what_it_has(self):
         props = [{"market_name": "M", "outcome_name": "No", "over_probability": 0.25,
                   "pregame_mark": None, "_inverted": True}]
-        row = _build_props_script(props, event_is_finished=False)[0]
+        row = _build_props_script(props)[0]
         assert row["pregame_mark"] is None
         assert row["current"] == 0.75
 
