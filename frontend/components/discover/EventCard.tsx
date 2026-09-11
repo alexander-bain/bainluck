@@ -4,7 +4,7 @@ import { teamCrestBadge, teamShortNames } from "@/lib/teamShortName";
 import { useState } from "react";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
-import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
+import { buildDiscoverShareUrl } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext } from "./utils";
@@ -152,10 +152,15 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
     if (tags.some(t => t.includes("playoff"))) contextLines.push("Playoff implications on the line");
   }
   const shareUrl = buildDiscoverShareUrl(`/events/${data.id}`, "event", data.id);
-  const homeProbability = formatShareProbability(homeProb);
-  const awayProbability = formatShareProbability(awayProb);
-  const shareText = homeProbability && awayProbability
-    ? `${data.home_team} ${homeProbability}, ${data.away_team} ${awayProbability} on Bain Luck.`
+  // #4963 — THE SHARE SENTENCE QUOTES THE CARD, IT DOES NOT RE-DERIVE IT. This
+  // line used to call `formatShareProbability` on the raw probabilities, which
+  // is a SECOND, independent rounding of the pair `awayPct`/`homePct` above had
+  // already decided once. So the card on screen read `53% / 47%` while the share
+  // sheet a stranger received said `53%, 48%` — the same 101 UX-P114 closed for
+  // the strip, still open in the text beside it, and a number the reader cannot
+  // find on the card it came from (the rule `buildBundleShareText` states).
+  const shareText = homePct != null && awayPct != null
+    ? `${data.home_team} ${homePct}%, ${data.away_team} ${awayPct}% on Bain Luck.`
     : `Track ${data.away_team} vs ${data.home_team} on Bain Luck.`;
 
   return (

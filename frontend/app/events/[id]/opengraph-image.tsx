@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 import type { EventDetailResponse } from "@/lib/types";
-import { formatShareProbability } from "@/lib/share";
+import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { getSportLabel } from "@/lib/sportCategories";
 import { teamCrestBadge } from "@/lib/teamShortName";
 
@@ -36,9 +36,38 @@ export default async function Image({ params }: { params: { id: string } }) {
   const event = await fetchEvent(params.id);
   const homeProbability = event?.current_odds?.home_probability ?? 0.5;
   const awayProbability = event?.current_odds?.away_probability ?? 0.5;
-  const awayPct = formatShareProbability(awayProbability) || "--";
-  const homePct = formatShareProbability(homeProbability) || "--";
-  const awayWidth = Math.max(3, Math.min(97, Math.round(awayProbability * 100)));
+  // #4963 — THE TWO NUMBERS ON THIS CARD ARE ONE DECISION, AND THE SERVER
+  // ALREADY MAKES IT. UX-P114 moved the duel's whole percents to
+  // `current_odds.{away,home}_rendered_percent` precisely because a game strip
+  // is drawn by four surfaces; this card is the surface that never adopted it,
+  // and went on formatting each side on its own. The feed derives away as
+  // `1 - home`, so whenever the blend lands on an exact half-percent both sides
+  // round up and the pair prints 101.
+  //
+  // Measured on production 2026-09-10, Pirates @ Cubs (event 15304803): the API
+  // served `home_rendered_percent: 53` / `away_rendered_percent: 47`, and this
+  // card drew `48%` beside `53%` — in the largest type on the image, on a card
+  // whose entire job is "this side, or that side".
+  //
+  // `servedDuelPercents` and not a local rounding rule: a third copy of this
+  // decision is how the second one drifted. It also takes the served pair WHOLE
+  // or not at all (#2279) — a payload carrying one field and not the other is
+  // the same 101 arriving from the other direction.
+  const [awayRendered, homeRendered] = servedDuelPercents(
+    awayProbability,
+    homeProbability,
+    event?.current_odds?.away_rendered_percent,
+    event?.current_odds?.home_rendered_percent,
+  );
+  const awayPct = awayRendered != null ? `${awayRendered}%` : "--";
+  const homePct = homeRendered != null ? `${homeRendered}%` : "--";
+  // The bar under the two numbers is the SAME pair drawn as a width, so it
+  // reads off the same rounding instead of being a third one that can disagree
+  // with the percentages printed directly above it.
+  const awayWidth = Math.max(
+    3,
+    Math.min(97, awayRendered ?? Math.round(awayProbability * 100)),
+  );
   const homeColor = event?.home_team_data?.primary_color || "#2563eb";
   const awayColor = event?.away_team_data?.primary_color || "#dc2626";
   const awayTeam = event?.away_team || "Away";
