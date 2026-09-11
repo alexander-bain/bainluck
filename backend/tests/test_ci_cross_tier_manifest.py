@@ -326,11 +326,13 @@ class TestTheClassifierFailsClosed:
             {"frontend/lib/util.ts": "x", "frontend/app/page.tsx": "y"},
             {"frontend/components/Card.tsx": "x"},
         ]
+        asserted = 0
         for files in cases:
             base = repo.commit({k: "a" for k in files})
             head = repo.commit(files)
             if repo.scope(base, head) != "frontend":
                 continue
+            asserted += 1
             required = subprocess.run(
                 ["bash", str(release_script), base, head],
                 cwd=repo.path,
@@ -343,6 +345,20 @@ class TestTheClassifierFailsClosed:
                 f"'{required}' for {sorted(files)} — deploy would be skipped by a "
                 f"skipped shard while a release was genuinely needed"
             )
+
+        # 🔴 #5250: THE `continue` ABOVE IS SILENT, SO THE LOOP CAN EMPTY.
+        #
+        # Every case that stops being classified `frontend` skips its assertion
+        # without a word. If change-scope ever stops matching these three paths,
+        # zero assertions run and this test still passes green — the subset
+        # invariant would be unguarded while reading as guarded, and the symptom
+        # is a silently missed production deploy. Measured latent, not live:
+        # instrumented 2026-09-11, all three cases assert today.
+        assert asserted == len(cases), (
+            f"only {asserted} of {len(cases)} cases reached the assertion — change-scope "
+            f"no longer classifies these frontend paths as 'frontend', so this guard is "
+            f"not guarding"
+        )
 
     def test_a_manifest_entry_is_matched_whole_line_not_as_a_substring(self, repo):
         # `frontend/lib/marketShape.ts.bak` must NOT satisfy the manifest entry
