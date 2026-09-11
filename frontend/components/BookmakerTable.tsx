@@ -2,6 +2,7 @@
 
 import type { BookmakerOddsDetail } from "@/lib/types";
 import { isNamedSource, sourceLabel } from "@/lib/sourceLabels";
+import { formatSourceAge, formatSourceStamp } from "@/lib/sourceAge";
 
 interface BookmakerTableProps {
   bookmakerOdds: BookmakerOddsDetail[];
@@ -9,36 +10,17 @@ interface BookmakerTableProps {
   awayTeam: string;
 }
 
-/**
- * Format a relative time string (e.g., "2m ago", "1h ago")
+/*
+ * `formatRelativeTime` and `formatAbsoluteTime` used to live here as private
+ * functions. #4970 needs the same two sentences on `/events/{id}/models`, where
+ * the per-SOURCE numbers carry no age at all, so they moved to
+ * `@/lib/sourceAge` as `formatSourceAge` / `formatSourceStamp` — a move, not a
+ * copy, for the reason that file's header gives. The thresholds and the wording
+ * are unchanged; the only difference is that both now return `null` for an
+ * absent or unparseable stamp instead of walking `NaN` through the comparisons
+ * and printing "NaN d ago". The `"-"` this column already showed for a missing
+ * `captured_at` is preserved at the call site below.
  */
-function formatRelativeTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays === 1) return "yesterday";
-  return `${diffDays}d ago`;
-}
-
-/**
- * Format absolute time for tooltip
- */
-function formatAbsoluteTime(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 /**
  * Table showing win probabilities by sportsbook.
@@ -224,7 +206,7 @@ export default function BookmakerTable({
                 </td>
                 <td
                   className="py-3 px-2 sm:px-4 text-right"
-                  title={odds.captured_at ? formatAbsoluteTime(odds.captured_at) : undefined}
+                  title={formatSourceStamp(odds.captured_at) ?? undefined}
                 >
                   {stale ? (
                     <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
@@ -236,7 +218,7 @@ export default function BookmakerTable({
                     </span>
                   )}
                   <div className="text-xs text-text-muted mt-1">
-                    {odds.captured_at ? formatRelativeTime(odds.captured_at) : "-"}
+                    {formatSourceAge(odds.captured_at) ?? "-"}
                   </div>
                 </td>
               </tr>

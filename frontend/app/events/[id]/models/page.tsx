@@ -8,6 +8,11 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import type { WinProbSourceMeta, ESPNHistoryPoint } from "@/lib/types";
 import { sourceHex } from "@/lib/sourceColors";
+import {
+  formatSourceAge,
+  formatSourceStamp,
+  sourceIsStale,
+} from "@/lib/sourceAge";
 
 /** Fallback source info for legacy events without win_prob_sources.
  *  Colors come from the one source-color registry (@/lib/sourceColors). */
@@ -95,11 +100,32 @@ export default function ModelsPage({ params }: ModelsPageProps) {
   const apiSources = historyData?.win_prob_sources ?? {};
   const hasApiSources = Object.keys(apiSources).length > 0;
 
+  /**
+   * WHEN EACH SOURCE WAS LAST READ (#4970 / D132).
+   *
+   * This page is the one surface whose whole subject is the sources disagreeing
+   * with each other, and until now it printed their numbers with no dates on
+   * them. Measured on production 2026-09-11 20:14Z, `/events/15310077/models`
+   * (Cubs–Pirates, live): ESPN 59.9% two cards below Kalshi 99.0%, a 39-point
+   * disagreement, with ESPN's number 97 minutes old and Kalshi's 6 seconds old.
+   * Nothing on the page separated them.
+   *
+   * The stamp comes from the hero contract, `win_probability_sources[key]
+   * .updated_at`, which the API has always sent (live/034) — NOT from
+   * `historyData.win_prob_sources`, which carries the descriptive metadata and
+   * no time at all. So a source can legitimately have a card and no stamp
+   * (the legacy ESPN fallback below is exactly that), and the render draws no
+   * age rather than inventing one; see `sourceAge`'s header.
+   */
+  const stampFor = (key: string): string | null =>
+    event.win_probability_sources?.[key]?.updated_at ?? null;
+
   // Build the display list: always show betting, then any model sources
   const displaySources: Array<{
     key: string;
     meta: WinProbSourceMeta;
     currentValue: number | null;
+    stamp: string | null;
   }> = [];
 
   // Betting odds (always available)
@@ -111,6 +137,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
       snapshot_count: bettingMeta.snapshot_count ?? historyData?.points ?? 0,
     },
     currentValue: event.current_odds?.home_probability ?? null,
+    stamp: stampFor("betting"),
   });
 
   // Model sources from API
@@ -118,7 +145,12 @@ export default function ModelsPage({ params }: ModelsPageProps) {
     for (const [key, meta] of Object.entries(apiSources)) {
       if (key === "betting") continue;
       const currentVal = event.win_probability_sources?.[key]?.value ?? null;
-      displaySources.push({ key, meta, currentValue: currentVal });
+      displaySources.push({
+        key,
+        meta,
+        currentValue: currentVal,
+        stamp: stampFor(key),
+      });
     }
   } else {
     // Legacy: check for ESPN data
@@ -135,6 +167,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
             .length,
         },
         currentValue: event.espn?.win_probability ?? null,
+        stamp: stampFor("espn"),
       });
     }
   }
@@ -159,10 +192,16 @@ export default function ModelsPage({ params }: ModelsPageProps) {
       </div>
 
       {/* Source cards */}
-      {displaySources.map(({ key, meta, currentValue }) => (
+      {displaySources.map(({ key, meta, currentValue, stamp }) => {
+        const age = formatSourceAge(stamp);
+        const stale = sourceIsStale(stamp);
+        return (
         <div
           key={key}
           className="bg-surface-card rounded-lg shadow-card border border-surface-border overflow-hidden"
+          data-testid="model-source-card"
+          data-source={key}
+          data-source-stale={stale ? "true" : "false"}
         >
           {/* Source header with color accent */}
           <div className="flex items-center gap-3 px-5 py-4 border-b border-surface-border">
@@ -192,10 +231,34 @@ export default function ModelsPage({ params }: ModelsPageProps) {
             </div>
             {currentValue !== null && (
               <div className="text-right shrink-0">
-                <p className="text-lg font-bold text-text-primary">
+                {/* A source that stopped updating half an hour ago must not be
+                    set in the same ink as one that ticked six seconds ago. The
+                    30-minute threshold and this muted treatment are the ones
+                    the sportsbook table inside the Betting card has always
+                    used — `SOURCE_STALE_AFTER_MS`, one definition, so the two
+                    halves of the same page cannot disagree about "stale". */}
+                <p
+                  className={`text-lg font-bold ${
+                    stale ? "text-text-muted" : "text-text-primary"
+                  }`}
+                >
                   {(currentValue * 100).toFixed(1)}%
                 </p>
                 <p className="text-xs text-text-muted">{event.home_team}</p>
+                {/* No stamp ⇒ no line. An age is the one thing on this card a
+                    reader would take on trust, so an unknown one is left blank
+                    rather than guessed at (notice 34 puts the exact time in the
+                    tooltip and keeps the body to the short form). */}
+                {age && (
+                  <p
+                    className="text-xs text-text-muted tabular-nums"
+                    data-testid="model-source-age"
+                    data-source={key}
+                    title={formatSourceStamp(stamp) ?? undefined}
+                  >
+                    {age}
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -238,7 +301,8 @@ export default function ModelsPage({ params }: ModelsPageProps) {
             </span>
           </div>
         </div>
-      ))}
+        );
+      })}
 
       {/* Explanation footer */}
       <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-800">
