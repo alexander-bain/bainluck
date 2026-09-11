@@ -1315,7 +1315,10 @@ _DISCOVER_IMMINENT_STATUSES = frozenset({"scheduled", "upcoming", "pre", ""})
 
 
 def _imminent_marquee_kickoff_ids(
-    feed_items: list[dict], now: datetime | None = None
+    feed_items: list[dict],
+    now: datetime | None = None,
+    *,
+    lead_capacity: int | None = None,
 ) -> set[int]:
     """Event ids of the about-to-start marquee games Discover keeps this request.
 
@@ -1386,7 +1389,23 @@ def _imminent_marquee_kickoff_ids(
         eligible.append((_discover_event_excitement_score(item), int(event_id)))
 
     eligible.sort(key=lambda pair: (-pair[0], pair[1]))
-    return {event_id for _, event_id in eligible[:_DISCOVER_IMMINENT_MARQUEE_SLOTS]}
+    ranked = [event_id for _, event_id in eligible[:_DISCOVER_IMMINENT_MARQUEE_SLOTS]]
+
+    # TWO QUESTIONS, ONE ORDERING (CERT-2591). Which games SURVIVE is capped at
+    # `_DISCOVER_IMMINENT_MARQUEE_SLOTS`; which games the edition REQUIRES in the
+    # lead is capped at what the lead can actually seat, and a pinned marquee
+    # concept spends a lead slot ahead of every game (C185).
+    #
+    # Deliberately NOT the same cap. Shrinking ADMISSION to the pin-adjusted
+    # capacity would delete the surplus game outright — #4898's arm is the only
+    # reason a pre-kickoff card survives the noise filter at all — so on a night
+    # with three pinned concepts the reader would lose tonight's game from
+    # Discover entirely. That is the opposite of this ship. The surplus game
+    # stays on the page just below the lead; what shrinks is only how many the
+    # edition check is entitled to DEMAND.
+    if lead_capacity is None:
+        return set(ranked)
+    return set(ranked[: max(0, lead_capacity)])
 
 
 def _recent_marquee_final_ids(
@@ -1789,6 +1808,7 @@ def apply_discover_display_chain(
     # on every non-Discover surface (gotcha #7), and defaulting it at the read
     # site would put the empty case in two places instead of one.
     kept_kickoff_ids: set[int] = set()
+    required_marquee_ids: set[int] = set()
     if event_pct is not None and event_pct < 0.3:
         # #4681 — chosen BEFORE either pass and handed to both. The demotion
         # would cap these to 35 and the noise filter would delete them, and a
@@ -1798,6 +1818,19 @@ def apply_discover_display_chain(
         # for the same reason: both passes below would delete these cards, and
         # surviving one of the two is not being on the page.
         kept_kickoff_ids = _imminent_marquee_kickoff_ids(items, now)
+        # The subset the edition is entitled to DEMAND in the lead, which is not
+        # the same as the set that survives (CERT-2591). A pinned marquee concept
+        # sits ahead of every game in `compose_lead`'s order, so it spends a lead
+        # slot; demanding three games behind one pin is demanding a fourth slot.
+        #
+        # A prefix of `kept_kickoff_ids` by construction — same call, same
+        # ordering — so the check can never require a game the passes below are
+        # about to delete.
+        required_marquee_ids = _imminent_marquee_kickoff_ids(
+            items,
+            now,
+            lead_capacity=MAX_LEAD - sum(1 for it in items if it.get(MARQUEE_PIN_KEY)),
+        )
         # D118 — and handed to a THIRD consumer, the browser. Stamped before the
         # noise filter runs so the flag rides the same dicts the filter keeps.
         _stamp_marquee_finals(items, kept_final_ids)
@@ -1910,33 +1943,44 @@ def apply_discover_display_chain(
     # === A REQUIRED MARQUEE THAT DID NOT MAKE THE LEAD IS LOUD (T4-A1, #5099) ===
     #
     # "A missing required marquee is an explicit FAILED edition check, not
-    # filler." The admission arm named at most `_DISCOVER_IMMINENT_MARQUEE_SLOTS`
-    # games as required for this request; if none of them is in the lead the
-    # page is not the page the ship promises, and that must not read the same as
-    # a night with no marquee game at all (gotcha #53 — an empty result and a
-    # failed one are different facts).
+    # filler." The admission arm named the games required for this request; a
+    # required game that is not in the lead means the page is not the page the
+    # ship promises, and that must not read the same as a night with no marquee
+    # game at all (gotcha #53 — an empty result and a failed one differ).
     #
-    # It REPORTS; it does not re-order. The lead is already capped at MAX_LEAD
-    # and the pinned prefix outranks games by C185's contract, so a marquee can
-    # legitimately be squeezed out by a pin or by more imminent games. Forcing
-    # it in here would be a second composition authority — the exact thing this
-    # ship exists to remove.
+    # COUNTS EXACTLY `required - seated`, and the first version did not
+    # (CERT-2591). It asked whether ANY required id was seated, so one pinned
+    # card plus three required fixtures reported a clean `shortfall=0` with a
+    # required fixture sitting fourth. A partial miss is a miss: an all-or-
+    # nothing check is green on precisely the crowded nights the edition matters
+    # most, and the guard that would have caught it did not exist because the
+    # test used enough pins to displace EVERY game.
+    #
+    # The count is taken from ACTUAL seating rather than from the capacity the
+    # arm assumed, so it stays exact even when the pin count moved between
+    # admission and composition.
+    #
+    # It REPORTS; it does not re-order. The lead is capped at MAX_LEAD and the
+    # pinned prefix outranks games by C185's contract, so a marquee can be
+    # squeezed out legitimately. Forcing it in here would be a second
+    # composition authority — the exact thing this ship exists to remove.
     marquee_lead_shortfall = 0
-    if kept_kickoff_ids:
+    if required_marquee_ids:
         seated = {
             (it.get("data") or {}).get("id")
             for it in items[:MAX_LEAD]
             if it.get("type") == "event"
         }
-        if not (kept_kickoff_ids & seated):
-            marquee_lead_shortfall = len(kept_kickoff_ids)
+        missing = required_marquee_ids - seated
+        if missing:
+            marquee_lead_shortfall = len(missing)
             logger.warning(
-                "Discover lead composition: %d required marquee game(s) %s were "
-                "admitted for this request but none reached the top %d — lead "
-                "holds %s",
+                "Discover lead composition: %d of %d required marquee game(s) "
+                "did not reach the top %d — missing %s, lead holds %s",
                 marquee_lead_shortfall,
-                sorted(kept_kickoff_ids),
+                len(required_marquee_ids),
                 MAX_LEAD,
+                sorted(missing),
                 [it.get("type") for it in items[:MAX_LEAD]],
             )
 
@@ -2183,8 +2227,14 @@ def apply_discover_display_chain(
         # 0 = the check passed OR no marquee game was required this request.
         # The two are distinguished by `marquee_lead_required` beside it, so a
         # quiet night never reads as a passing check (gotcha #53).
+        #
+        # `required` counts what the edition may DEMAND (capacity-limited by
+        # pins), not what survived — `marquee_lead_admitted` carries that, and
+        # the gap between them is how many marquee games are on the page below
+        # the lead by design rather than by failure (CERT-2591).
         "marquee_lead_shortfall": marquee_lead_shortfall,
-        "marquee_lead_required": len(kept_kickoff_ids),
+        "marquee_lead_required": len(required_marquee_ids),
+        "marquee_lead_admitted": len(kept_kickoff_ids),
     }
 
 

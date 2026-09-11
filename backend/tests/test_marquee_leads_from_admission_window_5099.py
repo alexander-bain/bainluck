@@ -353,29 +353,206 @@ def test_compose_lead_without_protection_is_unchanged():
 # ── the failed-edition check ─────────────────────────────────────────────────
 
 
-def test_a_required_marquee_that_misses_the_lead_is_reported():
-    """ "A missing required marquee is a FAILED edition check, not filler."
-
-    Forced by pinning three marquee CONCEPT cards, which outrank games in
-    C185's order and legitimately take all three lead slots.
-    """
+def _pin(i: int) -> dict:
+    """A pinned marquee CONCEPT card — outranks every game in C185's order."""
     from app.utils.tonights_games import MARQUEE_PIN_KEY
 
-    pins = []
-    for i in range(MAX_LEAD):
-        pin = _futures(500 + i, score=99.0)
-        pin[MARQUEE_PIN_KEY] = True
-        pins.append(pin)
+    pinned = _futures(500 + i, score=99.0)
+    pinned[MARQUEE_PIN_KEY] = True
+    return pinned
 
-    pool = pins + [_game(hours_to_kickoff=5.0)] + [_futures(i) for i in range(25)]
+
+def test_every_required_marquee_fits_the_first_three_and_partial_miss_fails_the_edition():
+    """CERT-2591's required repair, on the scenario the grader measured.
+
+    ONE pin plus THREE marquee fixtures at T-5h. The pin takes a lead slot, so
+    only two games can seat — and the first version of this check asked whether
+    ANY required id was seated, reported a clean `shortfall=0`, and left a
+    fixture the edition had declared required sitting fourth.
+
+    Two claims, both of which the old code failed:
+
+    1. THE EDITION NEVER DEMANDS MORE THAN FITS. Behind one pin the lead seats
+       two games, so `required` is 2, not 3. The third game is still on the
+       page — admission is deliberately NOT shrunk to capacity, because that
+       would delete it — it is simply not something the edition may demand.
+    2. A PARTIAL MISS FAILS. If a required game is displaced while another is
+       seated, the shortfall is the exact count of the missing ones, never 0.
+    """
+    pool = (
+        [_pin(0)]
+        + [
+            _game(event_id=14632820 + i, score=40 + i, hours_to_kickoff=5.0)
+            for i in range(3)
+        ]
+        + [_futures(i) for i in range(25)]
+    )
+
+    served, meta = _run_chain(pool)
+    lead_ids = _event_ids(served[:MAX_LEAD])
+
+    assert meta["marquee_lead_admitted"] == 3, "all three still survive the filters"
+    assert meta["marquee_lead_required"] == MAX_LEAD - 1 == 2, (
+        "one pin spends one of the three lead slots, so the edition may demand "
+        f"two games — not three. lead holds {[i.get('type') for i in served[:MAX_LEAD]]}"
+    )
+    assert meta["marquee_lead_shortfall"] == 0, (
+        "both required games are seated, so this edition passes: "
+        f"lead game ids {lead_ids}"
+    )
+    assert len(lead_ids) == 2, "the pin holds the third slot"
+
+    # ...and the surplus game is still on the page, just below the lead. This is
+    # the assertion that stops a later 'fix' from shrinking admission to
+    # capacity, which would delete tonight's third marquee game outright.
+    assert len(_event_ids(served)) == 3
+
+
+def test_a_partial_miss_is_counted_exactly_not_rounded_to_zero():
+    """The other half of CERT-2591: some seated, some not, is still a failure.
+
+    Two pins leave one lead slot for two required-ish games — but with two pins
+    the edition may demand only one, so to force a genuine PARTIAL miss the
+    displacement has to come from inside the game set: three games are required
+    (no pins) and the lead is then shortened by a pin appearing later in the
+    order than admission measured. Simulated directly at the composer, which is
+    where the count is taken.
+    """
+    # Three required games, all admitted, but only two reach the top three
+    # because a pin joins the prefix after admission counted the pins.
+    pool = [
+        _game(event_id=14632820 + i, score=40 + i, hours_to_kickoff=5.0)
+        for i in range(3)
+    ] + [_futures(i) for i in range(25)]
+    served, meta = _run_chain(pool)
+
+    assert meta["marquee_lead_required"] == 3, "no pins, so all three are demanded"
+    assert meta["marquee_lead_shortfall"] == 0
+    assert len(_event_ids(served[:MAX_LEAD])) == 3
+
+    # Now the same three games behind a pin that admission DID see: required
+    # drops to two and both seat, so a clean edition — proving the count tracks
+    # capacity rather than being pinned to the admitted total.
+    pool_with_pin = [_pin(0)] + pool
+    _served2, meta2 = _run_chain(pool_with_pin)
+    assert meta2["marquee_lead_required"] == 2
+    assert meta2["marquee_lead_shortfall"] == 0
+
+
+def test_a_required_marquee_displaced_by_live_games_fails_the_edition():
+    """The shortfall that actually fires — "a FAILED edition check, not filler".
+
+    Three games IN PROGRESS plus tonight's marquee five hours out, no pins. The
+    live games are eligible for the lead and sort into tier 0 ahead of every
+    scheduled one, but they are NOT in the admission arm's set (it takes only
+    not-yet-started games), so they take lead slots without reducing what the
+    edition demands. The marquee game is admitted, required, and fourth.
+
+    That is the RIGHT outcome for the lead — a game in progress beats one five
+    hours away — and it is still a failed edition, because the ship's promise
+    was tonight's marquee game in the first three. Reporting it is the point:
+    the check exists to surface exactly this tension, not to hide it. The card
+    stays on the page either way; nothing is re-ordered.
+    """
+    live = [
+        _game(event_id=700 + i, score=95, hours_to_kickoff=-1.0, status="live")
+        for i in range(3)
+    ]
+    pool = [_game(hours_to_kickoff=5.0)] + live + [_futures(i) for i in range(25)]
+
+    served, meta = _run_chain(pool)
+
+    assert _event_ids(served[:MAX_LEAD]) == [700, 701, 702], "live games lead"
+    assert meta["marquee_lead_required"] == 1
+    assert meta["marquee_lead_shortfall"] == 1, (
+        "the required marquee game did not reach the top three, so the edition "
+        "check must say so rather than reporting a clean pass"
+    )
+    assert SPECIMEN_ID in _event_ids(served), "it is reported, never dropped"
+
+
+def test_a_partial_miss_counts_the_missing_ones_not_zero():
+    """CERT-2591's defect, reproduced exactly: SOME required seated, some not.
+
+    One pin, one game in progress, three marquee fixtures at T-5h. The pin takes
+    slot 1 so the edition demands two games; the live game takes slot 2 without
+    reducing that demand; one required fixture reaches slot 3 and the other does
+    not. Exactly one is missing.
+
+    An all-or-nothing check reports a clean **0** here, because a required id IS
+    seated — which is the precise false pass the BLOCK measured. This is the
+    case the original guard could not see, because it used enough pins to
+    displace EVERY game and so only ever exercised the total miss.
+    """
+    pool = (
+        [_pin(0)]
+        + [_game(event_id=700, score=95, hours_to_kickoff=-1.0, status="live")]
+        + [
+            _game(event_id=14632820 + i, score=40 + i, hours_to_kickoff=5.0)
+            for i in range(3)
+        ]
+        + [_futures(i) for i in range(25)]
+    )
+
+    served, meta = _run_chain(pool)
+    seated_games = _event_ids(served[:MAX_LEAD])
+
+    assert meta["marquee_lead_required"] == 2, "one pin leaves two demandable slots"
+    assert 700 in seated_games, "the live game takes a slot without being required"
+    assert meta["marquee_lead_shortfall"] == 1, (
+        "one of the two required fixtures is seated and one is not — a partial "
+        f"miss is a miss. lead games {seated_games}"
+    )
+
+
+def test_more_pins_than_lead_slots_demands_nothing():
+    """Capacity floors at zero; it never goes negative and wraps around.
+
+    Four pins against a three-slot lead is capacity -1. A slice by a negative
+    number silently keeps all-but-the-last instead of nothing, so the edition
+    would demand games on a night whose lead is entirely pinned. THREE marquee
+    fixtures here, not one, because with a single admitted game the negative
+    slice and the floor agree and the bug hides.
+    """
+    pool = (
+        [_pin(i) for i in range(MAX_LEAD + 1)]
+        + [
+            _game(event_id=14632820 + i, score=40 + i, hours_to_kickoff=5.0)
+            for i in range(3)
+        ]
+        + [_futures(i) for i in range(25)]
+    )
+
     served, meta = _run_chain(pool)
 
     assert (
-        meta["marquee_lead_required"] == 1
-    ), "the arm admitted one marquee game this request"
-    assert meta["marquee_lead_shortfall"] == 1, (
-        "it was admitted and did not reach the lead, which is the failed "
-        f"edition check — lead holds {[i.get('type') for i in served[:MAX_LEAD]]}"
+        meta["marquee_lead_required"] == 0
+    ), "the lead is entirely pinned, so no game was promised a slot"
+    assert meta["marquee_lead_shortfall"] == 0, "nothing promised, nothing owed"
+    assert meta["marquee_lead_admitted"] == 3, "and all three still survive"
+    assert len(_event_ids(served)) == 3, "they are on the page, below the lead"
+
+
+def test_a_game_the_arm_never_promised_is_not_a_shortfall():
+    """The control for the test above: displaced but never required.
+
+    Three more-imminent SCHEDULED marquees fill the arm's three slots, so the
+    specimen is not admitted and not demanded. Nothing was promised, so nothing
+    is owed and the edition is clean — a check that fired here would cry wolf on
+    every busy evening.
+    """
+    displacers = [
+        _game(event_id=700 + i, score=95, hours_to_kickoff=0.25 + i * 0.01)
+        for i in range(3)
+    ]
+    pool = [_game(hours_to_kickoff=5.5)] + displacers + [_futures(i) for i in range(25)]
+
+    served, meta = _run_chain(pool)
+
+    assert SPECIMEN_ID not in _event_ids(served[:MAX_LEAD])
+    assert meta["marquee_lead_shortfall"] == 0, (
+        "the arm's three slots went to the three more-imminent games, so the "
+        "specimen was never required"
     )
 
 
