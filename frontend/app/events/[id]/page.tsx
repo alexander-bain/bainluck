@@ -1867,6 +1867,11 @@ export default function EventPage({ params }: EventPageProps) {
           <SectionErrorBoundary label="The script" resetKey={gameMarkets}>
           <PropsSection
             eventStatus={event.status}
+            // #4866: the venue heads every matchup-level family with
+            // "<away> vs <home>: ", which the hero above already says. Passing
+            // the teams lets the section drop it — and ONLY when it is this
+            // event's matchup, so a mis-attached fixture stays visible.
+            matchup={{ home: event.home_team, away: event.away_team }}
             items={propsScript
               .map((p, i): PropMark => {
                 const verified = verifyScriptGrade(p, rawPropRowsByKey);

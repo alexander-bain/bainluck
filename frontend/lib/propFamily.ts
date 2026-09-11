@@ -128,6 +128,100 @@ export function stripSharedFamilyPrefix(names: string[]): string[] {
   return names.map((n) => (n.startsWith(prefix) ? n.slice(prefix.length).trim() : n));
 }
 
+/** This event's two teams, as the page already knows them. */
+export interface MatchupNames {
+  home?: string | null;
+  away?: string | null;
+}
+
+/**
+ * Separators a venue puts between the two sides of a matchup title. `v` alone
+ * is deliberately absent: it is a common word, and no measured payload uses it.
+ */
+const MATCHUP_SPLIT = /\s+(?:vs\.?|@)\s+/i;
+
+function normalizeTeamText(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * True when `side` names `team`. Three forms are accepted because all three are
+ * on the wire: the venue's short form as a prefix of our name ("Tampa Bay" →
+ * "Tampa Bay Rays"), a MANGLED truncation of it ("Los Angeles R" → "Los Angeles
+ * Rams", #5181), and the nickname tail on its own ("Rays").
+ */
+function sideNamesTeam(side: string, team: string): boolean {
+  const s = normalizeTeamText(side);
+  const t = normalizeTeamText(team);
+  if (s.length < 3 || t.length < 3) return false;
+  return t.startsWith(s) || t.endsWith(s);
+}
+
+/**
+ * True when `head` names THIS event's matchup — both sides present, matching
+ * the two teams in either order.
+ *
+ * Both sides are required, and they must name DIFFERENT teams. That is the
+ * fail-safe: a market for some other fixture that has been mis-attached to this
+ * event (a truth defect under notice 40) does NOT match, so it keeps its prefix
+ * and stays visible to the reader instead of being silently disguised as one of
+ * ours.
+ */
+function headNamesMatchup(head: string, home: string, away: string): boolean {
+  const sides = head.split(MATCHUP_SPLIT);
+  if (sides.length !== 2) return false;
+  const [a, b] = sides;
+  return (
+    (sideNamesTeam(a, away) && sideNamesTeam(b, home)) ||
+    (sideNamesTeam(a, home) && sideNamesTeam(b, away))
+  );
+}
+
+/**
+ * Drop the leading `"<away> vs <home>: "` from every family whose head names
+ * this event's matchup.
+ *
+ * #4866: {@link sharedFamilyPrefix} takes ONE longest-common prefix across the
+ * whole section, so it only fires when the section is homogeneous. Since #1735
+ * un-suppressed the graded windows, a live MLB page carries two cohorts —
+ * player props (`Drake Baldwin: Hits O/U 2.5`) and matchup-level markets
+ * (`Tampa Bay vs Atlanta: Total Bases`) — whose common prefix is the empty
+ * string. Measured on Tampa Bay @ Atlanta (`/events/15308050`): 91 group
+ * headers, 33 of them repeating the matchup the hero already states.
+ *
+ * Why this is keyed on the EVENT'S OWN TEAMS and not on cohort sharedness: the
+ * obvious generalisation — compute a prefix per `": "` head — reads well on the
+ * matchup cohort and destroys the player cohort. `Drake Baldwin` heads seven
+ * families on that same payload, so it clears any "shared ⇒ boilerplate"
+ * threshold and the player's name, which IS the meaning of the row, is the
+ * thing that gets stripped. Sharedness cannot tell boilerplate from meaning
+ * here; only knowing what the page already says can.
+ *
+ * Index-preserving, so callers can zip the result against their own ordering.
+ */
+export function stripEventMatchupPrefix(
+  names: string[],
+  matchup?: MatchupNames | null,
+): string[] {
+  const home = matchup?.home?.trim();
+  const away = matchup?.away?.trim();
+  if (!home || !away) return names;
+
+  return names.map((name) => {
+    const i = name.indexOf(": ");
+    if (i <= 0) return name;
+    const remainder = name.slice(i + 2).trim();
+    // Never strip a name down to nothing (same guard as sharedFamilyPrefix).
+    if (!remainder) return name;
+    return headNamesMatchup(name.slice(0, i), home, away) ? remainder : name;
+  });
+}
+
 export interface PropFamilyGroup<T> {
   /**
    * Display name, already prefix-stripped. `null` means "no family" — the
@@ -148,6 +242,7 @@ export interface PropFamilyGroup<T> {
 export function groupByPropFamily<T>(
   items: T[],
   keyOf: (item: T) => string | number,
+  matchup?: MatchupNames | null,
 ): PropFamilyGroup<T>[] {
   const named = new Map<string, T[]>();
   const unfamiliar: T[] = [];
@@ -170,7 +265,21 @@ export function groupByPropFamily<T>(
 
   if (order.length === 0) return [{ name: null, items }];
 
-  const display = stripSharedFamilyPrefix(order);
+  // #4866 (per-family, needs the event's teams) composed with the section-wide
+  // longest-common prefix. Both are index-preserving, so the zip with `order`
+  // below still holds.
+  //
+  // The order of these two is NOT load-bearing on any shape we serve, and that
+  // is a measured claim, not an assumption: swapping them kills no test and
+  // changes no header on either specimen payload. They only diverge when a head
+  // NESTS one inside the other ("Game: Tampa Bay vs Atlanta: Hits"), which no
+  // venue sends today. Matchup-first is kept because it lets the matchup rule
+  // read the venue's original head rather than one another rule has already
+  // trimmed — so if a nested head ever does arrive, the rule that fails is the
+  // one that fails safe (a prefix stays, nothing is wrongly stripped).
+  const display = stripSharedFamilyPrefix(
+    stripEventMatchupPrefix(order, matchup),
+  );
   const groups: PropFamilyGroup<T>[] = order.map((family, i) => ({
     name: display[i],
     items: named.get(family) as T[],
