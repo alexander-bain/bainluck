@@ -178,8 +178,26 @@ def test_the_restamp_gauge_is_not_swept_in_by_the_new_prefix():
 # ---------------------------------------------------------------------------
 
 def test_the_stamp_moved_for_this_capture_rule():
-    """A capture rule changes what absence MEANS, and the ring outlives it."""
-    assert GAUGE_CAPTURE_VERSION == UNIT_COST_CAPTURE_VERSION
+    """A capture rule changes what absence MEANS, and the ring outlives it.
+
+    ``>=``, not ``==``, and the difference is the point of having two constants
+    at all. What this rule needs is that no row can carry a stamp below its floor
+    while claiming to support it — the floor is pinned by
+    :func:`test_the_unit_cost_floor_did_not_move` — not that the stamp stays
+    frozen at 3 for the life of the module. An ``==`` here makes the NEXT capture
+    rule's bump fail this test, which is precisely the re-dating that
+    ``DROP_AND_STOP_CAPTURE_VERSION``'s comment says the separation exists to
+    prevent ("CAL-P1066 bumped the stamp to 3 and this floor did NOT move"), and
+    it is what CAL-P1105 hit when it added the unit-fence rule at version 4.
+    """
+    assert GAUGE_CAPTURE_VERSION >= UNIT_COST_CAPTURE_VERSION
+
+
+def test_the_unit_cost_floor_did_not_move():
+    """The other half of the pair above: the floor stays where it shipped, so a
+    row banked at version 3 keeps licensing the cost reading it always licensed,
+    however far the stamp travels past it."""
+    assert UNIT_COST_CAPTURE_VERSION == 3
 
 
 def test_the_drop_and_stop_floor_did_not_move():

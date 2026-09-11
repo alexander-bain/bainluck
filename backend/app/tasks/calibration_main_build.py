@@ -411,6 +411,31 @@ CANCEL_CAUSE_INTERRUPTED = "interrupted"
 #: This one is emitted here, so the better pattern applies.
 UNIT_COST_REASON_PREFIX = "staged:unit_cost_reason:"
 
+#: Prefix for the pair that says WHAT FENCE one unit ran under —
+#: ``staged:unit_bound_ms:<phase>`` (the statement timeout applied) and
+#: ``staged:unit_bound_headroom_ms:<phase>`` (how much of the phase's remaining
+#: window that bound left unspent). Written by
+#: :meth:`StagedRunner.apply_unit_statement_timeout`, once per unit.
+#:
+#: Lifted out of those call sites by CAL-P1105 for the same reason
+#: :data:`UNIT_COST_REASON_PREFIX` was: the sampler needs a prefix to scan for,
+#: the phase half is interpolated so no fixed name can reach these, and this
+#: emitter is not the ruling-009 frozen module, so CAL-P993's rule — read the
+#: constant off the module that emits it — applies here rather than a retyped
+#: literal and a source-scan test.
+UNIT_BOUND_PREFIX = "staged:unit_bound"
+
+#: Prefix for the pair that says WHAT EVIDENCE sized that fence —
+#: ``staged:unit_worst_carried_ms:<phase>``, the carried worst-case unit cost the
+#: bound is derived from, or ``staged:unit_worst_reason:unmeasured:<phase>`` when
+#: there is none (ruling 075, second clause: "no carried worst" must not render
+#: identically to "the carried worst is zero").
+#:
+#: Deliberately NOT a prefix of ``staged:unit_ms_worst``, which is a different
+#: measurement already captured by name: that one is what a unit COST this beat,
+#: this one is what the bound was SIZED OFF.
+UNIT_WORST_PREFIX = "staged:unit_worst"
+
 
 def cancel_cause(exc: BaseException) -> Optional[str]:
     """``incomplete`` | ``interrupted`` | ``None`` — WHY a beat ended cancelled.
@@ -1039,19 +1064,19 @@ class PhaseRunner:
         # tight, and those call for opposite responses. The sixteen-beat pin
         # this fix addresses cost a day to attribute for exactly that reason.
         self.ledger.record_gauge(
-            f"staged:unit_bound_ms:{phase}", int(timeout_ms)
+            f"{UNIT_BOUND_PREFIX}_ms:{phase}", int(timeout_ms)
         )
         self.ledger.record_gauge(
-            f"staged:unit_bound_headroom_ms:{phase}",
+            f"{UNIT_BOUND_PREFIX}_headroom_ms:{phase}",
             max(0, self.ledger.remaining_ms(elapsed_ms=self.elapsed_ms()) - int(timeout_ms)),
         )
         worst = self.ledger.measured_unit_worst_ms(phase)
         if worst:
-            self.ledger.record_gauge(f"staged:unit_worst_carried_ms:{phase}", int(worst))
+            self.ledger.record_gauge(f"{UNIT_WORST_PREFIX}_carried_ms:{phase}", int(worst))
         else:
             # Ruling 075, second clause: "no carried worst" must not render
             # identically to "the carried worst is zero".
-            self.ledger.record_gauge(f"staged:unit_worst_reason:unmeasured:{phase}", 1)
+            self.ledger.record_gauge(f"{UNIT_WORST_PREFIX}_reason:unmeasured:{phase}", 1)
         await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
         await (
             self.tag_rebuild_session(db) if deferred_rebuild else self.tag_session(db)

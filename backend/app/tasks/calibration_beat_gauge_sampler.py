@@ -258,6 +258,45 @@ def _unit_cost_reason_prefix() -> str:
 
 UNIT_COST_REASON_PREFIX = _unit_cost_reason_prefix()
 
+#: The FIFTH and SIXTH prefixes, added by CAL-P1105: what fence each unit ran
+#: under, and what evidence sized it.
+#:
+#: 🔴 THE RING RECORDS WHAT A UNIT COST AND NEVER WHAT IT WAS ALLOWED. CAL-P163
+#: (#1978) added exactly the pair that answers "was the fence 100 ms too tight or
+#: 600 s too tight", and its own comment says why — "a cancelled unit records
+#: only that it was cancelled, the same ledger entry" either way, and "the
+#: sixteen-beat pin this fix addresses cost a day to attribute for exactly that
+#: reason". Neither half was ever added to :data:`OPERATIONAL_GAUGES`, and the
+#: phase suffix is interpolated so no fixed name could have reached them.
+#: Measured over the live 168-row ring on 2026-09-11T04:11Z: of 32 distinct gauge
+#: keys retained, ``staged:unit_bound_ms:*``, ``staged:unit_bound_headroom_ms:*``,
+#: ``staged:unit_worst_carried_ms:*`` and ``staged:unit_worst_reason:*`` occur on
+#: **0** rows, while ``staged:window_stop:unit_too_large`` — a beat giving up
+#: because a unit did not fit inside that fence — occurs on many.
+#:
+#: So the ring can say a beat stopped because a unit was too large for a bound it
+#: never records. That is the fifth time this file has recorded the same defect
+#: class, and it is why D119's throughput question ("every beat completes exactly
+#: 5 units across a 1.46× swing in unit cost, and ends with 29–191 s unspent")
+#: could be measured but not attributed.
+_UNIT_BOUND_PREFIX_FALLBACK = "staged:unit_bound"
+_UNIT_WORST_PREFIX_FALLBACK = "staged:unit_worst"
+
+
+def _unit_fence_prefixes() -> tuple[str, str]:
+    """The producer's own constants, read off the module that emits them."""
+    try:
+        from app.tasks.calibration_main_build import (
+            UNIT_BOUND_PREFIX,
+            UNIT_WORST_PREFIX,
+        )
+    except Exception:  # noqa: BLE001 — a sampler must never fail on an import
+        return _UNIT_BOUND_PREFIX_FALLBACK, _UNIT_WORST_PREFIX_FALLBACK
+    return UNIT_BOUND_PREFIX, UNIT_WORST_PREFIX
+
+
+UNIT_BOUND_PREFIX, UNIT_WORST_PREFIX = _unit_fence_prefixes()
+
 #: Every prefix ``select_gauges`` scans for. One tuple so a third prefix is one
 #: line here and nowhere else.
 CAPTURED_PREFIXES = (
@@ -265,6 +304,8 @@ CAPTURED_PREFIXES = (
     CANCEL_CAUSE_PREFIX,
     CURSOR_PREFIX,
     UNIT_COST_REASON_PREFIX,
+    UNIT_BOUND_PREFIX,
+    UNIT_WORST_PREFIX,
 )
 
 #: The FOURTH capture rule, added by CAL-P1030 (#3454) — and the first one that
@@ -321,7 +362,7 @@ def is_stop_key(key: Any) -> bool:
 #: So the row says what it could see, and a row that does not say is UNKNOWN. A
 #: version is the only marker that works here: the fields themselves are absent
 #: on a legacy row, and "absent" is precisely the value that must not be read.
-GAUGE_CAPTURE_VERSION = 3
+GAUGE_CAPTURE_VERSION = 4
 
 #: The first capture version whose :func:`select_gauges` retains
 #: ``staged:units_dropped`` and every ``staged:<stem>_stop:<reason>`` key —
@@ -351,6 +392,19 @@ DROP_AND_STOP_CAPTURE_VERSION = 2
 #: measured zero while writing #4314, on the live ring, before finding the
 #: capture gap. Gotcha #53, one layer above the field added to end it.
 UNIT_COST_CAPTURE_VERSION = 3
+
+#: The first capture version whose :func:`select_gauges` retains the unit FENCE
+#: — every ``staged:unit_bound*`` and ``staged:unit_worst*`` key.
+#:
+#: 🔴 THIS FLOOR IS LOAD-BEARING FOR SEVEN DAYS AND THEN NEVER AGAIN, WHICH IS
+#: EXACTLY WHEN IT WILL BE READ. The ring holds 168 rows, so every row banked
+#: before this ships carries a gauge map these keys were discarded from AT
+#: CAPTURE TIME — and the question they answer is asked by subtraction ("the
+#: bound left N ms unspent"), which is the shape that reads an absence as a zero
+#: without anybody noticing. A row below this floor answers UNKNOWN, never "the
+#: beat applied no bound" and never "the headroom was 0". CERT-2051's lesson,
+#: taken as a constant rather than a comment for the third time.
+UNIT_FENCE_CAPTURE_VERSION = 4
 
 #: A row banked before CAL-P1030 carries no version at all. Zero, so the
 #: comparison against the floor is an ordinary ``<`` and an unparseable or
@@ -630,6 +684,97 @@ def row_stop_and_drop(row: Any) -> dict:
         "stop_reasons_measured": True,
         "units_dropped": dropped,
         "units_dropped_measured": measured,
+    }
+
+
+#: The two fence stems, field name -> the suffix that follows
+#: :data:`UNIT_BOUND_PREFIX`. The phase half is whatever remains, verbatim.
+#:
+#: ``_headroom_ms:`` is not reachable through ``_ms:`` and vice versa — they
+#: differ at the character after ``staged:unit_bound_`` — so the two stems can be
+#: scanned in any order without one shadowing the other. The guard test pins that
+#: rather than trusting the reading.
+UNIT_FENCE_STEMS = {
+    "unit_bound_ms": "_ms:",
+    "unit_bound_headroom_ms": "_headroom_ms:",
+}
+
+
+def unit_fence(gauges: Any) -> dict:
+    """``{field: {phase: int}}`` — the fence each phase's last unit ran under.
+
+    CAL-P1105. Pure. Two fields, both keyed by phase because the producer writes
+    one pair per phase per unit and the ledger keeps the last:
+    ``unit_bound_ms`` (the statement timeout applied) and
+    ``unit_bound_headroom_ms`` (how much of the phase's remaining window that
+    bound left unspent).
+
+    ``{}`` for a field means this beat wrote no such key — a real state, and the
+    common one for a beat that refused its lease or died before its first unit.
+    It is not the same as the ``None`` :func:`row_unit_fence` returns for a row
+    whose capture could not have retained the key, and the two never share a
+    value domain.
+
+    ⚠️ ONLY SOUND AT :data:`UNIT_FENCE_CAPTURE_VERSION` OR LATER, for
+    :func:`bank_drop`'s reason and with a sharper edge: the question these
+    answer is asked by subtraction, so an absence read as a zero becomes "the
+    bound left no headroom" — a specific, plausible, wrong finding rather than a
+    visible gap. Never call this on a raw ring row; call :func:`row_unit_fence`.
+    """
+    out: dict = {field: {} for field in UNIT_FENCE_STEMS}
+    if not isinstance(gauges, dict):
+        return out
+    for key, value in gauges.items():
+        if not isinstance(key, str) or not key.startswith(UNIT_BOUND_PREFIX):
+            continue
+        if not isinstance(value, int) or isinstance(value, bool):
+            continue
+        rest = key[len(UNIT_BOUND_PREFIX):]
+        for field, stem in UNIT_FENCE_STEMS.items():
+            if rest.startswith(stem):
+                phase = rest[len(stem):]
+                # An empty phase is still a fence the producer applied; dropping
+                # it would let a malformed key read as "no bound was set".
+                out[field][phase] = value
+                break
+    return out
+
+
+#: What a row below :data:`UNIT_FENCE_CAPTURE_VERSION` says instead of a number.
+UNIT_FENCE_ABSENT_CAPTURE = "capture_below_floor"
+
+
+def row_unit_fence(row: Any) -> dict:
+    """The fence one banked beat ran under, gated on capture. Pure.
+
+    ``{"unit_bound_ms": dict|None, "unit_bound_headroom_ms": dict|None,
+    "unit_fence_measured": bool, "unit_fence_absent": str|None}``.
+
+    THE ONLY PLACE THIS VERSION GATE LIVES — :func:`row_stop_and_drop`'s shape,
+    for CERT-2051's reason. Below the floor the sampler that banked this row
+    discarded every fence key, so the row cannot speak to the question and says
+    so with ``None`` on both maps. **Not** ``{}``: that is :func:`unit_fence`'s
+    own word for "this beat applied no unit bound", which is a measurement.
+
+    The evidence half — ``staged:unit_worst_carried_ms:<phase>`` and
+    ``staged:unit_worst_reason:unmeasured:<phase>`` — is captured from this
+    version on but deliberately not derived here. It attributes a bound rather
+    than reporting one, and a reader who has got as far as asking why a bound is
+    the size it is can read it off the raw gauge map under ``full=true``.
+    """
+    version = capture_version(row)
+    if version < UNIT_FENCE_CAPTURE_VERSION:
+        return {
+            "unit_bound_ms": None,
+            "unit_bound_headroom_ms": None,
+            "unit_fence_measured": False,
+            "unit_fence_absent": UNIT_FENCE_ABSENT_CAPTURE,
+        }
+    fence = unit_fence((row or {}).get("gauges") if isinstance(row, dict) else None)
+    return {
+        **fence,
+        "unit_fence_measured": True,
+        "unit_fence_absent": None,
     }
 
 

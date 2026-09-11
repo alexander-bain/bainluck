@@ -688,6 +688,24 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     that is deliberate — they describe the SERVED census, whose age the beat
     genuinely does not know. Filling them from the builder's gauges would be
     CAL-P078's substitution arriving through the fix for its own symptom.
+
+    CAL-P1105 adds ``unit_bound_ms`` / ``unit_bound_headroom_ms`` — WHAT FENCE
+    the beat's units ran under, keyed by phase. The ring has always served what a
+    unit COST (``staged:unit_ms_worst``) and that a beat gave up because a unit
+    did not fit (``staged:window_stop:unit_too_large``), while never recording the
+    bound those are judged against: measured over the live ring at
+    2026-09-11T04:11Z, **zero of 168 rows** carried any ``unit_bound`` key,
+    because the phase suffix is interpolated and no fixed name in
+    ``OPERATIONAL_GAUGES`` could reach it. CAL-P163 (#1978) wrote that pair
+    specifically so a cancelled unit would stop recording "the same ledger entry
+    whether the fence was 100 ms too tight or 600 s too tight"; the sampler then
+    dropped it for eight months.
+
+    Gated on capture version inside ``row_unit_fence`` — ``null`` on a row banked
+    before the rule, never a headroom of ``0``. That distinction is sharper here
+    than elsewhere on this endpoint because the question is asked by subtraction,
+    so an unretained key read as a zero does not leave a visible hole: it reports
+    a bound that left no room, which is both plausible and false.
     """
     _check_admin_secret(request=request)
 
@@ -698,6 +716,7 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
         cursor_decision,
         row_rebuild_progress,
         row_stop_and_drop,
+        row_unit_fence,
         summarise,
     )
 
@@ -765,6 +784,17 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     # :func:`row_rebuild_progress`: 124 of 168 rows in the ring were nulled that
     # way, over the exact thirty-six hours the rebuild was being watched by hand.
     progress = [row_rebuild_progress(r) for r in bounded]
+    # CAL-P1105. WHAT FENCE the beat's units ran under, beside what they cost.
+    # The ring already served ``staged:unit_ms_worst`` — what a unit COST — and
+    # ``staged:window_stop:unit_too_large`` — a beat giving up because a unit did
+    # not fit — while never once recording the bound those two are judged
+    # against: measured 2026-09-11T04:11Z, zero of 168 rows carried any
+    # ``unit_bound`` key. Projected into the DEFAULT view on the CAL-P1002
+    # precedent, since "was the fence mis-sized?" is the question a reader of a
+    # stalled rebuild arrives with. Version-gated inside ``row_unit_fence``: a
+    # row banked before this capture rule answers ``null``, never a headroom of
+    # zero, which is what an absence read by subtraction would become.
+    fences = [row_unit_fence(r) for r in bounded]
     out["observations"] = [
         {
             "generation": r.get("generation"),
@@ -786,8 +816,9 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
             "units_dropped": d["units_dropped"],
             "units_dropped_measured": d["units_dropped_measured"],
             **p,
+            **f,
         }
-        for r, c, d, p in zip(bounded, cursors, drops, progress)
+        for r, c, d, p, f in zip(bounded, cursors, drops, progress, fences)
     ]
     out["observations_returned"] = len(out["observations"])
     out["observations_retained"] = len(rows)
