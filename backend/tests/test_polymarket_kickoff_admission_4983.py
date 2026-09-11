@@ -347,11 +347,12 @@ class TestTheSizingConstantsSayWhatWasMeasured:
         in one file disagreeing about the same quantity is the defect; asserting
         the stale one cannot come back is the guard.
         """
-        source = rail.KICKOFF_STALE_MINUTES.__doc__ or ""
-        # The constant carries no runtime docstring, so read the module source.
+        # A `#:` comment block is not a runtime docstring — an int has no
+        # `__doc__` of its own — so the assertion has to read the module source.
         import inspect
 
         source = inspect.getsource(rail)
         head, _, _ = source.partition("KICKOFF_STALE_MINUTES = 45")
+        assert head, "the constant moved; this guard is reading nothing"
         assert "leaves ~723 for the backlog drain" not in head
         assert "1,150 condition ids on a weeknight" in head
