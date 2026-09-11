@@ -20,11 +20,13 @@ the production reading. So the pools here contest the event's own group, and the
 red arm below is real rather than an artefact of a thin fixture.
 
 RED ARM — measured on the unwired tree, which is the state this file was written
-against. **5 failed, 6 passed:**
+against. **7 failed, 6 passed:**
 
     test_the_selected_final_reaches_page_one ............................ FAILED
     test_it_sits_at_the_seat_floor_and_not_in_the_lead .................. FAILED
     test_the_chain_reports_what_it_seated ............................... FAILED
+    test_a_WARM_reader_gets_the_seat_too ................................ FAILED
+    test_a_PINNED_marquee_keeps_the_top_and_the_final_still_seats ....... FAILED
     test_the_chain_reports_seating_nothing_for_an_ordinary_final ........ FAILED
     test_the_seating_runs_AFTER_the_lead_and_BEFORE_the_quality_floor ... FAILED
 
@@ -52,6 +54,7 @@ from app.routes.feed import (
     apply_discover_display_chain,
 )
 from app.utils.discover_final_seating import DISCOVER_FINAL_SEAT_FLOOR
+from app.utils.tonights_games import MARQUEE_PIN_KEY
 
 NOW = datetime(2026, 9, 11, 10, 26, tzinfo=timezone.utc)
 
@@ -197,6 +200,38 @@ class TestTheShip:
             "found nothing to do, and those are different facts (gotcha #53)"
         )
         assert meta["final_seating"]["seated"] == 1
+
+
+class TestItHoldsForEveryReaderAndEveryLead:
+    def test_a_WARM_reader_gets_the_seat_too(self):
+        """Every other test here runs cold (an empty `PersonalizationContext`).
+
+        Cold start tightens `diversify_discover_first_page`'s category caps to 2
+        for the first eight cards, so a cold page one is composed differently
+        from a warm one. The seating runs after that pass either way, and this
+        is what says so rather than assuming it — the #4681 fixture's whole
+        defect was a page-one claim that held for one composition only.
+        """
+        out, meta = _chain(_contested_pool() + [_final()], cold_start=False)
+
+        assert _position(out, 14780138) == DISCOVER_FINAL_SEAT_FLOOR
+        assert meta["final_seating"]["seated"] == 1
+
+    def test_a_PINNED_marquee_keeps_the_top_and_the_final_still_seats(self):
+        """The seat floor is below the lead, so a pin cannot be displaced.
+
+        Asserted rather than reasoned: #5099's edition contract puts a pinned
+        marquee ahead of every game in `compose_lead`'s order, and a placement
+        pass that quietly cost it slot 0 would break that ship to deliver this
+        one.
+        """
+        pinned = _futures(9_999, "golf", 95.0)
+        pinned[MARQUEE_PIN_KEY] = True
+
+        out, _ = _chain([pinned] + _contested_pool() + [_final()])
+
+        assert out[0] is pinned, "the pinned marquee lost the top slot"
+        assert _position(out, 14780138) == DISCOVER_FINAL_SEAT_FLOOR
 
 
 class TestTheScoreboardStillStaysOut:
