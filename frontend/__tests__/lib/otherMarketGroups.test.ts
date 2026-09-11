@@ -11,6 +11,7 @@ import {
   MAX_OUTCOMES_PER_CARD,
   PLAYER_PROPS_CATEGORY,
   buildMarketSection,
+  canonicalMatchupTitle,
   categorizeMarketName,
   completedSetsForTennis,
   matchScoreStillReachable,
@@ -979,5 +980,115 @@ describe("buildMarketSection — an enumeration is ordered by its sequence (#386
     const expected = ["Kelce", "Pacheco", "Rice"];
     expect(labelsOfCard(tied, "First Touchdown")).toEqual(expected);
     expect(labelsOfCard([...tied].reverse(), "First Touchdown")).toEqual(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #5181 — the card named a club that does not exist.
+// ---------------------------------------------------------------------------
+
+/**
+ * REAL rows, `GET /api/events/15298474/game-markets` read 2026-09-11 14:45Z
+ * (Vancouver Whitecaps FC 3–0 LA Galaxy, MLS). The venue's whole market is
+ * three rows and the mangled string is in BOTH slots: the market name that
+ * titles the card, and the outcome name on one of its rows.
+ */
+const VANCOUVER_MARKET = "Vancouver vs Los Angeles G";
+const VANCOUVER_HOME = "Vancouver Whitecaps FC";
+const VANCOUVER_AWAY = "LA Galaxy";
+const VANCOUVER: OtherMarketRow[] = [
+  { market_name: VANCOUVER_MARKET, outcome_name: "Vancouver", probability: 0.99, source: "kalshi" },
+  { market_name: VANCOUVER_MARKET, outcome_name: "Tie", probability: 0.01, source: "kalshi" },
+  { market_name: VANCOUVER_MARKET, outcome_name: "Los Angeles G", probability: 0.01, source: "kalshi" },
+];
+
+const VANCOUVER_TEAMS = { homeTeam: VANCOUVER_HOME, awayTeam: VANCOUVER_AWAY };
+
+function cardNames(section: ReturnType<typeof buildMarketSection>): string[] {
+  return section.categories.flatMap((c) => c.cards.map((card) => card.name));
+}
+
+describe("canonicalMatchupTitle (#5181)", () => {
+  test("a bare venue matchup is renamed to the two names the hero uses", () => {
+    expect(
+      canonicalMatchupTitle(VANCOUVER_MARKET, VANCOUVER_HOME, VANCOUVER_AWAY),
+    ).toBe("Vancouver Whitecaps FC vs LA Galaxy");
+  });
+
+  test("`vs.` with the period is the same shape", () => {
+    expect(canonicalMatchupTitle("Atlanta vs. New York", "Atlanta Braves", "New York Yankees"))
+      .toBe("Atlanta Braves vs New York Yankees");
+  });
+
+  test("a colon suffix keeps every character — the threshold is not reconstructible", () => {
+    // The venue puts the line, the period and the prop subject after the colon
+    // and two team names cannot carry any of it.
+    expect(canonicalMatchupTitle("Vancouver vs Los Angeles G: Total Goals", VANCOUVER_HOME, VANCOUVER_AWAY))
+      .toBeNull();
+    expect(canonicalMatchupTitle("Alcaraz vs Sinner: O/U 2.5 Sets", "Carlos Alcaraz", "Jannik Sinner"))
+      .toBeNull();
+  });
+
+  test("half a matchup is refused — a missing side is worse than the venue's whole string", () => {
+    expect(canonicalMatchupTitle(VANCOUVER_MARKET, VANCOUVER_HOME, "")).toBeNull();
+    expect(canonicalMatchupTitle(VANCOUVER_MARKET, "", VANCOUVER_AWAY)).toBeNull();
+    expect(canonicalMatchupTitle(VANCOUVER_MARKET, null, null)).toBeNull();
+    expect(canonicalMatchupTitle(VANCOUVER_MARKET, "   ", VANCOUVER_AWAY)).toBeNull();
+  });
+
+  test("a name that is not a two-sided matchup is left alone", () => {
+    expect(canonicalMatchupTitle("Coin Toss", VANCOUVER_HOME, VANCOUVER_AWAY)).toBeNull();
+    expect(canonicalMatchupTitle("A vs B vs C", VANCOUVER_HOME, VANCOUVER_AWAY)).toBeNull();
+    expect(canonicalMatchupTitle("", VANCOUVER_HOME, VANCOUVER_AWAY)).toBeNull();
+    expect(canonicalMatchupTitle(null, VANCOUVER_HOME, VANCOUVER_AWAY)).toBeNull();
+  });
+});
+
+describe("buildMarketSection — #5181 the card stops printing a club that does not exist", () => {
+  test("THE SHIP: the specimen's card is titled with our names, not the venue's", () => {
+    const section = buildMarketSection(VANCOUVER, VANCOUVER_TEAMS);
+    expect(cardNames(section)).toEqual(["Vancouver Whitecaps FC vs LA Galaxy"]);
+    // The defect string is gone from the title.
+    expect(cardNames(section).join("|")).not.toContain("Los Angeles G");
+  });
+
+  test("without team names the venue string is untouched — the behaviour before this ship", () => {
+    // A caller with no event context must not be changed by this at all.
+    expect(cardNames(buildMarketSection(VANCOUVER))).toEqual([VANCOUVER_MARKET]);
+  });
+
+  test("the ROW still carries the venue's mangled outcome — this ship is the title only", () => {
+    // Filed separately: `Los Angeles G` is also the outcome_name, and mapping it
+    // back to `LA Galaxy` needs identity work this deliberately does not do.
+    // Pinned so the remaining half cannot be believed fixed by accident.
+    const section = buildMarketSection(VANCOUVER, VANCOUVER_TEAMS);
+    const labels = section.categories.flatMap((c) =>
+      c.cards.flatMap((card) => card.outcomes.map((o) => o.label)),
+    );
+    expect(labels).toContain("Los Angeles G");
+  });
+
+  test("a player-prop card is still titled by its statistic, not the matchup", () => {
+    // `parsed` takes precedence over the rename, so a payload whose market name
+    // IS a bare matchup still groups by statistic. Note the fixture: `ACUNA`
+    // alone renders nothing (its three rows are one merged, withheld outcome),
+    // so asserting against it would have passed for the wrong reason.
+    const props: OtherMarketRow[] = [
+      { market_name: "Atlanta vs New York", outcome_name: "Matt Olson: Home Runs O/U 0.5", probability: 0.095, source: PM },
+      { market_name: "Atlanta vs New York", outcome_name: "Aaron Judge: Home Runs O/U 0.5", probability: 0.21, source: PM },
+      { market_name: "Atlanta vs New York", outcome_name: "Max Fried: Strikeouts O/U 5.5", probability: 0.44, source: PM },
+    ];
+    const section = buildMarketSection(props, VANCOUVER_TEAMS);
+    expect(cardNames(section)).toEqual(["Home Runs", "Strikeouts"]);
+  });
+
+  test("a colon-suffixed venue name keeps its suffix on the card", () => {
+    const rows: OtherMarketRow[] = [
+      { market_name: "Vancouver vs Los Angeles G: Corners", outcome_name: "Over 9.5", probability: 0.5, source: "kalshi" },
+      { market_name: "Vancouver vs Los Angeles G: Corners", outcome_name: "Exactly 9", probability: 0.2, source: "kalshi" },
+      { market_name: "Coin Toss", outcome_name: "Heads", probability: 0.5, source: "kalshi" },
+    ];
+    expect(cardNames(buildMarketSection(rows, VANCOUVER_TEAMS)))
+      .toContain("Vancouver vs Los Angeles G: Corners");
   });
 });
