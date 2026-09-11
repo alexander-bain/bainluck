@@ -101,6 +101,34 @@ GREP=/usr/bin/grep
 # into one five-second read. It never resolves that case silently in either
 # direction.
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# resolve_cert_id — the id to PRINT and to hand to notice 18, for one sha.
+#
+# Sets CERT_ID (empty if no granting row). Statement, not `$( )`; see below.
+#
+# It reads the id off the GRANTED row, not off the first row naming the sha. A
+# ship that was blocked once and repaired has two or more rows on one sha — the
+# BLOCK first, then the GREEN that repairs it — so `head -1` over all of them
+# returns the BLOCK. Measured on `5d18064c` (#5088): all-rows resolves CERT-2613
+# `BLOCK -- TOKEN WITHHELD`, the granted row resolves CERT-2622 `GREEN -- TOKEN
+# GRANTED` (#5252, found by live/153).
+#
+# The gate never *decided* anything on that id — `granted` is counted separately
+# and correctly — but the id is what goes into the merge subject and the ledger
+# note, and it fires on exactly the ships whose provenance most needs to be
+# legible: a later reader auditing "what did we merge on?" finds a withdrawn
+# token. It is also the id notice 18 scans, so resolving it from the granted row
+# is what makes that scan provably about the cert that granted the token.
+#
+# `head -1` still picks the granting cert rather than a `repairs CERT-M`
+# reference inside the same row, because `| CERT-N --` opens the row.
+# ─────────────────────────────────────────────────────────────────────────────
+CERT_ID=""
+resolve_cert_id () {
+  local sha="$1" ledger="$2"
+  CERT_ID="$($GREP "$sha" "$ledger" | $GREP 'TOKEN GRANTED' | $GREP -o 'CERT-[0-9]\+' | head -1)"
+}
+
 SUP_VERDICT=""; SUP_ROWS=""; SUP_N=0; SUP_DECL=0
 supersedes_scan () {
   local cert="$1" ledger="$2"
@@ -197,6 +225,9 @@ if [ "$SHA_IN" = "--selftest" ]; then
   check "supersedes_scan is called as a statement, never in a subshell" \
     "! sed -e 's/#.*//' '$self' | /usr/bin/grep -q '\$(supersedes_scan'"
 
+  check "resolve_cert_id is called as a statement, never in a subshell" \
+    "! sed -e 's/#.*//' '$self' | /usr/bin/grep -q '\$(resolve_cert_id'"
+
   # ── notice 18, behavioural. These call the SHIPPED function against fixture
   # ledgers rather than re-deriving its greps, because a test that reimplements
   # the thing it guards measures the reimplementation. Every fixture below is a
@@ -231,6 +262,20 @@ FIXEOF
     "supersedes_scan CERT-2619 '$fx/clean.md'; [ \"\$SUP_VERDICT\" = clean ]"
   check "notice 18: an id absent from the ledger is clean" \
     "supersedes_scan CERT-9999 '$fx/clean.md'; [ \"\$SUP_VERDICT\" = clean ]"
+
+  # ── notice 13, behavioural (#5252). A repaired ship has a BLOCK row and a
+  # GREEN row on ONE sha; the id we print and scan must come off the GREEN.
+  # Verbatim shape of #5088's two rows on 5d18064c.
+  cat > "$fx/repaired.md" <<'FIXEOF'
+| CERT-2613 -- 5088-MIDGAME-WINDOW-RESULTS | 2026-09-11 11:39Z | live/148 | BLOCK -- TOKEN WITHHELD | sha 5d18064c91caac7cae36caaaf9efe54fba3f885e |
+| CERT-2622 -- 5088-CLOSED-WINDOW-SETTLED-REPAIR-LANDED-RE-PRESENT | 2026-09-11 14:30Z | live/152 | GREEN -- TOKEN GRANTED (repairs CERT-2613) | sha 5d18064c91caac7cae36caaaf9efe54fba3f885e |
+FIXEOF
+  check "notice 13: a repaired ship resolves the GRANTING cert, not the BLOCK it repaired" \
+    "resolve_cert_id 5d18064c91caac7cae36caaaf9efe54fba3f885e '$fx/repaired.md'; [ \"\$CERT_ID\" = CERT-2622 ]"
+  check "notice 13: 'repairs CERT-2613' inside the granted row does not win over the row's own id" \
+    "resolve_cert_id 5d18064c91caac7cae36caaaf9efe54fba3f885e '$fx/repaired.md'; [ \"\$CERT_ID\" != CERT-2613 ]"
+  check "notice 13: a sha with no granted row resolves to empty, not to a withheld id" \
+    "resolve_cert_id deadbeef '$fx/repaired.md'; [ -z \"\$CERT_ID\" ]"
 
   # -w, not \b: BSD grep is what /usr/bin/grep is here, and a prefix match
   # would make CERT-261 inherit CERT-2619's verdict.
@@ -333,7 +378,7 @@ else
   granted="$($GREP "$SHA" "$LEDGER" | $GREP -c 'TOKEN GRANTED')"
   # `grep -c` exits 1 when the count is 0, so read the NUMBER, never the exit.
   if [ "${granted:-0}" -gt 0 ]; then
-    CERT_ID="$($GREP "$SHA" "$LEDGER" | $GREP -o 'CERT-[0-9]\+' | head -1)"
+    resolve_cert_id "$SHA" "$LEDGER"
     pass "notice 13 token" "$granted TOKEN GRANTED row(s)${CERT_ID:+ — $CERT_ID}"
   else
     # Not automatically fatal: notice 10 Tier A self-certifies with no cert
