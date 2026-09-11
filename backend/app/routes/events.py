@@ -10994,6 +10994,25 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         response["opening_odds"] = {
             "home_probability": float(event.opening_home_probability),
             "away_probability": float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - float(event.opening_home_probability), 4),
+            # #5414: the DETAIL formatter served three of the five opening
+            # columns and omitted exactly the two a "PRE-GAME" tile needs, while
+            # the LIST formatter for the same object (`_format_event_summary`,
+            # this file) has always carried them. So the event page had no
+            # pre-game spread or total on its payload at all, and the margin
+            # card's PRE-GAME tile fell back to "whichever quoted rung priced
+            # closest to a coin flip" — right by coincidence on Cubs-Pirates
+            # (opened -1.5, tile read 1.5+), wrong on Zverev-Khachanov (opened
+            # -5.5, tile read 2.5+). Serving them is the backend half of that
+            # fix; the frontend half is ux's.
+            #
+            # `is not None`, NOT the truthiness test the list formatter uses:
+            # a PICK'EM game opens at a spread of exactly 0.0, which is falsy,
+            # and `float(x) if x else None` reports it as "no line". Measured
+            # 2026-09-11 over 90 days: 557 of 7,717 events with an opening
+            # spread (7.2%) opened at 0. The list formatter's version of this
+            # line is corrected to match, below.
+            "spread": float(event.opening_home_spread) if event.opening_home_spread is not None else None,
+            "over_under": float(event.opening_over_under) if event.opening_over_under is not None else None,
             "favorite": event.opening_favorite,
         }
 
@@ -18832,8 +18851,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         response["opening_odds"] = {
             "home_probability": float(event.opening_home_probability),
             "away_probability": float(event.opening_away_probability) if event.opening_away_probability else None,
-            "spread": float(event.opening_home_spread) if event.opening_home_spread else None,
-            "over_under": float(event.opening_over_under) if event.opening_over_under else None,
+            # #5414: `is not None`, not truthiness. A pick'em game opens at a
+            # spread of exactly 0.0 — falsy — so this reported "no opening line"
+            # for 557 of the 7,717 events with an opening spread (7.2%, measured
+            # 2026-09-11 over 90 days). The card reading this cannot tell a
+            # pick'em from an unpriced game.
+            "spread": float(event.opening_home_spread) if event.opening_home_spread is not None else None,
+            "over_under": float(event.opening_over_under) if event.opening_over_under is not None else None,
             "favorite": event.opening_favorite,
         }
 
