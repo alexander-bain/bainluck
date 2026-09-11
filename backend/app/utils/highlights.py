@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 from typing import Optional, Literal
 import math
+import re
 
 from app.utils.league_classification import is_power_4_team
 from app.utils.lifecycle import live_start_satisfied
@@ -202,6 +203,40 @@ SPORT_TOTAL_PERIODS: dict[str, int] = {
 SOCCER_REGULATION_MINUTES = 90
 
 
+#: A SCHEDULED DATETIME, not a period. ESPN keeps the pre-game status detail in
+#: the `period` field until the first in-game update lands, so for the first few
+#: minutes after a game flips to live its "period" is still its kickoff time:
+#: "Thu, September 10th at 8:35 PM EDT". Every numeric reader below then finds
+#: the DAY OF THE MONTH in it — on the 10th, "10th" read as period 10, which is
+#: beyond regulation in every sport we map, so the night's marquee NFL game sat
+#: at rank 2 of Discover badged "Overtime" two minutes after kickoff at 0-0
+#: (#5012). There is no day on which the reading is right: days 5-31 claim
+#: overtime and days 1-4 report a false progress fraction instead.
+#:
+#: Matched on any of the three things a period token can never contain — a month
+#: name, a weekday, or a wall-clock time with a meridiem — so the sentence is
+#: refused before it reaches a reader rather than each reader being taught to
+#: distrust it. Same family as #3208, whose general lesson (never let a free-text
+#: field reach a numeric reader unanchored) this applies to the rest of the
+#: function.
+_SCHEDULED_DATETIME_RE = re.compile(
+    r"\b(?:january|february|march|april|may|june|july|august|september|october"
+    r"|november|december)\b"
+    r"|\b(?:mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat|sun)(?:day)?\b"
+    r"|\b\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)\b"
+)
+
+#: A period-shaped ordinal token: "3rd", "1st Quarter", "Top 12th", "Mid 5th".
+#: ANCHORED, and that is the whole point — an ordinal only says "period" when it
+#: LEADS the token, optionally behind one of baseball's half-inning qualifiers.
+#: An unanchored `re.search` is what let "September 10th" reach the period reader
+#: (#5012); it would find an ordinal anywhere in an arbitrary sentence.
+_ORDINAL_PERIOD_RE = re.compile(
+    r"^(?:(?:top|bot|bottom|mid|middle|end|start)\s+(?:of\s+)?(?:the\s+)?)?"
+    r"(\d{1,2})(?:st|nd|rd|th)\b"
+)
+
+
 def _is_minute_clock_sport(sport_key: Optional[str]) -> bool:
     """True when this sport's live period string is a running clock MINUTE.
 
@@ -231,9 +266,18 @@ def parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> 
 
     period_lower = cleaned.lower().strip()
 
+    # A scheduled datetime is not a period. Refused here, before ANY reader
+    # below can find a number in it — see `_SCHEDULED_DATETIME_RE` (#5012).
+    # 0.0 is the same claim the null-period case makes at the top of this
+    # function: unknown, so assume no progress. It is also the truthful one —
+    # a game still carrying its kickoff time in `period` has at most just
+    # started, and a caller scaling a late-game bonus by this must not be
+    # handed the 0.5 "mid-game" guess for a game that is two minutes old.
+    if _SCHEDULED_DATETIME_RE.search(period_lower):
+        return 0.0, False
+
     # Overtime detection — use word boundaries to avoid false matches
     # (e.g., "1st Quarter" should NOT match "ot" substring)
-    import re
     if re.search(r"\bot\b|\bovertime\b|\bextra\s*time\b|\bshootout\b|\bpenalties\b|\bso\b", period_lower):
         return 1.0, True
 
@@ -269,8 +313,10 @@ def parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> 
     # so it is not allowed to conclude overtime (see `explicit` below).
     bare_match = None if keyword_match else re.match(r"^(\d+)", period_lower)
     # Ordinals — "3rd", "Top 12th". These DO say period: 12th in a 9-inning sport
-    # is extra innings and reading it as beyond-regulation is correct.
-    ordinal_match = re.search(r"(\d+)(?:st|nd|rd|th)\b", period_lower)
+    # is extra innings and reading it as beyond-regulation is correct. That is
+    # only true of an ordinal that IS the period token, though, not one buried in
+    # prose, so the pattern is anchored (#5012).
+    ordinal_match = _ORDINAL_PERIOD_RE.match(period_lower)
 
     num_match = keyword_match or ordinal_match or bare_match
     if num_match:
