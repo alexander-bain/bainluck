@@ -340,22 +340,22 @@ struct PlayerPropsCardView: View {
         )
     }
 
-    /// Clean up stat type labels: strip "Player " prefix, keep just the stat name
-    private func cleanStatLabel(_ raw: String) -> String {
-        var s = raw
-        // Strip common prefixes like "Player " or "Batter "
-        for prefix in ["Player ", "Batter ", "Pitcher "] {
-            if s.hasPrefix(prefix) {
-                s = String(s.dropFirst(prefix.count))
-            }
-        }
-        return s
+    /// #5113 — the stat name, with any prefix the reader can already see
+    /// stripped. Display only: `group.type` remains the served `marketName` and
+    /// is still the grouping key.
+    private func cleanStatLabel(_ raw: String, player: String?) -> String {
+        PlayerPropsStatLabel.display(
+            marketName: raw,
+            homeTeam: homeTeam,
+            awayTeam: awayTeam,
+            player: player
+        )
     }
 
     private func statGroupView(_ group: StatGroup, card: PlayerCard) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
-                Text(cleanStatLabel(group.type).uppercased())
+                Text(cleanStatLabel(group.type, player: card.name).uppercased())
                     .font(.system(size: 8, weight: .bold))
                     .tracking(0.5)
                     .foregroundStyle(.tertiary)
