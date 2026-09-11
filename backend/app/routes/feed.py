@@ -1221,17 +1221,110 @@ def _is_discover_event_demotion_exception(item: dict) -> bool:
     return False
 
 
+class _AscendingTieBreak:
+    """Wraps the canonical key so it breaks ties ASCENDING under ``reverse=True`` (#5101).
+
+    Every call site sorts ``_rank_key`` with ``reverse=True``, which would flip a
+    bare string into DESCENDING order. That direction is not wrong — any fixed
+    order satisfies "canonical, never incidental" — but it is the maximally
+    disruptive one: exact ties are usually consecutive ids from one candidate
+    query, so descending REVERSES each tied run relative to what production
+    serves today. Ascending leaves those runs in roughly the order they already
+    have and confines the change to the ties that were genuinely unstable.
+
+    That is not cosmetic. ``test_a_required_marquee_displaced_by_live_games_fails_the_edition``
+    (#5099) pins three live games tied on both score and ``_sort_time`` and
+    expects ``[700, 701, 702]``; a bare string key serves ``[702, 701, 700]``.
+    The test is right — its subject is which games hold the lead — and reversing
+    a tied run is a real, reader-visible reshuffle that this ship has no reason
+    to cause.
+
+    ``__gt__`` is implemented as well as ``__lt__`` on purpose:
+    ``_dedupe_futures_by_canonical`` compares two ``_rank_key`` tuples with ``>``
+    directly, and tuple comparison delegates to the element's own ``__gt__``
+    once ``__eq__`` separates them. A wrapper with only ``__lt__`` sorts
+    correctly and then raises ``TypeError`` in dedup.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _AscendingTieBreak):
+            return NotImplemented
+        return self.value == other.value
+
+    def __lt__(self, other: "_AscendingTieBreak") -> bool:
+        return self.value > other.value
+
+    def __gt__(self, other: "_AscendingTieBreak") -> bool:
+        return self.value < other.value
+
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"_AscendingTieBreak({self.value!r})"
+
+
+def _canonical_item_key(item: dict) -> str:
+    """A stable identity for a feed item, for use as a final sort tie-break (#5101).
+
+    Not every card type carries ``data.id``. Measured against the served
+    ``/api/feed?limit=250`` payload on 2026-09-11 (135 items): ``futures``,
+    ``event`` and ``bundle`` all carry one (int for the first two, a
+    ``theme:story:...`` string for bundles), while all 12 ``concept`` and both
+    ``tournament`` items carry NONE and are identified by ``data.key`` (and, for
+    tournaments, ``data.slug``). A key built on ``data.id`` alone therefore
+    collapses every concept onto one value — the opposite of a tie-break — so the
+    fallback chain is load-bearing, not defensive padding.
+
+    With the chain in place the composite was **total (0 of 135 missing) and
+    unique (0 collisions)** across all five types on that payload. The ``type:``
+    prefix is what keeps an int id and a string key from ever colliding, and
+    ``str()`` is what keeps the tuple comparable when a pool mixes int and str
+    ids in the same request.
+
+    The empty string is returned only when an item has no identity at all. That
+    is a stable value, so it degrades to today's behaviour (incidental order
+    among those items) rather than raising inside a sort.
+    """
+    data = item.get("data") or {}
+    ident = data.get("id")
+    if ident is None:
+        ident = data.get("key")
+    if ident is None:
+        ident = data.get("slug")
+    if ident is None:
+        return ""
+    return f"{item.get('type')}:{ident}"
+
+
 def _rank_key(item: dict) -> tuple:
-    """Sort key for feed ordering (#141/Item 1).
+    """Sort key for feed ordering (#141/Item 1, #5101).
 
     Uses the de-saturated float `_rank_score` when present, falling back to the
     capped display `score` for item types that do not compute one. Recency
     (`_sort_time`) remains the tiebreaker, but now only breaks GENUINE ties
     rather than deciding the whole top page of 95-98-saturated cards.
+
+    #5101 adds a THIRD component, and it is what makes the order a function of
+    the items rather than of the query plan. Python's sort is stable, so two
+    cards tied on both score and recency previously kept whatever order the
+    candidate query happened to return them in — incidental DB order, free to
+    change between two requests that scored identically. The canonical key is
+    deterministic, so a tie now resolves the same way every time.
+
+    It is wrapped in ``_AscendingTieBreak`` so that, under the ``reverse=True``
+    every call site passes, a tie resolves in ASCENDING canonical order — see
+    that class for why the direction is chosen rather than inherited.
     """
     return (
         item.get("_rank_score", item.get("score", 0)),
         item.get("_sort_time", 0),
+        _AscendingTieBreak(_canonical_item_key(item)),
     )
 
 
@@ -1243,6 +1336,28 @@ def _rank_key(item: dict) -> tuple:
 # `app.utils.tonights_games.compose_lead`, which is the only pass that writes
 # the front of the deck. Its guard suite moved with it, to
 # `tests/test_feed_marquee_pin.py` against `compose_lead`.
+
+
+#: The window the composition stages reason about, independent of the requested
+#: page size (#5101, finishing #4921).
+#:
+#: #4921 changed the composition stages from the raw ``limit`` to
+#: ``min(20, limit)``, which fixed every size AT OR ABOVE 20 — a caller asking
+#: for 40 and a caller asking for 250 now compose over the same 20. It did not
+#: fix the sizes BELOW it: ``min(20, 7)`` is 7, so a caller asking for 7 still
+#: composes over a 7-item window and can get a different ORDER than the first 7
+#: of a 250-item request. The remaining defect is the same one #4921 named —
+#: "rank is not supposed to be a function of page size" — just on the other side
+#: of the ``min``.
+#:
+#: A CONSTANT is only safe because the candidate pools are constant-sized: every
+#: pool query in this module caps with a literal (``EVENT_CANDIDATE_BUDGET``,
+#: 200, 120, 100, 80, 1000) and not one of them derives its bound from ``limit``.
+#: So composing over 20 for a ``limit=7`` request reasons about candidates that
+#: were fetched anyway; it does not widen a query. The narrowing back to the
+#: caller's page size happens where it always did, at the single
+#: ``feed_items[offset : offset + limit]`` slice near the end of ``get_feed``.
+DISCOVER_COMPOSITION_WINDOW = 20
 
 
 #: How many just-finished marquee games Discover may carry at once (#4681).
@@ -1732,8 +1847,11 @@ def apply_discover_display_chain(
 
     Args:
         items: scored feed items (events + tournaments + deduped futures).
-        limit: the page size the caller will slice to. Several stages size their
-            windows from it, so it is part of the build, not just the slice.
+        limit: the page size the caller will slice to. Since #5101 the
+            composition stages take the fixed ``DISCOVER_COMPOSITION_WINDOW``
+            instead of sizing their windows from this, so the ORDER this
+            function produces no longer depends on it; it remains part of the
+            signature because the pagination slice and the probe path read it.
         ctx: personalization context — read for ``is_authenticated`` and, when
             ``cold_start`` is not given, ``discover_category_affinities``.
         event_pct: the caller's event ratio. ``< 0.3`` is Discover mode, ``< 0.2``
@@ -1845,16 +1963,23 @@ def apply_discover_display_chain(
             pass  # Discover mode: let scores decide, no artificial event promotion
         else:
             _epct = 0.6 if not ctx.is_authenticated else 0.4
-            # #4921 — the READER'S page, not the caller's page size. This stage
-            # was the last one in the chain still sized from the raw `limit`;
-            # every other stage below takes `min(20, limit)`. Because
-            # `_ensure_feed_diversity` scales BOTH its event quota and the span
-            # it rebuilds by interleaving from this number, a caller asking for
-            # 250 got a different ORDER than a caller asking for 40 — measured
-            # on production, limit=40 and limit=250 agreed on 2 of 40 ranks
-            # (max move +87) with 0 cards carrying a different score. Rank is
-            # not supposed to be a function of page size.
-            items = _ensure_feed_diversity(items, min(20, limit), event_pct=_epct)
+            # #4921, then #5101 — the READER'S page, not the caller's page size.
+            # This stage was the last one in the chain still sized from the raw
+            # `limit`. Because `_ensure_feed_diversity` scales BOTH its event
+            # quota and the span it rebuilds by interleaving from this number, a
+            # caller asking for 250 got a different ORDER than a caller asking
+            # for 40 — measured on production, limit=40 and limit=250 agreed on
+            # 2 of 40 ranks (max move +87) with 0 cards carrying a different
+            # score. Rank is not supposed to be a function of page size.
+            #
+            # #4921 spelled that as `min(20, limit)`, which made every size at or
+            # above 20 agree and left every size below it still sized from the
+            # caller. `DISCOVER_COMPOSITION_WINDOW` is that same rule carried to
+            # the small pages: see the constant for why a fixed window costs no
+            # extra query.
+            items = _ensure_feed_diversity(
+                items, DISCOVER_COMPOSITION_WINDOW, event_pct=_epct
+            )
 
     # The Discover-mode gate is spelled once here. In `get_feed` the identical
     # three-clause expression appeared three times (first-page, bundles, lead)
@@ -1869,7 +1994,7 @@ def apply_discover_display_chain(
         )
         items = diversify_discover_first_page(
             items,
-            first_page_size=min(20, limit),
+            first_page_size=DISCOVER_COMPOSITION_WINDOW,
             cold_start=_is_cold_start,
         )
         items = backfill_discover_editorial_tail(
@@ -2005,7 +2130,7 @@ def apply_discover_display_chain(
         # `FIRST_PAGE_WHY_NOW_WINDOW`). Two windows, two numbers, both stated.
         items, first_page_floor_meta = enforce_first_page_quality_floor(
             items,
-            first_page_size=min(20, limit),
+            first_page_size=DISCOVER_COMPOSITION_WINDOW,
             why_now_window=FIRST_PAGE_WHY_NOW_WINDOW,
         )
         if first_page_floor_meta["unreplaced"]:
@@ -2060,7 +2185,7 @@ def apply_discover_display_chain(
     finished_rail_cap_meta = None
     if sports_mode and not my_teams_only:
         items, finished_rail_cap_meta = cap_repeated_finished_rails(
-            items, first_page_size=min(20, limit)
+            items, first_page_size=DISCOVER_COMPOSITION_WINDOW
         )
         if finished_rail_cap_meta["unswapped"]:
             # Not a silent cap (gotcha #53). A page that kept a repeat because
@@ -2107,7 +2232,7 @@ def apply_discover_display_chain(
     if sports_mode and not my_teams_only:
         items, client_deletion_swap_meta = (
             swap_client_deleted_finished_off_first_page(
-                items, first_page_size=min(20, limit)
+                items, first_page_size=DISCOVER_COMPOSITION_WINDOW
             )
         )
         if client_deletion_swap_meta["declined_to_keep_a_game"]:
@@ -2159,7 +2284,7 @@ def apply_discover_display_chain(
     futures_cap_meta = None
     if sports_mode and not my_teams_only:
         items, futures_cap_meta = cap_futures_on_games_led_first_page(
-            items, first_page_size=min(20, limit)
+            items, first_page_size=DISCOVER_COMPOSITION_WINDOW
         )
         if futures_cap_meta["unswapped"]:
             # Not a silent cap (gotcha #53). A page that kept a surplus futures
@@ -2201,7 +2326,7 @@ def apply_discover_display_chain(
     live_first_page_meta = None
     if not discover_mode:
         items, live_first_page_meta = hoist_live_events_into_first_page(
-            items, first_page_size=min(20, limit)
+            items, first_page_size=DISCOVER_COMPOSITION_WINDOW
         )
         if live_first_page_meta["unhoisted"]:
             # Not a silent cap. A live game the reader cannot see on page one is
@@ -6260,20 +6385,22 @@ async def _discover_rank_phase_trace(
 
     post_event_mix_rank = post_event_demote_rank
     if event_pct is not None and event_pct >= 0.2:
-        # #4921 — the same `min(20, limit)` the served chain now takes. This
+        # #4921, then #5101 — the same window the served chain takes. This
         # trace exists to report the rank a market holds on the PAGE, so a
         # window this stage sizes differently from the served chain would
-        # misreport every rank downstream of it. Line 5980 below already
-        # mirrors the served window; this call was the one that did not.
+        # misreport every rank downstream of it. That is why the constant has
+        # to be followed here too: the moment the served chain stopped sizing
+        # from `limit`, a `min(20, limit)` left here would have re-opened the
+        # same divergence for every trace taken below 20.
         feed_items = _ensure_feed_diversity(
-            feed_items, min(20, limit), event_pct=0.6
+            feed_items, DISCOVER_COMPOSITION_WINDOW, event_pct=0.6
         )
         post_event_mix_rank = _rank_futures_market(feed_items, market_id)
 
     post_diversity_rank = post_event_mix_rank
     if (event_pct is not None and event_pct < 0.3) or not include_events:
         feed_items = diversify_discover_first_page(
-            feed_items, first_page_size=min(20, limit),
+            feed_items, first_page_size=DISCOVER_COMPOSITION_WINDOW,
             cold_start=not ctx.discover_category_affinities,
         )
         feed_items = backfill_discover_editorial_tail(
