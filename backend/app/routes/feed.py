@@ -1244,6 +1244,12 @@ class _AscendingTieBreak:
     directly, and tuple comparison delegates to the element's own ``__gt__``
     once ``__eq__`` separates them. A wrapper with only ``__lt__`` sorts
     correctly and then raises ``TypeError`` in dedup.
+
+    ``__le__`` and ``__ge__`` complete the ordering. They are not currently
+    reached by any call site, but a half-ordered comparable is a trap for the
+    next caller — CodeQL's "Incomplete ordering" rule flagged exactly this on
+    the first push of this branch — and an inverted ``__lt__`` is precisely the
+    case where someone would guess the missing operators wrong.
     """
 
     __slots__ = ("value",)
@@ -1261,6 +1267,12 @@ class _AscendingTieBreak:
 
     def __gt__(self, other: "_AscendingTieBreak") -> bool:
         return self.value < other.value
+
+    def __le__(self, other: "_AscendingTieBreak") -> bool:
+        return self.value >= other.value
+
+    def __ge__(self, other: "_AscendingTieBreak") -> bool:
+        return self.value <= other.value
 
     def __hash__(self) -> int:
         return hash(self.value)

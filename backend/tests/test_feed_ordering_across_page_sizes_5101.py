@@ -347,3 +347,24 @@ def test_shuffling_the_input_pool_does_not_change_the_served_order():
         assert _ids(_serve(shuffled, 40)) == reference, (
             f"input pool order (seed {seed}) changed the served order"
         )
+
+
+def test_the_tie_break_is_a_complete_ordering():
+    """All four operators, and the inverted ones agree with each other.
+
+    CodeQL's "Incomplete ordering" rule flagged the first push of this branch:
+    the class had ``__lt__`` and ``__gt__`` but not ``__le__``/``__ge__``. An
+    inverted ``__lt__`` is exactly the case where the next caller would guess
+    the missing operators wrong, so they are asserted rather than assumed.
+    """
+    a, b, a2 = (
+        _AscendingTieBreak("a"),
+        _AscendingTieBreak("b"),
+        _AscendingTieBreak("a"),
+    )
+    # "a" sorts BEFORE "b" ascending, so under the inversion a > b.
+    assert a > b and b < a
+    assert a >= b and b <= a
+    assert a >= a2 and a <= a2
+    assert not (a < b) and not (b > a)
+    assert a == a2 and not (a == b)
