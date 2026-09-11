@@ -1561,6 +1561,66 @@ def _ticker_period(ticker: str | None) -> str | None:
     return match.group(0) if match else None
 
 
+#: The periods `_period_scores` can actually rebuild a score for. Everything
+#: else stays REFUSED — #4923's rule that a wrong verdict is replaced by no
+#: verdict first, and the refusal stays counted as `refused_period`.
+#:
+#: #5052: `2h` joins `1h` here. Quarters (`1q`–`4q`) and the MLB first-N
+#: windows (`f3`/`f5`/`f7`) are deliberately NOT in this set — 91 + 69 markets
+#: at the time of writing, and neither has a reconstructor. Adding a token here
+#: without teaching `_period_scores` to rebuild it would grade it against the
+#: FULL-GAME score, which is precisely #4923.
+_RECONSTRUCTABLE_PERIODS = frozenset({"1h", "2h"})
+
+
+async def _period_scores(
+    session,
+    event_id: int,
+    period: str | None,
+    final_home: int | None,
+    final_away: int | None,
+) -> tuple[int, int] | None:
+    """The ``(home, away)`` score for the segment a period ticker asks about.
+
+    ``None`` period = the whole game, so the final score is the answer.
+    ``None`` RETURN = the segment cannot be rebuilt and the caller must refuse
+    — never fall back to the full-game score, which is the #4923 defect.
+
+    #5052. The refusing loop in `_resolve_kalshi_spread_total_from_scores` was
+    turning away 356 settled 2H markets / 1,401 outcomes whose arithmetic was
+    already in this module, 1,800 lines below it. This is that arithmetic,
+    hoisted to one place so both readings cannot drift apart again — the same
+    ONE CLASSIFIER, TWO CALLERS argument `_ticker_period` makes.
+
+    2H IS FINAL MINUS HALFTIME, **overtime included**. That is not an oversight
+    and it is not a free choice: `_resolve_kalshi_period_props` already grades
+    2H exactly this way, so any other reading here would make two loops in one
+    file disagree about what "2H" means for the same game. If Kalshi's own 2H
+    rules are ever measured to exclude OT, both sites move together.
+    """
+    if period is None:
+        if final_home is None or final_away is None:
+            return None
+        return (final_home, final_away)
+
+    h1 = await _get_halftime_score(session, event_id)
+    if h1 is None:
+        return None
+
+    if period == "1h":
+        return (h1[0], h1[1])
+
+    if period == "2h":
+        # A first half we cannot subtract FROM is as unusable as one we cannot
+        # reconstruct. The candidate scan already requires both final scores,
+        # so this is a guard against a caller that does not, not dead code.
+        if final_home is None or final_away is None:
+            return None
+        return (final_home - h1[0], final_away - h1[1])
+
+    return None
+
+
 async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     """Resolve Kalshi game markets from actual Event scores.
 
@@ -1805,6 +1865,38 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
 
 _SPREAD_RE = re.compile(
     r"(.+?) wins(?: the 1H)? by over (\d+\.?\d*)\s+(?:points|runs|goals)",
+    re.IGNORECASE,
+)
+
+#: #5052: "this leg states a MARGIN THRESHOLD", deliberately WIDER than
+#: `_SPREAD_RE` — it is the set of legs the team-name winner fallbacks must
+#: never touch, not the set they can grade.
+#:
+#: WHY IT IS NOT `_SPREAD_RE`. Measured on production 2026-09-11: Kalshi phrases
+#: period spreads two ways, and `_SPREAD_RE` reads exactly one of them. It wants
+#: "wins by over N" with an optional `the 1H` infix, so of 21,492 1H legs it can
+#: read the 17,540 "by over" ones and none of the 3,931 "by more than" ones
+#: (that gap is #4236, 913 events, and it is NOT fixed here); of 4,410 2H legs
+#: it reads NONE, because every 2H phrasing carries a `2H` infix the pattern has
+#: no branch for — "Bayern Munich wins the 2H by more than 1.5 goals".
+#:
+#: An unreadable margin leg used to be harmless: it fell through to `no_parse`.
+#: #5052 makes it dangerous, because a 2H market that now reconstructs a score
+#: can reach the 2- and 3-outcome team-name fallbacks below, and those grade
+#: "did this team win the segment" — a question the leg is NOT asking. On a half
+#: that finished 1–0, "wins the 2H by more than 1.5 goals" is FALSE for both
+#: sides, while the fallback would write True for the winner. That is a
+#: fabricated verdict stamped `game_score`, which is not in
+#: OVERWRITABLE_WINNER_SOURCES_SQL and therefore PERMANENT (#4923, gotcha #21).
+#:
+#: Measured before adding this: 0 of 3,788 legs on the 1,894 two-outcome 1H
+#: spread markets carry a `game_score` grade today, so nothing is being
+#: fabricated right now — but only because those soccer events have no
+#: reconstructable halftime, which is an accident of the data, not a guarantee.
+#: This makes the guarantee structural: no reconstructor can turn a margin
+#: question into a winner answer.
+_MARGIN_CLAIM_RE = re.compile(
+    r"\bwins\b.*\bby (?:over|more than)\s+\d",
     re.IGNORECASE,
 )
 
@@ -2348,6 +2440,13 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
         "total": 0,
         "h1_spread": 0,
         "h1_total": 0,
+        # #5052: second halves get their OWN counters rather than folding into
+        # the 1H or full-game ones. They are a newly-graded population, so a
+        # phase summary that cannot separate them cannot show this shipping —
+        # and both are added to `resolved` below, which is where #4721's class
+        # (a counter nobody sums) would otherwise reappear.
+        "h2_spread": 0,
+        "h2_total": 0,
         "no_plays": 0,
         "no_parse": 0,
         # #4923: a market whose question is bounded to a period this function
@@ -2432,15 +2531,29 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                 # reconstructs a real 1H score and this loop already REFUSES
                 # when it cannot (`no_plays`). That refusal was always right;
                 # it just had no equivalent for any other period, and none of
-                # the others has a reconstructor to call. Building one — 2H is
-                # final minus halftime, the arithmetic already at the bottom of
-                # this module — is a follow-up, and it is a follow-up on
-                # purpose: a wrong verdict is replaced by no verdict first.
+                # the others has a reconstructor to call.
+                #
+                # #5052 BUILDS THE 2H ONE, which is the follow-up the paragraph
+                # above promised. Refusal was the right FIRST move, never the
+                # destination: 356 settled 2H markets / 1,401 outcomes were
+                # questions with knowable answers on which we showed nothing,
+                # and the arithmetic (final minus halftime) already existed in
+                # `_resolve_kalshi_period_props`. It now lives in
+                # `_period_scores`, called by every branch below, so the two
+                # loops cannot drift apart on what "2H" means.
+                #
+                # Quarters and the MLB first-N windows are STILL refused and
+                # still counted — see `_RECONSTRUCTABLE_PERIODS`. The failure
+                # mode of this change is "still no verdict" (a 2H market whose
+                # halftime score cannot be rebuilt falls to `no_plays`, exactly
+                # as a 1H one does), never "a wrong one".
                 period = _ticker_period(row.ticker)
-                if period is not None and period != "1h":
+                if period is not None and period not in _RECONSTRUCTABLE_PERIODS:
                     stats["refused_period"] += 1
                     continue
-                is_1h = period == "1h"
+                # "" for the whole game, so `stats["spread"]`/`stats["total"]`
+                # keep their existing meaning untouched.
+                stat_prefix = {"1h": "h1_", "2h": "h2_"}.get(period, "")
 
                 # Get all outcomes for this market (block-prefetched above)
                 outcomes_list = block_outcomes.get(row.market_id, [])
@@ -2531,13 +2644,19 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                     # on its own terms; never flip siblings, never break.
                     sm = _SPREAD_RE.search(name)
                     if sm:
-                        if is_1h:
-                            h1_scores = await _get_halftime_score(session, row.event_id)
-                            if h1_scores is None:
+                        if period is not None:
+                            p_scores = await _period_scores(
+                                session,
+                                row.event_id,
+                                period,
+                                row.home_score,
+                                row.away_score,
+                            )
+                            if p_scores is None:
                                 stats["no_plays"] += 1
                                 resolved_st = True
                                 break
-                            h_for_spread, a_for_spread = h1_scores
+                            h_for_spread, a_for_spread = p_scores
                         else:
                             h_for_spread, a_for_spread = row.home_score, row.away_score
 
@@ -2566,7 +2685,7 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                             ),
                             {"won": won, "oid": outcome.id},
                         )
-                        stats["h1_spread" if is_1h else "spread"] += 1
+                        stats[f"{stat_prefix}spread"] += 1
                         resolved_st = True
                         continue
 
@@ -2582,13 +2701,19 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                     # re-grade band-aided. Grade each outcome on its own
                     # Over/Under + line vs the real total; never flip siblings.
                     if _TOTAL_RE.search(name):
-                        if is_1h:
-                            h1_scores = await _get_halftime_score(session, row.event_id)
-                            if h1_scores is None:
+                        if period is not None:
+                            p_scores = await _period_scores(
+                                session,
+                                row.event_id,
+                                period,
+                                row.home_score,
+                                row.away_score,
+                            )
+                            if p_scores is None:
                                 stats["no_plays"] += 1
                                 resolved_st = True
                                 break
-                            h_for_total, a_for_total = h1_scores
+                            h_for_total, a_for_total = p_scores
                         else:
                             h_for_total, a_for_total = row.home_score, row.away_score
 
@@ -2601,13 +2726,26 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                             ),
                             {"won": won, "oid": outcome.id},
                         )
-                        stats["h1_total" if is_1h else "total"] += 1
+                        stats[f"{stat_prefix}total"] += 1
                         resolved_st = True
                         continue
 
+                # #5052: a leg that names a MARGIN THRESHOLD is not a
+                # team-name winner leg, and the two fallbacks below cannot tell
+                # the difference — they intersect tokens with the team names and
+                # "Bayern Munich wins the 2H by more than 1.5 goals" contains a
+                # team name. If ANY leg on this market states a margin the
+                # spread parser could not read, the market is left to
+                # `no_parse`: an honest blank, which is what the reader already
+                # sees, instead of a permanent `game_score` answer to a question
+                # nobody asked. See `_MARGIN_CLAIM_RE`.
+                margin_claim = any(
+                    _MARGIN_CLAIM_RE.search(oc.name or "") for oc in outcomes_list
+                )
+
                 # Fallback: team-name-only outcomes on 2-outcome markets
                 # (e.g., "Penn" on KXNCAAMBGAME, "California" on KXNCAAMB1HWINNER)
-                if not resolved_st and len(outcomes_list) == 2:
+                if not resolved_st and not margin_claim and len(outcomes_list) == 2:
                     home_tokens = (
                         set(row.home_team_name.lower().split())
                         if row.home_team_name
@@ -2619,10 +2757,16 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                         else set()
                     )
 
-                    if is_1h:
-                        h1_scores = await _get_halftime_score(session, row.event_id)
-                        if h1_scores:
-                            h_score, a_score = h1_scores
+                    if period is not None:
+                        p_scores = await _period_scores(
+                            session,
+                            row.event_id,
+                            period,
+                            row.home_score,
+                            row.away_score,
+                        )
+                        if p_scores:
+                            h_score, a_score = p_scores
                         else:
                             h_score, a_score = None, None
                     else:
@@ -2663,10 +2807,16 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                 # skips it entirely and these sit at pass2_guess. Resolve from
                 # (half-time, for 1H) scores including the tie case. Purely additive —
                 # the 2-outcome path is untouched.
-                if not resolved_st and len(outcomes_list) == 3:
-                    if is_1h:
-                        h1_scores = await _get_halftime_score(session, row.event_id)
-                        h_score, a_score = h1_scores if h1_scores else (None, None)
+                if not resolved_st and not margin_claim and len(outcomes_list) == 3:
+                    if period is not None:
+                        p_scores = await _period_scores(
+                            session,
+                            row.event_id,
+                            period,
+                            row.home_score,
+                            row.away_score,
+                        )
+                        h_score, a_score = p_scores if p_scores else (None, None)
                     else:
                         h_score, a_score = row.home_score, row.away_score
 
@@ -2697,16 +2847,28 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
         stats["errors"].append(str(e))
         logger.error("Kalshi spread/total resolution error: %s", e)
 
-    resolved = stats["spread"] + stats["total"] + stats["h1_spread"] + stats["h1_total"]
+    # #5052: the h2_* counters are summed here, not merely stored. A phase that
+    # grades 1,401 new outcomes and reports the same `resolved` as before is
+    # #4721's class — work done and discarded at the reporting line.
+    resolved = (
+        stats["spread"]
+        + stats["total"]
+        + stats["h1_spread"]
+        + stats["h1_total"]
+        + stats["h2_spread"]
+        + stats["h2_total"]
+    )
     logger.info(
         "Kalshi spread/total resolution: %d resolved (spread=%d, total=%d, "
-        "h1_spread=%d, h1_total=%d), %d no_plays, %d refused_period, "
-        "%d no_parse, %d errors",
+        "h1_spread=%d, h1_total=%d, h2_spread=%d, h2_total=%d), %d no_plays, "
+        "%d refused_period, %d no_parse, %d errors",
         resolved,
         stats["spread"],
         stats["total"],
         stats["h1_spread"],
         stats["h1_total"],
+        stats["h2_spread"],
+        stats["h2_total"],
         stats["no_plays"],
         stats["refused_period"],
         stats["no_parse"],
@@ -6839,6 +7001,15 @@ async def _resolve_winners_only(limit: int = 2000):
         "moneyline": score_stats.get("moneyline", 0),
         "btts": score_stats.get("btts", 0),
         "total": spread_total_stats.get("total", 0),
+        # #5052: second-half verdicts get their OWN keys rather than folding
+        # into "total", which has meant "full-game total legs" since #947 —
+        # widening it in place would silently change the meaning of a number
+        # already on record. The live path (`_backfill_all_winners`) surfaces
+        # the whole `spread_total_stats` dict as the
+        # `kalshi_spread_total_resolution` phase, so these are the receipt in
+        # both entry points rather than only the retired one.
+        "h2_total": spread_total_stats.get("h2_total", 0),
+        "h2_spread": spread_total_stats.get("h2_spread", 0),
         "player_props": player_prop_stats.get("resolved", 0),
         "total_bases": total_bases_stats.get("resolved", 0),
         # #4923: period-bounded markets BOTH final-score resolvers declined,

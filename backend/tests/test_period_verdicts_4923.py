@@ -324,7 +324,145 @@ class TestSpreadTotalResolver:
         "Over 2.5 2H goals scored",
     ]
 
-    async def test_a_second_half_total_is_refused_not_graded(self, monkeypatch):
+    async def test_a_second_half_total_is_graded_on_the_second_half(self, monkeypatch):
+        """#5052 turned this refusal into a verdict — on the RIGHT score.
+
+        Refusing was #4923's first move ("a wrong verdict is replaced by no
+        verdict first"), never its destination. What must never come back is
+        the FULL-TIME answer, and this specimen is chosen so the two disagree:
+        the match ended 1–1 (two goals), Kalshi's own sibling markets pin the
+        first half at 1–0, so the second half had exactly ONE goal.
+
+        The middle rung is the entire point. `Over 1.5` is WON on the match and
+        LOST on the half, so a mutant that reaches for `row.home_score` /
+        `row.away_score` here cannot pass — which is the property the old
+        refusal-only assertion could not test, because a refusal looks the same
+        whatever score you would have refused to use.
+        """
+        async def _halftime(session, event_id):
+            return (1, 0)
+
+        monkeypatch.setattr(bw, "_get_halftime_score", _halftime)
+        session, stats = await self._run(
+            monkeypatch,
+            [_candidate(60489769, "KXMLS2HTOTAL-26SEP09CHIMIA", n_outcomes=3)],
+            [
+                _outcome(60489769, 226056760 + i, name)
+                for i, name in enumerate(self.SECOND_HALF_RUNGS)
+            ],
+        )
+        assert [w[1] for w in session.verdict_writes()] == [
+            {"won": True, "oid": 226056760},   # 1 second-half goal > 0.5
+            # the discriminator: the MATCH total (2) is over 1.5, the half is not
+            {"won": False, "oid": 226056761},
+            {"won": False, "oid": 226056762},  # 1 < 2.5
+        ]
+        assert stats["h2_total"] == 3
+        assert stats["total"] == 0
+        assert stats["refused_period"] == 0
+
+    async def test_a_second_half_spread_stays_blank_and_is_never_fabricated(
+        self, monkeypatch
+    ):
+        """The hazard #5052 creates, and the guard that closes it.
+
+        `_SPREAD_RE` wants "wins by over N" with an optional `the 1H` infix.
+        Measured on production 2026-09-11: it reads NONE of the 4,410 2H spread
+        legs, because every 2H phrasing carries a `2H` infix it has no branch
+        for — the real names are "Bayern Munich wins the 2H by more than 1.5
+        goals". (Of the 21,492 1H legs it reads the 17,540 "by over" ones and
+        none of the 3,931 "by more than" ones; that gap is #4236 and is NOT
+        fixed here.)
+
+        Before #5052 an unreadable margin leg was harmless — the market was
+        refused for being 2H. Now the score reconstructs, so a TWO-outcome 2H
+        spread market can reach the team-name winner fallback, which grades
+        "did this team win the half". This half is 0–1: "wins the 2H by more
+        than 1.5 goals" is FALSE for both clubs, while the fallback would write
+        True for Miami. `game_score` is not overwritable, so that verdict would
+        be permanent.
+
+        The right answer is the one a reader already gets — nothing — so this
+        asserts NO writes and `no_parse`. It fails the moment the fallback is
+        allowed to answer a margin question.
+        """
+        async def _halftime(session, event_id):
+            return (1, 0)
+
+        monkeypatch.setattr(bw, "_get_halftime_score", _halftime)
+        session, stats = await self._run(
+            monkeypatch,
+            [_candidate(70000002, "KXBUNDESLIGA2HSPREAD-26AUG29BVBHSV", n_outcomes=2)],
+            [
+                _outcome(70000002, 31, "Chicago Fire wins the 2H by more than 1.5 goals"),
+                _outcome(70000002, 32, "Inter Miami CF wins the 2H by more than 1.5 goals"),
+            ],
+        )
+        assert session.verdict_writes() == []
+        assert stats["h2_spread"] == 0
+        assert stats["spread"] == 0
+        assert stats["no_parse"] == 1
+        assert stats["refused_period"] == 0
+
+    async def test_a_full_game_margin_leg_is_not_fabricated_either(self, monkeypatch):
+        """The guard is not 2H-only, and this is the case that proves it.
+
+        A whole-game "wins by more than N" market reaches the same fallback on
+        the same tokens with the FINAL score, and 3,931 such legs exist on 1H
+        alone. Nothing is fabricated on production today (measured: 0 of 3,788
+        legs on the 1,894 two-outcome 1H spread markets carry `game_score`) —
+        but only because those events have no reconstructable halftime. That is
+        an accident of the data. Here the score is present and the answer must
+        still be blank.
+
+        THE SCORE HERE IS 3–1, NOT THE 1–1 THE OTHER FIXTURES USE, and that is
+        load-bearing. With a drawn match the fallback declines anyway on its own
+        `h_score != a_score` test, so the guard is never consulted and the test
+        passes whether or not it exists — vacuous, and it read as green against
+        a mutant that deleted the guard. A decided match is the only version of
+        this that can fail: 3–1 is a two-goal margin, so an unguarded fallback
+        writes True for Chicago and False for Miami on legs that both ask
+        "by more than 1.5", whose correct answers are True and False *by
+        coincidence of this scoreline* — hence the assertion is on the WRITES
+        being absent, not on their values.
+        """
+        decided = _row(
+            market_id=70000004,
+            market_name="Chicago Fire vs Miami: Spread",
+            ticker="KXMLSSPREAD-26SEP09CHIMIA",
+            event_id=15298466,
+            home_team_name="Chicago Fire",
+            away_team_name="Inter Miami CF",
+            home_score=3,
+            away_score=1,
+            n_outcomes=2,
+        )
+        session, stats = await self._run(
+            monkeypatch,
+            [decided],
+            [
+                _outcome(70000004, 51, "Chicago Fire wins by more than 1.5 goals"),
+                _outcome(70000004, 52, "Inter Miami CF wins by more than 1.5 goals"),
+            ],
+        )
+        assert session.verdict_writes() == []
+        assert stats["spread"] == 0
+        assert stats["no_parse"] == 1
+
+    async def test_a_second_half_with_no_halftime_score_is_still_refused(
+        self, monkeypatch
+    ):
+        """The fail-closed half of #5052: no reconstruction, no verdict.
+
+        `_get_halftime_score` returning `None` must land on `no_plays` and write
+        nothing — never on the full-time score. This is the same guarantee 1H
+        already had, and it is why adding 2H cannot invent a verdict: the
+        failure mode is "still blank", which is what the reader already sees.
+        """
+        async def _no_halftime(session, event_id):
+            return None
+
+        monkeypatch.setattr(bw, "_get_halftime_score", _no_halftime)
         session, stats = await self._run(
             monkeypatch,
             [_candidate(60489769, "KXMLS2HTOTAL-26SEP09CHIMIA", n_outcomes=3)],
@@ -334,39 +472,28 @@ class TestSpreadTotalResolver:
             ],
         )
         assert session.verdict_writes() == []
-        assert stats["refused_period"] == 1
-        assert stats["total"] == 0
+        assert stats["no_plays"] == 1
+        assert stats["h2_total"] == 0
+        assert stats["refused_period"] == 0
 
-    async def test_a_second_half_spread_is_refused(self, monkeypatch):
-        """A real production row, and it is wrong twice over.
+    async def test_a_quarter_is_still_refused(self, monkeypatch):
+        """#5052 widened the gate by exactly one token, and no more.
 
-        `KXNCAAF2HSPREAD-26SEP03MASSRUTG` — UMass at Rutgers, 2026-09-03, FINAL
-        **Rutgers 21, UMass 37**. Eight rungs of "Rutgers wins 2H by over N
-        points" all carry `is_winner = true, resolution_source = game_score`,
-        up to `over 17.5`, on a game Rutgers LOST BY SIXTEEN. The second half
-        is not the game; this one is not even the game's own margin.
+        Quarters and the MLB first-N windows have no reconstructor, so they
+        must keep landing on `refused_period`. If this ever starts grading, it
+        is grading against the full-game score — #4923 verbatim.
         """
-        rutgers = _row(
-            market_id=70000002,
-            market_name="UMass vs Rutgers: 2H Spread",
-            ticker="KXNCAAF2HSPREAD-26SEP03MASSRUTG",
-            event_id=15290000,
-            home_team_name="Rutgers Scarlet Knights",
-            away_team_name="UMass Minutemen",
-            home_score=21,
-            away_score=37,
-            n_outcomes=2,
-        )
         session, stats = await self._run(
             monkeypatch,
-            [rutgers],
+            [_candidate(70000003, "KXNCAAF4QTOTAL-26SEP09CHIMIA", n_outcomes=2)],
             [
-                _outcome(70000002, 31, "Rutgers wins 2H by over 6.5 points"),
-                _outcome(70000002, 32, "Rutgers wins 2H by over 17.5 points"),
+                _outcome(70000003, 41, "Over 0.5 4Q goals scored"),
+                _outcome(70000003, 42, "Over 1.5 4Q goals scored"),
             ],
         )
         assert session.verdict_writes() == []
         assert stats["refused_period"] == 1
+        assert stats["total"] == 0
 
     async def test_the_full_game_total_is_still_graded(self, monkeypatch):
         """The control, and the one that proves the refusal is not a mute button.
