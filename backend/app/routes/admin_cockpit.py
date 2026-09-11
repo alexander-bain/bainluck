@@ -172,6 +172,37 @@ _AUTOPILOT_BEATS = [
         "first_fire": "2026-07-14T09:50:00+00:00",
         "href": "/admin",
     },
+    {
+        # #5001 (THRU-B) — THE MISSING-RUN ALERT FOR THE HOURLY CALIBRATION
+        # REBUILD, and it is part of that ship rather than a nice-to-have.
+        #
+        # Moving the rebuild to a Heroku Scheduler one-off means
+        # `CALIBRATION_BEAT_DISABLED=1` removes the beat entry — and removing a
+        # beat entry silently removes whatever was noticing that it had not
+        # fired. Without this tile the cutover's failure mode is the worst kind:
+        # the Scheduler job is never created, or is created and errors every
+        # hour, and nothing anywhere says so while /calibration quietly ages.
+        #
+        # THIS TILE IS CARRIER-AGNOSTIC ON PURPOSE. It keys on the metric label
+        # `_tracked_run` writes, NOT on the beat schedule, and
+        # `scripts/run_calibration_hourly.py` calls `_tracked_run` with the SAME
+        # label the beat uses. So it reads true before the cutover (beat), after
+        # it (one-off), and after a rollback (beat again) — nobody has to
+        # remember to move it, and it cannot be made vacuous by flipping the
+        # switch it exists to cover.
+        #
+        # No `rescued_field`: this build reports through a nested `phase_ledger`
+        # and has no top-level count to show. See `_autopilot_tile`.
+        "label": "precompute_calibration_main",  # metric label, NOT the beat name
+        "display": "Calibration rebuild (hourly)",
+        "schedule": "hourly (:15 UTC)",
+        "expected_24h": 24,
+        # Hourly cadence with a p95 of ~1353 s. >2 h since the last SUCCESS means
+        # a scheduled slot produced nothing — one missed hour is inside the
+        # amber band (2 × 0.75 = 1.5 h), two is RED.
+        "stale_hours": 2,
+        "href": "/admin",
+    },
 ]
 
 
@@ -190,7 +221,18 @@ def _autopilot_tile(beat: dict, metrics: dict) -> dict:
     hrs = _hours_since(last_dt)
     successes = metrics.get("successes_24h")
     summary = metrics.get("last_result_summary")
-    rescued = summary.get(beat["rescued_field"]) if isinstance(summary, dict) else None
+    # `rescued_field` is OPTIONAL (#5001). It names a top-level count in the
+    # task's own summary, and not every beat worth a tile has one:
+    # `precompute_calibration_main` reports through a NESTED `phase_ledger`, so
+    # any top-level name invented for it would read `None` forever and render a
+    # detail bit that is silently always absent. A tile with no rescued count is
+    # honest; a tile with a rescued count that can never populate is not.
+    rescued_field = beat.get("rescued_field")
+    rescued = (
+        summary.get(rescued_field)
+        if rescued_field and isinstance(summary, dict)
+        else None
+    )
     expected = beat.get("expected_24h")
     stale = beat["stale_hours"]
 
