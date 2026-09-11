@@ -1512,7 +1512,38 @@ def free_background_slots(
 #: because the two sides' text agrees — while the composed tree is 123. The prose
 #: blocks conflict; the constant does not. **Re-run the census on the composed
 #: tree after any rebase and before any merge**, and do not trust a clean merge.
-BACKGROUND_BEAT_COUNT = 120
+#: 🔴 RE-DERIVED at discover/043g (2026-09-11, #4920): 120 → **121**, explicit
+#: **77 → 78**, fall-through UNMOVED at 43. RUN over the assembled schedule on
+#: this tree, not incremented — the census printed
+#: `explicit 78 implicit 43 total 121`.
+#:
+#: The beat is `warm-tag-counts`, `*/12` on `background`, EXPLICITLY routed. It
+#: measures what each Browse category actually renders so `/categories` can stop
+#: advertising 4,995 tennis markets for a page that draws 11 — all 28 visible
+#: tiles over-promised on production 2026-09-11, worst 784x.
+#:
+#: ITS COST, declared here because this is where costs are declared: ~28
+#: category measurements at 0.9–1.2 s each (measured on production), so **~30 s
+#: of wall per pass against a 720 s period** — ~4 % of one of the two
+#: `--concurrency=2` slots, and it is not a resident. It holds no slot between
+#: passes, it issues no external HTTP (it reads our own pipeline through
+#: `get_feed`), and it is bounded twice: `PER_CATEGORY_TIMEOUT_SECONDS=25` on
+#: the one uninterrupted op and `PASS_BUDGET_SECONDS=240` on the pass, so its
+#: worst case is bounded well under its own period rather than by the task
+#: limit. A pass that cannot finish is superseded exactly by the next one — it
+#: re-measures the same categories through the same route.
+#:
+#: The `*/12` is DERIVED, not chosen: `tag_counts_cache.FRESH_TTL_SECONDS //
+#: (MISSED_DELIVERY_ALLOWANCE + 1)`, so four consecutive lost deliveries still
+#: cannot uncover a reader, and a queue editing that TTL moves this beat with
+#: it. 12 divides 60, so `*/12` fires evenly at :00 :12 :24 :36 :48 rather than
+#: the uneven `:00 :07 … :00` shape an arbitrary period produces.
+#:
+#: ⚠️ THE MERGE HAZARD ABOVE APPLIES TO THIS LINE. Any other lane adding a
+#: background beat this week writes the IDENTICAL `BACKGROUND_BEAT_COUNT = 121`
+#: and `git merge` sees no conflict while the composed tree is 122. Re-run the
+#: census on the composed tree before merging this.
+BACKGROUND_BEAT_COUNT = 121
 #: 🔴 RE-DERIVED at authority/083 (2026-09-09, #2907): 122 → **120**, explicit
 #: UNMOVED at 77, fall-through **45 → 43**. And this is the FIRST entry in this
 #: whole block that moves the number DOWN — every other re-derivation here adds a

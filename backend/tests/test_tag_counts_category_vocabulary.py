@@ -36,7 +36,7 @@ import re
 
 import pytest
 
-from app.routes.feed import get_tag_counts
+from app.routes.feed import _candidate_tag_counts
 from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
 
 # The futures arm's own catch-all, which by construction is not a classifier
@@ -46,7 +46,15 @@ SHARED_CATCH_ALL = "other"
 
 @pytest.fixture(scope="module")
 def handler_source() -> str:
-    return inspect.getsource(get_tag_counts)
+    """The SQL arms, wherever they live.
+
+    #4920 split the route: `get_tag_counts` now prefers a measured render count
+    and delegates the candidate SQL to `_candidate_tag_counts`. The CASE arms
+    this file parses moved with the SQL, so the parser follows them. The
+    `test_the_parser_sees_the_whole_case` guard below is what caught the move
+    rather than letting these assertions quietly stop asserting.
+    """
+    return inspect.getsource(_candidate_tag_counts)
 
 
 def _case_targets(source: str) -> list[str]:
@@ -60,7 +68,7 @@ def _case_targets(source: str) -> list[str]:
     targets = re.findall(r"THEN\s+'([a-z_]+)'", source)
     if not targets:
         raise AssertionError(
-            "found no THEN '<category>' targets in get_tag_counts — the events "
+            "found no THEN '<category>' targets in _candidate_tag_counts — the events "
             "arm was rewritten into a shape this guard cannot read, so it is "
             "asserting nothing. Re-point the parser before trusting a pass."
         )

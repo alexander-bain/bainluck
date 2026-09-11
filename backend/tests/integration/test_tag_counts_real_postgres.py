@@ -113,15 +113,35 @@ class _RecordingSession:
 
 
 async def _statements_the_route_issues():
-    """Run the real handler and return every statement it executed."""
+    """Run the real handler and return every statement it executed.
+
+    #4920 gave this route a Redis-backed render count that it PREFERS over the
+    candidate SQL. Two consequences for this gate, both handled here rather
+    than by relaxing the assertion below:
+
+    * the cache is stubbed, so this file keeps testing the STATEMENTS it exists
+      to test and cannot start passing or failing on whether the CI container
+      happens to have a populated Redis;
+    * the stub returns "nothing measured", which is the state in which the
+      candidate SQL is the whole answer — i.e. the path these statements are
+      on. A stub that returned counts would skip the SQL's contribution and
+      quietly make the two Postgres tests below decorative.
+    """
+    from unittest.mock import patch
+
     from app.routes.feed import get_tag_counts
 
     session = _RecordingSession()
-    payload = await get_tag_counts(db=session)
+    with patch(
+        "app.utils.tag_counts_cache.read", return_value=({}, None)
+    ):
+        payload = await get_tag_counts(db=session)
 
     # With no rows the handler must still answer, not raise. The empty body is
     # a legitimate response shape here — it is the 500 that was the defect.
-    assert payload == {"counts": {}}
+    # Kept as an EXACT comparison: a new key in this payload is a contract
+    # change and should have to come through this line.
+    assert payload == {"counts": {}, "rendered_built_at": None}
     return session.executed
 
 

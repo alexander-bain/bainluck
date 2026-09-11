@@ -92,9 +92,18 @@ from tests.test_sql_group_by_alias_collision import (  # noqa: E402
 _SQL_LITERAL = re.compile(r"""text\(\s*(?:f)?("{3}|'{3})(.*?)\1""", re.S)
 
 
+#: The function the two statements live in. #4920 split the route:
+#: `get_tag_counts` now prefers a measured render count and delegates the
+#: candidate SQL to `_candidate_tag_counts`. The needle follows the SQL, because
+#: the SQL is what this harness mutates. The `len(found) != 2` precondition
+#: below is what CAUGHT the move — it refused to run rather than reporting
+#: vacuous kills against an empty region.
+_SQL_HOME = "async def _candidate_tag_counts"
+
+
 def _route_statements() -> tuple[str, str]:
     source = FEED.read_text()
-    start = source.index("async def get_tag_counts")
+    start = source.index(_SQL_HOME)
     end = (
         source.index("\n@router.", start)
         if "\n@router." in source[start:]
@@ -104,7 +113,7 @@ def _route_statements() -> tuple[str, str]:
     found = [m.group(2) for m in _SQL_LITERAL.finditer(body)]
     if len(found) != 2:
         raise SystemExit(
-            f"expected 2 text() statements in get_tag_counts, found {len(found)} "
+            f"expected 2 text() statements in {_SQL_HOME}, found {len(found)} "
             "— the harness is reading the wrong region and would report "
             "vacuous kills"
         )

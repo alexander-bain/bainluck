@@ -4226,6 +4226,30 @@ def warm_futures_categories(self):
     return _tracked_run("warm_futures_categories", _warm_futures_categories())
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=300,
+    time_limit=330,
+    name="app.tasks.warm_tag_counts",
+)
+def warm_tag_counts(self):
+    """Keep the Browse tiles telling the truth about their own pages (#4920).
+
+    Budget: up to `MAX_CATEGORIES` category measurements, each bounded inside
+    the task at `PER_CATEGORY_TIMEOUT_SECONDS` (25 s) and the pass as a whole at
+    `PASS_BUDGET_SECONDS` (240 s) — the longest uninterrupted op is ONE
+    category, and the soft limit here sits above the pass budget so a wedged
+    pass is reported by the inner bound with a reason rather than killed by the
+    outer one without. Measured cost is ~1 s per category, ~30 s per pass.
+
+    NOTE the module is `tag_counts_warm`, not `warm_tag_counts`: a submodule
+    sharing a name with a registered task is shadowed by the task on
+    `from app.tasks import <name>`, the trap `warm_event_concepts` records.
+    """
+    from app.tasks.tag_counts_warm import _warm_tag_counts
+    return _tracked_run("warm_tag_counts", _warm_tag_counts())
+
+
 @celery_app.task(bind=True, soft_time_limit=100, time_limit=115, name="app.tasks.warm_typeahead")
 def warm_typeahead(self, head_size: int = None):
     """Keep `/typeahead`'s hot pages resident so a user never pays the cold read.
@@ -4671,6 +4695,19 @@ def _futures_categories_warm_minutes() -> int:
     an import statement.
     """
     from app.tasks.futures_categories_warm import warm_period_minutes
+
+    return warm_period_minutes()
+
+
+def _tag_counts_warm_minutes() -> int:
+    """The `warm-tag-counts` cadence, in whole minutes.
+
+    #4920. Same one-line indirection as `_futures_categories_warm_minutes`
+    above, and for the same reason: the beat spells a period DERIVED from the
+    slot's own freshness TTL rather than a literal that can drift out of step
+    with the contract it covers.
+    """
+    from app.tasks.tag_counts_warm import warm_period_minutes
 
     return warm_period_minutes()
 
@@ -5297,6 +5334,29 @@ celery_app.conf.beat_schedule = {
         # in ~0.44s and schedules one revalidation, so this cadence governs
         # content freshness, not user-visible latency.
         "schedule": crontab(minute="*/5"),
+        "options": {"queue": "background"},
+    },
+    "warm-tag-counts": {
+        "task": "app.tasks.warm_tag_counts",
+        # #4920. The Browse tiles. Every one of the 28 visible tiles advertised
+        # a number its own page could not deliver — cricket promised 784 and
+        # rendered 1 — because the tile counted CANDIDATE admission and the page
+        # renders what survives the pipeline. This pass measures the page and
+        # publishes the answer; the route prefers it and falls back to the old
+        # count for any category not measured, so a lapsed beat is today's
+        # behaviour and never an empty grid.
+        #
+        # COST, stated: ~28 category measurements at ~0.9-1.2 s each (measured
+        # on production 2026-09-11), so ~30 s per pass. At */15 that is ~3.3 %
+        # of one `background` slot-hour — declared here rather than left for the
+        # next re-derivation of BACKGROUND_BEAT_COUNT to discover.
+        #
+        # PLACED HERE, ABOVE `warm-futures-categories`, ON PURPOSE:
+        # `futures_categories_warm_mutations:M11`'s needle spans that entry
+        # THROUGH the `warm-typeahead` key that follows it, so a beat
+        # inserted between the two drifts that sibling harness. Keeping the
+        # pair adjacent costs nothing and re-targets nobody else's guard.
+        "schedule": crontab(minute=f"*/{_tag_counts_warm_minutes()}"),
         "options": {"queue": "background"},
     },
     "warm-futures-categories": {
@@ -6697,6 +6757,13 @@ _EXPIRING_WARMER_BEATS = {
     # from the period for the same reason the period is derived from the tier's
     # ceiling: three numbers that must agree, and only one of them typed.
     "warm-futures-categories": _futures_categories_warm_minutes() * 60,
+
+    # #4920. One period, so #1609's flat rule applies unamended: the pass is
+    # ~30 s of measurement against a 720 s beat, so a fire that could not start
+    # IS superseded by the next one — and superseded exactly, because the next
+    # fire re-measures the same categories through the same route. DERIVED from
+    # the period for the same reason the period is derived from the slot's TTL.
+    "warm-tag-counts": _tag_counts_warm_minutes() * 60,
 
     # 🔴 **20 -> 180, #3364.** The old value and its reasoning are kept below,
     # because the reasoning is sound and it is the reasoning a reader will
