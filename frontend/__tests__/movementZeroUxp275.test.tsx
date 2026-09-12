@@ -302,40 +302,59 @@ describe("CombinedFeedCard (/sports Top Markets, grouped) — rendered markup", 
   // wrong reason — absence of the marker and absence of the thing are the same
   // observation. Anchor a PRESENCE check on your new attribute; anchor an
   // ABSENCE check on something older than your diff.
+  // #5666 CHANGED THE UNIT THIS CARD PRINTS, SO THESE ABSENCE ARMS WERE ABOUT TO
+  // GO VACUOUS. They asserted `not.toContain("0.0%")`; the card now prints
+  // ` pts`, so a zero badge would read `+0.0 pts` and every one of them would
+  // have passed while the defect they exist for was back on screen. The unit is
+  // incidental to this suite's claim — which is that a move rounding to nothing
+  // draws NO badge — so the check is widened to BOTH spellings rather than
+  // moved to the new one. A third unit change cannot hollow them out either.
+  const ZERO_IN_ANY_UNIT = [
+    "0.0%",
+    "0.0 pts",
+  ];
+
   it("renders NO zero badge for a move that would print as zero", () => {
     // -0.00029 is San Diego's real production value: the exact shape that
     // produced `-0.0%` in the shopper's screenshot.
     const html = renderCombined([["San Diego Padres", -0.00029]]);
-    expect(html).not.toContain("0.0%");
+    for (const z of ZERO_IN_ANY_UNIT) expect(html).not.toContain(z);
     expect(badges(html)).toEqual([]);
   });
 
   it("renders no zero badge for the positive twin either — BOTH signs were wrong", () => {
     const html = renderCombined([["Milwaukee Brewers", 7.3e-5]]);
-    expect(html).not.toContain("0.0%");
+    for (const z of ZERO_IN_ANY_UNIT) expect(html).not.toContain(z);
     expect(badges(html)).toEqual([]);
   });
 
   it("never emits a signed zero, over the whole production population", () => {
     const html = renderCombined(PRODUCTION_CHANGES.map(([n, v]) => [n, v]));
-    expect(html).not.toContain("-0.0%");
-    expect(html).not.toContain("+0.0%");
+    for (const z of ZERO_IN_ANY_UNIT) {
+      expect(html).not.toContain(`-${z}`);
+      expect(html).not.toContain(`+${z}`);
+    }
     for (const b of badges(html)) {
-      expect(b).not.toMatch(/[+-]0\.0%/);
+      expect(b).not.toMatch(/[+-]0\.0\s*(?:%|pts)/);
     }
   });
 
   it("CONTROL — a real move is untouched, with its sign and its magnitude", () => {
     // The whole change is a NARROWING: nothing that printed a nonzero magnitude
     // before may print differently now.
+    //
+    // #5666 moved the UNIT from `%` to ` pts` (the formatter always returned
+    // points; the `%` was a mislabel). The SIGN and the MAGNITUDE — the two
+    // things this control is about — are byte-identical before and after, which
+    // is what makes the edit legitimate rather than a rewrite to fit the ship.
     expect(badges(renderCombined([["Los Angeles Dodgers", 0.00149]]))).toEqual([
-      "+0.1%",
+      "+0.1 pts",
     ]);
     expect(badges(renderCombined([["Tampa Bay Rays", -0.001251]]))).toEqual([
-      "-0.1%",
+      "-0.1 pts",
     ]);
-    expect(badges(renderCombined([["The Odyssey", -0.07]]))).toEqual(["-7.0%"]);
-    expect(badges(renderCombined([["Big Mover", 0.64]]))).toEqual(["+64.0%"]);
+    expect(badges(renderCombined([["The Odyssey", -0.07]]))).toEqual(["-7.0 pts"]);
+    expect(badges(renderCombined([["Big Mover", 0.64]]))).toEqual(["+64.0 pts"]);
   });
 
   it("CONTROL (green on master too) — a null movement was always silent", () => {
