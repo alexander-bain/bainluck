@@ -381,3 +381,121 @@ def test_the_sync_does_not_share_the_main_deploy_concurrency_group():
     body = WORKFLOW.read_text()
     assert "group: heavy-deploy" in body
     assert "group: heroku-deploy" not in body
+
+
+# ---------------------------------------------------------------------------
+# #5722 — the post-push readback. The first ever sync SUCCEEDED and reported
+# failure, because it asked the git ref instead of the release record.
+# ---------------------------------------------------------------------------
+
+CONFIRMED, MISMATCH, UNREADABLE = 0, 1, 2
+
+
+def test_the_readback_confirms_when_the_release_is_built_from_the_pushed_sha():
+    mod = _module()
+    d = mod.readback_verdict(expected=A, observed=A)
+    assert d.code == CONFIRMED
+    assert d.verdict == "CONFIRMED"
+
+
+def test_a_release_on_a_different_commit_is_a_mismatch():
+    mod = _module()
+    d = mod.readback_verdict(expected=A, observed=B)
+    assert d.code == MISMATCH
+    assert B[:9] in d.reason and A[:9] in d.reason
+
+
+def test_an_unreadable_release_is_not_a_mismatch():
+    """Gotcha #53, and the distinction the old one-line check could not draw.
+
+    "the API did not answer" and "heavy is on a different commit" call for
+    opposite responses — retry versus stop — and the replaced line reported both
+    as the same false claim about heavy's sha.
+    """
+    mod = _module()
+    for observed in (None, "", "not-a-sha", "10c0ee5c"):  # incl. an ABBREVIATION
+        d = mod.readback_verdict(expected=A, observed=observed)
+        assert d.code == UNREADABLE, f"{observed!r} should be UNREADABLE, got {d.verdict}"
+
+
+def test_the_poller_survives_the_race_that_broke_the_first_real_sync():
+    """THE REGRESSION, reproduced.
+
+    Run 34714692872 pushed `10c0ee5cd`, Heroku released it, and the immediate
+    readback returned the PREVIOUS sha because a Heroku git endpoint advertises
+    its ref asynchronously after the release. A single read fails; re-asking
+    finds the truth. The stale answer is returned twice so this cannot pass by
+    accident on a one-shot retry.
+    """
+    mod = _module()
+    answers = iter([B, B, A])
+    slept: list[float] = []
+    d = mod.poll_readback(
+        expected=A, fetch=lambda: next(answers), attempts=5, delay_s=6.0,
+        sleep=slept.append,
+    )
+    assert d.code == CONFIRMED
+    assert slept == [6.0, 6.0], "it must wait between attempts, not spin"
+
+
+def test_a_genuine_mismatch_still_fails_after_the_budget():
+    """The poller must not launder a real mismatch into patience.
+
+    If it retried forever, or returned CONFIRMED on exhaustion, the
+    never-backwards guarantee would be reported as holding when it does not.
+    """
+    mod = _module()
+    d = mod.poll_readback(
+        expected=A, fetch=lambda: B, attempts=3, delay_s=0.0, sleep=lambda _: None
+    )
+    assert d.code == MISMATCH
+
+
+def test_a_fetch_that_raises_is_unreadable_not_a_mismatch():
+    """A network error is not evidence about heavy's commit."""
+    mod = _module()
+
+    def boom():
+        raise OSError("connection reset")
+
+    d = mod.poll_readback(
+        expected=A, fetch=boom, attempts=2, delay_s=0.0, sleep=lambda _: None
+    )
+    assert d.code == UNREADABLE
+
+
+def test_the_workflow_reads_the_release_record_and_not_the_git_ref_after_pushing():
+    """The git ref lost the race once and is not the authority for "is it live".
+
+    Scoped to what happens AFTER the push: `ls-remote` is still the right way to
+    read the two live refs BEFORE deciding, so a blanket ban would be wrong.
+    """
+    body = WORKFLOW.read_text()
+    after_push = body.split('git push heroku-heavy "$MAIN_LIVE:refs/heads/master"')[-1]
+    assert "heavy_sync_decision.py verify" in after_push
+
+    # COMMENTS ARE STRIPPED FIRST, and that is not a convenience. The comment
+    # explaining this very fix has to name `ls-remote` to say what went wrong, so
+    # a bare substring search is true on the text that DENIES the defect — the
+    # guard would fail on a correct file and pass on one whose explanation had
+    # been deleted. Assert about executable lines only.
+    code = "\n".join(
+        ln for ln in after_push.splitlines() if not ln.lstrip().startswith("#")
+    )
+    assert "ls-remote" not in code, (
+        "the post-push readback must not consult the git ref — it advances "
+        "asynchronously after the release and reported a false mismatch on the "
+        f"first ever sync.\n{code}"
+    )
+
+
+def test_an_unreadable_readback_does_not_fail_the_job():
+    """An unreadable answer is not a negative one; the next run re-judges.
+
+    Failing here would put us back where #5722 started — a red run on a sync
+    that worked — just through a different door.
+    """
+    body = WORKFLOW.read_text()
+    after_push = body.split('git push heroku-heavy "$MAIN_LIVE:refs/heads/master"')[-1]
+    assert re.search(r"^\s*2\)\s*echo \"::warning::", after_push, re.M), after_push
+    assert re.search(r"::warning::.*\n(.*\n)*?\s*exit 0", after_push)

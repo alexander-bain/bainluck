@@ -199,6 +199,140 @@ def decide(
     )
 
 
+# ---------------------------------------------------------------------------
+# READBACK — did the push actually become the release heavy is running? (#5722)
+# ---------------------------------------------------------------------------
+#
+# THE GIT REF IS NOT THE ANSWER, AND ASKING IT COST US THE FIRST EVER SYNC.
+#
+# Run 34714692872 (2026-09-12 19:37Z) pushed `10c0ee5cd` to bainluck-heavy,
+# Heroku built it, printed `Released v11`, and ran the release command clean.
+# The workflow then read `git ls-remote heroku-heavy refs/heads/master` and got
+# `87a095b4` — the PRE-PUSH sha — and failed the job. Heavy was, and is, on the
+# new code: `heroku releases -a bainluck-heavy` showed `v11 Deploy 10c0ee5c`.
+#
+# A Heroku git endpoint is a push endpoint that triggers a build, not a plain
+# git server, and the ref it advertises advances asynchronously after the
+# release. So the readback raced it and lost.
+#
+# Why that is worth a script rather than a retry loop in YAML: #5470 exists
+# because heavy drift is SILENT, and #5662's repair existed because a job that
+# looks fine while doing nothing is the failure mode. A job that reports failure
+# every time it succeeds is the same corrosion pointed the other way — within a
+# day nobody reads the red, and the run that fails for a real reason becomes
+# invisible. So the readback asks the RELEASE record, which is what notice 48
+# already means by "heavy carries the sha", and it distinguishes three outcomes
+# where the old line had two.
+
+CONFIRMED = 0
+MISMATCH = 1
+UNREADABLE = 2
+
+
+def readback_verdict(*, expected: str | None, observed: str | None) -> Decision:
+    """Is the release heavy is running built from ``expected``?
+
+    ``UNREADABLE`` is deliberately NOT folded into ``MISMATCH`` (gotcha #53).
+    "the API did not answer" and "heavy is on a different commit" call for
+    opposite responses — the first is retried, the second is a genuine stop —
+    and the old one-line check could not tell them apart, so an unreadable
+    answer and a wrong one both printed the same false claim about heavy's sha.
+    """
+    if not _is_sha(expected):
+        return Decision(REFUSE, "REFUSE", f"expected sha unreadable: {expected!r}")
+    if not observed:
+        return Decision(UNREADABLE, "UNREADABLE", "the release API did not name a commit")
+    if not _is_sha(observed):
+        return Decision(
+            UNREADABLE, "UNREADABLE", f"the release API named something that is not a sha: {observed!r}"
+        )
+    if observed.lower() == expected.lower():
+        return Decision(CONFIRMED, "CONFIRMED", f"heavy's release is built from {expected[:9]}")
+    return Decision(
+        MISMATCH,
+        "MISMATCH",
+        f"heavy's release is built from {observed[:9]}, not the {expected[:9]} just pushed",
+    )
+
+
+def poll_readback(
+    *,
+    expected: str | None,
+    fetch,
+    attempts: int = 10,
+    delay_s: float = 6.0,
+    sleep=None,
+) -> Decision:
+    """Re-ask until the release record catches up, or the budget runs out.
+
+    ``fetch`` returns the commit of the app's current release, or ``None`` if it
+    could not be read. It is injected so the classification above is testable
+    without a network, a credential, or a clock.
+
+    A MISMATCH is retried rather than trusted immediately, because the race this
+    exists for PRESENTS as a mismatch: the first read returns the previous
+    release. Only a mismatch that survives the whole budget is reported as one.
+    """
+    import time
+
+    sleep = sleep or time.sleep
+    verdict = readback_verdict(expected=expected, observed=None)
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            observed = fetch()
+        except Exception as exc:  # noqa: BLE001 - any read failure is UNREADABLE, not a mismatch
+            observed = None
+            print(f"  attempt {attempt}: release read failed ({type(exc).__name__}: {exc})")
+        verdict = readback_verdict(expected=expected, observed=observed)
+        if verdict.code in (CONFIRMED, REFUSE):
+            return verdict
+        print(f"  attempt {attempt}/{attempts}: {verdict.verdict} — {verdict.reason}")
+        if attempt < attempts:
+            sleep(delay_s)
+    return verdict
+
+
+def heroku_release_commit(app: str, token: str) -> str | None:
+    """The commit the app's CURRENT release was built from, via the Platform API.
+
+    Stdlib only — this script imports nothing external and must stay that way so
+    it runs on a bare runner before any `pip install`.
+    """
+    import json
+    import urllib.request
+
+    def _get(path: str, extra: dict | None = None):
+        # The trailing `/` in the literal is load-bearing, not a tidy-up target:
+        # `backend/tests/test_agent_origin_outbound_tag.py` proves statically that
+        # this call is third-party (so the origin carrier would be a no-op here,
+        # and this file can stay importless), and it can only prove that while the
+        # literal prefix CLOSES the authority. `f"...heroku.com{path}"` would leave
+        # the host open to whatever `path` holds, and is correctly reported.
+        req = urllib.request.Request(
+            f"https://api.heroku.com/{path}",
+            headers={
+                "Accept": "application/vnd.heroku+json; version=3",
+                "Authorization": f"Bearer {token}",
+                **(extra or {}),
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.load(resp)
+
+    releases = _get(
+        f"apps/{app}/releases", {"Range": "version ..; order=desc, max=1"}
+    )
+    if not releases:
+        return None
+    slug = (releases[0] or {}).get("slug") or {}
+    slug_id = slug.get("id")
+    if not slug_id:
+        # A release with no slug is a config change, not a deploy — it cannot
+        # tell us which commit is running, and saying "no" would be a lie.
+        return None
+    return (_get(f"apps/{app}/slugs/{slug_id}") or {}).get("commit")
+
+
 def _bool_arg(value: str) -> bool | None:
     """`true`/`false` only. Anything else is UNKNOWN, which refuses upstream."""
     lowered = value.strip().lower()
@@ -230,10 +364,35 @@ def main(argv: list[str] | None = None) -> int:
         help="an attended workflow_dispatch run: bypasses the CLOCK only, never the "
         "never-backwards guard",
     )
+    v = sub.add_parser(
+        "verify", help="confirm heavy's CURRENT RELEASE is built from the sha just pushed"
+    )
+    v.add_argument("--app", required=True, help="the Heroku app, e.g. bainluck-heavy")
+    v.add_argument("--expect", required=True, help="the sha that was just pushed (40 hex)")
+    v.add_argument("--attempts", type=int, default=10)
+    v.add_argument("--delay-s", type=float, default=6.0)
+
     try:
         args = parser.parse_args(argv)
     except SystemExit:
         return USAGE
+
+    if args.command == "verify":
+        import os
+
+        token = os.environ.get("HEROKU_API_KEY", "")
+        if not token:
+            # Gotcha #9: checked here, never in a step-level `if`.
+            print("UNREADABLE: HEROKU_API_KEY is not set, so no release can be read")
+            return UNREADABLE
+        decision = poll_readback(
+            expected=args.expect,
+            fetch=lambda: heroku_release_commit(args.app, token),
+            attempts=args.attempts,
+            delay_s=args.delay_s,
+        )
+        print(f"{decision.verdict}: {decision.reason}")
+        return decision.code
 
     decision = decide(
         main_live=args.main_live,
