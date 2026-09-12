@@ -129,6 +129,68 @@ resolve_cert_id () {
   CERT_ID="$($GREP "$sha" "$ledger" | $GREP 'TOKEN GRANTED' | $GREP -o 'CERT-[0-9]\+' | head -1)"
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ancestry_of — "is this sha on master?", answered so that a SHALLOW clone
+# cannot turn the answer into a silent yes-you-may.
+#
+# Sets ANC_STATE to merged | not-merged | unknown, and ANC_HOW to local|remote.
+#
+# ── THE BUG THIS EXISTS FOR (measured 2026-09-11, latency/343) ───────────────
+#
+# `~/bainluck/.git` is a SHALLOW clone — `rev-parse --is-shallow-repository` is
+# true, `.git/shallow` lists twelve boundary commits dated 2026-09-10, and only
+# 348 commits are reachable from origin/master. Every lane worktree shares that
+# object store, so every lane has the same truncated view.
+#
+# `git merge-base --is-ancestor X origin/master` cannot see past the boundary.
+# For anything merged before it, the honest graph answer is "I don't know" and
+# git's answer is exit 1 — indistinguishable from "not merged". Notice 31 reads
+# exit 1 as GO. Measured on the shipped gate: `a1fe4212`, whose own subject is
+# "Merge live/041 … into master" and which notice 12 records as merged on 9/2,
+# printed `PASS notice 31 ancestry — not an ancestor of origin/master`. The gate
+# whose entire job is "do not offer or re-gate what has already landed" said go.
+#
+# That case then STOPped at the composition gate, but only by luck: a 9/2 merge
+# commit no longer applies cleanly. A pre-boundary sha that still composes gets
+# a clean GO.
+#
+# ── THE ASYMMETRY THAT MAKES THE FIX CHEAP ───────────────────────────────────
+#
+# A local YES is always true: `--is-ancestor` only says yes about commits it can
+# actually walk to. It is only a local NO that a shallow clone can fabricate. So
+# the remote is consulted on exactly one branch — local-no, clone-shallow — and
+# a full clone never reaches the network at all. Behaviour there is unchanged.
+#
+# The remote oracle is `compare/<sha>...master`, whose `status` is `ahead` when
+# master is ahead of the sha (i.e. the sha is an ancestor) or `identical` when
+# they are the same commit; `behind` and `diverged` both mean not merged.
+# Measured: a1fe4212 -> ahead; f74de8a7 and 4564d947 (real unmerged shas) ->
+# diverged.
+#
+# If the remote cannot be reached the state is `unknown`, never `not-merged`.
+# A gate that could not be evaluated is a STOP everywhere else in this file and
+# it is a STOP here: the whole point is that "I could not tell" must stop being
+# spelled the same way as "no".
+# ─────────────────────────────────────────────────────────────────────────────
+IS_SHALLOW=""
+ANC_STATE=""; ANC_HOW=""
+ancestry_of () {
+  local full="$1"
+  if git -C "$REPO_PATH" merge-base --is-ancestor "$full" "$MASTER" 2>/dev/null; then
+    ANC_STATE=merged; ANC_HOW=local; return
+  fi
+  if [ "$IS_SHALLOW" != "true" ]; then
+    ANC_STATE=not-merged; ANC_HOW=local; return
+  fi
+  local st
+  st="$(gh api "repos/$REPO_SLUG/compare/${full}...master" --jq '.status' 2>/dev/null)"
+  case "$st" in
+    ahead|identical) ANC_STATE=merged;     ANC_HOW=remote ;;
+    behind|diverged) ANC_STATE=not-merged; ANC_HOW=remote ;;
+    *)               ANC_STATE=unknown;    ANC_HOW=remote ;;
+  esac
+}
+
 SUP_VERDICT=""; SUP_ROWS=""; SUP_N=0; SUP_DECL=0
 supersedes_scan () {
   local cert="$1" ledger="$2"
@@ -404,12 +466,421 @@ FIXEOF
   check "piped into bash it still finds the repo, not /" \
     "! printf '%s' \"\$piped\" | /usr/bin/grep -q 'not a git repository: /$'"
 
+  # ── ancestry_of, behavioural. These call the SHIPPED function with a stubbed
+  # `gh` on PATH, so they measure the real mapping table rather than a copy of
+  # it. The sha is deliberately not a local ancestor, which is what pushes the
+  # function onto its remote branch.
+  #
+  # The third case is the one that matters. Before this function existed, "the
+  # clone cannot see that far" and "not merged" were the same exit code, and
+  # notice 31 read both as GO — that is how the shipped gate came to print
+  # `PASS ancestry` for a1fe4212, a commit whose own subject says it was merged
+  # into master on 9/2. If a broken/absent `gh` ever collapses back into
+  # `not-merged`, the fail-open is silently reopened and no other test sees it.
+  mkdir -p "$fx/bin"
+  _sv_shallow="$IS_SHALLOW"; _sv_master="${MASTER:-}"; _sv_repo="$REPO_PATH"
+  IS_SHALLOW=true
+  MASTER="$(git -C "$REPO_PATH" rev-parse HEAD 2>/dev/null || echo HEAD)"
+  _fake_sha=0123456789012345678901234567890123456789
+
+  printf '#!/bin/sh\necho ahead\n'    > "$fx/bin/gh"; chmod +x "$fx/bin/gh"
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: remote 'ahead' means the sha IS on master" \
+    "[ \"$ANC_STATE\" = merged ] && [ \"$ANC_HOW\" = remote ]"
+
+  printf '#!/bin/sh\necho identical\n' > "$fx/bin/gh"
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: remote 'identical' also means on master" "[ \"$ANC_STATE\" = merged ]"
+
+  printf '#!/bin/sh\necho diverged\n' > "$fx/bin/gh"
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: remote 'diverged' means genuinely not merged" "[ \"$ANC_STATE\" = not-merged ]"
+
+  printf '#!/bin/sh\nexit 1\n' > "$fx/bin/gh"
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: an UNREACHABLE remote is 'unknown', never 'not-merged' (the fail-open)" \
+    "[ \"$ANC_STATE\" = unknown ]"
+
+  IS_SHALLOW=false
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: a FULL clone never consults the remote (behaviour unchanged there)" \
+    "[ \"$ANC_STATE\" = not-merged ] && [ \"$ANC_HOW\" = local ]"
+
+  IS_SHALLOW="$_sv_shallow"; MASTER="$_sv_master"; REPO_PATH="$_sv_repo"
+
+  check "the notice 31 gate routes through ancestry_of, not a bare --is-ancestor" \
+    "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'ancestry_of \"\$SHA\"'"
+
+  # ── --orphans, behavioural. THE EMPTINESS GUARD IS THE POINT: a sweep whose
+  # parser stops matching reports an empty orphan list, and empty reads as a
+  # clean board. It must exit 2 (rig failure), never 0.
+  cat > "$fx/noledger.md" <<'FIXEOF'
+| CERT-9001 -- SUBJECT | 2026-09-11 10:00Z | lane | BLOCK -- TOKEN WITHHELD | nothing granted here |
+FIXEOF
+  out="$(MERGE_GATE_LEDGER="$fx/noledger.md" bash "$self" --orphans 2>&1)"; rc=$?
+  check "--orphans: a ledger with zero granted rows is a RIG FAILURE (exit 2), not a clean board" \
+    "[ $rc -eq 2 ]"
+  check "--orphans: and it says so in words, not just in an exit code" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'RIG FAILURE'"
+
+  out="$(MERGE_GATE_LEDGER=/nonexistent/ledger.md bash "$self" --orphans 2>&1)"; rc=$?
+  check "--orphans: an unreadable ledger exits 2, never 0" "[ $rc -eq 2 ]"
+
+  # It must print its denominator every run. A coverage number whose population
+  # nobody stated is the failure that read 674 priced legs out of 2,652.
+  out="$(bash "$self" --orphans 2>&1)"
+  check "--orphans: prints its population (granted rows -> unique shas)" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'population:.*granted row'"
+
+  check "--orphans: --all cannot widen past a shallow clone's floor" \
+    "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'window clamped to'"
+
   echo
   if [ "$fails" -eq 0 ]; then
     echo "  selftest: PASS"
     exit 0
   fi
   echo "  selftest: $fails FAILED"
+  exit 1
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# --orphans — notice 31(b), mechanized: which GRANTED tokens never landed?
+#
+#   usage:  tools/merge-gate.sh --orphans [--all] [<repo-path>]
+#
+# Every other gate in this file answers "may I merge THIS sha?". That question
+# presupposes somebody is already merging, and the failure it cannot see is the
+# sha nobody is holding at all: a cert graded GREEN, a token granted, and no
+# offer ever written. Notice 31(b) exists because that is not hypothetical —
+# int310 found FOUR unoffered GREEN shas in one day, two of them only by
+# re-running a sweep after pushing, and the tray read empty the whole time. The
+# tray records what a lane remembered to say; the ledger records what graded.
+#
+# So this mode reads the LEDGER and git ANCESTRY, and never the inbox. An offer
+# file is exactly the artifact that goes missing, so a sweep that consulted it
+# would be blind in the one direction it exists to see (live/155 wrote a real
+# offer into the wrong directory and polled a lock for hours; the offer was
+# never the evidence — the ledger row was).
+#
+# ── THE PREDICATE IS THE GATE'S OWN ──────────────────────────────────────────
+#
+# "Merged" is `git merge-base --is-ancestor`, the identical call the notice-31
+# gate makes on a single sha, not a lookup in a commit list that happens to
+# agree with it today. Two instruments answering one question is how they come
+# to disagree; there is only one instrument here.
+#
+# ── WHAT IT REFUSES TO DO SILENTLY ───────────────────────────────────────────
+#
+# It prints its denominator on every run. A sweep whose population predicate is
+# wrong reports a clean board and reports it confidently — the same failure that
+# read 674 priced legs where there were 2,652, because the walker invented the
+# denominator instead of taking it from the data. So: the granted-row count, the
+# unique-sha count, and the count outside the window are all printed, and a
+# population of ZERO exits 2 as a rig failure rather than 0 as "nothing to do".
+#
+# Every sha it declines to report is declined OUT LOUD and counted — parked,
+# superseded, already merged, or unresolvable. A suppression you cannot see is
+# indistinguishable from a bug in the suppressor.
+#
+# ── THE WINDOW, AND WHY IT DEFAULTS SHORT ────────────────────────────────────
+#
+# The ledger goes back to 2026-09-01 and most of its early rows name shas whose
+# branches are long gone. Defaulting to the whole file buries this week's real
+# orphan under a hundred dead ones, so the default is 7 days and `--all` opens
+# it. The rows outside the window are COUNTED in the summary either way — a
+# truncated bound that does not say it truncated is how a sweep goes vacuous.
+# ─────────────────────────────────────────────────────────────────────────────
+if [ "$SHA_IN" = "--orphans" ]; then
+  ORPH_ALL=0
+  orph_repo=""
+  shift
+  for a in "$@"; do
+    case "$a" in
+      --all) ORPH_ALL=1 ;;
+      --*)   echo "  unknown flag for --orphans: $a" >&2; exit 2 ;;
+      *)     orph_repo="$a" ;;
+    esac
+  done
+  # `$2` is the repo path for the single-sha form, so REPO_PATH was set at the
+  # top of this file from an argument that here may be `--all`. Re-derive it.
+  REPO_PATH="${orph_repo:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
+  if ! git -C "$REPO_PATH" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "  not a git repository: $REPO_PATH" >&2
+    exit 2
+  fi
+  if [ ! -r "$LEDGER" ]; then
+    echo "  ledger unreadable at $LEDGER — a sweep that cannot read the ledger" >&2
+    echo "  has not found zero orphans, it has found nothing." >&2
+    exit 2
+  fi
+  git -C "$REPO_PATH" fetch origin master --quiet 2>/dev/null
+  MASTER="$(git -C "$REPO_PATH" rev-parse origin/master)"
+  IS_SHALLOW="$(git -C "$REPO_PATH" rev-parse --is-shallow-repository 2>/dev/null)"
+
+  # ── The shallow floor. `ancestry_of` repairs a single wrong answer by asking
+  # the remote, but a sweep cannot ask 700 times, so this mode instead refuses to
+  # GUESS about rows it cannot judge locally and says how many there were.
+  #
+  # In a shallow clone every pre-boundary merge reads as "not an ancestor", which
+  # in this mode means "orphan". Unclamped, the first run of this sweep would have
+  # reported some five hundred long-merged shas as unoffered GREEN tokens — a
+  # confident, entirely false emergency, and precisely the rig artifact this file
+  # keeps warning about. The floor is the newest boundary commit's date: at or
+  # after it the local graph is complete, before it the local answer is noise.
+  SHALLOW_FLOOR=""
+  if [ "$IS_SHALLOW" = "true" ]; then
+    gitdir="$(git -C "$REPO_PATH" rev-parse --git-common-dir 2>/dev/null)"
+    case "$gitdir" in /*) ;; *) gitdir="$REPO_PATH/$gitdir" ;; esac
+    if [ -r "$gitdir/shallow" ]; then
+      SHALLOW_FLOOR="$(while read -r b; do
+          git -C "$REPO_PATH" log -1 --format=%cd --date=format:%Y-%m-%d "$b" 2>/dev/null
+        done < "$gitdir/shallow" | sort | tail -1)"
+    fi
+  fi
+
+  # The window. BSD `date` first (the lanes are macOS), GNU second. If NEITHER
+  # parses, the window is abandoned and every row is scanned — widening, never
+  # narrowing, and it says so, because a sweep that silently shrank its own
+  # window would under-report exactly when its clock is broken.
+  ORPH_DAYS="${MERGE_GATE_ORPHAN_DAYS:-7}"
+  cutoff=""
+  if [ "$ORPH_ALL" -eq 0 ]; then
+    cutoff="$(date -u -v-"${ORPH_DAYS}"d +%Y-%m-%d 2>/dev/null)" ||
+      cutoff="$(date -u -d "${ORPH_DAYS} days ago" +%Y-%m-%d 2>/dev/null)" || cutoff=""
+    if [ -z "$cutoff" ]; then
+      echo "  note: neither date(1) dialect parsed a ${ORPH_DAYS}-day cutoff — scanning ALL rows"
+      ORPH_ALL=1
+    fi
+  fi
+
+  echo "merge-gate --orphans — granted tokens that never landed (notice 31b)"
+  echo "  ledger=$LEDGER"
+  echo "  repo=$REPO_PATH"
+  echo "  master=$MASTER"
+  if [ "$ORPH_ALL" -eq 1 ]; then
+    echo "  window=ALL rows"
+  else
+    echo "  window=rows dated >= $cutoff (${ORPH_DAYS}d; --all for the whole ledger)"
+  fi
+  # The floor overrides both, including --all: --all asks for more rows, it does
+  # not make the clone able to answer for them.
+  if [ -n "$SHALLOW_FLOOR" ]; then
+    echo "  CLONE IS SHALLOW — local ancestry is only valid at/after $SHALLOW_FLOOR (.git/shallow boundary)."
+    echo "  Rows older than that are counted as UNJUDGEABLE, never as orphans."
+    echo "  To sweep the whole ledger: git -C $REPO_PATH fetch --unshallow"
+    if [ "$ORPH_ALL" -eq 1 ] || [ -z "$cutoff" ] || [ "$cutoff" \< "$SHALLOW_FLOOR" ]; then
+      cutoff="$SHALLOW_FLOOR"; ORPH_ALL=0
+      echo "  window clamped to >= $SHALLOW_FLOOR"
+    fi
+  fi
+  echo
+
+  # ── Parse. One awk pass, no brace-interval regexes: macOS awk is not GNU awk
+  # and `{40}` is not portable there, so a hex run is recognised by charset and
+  # LENGTH, which is exactly what `{40}` was going to mean anyway.
+  #
+  # Columns are pipe-delimited (`| CERT-N -- SUBJ | date | lane | verdict | …`),
+  # so cert/date/lane come from their own column and cannot be captured out of
+  # the prose. The sha is scanned across the WHOLE row: it is written into the
+  # notes column about as often as anywhere else.
+  #
+  # A 40-hex token wins over a short one wherever both appear. 781 of the 975
+  # granted rows carry a full sha and 193 more carry only an 8-hex — dropping
+  # the short form would silently exclude a fifth of the ledger.
+  orph_rows="$(awk -F'|' '
+    function ishex(s,   i,c) {
+      if (length(s) < 7) return 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (index("0123456789abcdef", c) == 0) return 0
+      }
+      return 1
+    }
+    index($0, "TOKEN GRANTED") == 0 { next }
+    {
+      cert = ""; dt = ""; lane = ""; sha40 = ""; shashort = ""
+      if (match($2, /CERT-[0-9]+/)) cert = substr($2, RSTART, RLENGTH)
+      if (match($3, /2026-[0-9][0-9]-[0-9][0-9]/)) dt = substr($3, RSTART, RLENGTH)
+      lane = $4
+      gsub(/^[ \t]+|[ \t]+$/, "", lane)
+      # Fall back to a whole-row date scan for the 32 rows whose third column is
+      # not the canonical stamp.
+      if (dt == "" && match($0, /2026-[0-9][0-9]-[0-9][0-9]/)) dt = substr($0, RSTART, RLENGTH)
+      n = split($0, tok, /[^0-9A-Za-z-]+/)
+      for (i = 1; i <= n; i++) {
+        t = tok[i]
+        if (!ishex(t)) continue
+        if (length(t) == 40) { if (sha40 == "") sha40 = t }
+        else if (length(t) <= 12) { if (shashort == "") shashort = t }
+      }
+      s = (sha40 != "" ? sha40 : shashort)
+      if (cert == "") cert = "CERT-?"
+      if (dt == "") dt = "0000-00-00"
+      printf "%s\t%s\t%s\t%s\n", s, dt, cert, lane
+    }
+  ' "$LEDGER")"
+
+  granted_rows="$(/usr/bin/grep -c 'TOKEN GRANTED' "$LEDGER")"
+  rows_parsed="$(printf '%s' "$orph_rows" | /usr/bin/grep -c .)"
+  no_sha="$(printf '%s' "$orph_rows" | awk -F'\t' '$1 == "" {n++} END {print n+0}')"
+
+  # THE EMPTINESS GUARD. A reused scanner inherits its first caller's assumptions
+  # about shape, and the failure is silent: nothing matches, the report is empty,
+  # and empty reads as clean. Zero granted rows or zero parsed rows means the
+  # ledger's format moved under this parser — that is a rig failure, not a green
+  # board, and it exits 2 so nobody can mistake it for one.
+  if [ "${granted_rows:-0}" -eq 0 ] || [ "${rows_parsed:-0}" -eq 0 ]; then
+    echo "  RIG FAILURE: $granted_rows granted row(s), $rows_parsed parsed."
+    echo "  The ledger's row format has moved under this parser. This is NOT a clean board."
+    exit 2
+  fi
+
+  # Unique shas, earliest granted row wins (that is the moment it became
+  # offerable, and it is the row `resolve_cert_id` would pick).
+  uniq_shas="$(printf '%s\n' "$orph_rows" | awk -F'\t' '$1 != "" && !seen[$1]++')"
+  n_uniq="$(printf '%s' "$uniq_shas" | /usr/bin/grep -c .)"
+
+  # ── The park list. Read from origin/master, the same ref the script itself is
+  # fetched from, because the shared checkout drifts by hours (#5269) and a park
+  # that is stale in the working tree would hide a live orphan. `MERGE_GATE_PARKED`
+  # overrides for anyone editing it.
+  #
+  # If it cannot be read the sweep continues with an EMPTY park list, which makes
+  # held shas noisy. That is the correct direction to fail: a sweep that suppresses
+  # on evidence it could not load is worse than one that shows too much.
+  parked_src=""
+  parked_txt=""
+  if [ -n "${MERGE_GATE_PARKED:-}" ] && [ -r "${MERGE_GATE_PARKED}" ]; then
+    parked_txt="$(cat "${MERGE_GATE_PARKED}")"; parked_src="${MERGE_GATE_PARKED}"
+  elif parked_txt="$(git -C "$REPO_PATH" show origin/master:tools/merge-gate-parked.txt 2>/dev/null)"; then
+    parked_src="origin/master:tools/merge-gate-parked.txt"
+  else
+    parked_txt=""; parked_src="(none — no park list; held shas will be reported)"
+  fi
+  n_parked_entries="$(printf '%s\n' "$parked_txt" | /usr/bin/grep -cE '^[0-9a-f]{7,40}[[:space:]]' || true)"
+  echo "  parked=$parked_src (${n_parked_entries:-0} entr(y|ies))"
+  # A park with no stated reason is how a sha goes quiet forever. Name them.
+  bare_park="$(printf '%s\n' "$parked_txt" | awk '/^[0-9a-f]/ && NF < 2 {print "    " $1}')"
+  if [ -n "$bare_park" ]; then
+    echo "  WARN: park entries with no reason (a park without a reason is a disappearance):"
+    printf '%s\n' "$bare_park"
+  fi
+  echo
+
+  n_merged=0; n_unres=0; n_parked=0; n_super=0; n_window=0; n_out=0; n_orph=0
+  orph_out=""; unres_out=""; parked_out=""; super_out=""; review_out=""
+
+  while IFS=$'\t' read -r tok dt cert lane; do
+    [ -n "$tok" ] || continue
+    if [ "$ORPH_ALL" -eq 0 ] && [ "$dt" \< "$cutoff" ]; then
+      n_out=$((n_out + 1)); continue
+    fi
+    n_window=$((n_window + 1))
+
+    full="$(git -C "$REPO_PATH" rev-parse --verify --quiet "${tok}^{commit}" 2>/dev/null)"
+    rc=$?
+    if [ "$rc" -ne 0 ] || ! printf '%s' "$full" | $GREP -Eq '^[0-9a-f]{40}$'; then
+      # Not judgeable: the object is not in this clone. That is usually a branch
+      # deleted after merge, but it can also be a sha never pushed here, so it is
+      # reported as its own class and never folded into "merged".
+      n_unres=$((n_unres + 1))
+      unres_out="$unres_out
+    $tok  $dt  $cert  $lane"
+      continue
+    fi
+
+    # The gate's own predicate, via the same helper the single-sha gate uses —
+    # not a second instrument that agrees with it today. Inside the clamped
+    # window the local graph is complete, so this answers locally; the remote is
+    # reached only for a sha that looks like an orphan in a shallow clone, which
+    # is a handful of calls and buys exactness on the only rows we will print.
+    ancestry_of "$full"
+    if [ "$ANC_STATE" = merged ]; then
+      n_merged=$((n_merged + 1)); continue
+    fi
+
+    short="$(printf '%s' "$full" | cut -c1-8)"
+
+    if [ "$ANC_STATE" = unknown ]; then
+      n_unres=$((n_unres + 1))
+      unres_out="$unres_out
+    $short  $dt  $cert  $lane — ancestry UNDECIDABLE (shallow clone, remote unreachable)"
+      continue
+    fi
+
+    # Prefix match, computed rather than pattern-matched: a park entry matches
+    # when it IS a prefix of this candidate's full sha. Written as a regex on
+    # the short form instead, a 7-character park entry never matches an 8-character
+    # short sha — the entry sits in the file looking effective and suppresses
+    # nothing, which is the one way a park list can fail silently in the noisy
+    # direction and the one way nobody would notice.
+    why="$(printf '%s\n' "$parked_txt" | awk -v f="$full" '
+      /^[0-9a-f]/ {
+        s = $1
+        if (substr(f, 1, length(s)) == s) {
+          $1 = ""; sub(/^[ \t]+/, "")
+          print; exit
+        }
+      }')"
+    if [ -n "$why" ]; then
+      n_parked=$((n_parked + 1))
+      parked_out="$parked_out
+    $short  $dt  $cert  — $why"
+      continue
+    fi
+
+    # Notice 18: a superseded token is not an orphan to go and offer.
+    supersedes_scan "$cert" "$LEDGER"
+    if [ "$SUP_VERDICT" = declared ]; then
+      n_super=$((n_super + 1))
+      super_out="$super_out
+    $short  $dt  $cert  $lane — superseded; do NOT offer, the orchestrator rules (notice 17)"
+      continue
+    fi
+
+    n_orph=$((n_orph + 1))
+    flag=""
+    [ "$SUP_VERDICT" = review ] && flag="  [notice 18: REVIEW — read the row before offering]"
+    orph_out="$orph_out
+    $short  $dt  $cert  $lane$flag"
+  done <<EOF
+$uniq_shas
+EOF
+
+  echo "  population: $granted_rows granted row(s) -> $n_uniq unique sha(s); $no_sha row(s) carried no sha"
+  if [ -n "$SHALLOW_FLOOR" ]; then
+    echo "  in window:  $n_window   outside/unjudgeable-in-a-shallow-clone: $n_out"
+  else
+    echo "  in window:  $n_window   outside: $n_out"
+  fi
+  echo "  merged: $n_merged   parked: $n_parked   superseded: $n_super   unresolvable here: $n_unres"
+  echo
+
+  if [ -n "$parked_out" ]; then
+    echo "  PARKED (counted, deliberately not offered):$parked_out"
+    echo
+  fi
+  if [ -n "$super_out" ]; then
+    echo "  SUPERSEDED:$super_out"
+    echo
+  fi
+  if [ -n "$unres_out" ]; then
+    echo "  NOT IN THIS CLONE (cannot judge — fetch the branch, or it was deleted after merge):$unres_out"
+    echo
+  fi
+
+  if [ "$n_orph" -eq 0 ]; then
+    echo "  VERDICT: no orphans in window — every granted token is on master, parked or superseded."
+    echo "  True at $(date -u +%H:%M:%S)Z and not one second longer."
+    exit 0
+  fi
+  echo "  ORPHANS — granted, not on master, nobody parked them:$orph_out"
+  echo
+  echo "  Each line is a candidate, not a verdict: run the full gate on it"
+  echo "  (tools/merge-gate.sh <sha>) before offering — ancestry is only the first gate."
+  echo "  VERDICT: $n_orph orphan(s) at $(date -u +%H:%M:%S)Z."
   exit 1
 fi
 
@@ -459,13 +930,27 @@ echo
 # notice 31 — ancestry BEFORE anything else. Already merged means no offer, no
 # re-gate, no merge; four lanes once re-ran gate tables for work already live.
 # ─────────────────────────────────────────────────────────────────────────────
-if git -C "$REPO_PATH" merge-base --is-ancestor "$SHA" "$MASTER"; then
-  stop "notice 31 ancestry" "ALREADY ON MASTER — nothing to merge, record it and move on"
-  echo
-  echo "  VERDICT: STOP (already merged)"
-  exit 1
+IS_SHALLOW="$(git -C "$REPO_PATH" rev-parse --is-shallow-repository 2>/dev/null)"
+ancestry_of "$SHA"
+case "$ANC_STATE" in
+  merged)
+    stop "notice 31 ancestry" "ALREADY ON MASTER — nothing to merge, record it and move on (by $ANC_HOW)"
+    echo
+    echo "  VERDICT: STOP (already merged)"
+    exit 1
+    ;;
+  unknown)
+    stop "notice 31 ancestry" "UNDECIDABLE — clone is shallow and the remote could not be reached; a local 'no' here is not an answer"
+    echo
+    echo "  VERDICT: STOP (ancestry undecidable — deepen the clone with 'git fetch --unshallow' or fix gh auth)"
+    exit 1
+    ;;
+esac
+if [ "$IS_SHALLOW" = "true" ]; then
+  pass "notice 31 ancestry" "not on master (confirmed against the remote; local clone is SHALLOW and cannot see past its boundary)"
+else
+  pass "notice 31 ancestry" "not an ancestor of origin/master"
 fi
-pass "notice 31 ancestry" "not an ancestor of origin/master"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # notice 13 — a banked GREEN row IS the token. A cert id in a merge subject is
