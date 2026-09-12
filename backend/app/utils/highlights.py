@@ -399,6 +399,13 @@ class EventFlags:
     # #4580 — the scoreboard, for sentences that name it. Tri-state: None means
     # the row carries no score, which is never the same as "no".
     underdog_is_leading: Optional[bool] = None
+    # T10-1 (#5439): this flag's only reader was the withdrawn "Momentum shift"
+    # arm — "a move plus a score" was never evidence of momentum, at any
+    # threshold. It is still written (`compute_highlight`), still correct, and
+    # deliberately kept: "is anybody ahead?" is the cheap half of the ordered
+    # score observation a GENUINE SCORE CHANGE claim will need. It is not served
+    # in any payload, so nothing reads it today. Do not wire it back into a
+    # sentence about momentum.
     someone_is_leading: Optional[bool] = None
     # #5047 — how much doubt the market has left in an upset the scoreboard has
     # already earned. Tri-state for the same reason: None is "cannot say".
@@ -503,6 +510,69 @@ def upset_is_no_longer_in_doubt(
     home_is_underdog = opening_home_prob < 0.5
     underdog_prob_now = current_home_prob if home_is_underdog else 1 - current_home_prob
     return underdog_prob_now >= BLOWOUT_THRESHOLD
+
+
+#: The claims a LIVE card is allowed to make about itself (T10-1, #5439).
+#:
+#: A claim type is not a label and not a sentence — it is the answer to "what,
+#: if anything, has this card got evidence FOR?". The label ladder and the
+#: reason sentence are two renderings of one answer, which is the only way they
+#: are stopped from describing different events on the same card (#4596).
+LiveClaimType = Literal["underdog_lead", "movement"]
+
+
+def select_live_claim(
+    status: Optional[str],
+    opening_home_prob: Optional[float],
+    current_home_prob: Optional[float],
+    home_score: Optional[int],
+    away_score: Optional[int],
+) -> Optional[LiveClaimType]:
+    """Which claim does a live card's evidence actually support? (T10-1, #5439)
+
+    THE ONE DETERMINATION behind every live caption, in the same sense that
+    ``underdog_leads`` is the one determination behind every sentence that names
+    the field. It answers with a claim TYPE, never with copy, so that a renderer
+    cannot invent a claim by writing a good sentence for it.
+
+    The order is evidence quality, not drama: a fact about the field outranks a
+    fact about the price, because the price is our own instrument and the field
+    is the world.
+
+    * ``"underdog_lead"`` — the pre-game underdog is ahead on a complete
+      scoreboard, in a live game, on the correct side. ``underdog_leads``
+      already refuses every other case, including 0-0 (a known "no", #4580) and
+      an absent score (``None``, unanswerable on 41 of 64 live rows).
+
+      Deliberately NOT gated on ``favorite_switched``. Whether the MARKET has
+      come round to the underdog is a different question from whether the
+      underdog is ahead, and requiring the price event before we may state the
+      field fact is #4580's confusion run backwards. The label ladder keeps its
+      own price gate for ranking reasons (see ``get_highlight_label``); this
+      selector is what lets the SENTENCE say the true thing either way.
+
+    * ``"movement"`` — the price has moved at least ``MAJOR_PROB_SWING`` off its
+      pre-game number. That is a fact about our own instrument and is stated as
+      one: endpoints and direction, never as an event on the field.
+
+    * ``None`` — nothing is supported. Ruling 146: the sentence is suppressed,
+      the card is not.
+
+    NOT AN ARM, AND THE ABSENCE IS THE POINT: a GENUINE SCORE CHANGE ("Boston
+    took the lead in the eighth") is the third claim T10-1 names, and it is
+    provable only from ORDERED score observations — ``score_snapshots`` rows,
+    which no caption path loads today. It is not stubbed here. A claim type with
+    a reader but no writer is the exact defect #5453 was: declared, read, and
+    fed by nothing. It gets its evidence rail first, then this arm.
+    """
+    if (status or "").lower() != "live":
+        return None
+    if underdog_leads(opening_home_prob, home_score, away_score) is True:
+        return "underdog_lead"
+    if opening_home_prob is not None and current_home_prob is not None:
+        if abs(current_home_prob - opening_home_prob) >= MAJOR_PROB_SWING:
+            return "movement"
+    return None
 
 
 @dataclass
@@ -1001,11 +1071,15 @@ def compute_highlight(
         ("upset", "Recent upset"),
         ("overtime", "Overtime"),
         ("favorite_switched", "Possible upset"),
-        ("lead_changes", "Lead change"),
+        # T10-1 (#5439) — the same two withdrawals as `get_highlight_label`.
+        # `primary_reason` is SERVED (`routes/feed.py` -> `"primary_reason"`, and
+        # it is the fallback headline for futures cards), so leaving the claims
+        # here would have moved the defect one field to the left.
+        ("lead_changes", "Odds flipped"),
         ("very_close", "Coin flip"),
         ("close_matchup", "Close matchup"),
         ("recent_momentum", "Odds shifting fast"),
-        ("momentum_accelerating", "Momentum surge"),
+        ("momentum_accelerating", "Odds moving faster"),
         ("major_prob_swing", "Big line movement"),
         ("high_volatility", "Wild game"),
         ("championship", "Championship game"),
@@ -1058,8 +1132,23 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
         if flags.upset_is_no_longer_in_doubt is True:
             return "Upset underway"
         return "Upset brewing"
+    # T10-1 (#5439) — "Lead change" named a SPORTING event and was produced by a
+    # PRICE one. `has_lead_changes` counts 50% crossings in the probability
+    # series (`TimeSeriesMetrics.lead_changes`, and `compute_highlight`'s own
+    # comment at the flag says so): nobody scored, the favourite swapped. A
+    # reader who has just been told the lead changed and then looks at an
+    # unchanged scoreboard has been told something false.
+    #
+    # Unreachable on Discover — `routes/feed.py` passes no `time_series` at all,
+    # so this arm and the two below it are dead on the feed — but LIVE on the
+    # event page, which does compute the metrics (`routes/events.py`). Same
+    # function, same claim, so it is fixed once here rather than at one surface.
+    #
+    # The honest sentence for the same evidence is the price one. It keeps the
+    # signal (the card still says something happened) and moves the subject from
+    # the field to the market, which is where the observation was taken.
     if flags.is_live and flags.has_lead_changes:
-        return "Lead change"
+        return "Odds flipped"
     if flags.is_live and flags.is_very_close:
         return "Coin flip"
     if flags.is_live and flags.is_close_matchup:
@@ -1067,11 +1156,26 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
     if flags.is_live and flags.has_recent_momentum:
         return "Odds shifting fast"
     if flags.is_live and "momentum_accelerating" in result.reasons:
-        return "Momentum surge"
-    # #4580 — "Momentum shift" needs a move AND a score. A major swing over a
-    # game where nobody has scored is a market event, not momentum; say so.
+        # T10-1 — same withdrawal as "Momentum shift" below, one rung earlier and
+        # with even less behind it: `momentum_acceleration` is the second
+        # derivative of the PRICE and reads no scoreboard whatsoever.
+        return "Odds moving faster"
+    # T10-1 (#5439), ppp default A — THE "MOVE PLUS A SCORE" PERMISSION IS
+    # WITHDRAWN. #4580 required a major swing AND somebody ahead before this
+    # could say "Momentum shift", which fixed the 0-0 case and left the label
+    # describing nothing at all. Measured on production 2026-09-12 02:00Z, page
+    # one carried it FIVE times — over Twins 1 - Guardians 2 and over Brewers 17
+    # - Reds 0, the same three syllables on a one-run game and a seventeen-run
+    # rout, `sublabel: None` on every one.
+    #
+    # Momentum is a sequence of sporting events. Two numbers — a price delta and
+    # a scoreboard that merely is not level — cannot establish one, at any
+    # threshold, so there is no gate to tighten and the claim is removed rather
+    # than re-tuned. "Odds moved" was already the sentence this branch served
+    # whenever the scoreboard was silent, and it is the one that is true in both
+    # cases: a major swing IS a price event, and that is all we saw.
     if flags.is_live and flags.probability_swing == "major":
-        return "Momentum shift" if flags.someone_is_leading is True else "Odds moved"
+        return "Odds moved"
     if flags.is_live and flags.is_volatile:
         return "Wild game"
     if flags.is_starting_very_soon and flags.is_close_matchup:
