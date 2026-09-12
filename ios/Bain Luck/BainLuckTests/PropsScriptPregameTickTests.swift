@@ -226,5 +226,12 @@ final class PropsScriptPregameTickTests: XCTestCase {
             source.contains("pregameMark: rung.pregameMark"),
             "the tick is no longer fed by the served mark — #4577"
         )
+        // …and the rung itself is fed by the served prop. Without this the
+        // feature can be switched off one layer earlier — `pregameMark: nil` in
+        // the Rung — with every other assertion in this file still green.
+        XCTAssertTrue(
+            source.contains("pregameMark: prop.pregameMark"),
+            "the rung is no longer built from the served mark, so no tick can ever draw — #4577"
+        )
     }
 }
