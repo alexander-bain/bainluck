@@ -36,7 +36,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
-from app.utils.game_market_class import classify_game_market_class
+from app.utils.game_market_class import (
+    classify_game_market_class,
+    outcomes_refute_game_winner,
+)
 from app.utils.prediction_market_matching import (
     _strip_category_prefix,
     extract_matchup_with_ticker_fallback,
@@ -204,7 +207,9 @@ def _class_says_game_winner(market: Any) -> bool:
     ) == "moneyline"
 
 
-def admissible_as_blend_speaker(market: Any, *, is_primary: bool) -> bool:
+def admissible_as_blend_speaker(
+    market: Any, *, is_primary: bool, outcomes: Optional[Sequence[Any]] = None
+) -> bool:
     """Whether this market may speak for its source — primary or not (#5031).
 
     THE PRIMARY USED TO BE EXEMPT, and that exemption was the bug. The reasoning
@@ -250,10 +255,35 @@ def admissible_as_blend_speaker(market: Any, *, is_primary: bool) -> bool:
     it is stricter than the primary's. That asymmetry is the pre-existing #759
     design ("new admission proves itself") and this is not the queue that moves
     it.
+
+    ── ``outcomes``: the row's own refutation (#5273) ───────────────────────
+
+    The name recognizer above reads a TITLE, and Polymarket's event-level
+    container wears the match's title while carrying the derivative books as
+    its outcomes (`Duquesne | Spread -16.5`). So the class gate admits it and
+    `find_moneyline_outcome` resolves the lone competitor-shaped outcome,
+    publishing a handicap's price as the winner. Passing the outcomes lets the
+    market refute itself — see `outcomes_refute_game_winner` for the measured
+    population and for why one derivative outcome is the whole signal.
+
+    IT IS ASKED EXACTLY WHERE THE CLASS RECOGNIZER IS ASKED, never of a Kalshi
+    primary. Not because the outcome test would misfire there — Kalshi's pair
+    is `Yes | No` and would pass — but because the Kalshi primary's exemption
+    is a MEASURED one (the 13 UFC fights above) and widening a second
+    instrument onto it would change a population this queue did not measure.
+    The Kalshi delta is therefore provably zero.
+
+    ``outcomes`` defaults to None, which is "no evidence" and refuses nothing,
+    so a caller that has not loaded them — `event_chart_backfill` — keeps the
+    behaviour it has today rather than silently acquiring a new gate.
     """
     if getattr(market, "source", None) == "kalshi" and is_primary:
         return True
-    return _class_says_game_winner(market)
+    if not _class_says_game_winner(market):
+        return False
+    return not outcomes_refute_game_winner(
+        [getattr(o, "name", None) for o in outcomes] if outcomes else None
+    )
 
 
 def count_admissible_speakers(group: Sequence[MarketOutcomes]) -> int:
@@ -288,7 +318,9 @@ def count_admissible_speakers(group: Sequence[MarketOutcomes]) -> int:
         1
         for entry in entries
         if admissible_as_blend_speaker(
-            entry.market, is_primary=entry.market.id == primary_id
+            entry.market,
+            is_primary=entry.market.id == primary_id,
+            outcomes=entry.outcomes,
         )
     )
 
@@ -399,7 +431,9 @@ def compute_source_home_probability(
     speaker = None
     for entry in ordered_entries:
         is_primary = entry.market.id == primary.market.id
-        if not admissible_as_blend_speaker(entry.market, is_primary=is_primary):
+        if not admissible_as_blend_speaker(
+            entry.market, is_primary=is_primary, outcomes=entry.outcomes
+        ):
             continue
         found = _reading_for_entry(entry, home_team_name, away_team_name)
         if found is not None:
@@ -467,7 +501,9 @@ def compute_source_home_probability(
             if sibling.market.source == "kalshi":
                 if not is_game_winner_market(sibling.market):
                     continue
-            elif not admissible_as_blend_speaker(sibling.market, is_primary=False):
+            elif not admissible_as_blend_speaker(
+                sibling.market, is_primary=False, outcomes=sibling.outcomes
+            ):
                 continue
             sibling_reading = _home_probability_for_market(
                 sibling, matchup, home_team_name, away_team_name,
