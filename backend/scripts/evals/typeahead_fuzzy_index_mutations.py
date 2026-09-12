@@ -168,7 +168,13 @@ MUTANTS: tuple[tuple[str, str, object, str], ...] = (
     (
         "M9-SEARCH-REVERT",
         "search_events",
-        _drop('Team.name.op("%")(q),\n'),
+        # `_q_identity`, not `q`, since #5688: `/search` resolves a reader's
+        # question to its SUBJECT before it identifies anything, so this
+        # surface spells the same access path with a different name. The
+        # mutation itself is unchanged — it still deletes the indexable
+        # operator from this surface — and it must still die on the
+        # access-path check, which is what the re-run proves.
+        _drop('Team.name.op("%")(_q_identity),\n'),
         "killed",
     ),
 )

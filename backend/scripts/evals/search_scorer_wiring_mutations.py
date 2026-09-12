@@ -53,7 +53,7 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "M3",
         "THE ORIGINAL BUG, imported: /search flags provenance blanket-true",
-        '        _c["_derived"] = not _query_names_concept(q, _c)\n',
+        '        _c["_derived"] = not _query_names_concept(_q_identity, _c)\n',
         '        _c["_derived"] = True\n',
     ),
     (
@@ -84,7 +84,7 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "M7",
         "the teams bucket is no longer ranked — raw FTS order ships",
         "    matched_teams = _search_rank_candidates(\n"
-        "        q, [(_search_team_evidence(t), t) for t in matched_teams]\n"
+        "        _q_identity, [(_search_team_evidence(t), t) for t in matched_teams]\n"
         "    )[:5]\n",
         "    matched_teams = matched_teams[:5]\n",
     ),
@@ -92,7 +92,7 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "M8",
         "the concepts bucket is no longer ranked",
         "    event_concepts = _search_rank_candidates(\n"
-        "        q, [(_search_concept_evidence(c), c) for c in event_concepts]\n"
+        "        _q_identity, [(_search_concept_evidence(c), c) for c in event_concepts]\n"
         "    )[:5]\n",
         "    event_concepts = event_concepts[:5]\n",
     ),

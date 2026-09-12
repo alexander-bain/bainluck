@@ -572,4 +572,8 @@ class TestEveryConceptCallSiteIsRouted:
         """Pins the #1846 divergence so a 'consistency' edit cannot silently
         import typeahead's bug into `/search`."""
         src = self._source()
-        assert "_derived\"] = not _query_names_concept(q, _c)" in src
+        # `_q_identity`, not `q`, since #5688: `/search` resolves the reader's
+        # question to its SUBJECT before identifying anything, so this call site
+        # is the same per-row provenance test spelled with a different name. The
+        # property being pinned — per ROW, never blanket — is untouched.
+        assert "_derived\"] = not _query_names_concept(_q_identity, _c)" in src
