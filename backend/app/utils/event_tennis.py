@@ -24,6 +24,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.futures_market_snapshot import price_observed_at_iso
+
 from app.utils.settledness import (
     market_assigned_settled,
     price_converged,
@@ -1013,6 +1015,20 @@ class TennisEventAdapter:
                 "label": "Winner",
                 "competitors": competitors,
                 "evolution_market_id": winner.id,
+                # #5778 — see `event_cycling`. 🔴 THIS ONE RESOLVES TO `None`
+                # TODAY, and that is measured rather than assumed: tennis reads
+                # `tennis_population.MarketRow`/`OutcomeRow`, the compact
+                # `__slots__ ` projection LAT-P146 caches, and `OutcomeRow`
+                # carries exactly `("name", "current_probability",
+                # "is_winner")`. There is no `last_updated` on the carrier, so
+                # there is no stamp to read and the card correctly discloses
+                # nothing rather than a fabricated age.
+                #
+                # The CALL stays rather than a hardcoded `None`, so that if the
+                # column is ever added to that row this card lights up with no
+                # further change here. Widening the cached row is latency's
+                # call, not ux's (standing notice 41).
+                "price_observed_at": price_observed_at_iso(winner),
             },
             "sections": sections,
             "children": children,

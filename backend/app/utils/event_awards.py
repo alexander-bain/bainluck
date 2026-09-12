@@ -41,6 +41,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.futures_market_snapshot import price_observed_at_iso
+
 from app.utils.settledness import (
     market_assigned_settled,
     price_converged,
@@ -537,6 +539,8 @@ class AwardsEventAdapter:
                 "label": clean_category_label(marquee.name),
                 "competitors": competitors,
                 "evolution_market_id": marquee.id,
+                # #5778 — see `event_cycling`.
+                "price_observed_at": price_observed_at_iso(marquee),
             },
             "sections": sections,
             "children": children,

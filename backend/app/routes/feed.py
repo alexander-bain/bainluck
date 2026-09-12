@@ -12660,6 +12660,21 @@ async def _resolve_concept_leader(
                 float(movement) if isinstance(movement, (int, float)) else None
             ),
             "field_size": len(competitors),
+            # #5778 — when the price behind `probability` was last polled. Read
+            # off the envelope rather than recomputed, because this path is
+            # CACHE-ONLY by design (see the paragraph above): loading the market
+            # to date it would put a DB round-trip on a probability flourish
+            # that is explicitly not allowed to cost the feed anything.
+            #
+            # The stamp is ABSOLUTE, which is what makes it survive the cache.
+            # A cached DURATION ("5h ago") would be wrong the moment the
+            # envelope aged a minute; an ISO instant stays true however long the
+            # envelope sits, and the reader's clock does the subtraction.
+            "price_observed_at": (
+                primary.get("price_observed_at")
+                if isinstance(primary.get("price_observed_at"), str)
+                else None
+            ),
         }
         return resolved, _bout_from_competitors(primary, competitors)
     except Exception as e:  # never break the feed for a probability flourish
@@ -12844,6 +12859,20 @@ async def _score_event_concepts(
                     # field, so the renderer's "has a leader" test is a presence
                     # test and an older client ignores it.
                     **({"leader": _leader} if _leader else {}),
+                    # #5778 — when this card's price was last seen, at the SAME
+                    # key and the SAME level a futures card carries it (#5752),
+                    # so one `ActionBar` prop serves both and a reader never
+                    # learns which card type they are looking at.
+                    #
+                    # NOT nested under `leader` even though that is where it is
+                    # resolved: `leader` is ABSENT on a card with no usable
+                    # field, and the age of a price is a fact about the card,
+                    # not about the favourite. Served as null in that case
+                    # rather than omitted — #2088, the same rule as every key
+                    # above that is null-when-checked.
+                    "price_observed_at": (
+                        _leader.get("price_observed_at") if _leader else None
+                    ),
                     # ux/1070 item 2: the main event as a BOUT. Absent (not
                     # null) when the card has no priced two-sided main event, so
                     # a renderer that has not learned it — and every shipped iOS

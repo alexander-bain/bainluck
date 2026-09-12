@@ -39,6 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.futures_market_snapshot import price_observed_at_iso
 from app.utils.nation_flags import flag_url as nation_flag_url
 from app.utils.nation_flags import is_nation as nation_is_nation
 from app.utils.winner_field_selection import prefer_graded_winner_field
@@ -959,6 +960,15 @@ class SoccerEventAdapter:
                 "competitors": competitors,
                 "evolution_market_id": (
                     winner_market.id if winner_market is not None else None
+                ),
+                # #5778 — see `event_cycling`. Guarded on the same `is not None`
+                # as the id beside it: this adapter is the one that can build a
+                # `primary` with no winner market at all, and `price_poll_stamp`
+                # takes a market, not an Optional.
+                "price_observed_at": (
+                    price_observed_at_iso(winner_market)
+                    if winner_market is not None
+                    else None
                 ),
             },
             "sections": sections,

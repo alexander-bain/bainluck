@@ -65,6 +65,7 @@ that needs a live row fails a test instead of a request.
 
 from __future__ import annotations
 
+from datetime import timezone
 from typing import Any, Iterable, Sequence
 
 #: Columns loaded for `FuturesMarket` on the Discover futures candidate query.
@@ -408,6 +409,13 @@ def _row(instance: Any, columns: tuple[str, ...]) -> list[Any]:
     return [state.get(name) for name in columns]
 
 
+#: Read-only stand-in for the instance dict of a `__slots__` row, so the folds
+#: below keep using `__dict__.get` (never `getattr` — gotcha #42) on a carrier
+#: that has no instance dict. Module-level and shared because it is never
+#: written to; a fresh `{}` per outcome would allocate once per leg per fold.
+_NO_INSTANCE_DICT: dict[str, Any] = {}
+
+
 def _price_polled_at(outcomes: Iterable[Any]) -> Any:
     """`MAX(outcome.last_updated)` for one market, or `None` if it has no price.
 
@@ -418,10 +426,25 @@ def _price_polled_at(outcomes: Iterable[Any]) -> Any:
     path. That also means a projection that stops loading the column degrades to
     `None` — "we do not know" — rather than to a wrong answer, and `None` is
     exclusion at every consumer.
+
+    `_NO_INSTANCE_DICT` extends that same degradation to an outcome with no
+    instance dict at all (#5778). `tennis_population.OutcomeRow` is a
+    `__slots__` row carrying exactly `("name", "current_probability",
+    "is_winner")` — the compact projection LAT-P146 caches — so it cannot hold
+    `last_updated` no matter how it is read, and reading `o.__dict__` on it
+    raised `AttributeError` through this fold. Contributing nothing is the
+    correct answer for such a row and is the rule already stated above: an
+    outcome with no stamp is ignored rather than treated as a disagreement.
+    Note this is a genuine "we cannot date this", not a silent zero papering
+    over a bug — the column is absent from the carrier BY DESIGN, and widening
+    that cache row is latency's call, not this module's.
     """
     stamps = [
         stamp
-        for stamp in (o.__dict__.get("last_updated") for o in outcomes)
+        for stamp in (
+            getattr(o, "__dict__", _NO_INSTANCE_DICT).get("last_updated")
+            for o in outcomes
+        )
         if stamp is not None
     ]
     return max(stamps) if stamps else None
@@ -513,10 +536,75 @@ def price_poll_stamp(market: Any) -> Any:
     nor the outcome column: it reads `None`, "we do not know", never a wrong
     stamp.
     """
-    state = market.__dict__
+    state = getattr(market, "__dict__", None)
+    if state is None:
+        # THIRD CARRIER (#5778): a `__slots__` row. `tennis_population.MarketRow`
+        # is "deliberately duck-type-identical to the ORM object it replaces" —
+        # and it is, for every reader that uses attributes. This module does not:
+        # it reads `__dict__` on purpose (a deferred attribute lazy-loads and
+        # raises `MissingGreenlet` on the async path), and a slots class has no
+        # instance dict at all, so the two branches below both raise
+        # `AttributeError` on it rather than degrading.
+        #
+        # Such a row can only ever hold the outcome carrier — there is no folded
+        # `price_polled_at` slot to read — and its outcomes are real hydrated
+        # rows, so the fold answers normally. An empty `outcomes` (the row was
+        # never selected for the page, which is exactly what the two-phase load
+        # leaves behind) folds to `None`: "we do not know", the same honest
+        # degradation as every other unreadable case here.
+        return _price_polled_at(getattr(market, "outcomes", None) or [])
     if "price_polled_at" in state:
         return state["price_polled_at"]
     return _price_polled_at(state.get("outcomes") or [])
+
+
+def price_observed_at_iso(market: Any) -> str | None:
+    """`price_poll_stamp` as a UTC ISO string, for a payload (#5778).
+
+    The one way a market's price age reaches a reader. `price_poll_stamp`
+    answers the carrier question and returns a `datetime`; this puts that
+    datetime on the wire, and exists as a named function for two reasons that
+    are not stylistic.
+
+    ═══ THE OFFSET IS NOT OPTIONAL ═══
+
+    A naive `isoformat()` carries no offset, and `Date.parse` reads an
+    offsetless stamp as LOCAL time in the reader's browser — which ages a fresh
+    price by the reader's own UTC offset and would print "3h ago" on a
+    just-polled market in California. The two carriers hand back stamps that
+    differ in `tzinfo` (a plain ORM row's column is naive; a `from_plain`
+    rebuild's folded value is aware), so the normalisation has to happen
+    somewhere, and doing it once here is what stops each caller getting it
+    right separately.
+
+    ═══ SEVEN CALL SITES, ONE RULE ═══
+
+    Every concept-envelope adapter writes this key beside the
+    `evolution_market_id` it already derives from the same market object. Seven
+    copies of `stamp.isoformat() if stamp else None` is seven chances for one
+    domain to drift — and a card that discloses its price age on the cycling
+    concept but not the F1 one is the defect #5778 was filed on, not half a
+    fix. `feed.py`'s `_card_price_observed_at` (#5752) is the same rule on the
+    futures serializers and should be collapsed onto this function once that
+    change is on master; it is deliberately left alone here because it is in
+    the desk tray and rewriting it would invalidate a gated sha.
+
+    ═══ `None` IS AN ANSWER ═══
+
+    `price_poll_stamp` already returns `None` for a market whose outcomes carry
+    no stamp, and that propagates rather than being papered over: the reader
+    draws nothing for a price we cannot date, which is honest, where a borrowed
+    `created_at` would be a wrong stamp (gotcha #53 — "it returned" is not "it
+    worked"). Serving the key with a null is the #2088 rule: null is "checked,
+    and there is no stamp"; the key being ABSENT is "a payload built before
+    this shipped".
+    """
+    stamp = price_poll_stamp(market)
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.isoformat()
 
 
 def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
