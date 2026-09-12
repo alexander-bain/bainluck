@@ -1337,6 +1337,23 @@ WORKER_CODE_REFRESH_S = 60
 WORKER_CODE_TTL_S = 3600
 
 
+#: THE SLOTS THAT MUST BE HEARD FROM, because the stalest app is the one that
+#: cannot speak. A worker running code older than this recorder does not write a
+#: marker at all — it is ABSENT from the census rather than unknown in it — and
+#: the first app that will be in that state is `bainluck-heavy`, i.e. exactly
+#: the subject. Without an expectation, "the stale worker said nothing" and "the
+#: fleet agrees" are the same JSON, and the census would certify agreement on
+#: the strength of the silence of the machine it was built to watch.
+#:
+#: One entry per Procfile line that runs `celery ... worker`, and `worker-ws` is
+#: deliberately NOT among them: it is `python3 run_kalshi_ws.py`, which executes
+#: no celery tasks and would therefore never stamp. Expecting it would put a
+#: permanent UNKNOWN_VERSION on a healthy fleet, which is how an alarm gets
+#: switched off. `test_worker_code_census_5470.py` parses the Procfile and
+#: asserts this tuple still equals the set of lines that really are workers.
+EXPECTED_WORKER_PROCESSES = ("worker-realtime", "worker-background", "worker-heavy")
+
+
 class WorkerCodeCensusUnavailable(RuntimeError):
     """Redis could not be read for the worker code census.
 
@@ -1484,7 +1501,23 @@ def get_worker_code_census() -> dict:
     }
 
 
-def fleet_code_verdict(reader_slug, detail) -> dict:
+def _unstamped_expected(detail, expected) -> list:
+    """Which expected worker families nothing has stamped for.
+
+    Matched on the dyno's process name — `bainluck/worker-heavy.1` belongs to
+    `worker-heavy` — on the segment before the first dot, never on a prefix
+    test: `worker` would match all three families and `worker-heavy` would match
+    a hypothetical `worker-heavy-2`, and both directions turn the check into
+    decoration.
+    """
+    seen = set()
+    for identity in detail:
+        dyno = identity.split("/", 1)[-1]
+        seen.add(dyno.split(".", 1)[0])
+    return [name for name in expected if name not in seen]
+
+
+def fleet_code_verdict(reader_slug, detail, expected=EXPECTED_WORKER_PROCESSES) -> dict:
     """Is every worker running the code the reader is running? Pure.
 
     `verdict` is five-valued and only one of them is a pass:
@@ -1493,11 +1526,16 @@ def fleet_code_verdict(reader_slug, detail) -> dict:
     * ``DRIFTED``         — at least one worker is provably on other code. The
       alarm, with the culprits named, because "which app" is the only useful
       form of the answer.
-    * ``UNKNOWN_VERSION`` — workers are alive but at least one cannot say what
-      it is running (no `runtime-dyno-metadata` on its app), or the reader has
-      no slug of its own to compare against. **NOT a pass.** This is the state
-      of `bainluck-heavy` today, and reporting it as agreement would be the
-      original defect with an instrument bolted on.
+    * ``UNKNOWN_VERSION`` — one of three silences, none of them a pass. A worker
+      that cannot say what it is running (no `runtime-dyno-metadata` on its
+      app); a reader with no slug of its own to compare against; or an EXPECTED
+      worker family that has not stamped at all (``unstamped_expected``).
+      The third is what makes this instrument honest about its own rollout: a
+      worker running code older than the recorder writes no marker, so the
+      STALEST app in the fleet is absent from the census rather than visible in
+      it. That is the state of `bainluck-heavy` on the day this ships, and
+      reading its silence as agreement would be the original defect with an
+      instrument bolted on top.
     * ``NONE``            — nothing has stamped. Either no worker is running at
       all, or none has yet executed a task on a release carrying the recorder.
       Both are worth an operator's attention and neither is "fine".
@@ -1536,6 +1574,8 @@ def fleet_code_verdict(reader_slug, detail) -> dict:
         drifted = sorted(known) if len({*known.values()}) > 1 else []
         matched = []
 
+    silent = _unstamped_expected(detail, expected or ())
+
     if not detail:
         verdict, reason = "NONE", (
             "no worker has stamped its code version: either no worker is "
@@ -1550,6 +1590,13 @@ def fleet_code_verdict(reader_slug, detail) -> dict:
             "the workers disagree with each other about what code they are "
             "running, so at least one of them is stale."
         )
+    elif silent:
+        verdict, reason = "UNKNOWN_VERSION", (
+            "nothing has stamped for " + ", ".join(silent) + ": either that "
+            "worker is scaled to zero, or it is running code older than this "
+            "recorder — which is the drift being asked about. SILENCE IS NOT "
+            "AGREEMENT."
+        )
     elif unknown or baseline is None:
         verdict, reason = "UNKNOWN_VERSION", (
             "a worker is alive but cannot say what code it is running "
@@ -1561,7 +1608,7 @@ def fleet_code_verdict(reader_slug, detail) -> dict:
         )
     else:
         verdict, reason = "MATCHED", (
-            "every worker names the reader's slug."
+            "every expected worker stamped, and each names the reader's slug."
         )
 
     return {
@@ -1571,6 +1618,10 @@ def fleet_code_verdict(reader_slug, detail) -> dict:
         "drifted": sorted(drifted),
         "unknown": sorted(unknown),
         "matched": sorted(matched),
+        # The absent ones, named. This is the field that answers "is the app I
+        # cannot see running my code" when that app is too stale to answer at
+        # all — the state `bainluck-heavy` is in the moment this ships.
+        "unstamped_expected": silent,
     }
 
 

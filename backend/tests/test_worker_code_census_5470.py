@@ -338,52 +338,69 @@ class TestGetWorkerCodeCensus:
 # The verdict — pure, so it can be asked about states this fleet has not reached
 # ---------------------------------------------------------------------------
 
+def _full_fleet(slug):
+    """One stamped slot per expected worker family — the only MATCHED shape."""
+    return {
+        f"bainluck/{name}.1": {"slug": slug}
+        for name in redis_state.EXPECTED_WORKER_PROCESSES
+    }
+
+
 class TestFleetCodeVerdict:
     def test_everyone_on_the_readers_slug_is_MATCHED(self):
-        out = fleet_code_verdict("137bf299", {
-            "bainluck/worker-background.1": {"slug": "137bf299"},
-            "bainluck/worker-realtime.1": {"slug": "137bf299"},
-        })
+        out = fleet_code_verdict("137bf299", _full_fleet("137bf299"))
         assert out["verdict"] == "MATCHED"
         assert out["drifted"] == []
+        assert out["unstamped_expected"] == []
 
     def test_a_stale_worker_is_DRIFTED_and_is_NAMED(self):
         """The live defect: which APP is stale is the only useful form of the
-        answer, so the census stores identity rather than a count."""
-        out = fleet_code_verdict("137bf299", {
-            "bainluck/worker-background.1": {"slug": "137bf299"},
-            "heavy-unnamed/worker-heavy.1": {"slug": "cc705833"},
-        })
+        answer, so the census stores identity rather than a count.
+
+        Built by mutating ONE member of a full fleet, so the verdict can only be
+        coming from the drift — a hand-built two-slot dict would also be missing
+        an expected family and would pass through a different branch.
+        """
+        fleet = _full_fleet("137bf299")
+        fleet.pop("bainluck/worker-heavy.1")
+        fleet["heavy-unnamed/worker-heavy.1"] = {"slug": "cc705833"}
+
+        out = fleet_code_verdict("137bf299", fleet)
+
         assert out["verdict"] == "DRIFTED"
         assert out["drifted"] == ["heavy-unnamed/worker-heavy.1"]
-        assert out["matched"] == ["bainluck/worker-background.1"]
+        assert out["unstamped_expected"] == []
 
     def test_an_unknown_slug_is_never_MATCHED(self):
         """THE CENTRAL PROPERTY. `bainluck-heavy` has no `runtime-dyno-metadata`,
         so its workers cannot name their slug at all. Reading that silence as
         agreement would reproduce the original defect with an instrument bolted
         on top — the receipt would go on reading green."""
-        out = fleet_code_verdict("137bf299", {
-            "bainluck/worker-background.1": {"slug": "137bf299"},
-            "heavy-unnamed/worker-heavy.1": {"slug": None},
-        })
+        fleet = _full_fleet("137bf299")
+        fleet["bainluck/worker-heavy.1"] = {"slug": None}
+
+        out = fleet_code_verdict("137bf299", fleet)
+
         assert out["verdict"] == "UNKNOWN_VERSION"
-        assert out["unknown"] == ["heavy-unnamed/worker-heavy.1"]
+        assert out["unknown"] == ["bainluck/worker-heavy.1"]
 
     def test_a_legacy_marker_with_no_slug_key_is_unknown_not_agreeing(self):
-        out = fleet_code_verdict("137bf299", {"bainluck/worker-heavy.1": {}})
-        assert out["verdict"] == "UNKNOWN_VERSION"
+        fleet = _full_fleet("137bf299")
+        fleet["bainluck/worker-heavy.1"] = {}
+        assert fleet_code_verdict("137bf299", fleet)["verdict"] == "UNKNOWN_VERSION"
 
     def test_a_provable_drift_outranks_an_unknown(self):
         """Precedence, stated: an unknown is a gap in the instrument, a drift is
         a defect in the fleet. Reporting the gap would bury the defect."""
-        out = fleet_code_verdict("137bf299", {
-            "a/worker.1": {"slug": None},
-            "b/worker.1": {"slug": "cc705833"},
-        })
+        fleet = _full_fleet("137bf299")
+        fleet["bainluck/worker-realtime.1"] = {"slug": None}
+        fleet["bainluck/worker-heavy.1"] = {"slug": "cc705833"}
+
+        out = fleet_code_verdict("137bf299", fleet)
+
         assert out["verdict"] == "DRIFTED"
-        assert out["drifted"] == ["b/worker.1"]
-        assert out["unknown"] == ["a/worker.1"]
+        assert out["drifted"] == ["bainluck/worker-heavy.1"]
+        assert out["unknown"] == ["bainluck/worker-realtime.1"]
 
     def test_no_worker_at_all_is_NONE_and_NONE_is_not_healthy(self):
         out = fleet_code_verdict("137bf299", {})
@@ -394,10 +411,7 @@ class TestFleetCodeVerdict:
         one slug still says nothing about whether it is the CURRENT one, so
         inventing a baseline out of that agreement would turn "we could not
         check" into "we checked"."""
-        out = fleet_code_verdict(None, {
-            "a/worker.1": {"slug": "cc705833"},
-            "b/worker.1": {"slug": "cc705833"},
-        })
+        out = fleet_code_verdict(None, _full_fleet("cc705833"))
         assert out["verdict"] == "UNKNOWN_VERSION"
         assert out["reader_slug"] is None
 
@@ -416,8 +430,84 @@ class TestFleetCodeVerdict:
         """`''` and absent are the same fact here and must not split into two
         answers — an empty string would otherwise compare unequal to the reader
         and read as a DRIFT that is really a missing variable."""
-        out = fleet_code_verdict("137bf299", {"a/worker.1": {"slug": ""}})
+        fleet = _full_fleet("137bf299")
+        fleet["bainluck/worker-heavy.1"] = {"slug": ""}
+        assert fleet_code_verdict("137bf299", fleet)["verdict"] == "UNKNOWN_VERSION"
+
+
+class TestSilenceIsNotAgreement:
+    """The hole this census would otherwise have had, found by walking its own
+    rollout: **a worker too stale to carry the recorder does not appear at all.**
+
+    On the day this ships, `bainluck-heavy` is 84 commits behind. Its worker will
+    not stamp — not with an unknown slug, but with nothing whatsoever — while the
+    main app's two workers stamp and match. Without an expectation, the census
+    would then report MATCHED, and the instrument built to expose the drift would
+    have certified it on the strength of the stale machine's silence. Absence is
+    the one state a census cannot see by looking harder; it has to be declared.
+    """
+
+    def test_an_expected_worker_that_never_stamped_is_not_a_pass(self):
+        fleet = _full_fleet("137bf299")
+        del fleet["bainluck/worker-heavy.1"]
+
+        out = fleet_code_verdict("137bf299", fleet)
+
         assert out["verdict"] == "UNKNOWN_VERSION"
+        assert out["unstamped_expected"] == ["worker-heavy"]
+        # ...and the ones that DID answer are still reported as matching, so the
+        # reader can see the gap is one app rather than the whole fleet.
+        assert out["matched"] == [
+            "bainluck/worker-background.1", "bainluck/worker-realtime.1",
+        ]
+
+    def test_a_provable_drift_still_outranks_a_silence(self):
+        """Same precedence as the unknown case: a silence is a gap in the
+        instrument's reach, a drift is a defect in the fleet."""
+        fleet = _full_fleet("137bf299")
+        del fleet["bainluck/worker-realtime.1"]
+        fleet["bainluck/worker-heavy.1"] = {"slug": "cc705833"}
+
+        assert fleet_code_verdict("137bf299", fleet)["verdict"] == "DRIFTED"
+
+    def test_the_family_is_matched_on_the_whole_segment_not_a_prefix(self):
+        """A prefix test would let `worker-heavy-2.1` vouch for `worker-heavy`,
+        and a bare `worker` would let any one worker vouch for all three — either
+        way the check becomes decoration."""
+        fleet = _full_fleet("137bf299")
+        del fleet["bainluck/worker-heavy.1"]
+        fleet["bainluck/worker-heavy-2.1"] = {"slug": "137bf299"}
+
+        out = fleet_code_verdict("137bf299", fleet)
+
+        assert out["unstamped_expected"] == ["worker-heavy"]
+        assert out["verdict"] == "UNKNOWN_VERSION"
+
+    def test_the_expectation_is_exactly_the_procfiles_celery_workers(self):
+        """Parsed from the Procfile, because a hand-maintained list of dynos is
+        wrong the first time the formation changes — and wrong in the quiet
+        direction, since a family nobody expects can go stale unobserved.
+
+        `worker-ws` must NOT be expected: it is `python3 run_kalshi_ws.py`, runs
+        no celery tasks, and would therefore never stamp. Expecting it would put
+        a permanent UNKNOWN_VERSION on a healthy fleet, and a verdict that is
+        never green is a verdict nobody reads.
+        """
+        from pathlib import Path
+
+        procfile = Path(__file__).resolve().parents[1] / "Procfile"
+        workers = set()
+        for line in procfile.read_text().splitlines():
+            if ":" not in line:
+                continue
+            name, command = line.split(":", 1)
+            if "celery" in command and " worker" in command:
+                workers.add(name.strip())
+
+        assert workers, "parsed no worker lines out of the Procfile — check the parse"
+        assert set(redis_state.EXPECTED_WORKER_PROCESSES) == workers
+        assert "worker-ws" not in redis_state.EXPECTED_WORKER_PROCESSES
+        assert "scheduler" not in redis_state.EXPECTED_WORKER_PROCESSES
 
 
 # ---------------------------------------------------------------------------
@@ -439,12 +529,19 @@ class TestFleetCodeReport:
         monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
         monkeypatch.setenv("DYNO", "worker-background.1")
 
+        # This process stands in for ONE worker; the other two expected families
+        # are seeded as their own stamps, because a real MATCHED needs the whole
+        # fleet to have answered and this test is about the slug FORM, not the
+        # expectation.
+        for name in ("worker-realtime", "worker-heavy"):
+            fake.strings[f"{WORKER_CODE_PREFIX}:bainluck/{name}.1"] = _marker("137bf299")
+
         redis_state.record_worker_code_alive(now_s=1000.0)
         report = redis_state.get_fleet_code_report()
 
         assert report["verdict"] == "MATCHED"
         assert report["reader_slug"] == "137bf299"
-        assert report["matched"] == ["bainluck/worker-background.1"]
+        assert "bainluck/worker-background.1" in report["matched"]
 
     def test_the_reader_slug_can_be_stated_rather_than_taken_from_the_ambient_env(
         self, fake
