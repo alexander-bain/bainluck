@@ -1336,6 +1336,64 @@ async def heavy_move_falsifier(
     }
 
 
+@router.get("/celery/beat-instances")
+async def beat_instances(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """How many celery beats are alive, and which apps they are on.
+
+    The single-instance proof for moving the `scheduler` dyno onto
+    `bainluck-heavy`. Beat has no distributed lock here (the default
+    `PersistentScheduler` keeps its state in a shelve file on the dyno's own
+    disk), so two beat dynos do not contend — they both tick, and every
+    scheduled task in the system runs twice. Unlike the worker move, where an
+    overlap was free because one queue feeds each message to exactly one
+    consumer, an overlap here is the failure. This endpoint is what makes that
+    state visible instead of inferred.
+
+    **`verdict` is three-valued and NONE is not the good one.** `SINGLE` is the
+    only healthy answer; `MULTIPLE` names the culprits; `NONE` means nothing is
+    scheduling anything, or no beat has yet run a release carrying the recorder.
+    An unreadable Redis renders `INCONCLUSIVE`, never `NONE` — an outage and an
+    empty fleet would otherwise produce the same JSON (gotcha #53), and here
+    that would turn the loudest possible alarm into a quiet one.
+
+    Off-loop via `run_in_threadpool` for the reason the falsifier above is:
+    `get_redis_client()` is bounded at 5s (gotcha #39) and the single uvicorn
+    loop should not wear that under a refreshing dashboard tab (#1994).
+    """
+    _check_admin_secret(secret, request=request)
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.tasks.redis_state import BeatCensusUnavailable, get_beat_instances
+
+    try:
+        census = await run_in_threadpool(get_beat_instances)
+    except BeatCensusUnavailable as exc:
+        return {
+            "status": "unreadable",
+            "verdict": "INCONCLUSIVE",
+            "error": str(exc)[:300],
+            "reason": (
+                "the beat census could not be read; this is NOT evidence that "
+                "a single beat is running"
+            ),
+        }
+
+    return {
+        "status": "ok",
+        **census,
+        "note": (
+            "SINGLE is the only healthy verdict. MULTIPLE means every scheduled "
+            "task is being dispatched once per beat listed. A beat stopped "
+            f"during a handover keeps its marker for up to {census['ttl_s']}s, "
+            "so read MULTIPLE as stale only if it persists past that."
+        ),
+    }
+
+
 def _iso_or_none(epoch: float | None) -> str | None:
     if epoch is None:
         return None

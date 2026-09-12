@@ -1113,6 +1113,154 @@ def record_task_emission(full_task_name: str):
                      alive_prefix=TASK_EMIT_WRITER_ALIVE_PREFIX)
 
 
+#: BEAT INSTANCE CENSUS — the single-instance proof for moving the `scheduler`
+#: dyno onto `bainluck-heavy` (Fable-5 directive, Fri 2026-09-11 6:15pm PT).
+#:
+#: THE HAZARD THIS EXISTS FOR. Celery beat here has no distributed lock:
+#: `celery_app.conf` sets no `beat_scheduler`, so the default
+#: `PersistentScheduler` keeps its state in a shelve file on the dyno's own
+#: ephemeral disk. Two beat dynos therefore do not contend for anything — they
+#: both tick, and every scheduled task in the system is dispatched twice. The
+#: worker move was safe to overlap for exactly the opposite reason (one queue,
+#: each message to one consumer); this one is not, and the ordering of the two
+#: scale commands is the whole of the safety.
+#:
+#: WHY THE EXISTING COUNTERS CANNOT ANSWER IT. `TASK_EMISSION_BUCKET_PREFIX`
+#: would simply read double, which is indistinguishable from a schedule change
+#: or a backfill, and `TASK_EMIT_WRITER_ALIVE_PREFIX` is a bare per-bucket flag:
+#: it says *some* publisher was alive in bucket N, never how many. Neither can
+#: name the second beat, and during a handover "which app is this beat on" is
+#: the only question worth asking.
+#:
+#: So identity is recorded, not a count — one key per live beat, each expiring
+#: on its own so a stopped beat drops out instead of lingering in a set that a
+#: live sibling keeps refreshing. The reader returns the identities themselves,
+#: so an operator mid-move reads the handover rather than interpreting a number.
+BEAT_ALIVE_PREFIX = "bainluck:beat_alive"
+
+#: A live beat re-stamps every `REFRESH_S`; the stamp outlives it by `TTL_S`.
+#: The schedule's tightest entry fires every 10s and thirteen entries are under
+#: three minutes, so a beat that is alive at all publishes many times inside the
+#: TTL — 180s is ~18 fires of headroom against reading a live beat as gone. The
+#: cost of the other direction is bounded and stated rather than tuned away: a
+#: beat stopped during a handover keeps its marker for up to TTL_S, so "the old
+#: one is gone" is only true after three minutes, and the note that drives the
+#: move says so instead of letting an operator read a stale row as a failure.
+BEAT_ALIVE_REFRESH_S = 30
+BEAT_ALIVE_TTL_S = 180
+
+
+class BeatCensusUnavailable(RuntimeError):
+    """Redis could not be read for the beat census.
+
+    Its own class for the reason `HardKillCensusUnavailable` has one (gotcha
+    #53): an unreachable Redis and a fleet with no scheduler at all would
+    otherwise produce the same empty list, and one of those is an outage while
+    the other is the single most alarming thing this census can report.
+    """
+
+
+def _is_beat_process() -> bool:
+    """True only inside `celery ... beat`, never a worker or the web dyno.
+
+    Read off `sys.argv` rather than the `DYNO` name, because the dyno name is a
+    Procfile convention that a formation change can quietly break, while the
+    subcommand is what actually decides whether this process ticks a schedule.
+    `-B`/`--beat` are included so an embedded beat — which is a second beat in
+    every sense that matters here — is counted rather than hidden.
+    """
+    import sys
+
+    argv = sys.argv or []
+    return "beat" in argv or "-B" in argv or "--beat" in argv
+
+
+def beat_identity() -> str:
+    """A string that differs between any two beat processes, anywhere.
+
+    `HEROKU_APP_NAME` is what makes it legible mid-move ("which app is this one
+    on"), but the identity does not depend on it: that variable arrives with the
+    `runtime-dyno-metadata` lab, which is enabled on `bainluck` and not yet on
+    `bainluck-heavy`. With it absent on both sides the two beats still separate
+    on pid, so the census reports the hazard correctly on an app that has never
+    been configured for it — it just reports it less readably.
+    """
+    app = os.getenv("HEROKU_APP_NAME") or "unknown-app"
+    dyno = os.getenv("DYNO") or "nodyno"
+    return f"{app}/{dyno}/{os.getpid()}"
+
+
+_last_beat_stamp_s = 0.0
+
+
+def record_beat_alive(now_s=None):
+    """Stamp this beat's liveness marker. Best-effort, throttled, beat-only.
+
+    Called from the same `before_task_publish` hook as `record_task_emission`,
+    which is the one place in the codebase that runs inside the scheduler
+    process on a cadence. It is throttled to `BEAT_ALIVE_REFRESH_S` because that
+    hook fires on every publication and the tightest beat is 10s — an unthrottled
+    stamp would add a Redis round-trip to a hot publish path to re-assert a fact
+    that changes at most twice a day.
+
+    The throttle clock advances only on a write that succeeded, so a Redis blip
+    costs one stamp rather than suppressing the next `REFRESH_S` of them.
+    """
+    global _last_beat_stamp_s
+
+    if not _is_beat_process():
+        return
+    now = time.time() if now_s is None else now_s
+    if now - _last_beat_stamp_s < BEAT_ALIVE_REFRESH_S:
+        return
+    try:
+        r = get_redis_client()
+        r.set(f"{BEAT_ALIVE_PREFIX}:{beat_identity()}", int(now),
+              ex=BEAT_ALIVE_TTL_S)
+        _last_beat_stamp_s = now
+    except Exception:
+        # Best-effort by contract, like every recorder here: this sits on beat's
+        # publish path, so a Redis fault must cost a stamp and never a fire.
+        pass
+
+
+def get_beat_instances() -> dict:
+    """Which beat processes are alive right now, by name.
+
+    `verdict` is three-valued and NONE is not the good one:
+
+    * ``SINGLE``   — exactly one beat. The only healthy state.
+    * ``MULTIPLE`` — the double-dispatch hazard, with the culprits named.
+    * ``NONE``     — no beat is stamping. Either nothing is scheduling anything,
+      or no beat has yet run a release carrying this recorder. Both are worth an
+      operator's attention and neither is "fine".
+
+    An unreadable Redis raises rather than returning an empty list, so it can
+    never be rendered as NONE — see `BeatCensusUnavailable`.
+    """
+    try:
+        r = get_redis_client()
+        prefix = f"{BEAT_ALIVE_PREFIX}:"
+        identities = []
+        for key in r.keys(f"{prefix}*"):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            identity = key_str[len(prefix):]
+            if identity:
+                identities.append(identity)
+        identities.sort()
+    except Exception as exc:
+        raise BeatCensusUnavailable(str(exc)) from exc
+
+    return {
+        "instances": identities,
+        "count": len(identities),
+        "verdict": ("SINGLE" if len(identities) == 1
+                    else "MULTIPLE" if identities else "NONE"),
+        "refresh_s": BEAT_ALIVE_REFRESH_S,
+        "ttl_s": BEAT_ALIVE_TTL_S,
+    }
+
+
 def record_task_delivery_bucket(full_task_name: str):
     """The DELIVERY half of the matched pair — CERT-1966 repair.
 
