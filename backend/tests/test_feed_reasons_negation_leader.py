@@ -266,7 +266,7 @@ class TestReasonAndHeadline:
         # `_side_label` is this file's existing convention for movement copy and
         # still applies: the bare side word becomes "No side" so the sentence
         # reads. That is the pre-existing rule, not part of this fix.
-        assert moved.startswith("No side moved down 50.0 points today in")
+        assert moved.startswith("No side moved down 50 points today in")
 
         surprised = generate_futures_reason(
             market_name=NEURALINK_MARKET,
