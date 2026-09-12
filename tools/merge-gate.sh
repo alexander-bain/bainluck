@@ -434,6 +434,67 @@ supersedes_scan () {
   fi
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Composition — three answers, not two (#5456).
+#
+# `merge-tree --write-tree` has three outcomes and this gate read them as two.
+# Measured on git 2.50.1:
+#
+#   clean merge            merge-base non-empty   exit 0
+#   REAL conflict          merge-base non-empty   exit 1
+#   unrelated histories    merge-base EMPTY       exit 128, "refusing to merge
+#                                                  unrelated histories"
+#
+# `ancestry_of` above already carries the lesson for its own gate: in a shallow
+# clone a local "no" is not an answer. Composition had the same blind spot and a
+# worse consequence — the third row was folded into "conflict", so the gate
+# failed CLOSED on a GREEN-token sha while telling the lane to rebase, which is
+# the one action that destroys the token (b27c29f9, #5413/CERT-2670: every other
+# gate passed, PR state read MERGEABLE/CLEAN off GitHub's full history, and the
+# adjacent line said CONFLICTS). It read as flaky rather than blind, too: the
+# same sha against the same master answered conflict-free at 01:19:56Z and
+# CONFLICTS at 01:35Z.
+#
+# The discriminator is the ABSENCE OF A BASE, not `$IS_SHALLOW`. An orphan
+# branch in a full, non-shallow repository produces the identical no-base state
+# and `rev-parse --is-shallow-repository` reads `false` there — so the shallow
+# flag is REPORTED for the reader and never tested. A check that passes today
+# only because the fleet happens to be shallow is the same class of bug as the
+# one being fixed, and the fixture is built as an orphan so it fails that way.
+#
+# `inconclusive` does not breach the rule beside the printers that a gate which
+# cannot be EVALUATED is a stop. That rule protects a gate with NO second
+# authority: if the ledger cannot be read, nothing else can say whether a token
+# exists. Composition has one in this same script, thirty lines above — the PR
+# state gate reads GitHub's `mergeable` on the full history and STOPs on
+# CONFLICTING. So a real conflict cannot reach a GO through this door while a PR
+# exists, and every merge offer has one. Where none does, PR state only WARNS
+# and this line is the reader's whole signal, which is why the verdict counts it.
+COMP_VERDICT=""; COMP_DETAIL=""
+composition_scan () {
+  local repo="$1" master="$2" sha="$3"
+  local base out rc shallow
+  shallow="$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)"
+  base="$(git -C "$repo" merge-base "$master" "$sha" 2>/dev/null)"
+  if [ -z "$base" ]; then
+    COMP_VERDICT=inconclusive
+    COMP_DETAIL="NO MERGE BASE — this checkout cannot answer (shallow repository: ${shallow:-unknown}). NOT a conflict, do NOT rebase"
+    return 0
+  fi
+  out="$(git -C "$repo" merge-tree --write-tree "$master" "$sha" 2>&1)"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    COMP_VERDICT=clean
+    COMP_DETAIL="conflict-free at $master, tree $(printf '%s' "$out" | head -1)"
+  elif [ "$rc" -eq 1 ]; then
+    COMP_VERDICT=conflict
+    COMP_DETAIL="CONFLICTS against current master — rebase, restage, re-grade (the token dies with the sha)"
+  else
+    COMP_VERDICT=inconclusive
+    COMP_DETAIL="merge-tree could not answer (exit $rc: $(printf '%s' "$out" | head -1)); shallow repository: ${shallow:-unknown}. NOT a conflict, do NOT rebase"
+  fi
+}
+
 if [ -z "$SHA_IN" ]; then
   echo "usage: tools/merge-gate.sh <sha> [<repo-path>]" >&2
   echo "       tools/merge-gate.sh --orphans [--all] [<repo-path>]" >&2
@@ -637,6 +698,119 @@ FIXEOF
     "supersedes_scan CERT-261 '$fx/bounds.md'; [ \"\$SUP_VERDICT\" = clean ]"
   check "notice 18: CERT-2619 itself is declared in that fixture (control)" \
     "supersedes_scan CERT-2619 '$fx/bounds.md'; [ \"\$SUP_VERDICT\" = declared ]"
+
+  # ── composition, behavioural (#5456). These build three real git repositories
+  # and call the SHIPPED composition_scan against them, for the same reason the
+  # notice-18 cases call the shipped supersedes_scan: a test that re-derives the
+  # exit codes it is guarding measures the re-derivation. Offline; everything
+  # lands in the same mktemp dir the trap already removes.
+  gg () { git -c user.email=t@t -c user.name=t -c init.defaultBranch=main \
+               -c commit.gpgsign=false -c gc.auto=0 "$@"; }
+
+  # (a) clean: shared base, disjoint files.
+  mkdir -p "$fx/clean" && gg -C "$fx/clean" init -q .
+  echo base > "$fx/clean/f.txt"; gg -C "$fx/clean" add -A; gg -C "$fx/clean" commit -qm base
+  gg -C "$fx/clean" branch side
+  echo more >> "$fx/clean/f.txt"; gg -C "$fx/clean" add -A; gg -C "$fx/clean" commit -qm m
+  gg -C "$fx/clean" checkout -q side
+  echo other > "$fx/clean/g.txt"; gg -C "$fx/clean" add -A; gg -C "$fx/clean" commit -qm s
+
+  # (b) conflict: shared base, SAME file, both sides rewrote it.
+  mkdir -p "$fx/conflict" && gg -C "$fx/conflict" init -q .
+  echo base > "$fx/conflict/f.txt"; gg -C "$fx/conflict" add -A; gg -C "$fx/conflict" commit -qm base
+  gg -C "$fx/conflict" branch side
+  echo MASTER > "$fx/conflict/f.txt"; gg -C "$fx/conflict" add -A; gg -C "$fx/conflict" commit -qm m
+  gg -C "$fx/conflict" checkout -q side
+  echo BRANCH > "$fx/conflict/f.txt"; gg -C "$fx/conflict" add -A; gg -C "$fx/conflict" commit -qm s
+
+  # (c) no merge base — the production shape. An ORPHAN branch, deliberately:
+  # it reproduces "no common ancestor" in a repository that is NOT shallow, so
+  # a fix keyed on `--is-shallow-repository` instead of on the missing base
+  # fails this case. That is the point of building it this way.
+  mkdir -p "$fx/nobase" && gg -C "$fx/nobase" init -q .
+  echo one > "$fx/nobase/f.txt"; gg -C "$fx/nobase" add -A; gg -C "$fx/nobase" commit -qm one
+  gg -C "$fx/nobase" checkout -q --orphan lonely
+  gg -C "$fx/nobase" rm -rq --cached . >/dev/null 2>&1; rm -f "$fx/nobase/f.txt"
+  echo two > "$fx/nobase/h.txt"; gg -C "$fx/nobase" add -A; gg -C "$fx/nobase" commit -qm two
+
+  check "composition: the no-merge-base repo really is NOT shallow (fixture control)" \
+    "[ \"\$(git -C '$fx/nobase' rev-parse --is-shallow-repository)\" = false ]"
+
+  check "composition: a clean merge is clean" \
+    "composition_scan '$fx/clean' main side; [ \"\$COMP_VERDICT\" = clean ]"
+
+  # Acceptance 2: a real conflict must still STOP.
+  check "composition: a real conflict is still a conflict (acceptance 2)" \
+    "composition_scan '$fx/conflict' main side; [ \"\$COMP_VERDICT\" = conflict ]"
+
+  # Acceptance 1: no merge base is inconclusive, and must NOT read as conflict.
+  check "composition: no merge base is inconclusive (acceptance 1)" \
+    "composition_scan '$fx/nobase' main lonely; [ \"\$COMP_VERDICT\" = inconclusive ]"
+
+  # Acceptance 3: the two must not be collapsible back into one verdict. This
+  # fails if either is renamed to the other, which is the whole regression.
+  check "composition: inconclusive and conflict are DISTINCT verdicts (acceptance 3)" \
+    "composition_scan '$fx/nobase' main lonely; a=\$COMP_VERDICT; \
+     composition_scan '$fx/conflict' main side; b=\$COMP_VERDICT; \
+     [ \"\$a\" != \"\$b\" ] && [ -n \"\$a\" ] && [ -n \"\$b\" ]"
+
+  # Only `conflict` may reach the `stop` printer. A no-base answer that still
+  # told the lane to rebase would be this bug wearing a new label.
+  check "composition: the inconclusive answer does not say 'rebase'" \
+    "composition_scan '$fx/nobase' main lonely; \
+     ! printf '%s' \"\$COMP_DETAIL\" | /usr/bin/grep -qi 'rebase, restage'"
+
+  # The missing base is diagnosed BY NAME. Without this the empty-base branch is
+  # a surviving mutant: deleting it drops through to merge-tree, which exits 128
+  # on the same input and reaches `inconclusive` by the other road — the same
+  # verdict, but a reader gets "merge-tree could not answer (exit 128)" instead
+  # of being told their checkout has no common ancestor and why.
+  check "composition: a missing base is diagnosed by name, not via merge-tree's 128" \
+    "composition_scan '$fx/nobase' main lonely; \
+     printf '%s' \"\$COMP_DETAIL\" | /usr/bin/grep -q 'NO MERGE BASE'"
+  check "composition: the inconclusive answer reports the shallow state for the reader" \
+    "composition_scan '$fx/nobase' main lonely; \
+     printf '%s' \"\$COMP_DETAIL\" | /usr/bin/grep -q 'shallow repository:'"
+
+  # merge-tree FATAL while a base EXISTS. No fixture reaches this: the missing
+  # base returns early, so `rc -eq 1` widened to `rc -ne 0` was a live surviving
+  # mutant — it reclassifies every merge-tree fatal as a conflict, which is the
+  # bug this ship is about, one road over. A pass-through shim forces the exit
+  # code, because the classifier is what is under test, not git's own plumbing.
+  mkdir -p "$fx/bin"
+  { echo '#!/usr/bin/env bash'
+    echo 'for a in "$@"; do'
+    echo '  if [ "$a" = merge-tree ]; then'
+    echo '    echo "fatal: simulated merge-tree failure" >&2; exit "${SHIM_RC:-128}"'
+    echo '  fi'
+    echo 'done'
+    echo "exec $(command -v git) \"\$@\""
+  } > "$fx/bin/git"
+  chmod +x "$fx/bin/git"
+
+  # `SHIM_RC=128 composition_scan ...` would NOT reach the shim: a var assignment
+  # prefixed to a shell FUNCTION is not exported to that function's subprocesses.
+  # It must be exported, and the shim's own 128 default would have hidden that.
+  check "composition: merge-tree FATAL with a valid base is inconclusive, not a conflict" \
+    "oldp=\$PATH; PATH='$fx/bin':\$PATH; export SHIM_RC=128; \
+     composition_scan '$fx/clean' main side; unset SHIM_RC; PATH=\$oldp; \
+     [ \"\$COMP_VERDICT\" = inconclusive ]"
+  # The control for the shim: exit 1 through the SAME shim must still be a
+  # conflict, or the case above would pass simply by breaking everything. It is
+  # also what proves the export above actually took.
+  check "composition: exit 1 through that same shim is still a conflict (shim control)" \
+    "oldp=\$PATH; PATH='$fx/bin':\$PATH; export SHIM_RC=1; \
+     composition_scan '$fx/clean' main side; unset SHIM_RC; PATH=\$oldp; \
+     [ \"\$COMP_VERDICT\" = conflict ]"
+
+  check "composition: only the conflict branch reaches stop, the other reaches inconc" \
+    "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'conflict) stop \"composition\"' && \
+     sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'inconc \"composition\"'"
+
+  # Same trap as supersedes_scan/resolve_cert_id: called in \$( ) its globals are
+  # set in a subshell and thrown away, and the caller reads an empty verdict.
+  check "composition_scan is called as a statement, never in a subshell" \
+    "! sed -e 's/#.*//' '$self' | /usr/bin/grep -q '\$(composition_scan'"
 
   check "rev-parse is verified, not trusted to be empty on failure" \
     "/usr/bin/grep -q 'rev-parse --verify --quiet' '$self'"
@@ -1212,6 +1386,7 @@ fi
 
 stops=0
 warns=0
+inconcs=0
 
 # `pass`/`stop`/`warn` are the only three verdicts. A gate that cannot be
 # EVALUATED is a `stop`, never a `warn` — an unreadable ledger and a clean
@@ -1219,6 +1394,12 @@ warns=0
 pass () { printf '  \033[32mPASS\033[0m  %-26s %s\n' "$1" "$2"; }
 warn () { printf '  \033[33mWARN\033[0m  %-26s %s\n' "$1" "$2"; warns=$((warns + 1)); }
 stop () { printf '  \033[31mSTOP\033[0m  %-26s %s\n' "$1" "$2"; stops=$((stops + 1)); }
+# The fourth, and deliberately not one of the three above: "this check could not
+# take its baseline, and a NAMED other authority answers the same question". It
+# is legal only where that authority exists and is printed beside it — today,
+# composition alone (see composition_scan). Reaching for it anywhere else
+# re-opens the hole the comment above closes.
+inconc () { printf '  \033[36m????\033[0m  %-26s %s\n' "$1" "$2"; inconcs=$((inconcs + 1)); }
 
 echo
 echo "merge-gate  repo=$REPO_PATH  ledger=$LEDGER"
@@ -1453,13 +1634,18 @@ fi
 # Composition at the CURRENT master. A cert composes against the master it saw;
 # master moves. `merge-tree --write-tree` exits non-zero on a conflict.
 # ─────────────────────────────────────────────────────────────────────────────
-comp="$(git -C "$REPO_PATH" merge-tree --write-tree "$MASTER" "$SHA" 2>&1)"
-comp_rc=$?
-if [ "$comp_rc" -eq 0 ]; then
-  pass "composition" "conflict-free at $MASTER, tree $(printf '%s' "$comp" | head -1)"
-else
-  stop "composition" "CONFLICTS against current master — rebase, restage, re-grade (the token dies with the sha)"
-fi
+composition_scan "$REPO_PATH" "$MASTER" "$SHA"
+case "$COMP_VERDICT" in
+  clean)    pass "composition" "$COMP_DETAIL" ;;
+  conflict) stop "composition" "$COMP_DETAIL" ;;
+  *)
+    inconc "composition" "$COMP_DETAIL"
+    echo "        └─ the PR state row above carries GitHub's answer on the FULL history (mergeable/mergeStateStatus);"
+    echo "           if there is no PR: gh api repos/$REPO_SLUG/compare/\$BASE...$MASTER --jq '.files[].filename'"
+    echo "           — disjoint paths against this branch's files cannot conflict."
+    echo "           'git -C $REPO_PATH fetch --unshallow' once makes this gate answerable for good."
+    ;;
+esac
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Does it force a Heroku release? Not a gate — a routing fact. Notice 10: a
@@ -1495,9 +1681,14 @@ else
 fi
 
 echo
+# An inconclusive never turns a STOP into a GO, but it must never be lost inside
+# one either: it is reported in BOTH verdict lines, so "the gate said GO" can
+# always be reread as "and one check could not answer".
+inconc_note=""
+[ "$inconcs" -gt 0 ] && inconc_note=", $inconcs inconclusive (a check could not take its baseline — read its line)"
 if [ "$stops" -eq 0 ]; then
-  verdict "GO — $warns warning(s). True at $(date -u +%H:%M:%S)Z and not one second longer."
+  verdict "GO — $warns warning(s)$inconc_note. True at $(date -u +%H:%M:%S)Z and not one second longer."
   exit 0
 fi
-verdict "STOP — $stops gate(s) refused, $warns warning(s)."
+verdict "STOP — $stops gate(s) refused, $warns warning(s)$inconc_note."
 exit 1
