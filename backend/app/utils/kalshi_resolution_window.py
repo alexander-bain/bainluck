@@ -26,14 +26,26 @@ past resolution_date`` selects none of them and why ux-041 found 11/11 settled
 markets resolving "in the future". Switching to ``close_time`` makes **39 of 49**
 visible with **zero** still-active markets wrongly moved into the past.
 
-WHY NOT ``expected_expiration_time``. It is the right field for the OTHER defect
-(#2644: tier-1 championship futures printing 2029 — ``KXSB-27`` stores 2029-02-13
-while the venue expects 2027-02-14) but it is a PREDICTION made before the event.
-On the settled cohort it scores worse than ``close_time`` (34/49 vs 39/49) because
-it is the date Kalshi *guessed*, not the date trading stopped. #2644 is a separate
-ship with a separate hazard (13 markets where "expected" is LATER than what we
-store, so a blanket preference moves those the wrong way); this module deliberately
-does not touch it.
+``expected_expiration_time``: NOT A REPLACEMENT, BUT A TIE-BREAK ON PADS (#2644,
+CAL-P1127). It is a PREDICTION made before the event. On the settled cohort it
+scores worse than ``close_time`` (34/49 vs 39/49) because it is the date Kalshi
+*guessed*, not the date trading stopped — so it never displaces a real close, and
+the paragraph above stands unchanged.
+
+What that measurement does NOT cover is the case where ``close_time`` is not a
+real close either. When ``close_max == expiration_max`` the venue has sent the
+same backstop twice, and preferring "the close" is a preference between a pad and
+the same pad; the estimate is then the only date in the row with an opinion about
+when the thing happens. That is #2644's defect — ``KXSB-27`` stores 2029-02-13
+while the venue expects 2027-02-14 — and :func:`derive_resolution_window` now
+resolves it, gated to that case and to ``min()`` so the estimate can only pull a
+date EARLIER (13 measured markets have an estimate that is LATER, and a blanket
+preference would move those the wrong way).
+
+The gate is what makes this safe rather than merely tested: a row with a genuine
+close cannot move, so #1818's 39/49 is untouched STRUCTURALLY, not just on the
+sample that was measured. ``ResolutionWindow.used_expected_expiration`` reports
+where it fired.
 
 WHY NOT ``settlement_ts``. CAL-P061 named it "the truth", and it is — where it
 exists. Measured on this population it is ``None`` on the finalized
@@ -80,10 +92,19 @@ from typing import Iterable, Optional, Protocol, Sequence
 
 
 class _HasWindow(Protocol):
-    """The two fields this derivation reads off a Kalshi sub-market."""
+    """The fields this derivation reads off a Kalshi sub-market.
+
+    ``expected_expiration_time`` (#2644) is read through :func:`getattr` with a
+    ``None`` default rather than as a hard attribute access. That is deliberate
+    and not defensive clutter: a caller that has not been taught the field —
+    an older fake, a partial leg built from a payload that predates it — keeps
+    exactly its previous behaviour instead of raising. Absence means "no
+    opinion", which is the same thing the venue omitting the field means.
+    """
 
     close_time: Optional[datetime]
     expiration_time: Optional[datetime]
+    expected_expiration_time: Optional[datetime]
 
 
 @dataclass(frozen=True)
@@ -108,6 +129,15 @@ class ResolutionWindow:
     #: rather than re-deriving it by comparing the two dates (which cannot
     #: distinguish "fell back" from "close == expiration", 73% of active rows).
     used_expiration_fallback: bool
+
+    #: True when #2644 fired: ``close_time`` was itself a pad (equal to the
+    #: backstop) and the venue's ``expected_expiration_time`` was earlier, so
+    #: ``resolution_date`` is the venue's estimate rather than either stored
+    #: date. Exposed for the same reason as ``used_expiration_fallback`` — a
+    #: census counting this ship's reach must not re-derive it by comparing
+    #: dates, which cannot tell "the estimate won" from "the venue moved the
+    #: close". Defaulted so every existing construction site stays valid.
+    used_expected_expiration: bool = False
 
 
 #: The venue statuses that mean "Kalshi says this market is over".
@@ -246,6 +276,39 @@ def derive_resolution_window(markets: Sequence[_HasWindow]) -> ResolutionWindow:
     A partial event — some legs with a close, some without — uses the max over
     the legs that have one, because a missing ``close_time`` is an absent field,
     not an assertion that the leg runs forever.
+
+    #2644 — THE PAD-ONLY PREFERENCE, AND WHY IT IS GATED THIS TIGHTLY. The
+    module docstring above records why ``expected_expiration_time`` is NOT a
+    general replacement for ``close_time``: it is the date Kalshi *guessed*, and
+    on the settled cohort it scores 34/49 against ``close_time``'s 39/49. That
+    finding is not overturned here, it is *scoped*. It was measured across the
+    whole cohort, where ``close_time`` is usually a real close — and where a
+    real close exists, this function still takes it, unchanged.
+
+    The case #2644 is about is the one where ``close_time`` is not a real close
+    at all. When ``close_max == expiration_max`` the venue has sent the same
+    backstop twice and neither date is a trading fact, so "prefer the close" is
+    a preference between a pad and the same pad. Venue-read 2026-09-12::
+
+        event          close_max     expiration_max   expected_max
+        KXWTA-26USO    2026-09-27    2026-09-27       2026-09-13
+        KXSB-27        2029-02-13    2029-02-13       2027-02-14
+
+    Both are pads; the estimate is the only date in the row with an opinion
+    about when the thing happens. That is why the card said a US Open market
+    resolves at the end of September and a 2027 Super Bowl future resolves in
+    2029.
+
+    ``min(...)`` AND NEVER A BLANKET PREFERENCE. On 13 measured markets the
+    estimate is LATER than what we store; taking it unconditionally would push
+    those the wrong way, so the estimate can only ever pull the date EARLIER.
+    Combined with the pad-only gate this makes the change monotone: no row moves
+    later, and no row with a genuine close moves at all — which is the property
+    that leaves #1818's 39/49 structurally untouched rather than merely
+    measured-untouched.
+
+    An absent estimate is "no opinion" and changes nothing (gotcha #53: absence
+    is not a value).
     """
     close_max = _max_or_none(m.close_time for m in markets)
     expiration_max = _max_or_none(m.expiration_time for m in markets)
@@ -255,6 +318,25 @@ def derive_resolution_window(markets: Sequence[_HasWindow]) -> ResolutionWindow:
             resolution_date=expiration_max,
             expiration_time=expiration_max,
             used_expiration_fallback=True,
+        )
+
+    # Read tolerantly — see `_HasWindow`. A leg that predates this field keeps
+    # the pre-#2644 behaviour rather than raising.
+    expected_max = _max_or_none(
+        getattr(m, "expected_expiration_time", None) for m in markets
+    )
+
+    if (
+        expiration_max is not None
+        and close_max == expiration_max
+        and expected_max is not None
+        and expected_max < close_max
+    ):
+        return ResolutionWindow(
+            resolution_date=expected_max,
+            expiration_time=expiration_max,
+            used_expiration_fallback=False,
+            used_expected_expiration=True,
         )
 
     return ResolutionWindow(

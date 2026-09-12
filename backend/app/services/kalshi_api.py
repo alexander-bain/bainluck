@@ -55,6 +55,18 @@ class KalshiMarket(BaseModel):
     open_time: Optional[datetime] = None
     close_time: Optional[datetime] = None
     expiration_time: Optional[datetime] = None
+    # #2644 — the venue's own estimate of when this market will actually expire,
+    # as opposed to `expiration_time`, which is the legal backstop it may never
+    # exceed. On a tier-1 championship future the two differ by YEARS: `KXSB-27`
+    # carries expiration 2029-02-13 and expected 2027-02-14 (venue-read
+    # 2026-09-12), which is why the card said "resolves in 2029".
+    #
+    # It arrives on the same `?with_nested_markets=true` payload we already
+    # fetch, and until now was read by zero lines of our code. It is a
+    # PREDICTION, not a fact — see `kalshi_resolution_window`, which uses it
+    # only where `close_time` is itself a pad and never in preference to a real
+    # close (it scores 34/49 vs close_time's 39/49 on the settled cohort).
+    expected_expiration_time: Optional[datetime] = None
     # When the thing being traded actually happens. Distinct from close_time,
     # which for a game market is a multi-day settlement backstop (+3d NFL,
     # +14d UFC/tennis) — see gotcha #14 and _is_kalshi_game_ticker's callers.
@@ -2683,6 +2695,11 @@ class KalshiAPIService(BaseAPIClient):
             open_time = self._parse_timestamp(market_data.get("open_time"))
             close_time = self._parse_timestamp(market_data.get("close_time"))
             expiration_time = self._parse_timestamp(market_data.get("expiration_time"))
+            # #2644. Absent on some series, so it stays Optional and the
+            # derivation treats absence as "no opinion", never as a date.
+            expected_expiration_time = self._parse_timestamp(
+                market_data.get("expected_expiration_time")
+            )
             occurrence_datetime = self._parse_timestamp(
                 market_data.get("occurrence_datetime")
             )
@@ -2752,6 +2769,7 @@ class KalshiAPIService(BaseAPIClient):
                 open_time=open_time,
                 close_time=close_time,
                 expiration_time=expiration_time,
+                expected_expiration_time=expected_expiration_time,
                 occurrence_datetime=occurrence_datetime,
                 yes_bid=yes_bid,
                 yes_ask=yes_ask,

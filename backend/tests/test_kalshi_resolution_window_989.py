@@ -14,8 +14,17 @@ EVERY FIXTURE BELOW IS A REAL VENUE PAYLOAD, not an invented shape:
 
 * ``KXWTASETWINNER-26SEP01POTSEM-2`` — finalized, close 2026-09-01T22:54:02Z,
   expiration 2026-09-15T16:40:00Z. The 14-day backstop is the whole bug.
-* ``KXSB-27`` — active, close == expiration == 2029-02-13T23:30:00Z. The no-op
-  case, and the reason this fix does NOT close #2644.
+* ``KXSB-27`` — active, close == expiration == 2029-02-13T23:30:00Z, and (re-read
+  from the venue 2026-09-12) expected 2027-02-14T23:30:00Z.
+
+AMENDED CAL-P1127 (#2644). When this suite was written, ``KXSB-27`` was the no-op
+case and a test here asserted that the 2029 defect SURVIVED — a deliberate limit
+guard, so that anyone closing #2644 by editing the derivation had to come and read
+why. #2644 is now closed, pad-gated, and that guard has been re-aimed rather than
+deleted: the fixture it runs on carries no ``expected_expiration_time``, so it now
+guards the thing that is still true — an event with no venue estimate keeps its
+``close_time`` and nothing moves. The 2644 behaviour has its own class below, on a
+fixture re-read from the venue.
 
 CLOCK DISCIPLINE (gotcha #44). ``derive_resolution_window`` takes no clock and
 these tests assert on returned datetimes, never on "is it in the past". The one
@@ -44,10 +53,16 @@ def _ts(s: str) -> datetime:
 
 @dataclass
 class FakeMarket:
-    """Only the two fields the derivation reads. Mirrors ``KalshiMarket``."""
+    """The fields the derivation reads. Mirrors ``KalshiMarket``.
+
+    ``expected_expiration_time`` is defaulted to ``None`` (CAL-P1127) so every
+    fixture written before #2644 keeps its exact previous meaning: no estimate,
+    no change. New #2644 fixtures pass it explicitly.
+    """
 
     close_time: Optional[datetime] = None
     expiration_time: Optional[datetime] = None
+    expected_expiration_time: Optional[datetime] = None
 
 
 # --- Real venue payloads, fetched 2026-09-02 -------------------------------
@@ -106,25 +121,25 @@ class TestSettledPropShape:
 
 
 class TestActiveFutureShape:
-    """The no-op case. This fix must not pretend to close #2644."""
+    """An active future with NO venue estimate. Still a no-op, and must stay one."""
 
     def test_active_future_is_unchanged(self):
         w = derive_resolution_window(ACTIVE_FUTURE)
         assert w.resolution_date == _ts("2029-02-13T23:30:00Z")
         assert w.expiration_time == _ts("2029-02-13T23:30:00Z")
 
-    def test_the_2029_defect_survives_this_fix(self):
-        """#2644 needs `expected_expiration_time` (2027-02-14) and does not get it here.
+    def test_absence_of_an_estimate_is_no_opinion_not_a_date(self):
+        """The re-aimed limit guard (see this module's docstring).
 
-        Guarding the LIMIT, not just the win: if someone later "fixes" #2644 by
-        editing this derivation, this test fails and forces them to read why the
-        13-negatives hazard makes that the wrong move.
+        These legs carry no ``expected_expiration_time`` at all. #2644's rule
+        must read that as "the venue has no opinion" and leave the date alone —
+        NOT reach for the backstop, and not invent anything (gotcha #53:
+        absence is not a value). If someone ever makes the pad-only rule fire
+        on an absent estimate, this fails.
         """
         w = derive_resolution_window(ACTIVE_FUTURE)
-        assert w.resolution_date.year == 2029, (
-            "KXSB-27 still resolves 2029 after this change — close_time is a "
-            "no-op for active futures. #2644 is a separate ship."
-        )
+        assert w.resolution_date.year == 2029
+        assert w.used_expected_expiration is False
 
 
 class TestFallbackAndAggregation:
