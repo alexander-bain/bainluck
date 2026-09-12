@@ -214,7 +214,7 @@ async def _discover_events():
         logger.warning("discover_events SKIPPED by quota guard: %s", guard_reason)
         return {"skipped": True, "reason": f"quota_guard:{guard_reason}"}
 
-    from app.tasks.odds_polling import _create_or_update_snapshot
+    from app.tasks.odds_polling import _ingest_event_odds
 
     service = OddsAPIService()
 
@@ -231,6 +231,11 @@ async def _discover_events():
         claimed_espn_ids: set[str] = set()
         sports_polled = 0
         sports_skipped = 0
+        # #5426: bookmaker snapshots written by this pass. Discovery now shares
+        # `_ingest_event_odds` with the pollers, so it advances the betting
+        # consensus too — a count that stays invisible is a rail nobody can tell
+        # apart from one that stopped running (gotcha #53 / task_verdict).
+        total_snapshots = 0
 
         # Get Redis client for per-sport discovery frequency gating
         try:
@@ -297,6 +302,11 @@ async def _discover_events():
 
                     # Collect all team names from this sport's events
                     all_team_names: set[str] = set()
+
+                    # Snapshot cache to avoid N+1 queries in
+                    # _create_or_update_snapshot. Accumulates across events
+                    # within this sport batch, exactly as the poller does.
+                    snapshot_cache: dict = {}
 
                     # Pre-fetch ESPN schedule for unique dates in this batch
                     # to correct commence_times at creation time (especially
@@ -477,17 +487,42 @@ async def _discover_events():
                         all_team_names.add(event_data["home_team"])
                         all_team_names.add(event_data["away_team"])
 
-                        # Also save odds snapshots for this event
-                        # This ensures events discovered have odds data immediately
-                        for bookmaker in event_data.get("bookmakers", []):
-                            snapshot, is_new = await _create_or_update_snapshot(
-                                session,
-                                event_id,
-                                bookmaker,
-                                event_data
-                            )
-                            if is_new:
-                                session.add(snapshot)
+                        # Save odds snapshots AND advance the betting consensus
+                        # for this event (#5426).
+                        #
+                        # This loop used to write only the snapshots, which left
+                        # `win_probability_sources['betting']` — value and
+                        # `updated_at` both — frozen at whatever the last
+                        # `poll_all_odds` pass said. That matters because the two
+                        # tasks cover different populations: poll_all_odds selects
+                        # SPORTS having an event within ±6h, so a league with no
+                        # fixture in that window is never polled at all, while
+                        # discovery keeps fetching its odds on the tier gate. The
+                        # measured result was fresh `odds_snapshots` rows sitting
+                        # beside a `betting` entry days old — 42 of 150 upcoming
+                        # events >6h stale, whole leagues at once, worst 130h
+                        # (#5426). A five-day-old value was 5.3 points off the
+                        # books' own current consensus.
+                        #
+                        # It also poisoned every reader of the stamp: `updated_at`
+                        # is an OBSERVATION time (#4028), so a bookkeeping gap read
+                        # as "the sportsbooks have gone quiet" and floored
+                        # betting's weight (#1999).
+                        #
+                        # Routing through the shared writer costs NO extra quota —
+                        # the payload is already fetched and already paid for. The
+                        # two flags are required because this fetch is h2h/us only:
+                        # see `_ingest_event_odds` for why a partial caller must
+                        # not write opening odds or drop below the book floor.
+                        total_snapshots += await _ingest_event_odds(
+                            session,
+                            event,
+                            event_data,
+                            espn_commence_time or commence_time,
+                            snapshot_cache,
+                            update_opening=False,
+                            drop_below_floor=False,
+                        )
 
                     # Auto-create Team records for any teams not yet in the DB.
                     # This ensures college teams (Harvard, Brown, Stanford, etc.)
@@ -632,6 +667,10 @@ async def _discover_events():
             "new_teams": total_new_teams,
             "espn_corrected": total_espn_corrected,
             "espn_id_stamps_refused": total_espn_id_refused,
+            # #5426 — the betting consensus this pass refreshed. Zero here with
+            # sports_polled > 0 means the shared writer stopped running, which
+            # is the regression this ship exists to prevent.
+            "snapshots": total_snapshots,
         }
     finally:
         await service.close()

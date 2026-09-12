@@ -677,6 +677,9 @@ async def _ingest_event_odds(
     event_data: dict,
     commence_time: datetime,
     snapshot_cache: dict,
+    *,
+    update_opening: bool = True,
+    drop_below_floor: bool = True,
 ) -> int:
     """Create odds snapshots for every bookmaker of one event, then update the
     event's opening-odds consensus and win_probability_sources['betting'].
@@ -685,6 +688,27 @@ async def _ingest_event_odds(
     task (_poll_mlb_pregame, issue #892) reuses identical snapshot/consensus
     logic and the two paths cannot drift. Returns the number of bookmaker
     snapshots processed.
+
+    The two flags exist for ONE caller — `_discover_events` (#5426), which polls
+    with `regions="us", markets="h2h"` to save 5/6 of the quota. Both defaults
+    preserve the full-coverage behaviour exactly for `_poll_all_odds` and
+    `_poll_mlb_pregame`; a partial-coverage caller must say so explicitly:
+
+    `update_opening=False`
+        `_maybe_set_opening_odds` writes the spread and total UNCONDITIONALLY
+        once it has a home probability. An h2h-only fetch has neither, so
+        calling it from discovery would NULL an opening spread/total some
+        earlier full-markets poll had captured. The paired fields must not be
+        wiped by a caller that never asked for them.
+
+    `drop_below_floor=False`
+        Ruling 051 drops `betting` under BETTING_BOOK_FLOOR because books PULL
+        the moneyline when a game goes out of reach — few books is EVIDENCE.
+        That inference does not transfer to a narrow fetch: discovery asking one
+        region for one market sees few books because of what it ASKED FOR, not
+        because the market thinned. Dropping on that would delete a consensus a
+        full poll had legitimately written. So a partial caller under the floor
+        leaves the existing entry untouched instead of removing it.
     """
     event_id = event.id
 
@@ -746,12 +770,13 @@ async def _ingest_event_odds(
         avg_away = _median(all_away_probs) if all_away_probs else (1 - avg_home)
         avg_spread = _median(all_spreads) if all_spreads else None
         avg_ou = _median(all_ous) if all_ous else None
-        await _maybe_set_opening_odds(
-            session, event_id,
-            avg_home, avg_away,
-            avg_spread, avg_ou,
-            commence_time=commence_time,
-        )
+        if update_opening:
+            await _maybe_set_opening_odds(
+                session, event_id,
+                avg_home, avg_away,
+                avg_spread, avg_ou,
+                commence_time=commence_time,
+            )
 
         # Write betting consensus to win_probability_sources so the multi-source
         # aggregation system sees it. Reuse the loaded event object (N+1 fix).
@@ -767,7 +792,25 @@ async def _ingest_event_odds(
         betting_val = round(avg_home, 4)
         _book_count = len(all_home_probs)
 
-        if _book_count >= BETTING_BOOK_FLOOR:
+        # #5426: a partial-coverage caller under the floor is NOT ruling 051's
+        # case. Ruling 051 reads a thin book count as evidence the market
+        # thinned; for a caller that asked one region for one market it is
+        # evidence of nothing but the request. Leave the existing entry alone —
+        # skipping the write here is the honest thing precisely because this
+        # caller has not measured what ruling 051's drop would be asserting.
+        _partial_under_floor = (
+            _book_count < BETTING_BOOK_FLOOR and not drop_below_floor
+        )
+
+        if _partial_under_floor:
+            logger.info(
+                "event %s: betting LEFT AS-IS — partial-coverage caller saw "
+                "%d book(s) < %d (would have written %.4f). Not ruling 051's "
+                "drop: a narrow fetch's book count is not market evidence "
+                "(#5426).",
+                event_id, _book_count, BETTING_BOOK_FLOOR, betting_val,
+            )
+        elif _book_count >= BETTING_BOOK_FLOOR:
             _current = stamp_source_reading(
                 event.win_probability_sources, "betting", betting_val
             )
@@ -816,12 +859,18 @@ async def _ingest_event_odds(
         # reading, so "0 books stand behind a value that is no longer here" is a
         # meaningful, readable statement, and it is what makes the drop visible
         # to a human rather than silent.
-        _current["betting_book_count"] = _book_count
-        await session.execute(
-            _update(Event)
-            .where(Event.id == event_id)
-            .values(win_probability_sources=_current)
-        )
+        #
+        # #5426: the count travels WITH the value it describes. A partial caller
+        # that left the value alone must not stamp its own narrower count over
+        # the one standing behind the stored reading — that would make the count
+        # describe a measurement the value never came from.
+        if not _partial_under_floor:
+            _current["betting_book_count"] = _book_count
+            await session.execute(
+                _update(Event)
+                .where(Event.id == event_id)
+                .values(win_probability_sources=_current)
+            )
     elif snapshots_processed:
         # gotcha #53, in the odds pipeline: "no book quotes a moneyline" (a FACT
         # — the market has closed) and "we did not poll" (an absence) are the
