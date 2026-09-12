@@ -523,12 +523,13 @@ class TestTheTwinFoldReachesTheTeamCard:
 
         card = _card(_page(_standard_page(), "aryna-sabalenka")[0])
         assert card["win_probability"] == pytest.approx(round(expected, 3))
-        # 0.575, not the 0.555 a plain average of the two readings would give:
-        # the blend weights by recency and kalshi's stamp is eight hours fresher.
+        # 0.555, not the 0.575 recency weighting gave before #1999: this fixture
+        # is `scheduled`, and recency decay is now an in-play rule, so the two
+        # readings carry equal weight and the weighted median is the lower one.
         # Kept as a literal BESIDE the computed assertion so that a change to the
         # blend's weighting shows up here as a decision rather than sliding
         # through on a comparison that can only ever agree with itself.
-        assert card["win_probability"] == pytest.approx(0.575)
+        assert card["win_probability"] == pytest.approx(0.555)
 
     def test_the_recent_rail_is_folded_too_and_not_only_the_upcoming_one(self):
         """🔴 Both rails, or the repair is half-applied.
