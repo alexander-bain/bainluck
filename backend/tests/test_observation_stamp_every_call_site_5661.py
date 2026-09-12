@@ -57,6 +57,12 @@ BACKEND = Path(__file__).resolve().parents[1]
 #: The function whose `now=` is the observation-time contract.
 STAMPER = "stamp_source_reading"
 
+#: The only admissible source of that `now=`. Composite-safe by construction —
+#: it takes the SEQUENCE of contributing rows and returns the oldest, so the
+#: single-market case is the one-element case rather than a separate rule
+#: (CERT-2745).
+OBSERVER = "oldest_observation_time"
+
 #: Modules that write `win_probability_sources` from rows they may not have
 #: re-observed. Enumerated rather than globbed: a new writer should have to
 #: appear here by a human decision, which is itself the review this file wants.
@@ -119,24 +125,35 @@ def test_every_stamp_site_passes_an_observation_time(rel):
         "already had, that is a frozen price served as fresh (#4028, #5661) — "
         "and because the hero's decay is RELATIVE to the freshest stamp on the "
         "event, the dead source then decays the honest one. Pass "
-        "`now=source_observation_time(<the row the number came from>)`; it is "
-        "inert when the row is healthy."
+        f"`now={OBSERVER}(<every row the number came from>)`; it is inert when "
+        "those rows are healthy."
     )
 
 
-def test_the_observation_time_comes_from_the_originating_row():
-    """`now=` must be an observation of the ROW, not any convenient datetime.
+def test_the_observation_time_comes_from_every_contributing_row():
+    """`now=` must be an observation of the ROWS, not any convenient datetime.
 
     `now=datetime.now(timezone.utc)` satisfies the assertion above while
     changing nothing — the mutation that makes this guard look green and the
     product still wrong. CERT-767's lesson also rides here: the argument is the
     ORIGINATING outcome, not the group's primary, because the group's primary
     can be a different market that is still being quoted.
+
+    IT IS THE COMPOSITE-SAFE HELPER, NOT THE SINGLE-ROW ONE (CERT-2745). The
+    first cut of #5661 passed `source_observation_time(reading.outcome)` and was
+    refused: a devigged reading is the mean of two separately-fetched markets,
+    so a fresh 70% primary averaged with a stale 60% sibling published 65%
+    stamped at the PRIMARY's time. `oldest_observation_time` takes the sequence
+    and returns its minimum, so requiring it here is what makes the single-row
+    case and the composite case one rule instead of two. Passing the single-row
+    primitive at a stamp site is now the offence, and that is deliberate: the
+    primitive is correct for one row and silently wrong for a devig, which is
+    exactly the shape that got through the first time.
     """
     path = BACKEND / GUARDED[0]
     tree = ast.parse(path.read_text())
     names = _aliases_of(tree, STAMPER)
-    obs_names = _aliases_of(tree, "source_observation_time")
+    obs_names = _aliases_of(tree, OBSERVER)
 
     bad = []
     for call in _stamp_calls(tree, names):
@@ -153,6 +170,7 @@ def test_the_observation_time_comes_from_the_originating_row():
                 bad.append((call.lineno, ast.dump(inner)[:60]))
 
     assert bad == [], (
-        "every `now=` handed to the stamper must be "
-        f"`source_observation_time(...)`; offenders: {bad}"
+        f"every `now=` handed to the stamper must be `{OBSERVER}(...)` over "
+        "every contributing row — not the single-row primitive, which dates a "
+        f"devig by its freshest half (CERT-2745); offenders: {bad}"
     )

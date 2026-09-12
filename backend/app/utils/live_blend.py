@@ -145,6 +145,18 @@ class BlendReading:
     yes_probability: float
     devigged: bool
     eligibility: Optional[EligibilityRecord] = None
+    #: EVERY outcome row that moved ``home_probability``, speaker first (#5661,
+    #: CERT-2745). ``outcome`` names the row the number is ATTRIBUTED to, and on
+    #: a devig that is only half of it: the published figure is the mean of two
+    #: rows that are fetched per market and therefore age independently. A
+    #: caller stamping an observation time off ``outcome`` alone would assert
+    #: the composite was seen when its FRESHER half was seen — the same
+    #: over-claim as #4028, one level up, and reachable exactly when a partial
+    #: refresh leaves the group mixed-age.
+    #:
+    #: Defaults to ``()`` so a reading built anywhere else is unchanged; callers
+    #: fall back to ``(outcome,)``, which is what a single-market reading means.
+    contributing_outcomes: tuple = ()
 
 
 def _home_probability_for_market(
@@ -525,6 +537,11 @@ def compute_source_home_probability(
     # is always the first; a devig sibling that is admitted joins it. This is
     # what the record names (CERT-2646) — see `_market_ref`.
     contributors = [speaker.market]
+    # The same list one level down, in ROWS rather than markets (#5661). The
+    # markets answer "what substantiates this number"; the rows answer "when was
+    # it last seen", and a stamp needs the second. Kept in lockstep with
+    # `contributors` below — if one grows an entry the other must.
+    contributing_outcomes = [outcome]
 
     if len(entries) == 2:
         for sibling in entries:
@@ -589,6 +606,10 @@ def compute_source_home_probability(
                 home_prob = (home_prob + sibling_reading[0]) / 2.0
                 devigged = True
                 contributors.append(sibling.market)
+                # `_home_probability_for_market` returns (prob, outcome, yes):
+                # the sibling's own row, which until #5661 was discarded here.
+                # It is half the published number and it ages on its own fetch.
+                contributing_outcomes.append(sibling_reading[1])
 
     return BlendReading(
         home_probability=home_prob,
@@ -596,6 +617,7 @@ def compute_source_home_probability(
         outcome=outcome,
         yes_probability=yes_prob,
         devigged=devigged,
+        contributing_outcomes=tuple(contributing_outcomes),
         # `speaker.market`, never `primary.market`: the loop above falls through
         # the group until a market can speak, so those are not always the same
         # row. Naming the primary here would be worse than naming nothing — it
