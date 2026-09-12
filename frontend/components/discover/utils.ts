@@ -722,3 +722,55 @@ export function compactOutcomeName(name: string): string {
 
   return `${parts.join(" ")}${suffix}`.trim();
 }
+
+/**
+ * May this feed item be put to the reader as a "higher or lower?" question?
+ *
+ * #5763. TWO call sites in `app/discover/page.tsx` decide independently who
+ * gets a `GuessCard` — `isGuessSlot` (every fifth card in the feed) and
+ * `challengeItems` (the daily challenge's five questions) — and they did not
+ * agree. `challengeItems` required a probability to exist; `isGuessSlot`
+ * required only `type === "futures" || type === "event"`. Neither asked whether
+ * the game had already been played.
+ *
+ * MEASURED ON PRODUCTION 2026-09-12. Discover page one served Pittsburgh
+ * Pirates @ Chicago Cubs `completed`, final 4-3, at DOM index 9 — `(9 + 1) % 5
+ * === 0`, so the feed asked a reader to guess whether the Cubs' chance was
+ * "higher or lower than 68%" on a game that had finished 75 minutes earlier,
+ * with no score and no FINAL badge on the card. The grading number is worse
+ * than the question: `current_odds.home_probability` was 0.921, an in-game
+ * reading frozen at the whistle, while the true settled answer is 100% — so the
+ * reader is marked wrong against a number that stopped being true.
+ *
+ * A LATENT BUG THAT #4681 MADE REACHABLE, NOT A REASON TO REVERT #4681. Before
+ * the finished-marquee arm seated finals on page one, a `completed` event could
+ * not land in the first twenty cards, so the missing status test cost nothing.
+ * The negative specimen confirms the mechanism rather than the coincidence:
+ * Elche CF @ Athletic Bilbao, also `completed`, sat at index 10 and correctly
+ * rendered as a FINAL card.
+ *
+ * Two conditions, one predicate, both call sites:
+ *
+ * * **Not settled.** `eventIsSettled` — the module's own past-tense predicate —
+ *   rather than a third copy of the status list.
+ * * **Has the number it will grade against.** `challengeItems` already demanded
+ *   this and `isGuessSlot` did not; adopting it at both sites is the point of
+ *   writing this once. Without it the card falls back to `actualProb ?? 0` and
+ *   asks a question whose answer is 0%.
+ *
+ * FUTURES ARE DELIBERATELY UNCHANGED beyond the probability test they already
+ * had. Every futures row on the page is served `open`, so a settled-futures arm
+ * here would be a branch with no specimen behind it; the day one is measured it
+ * belongs in this function, next to the event arm.
+ */
+export function feedItemCanBeGuessed(item: FeedItem | null | undefined): boolean {
+  if (!item) return false;
+  if (item.type === "futures") {
+    return (item.data as FeedFuturesData)?.top_outcomes?.[0]?.probability != null;
+  }
+  if (item.type === "event") {
+    if (eventIsSettled(item)) return false;
+    return (item.data as FeedEventData)?.current_odds?.home_probability != null;
+  }
+  return false;
+}

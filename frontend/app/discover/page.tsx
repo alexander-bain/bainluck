@@ -38,7 +38,7 @@ import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { futuresGroupKey } from "@/lib/discover/groupKey";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
-import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
+import { feedItemHasRenderableContent, collectSuppressedEnvelopes, feedItemCanBeGuessed } from "@/components/discover/utils";
 import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
 import {
   areGamesUnlocked,
@@ -1107,18 +1107,13 @@ export default function DiscoverPage() {
   }, []);
 
   const challengeItems = useMemo(() => {
+    // #5763 — the same predicate the in-feed quiz slot uses. This filter used
+    // to state the probability half privately, which is how the two sites came
+    // to disagree about who may be asked a question at all.
     return processedItems
       .filter((gi): gi is { type: "single"; item: FeedItem } => {
         if (gi.type !== "single" || !gi.item) return false;
-        if (gi.item.type === "futures") {
-          const fd = gi.item.data as FeedFuturesData;
-          return Boolean(fd.top_outcomes?.[0]?.probability != null);
-        }
-        if (gi.item.type === "event") {
-          const ed = gi.item.data as FeedEventData;
-          return Boolean(ed.current_odds?.home_probability != null);
-        }
-        return false;
+        return feedItemCanBeGuessed(gi.item);
       })
       .map((gi) => gi.item)
       .slice(0, 5);
@@ -1334,7 +1329,14 @@ export default function DiscoverPage() {
             // Queue 309 Item 3: a locked slot falls through to the normal
             // DiscoverCard rather than rendering nothing — suppressing the quiz
             // must never leave a hole in the masonry grid.
-            const isGuessSlot = gamesUnlocked && gi.type === "single" && (idx + 1) % 5 === 0 && (gi.item!.type === "futures" || gi.item!.type === "event");
+            // #5763 — `feedItemCanBeGuessed` replaces the bare type test here.
+            // Every fifth card was offered as a "higher or lower?" question on
+            // nothing but its type, so a finished game seated on page one by the
+            // marquee-final arm (#4681/#5100) was asked as a live question, and
+            // graded against an in-game probability frozen at the whistle. A
+            // rejected slot falls through to the ordinary card below, exactly as
+            // a locked one does — the masonry grid never gains a hole.
+            const isGuessSlot = gamesUnlocked && gi.type === "single" && (idx + 1) % 5 === 0 && feedItemCanBeGuessed(gi.item);
             const analytics = getGroupedAnalytics(gi);
             const personalizationTrace = analytics
               ? getDiscoverPersonalizationTrace(interactionProfile, analytics.category)
