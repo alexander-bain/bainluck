@@ -937,5 +937,90 @@ def test_claim_and_release_delegate_too_not_just_check(tmp_path):
         assert result.returncode == DELEGATED_EXIT, f"{argv}: {result.stderr}"
 
 
+#: A PRE-FIX copy of the primitive: byte-for-byte the current one with the
+#: delegation call neutered. That is what eight of the nine active lane
+#: worktrees were running when CERT-2601/2602 blocked this — not a hypothetical.
+_DELEGATION_CALL = "_delegate_to_lock_owner(args.lock)"
+
+
+def _prefix_copy() -> str:
+    """The primitive as it was before this fix — it answers locally, always."""
+    src = SCRIPT.read_text()
+    assert _DELEGATION_CALL in src, "the call this strips has been renamed"
+    return src.replace(_DELEGATION_CALL, "pass  # pre-fix: no delegation")
+
+
+def test_pre_fix_and_post_fix_callers_use_one_canonical_arbiter(tmp_path):
+    """CERT-2602's required test. Divergent SCRIPT VERSIONS, one verdict.
+
+    The BLOCK was right and this is the test it named. `test_two_readers_of_one
+    _lock_get_the_SAME_verdict` drives the same new absolute script twice from
+    two cwds, so it proves cwd-independence of ONE copy and cannot see the
+    defect: in the real fleet the copies THEMSELVES differed, eight of nine lane
+    worktrees predating the hook, and a lock read FREE/0 from one and MALFORMED/2
+    from another at the same instant.
+
+    So the entry points here are three genuinely different scripts, each invoked
+    the way the lane holding it really would, and all three must land on the one
+    copy that sits beside the lock.
+
+    Note honestly which half closes which arm — they are not both code:
+
+    * **A** is closed by THIS fix. A post-fix lane runs its own copy (the old
+      relative habit) and the hook re-execs the lock's arbiter.
+    * **B** is closed by STANDING NOTICE 30, amended 2026-09-11 to name the
+      absolute `~/bainluck/scripts/claim_lane_lock.py`. A pre-fix copy has no
+      hook, so no code we ship can rescue it — only the instructed path can.
+      That is exactly the grader's `CANONICALIZE-THE-INVOKED-PATH-NOT-THE-
+      INVOKED-COPY`, and the notice is the half that does it.
+    * **C** is the control, and it must NOT agree. Without it A and B could both
+      be passing because the copies never really diverged, which is the way this
+      test would quietly become the vacuous one it replaces.
+    """
+    canonical = tmp_path / "shared"          # the tree that owns the lock
+    lock = _fake_repo(canonical, STUB)       # its copy is the sentinel
+    lane_post = _fake_repo_only(tmp_path / "lane-post", SCRIPT.read_text())
+    lane_pre = _fake_repo_only(tmp_path / "lane-pre", _prefix_copy())
+
+    # A — post-fix lane, its OWN copy, standing in its own tree.
+    a = _run_script(lane_post / "scripts" / "claim_lane_lock.py", lane_post,
+                    "check", str(lock), "--identity", ME)
+    # B — pre-fix lane, following the INSTRUCTED absolute command.
+    b = _run_script(canonical / "scripts" / "claim_lane_lock.py", lane_pre,
+                    "check", str(lock), "--identity", ME)
+
+    assert a.returncode == b.returncode == DELEGATED_EXIT, (
+        f"A={a.returncode} B={b.returncode}\nA err: {a.stderr}\nB err: {b.stderr}"
+    )
+    assert "STUB-PRIMITIVE-RAN" in a.stdout and "STUB-PRIMITIVE-RAN" in b.stdout
+    assert a.returncode == b.returncode and a.stdout.split()[0] == b.stdout.split()[0]
+
+    # C — the uncovered arm, asserted so the divergence above is proven real and
+    # not an artefact of three identical copies. A pre-fix lane running its own
+    # copy still answers locally; notice 30's absolute path is what stops it.
+    c = _run_script(lane_pre / "scripts" / "claim_lane_lock.py", lane_pre,
+                    "check", str(lock), "--identity", ME)
+    assert c.returncode != DELEGATED_EXIT, (
+        "the pre-fix copy delegated — then it was never pre-fix and arms A/B "
+        "prove nothing"
+    )
+    assert "STUB-PRIMITIVE-RAN" not in c.stdout
+
+
+def _fake_repo_only(root: Path, primitive: str) -> Path:
+    """A checkout-shaped directory with NO lock — a lane worktree."""
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    (root / "scripts" / "claim_lane_lock.py").write_text(primitive)
+    return root
+
+
+def _run_script(script: Path, cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    """Drive a NAMED copy of the primitive — the entry point is the variable."""
+    return subprocess.run(
+        [sys.executable, str(script), *args],
+        capture_output=True, text=True, env=_env(), cwd=str(cwd),
+    )
+
+
 def mod_delegation_env() -> str:
     return _module().DELEGATION_ENV
