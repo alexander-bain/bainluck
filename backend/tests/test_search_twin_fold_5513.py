@@ -386,8 +386,13 @@ async def test_a_folded_first_page_keeps_the_next_distinct_raw_row_reachable_551
     assert len(payload["results"]) == 24, _ids(payload)
 
     pag = payload["pagination"]
-    # The sentence about the rows still agrees with the rows (#2623 intact).
-    assert pag["total_results"] == 25
+    # #5559 moved this line, and only this line. The corpus does not fit on one
+    # page, so the page's own fold is a SAMPLE and is no longer extrapolated to
+    # the corpus count — otherwise the same query prints a different, rising
+    # number on each page. #2623's exactness is kept where the reader can check
+    # it (`test_total_results_counts_what_was_served`, one page, still 1). What
+    # this test is FOR is untouched below: the pager still counts raw rows.
+    assert pag["total_results"] == 26
 
     # And the pager still reaches the row the fold never touched.
     assert pag["total_pages"] == 2, (
