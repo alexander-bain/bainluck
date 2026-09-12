@@ -619,7 +619,13 @@ export default function EventPage({ params }: EventPageProps) {
     [historyData, event?.home_score, event?.away_score, event?.score_observed_at],
   );
 
-  // Best-known scores: prefer latest ESPN history (more frequent updates) over event SWR
+  // Best-known scores. #5521 — the comment that stood here said *"prefer latest
+  // ESPN history (more frequent updates) over event SWR"*, which is an empirical
+  // claim about relative freshness that nothing re-checked at runtime, and on
+  // 15304937 it was simply false: ESPN's last row was 4m30s OLDER than the
+  // StatPal snapshot beside it and the hero printed the wrong team ahead for an
+  // hour. `computeLastChartPoint` now ranks the two observation series by their
+  // own clocks; the event row remains the fallback beneath both.
   const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
   const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
 
