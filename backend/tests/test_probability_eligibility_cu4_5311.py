@@ -706,20 +706,41 @@ class TestEveryDevigContributorIsGatedAndRecorded:
     # ── The per-source asymmetry the repair had to preserve ──────────────────
 
     def test_a_kalshi_sibling_is_still_judged_on_its_ticker_not_its_name(self):
-        """MEASURED, and the reason the repair is a dispatch rather than one
-        call: the class recognizer reads False on `Fight Night: Silva vs
-        Delgado` (`KXUFCFIGHT-…`) because the colon stops the title being a bare
-        matchup and no winner word appears. It is a real fight winner. Gating
-        Kalshi siblings with `admissible_as_blend_speaker` would retire it and
-        every card like it — #5031's own measured regression, one step over."""
+        """MEASURED, and the reason the repair is a dispatch rather than one call.
+
+        THE SPECIMEN FLIPPED SIDES WITH #5660, and the argument got stronger.
+        This test used to ride `Fight Night: Silva vs Delgado`: the ticker
+        admitted a real fight winner the class recognizer refused for its
+        prefix, so a single source-agnostic call would have RETIRED it. #5660
+        taught the recognizer that prefix, and the two gates now agree on every
+        one of a 900-row Kalshi sample read on 2026-09-12 — that disagreement
+        is gone, and a test riding it is inert.
+
+        The disagreement that remains runs the other way, and it is worse: 97 of
+        those 900 rows are period books whose titles carry the word "Winner" —
+        `Alabama vs Kentucky: 1st Half Winner` (`KXNCAAF1H-…`), every quarter,
+        every `Set N Winner`. The CLASS recognizer calls each of them the match
+        winner, because `_WINNER_WORD_RE` reads the word and no branch asks
+        which contest it names; the Kalshi TICKER rule is the only thing
+        refusing them. So a single source-agnostic call would now ADMIT a half
+        winner as the game winner — the #5031/#5273/#5432 class exactly. The
+        dispatch is what stands between the two, in both eras.
+
+        (On Polymarket, where there is no ticker rule, nothing refuses them:
+        439 such rows measured the same day. Filed as #5698.)
+        """
         from app.utils.live_blend import (
             admissible_as_blend_speaker,
             is_game_winner_market,
         )
 
-        ufc = _Market(
-            3, "Fight Night: Silva vs Delgado",
-            source="kalshi", external_id="KXUFCFIGHT-26SEP12SILDEL",
+        half = _Market(
+            3, "Alabama vs Kentucky: 1st Half Winner",
+            source="kalshi", external_id="KXNCAAF1H-26SEP12ALAUK",
         )
-        assert is_game_winner_market(ufc) is True
-        assert admissible_as_blend_speaker(ufc, is_primary=False) is False
+        assert is_game_winner_market(half) is False, (
+            "the ticker rule is what refuses a period book"
+        )
+        assert admissible_as_blend_speaker(half, is_primary=False) is True, (
+            "the class recognizer admits it on the word 'Winner' alone (#5698)"
+        )

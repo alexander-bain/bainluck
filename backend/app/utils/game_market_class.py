@@ -142,20 +142,121 @@ _DERIVATIVE_OUTCOME_RE = re.compile(
 )
 
 
+# Segment-scope words that can head a title and mean "a PART of the match":
+# "Map 1: A vs B", "Period 2: A vs B", "1st Round Head-to-Head: Åberg vs
+# Fleetwood". Consulted ONLY against a leading prefix (see
+# `_matchup_behind_competition_prefix`), never against a whole title, so its
+# only possible effect is to leave a prefixed title classed exactly as it is
+# classed today.
+#
+# MEASURED INERT, AND KEPT AS THE FAIL-CLOSED MARGIN (#5660). Over every
+# Polymarket/Kalshi market linked to an event commencing within ±7 days
+# (1,752 distinct names, 2026-09-12), this pattern blocked nothing that the
+# module's existing vocabulary did not already block: all 441 refused prefixes
+# were caught by `_DERIVATIVE_OUTCOME_RE`/`_WINNER_WORD_RE` ("Set 1 Winner: …",
+# 439) or `_TEAM_PROP_RE` ("Will there be a run scored in the first inning?: …",
+# 2). It is here because the esports rows DO carry these scopes today — as a
+# SUFFIX ("Counter-Strike: 1WIN vs B8 - Map 1 Winner", 151 rows, refused by the
+# " - " test) — and a venue that moves one to the front must not thereby
+# publish a map winner as the match winner. Its failure mode is today's
+# behaviour, so an over-broad token costs a missed match, never a wrong price.
+_DERIVATIVE_SCOPE_RE = re.compile(
+    r"\b(?:map|period|quarter|half|frame|leg|set|game|round|inning|innings)\b",
+    re.IGNORECASE,
+)
+
+# Every pattern that disqualifies a leading prefix from being read as a
+# competition name. Reuses the module's own vocabulary rather than inventing a
+# second one, so a derivative word learned anywhere is learned here too.
+_PREFIX_DISQUALIFIERS = (
+    _SPREAD_RE,
+    _TOTAL_RE,
+    _PLAYER_PROP_RE,
+    _TEAM_PROP_RE,
+    _DERIVATIVE_OUTCOME_RE,
+    _WINNER_WORD_RE,
+    _MONEYLINE_WORD_RE,
+    _DERIVATIVE_SCOPE_RE,
+)
+
+
+def _matchup_behind_competition_prefix(stripped: str) -> bool:
+    """True if ``stripped`` is a bare matchup wearing a competition PREFIX.
+
+    THE OLD TEST COULD NOT TELL A PREFIX FROM A SUFFIX (#5660). It asked
+    whether a ":" or a " - " appeared ANYWHERE and answered "not a bare game"
+    if one did. That is right for a qualifier hung off the END — "Yankees at
+    Dodgers: Total Runs" — and wrong for a competition hung off the FRONT, which
+    is how Polymarket titles most of its tennis, rugby, cricket, pickleball and
+    doubles fixtures and how Kalshi titles its fight cards: "US Open ATP:
+    Alexander Zverev vs Ben Shelton", "PPA - Women's Singles: Hannah Blatt vs
+    Polina Libo", "Fight Night: Aldrich vs Tarin", "M25 Sintra: Dino Molokova
+    Ferreira vs Lucas Nunez". Gamma calls the PPA row `sportsMarketType=
+    moneyline`; we called it "other" for its prefix alone.
+
+    DIRECTION IS THE WHOLE DISCRIMINATOR, and it is read structurally rather
+    than guessed: the market's own qualifier — if it has one — trails the
+    matchup, where the unchanged ":"/" - " test still refuses it
+    ("Counter-Strike: 1WIN vs B8 - Map 1 Winner"). Only when the tail is a clean
+    two-side matchup is the head examined at all, and then it must carry no
+    derivative word (`_PREFIX_DISQUALIFIERS`), because a head is free to name a
+    segment instead of a competition — "Set 1 Winner: Aboian vs Martin" is a
+    set, not the match.
+
+    THE SPLIT IS AT THE LAST COLON SO THAT THE WHOLE HEAD IS TESTED. On the
+    single-colon titles that are 100% of the measured window the two splits are
+    indistinguishable; they differ only on a multi-segment head
+    ("US Open ATP: Qualification: Carole Monnet vs Julia Garcia"), which a
+    first-colon split refuses outright and this one admits — but only after
+    reading every segment of the head for a derivative word, so the extra reach
+    cannot admit a segment market. Multi-colon titles are UNOBSERVED in the
+    measured window; the case is pinned by test rather than left to whichever
+    split someone edits in later.
+
+    A " - " with no colon is left exactly as it was: that shape is a trailing
+    qualifier in every row measured, and widening it has no evidence behind it.
+
+    MEASURED BOTH DIRECTIONS before shipping, over every market linked to an
+    event commencing within ±7 days (1,752 distinct names, production
+    2026-09-12): 408 names move "other" → "moneyline" and **zero** move the
+    other way. Every one of the 408 wears a competition, venue or card name —
+    the US Open ATP/WTA singles and doubles draws, 30-odd ITF/challenger venues
+    (M15/M25/W15/W50 …), Top 14, United Rugby Championship, Premiership Rugby,
+    the T20/Test cricket series, UFC 331, Kalshi's Fight Night and MMA cards,
+    and the three PPA pickleball draws this issue was filed on. 441 are refused
+    by the prefix test and 898 by the structural tests.
+    """
+    prefix, sep, tail = stripped.rpartition(":")
+    if not sep:
+        return False
+    tail = _LEAGUE_TAG_RE.sub("", tail.strip()).strip()
+    # The market's own qualifier lives in the tail — refuse it exactly as before.
+    if not tail or ":" in tail or " - " in tail:
+        return False
+    if any(pattern.search(prefix) for pattern in _PREFIX_DISQUALIFIERS):
+        return False
+    if _WILL_BEAT_RE.match(tail):
+        return True
+    return bool(_BARE_MATCHUP_RE.match(tail))
+
+
 def is_bare_matchup(name: str) -> bool:
     """True if ``name`` is ONLY a two-side matchup title (a game-winner market).
 
     Recognizes the dominant real phrasing that carries no "winner"/"moneyline"
     word: "Celtics at Warriors", "Yankees vs. Red Sox", "MLB: Yankees at
-    Dodgers", "Will the Yankees beat the Red Sox?". Rejects titles with a
-    sub-market qualifier ("... : Total Runs", "... - Player Props").
+    Dodgers", "Will the Yankees beat the Red Sox?", and — since #5660 — a bare
+    matchup behind a competition prefix ("US Open ATP: Zverev vs Shelton").
+    Rejects titles with a sub-market qualifier ("... : Total Runs", "... -
+    Player Props", "Set 1 Winner: Aboian vs Martin").
     """
     if not name:
         return False
     stripped = _LEAGUE_TAG_RE.sub("", name).strip()
-    # A colon or a space-dash-space marks a sub-market qualifier, not a bare game.
+    # A colon or a space-dash-space marks a sub-market qualifier — UNLESS the
+    # colon is a competition prefix and the real matchup is behind it (#5660).
     if ":" in stripped or " - " in stripped:
-        return False
+        return _matchup_behind_competition_prefix(stripped)
     if _WILL_BEAT_RE.match(stripped):
         return True
     return bool(_BARE_MATCHUP_RE.match(stripped))

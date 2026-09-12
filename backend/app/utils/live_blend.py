@@ -198,9 +198,23 @@ def _class_says_game_winner(market: Any) -> bool:
     list here is the #1951 drift failure, where the second copy does not throw
     when it disagrees, it just quietly answers differently.
 
-    Fail-closed: a prefix neither module recognizes leaves the colon in place,
-    the name is not a bare matchup, and the market stays silent. That is the
-    behaviour it already has today.
+    THAT FAIL-CLOSED SENTENCE WAS THE BUG (#5660), and it used to read here as
+    a reassurance: "a prefix neither module recognizes leaves the colon in
+    place, the name is not a bare matchup, and the market stays silent". It was
+    an accurate description and a silent one — the Kalshi-spelling stripper
+    recognizes none of Polymarket's tournament prefixes, so every fixture
+    titled `US Open ATP: Zverev vs Shelton`, `M25 Sintra: A vs B`, `PPA -
+    Women's Singles: A vs B` stayed silent for its prefix alone while Gamma
+    called it `moneyline`. The shared recognizer now reads the matchup behind a
+    competition prefix itself, so the fallback no longer depends on this
+    module's stripper knowing a venue's tournament vocabulary; 408 real match
+    winners linked to an event commencing within ±7 days stopped being mute
+    (measured 2026-09-12, zero markets moved the other way).
+
+    Still fail-closed where it must be: the recognizer splits at the LAST colon,
+    so a qualifier hung off the END is refused exactly as before, and a head
+    naming a segment rather than a competition (`Set 1 Winner: …`, `Map 1: …`)
+    is refused by name.
     """
     name = market.name or ""
     return classify_game_market_class(

@@ -1670,19 +1670,39 @@ def test_a_kalshi_primary_keeps_the_exemption_the_shared_policy_gives_it():
     """The new gate must not be applied source-agnostically. That is a regression.
 
     `admissible_as_blend_speaker` exempts a KALSHI primary deliberately: the
-    class recognizer is the wrong instrument on a Kalshi row, and applying it
-    there refuses 13 live UFC primaries (`Fight Night: Silva vs Delgado`) whose
-    colon makes the title not a bare matchup. Kalshi's real admission is the
-    venue-side ticker rule, which this path already applied and still does.
+    class recognizer is the wrong instrument on a Kalshi row. Kalshi's real
+    admission is the venue-side ticker rule, which this path already applied
+    and still does.
 
     Without this test the obvious "simplification" — ask the class recognizer of
     everything — reads cleaner and blanks a whole card.
+
+    THE SPECIMEN MOVED WITH #5660, AND THE MUTATION RECEIPT IS WHY. This test
+    used to ride `Fight Night: Silva vs Delgado`, one of the 13 live UFC
+    primaries the recognizer refused for its tournament prefix alone. #5660
+    taught the recognizer that prefix, so that row is now admitted by NAME and
+    the exemption is no longer what carries it — measured by removing the
+    exemption, which this test then survived. A guard that survives the removal
+    of the thing it guards is not a guard.
+
+    THE REPLACEMENT SPELLING IS CONSTRUCTED, AND THAT IS SAID OUT LOUD. What
+    this test needs is a Kalshi row the ticker rule ADMITS whose title the class
+    recognizer REFUSES — the only combination in which the exemption changes an
+    outcome. Measured on 2026-09-12 over 900 production Kalshi rows, that
+    combination is now EMPTY: after #5660, every Kalshi row the recognizer
+    refuses is one `feeds_win_prob_blend` refuses too, so no live row can carry
+    this test. It rides a constructed spelling of the same fight instead:
+    `UFC 331 - Main Card - Silva vs Delgado`, the dash-without-colon shape
+    #5660 deliberately did NOT widen, so the fixture is stable by design rather
+    than by luck. That is not idle — the population was non-empty yesterday, a
+    venue changing its punctuation re-creates it, and the exemption is the live
+    code that stops a card going blank when it does.
     """
     from app.tasks.event_chart_backfill import _orient_one_market
     from app.utils.live_blend import MarketOutcomes, _class_says_game_winner
 
     market = SimpleNamespace(
-        id=1, source="kalshi", name="Fight Night: Silva vs Delgado",
+        id=1, source="kalshi", name="UFC 331 - Main Card - Silva vs Delgado",
         external_id="KXUFCFIGHT-26SEP12SILDEL-SIL",
         market_metadata={}, group_id=None,
     )
@@ -1711,10 +1731,15 @@ def test_a_kalshi_fallback_does_not_inherit_the_primarys_exemption():
     divergence this ship exists to close reopens on the Kalshi half.
 
     The asymmetry being preserved is the pre-existing #759 design: a fallback
-    carries a stricter burden than the primary, on Kalshi too. The specimen is
-    the UFC shape — a ticker the venue rule ADMITS whose title the class
-    recognizer REFUSES — because that is the only combination where the two
-    gates disagree and the flag is therefore observable.
+    carries a stricter burden than the primary, on Kalshi too. The specimen
+    must be a Kalshi row whose title the class recognizer REFUSES, because that
+    is the only combination where the two gates disagree and the flag is
+    therefore observable.
+
+    Re-pointed by #5660 for the reason the sibling test records, and onto the
+    same constructed spelling for the same measured reason: the old
+    `Fight Night:` title is now read by the recognizer, and no production Kalshi
+    row is left that the ticker rule admits and the recognizer refuses.
     """
     from app.tasks.event_chart_backfill import resolve_orientation
     from app.utils.live_blend import (
@@ -1738,9 +1763,9 @@ def test_a_kalshi_fallback_does_not_inherit_the_primarys_exemption():
         _outcome("Delgado", 0.38, "KXUFCFIGHT-26SEP12SILDEL-DEL", 2),
     ]
     # Primary is the lowest id and cannot orient (no outcomes); the fallback is
-    # ticker-admitted but class-refused.
+    # class-refused, so only the primary's exemption can admit it.
     primary = _kalshi(1, "Silva vs Delgado", [])
-    fallback = _kalshi(2, "Fight Night: Silva vs Delgado", fights)
+    fallback = _kalshi(2, "UFC 331 - Main Card - Silva vs Delgado", fights)
 
     assert select_primary_market([primary, fallback]).market.id == 1
 
@@ -1748,9 +1773,9 @@ def test_a_kalshi_fallback_does_not_inherit_the_primarys_exemption():
     # market is admitted, so a refusal below is the flag and nothing else.
     assert resolve_orientation([fallback], "Silva", "Delgado") is not None
 
-    assert resolve_orientation([primary, fallback], "Silva", "Delgado") is None, (
-        "a Kalshi fallback must clear the class recognizer, primary or not"
-    )
+    assert resolve_orientation(
+        [primary, fallback], "Silva", "Delgado"
+    ) is None, "a Kalshi fallback must clear the class recognizer, primary or not"
     # And the hero agrees, which is the whole point.
     assert compute_source_home_probability(
         [primary, fallback], "Silva", "Delgado"

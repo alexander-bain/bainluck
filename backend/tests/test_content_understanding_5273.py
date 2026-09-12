@@ -635,23 +635,28 @@ class TestTheParentRowIsAPricedRowInEveryShape:
             _Market(1, PPA_BARE, market_metadata=stored)
         ) == "moneyline"
 
-    def test_the_certs_own_gamma_specimen_records_the_disagreement(self):
-        """🔴 The exact live row CERT-2733 named, pinned as it actually behaves.
+    def test_the_certs_own_gamma_specimen_now_agrees_with_the_venue(self):
+        """🔴 The exact live row CERT-2733 named — and the clause paying out.
 
         `PPA - Women's Singles: Hannah Blatt vs Polina Libo` IS the match
-        winner, and Gamma says so (`sportsMarketType=moneyline`) — but our title
-        recognizer reads the tournament-and-draw prefix and answers `other`. So
-        the stored record is `other:disputed`, and that is the clause doing its
-        job: the disagreement it exists to write down is ours here, not the
-        venue's. Filed as #5660.
+        winner and Gamma says so (`sportsMarketType=moneyline`), while our title
+        recognizer answered `other` on the tournament-and-draw prefix alone. The
+        clause's whole job is to write that disagreement down instead of
+        swallowing it, and it did: the row stored `other:disputed`, the
+        contradiction was filed as #5660, and #5660 fixed the recognizer.
+
+        So this assertion flips from `contradicted` to `corroborated` BY DESIGN.
+        It is the receipt that clause (2) is a working instrument and not
+        decoration — a disagreement it recorded is a disagreement that got
+        closed. #5660's acceptance criterion is this exact line.
         """
         understanding = polymarket_task.parent_content_understanding(
             _single_market_event(title=PPA_TITLE), sport="tennis"
         )
-        assert understanding["semantic_type"] == "other"
+        assert understanding["semantic_type"] == "moneyline"
         assert understanding["venue_type"] == "moneyline"
-        assert understanding["agreement"] == CONTRADICTED
-        assert record_semantic_type(understanding) == "other:disputed"
+        assert understanding["agreement"] == CORROBORATED
+        assert record_semantic_type(understanding) == "moneyline"
 
     def test_a_negrisk_parent_is_typed_because_it_is_the_row_that_speaks(self):
         """🔴 The bigger half of the same hole. Sub-markets are written only for
