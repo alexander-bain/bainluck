@@ -633,6 +633,22 @@ def _team_competition_rank(sport_key: str | None) -> int:
     return _TEAM_COMP_LEAGUE
 
 
+def _seasons_with_a_parent_row(rows: list) -> set:
+    """``(name, league identity)`` for every NON-variant row in *rows*. Pure.
+
+    The membership test for the season-variant demotion below: a spring row is
+    only the wrong row to show when the club's parent-league row is standing
+    right beside it in the same name group. Keyed on `league_identity` and not
+    on the raw key so `baseball_mlb_preseason` recognises `baseball_mlb` as its
+    parent (#4945), and keyed on the name too so the demotion can never reach
+    across a group it was not measured on."""
+    return {
+        (getattr(row, "name", None), league_identity(getattr(row, "sport_key", None)))
+        for row in rows
+        if not is_season_variant(getattr(row, "sport_key", None))
+    }
+
+
 def _pick_team_row_per_name(rows: list) -> list:
     """Collapse same-name team rows to one, keeping the club's own competition.
 
@@ -640,12 +656,42 @@ def _pick_team_row_per_name(rows: list) -> list:
     name group occupies the slot of its FIRST member, so this can only change
     WHICH row represents a name, never where that name sits in the list. Ties
     inside a class fall back to the incoming order, so a surface that already
-    ordered its rows keeps that order as the last word."""
+    ordered its rows keeps that order as the last word.
+
+    #2498 AT THE SEARCH CARD. `/api/teams/boston-red-sox` has served the pennant
+    race since #2498, but the card the front door hands the reader is built here
+    and still coin-flipped: `teams` holds one row per SEASON as well as one per
+    competition, and a season variant and its parent are the same name in the
+    same competition class, so every tie-break tied and the heap order decided.
+    Measured on production 2026-09-12 21:3xZ, `/api/events/search?q=red sox`
+    returned `Boston Red Sox · BASEBALL_MLB_PRESEASON · 13-15` — a spring record
+    in September, on the one club Alex checks — while `yankees` and `white sox`
+    happened to land on the league row. 90 name groups can flip today
+    (32 `americanfootball_nfl_preseason`, 30 `baseball_mlb_preseason`,
+    28 `basketball_nba_summer_league`, each sharing its name with its parent).
+
+    The demotion is gated on the parent being IN THE GROUP, so a club that only
+    ever appears as a variant row still shows, and it is keyed on the league
+    identity, so a same-name row from another league cannot claim to be the
+    parent: measured, all 90 same-name siblings are the variant's own parent
+    league, and 0 name groups hold both a variant row and a women's row (so the
+    order of this penalty against `_TEAM_COMP_WOMENS` decides nothing today).
+
+    This is the rule `_build_team_lookup` already applies to the same two rows
+    one surface over — *"Same league, two rows: keep the PARENT league's"* — and
+    it reasons about no names or kickoff times that the collapse it rides was
+    not already keyed on, so ruling 048 is not in play. Nothing here writes."""
+    parents = _seasons_with_a_parent_row(rows)
     order: list = []
     best: dict = {}
     for index, row in enumerate(rows):
         name = getattr(row, "name", None)
-        candidate = (_team_competition_rank(getattr(row, "sport_key", None)), index)
+        sport_key = getattr(row, "sport_key", None)
+        spring_row = (
+            is_season_variant(sport_key)
+            and (name, league_identity(sport_key)) in parents
+        )
+        candidate = (int(spring_row), _team_competition_rank(sport_key), index)
         if name not in best:
             order.append(name)
             best[name] = (candidate, row)
