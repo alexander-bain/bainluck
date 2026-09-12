@@ -69,6 +69,72 @@ class PolymarketMarket(BaseModel):
     # Group item title (e.g., "33°F or below" for weather markets)
     group_item_title: Optional[str] = None
 
+    # ── Venue-authored semantic fields (CU-1 clause (4), #5273) ─────────────
+    # Gamma publishes its OWN classification of what a market asks. We kept
+    # none of it, so every consumer re-derived the question's shape from the
+    # title — which is how a derivative got published as the match winner
+    # (#5432, #5311). These four are retained so a deterministic classifier
+    # has an INDEPENDENT signal to be confirmed by or contradicted against
+    # (standing notice 40: a title match alone is only a candidate).
+    #
+    # Measured against Gamma itself, 100 markets, 2026-09-12 ~12:18Z
+    # (`/markets?limit=500&closed=false&order=volume&ascending=false`):
+    #
+    # `sports_market_type` — an OPEN SET, 13 distinct values in 100 markets,
+    #   and ABSENT on 21 of them (0 were present-but-empty). So it can
+    #   corroborate and it can quarantine, but it may NEVER gate: requiring
+    #   it fails closed on a fifth of the population. Fail closed on a value
+    #   you have not seen, never on a value that is missing.
+    #   🔴 `moneyline` is the full-contest winner. `child_moneyline` is NOT —
+    #   the observed row is `… Nemiga vs Just Players - Map 1 Winner`. Any
+    #   SUBSTRING test on "moneyline" admits map and period winners into the
+    #   winner slot, which is the exact defect CU-1 exists to stop. Compare
+    #   with `is_full_contest_winner_type()` below, never with `in`.
+    #   Absent and null both arrive as None, and that is correct rather than
+    #   lossy: neither can corroborate, so the consumer owes them the same
+    #   answer. A sentinel would be two states with one meaning.
+    #
+    # `line` — arrives as a STRING (`"-1.5"`, `"1.5"`). Coerced explicitly
+    #   here because `"0"` is a legitimate line: test `is not None`, never
+    #   truthiness, or every pick'em silently reads as "no line".
+    #
+    # `description` / `resolution_source` — an empty string is preserved as
+    #   an empty string and absence as None. They are not the same claim
+    #   (the venue said nothing vs the venue published a blank), and
+    #   collapsing them would destroy a signal quarantine may need.
+    sports_market_type: Optional[str] = None
+    line: Optional[float] = None
+    description: Optional[str] = None
+    resolution_source: Optional[str] = None
+
+
+#: The ONLY `sportsMarketType` value that denotes a full-contest winner.
+#: Deliberately a one-element frozenset rather than a string, so that widening
+#: it later is an explicit edit to a named set with a test beside it, and so
+#: that no caller can reach for `startswith`/`in` on a bare constant.
+GAMMA_FULL_CONTEST_WINNER_TYPES = frozenset({"moneyline"})
+
+
+def is_full_contest_winner_type(sports_market_type: Optional[str]) -> bool:
+    """Does Gamma's own label say this market prices who wins the whole contest?
+
+    🔴 EXACT MATCH, AND THAT IS THE WHOLE POINT.  `child_moneyline` is
+    winner-SHAPED and is not a full-contest winner — the observed row is a
+    Counter-Strike `Map 1 Winner`.  `"moneyline" in "child_moneyline"` is
+    True, so a containment test hands a map winner to the winner slot: the
+    same defect class as #5432 and #5311, where a derivative's price was
+    published as the match result.
+
+    Returns False for a missing label.  That is a refusal to corroborate, NOT
+    a claim that the market is a derivative — the field is absent on 21% of
+    markets (measured, see `PolymarketMarket`), so a caller must never read
+    False here as evidence against a market.  Ask this only to CONFIRM a
+    winner a deterministic classifier already proposed, or to contradict one.
+    """
+    if sports_market_type is None:
+        return False
+    return sports_market_type in GAMMA_FULL_CONTEST_WINNER_TYPES
+
 
 class PolymarketEvent(BaseModel):
     """A Polymarket event containing one or more markets."""
@@ -765,6 +831,14 @@ class PolymarketAPIService:
                 volume_24h=self._safe_float(market_data.get("volume24hr")),
                 liquidity=self._safe_float(market_data.get("liquidity")),
                 neg_risk=market_data.get("negRisk", False),
+                # CU-1 clause (4): retain the venue's own semantics. `.get()`
+                # leaves absent as None; `_safe_float` keeps `"0"` as 0.0 and
+                # turns an unparseable line into None rather than raising —
+                # a bad line must not cost us the market's price.
+                sports_market_type=market_data.get("sportsMarketType"),
+                line=self._safe_float(market_data.get("line")),
+                description=market_data.get("description"),
+                resolution_source=market_data.get("resolutionSource"),
             )
         except Exception as e:
             logger.warning("Error parsing Polymarket market: %s", e)
