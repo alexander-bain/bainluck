@@ -98,6 +98,104 @@ const CALLOUT_PLATE_PAD_X = 3;
 const CALLOUT_PLATE_PAD_Y = 2;
 /** Gap between the label's right edge and the dot it labels — #3525's `cx - 12`. */
 const CALLOUT_GAP_PX = 12;
+/**
+ * #5581 — the band at the top of the plot that the period chips paint into,
+ * MEASURED on the rendered page rather than derived from the font size.
+ *
+ * The chips are `ReferenceLine` labels at `insideTopLeft` (see
+ * `filteredPeriodBoundaries` below). On `/events/15308045` at 390px, read with
+ * `getBBox()` off the live SVG on 2026-09-12: the plot's top edge is `y=15` and
+ * every chip's box is `y=16.81..29.81`, so the strip occupies **14.81px**
+ * measured DOWN from that edge. 15 is that rounded UP.
+ *
+ * Rounding up is the safe direction and the direction matters: the number is
+ * used to push the callout CLEAR of the chips, so an over-estimate costs a pixel
+ * of drop while an under-estimate re-opens the collision. The same reasoning
+ * `CALLOUT_MONO_ADVANCE_EM` is rounded up for — and the reason this is 15 and
+ * not the 14 a line-box estimate suggests.
+ */
+const PERIOD_CHIP_BAND_PX = 15;
+/**
+ * Half the callout label's painted box — the plate, which is the widest thing
+ * drawn (the glyphs sit inside it) and so the thing that must clear an edge.
+ * Derived from the plate's own geometry below, not restated: `#4338` paints it
+ * at `cy - glyphHeight / 2 - CALLOUT_PLATE_PAD_Y` with height
+ * `glyphHeight + CALLOUT_PLATE_PAD_Y * 2`.
+ */
+const CALLOUT_PLATE_HALF_PX =
+  (CALLOUT_FONT_PX * CALLOUT_GLYPH_BOX_EM) / 2 + CALLOUT_PLATE_PAD_Y;
+
+/**
+ * Where the trailing value label is painted, vertically (#5581).
+ *
+ * ═══ WHY THE LABEL CANNOT SIMPLY SIT ON `cy` ═══
+ *
+ * It sat on `cy` — it is labelling the dot, and #3561 ruled out lifting it off
+ * the dot's row for a *steeply-arriving* series. That reasoning is still right
+ * and is not what this is. At the FRAME the label is not merely awkward, it is
+ * cut in half and unreadable, and a label nobody can read marks nothing.
+ *
+ * The y domain is capped at 100 (`computeWinProbYAxis` snaps with
+ * `Math.min(100, …)`, because a probability has nowhere above 100 to go), so a
+ * game that finishes at 100% puts the last data point EXACTLY on the plot's top
+ * edge. The YAxis carries `allowDataOverflow`, which makes recharts clip every
+ * Scatter layer to the plot rect. A box centred on the top edge therefore loses
+ * its upper half — by construction, on every blowout, not as a property of one
+ * specimen. Measured on `/events/15308045`: plot top `y=15`, callout `cy=15`,
+ * label box `y=8.5..21.5` — 6.5px of it cut. 0% does the same at the bottom.
+ *
+ * ═══ WHY IT IS NOT JUST A CLAMP INTO THE FRAME ═══
+ *
+ * native/024 recorded the trap when it fixed this chart's twin on iOS (#3237):
+ * *the clamp alone was WRONG* — pulling "Final" in off the trailing edge drove
+ * it into "9th" and the walk-off chart drew "9Final". A clamp that stops at the
+ * frame does not fix a collision, it relocates one. The neighbour here is the
+ * period-chip strip, which paints into the first `PERIOD_CHIP_BAND_PX` of the
+ * plot at the same x the callout occupies (`T8` and `T9` are the chips the
+ * `100%` overprinted in the filed frames). So the top floor clears the strip,
+ * not merely the edge.
+ *
+ * The strip is only consulted when the chart is drawing one. The `Start` marker
+ * is deliberately NOT counted: it is anchored `insideTopLeft` at the plot's LEFT
+ * edge while the callout is always at the right edge by construction, so it can
+ * never be the neighbour, and counting it would spend ~15px of drop on every
+ * chipless chart for nothing.
+ *
+ * ═══ WHAT THIS DOES NOT MOVE ═══
+ *
+ * The dot. It marks the data point, and on these pages the data point really is
+ * at the ceiling — a half dot on the frame is the value being honest about where
+ * it landed. Moving a marker off its own datum is the other half of what
+ * native/024 warned against, and #3561's "the label has to stay on the dot's
+ * row" says which of the two is the anchor.
+ *
+ * `cy` is returned unchanged whenever the label already fits, which is every
+ * chart whose series does not finish against the frame.
+ */
+export function calloutLabelCenterY(args: {
+  cy: number;
+  /** Plot rect, read off the renderer's own `yAxis` — never re-derived from the margin. */
+  plotTop: number;
+  plotHeight: number;
+  /** Is a period-chip strip being drawn? See the `Start` marker note above. */
+  hasPeriodChips: boolean;
+}): number {
+  const { cy, plotTop, plotHeight, hasPeriodChips } = args;
+  if (!Number.isFinite(plotTop) || !Number.isFinite(plotHeight) || plotHeight <= 0) return cy;
+
+  const ceiling = plotTop + plotHeight - CALLOUT_PLATE_HALF_PX;
+  const insideFrame = plotTop + CALLOUT_PLATE_HALF_PX;
+  const clearOfChips = insideFrame + (hasPeriodChips ? PERIOD_CHIP_BAND_PX : 0);
+
+  // A plot too short to hold the label at all has no honest answer; leave the
+  // label where the data put it rather than invent a position. native/024's
+  // "visibly wrong beats arbitrarily wrong", same call.
+  if (insideFrame > ceiling) return cy;
+  // Too short to also clear the strip: staying inside the frame is the half that
+  // must not be given up, because outside it the label is not drawn at all.
+  const floor = clearOfChips > ceiling ? insideFrame : clearOfChips;
+  return Math.min(Math.max(cy, floor), ceiling);
+}
 
 interface OddsChartProps {
   history: OddsHistoryPoint[];
@@ -1850,7 +1948,20 @@ export default function OddsChart({
               <Scatter
                 dataKey="calloutDelta"
                 fill="none"
-                shape={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
+                shape={(props: {
+                  cx?: number;
+                  cy?: number;
+                  payload?: Record<string, unknown>;
+                  /* The plot rect, straight from the renderer. recharts hands the
+                     shape its resolved `yAxis`, whose `y`/`height` ARE the plot's
+                     top and height — so #5581's clamp never re-derives the frame
+                     from `margin.top` and cannot drift from the real layout.
+                     Optional because the library's types do not promise it; if it
+                     ever stops arriving the clamp no-ops back to today's
+                     behaviour, and `chartCalloutClearsTheTopStrip5581` goes red,
+                     which is how anyone would find out. */
+                  yAxis?: { y?: number; height?: number };
+                }) => {
                   if (props.payload?.calloutDelta == null) return <g />;
                   const { cx = 0, cy = 0 } = props;
                   const fillColor = showBlendLine
@@ -1863,6 +1974,18 @@ export default function OddsChart({
                   const glyphWidth =
                     label.length * CALLOUT_FONT_PX * CALLOUT_MONO_ADVANCE_EM;
                   const glyphHeight = CALLOUT_FONT_PX * CALLOUT_GLYPH_BOX_EM;
+                  // #5581 — the label's row, which is the dot's row on every
+                  // chart that does not finish against the frame. See
+                  // `calloutLabelCenterY` for why the dot does NOT move with it.
+                  const labelY =
+                    props.yAxis?.y != null && props.yAxis?.height != null
+                      ? calloutLabelCenterY({
+                          cy,
+                          plotTop: props.yAxis.y,
+                          plotHeight: props.yAxis.height,
+                          hasPeriodChips: filteredPeriodBoundaries.length > 0,
+                        })
+                      : cy;
                   return (
                     <g>
                       {/* Outer glow */}
@@ -1905,6 +2028,17 @@ export default function OddsChart({
                           white stroke is slope-independent and needs no
                           geometry.
 
+                          #5581 NARROWS THAT LAST SENTENCE AND DOES NOT REVOKE
+                          IT. The row is still the answer wherever the label fits
+                          on it. It does not fit when the series finishes ON the
+                          frame: there the clip takes half the glyphs and the
+                          period strip takes what is left, so `labelY` above
+                          moves the row by the least that makes it readable.
+                          Note this paragraph already named the ceiling clamp
+                          such a move would need — that was a reason not to lift
+                          the label for a DIFFERENT problem, never a reason to
+                          leave the frame case cut in half.
+
                           #4338, THE THICKET: a halo is enough over ONE line and
                           not over the four that cross this label at the plot's
                           busiest end. See `CALLOUT_MONO_ADVANCE_EM` above for
@@ -1915,7 +2049,7 @@ export default function OddsChart({
                           dot, so paint order is glow → dot → plate → glyphs. */}
                       <rect
                         x={textRight - glyphWidth - CALLOUT_PLATE_PAD_X}
-                        y={cy - glyphHeight / 2 - CALLOUT_PLATE_PAD_Y}
+                        y={labelY - glyphHeight / 2 - CALLOUT_PLATE_PAD_Y}
                         width={glyphWidth + CALLOUT_PLATE_PAD_X * 2}
                         height={glyphHeight + CALLOUT_PLATE_PAD_Y * 2}
                         rx={3}
@@ -1923,7 +2057,7 @@ export default function OddsChart({
                       />
                       <text
                         x={textRight}
-                        y={cy}
+                        y={labelY}
                         textAnchor="end"
                         dominantBaseline="central"
                         fill={fillColor}
