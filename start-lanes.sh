@@ -199,15 +199,36 @@ done
 # `count_running` (lane-launch-lib.sh), not `pgrep`: pgrep excludes its own
 # ancestors, so running this script from the bus's own Terminal window would
 # report no bus and open a duplicate — precisely the case the guard is for.
+#
+# ATOMIC, 2026-09-11 (latency/332, #4956). The guard above was still
+# check-then-act, and the window is not the two lines between the read and the
+# `launch` — `launch` is an `osascript` that returns when Terminal has been TOLD,
+# so the bus is not matchable by `count_running` until some unbounded moment
+# after that. The claim therefore has to outlive the launch, not the critical
+# section; `claim_bus_start` in lane-launch-lib.sh carries the full argument,
+# including why it fails OPEN (a fleet with no bus is worse than two).
+BUS_START_LOCK="${BUS_START_LOCK:-$PIDDIR/.bus-start.lock}"
+BUS_VISIBLE_WAIT="${BUS_VISIBLE_WAIT:-20}"
+
 BUS=0
 if [ -z "${BUS_RUNNER:-}" ] || [ ! -f "$BUS_RUNNER" ]; then
   echo "SKIPPED the measurement bus — no script at ${BUS_RUNNER:-<unset>}."
   echo "  The recurring M-R set will only run when someone drives it by hand."
+elif ! claim_bus_start "$BUS_START_LOCK"; then
+  # Skip, never wait: the only thing we could be waiting for is permission to
+  # do nothing. The other invocation is already bringing a bus up.
+  echo "measurement bus: another start-lanes.sh is bringing one up"
 elif [ "$(count_running "$BUS_RUNNER")" -gt 0 ]; then
   echo "measurement bus: already running"
+  release_bus_start "$BUS_START_LOCK"
 else
   launch "$BUS_RUNNER"
   BUS=1
+  # Keep the claim until the bus can actually be SEEN by the next invocation's
+  # `count_running`. In --dry-run nothing was launched, so there is nothing to
+  # become visible and the wait would burn its whole bound for no reason.
+  [ "$DRYRUN" -eq 1 ] || hold_until_bus_visible "$BUS_RUNNER" "$BUS_VISIBLE_WAIT"
+  release_bus_start "$BUS_START_LOCK"
 fi
 
 # THE SUPERVISOR, 2026-09-10 (Fable-5, at Alex's ask). This script used to end by
