@@ -1231,3 +1231,139 @@ async def test_a_crowd_of_ghosts_refuses_the_arm_instead_of_retiring_them(
         "🔴 nothing is retired over the ceiling, and nothing is trimmed to fit"
     )
     assert session.unhooked_event_ids is None, "no market is unhooked either"
+
+
+# ── The receipt ACTOR, and what a seam is for ───────────────────────────────
+# 2026-09-12, release v4471 (19:46Z) — the first production apply of this rail,
+# minutes after it went live. It committed its
+# four category rows and retired its one ghost event, and THEN died —
+#
+#   Repair 'kalshi-series-tag-category' failed: unknown link-change actor
+#   'repair_kalshi_series_tag_category' — add it to app/utils/match_receipts.ACTORS
+#
+# — so the operator got a 500 with no census and no `restore_sql`, for writes
+# that were already durable. 5,535 tests were green on that sha.
+#
+# 🔴 THEY WERE GREEN BECAUSE OF THE SEAM. `_record_link_change` exists "so a
+# test can observe it", and every apply test above observes it by REPLACING it
+# with `_fake_receipt`. A stub accepts any actor, so no test in this file ever
+# handed the real string to the real validator, and the one test that reads the
+# receipt kwargs asserts `previous_event_id` / `new_event_id` / rows — every
+# field except the one that was wrong. A seam used to replace the collaborator
+# tests the caller against a collaborator that cannot refuse.
+#
+# The two below close that. The first keeps the stub (it must: the real call
+# opens its own session) but validates what the CALL SITE PASSES against the
+# REAL, imported `match_receipts.ACTORS` — so the stub can no longer absorb a
+# bad actor. The second proves the repair's own numbers survive a receipt that
+# fails, which is what the comment at the call site had merely asserted.
+
+
+@pytest.mark.asyncio
+async def test_the_actor_the_call_site_passes_is_one_the_real_registry_accepts(
+    monkeypatch,
+):
+    """🔴 The regression guard for the 2026-09-12 apply failure.
+
+    Not `ACTOR_ADMIN_REPAIR in ACTORS` — that asserts a fact about two
+    constants and is true no matter what this module does. This runs the arm
+    and checks the value that actually reached the receipt call, against the
+    live registry object, so reverting the call site to a string literal (or to
+    any other unregistered name) is RED.
+    """
+    from app.utils.match_receipts import ACTORS
+
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(
+        kalshi_module,
+        "_resolve_series_tag_result",
+        _TagStub({_REDBLACKS_TICKER: _result(tag="Football")}),
+    )
+    ghost = _GhostRow(
+        _GHOST_EVENT_ID, "Ottawa Redblacks", "Toronto Argonauts", "scheduled",
+        "basketball_other",
+        real_id=_REAL_EVENT_ID, real_key="americanfootball_cfl",
+    )
+    seen = []
+
+    async def _spy(market_rows, **kwargs):
+        seen.append(kwargs)
+        return len(market_rows)
+
+    monkeypatch.setattr(rail, "_record_link_change", _spy)
+
+    session = _ApplySession(
+        [_redblacks_market()], matched_ids=[_REDBLACKS_ID, _GHOST_EVENT_ID],
+        ghosts=[ghost],
+    )
+    out = await rail.repair(session, apply=True)
+
+    assert out["ghost_events_retired"] >= 1, "the arm has to have run at all"
+    assert seen, "the retire owes a receipt call — see LINKLOSS-03"
+    actor = seen[0]["actor"]
+    assert actor in ACTORS, (
+        f"🔴 the call site passes actor={actor!r}, which "
+        f"`record_link_change_receipts` REJECTS by raising. That raise lands "
+        f"AFTER the commit, so the writes are durable and the operator loses "
+        f"the census and the D51 undo for them. Registered actors: "
+        f"{sorted(ACTORS)}"
+    )
+    assert out["link_receipt_errors"] == [], (
+        "a receipt that was accepted must not be reported as a hole"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_link_receipt_cannot_cost_the_census_or_the_undo(
+    monkeypatch,
+):
+    """The call site's promise, made true instead of asserted.
+
+    The comment there used to read "it never raises" — an inherited claim about
+    a helper this module does not own, and false. What the operator must never
+    lose is the `restore_sql` for a write that already committed, so a receipt
+    failure is caught, surfaced in `link_receipt_errors`, and costs nothing
+    else.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(
+        kalshi_module,
+        "_resolve_series_tag_result",
+        _TagStub({_REDBLACKS_TICKER: _result(tag="Football")}),
+    )
+    ghost = _GhostRow(
+        _GHOST_EVENT_ID, "Ottawa Redblacks", "Toronto Argonauts", "scheduled",
+        "basketball_other",
+        real_id=_REAL_EVENT_ID, real_key="americanfootball_cfl",
+    )
+
+    async def _exploding_receipt(market_rows, **kwargs):
+        raise ValueError("unknown link-change actor 'nope'")
+
+    monkeypatch.setattr(rail, "_record_link_change", _exploding_receipt)
+
+    session = _ApplySession(
+        [_redblacks_market()], matched_ids=[_REDBLACKS_ID, _GHOST_EVENT_ID],
+        ghosts=[ghost],
+    )
+    out = await rail.repair(session, apply=True)
+
+    assert out["ghost_events_retired"] >= 1, (
+        "the retire itself committed before the receipt was attempted and must "
+        "still be reported — the census describes the database, not the audit"
+    )
+    assert "scheduled" in out["event_restore_sql"], (
+        "🔴 the D51 undo for a committed write is the one thing that may never "
+        "be lost to a failure in the thing that merely RECORDS that write"
+    )
+    assert session.market_unhooks == 1
+    errs = out["link_receipt_errors"]
+    assert len(errs) == 1, (
+        "swallowed, but never silent — the hole in the link-change audit trail "
+        "travels in the payload the operator is reading"
+    )
+    assert errs[0]["event_id"] == _GHOST_EVENT_ID
+    assert errs[0]["markets"] == [_REDBLACKS_ID]
+    assert "ValueError" in errs[0]["error"]

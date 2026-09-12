@@ -210,6 +210,13 @@ from sqlalchemy import and_, func, or_, select, text, update
 
 from app.models import Event, FuturesMarket
 
+#: The one actor name this module is allowed to receipt under. Imported at
+#: module scope, not passed as a literal at the call site, so that a rename in
+#: the closed `match_receipts.ACTORS` set breaks the IMPORT — loudly, at
+#: startup, in CI — instead of surviving every test and raising in the middle
+#: of an attended production apply that has already committed its writes.
+from app.utils.match_receipts import ACTOR_ADMIN_REPAIR
+
 #: What a retired ghost's `status` becomes. `repair_5621_phantom_ffpts_events`
 #: writes the same value for the same reason: the row is not deleted (`events`
 #: has 11 FK children, two of them NO ACTION), it is marked so no surface shows
@@ -786,6 +793,11 @@ async def repair(
     ghost_retired = 0
     ghost_drifted: list[dict[str, Any]] = []
     ghost_applied: list[dict[str, Any]] = []
+    #: Receipts that could not be written for an unlink that DID commit. Empty
+    #: is the normal state and the only acceptable one; a non-empty list means
+    #: the link-change audit trail (#2705/#2706) has a hole that someone has to
+    #: backfill, so it travels in the payload rather than living in a log line.
+    link_receipt_errors: list[dict[str, Any]] = []
     ghost_over_ceiling = len(ghost_planned) > MAX_EXPECTED_GHOST_EVENTS
 
     if apply and ghost_planned and not ghost_over_ceiling:
@@ -869,16 +881,53 @@ async def repair(
         # Called AFTER the commit, as `record_link_change_receipts` requires —
         # it re-reads each market on a fresh session to prove the link really
         # moved, so a claim published before the commit would read the pre-change
-        # row and be downgraded as un-durable. It never raises: the record must
-        # not be able to cost the thing it records.
+        # row and be downgraded as un-durable.
+        #
+        # 🔴 THE ACTOR IS THE REGISTRY'S CONSTANT, NEVER THIS MODULE'S NAME.
+        # `record_link_change_receipts` validates `actor` against the closed
+        # `match_receipts.ACTORS` set and RAISES on an unknown one. The first
+        # production apply (2026-09-12, on release v4471 / 19:46Z) passed the string
+        # "repair_kalshi_series_tag_category" and died with
+        # `unknown link-change actor` — AFTER the commit above, so page 1's
+        # four category rows and its one retired ghost event were durable while
+        # the operator got a 500 with no census and, worse, no `restore_sql`.
+        # The write survived; the only D51 undo for it did not. This module is
+        # an admin repair like its four siblings in `admin_matching.py` /
+        # `admin_events.py` / `source_intelligence.py`, so it uses the same
+        # constant they do. A string literal here cannot be checked by anything.
+        #
+        # And the comment that used to sit on this line — "it never raises" —
+        # was an inherited claim about a helper this module does not own, and
+        # it was false. It is made true HERE instead of asserted: a receipt
+        # failure is caught, counted into `link_receipt_errors`, and logged
+        # loudly, because the record must not be able to cost the thing it
+        # records. Swallowed, but never silent (gotcha #53).
         for eid, market_rows in unlinked_by_event.items():
-            await _record_link_change(
-                market_rows,
-                previous_event_id=eid,
-                new_event_id=None,
-                actor="repair_kalshi_series_tag_category",
-                phase="ghost_event_retired_5637",
-            )
+            try:
+                await _record_link_change(
+                    market_rows,
+                    previous_event_id=eid,
+                    new_event_id=None,
+                    actor=ACTOR_ADMIN_REPAIR,
+                    phase="ghost_event_retired_5637",
+                )
+            except Exception as exc:  # noqa: BLE001 — see the block above
+                link_receipt_errors.append(
+                    {
+                        "event_id": eid,
+                        "markets": [m.get("id") for m in market_rows],
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                logger.error(
+                    "#5637 ghost-event retirement: the link-change RECEIPT for "
+                    "event %s failed (%s). The unlink itself is COMMITTED and "
+                    "the census below is correct; the audit row is missing and "
+                    "is reported as `link_receipt_errors` in the payload.",
+                    eid,
+                    exc,
+                    exc_info=True,
+                )
 
         logger.warning(
             "#5637 ghost-event retirement applied: %s of %s planned events "
@@ -968,5 +1017,10 @@ async def repair(
         "event_restore_sql": event_restore_sql(
             ghost_applied if apply else ghost_planned
         ),
+        # Non-empty means an unlink COMMITTED without its link-change receipt.
+        # The repair's own numbers above are still true; the audit trail is not
+        # complete. It rides the payload so the operator reading the response
+        # sees it — a hole recorded only in a log line is a hole nobody finds.
+        "link_receipt_errors": link_receipt_errors,
         "terminal": terminal,
     }
