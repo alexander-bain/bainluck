@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { teamTextColor } from "@/lib/teamColors";
+import { teamShortNames } from "@/lib/teamShortName";
 
 // ── Negative binomial series probability (ported from backend) ──
 
@@ -88,14 +89,27 @@ export default function SeriesProbability({
   awayTeamColor,
   className,
 }: SeriesProbabilityProps) {
+  // #5671 — both ends of this bar are named by the one shared rule, the same
+  // adoption #4285 made on the two charts. The PAIR form, not two
+  // `teamShortName` calls: a collision is invisible from one side, and this
+  // component prints the two labels 25px apart, where "Town" over "Town" is
+  // exactly the symptom #4285 was filed on.
+  //
+  // It also fixes the sentence above the bar, which took the same `.pop()`
+  // separately — so "Sox lead 2-1" could disagree with the label beneath it.
+  const { home: homeShort, away: awayShort } = useMemo(
+    () => teamShortNames({ name: homeTeam }, { name: awayTeam }),
+    [homeTeam, awayTeam],
+  );
+
   const result = useMemo(() => {
     const homeSeriesProb = computeSeriesWinProb(homeWinProb, homeSeriesWins, awaySeriesWins, gamesToWin);
     const awaySeriesProb = 1 - homeSeriesProb;
-    const stateLabel = seriesStateLabel(homeSeriesWins, awaySeriesWins, gamesToWin, homeTeam.split(" ").pop());
+    const stateLabel = seriesStateLabel(homeSeriesWins, awaySeriesWins, gamesToWin, homeShort);
     const totalGames = gamesToWin * 2 - 1;
 
     return { homeSeriesProb, awaySeriesProb, stateLabel, totalGames };
-  }, [homeWinProb, homeSeriesWins, awaySeriesWins, gamesToWin, homeTeam]);
+  }, [homeWinProb, homeSeriesWins, awaySeriesWins, gamesToWin, homeShort]);
 
   const homeColor = homeTeamColor || "#16a34a";
   const awayColor = awayTeamColor || "#2563eb";
@@ -107,8 +121,6 @@ export default function SeriesProbability({
   // alone deliberately.
   const homeTextColor = teamTextColor(homeColor) || "#16a34a";
   const awayTextColor = teamTextColor(awayColor) || "#2563eb";
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
   const homeSeriesPct = Math.round(result.homeSeriesProb * 100);
   const awaySeriesPct = Math.round(result.awaySeriesProb * 100);
   const isSeriesOver = homeSeriesWins >= gamesToWin || awaySeriesWins >= gamesToWin;

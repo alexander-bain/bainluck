@@ -8,6 +8,7 @@ import {
   type PlayerData,
   type PlayerStat,
 } from "@/lib/playerPropsGrouping";
+import { teamCrestBadge } from "@/lib/teamShortName";
 import SectionErrorBoundary from "./SectionErrorBoundary";
 
 interface PlayerPropsDashboardProps {
@@ -436,8 +437,19 @@ export default function PlayerPropsDashboard({
   );
   // L2-52: source-name attribution removed (blend-only).
 
-  const homeShortCode = homeTeam?.split(" ").pop()?.slice(0, 3).toUpperCase() ?? "HOME";
-  const awayShortCode = awayTeam?.split(" ").pop()?.slice(0, 3).toUpperCase() ?? "AWAY";
+  // #5671 — a THREE-GLYPH BADGE, so this one is not the `teamShortNames` pair
+  // form the other two sites take; it is the badge ladder, which is where the
+  // #4466/#4537 history lives. `teamCrestBadge` keeps three glyphs (so these
+  // filter chips do not change width), is spelling-independent — "Paris
+  // Saint-Germain" and "Paris Saint Germain" are both live and the shipped rule
+  // gave them "SAI" and "GER" on the same afternoon — and carries
+  // `UNSHIPPABLE_BADGES`, which slicing a last word to three letters cannot.
+  //
+  // `|| "HOME"` rather than `??`: the old expression only reached its fallback
+  // on a null/undefined name, so an EMPTY one labelled the chip with an empty
+  // string. A filter button a reader cannot name is worse than a generic one.
+  const homeShortCode = teamCrestBadge(homeTeam) || "HOME";
+  const awayShortCode = teamCrestBadge(awayTeam) || "AWAY";
 
   return (
     <div>
