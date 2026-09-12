@@ -128,6 +128,24 @@ RESTORE, one command (D51(b)):
      WHERE b.id IN (SELECT snapshot_id FROM bak_5432_repair_manifest)
        AND NOT EXISTS (SELECT 1 FROM win_prob_snapshots s WHERE s.id = b.id);
 
+  The restore is only as honest as the backup, and #5595 is why the backup is
+  now checked by CONTENT rather than by id. A row staged in one session,
+  re-parented to another event, then deleted by a later pass used to restore
+  with its stale `event_id` — a snapshot hung on a game it never belonged to —
+  because every gate on that path asked only "is this id in the backup table?".
+
+  Two windows, two mechanisms, because closing one does not close the other:
+
+  * BETWEEN SESSIONS — `--backup` evicts and re-stages a drifted row before
+    copying, and `--apply` refuses while `stale_backup_rows` is non-zero.
+  * WITHIN THIS RUN — the reconciliation reads without a lock, so a row can
+    still move between the clean check and the write. The delete therefore
+    swaps on the WHOLE backed-up row: a row that no longer matches its backup
+    is DECLINED, not deleted.
+
+  Together these make the undo's guarantee unconditional: every row this
+  script removed has a byte-identical backup, or it was not removed.
+
 USAGE:
 
     python3 scripts/repair_5432_derivative_polymarket_win_prob_snapshots.py
@@ -221,6 +239,29 @@ SQL = {
     "bak_missing": f"SELECT count(*) FROM win_prob_snapshots s "
                    f"WHERE s.id = ANY(CAST(:ids AS int[])) "
                    f"AND NOT EXISTS (SELECT 1 FROM {BAK_TABLE} b WHERE b.id = s.id)",
+    # #5595 — PRESENCE BY ID IS NOT COVERAGE, AND THE GAP RESTORES ONTO THE
+    # WRONG EVENT. `bak_copy` skips any id already in the backup and
+    # `bak_missing` asks only whether the id is there, so a row backed up in an
+    # earlier session and then RE-PARENTED to another `event_id` reconciles
+    # clean. The delete's CAS covers source and producer name, not parentage,
+    # so the row is still removed — and the documented undo then reinserts the
+    # backup's stale `event_id`, hanging a snapshot on a game it never belonged
+    # to. A whole-row `IS DISTINCT FROM` is the test, not an `event_id`
+    # comparison: any column that drifted makes the backup a false record of
+    # what was deleted, and enumerating the columns here would silently stop
+    # covering a column added to `win_prob_snapshots` later.
+    "bak_stale": f"SELECT count(*) FROM win_prob_snapshots s "
+                 f"JOIN {BAK_TABLE} b ON b.id = s.id "
+                 f"WHERE s.id = ANY(CAST(:ids AS int[])) "
+                 f"AND (b.*) IS DISTINCT FROM (s.*)",
+    # The repair, not merely the alarm: drop the divergent backup rows so the
+    # ordinary `bak_copy` re-stages them from live. A row still present in
+    # `win_prob_snapshots` has not been deleted by any pass, so live is the
+    # truth the undo must be able to restore — refreshing loses nothing.
+    "bak_evict_stale": f"DELETE FROM {BAK_TABLE} b "
+                       f"USING win_prob_snapshots s "
+                       f"WHERE b.id = s.id AND s.id = ANY(CAST(:ids AS int[])) "
+                       f"AND (b.*) IS DISTINCT FROM (s.*)",
     # Asked BEFORE `bak_missing`, never instead: that statement names the backup
     # table in a subquery and raises UndefinedTable on a database that has never
     # been backed up — which is every database on the documented plan-only first
@@ -242,11 +283,29 @@ SQL = {
     # THE FORWARD WRITE, and it is a compare-and-swap on the premise. If a row's
     # recorded producer changed between the plan and the write, the delete
     # no-ops rather than removing a row this plan never judged.
-    "delete": f"DELETE FROM win_prob_snapshots "
-              f"WHERE id = ANY(CAST(:ids AS int[])) "
-              f"  AND source = 'polymarket' "
-              f"  AND game_state->>'{PRODUCER_KEY}' = ANY(CAST(:names AS text[])) "
-              f"RETURNING id, event_id",
+    # #5595, second half (CERT-2724). Refreshing the backup at `--backup` time
+    # closes the window between an EARLIER session and this pass; it does not
+    # close the window inside this one. `reconcile_backup` reads without a lock
+    # and commits nothing, so a row re-parented BETWEEN the clean reconciliation
+    # and this delete was still removed — the premise the CAS checked (source
+    # and producer name) is untouched by a re-parent — and the undo then
+    # restored the stale `event_id`.
+    #
+    # So the swap is made on the WHOLE backed-up row: delete this row only if
+    # the undo that exists for it is still a faithful copy of it. A row that
+    # moved after reconciliation no longer matches its backup, the delete
+    # declines it, and it is counted in `declined` — which this script already
+    # reports as the good case. No lock, no second pass, and the guarantee is
+    # exactly the one the undo needs: every row we removed has a byte-identical
+    # backup, or we did not remove it.
+    "delete": f"DELETE FROM win_prob_snapshots s "
+              f"WHERE s.id = ANY(CAST(:ids AS int[])) "
+              f"  AND s.source = 'polymarket' "
+              f"  AND s.game_state->>'{PRODUCER_KEY}' = ANY(CAST(:names AS text[])) "
+              f"  AND EXISTS (SELECT 1 FROM {BAK_TABLE} b "
+              f"               WHERE b.id = s.id "
+              f"                 AND (b.*) IS NOT DISTINCT FROM (s.*)) "
+              f"RETURNING s.id, s.event_id",
 }
 
 
@@ -399,27 +458,54 @@ async def manifest_count(session) -> int:
     return int((await session.execute(text(SQL["man_count"]))).scalar_one())
 
 
-async def backup(session, ids):
+async def backup(session, ids) -> int:
+    """Stage the undo, refreshing any row that drifted since an earlier pass.
+
+    Returns the number of stale backup rows evicted and re-staged (#5595), so
+    the caller can say so out loud rather than silently repairing.
+    """
     from sqlalchemy import text
 
     await session.execute(text(SQL["bak_create"]))
     await session.execute(text(SQL["bak_index"]))
+    refreshed = 0
     for chunk in _chunks(ids, 5000):
+        # Evict BEFORE copying: `bak_copy` skips ids already present, so a
+        # divergent row would otherwise never be re-staged. Ordering is the
+        # whole fix.
+        refreshed += int(
+            (
+                await session.execute(text(SQL["bak_evict_stale"]), {"ids": chunk})
+            ).rowcount
+            or 0
+        )
         await session.execute(text(SQL["bak_copy"]), {"ids": chunk})
     await session.commit()
+    return refreshed
 
 
 async def reconcile_backup(session, ids) -> dict:
+    """Does the backup cover every planned row, by CONTENT and not just by id?
+
+    Two keys, deliberately not summed: `missing` means no backup row exists,
+    `stale` means one exists and disagrees with the live row. They have
+    different causes and the second is the #5595 defect, so collapsing them
+    into one count would hide which one fired.
+    """
     from sqlalchemy import text
 
     if not await _table_exists(session, "bak_exists"):
         return {}
     missing = 0
+    stale = 0
     for chunk in _chunks(ids, 5000):
         missing += int(
             (await session.execute(text(SQL["bak_missing"]), {"ids": chunk})).scalar_one()
         )
-    return {"win_prob_snapshots": missing}
+        stale += int(
+            (await session.execute(text(SQL["bak_stale"]), {"ids": chunk})).scalar_one()
+        )
+    return {"win_prob_snapshots": missing, "stale_backup_rows": stale}
 
 
 def _chunks(seq, size):
@@ -502,8 +588,14 @@ async def run(args) -> None:
             return
 
         if args.backup:
-            await backup(s, plan_ids)
+            refreshed = await backup(s, plan_ids)
             print(f"\nbacked up {len(plan_ids)} rows into {BAK_TABLE}")
+            if refreshed:
+                print(
+                    f"  refreshed {refreshed} stale backup rows that had drifted "
+                    f"since an earlier pass (#5595) — restoring them would have "
+                    f"written a stale event_id"
+                )
 
         recon = await reconcile_backup(s, plan_ids)
         print(f"reconciliation: {recon}")
