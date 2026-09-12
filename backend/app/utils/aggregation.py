@@ -343,6 +343,44 @@ def source_observation_time(
     return min(observed, reference)
 
 
+def oldest_observation_time(
+    rows: Any, now: Optional[datetime] = None
+) -> Optional[datetime]:
+    """When the venue was last seen quoting EVERY row that moved the number.
+
+    `source_observation_time` answers the question for one row. A published
+    figure is not always one row: a devigged reading is the mean of two markets
+    that are FETCHED SEPARATELY and therefore age separately, so after a partial
+    refresh a fresh 70% primary can be averaged with a sibling last seen two
+    hours ago. Stamping that composite off the primary alone asserts the whole
+    of it was observed when its freshest half was — #4028's over-claim, one
+    level up, and the reason CERT-2745 refused the first cut of #5661.
+
+    The composite is only as fresh as its STALEST contributor, so this returns
+    the minimum. A single-row sequence gives exactly `source_observation_time`,
+    which is why callers can pass `(outcome,)` and change nothing.
+
+    ABSTAINS — returns ``None`` — when the sequence is empty or when ANY
+    contributor cannot say when it was seen. That is deliberate and it is the
+    weaker-looking half of the rule, so: `None` means "you have no observation
+    time, use your own" (the contract `source_observation_time` already has),
+    and the alternative — stamping the oldest KNOWN contributor — would quietly
+    assert an observation time for a row that has none, which is the class of
+    claim this helper exists to stop making. An unknown contributor is not an
+    old one; it is an unmeasured one, and the two must not be collapsed.
+    """
+    rows = list(rows or ())
+    if not rows:
+        return None
+    observed = []
+    for row in rows:
+        seen = source_observation_time(row, now=now)
+        if seen is None:
+            return None
+        observed.append(seen)
+    return min(observed)
+
+
 def wps_numeric_sql(source: str, column: str = "win_probability_sources") -> str:
     """SQL that reads one source's numeric probability out of the JSONB.
 

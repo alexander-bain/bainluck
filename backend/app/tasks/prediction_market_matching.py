@@ -3720,7 +3720,7 @@ async def _phase2_persist_group_reading(
     """
     from app.models.models import Event, FuturesOutcome
     from app.tasks.snapshots import _create_or_update_win_prob_snapshot
-    from app.utils.aggregation import source_observation_time, stamp_source_reading
+    from app.utils.aggregation import oldest_observation_time, stamp_source_reading
 
     refs = [ref for ref in (group or [])]
     if not refs:
@@ -3797,7 +3797,10 @@ async def _phase2_persist_group_reading(
     # the hero's decay is relative to the freshest stamp ON THE SAME EVENT, the
     # ghost's heartbeat decayed the real sportsbook instead of itself. So stamp
     # the ORIGINATING outcome's observation time — `reading.outcome`, the row the
-    # number actually came from, not the group's primary (CERT-767's lesson). A
+    # number actually came from — and on a devig, from EVERY row that moved it
+    # (CERT-2745): the published figure is the mean of two separately-fetched
+    # markets, so the oldest contributor dates it. Not the group's primary
+    # either way (CERT-767's lesson). A
     # healthy poll leaves `last_updated` at ~now, so this is inert on every live
     # source and only ever bites the dead ones. `None` = the row cannot say, and
     # then this writer's own clock is the honest answer, exactly as before.
@@ -3810,7 +3813,9 @@ async def _phase2_persist_group_reading(
         _pm_r.scalar_one_or_none(),
         anchor.source,
         round(home_prob, 4),
-        now=source_observation_time(reading.outcome),
+        now=oldest_observation_time(
+            reading.contributing_outcomes or (reading.outcome,)
+        ),
         eligibility=reading.eligibility,
     )
     await session.execute(
@@ -6187,7 +6192,10 @@ async def _poll_live_prediction_market_prices():
 
                 # Write to win_probability_sources on the event
                 from sqlalchemy import update as _sql_upd2
-                from app.utils.aggregation import stamp_source_reading as _stamp2
+                from app.utils.aggregation import (
+                    oldest_observation_time as _obs2,
+                    stamp_source_reading as _stamp2,
+                )
                 _pm_r2 = await session.execute(
                     select(Event.win_probability_sources).where(Event.id == event.id)
                 )
@@ -6195,9 +6203,41 @@ async def _poll_live_prediction_market_prices():
                 # naming the market that spoke — `reading.eligibility`, minted
                 # by the gate, for the same reason `game_state` above names
                 # `reading.market` rather than the loop's primary.
+                #
+                # #5661: and the write time is an OBSERVATION time, not this
+                # task's clock — the same kwarg, helper and reason as
+                # `_phase2_persist_group_reading` (#4028), which this call site
+                # was missed by. It is the oldest of EVERY contributing row
+                # (CERT-2745): a devigged number is the mean of two markets
+                # fetched separately, so stamping it off the speaker alone
+                # dates the composite by its fresher half — the same over-claim
+                # one level up, and reachable precisely here, where per-market
+                # fetch isolation is what makes a group mixed-age.
+                #
+                # THE OBJECTION, AND WHY IT DOES NOT HOLD. Unlike the 15-minute
+                # matcher, this task genuinely DOES re-observe the venue, so its
+                # own clock looks defensible. But it re-observes in an EARLIER
+                # phase, and this loop then runs over the re-queried live
+                # population WHOLE — including every market whose fetch was
+                # skipped, errored, or never reached because the pass threw
+                # partway (the deadlock in #5661 was failing 72 of 79 starts).
+                # For those rows this writer re-derives from a row it already
+                # had, which is exactly the case `source_observation_time`
+                # exists for. Re-observing SOMETIMES is not re-observing.
+                #
+                # Bournemouth 2-2 Brentford, LIVE at 78': the Polymarket leg
+                # froze at 13:08Z, 52 minutes before kickoff, and was served to
+                # a reader stamped 15:46:41Z at 40.5% while Gamma said 0.215.
+                # Inert on a healthy poll (`last_updated` ~ now); it only bites
+                # legs that are already dead — and it is what lets the hero's
+                # relative decay demote a frozen leg at all, which forged
+                # freshness makes impossible.
                 _pm_wps2 = _stamp2(
                     _pm_r2.scalar_one_or_none(), market.source, round(home_prob, 4),
                     eligibility=reading.eligibility,
+                    now=_obs2(
+                        reading.contributing_outcomes or (reading.outcome,)
+                    ),
                 )
                 await session.execute(
                     _sql_upd2(Event)
