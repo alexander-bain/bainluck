@@ -28,10 +28,13 @@ import pytest
 
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
+    _gate_population,
     _weighted_median,
     assess_event_divergence,
+    cap_weight_shares,
     compute_aggregate_probability,
     effective_source_weights,
+    effective_source_weights_detailed,
     parse_source_entry,
 )
 from app.utils.futures_source_merge import (
@@ -153,6 +156,215 @@ def test_a_pair_just_past_the_threshold_does_gate():
 def test_the_gate_ignores_populations_it_does_not_govern(readings):
     weights = {k: SOURCE_WEIGHTS.get(k, 0.8) for k in readings}
     assert assess_divergence(readings, weights) is None
+
+
+# ── #5542: a dead arm no longer votes on whether the gate fires ──────────────
+#
+# The gate governs events resting on exactly two sources, and a third reading —
+# however stale — used to remove the event from that population, so the
+# protection switched off exactly as the disagreement got worse.
+#
+# The repair is a POPULATION filter (`aggregation._gate_population`): arms at the
+# decay floor are dropped before the gate counts sources, BUT never below two,
+# because the anti-#240 two-source case has a floored arm in it too. These tests
+# pin all four corners of that table — the fix, the floor under it, the blend
+# being untouched, and "floored" meaning stale rather than lightly weighted.
+
+
+def _three_source_specimen():
+    """Event 15304937 as read live at 07:07Z 2026-09-12 (#5542).
+
+    `mlb` is 131 min behind the freshest, so relative decay drops it to
+    `HERO_MIN_STALENESS_MULTIPLIER`. The other two are current and 63 points
+    apart — well past the 0.40 threshold.
+    """
+    now = datetime.now(timezone.utc)
+    return _Ev(
+        {
+            "mlb": {
+                "value": 0.356,
+                "updated_at": (now - timedelta(minutes=131)).isoformat(),
+            },
+            "kalshi": {"value": 0.99, "updated_at": now.isoformat()},
+            "polymarket": {"value": 0.455, "updated_at": now.isoformat()},
+        },
+        "live",
+    )
+
+
+def test_a_third_arm_at_the_staleness_floor_no_longer_switches_the_gate_off_5542():
+    """The repair: a dead arm stops voting on whether the gate fires.
+
+    Two live sources 63 points apart are a broken pair. Before #5542 a third arm
+    we had already decided is not describing this game removed them from the
+    gate's population, and the statistic arbitrated the broken pair after all —
+    serving 0.455, the losing side of a game the home team had won 6-5.
+
+    The named assertion is the last one: the specimen no longer serves 0.455.
+    """
+    ev = _three_source_specimen()
+    keys, values, weights, floored = effective_source_weights_detailed(ev, "live")
+    assert len(keys) == 3, f"specimen must carry three real sources, got {keys}"
+
+    # NON-VACUITY: the dead arm must really be at the floor AND still carry real
+    # post-cap mass, or this specimen has stopped demonstrating the defect.
+    assert floored == {"mlb"}, f"expected mlb floored, got {floored}"
+    shares = {k: w / sum(weights) for k, w in zip(keys, weights)}
+    assert shares["mlb"] == pytest.approx(0.30, abs=0.01), (
+        f"dead arm must still hold real post-cap mass. shares={shares}"
+    )
+    widest = max(values) - min(values)
+    assert spread_exceeds(widest), (
+        f"NON-VACUITY: widest pair {widest:.3f} must be past the threshold"
+    )
+
+    # The gate now sees the two live arms as the pair they are, and fires.
+    divergence = assess_event_divergence(ev, "live")
+    assert divergence is not None, "a dead arm must not switch the gate off"
+    assert divergence.primary_source == "kalshi"
+    assert divergence.primary_value == pytest.approx(0.99)
+
+    # THE DEFECT, GONE: the served hero is no longer the losing side.
+    served = compute_aggregate_probability(ev, "live")
+    assert served != pytest.approx(0.455), (
+        "the specimen still serves 0.455 — the dead arm is still deciding the hero"
+    )
+    assert served == pytest.approx(0.99)
+
+
+def test_the_dead_arm_keeps_its_weight_in_the_blend_it_only_leaves_the_gate():
+    """#5542 narrows WHEN the gate fires, never what the median is made of.
+
+    The floored arm is dropped from the gate's population only. If the two live
+    arms agree (no divergence), the blend must still weigh all three — "we
+    stopped hearing from Kalshi" is not "Kalshi does not exist", and this is the
+    property that keeps the repair a gate change rather than a silent
+    source-deletion.
+    """
+    now = datetime.now(timezone.utc)
+    ev = _Ev(
+        {
+            "mlb": {
+                "value": 0.10,
+                "updated_at": (now - timedelta(minutes=131)).isoformat(),
+            },
+            "kalshi": {"value": 0.60, "updated_at": now.isoformat()},
+            "polymarket": {"value": 0.62, "updated_at": now.isoformat()},
+        },
+        "live",
+    )
+    keys, values, weights, floored = effective_source_weights_detailed(ev, "live")
+    assert floored == {"mlb"}
+    # NON-VACUITY: the two live arms must AGREE, or this is the gated case again.
+    assert not spread_exceeds(abs(0.62 - 0.60))
+
+    assert assess_event_divergence(ev, "live") is None
+    # All three still weigh: the median is taken over the full population.
+    assert compute_aggregate_probability(ev, "live") == pytest.approx(
+        round(_weighted_median(values, weights), 6)
+    )
+    assert len(keys) == 3 and "mlb" in keys
+
+
+def test_the_dead_arm_filter_never_takes_the_population_below_two():
+    """The floor on #5542's filter — the anti-#240 case is a floored arm too.
+
+    A two-source event whose sportsbook is frozen at its stale pregame line IS
+    the case this gate was built for, and that stale arm is at the decay floor.
+    Filtering it out would leave one reading, no pair and no gate. This pins the
+    population directly rather than only its outcome, so the property cannot pass
+    for an unrelated reason.
+    """
+    now = datetime.now(timezone.utc)
+    ev = _Ev(
+        {
+            "betting": {
+                "value": 0.65,
+                "updated_at": (now - timedelta(minutes=40)).isoformat(),
+            },
+            "kalshi": {"value": 0.05, "updated_at": now.isoformat()},
+        },
+        "live",
+    )
+    keys, values, weights, floored = effective_source_weights_detailed(ev, "live")
+    # NON-VACUITY: if `betting` is not actually floored here, this test is not
+    # exercising the floor at all and proves nothing.
+    assert floored == {"betting"}, f"expected betting floored, got {floored}"
+
+    readings, _w = _gate_population(keys, values, weights, floored)
+    assert set(readings) == {"betting", "kalshi"}, (
+        "the filter dropped a two-source event to one arm and killed the gate"
+    )
+    assert assess_event_divergence(ev, "live").primary_source == "kalshi"
+
+
+def test_a_low_base_weight_source_is_not_treated_as_dead():
+    """"Floored" means the DECAY multiplier hit the floor, not "small weight".
+
+    A source can be lightly trusted and perfectly current. If the repair keyed
+    off the post-cap weight instead of the multiplier, a fresh low-weight arm
+    would be silently disenfranchised — a different and worse bug.
+    """
+    now = datetime.now(timezone.utc)
+    ev = _Ev(
+        {
+            "betting": {"value": 0.90, "updated_at": now.isoformat()},
+            "kalshi": {"value": 0.20, "updated_at": now.isoformat()},
+            "mlb": {"value": 0.50, "updated_at": now.isoformat()},
+        },
+        "live",
+    )
+    _keys, _values, _weights, floored = effective_source_weights_detailed(ev, "live")
+    assert floored == set(), (
+        "no arm is stale here — every one carries the same fresh stamp"
+    )
+    # Three live arms, so the gate does not govern this event at all.
+    assert assess_event_divergence(ev, "live") is None
+
+
+def test_the_dead_arms_own_value_is_never_the_number_we_render():
+    """`HERO_MIN_STALENESS_MULTIPLIER`'s comment is true BY VALUE.
+
+    Half of the aggregation comment is right and worth keeping honest: a source
+    at the floor never wins the median itself. It is the other half — that it
+    therefore "cannot carry a median" — that the test above refutes, by position.
+    """
+    ev = _three_source_specimen()
+    rendered = compute_aggregate_probability(ev, "live")
+    assert rendered != pytest.approx(0.356), (
+        "the floored source's own reading was rendered; the floor is not "
+        "demoting it at all"
+    )
+
+
+def test_governing_the_widest_pair_among_three_would_discard_a_healthy_agreement():
+    """Why `!= 2` stands, rather than widening to the widest pair among N.
+
+    A healthy triple with one genuine outlier already has a widest pair past the
+    threshold. The median resists the outlier and renders the value the two
+    agreeing sources support. A widest-pair gate would fire here and render ONE
+    source alone — strictly worse. This pins the rejected design so the next
+    reader does not re-propose it.
+    """
+    keys = ["betting", "kalshi", "polymarket"]
+    values = [0.10, 0.52, 0.55]
+    # The CAPPED weights, because that is what the blend actually median-s over.
+    # With raw base weights `betting` (3.0) holds a 65% share and carries the
+    # median by value on its own — a different situation, and not the one the
+    # weight cap ships to produce.
+    weights = cap_weight_shares(
+        [SOURCE_WEIGHTS[k] for k in keys], exempt=[False] * len(keys)
+    )
+
+    widest = max(values) - min(values)
+    assert spread_exceeds(widest), (
+        f"NON-VACUITY: healthy triple's widest pair {widest:.3f} must be past "
+        "the threshold, or this proves nothing about widening"
+    )
+
+    # Today: silent, and the median lands on the agreeing pair, not the outlier.
+    assert assess_divergence(dict(zip(keys, values)), dict(zip(keys, weights))) is None
+    assert _weighted_median(values, weights) == pytest.approx(0.52)
 
 
 # ── the anti-#240 property: primary follows EFFECTIVE weight ─────────────────

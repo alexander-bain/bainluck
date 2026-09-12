@@ -83,12 +83,58 @@ Where the gate DOES change numbers is the futures merge, where the pair is
 equal-weight and the midpoint rule would otherwise average Kalshi's 57.5% with
 Polymarket's 6%.
 
-## SCOPE
+## SCOPE — TWO SOURCES, AND THE ONE CASE WHERE THAT IS WRONG (#5542)
 
-Two sources only. With three or more there IS an outlier to resist, the weight
-cap applies, and a wide spread is a minority opinion the median already handles
-— that is the mechanism working, not a bad pair. A one-source event has no
-spread. Both are left alone.
+Two sources only. A one-source event has no spread. Both are left alone.
+
+The `len(keys) != 2` below is a DELIBERATE population choice, not an
+implementation detail, and it is right for the case it was written for: with
+three or more HEALTHY sources there is a genuine outlier to resist and the
+median already resists it. Measured on the shape rather than asserted —
+
+    betting 0.10 · kalshi 0.52 · polymarket 0.55
+    widest pair 0.450 (past the 0.40 threshold) · median 0.5200
+
+— the two sources that agree carry the number and the outlier is discarded. Had
+the gate governed the WIDEST PAIR among N it would fire here and render ONE
+source alone, throwing away the agreement of the other two. That is strictly
+worse than blending, so **"widest pair among N" is REJECTED**, on that specimen.
+
+### A DEAD ARM IS NOT AN OPINION, AND NO LONGER COUNTS AS A SOURCE (fixed, #5542)
+
+That argument assumes the third reading is a live opinion. It is not always. A
+source decayed to `HERO_MIN_STALENESS_MULTIPLIER` has been told by our own
+recency rule that it is no longer describing this game — and it USED TO take the
+event out of this gate's population while STILL holding enough post-cap mass to
+decide which of the two live sources is the median.
+
+Measured on event 15304937, live at 07:07Z 2026-09-12, BEFORE the fix:
+
+    mlb 0.356 (131 min behind the freshest) · kalshi 0.99 · polymarket 0.455
+    post-cap shares   mlb 0.30 · kalshi 0.35 · polymarket 0.35
+    3 sources         -> median 0.4550, assess_divergence None   (SILENT)
+    dead arm removed  -> gate FIRES, primary kalshi 0.99
+
+The widest pair is 63 points — worse than the 51.5-point pair this module was
+written against — and the protection was off. **The protection switched off
+exactly as the data got worse.** The dead arm's own value is never the median; it
+decides WHICH source is, by position. The served hero was 0.455, the losing side,
+on a game the home team had already won 6-5.
+
+**The fix is a POPULATION filter, not a threshold or a weight change.**
+`aggregation._gate_population` drops floored arms before this gate counts its
+sources, so the two live arms above are assessed as the pair they are. Floored
+arms keep their weight in the BLEND — this narrows when the gate fires, never
+what the median is made of. The only events whose served number can move are
+those with exactly two live arms, at least one floored arm, and the two live arms
+past the threshold; a healthy triple has no floored arm and is untouched.
+
+Reach was not measurable when this shipped — at 09:26Z 2026-09-12 the live
+population held 16 events and NONE with three real sources, an overnight slate.
+(`betting_book_count` is a metadata key in the same JSONB — counting it as a
+source is how that census goes wrong, and did once before it was corrected.)
+`M-20260912-live170` re-takes it on a full slate; the fix is bounded by
+construction above, which is why it did not wait for the count.
 """
 
 from __future__ import annotations
@@ -178,6 +224,14 @@ def assess_divergence(
     Returns ``None`` — meaning "blend normally" — for any population this gate
     does not govern: fewer or more than two sources, or a spread at or below the
     threshold.
+
+    🔴 ``readings`` is the population the caller wants GOVERNED, which is not
+    always every source on the event. Since #5542 the aggregator passes only the
+    arms still speaking: a third source decayed to the staleness floor is not a
+    live opinion and must not switch this gate off. See the SCOPE section of the
+    module docstring for the specimen (event 15304937, 63 points apart and
+    silent) and for why the obvious widening — governing the widest pair among N
+    — is the wrong fix.
     """
     keys = list(readings.keys())
     if len(keys) != 2:
