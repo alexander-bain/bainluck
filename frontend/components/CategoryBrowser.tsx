@@ -6,6 +6,7 @@ import Link from "next/link";
 import { fetchFuturesBrowse, fetchFuturesCategories, formatProbability } from "@/lib/api";
 import { createSearchDebouncer } from "@/lib/searchDebounce";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+import { isRenderedMove } from "@/lib/probabilityDisplay";
 import { categoryEmoji } from "@/lib/categoryEmoji";
 import type { FuturesBrowseItem } from "@/lib/types";
 
@@ -260,11 +261,16 @@ export function CompactMarketCard({ market }: { market: FuturesBrowseItem }) {
           )}
         </div>
         <div className="flex-shrink-0 flex items-center gap-2">
-          {leader?.movement !== null && leader?.movement !== undefined && leader.movement !== 0 && (
+          {/* UX-P275. This badge is an arrow with NO magnitude, so "ask the
+              string" needs saying out loud: it inherits the same one-decimal
+              threshold as every surface that does print one, because a direction
+              claim off a rounding residue is the defect in its purest form — a
+              green ▲ on a market that did not move. */}
+          {isRenderedMove(leader?.movement) && (
             <span className={`text-[10px] font-medium ${
-              leader.movement > 0 ? "text-accent-live" : "text-accent-danger"
+              leader!.movement! > 0 ? "text-accent-live" : "text-accent-danger"
             }`}>
-              {leader.movement > 0 ? "▲" : "▼"}
+              {leader!.movement! > 0 ? "▲" : "▼"}
             </span>
           )}
           <span className="text-micro text-text-muted">
