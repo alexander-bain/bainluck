@@ -554,17 +554,14 @@ async def enrich_market_images(limit: int = 50):
     return stats
 
 
-def _load_polymarket_blurbs() -> list[dict]:
-    """Load curated Polymarket email blurbs for few-shot examples."""
-    import json
-    from pathlib import Path
-    blurb_file = Path(__file__).parent.parent / "data" / "polymarket_blurbs.json"
-    if not blurb_file.exists():
-        return []
-    try:
-        return json.loads(blurb_file.read_text())
-    except Exception:
-        return []
+#: T11-1 (#5461). A loader used to live here that read the newsletter blurb corpus under
+#: `app/data/`, and `enrich_market_hooks` pasted three of its sentences, sampled per
+#: market, into the production prompt as "Examples of great hooks". D138 forbids exactly
+#: that: the newsletters teach the SHAPE of a good description, and their prose never
+#: enters production generation. The loader is gone rather than left unused, so the path
+#: cannot be re-wired by accident; the examples and the criteria now live in
+#: `app/utils/hook_prompt.py`, are originally authored, and are the same for every market.
+#: The corpus filename is deliberately not written here — a guard scans this module for it.
 
 
 def _needs_regeneration(
@@ -579,13 +576,24 @@ def _needs_regeneration(
     - Leader probability moved >= 15pp from generation-time snapshot
     """
     from app.utils.hook_staleness import (
+        CURRENT_HOOK_POLICY_VERSION,
         HOOK_PROB_METADATA_KEY,
         STALE_PROBABILITY_DELTA,
+        hook_policy_version,
     )
 
     if not market.hook_description:
         return True
     if not market.hook_generated_at:
+        return True
+    # #5461: a hook written under a retired policy is suppressed at serve, so
+    # leaving it out of regen would leave the card wordless until something
+    # ELSE made it eligible — and the `age_hours < 24` early return below would
+    # actively hold a freshly-retired hook out of the queue for a day. Markets
+    # that hold citable evidence get their replacement on the next pass; the
+    # rest are refused by the evidence gate and stay suppressed, which is the
+    # intended outcome, not a failure of this branch.
+    if hook_policy_version(market.market_metadata) < CURRENT_HOOK_POLICY_VERSION:
         return True
     age_hours = (now - market.hook_generated_at).total_seconds() / 3600
     if market.hook_leader_at_generation and market.hook_leader_at_generation != current_leader_name:
@@ -608,9 +616,14 @@ def _needs_regeneration(
 
 async def enrich_market_hooks(limit: int = 50):
     """Generate Polymarket-style context blurbs for markets."""
-    import random
-    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.models.models import Event, FuturesMarket, FuturesOutcome
     from app.services.llm import _get_client
+    from app.utils.hook_prompt import (
+        accept_hook_output,
+        build_hook_evidence,
+        build_hook_prompt,
+        should_generate_hook,
+    )
     from sqlalchemy import case, or_
 
     client = _get_client()
@@ -619,9 +632,19 @@ async def enrich_market_hooks(limit: int = 50):
         return {"skipped": True}
 
     now = datetime.now(timezone.utc)
-    stats = {"processed": 0, "generated": 0, "regenerated": 0, "skipped": 0, "errors": 0}
-
-    blurbs = _load_polymarket_blurbs()
+    stats = {
+        "processed": 0,
+        "generated": 0,
+        "regenerated": 0,
+        "skipped": 0,
+        "errors": 0,
+        # T11-1 (#5461), CERT-2691's repair. Two fail-closed exits, counted apart from
+        # `skipped` (which means "this hook is still fresh") because they say something
+        # different and a reader of these stats should not have to guess: the first is us
+        # declining to ask, the second is the model declining to answer.
+        "skipped_no_evidence": 0,
+        "declined_no_hook": 0,
+    }
 
     async with get_task_session() as session:
         feed_categories = [
@@ -738,26 +761,58 @@ async def enrich_market_hooks(limit: int = 50):
                 elif vol >= 1_000:
                     volume_str = f"24h volume: ${vol/1_000:.0f}K"
 
-            # Pick 2-3 random Polymarket blurb examples for variety
-            examples = random.sample(blurbs, min(3, len(blurbs))) if blurbs else []
-            example_str = "\n".join(f'- "{ex["blurb"]}"' for ex in examples) if examples else (
-                '- "The son of former Brazilian president Bolsonaro has surged into the lead, buoyed by new polls showing right-wing momentum"\n'
-                '- "Cameron Young is running away with the Cadillac Championship after a tournament-record 64 in round one"\n'
-                '- "Fed Chair Powell hinted at rate cuts, sending this market surging — three of four economists now expect a cut by September"'
+            # T11-1 (#5461), CERT-2691's required repair: the dated, sourced facts this
+            # hook is allowed to state. A linked fixture's schedule is read here — one
+            # extra row per candidate, only when the market is attached to an event —
+            # because a kickoff is the thing that actually happens, while the venue's
+            # resolution date is routinely a padded latest-possible settlement (#2644).
+            event_commence_time = event_home_team = event_away_team = None
+            if getattr(market, "event_id", None):
+                # `Event.home_team` / `.away_team` are RELATIONSHIPS, not columns — selecting
+                # them compiles to `teams.id = events.home_team_id AS anon_1` and hands back
+                # booleans that read as names right up until the evidence line says
+                # "True play False on Sep 13". The name columns are `*_team_name`.
+                event_row = (
+                    await session.execute(
+                        select(
+                            Event.commence_time,
+                            Event.home_team_name,
+                            Event.away_team_name,
+                        ).where(Event.id == market.event_id)
+                    )
+                ).first()
+                if event_row:
+                    event_commence_time, event_home_team, event_away_team = event_row
+
+            evidence = build_hook_evidence(
+                market_name=market.name,
+                resolution_date=market.resolution_date,
+                # The venue's name is deliberately NOT passed: the standing rules forbid
+                # naming a venue in the sentence, so it is never put in front of the model.
+                event_commence_time=event_commence_time,
+                event_home_team=event_home_team,
+                event_away_team=event_away_team,
+                now=now,
             )
 
-            prompt = (
-                f"Write 1-2 sentences (max 250 chars) explaining WHY a reader should care about this topic RIGHT NOW. "
-                f"Write like a journalist, not a market description. Focus on what happened, what changed, or why this matters. "
-                f"NEVER include specific percentages or probability numbers — those are shown separately and go stale. "
-                f"NEVER reference prediction markets, Polymarket, Kalshi, odds, traders, betting, or gambling — write as pure news context.\n\n"
-                f"Market: {market.name}\n"
-                f"Category: {market.llm_sport_category or 'general'}\n"
-                f"Leaderboard:\n" + "\n".join(leaderboard_lines) + "\n"
-                f"{resolve_str}\n"
-                f"{volume_str}\n\n"
-                f"Examples of great hooks:\n{example_str}\n\n"
-                f"Your hook:"
+            # FAIL CLOSED, exit 1 of 2. With no dated evidence there is nothing the model
+            # could say that we could stand behind, so it is not asked. An unspent call
+            # cannot invent a development; the card keeps its deterministic copy.
+            if not should_generate_hook(evidence):
+                stats["skipped_no_evidence"] += 1
+                continue
+
+            # Originally authored examples + abstract criteria, identical for every market.
+            # The retired block sampled three newsletter sentences per market, which broke
+            # D138 and made the prompt irreproducible — no trace could say what a given
+            # hook was generated from.
+            prompt = build_hook_prompt(
+                market_name=market.name,
+                category=market.llm_sport_category or "general",
+                leaderboard_lines=leaderboard_lines,
+                resolve_str=resolve_str,
+                volume_str=volume_str,
+                evidence=evidence,
             )
 
             try:
@@ -767,7 +822,15 @@ async def enrich_market_hooks(limit: int = 50):
                     max_tokens=150,
                     temperature=0.7,
                 )
-                hook = response.choices[0].message.content.strip().strip('"').strip("'")
+                # FAIL CLOSED, exit 2 of 2: the model is allowed to answer "the evidence
+                # supports nothing worth saying", and that answer is honoured rather than
+                # written to a card.
+                hook = accept_hook_output(response.choices[0].message.content)
+                if hook is None:
+                    stats["declined_no_hook"] += 1
+                    stats["processed"] += 1
+                    processed += 1
+                    continue
                 if "%" in hook:
                     hook = re.sub(r"\d+(\.\d+)?%", "", hook).strip()
                     hook = re.sub(r"\s{2,}", " ", hook)
@@ -777,7 +840,11 @@ async def enrich_market_hooks(limit: int = 50):
                 # Store generation-time probability in market_metadata
                 # so serve-time staleness check can detect big probability
                 # swings without a schema migration.
-                from app.utils.hook_staleness import HOOK_PROB_METADATA_KEY
+                from app.utils.hook_staleness import (
+                    CURRENT_HOOK_POLICY_VERSION,
+                    HOOK_POLICY_METADATA_KEY,
+                    HOOK_PROB_METADATA_KEY,
+                )
 
                 # #219E Item 3 (BAINLUCK-SZ): a jsonb-concat gotcha left ~369
                 # rows with ARRAY metadata ([null, {"shape": {...}}]) instead of
@@ -800,6 +867,14 @@ async def enrich_market_hooks(limit: int = 50):
                     next_metadata[HOOK_PROB_METADATA_KEY] = round(leader_prob, 4)
                 elif HOOK_PROB_METADATA_KEY in next_metadata:
                     del next_metadata[HOOK_PROB_METADATA_KEY]
+                # #5461: stamp the policy this sentence was written under, in
+                # the same write as the sentence itself. Serve-time suppression
+                # reads it and retires anything older (`is_hook_stale` check 0).
+                # Unconditional — a hook that reaches this line was produced by
+                # the current evidence-gated path by construction, and the
+                # alternative (stamping only sometimes) would leave a fresh
+                # current-policy hook indistinguishable from a retired one.
+                next_metadata[HOOK_POLICY_METADATA_KEY] = CURRENT_HOOK_POLICY_VERSION
 
                 await session.execute(
                     update(FuturesMarket)
