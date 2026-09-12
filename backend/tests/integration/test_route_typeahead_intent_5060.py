@@ -23,6 +23,7 @@ the team must also match, which is why the pool came back empty in production.
 `TestTheSeedIsReal` fails loudly if the seed stops reaching the pool at all.
 """
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -71,9 +72,31 @@ def _playoff_market_row():
     )
 
 
-def _empty_result(futures_rows=()):
+def _event_row(event_id, away, home, commence_time):
+    """An events-pool stand-in carrying the fields the route reads off an event.
+
+    `commence_time` is a real aware datetime because that is what the route
+    `.isoformat()`s onto the suggestion, and the time band under test reads it
+    back off the suggestion — so a string here would test the wrong object.
+    """
+    team = lambda: SimpleNamespace(logo_url_small=None)  # noqa: E731
+    return SimpleNamespace(
+        id=event_id,
+        home_team=team(),
+        away_team=team(),
+        home_team_id=None,
+        away_team_id=None,
+        home_team_name=home,
+        away_team_name=away,
+        status="scheduled",
+        commence_time=commence_time,
+        sport=SimpleNamespace(key="basketball_nba"),
+    )
+
+
+def _empty_result(futures_rows=(), event_rows=()):
     result = MagicMock()
-    result.scalars.return_value.all.return_value = []
+    result.scalars.return_value.all.return_value = list(event_rows)
     result.scalars.return_value.first.return_value = None
     # The futures arm reads `.scalars().unique().all()`; every other scalars
     # caller reads `.scalars().all()`. Configured separately because a MagicMock
@@ -125,17 +148,29 @@ def recorder():
     return _Recorder()
 
 
-@pytest.fixture
-def seeded_db(recorder):
+def _make_seeded_db(recorder, event_rows=()):
     rows = [_team_row()]
     markets = [_playoff_market_row()]
     session = AsyncMock()
+    # The route asks for events more than once — a primary pool and, when that
+    # comes back thin, a fuzzy one. Answering BOTH with the same seed puts every
+    # event on the page twice, which is a property of this mock and not of the
+    # product: in production the fuzzy arm exists precisely because the primary
+    # found little. Served once so the page under test is a page the route could
+    # really build.
+    served = {"events": False}
 
     async def _execute(stmt, *args, **kwargs):
         sql = recorder.record(stmt)
-        is_futures = "futures_markets" in sql and "SELECT" in sql.upper()
-        result = _empty_result(markets if is_futures else ())
-        if " teams" in sql and "SELECT" in sql.upper():
+        upper = sql.upper()
+        is_futures = "futures_markets" in sql and "SELECT" in upper
+        is_events = " events" in sql and "SELECT" in upper and not is_futures
+        events_now = ()
+        if is_events and event_rows and not served["events"]:
+            served["events"] = True
+            events_now = event_rows
+        result = _empty_result(markets if is_futures else (), events_now)
+        if " teams" in sql and "SELECT" in upper:
             result.all.return_value = list(rows)
         return result
 
@@ -144,12 +179,22 @@ def seeded_db(recorder):
 
 
 @pytest.fixture
-async def client(seeded_db, monkeypatch):
+def seeded_db(recorder):
+    return _make_seeded_db(recorder)
+
+
+async def _client_for(session, monkeypatch):
+    """The `client` fixture's body, over an arbitrary seeded session.
+
+    Factored out so the time-band tests below can seed their own competing
+    event rows without duplicating the dependency-override dance — and so they
+    exercise the same app wiring as every other test in this file.
+    """
     monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
     from app.main import app
 
     async def _mock_get_db():
-        yield seeded_db
+        yield session
 
     async def _mock_get_optional_user():
         return None
@@ -163,6 +208,12 @@ async def client(seeded_db, monkeypatch):
         ) as ac:
             yield ac
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def client(seeded_db, monkeypatch):
+    async for ac in _client_for(seeded_db, monkeypatch):
+        yield ac
 
 
 TYPEAHEAD = "/api/events/typeahead"
@@ -444,3 +495,102 @@ class TestTheIntentTravels:
         assert "New England Patriots" in [
             s.get("text") for s in body["suggestions"]
         ]
+
+
+
+class TestATimeQualifierConstrainsTheAnswer:
+    """CERT-2735's required repair, `5060-TIME-QUALIFIERS-CONSTRAIN-THE-ANSWER`.
+
+    The BLOCK in its own terms: `today` treated every event as an answer without
+    reading `commence_time`. On production 2026-09-12 the `lakers` event rows
+    were, in scorer order — Oct 22 LA Lakers, Sep 12 Mercyhurst Lakers, Sep 19
+    Växjö Lakers — so promoting all three as one block led `lakers today` with a
+    game five weeks out over the one being played that day. The reader's
+    qualifier was read as a topic rather than as a constraint.
+
+    Every test here is a COMPETING-ROW test and that is the point: one seeded
+    row cannot fail, because with a single candidate every ordering is the same
+    ordering. In each fixture the row the pre-repair code would wrongly lead
+    with is seeded FIRST, so a stable partition that reads no clock leaves it on
+    top and the assertion bites.
+    """
+
+    @pytest.fixture
+    async def two_lakers_games(self, recorder, monkeypatch):
+        """The production specimen, reduced: a future game the scorer ranks
+        first, and a same-day game it ranks second."""
+        now = datetime.now(timezone.utc)
+        rows = [
+            _event_row(7001, "Warriors", "Los Angeles Lakers", now + timedelta(days=40)),
+            _event_row(7002, "Gannon", "Mercyhurst Lakers", now + timedelta(hours=3)),
+        ]
+        async for ac in _client_for(_make_seeded_db(recorder, rows), monkeypatch):
+            yield ac
+
+    @pytest.fixture
+    async def one_future_game(self, recorder, monkeypatch):
+        now = datetime.now(timezone.utc)
+        rows = [
+            _event_row(7201, "Warriors", "Los Angeles Lakers", now + timedelta(days=40)),
+        ]
+        async for ac in _client_for(_make_seeded_db(recorder, rows), monkeypatch):
+            yield ac
+
+    @pytest.fixture
+    async def two_seasons(self, recorder, monkeypatch):
+        now = datetime.now(timezone.utc)
+        rows = [
+            _event_row(7101, "Warriors", "Los Angeles Lakers", now + timedelta(days=40)),
+            _event_row(7102, "Clippers", "Los Angeles Lakers", now - timedelta(days=800)),
+        ]
+        async for ac in _client_for(_make_seeded_db(recorder, rows), monkeypatch):
+            yield ac
+
+    async def test_the_competing_rows_reach_the_page(self, two_lakers_games):
+        """Non-vacuity, first: without both events in the pool every ordering
+        assertion below would be trivially satisfiable."""
+        body = (await two_lakers_games.get(f"{TYPEAHEAD}?q=lakers")).json()
+        ids = [s.get("event_id") for s in body["suggestions"] if s.get("type") == "event"]
+        assert sorted(i for i in ids if i) == [7001, 7002], ids
+
+    async def test_today_does_not_promote_a_future_game_over_a_same_day_game_5060(
+        self, two_lakers_games
+    ):
+        body = (await two_lakers_games.get(f"{TYPEAHEAD}?q=lakers today")).json()
+        events = [s for s in body["suggestions"] if s.get("type") == "event"]
+        assert len(events) == 2, events
+        assert events[0]["event_id"] == 7002, (
+            "the game being played TODAY must lead a `today` question; got "
+            f"{[e['event_id'] for e in events]}. A future game leading here is "
+            "CERT-2735 exactly."
+        )
+
+    async def test_a_missed_time_qualifier_demotes_but_never_empties_the_page(
+        self, one_future_game
+    ):
+        """Why this is a BAND and not a filter.
+
+        Excluding rows that miss the qualifier would empty the page whenever
+        nothing is on today — and "not an empty page" is the ship this module
+        exists to deliver. With no same-day game, `lakers today` must still lead
+        with a Lakers game rather than with nothing.
+        """
+        body = (await one_future_game.get(f"{TYPEAHEAD}?q=lakers today")).json()
+        events = [s for s in body["suggestions"] if s.get("type") == "event"]
+        assert [e["event_id"] for e in events] == [7201], events
+
+    async def test_season_year_does_not_return_current_season_as_the_requested_year_5060(
+        self, two_seasons
+    ):
+        """The BLOCK's second half: `season_year` answered no row and affected
+        nothing but the echoed intent object, so a reader asking for an old
+        season was shown the current one as though it were the answer.
+        """
+        requested = (datetime.now(timezone.utc) - timedelta(days=800)).year
+        body = (await two_seasons.get(f"{TYPEAHEAD}?q=lakers {requested}")).json()
+        events = [s for s in body["suggestions"] if s.get("type") == "event"]
+        assert len(events) == 2, events
+        assert events[0]["event_id"] == 7102, (
+            f"the reader asked for {requested}; that season's game must lead, "
+            f"not the current one. Got {[e['event_id'] for e in events]}."
+        )

@@ -65,9 +65,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Final
 
 from app.utils.ladder_monotonicity import parse_threshold as _parse_threshold_word
+from app.utils.market_identity import eastern_game_date
 
 # ── The seven kinds ──────────────────────────────────────────────────────────
 #
@@ -335,6 +337,14 @@ def row_answers_intent(row: dict, kind: str) -> bool:
     is answered by what the row IS, and falling through to the name arm would
     let "Patriots to Win the Division" answer a "today" question because the two
     maps happened to share a word.
+
+    MEMBERSHIP ONLY — it does not know about TIME. `today` and `season_year`
+    carry a time qualifier that this predicate deliberately cannot express,
+    because it is a yes/no and the qualifier is a RANKING: see
+    `intent_answer_rank`, which is what `promote_answering_rows` actually uses.
+    A row that is an event answers "today" in the sense that matters here (it is
+    the right KIND of thing); whether it is on the right DAY is the next
+    question, and conflating the two is what CERT-2735 blocked.
     """
     types = _INTENT_ANSWER_TYPES.get(kind)
     if types is not None:
@@ -342,10 +352,99 @@ def row_answers_intent(row: dict, kind: str) -> bool:
     return answers_intent(row.get("text"), kind)
 
 
+#: Rank bands returned by `intent_answer_rank`, best first. Named rather than
+#: bare integers so the partition below reads as what it is.
+_RANK_QUALIFIED: Final = 0
+_RANK_ANSWERS: Final = 1
+_RANK_OTHER: Final = 2
+
+
+def intent_answer_rank(
+    row: dict, intent: SearchIntent | None, now: datetime | None = None
+) -> int:
+    """How well does ``row`` answer ``intent``? Lower is better; 2 is "not at all".
+
+    WHY THIS EXISTS (CERT-2735). `row_answers_intent` says only "this is the
+    right kind of row", and for `today` that is every event on the page. On
+    2026-09-12 the `lakers` event rows were, in scorer order:
+
+        Oct 22  Los Angeles Lakers      <- promoted first
+        Sep 12  Mercyhurst Lakers       <- the game that is ACTUALLY today
+        Sep 19  Växjö Lakers
+
+    Promoting all three as one block therefore led `lakers today` with a game
+    five weeks away, over the one being played that day. The reader's qualifier
+    was read as a topic and not as a constraint, which is a confident wrong
+    answer — the exact failure this module's own docstring warns about for
+    dropped qualifiers ("the reader asked for 2025 and is shown 2026").
+
+    A BAND, NOT A FILTER, AND THAT IS THE DESIGN DECISION. Excluding rows that
+    miss the qualifier would empty the page whenever nothing matches — and "not
+    an empty page" is the ship this module exists to deliver. `lakers today`
+    with no Lakers game today should still lead with a Lakers game, just BELOW
+    any game actually on today. So a missed qualifier demotes within the
+    answering block; it never removes.
+
+    ``now`` is injected rather than read here so the caller owns the clock and
+    the tests do not branch on it (gotcha #44). ``None`` means "no clock
+    available", and every time-qualified row then bands as a plain answer —
+    degrading to exactly the pre-CERT-2735 behaviour rather than to an empty or
+    arbitrary one.
+    """
+    if intent is None:
+        return _RANK_OTHER
+
+    # `season_year` is handled BEFORE the answering gate and is the one kind
+    # that promotes on the qualifier alone. It is in neither answer map on
+    # purpose — a bare year is a qualifier on some other question, not a
+    # question, and no row is NAMED after it — so routing it through
+    # `row_answers_intent` would band it `_RANK_OTHER` and this arm would be
+    # dead code.
+    #
+    # Deliberately NOT solved by adding `event` to `_INTENT_ANSWER_TYPES`: that
+    # would make every event answer a bare year and lift games above the team
+    # row for "lakers 2024", which is the same regression this module already
+    # records for `red sox tonight`. Only a row that genuinely matches the year
+    # moves; when none does, nothing is promoted and the page is the generic
+    # one — which is the honest answer to a question we cannot answer, and is
+    # what stops the current season being served AS the requested year.
+    if intent.kind == INTENT_SEASON_YEAR:
+        if intent.season is None:
+            return _RANK_OTHER
+        game_day = eastern_game_date(row.get("commence_time"))
+        if game_day is None or game_day.year != intent.season:
+            return _RANK_OTHER
+        return _RANK_QUALIFIED
+
+    if not row_answers_intent(row, intent.kind):
+        return _RANK_OTHER
+
+    if intent.kind == INTENT_TODAY:
+        if now is None:
+            return _RANK_ANSWERS
+        game_day = eastern_game_date(row.get("commence_time"))
+        if game_day is None:
+            return _RANK_ANSWERS
+        return (
+            _RANK_QUALIFIED
+            if game_day == eastern_game_date(now)
+            else _RANK_ANSWERS
+        )
+
+    return _RANK_ANSWERS
+
+
 def promote_answering_rows(
-    suggestions: list[dict], intent: SearchIntent | None
+    suggestions: list[dict],
+    intent: SearchIntent | None,
+    now: datetime | None = None,
 ) -> list[dict]:
     """Move the rows that ANSWER ``intent`` to the front, order otherwise intact.
+
+    ``now`` is the clock the time qualifiers are judged against. It defaults to
+    the real one so every existing caller is unchanged, and is injectable so the
+    route can pass the same instant it already stamps its rows with and the
+    tests can pin a day without branching on the clock (gotcha #44).
 
     A STABLE PARTITION, not a sort. The answering rows keep their relative order
     and so does everything else, so this can only lift the answering rows as a
@@ -362,15 +461,22 @@ def promote_answering_rows(
     """
     if intent is None or not suggestions:
         return suggestions
-    answer_ids = {
-        id(s) for s in suggestions if row_answers_intent(s, intent.kind)
-    }
-    if not answer_ids:
+    if now is None:
+        now = datetime.now(timezone.utc)
+    ranks = {id(s): intent_answer_rank(s, intent, now) for s in suggestions}
+    if all(r == _RANK_OTHER for r in ranks.values()):
         return suggestions
-    return (
-        [s for s in suggestions if id(s) in answer_ids]
-        + [s for s in suggestions if id(s) not in answer_ids]
-    )
+    # THREE stable bands, not two and not a sort (CERT-2735's repair). Within
+    # each band the scorer's order survives untouched, so this still cannot
+    # re-decide an ordering the scorer settled — it can only lift a band. The
+    # middle band is what keeps a missed time qualifier a DEMOTION rather than
+    # a removal, so the page is never emptied by a qualifier nothing satisfies.
+    return [
+        s
+        for band in (_RANK_QUALIFIED, _RANK_ANSWERS, _RANK_OTHER)
+        for s in suggestions
+        if ranks[id(s)] == band
+    ]
 
 
 def parse_intent(query: str | None) -> SearchIntent | None:
