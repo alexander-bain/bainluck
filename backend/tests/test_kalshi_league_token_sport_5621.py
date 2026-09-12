@@ -228,9 +228,11 @@ def test_the_head_to_head_win_total_series_is_futures_not_game_level():
 # comment with a function signature.
 # ─────────────────────────────────────────────────────────────────────────────
 
+import ast  # noqa: E402
 import asyncio  # noqa: E402
 import importlib.util  # noqa: E402
 import pathlib  # noqa: E402
+import re  # noqa: E402
 import types  # noqa: E402
 
 _SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
@@ -284,3 +286,173 @@ def test_the_restore_refuses_when_there_is_no_backup_to_restore_from():
     """D51's undo must not report success against a database it never backed up."""
     restore = _load("restore_5621_phantom_ffpts_events")
     assert hasattr(restore, "run")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CERT-2726 / standing notice 48 — THE TAP IS ON THE OTHER APP.
+#
+# The interlock above imports the ticker map and refuses if the prevention is
+# absent. That is only an interlock when the interpreter it inspects is the one
+# that could re-mint the rows. `poll_kalshi_markets` and
+# `match_prediction_markets` are HEAVY_TASKS, so that interpreter lives on
+# `bainluck-heavy` — released separately, and measured at v10 `87a095b4` (no
+# `kxnflffpts`) while main could already have had it. Run from `-a bainluck` the
+# check passes against the wrong app and the old poller refills the table.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PRODUCERS = {
+    "app.tasks.poll_kalshi_markets",
+    "app.tasks.match_prediction_markets",
+}
+
+
+def _runbook_and_code(name):
+    """The module docstring and the source WITHOUT it, kept apart on purpose.
+
+    Both halves get scanned below and they must not be confused. The runbook
+    lives in the docstring; the SQL lives in the code. Scanning the whole file
+    for either gives a false answer in BOTH directions, and both were observed
+    while writing these tests: the header's `heroku run:detached -a ` sits at
+    the end of a split f-string in the refusal message (so a regex over the raw
+    source captures a quote character as the app name), and the header also
+    QUOTES the `ON CONFLICT (id) DO NOTHING` it exists to warn against (so a
+    raw-source scan for the defective SQL matches the prose describing it).
+
+    Split by the docstring's SOURCE SPAN, not by string-matching its value.
+    `ast.get_docstring` returns the evaluated literal: `clean=True` dedents it,
+    and even `clean=False` has already eaten the `\` line-continuations in the
+    `heroku run:detached …` lines. Neither form is a substring of the file, so
+    `src.replace(doc, "")` silently removes nothing — and an
+    `assert doc not in code` written to catch that is vacuous precisely then,
+    because `doc` is not in `src` either. Both were observed here.
+    """
+    path = _SCRIPTS / f"{name}.py"
+    src = path.read_text()
+    node = ast.parse(src).body[0]
+    assert isinstance(node, ast.Expr) and isinstance(
+        node.value, ast.Constant
+    ), f"{name} lost its runbook"
+
+    lines = src.splitlines(keepends=True)
+    start, end = node.lineno - 1, node.end_lineno
+    runbook = "".join(lines[start:end])
+    code = "".join(lines[:start] + lines[end:])
+
+    # Not `'"""' not in code` — `_POPULATION_SQL` is legitimately triple-quoted.
+    assert runbook.lstrip().startswith('"""')
+    assert not code.lstrip().startswith('"""'), "the runbook is still in code"
+    assert len(runbook) + len(code) == len(src), "the split lost or duplicated text"
+    return runbook, code
+
+
+def test_repair_runbook_targets_the_heavy_producer_5621(monkeypatch):
+    """Every WRITE is pinned to the app the producer actually runs on.
+
+    Three things at once, because any one alone goes stale silently:
+
+    1. the producers really are heavy today — if one is ever moved back, this
+       fails and the runbook has to be re-derived rather than quietly lying;
+    2. the runbook's `heroku` invocations all name that app, so nobody copies a
+       `-a bainluck` line out of the header;
+    3. the refusal is EXERCISED on the main app's name, not asserted about, so
+       a gate that stopped firing would fail here.
+    """
+    from app.tasks import HEAVY_TASKS
+
+    assert _PRODUCERS <= set(HEAVY_TASKS), (
+        "a Kalshi producer left HEAVY_TASKS — re-derive which app the #5621 "
+        "repair must run on before changing this test"
+    )
+
+    repair = _load("repair_5621_phantom_ffpts_events")
+    assert repair.PRODUCER_APP == "bainluck-heavy"
+
+    # (2) no runbook line sends an operator at the wrong app.
+    runbook, _ = _runbook_and_code("repair_5621_phantom_ffpts_events")
+    targets = re.findall(r"heroku (?:run:detached|releases) -a (\S+)", runbook)
+    assert targets, "the runbook lost its heroku invocations"
+    assert set(targets) == {"bainluck-heavy"}
+
+    # …and so does the undo, or the restore is taken against a different deploy.
+    undo_runbook, _ = _runbook_and_code("restore_5621_phantom_ffpts_events")
+    undo_targets = re.findall(r"heroku run:detached -a (\S+)", undo_runbook)
+    assert set(undo_targets) == {"bainluck-heavy"}
+
+    # (3) the gate fires on the web app, and only a write is gated.
+    write = types.SimpleNamespace(backup=False, apply=True)
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+    assert repair.wrong_app_refusal(write) is not None
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck-heavy")
+    assert repair.wrong_app_refusal(write) is None
+
+
+def test_the_repair_refuses_to_write_from_the_web_app_even_with_the_map(monkeypatch):
+    """The end-to-end failure CERT-2726 found, driven through `run()`.
+
+    The map fix IS present here — `tap_is_off()` is True — which is exactly the
+    situation after an ordinary main release: the old interlock passed and the
+    stale heavy poller refilled the rows. `run()` must still return 2, and it
+    must do so before touching a database (no stub, deliberately: a gate that
+    slipped below the session open would fail this test rather than pass
+    against a mock).
+    """
+    repair = _load("repair_5621_phantom_ffpts_events")
+    assert repair.tap_is_off() is True
+
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+    for args in (
+        types.SimpleNamespace(backup=False, apply=True),
+        types.SimpleNamespace(backup=True, apply=False),
+    ):
+        assert asyncio.run(repair.run(args)) == 2
+
+
+def test_a_laptop_pointed_at_production_cannot_write_either(monkeypatch):
+    """An UNSET marker is the laptop case, not a free pass.
+
+    Falling through on absence would defeat the gate in the one environment
+    where the checked-out code is least likely to be what production runs.
+    """
+    repair = _load("repair_5621_phantom_ffpts_events")
+    monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+    assert repair.wrong_app_refusal(types.SimpleNamespace(backup=True, apply=False))
+
+
+def test_a_dry_run_is_not_gated_on_the_app(monkeypatch):
+    """The negative control: reading is allowed anywhere.
+
+    Without this the gate could be 'refuse always' and every test above would
+    still pass.
+    """
+    repair = _load("repair_5621_phantom_ffpts_events")
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+    dry = types.SimpleNamespace(backup=False, apply=False)
+    assert repair.wrong_app_refusal(dry) is None
+
+
+def test_the_backup_reconciliation_is_content_exact_not_id_only():
+    """`5621-BACKUP-RECONCILIATION-MUST-BE-CONTENT-EXACT`.
+
+    A backup taken before an unrelated writer moved a row must not satisfy the
+    D51 gate: the undo would put back a value that was never overwritten. Two
+    halves have to hold together — the insert REFRESHES on conflict, and the
+    gate compares the stored values rather than the presence of an id.
+    """
+    _, code = _runbook_and_code("repair_5621_phantom_ffpts_events")
+
+    assert "ON CONFLICT (id) DO NOTHING" not in code, (
+        "DO NOTHING keeps a stale backup row, which is the defect"
+    )
+    assert code.count("ON CONFLICT (id) DO UPDATE SET") == 2
+
+    # Every column the repair overwrites must be compared by the gate.
+    # Only the bind-parameter columns can be recovered from the SQL; `status`
+    # and `event_id` are written as literals ('voided', NULL) and are named
+    # here. So the set is pinned as well as partly derived: a new bind column
+    # appears on its own and fails the equality below, and a new literal one
+    # fails review against this list.
+    bound = set(re.findall(r"(\w+) = :(?:cat|sid)\b", code))
+    written = bound | {"status", "event_id"}
+    assert written == {"status", "llm_sport_category", "sport_id", "event_id"}
+    for column in written:
+        assert f"b.{column} IS NOT DISTINCT FROM" in code, column

@@ -25,6 +25,18 @@ written before that landed.
     REFUSES if `kxnflffpts` is missing from it, so the repair cannot physically
     run against a deploy that would just mint the rows back.
 
+    AND THE TAP IS ON THE OTHER APP (CERT-2726, standing notice 48).
+    `poll_kalshi_markets` and `match_prediction_markets` are both in
+    `HEAVY_TASKS`, so the code that can re-mint these rows is what is deployed
+    to `bainluck-heavy` — not the web app. Since the heavy split (2026-09-11)
+    that app is released separately and drifts: at 14:24Z on 2026-09-12 it was
+    v10 `87a095b4`, which does not carry `kxnflffpts`, while main already
+    could. `tap_is_off()` can only inspect the map of the interpreter it runs
+    in, so run from `-a bainluck` it reads the web app's fresh map, PASSES, and
+    leaves the old heavy poller free to write every phantom straight back. The
+    interlock is only an interlock on the producer's own app, so the app is
+    checked (`HEROKU_APP_NAME`) rather than assumed.
+
 ------------------------------------------------------------------------------
 WHY THIS IS NOT `DELETE FROM events WHERE id IN (...)`
 ------------------------------------------------------------------------------
@@ -93,6 +105,15 @@ D51 — BACKUP FIRST, ONE-COMMAND RESTORE
 `--apply` REFUSES until `--backup` has copied every in-scope row into
 `backup_5621_events` / `backup_5621_markets` and the reconciliation is exact.
 
+Exact means CONTENT, not merely a matching id. The first cut of this script
+inserted `ON CONFLICT (id) DO NOTHING` and then reconciled on existence, so a
+backup taken before an unrelated writer moved a row stayed stale, still
+satisfied the gate, and the documented undo would have restored the OLD value.
+That is `5621-BACKUP-RECONCILIATION-MUST-BE-CONTENT-EXACT` (and the defect
+CERT-2724 blocked on lane1b's #5595 the same morning). The insert now refreshes
+on conflict and the gate compares every backed-up column with
+`IS NOT DISTINCT FROM`, so a stale backup FAILS instead of passing.
+
     python3 scripts/restore_5621_phantom_ffpts_events.py --apply
 
 USAGE
@@ -101,8 +122,23 @@ USAGE
     python3 scripts/repair_5621_phantom_ffpts_events.py --backup
     python3 scripts/repair_5621_phantom_ffpts_events.py --apply
 
-    heroku run:detached -a bainluck \
+ORDER, and it is the whole safety argument (standing notice 48):
+
+  1. #5624 merges — the web app releases and `bainluck.com` is correct.
+  2. ALEX redeploys `bainluck-heavy` (attended) so the PRODUCER carries the
+     prevention. Prove it, do not assume it:
+         heroku releases -a bainluck-heavy      # the sha must contain #5624
+  3. only then, ON THE PRODUCER'S APP:
+
+    heroku run:detached -a bainluck-heavy \
         "python3 scripts/repair_5621_phantom_ffpts_events.py --backup"
+    heroku run:detached -a bainluck-heavy \
+        "python3 scripts/repair_5621_phantom_ffpts_events.py --apply"
+
+Steps 2 and 3 are not advice. `--backup`/`--apply` refuse unless
+`HEROKU_APP_NAME` is `bainluck-heavy`, and the map check then reads the
+producer's own code, so "the tap is off" becomes a statement about the process
+that could actually re-mint the rows. A dry run reads nothing and runs anywhere.
 
 Non-detached `heroku run` fails silently in the sandbox (gotcha #48): use
 `run:detached` and verify the side effect ~60s later.
@@ -122,6 +158,13 @@ from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY  # noqa: E402
 TICKER_PREFIX = "kxnflffpts"
 TARGET_SPORT_KEY = "americanfootball_nfl"
 TARGET_CATEGORY = "football"
+
+#: The app the PRODUCER runs on — see the header. `poll_kalshi_markets` and
+#: `match_prediction_markets` live in `HEAVY_TASKS`, and since the heavy split
+#: that means `bainluck-heavy`, released separately from the web app. Writing
+#: from anywhere else makes `tap_is_off()` a statement about the wrong
+#: interpreter.
+PRODUCER_APP = "bainluck-heavy"
 
 #: Sanity ceiling, not a floor. gotcha #53 — an empty result is a response
 #: shape, not an absence — but the inverse matters more for a WRITER: this
@@ -173,9 +216,47 @@ SELECT ph.*, r.id AS real_id, r.espn_id, r.commence_time AS real_ct
 
 
 def tap_is_off():
-    """The prevention is deployed: the prefix resolves to American football."""
+    """The prevention is deployed *in this interpreter*.
+
+    Deliberately narrow: this can only ever answer for the process it runs in.
+    `wrong_app_refusal` is what makes that process the right one.
+    """
     return KALSHI_TICKER_TO_SPORT_KEY.get(TICKER_PREFIX, "").startswith(
         "americanfootball"
+    )
+
+
+def wrong_app_refusal(args):
+    """Why this invocation may not WRITE, or None if it may.
+
+    A dry run only reads, so it runs anywhere — locally, on either app. A write
+    must happen on the producer's app, because that is the only place where
+    `tap_is_off()` is inspecting the code that could re-mint the rows.
+
+    `HEROKU_APP_NAME` is populated by the `runtime-dyno-metadata` lab, enabled
+    on both `bainluck` and `bainluck-heavy` (checked 2026-09-12). Unset means we
+    are not on a dyno at all — a laptop pointed at the production database with
+    whatever happens to be checked out, which is precisely the case this gate
+    exists to stop, so it refuses too rather than falling through.
+    """
+    if not (args.apply or args.backup):
+        return None
+
+    app = os.environ.get("HEROKU_APP_NAME")
+    if app == PRODUCER_APP:
+        return None
+
+    where = f"'{app}'" if app else "not a Heroku dyno (HEROKU_APP_NAME is unset)"
+    return (
+        f"REFUSING to write: this is {where}, not '{PRODUCER_APP}'. The Kalshi "
+        "poller and the matcher are HEAVY_TASKS, so the code that re-mints these "
+        f"rows is what is deployed to '{PRODUCER_APP}' — an app released "
+        "separately from the web app and routinely behind it (standing notice "
+        "48). Run from anywhere else and the map check above passes against the "
+        "wrong interpreter while the real producer keeps writing. Redeploy "
+        f"'{PRODUCER_APP}' onto a sha containing PR #5624 (`heroku releases -a "
+        f"{PRODUCER_APP}`), then re-run this with `heroku run:detached -a "
+        f"{PRODUCER_APP}`."
     )
 
 
@@ -191,6 +272,11 @@ async def run(args):
             "retired here would be minted again on the next Kalshi poll. Land the "
             "map fix first."
         )
+        return 2
+
+    refusal = wrong_app_refusal(args)
+    if refusal:
+        print(refusal)
         return 2
 
     async with get_task_session() as s:
@@ -255,9 +341,12 @@ async def run(args):
             )
             await s.execute(
                 text(
+                    # DO UPDATE, not DO NOTHING: a second --backup after an
+                    # unrelated writer moved a row must REFRESH it, or the undo
+                    # restores a value that was never the one we overwrote.
                     "INSERT INTO backup_5621_events (id, status) "
                     "SELECT id, status FROM events WHERE id = ANY(:ids) "
-                    "ON CONFLICT (id) DO NOTHING"
+                    "ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status"
                 ),
                 {"ids": event_ids},
             )
@@ -267,37 +356,50 @@ async def run(args):
                     "(id, llm_sport_category, sport_id, event_id) "
                     "SELECT id, llm_sport_category, sport_id, event_id "
                     "FROM futures_markets WHERE id = ANY(:ids) "
-                    "ON CONFLICT (id) DO NOTHING"
+                    "ON CONFLICT (id) DO UPDATE SET "
+                    "llm_sport_category = EXCLUDED.llm_sport_category, "
+                    "sport_id = EXCLUDED.sport_id, "
+                    "event_id = EXCLUDED.event_id"
                 ),
                 {"ids": market_ids},
             )
             await s.commit()
             print(f"  copied {len(event_ids)} events + {len(market_ids)} markets")
 
-        # The D51 gate: every in-scope row has a backup row, and something was
-        # checked. A clean pass over an EMPTY backup is not a clean pass.
-        missing_e = (
+        # The D51 gate: every in-scope row has a backup holding the values that
+        # are about to be overwritten. A clean pass over an EMPTY backup is not
+        # a clean pass — and neither is one over a STALE backup, which is why
+        # these compare CONTENT and not just the id. `IS NOT DISTINCT FROM`
+        # rather than `=` so a NULL on both sides reconciles instead of
+        # silently counting as a mismatch forever (`event_id` is nullable).
+        stale_e = (
             await s.execute(
                 text(
                     "SELECT count(*) FROM events e WHERE e.id = ANY(:ids) AND NOT "
-                    "EXISTS (SELECT 1 FROM backup_5621_events b WHERE b.id = e.id)"
+                    "EXISTS (SELECT 1 FROM backup_5621_events b WHERE b.id = e.id "
+                    "AND b.status IS NOT DISTINCT FROM e.status)"
                 ),
                 {"ids": event_ids},
             )
         ).scalar()
-        missing_m = (
+        stale_m = (
             await s.execute(
                 text(
                     "SELECT count(*) FROM futures_markets f WHERE f.id = ANY(:ids) "
                     "AND NOT EXISTS (SELECT 1 FROM backup_5621_markets b "
-                    "WHERE b.id = f.id)"
+                    "WHERE b.id = f.id "
+                    "AND b.llm_sport_category IS NOT DISTINCT FROM "
+                    "f.llm_sport_category "
+                    "AND b.sport_id IS NOT DISTINCT FROM f.sport_id "
+                    "AND b.event_id IS NOT DISTINCT FROM f.event_id)"
                 ),
                 {"ids": market_ids},
             )
         ).scalar()
+        missing_e, missing_m = stale_e, stale_m
         print(
-            f"\n=== backup reconciliation === events missing={missing_e} "
-            f"markets missing={missing_m}"
+            f"\n=== backup reconciliation (content-exact) === events "
+            f"unbacked-or-stale={stale_e} markets unbacked-or-stale={stale_m}"
         )
 
         if not args.apply:
@@ -309,7 +411,12 @@ async def run(args):
             return 0
 
         if missing_e or missing_m:
-            print("\nREFUSING --apply: backup is not exact. Run --backup first.")
+            print(
+                "\nREFUSING --apply: the backup does not match the rows about to "
+                "be written — either a row is unbacked, or it MOVED since the "
+                "backup was taken and the undo would restore a value that was "
+                "never overwritten. Re-run --backup."
+            )
             return 2
 
         sport_id = (

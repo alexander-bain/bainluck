@@ -9,8 +9,12 @@ in the backup tables and no others.
     python3 scripts/restore_5621_phantom_ffpts_events.py           # dry run
     python3 scripts/restore_5621_phantom_ffpts_events.py --apply
 
-    heroku run:detached -a bainluck \
+    heroku run:detached -a bainluck-heavy \
         "python3 scripts/restore_5621_phantom_ffpts_events.py --apply"
+
+Run it on the same app the repair ran on (`bainluck-heavy`, the app the Kalshi
+poller and the matcher actually run on — see that script's header and standing
+notice 48), so the undo is taken against the deploy that produced the state.
 
 WHY IT JOINS RATHER THAN LOOPS. The backup holds the prior value per id, so the
 restore is one UPDATE…FROM per table. A loop would restore partially if it died
