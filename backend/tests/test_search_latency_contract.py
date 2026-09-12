@@ -42,6 +42,18 @@ def _strip_comments(src: str) -> str:
 
 
 SEARCH_SRC = _source_of(events_route.search_events)
+
+#: A NOTE ON THE SPELLING `_q_identity`, for the next reader of the needles
+#: below (#5688). `/search` resolves a reader's explicit question to its SUBJECT
+#: and hands THAT to every identity-resolving step — the ILIKE pattern, the FTS
+#: rank, the trigram fallback, the teams filter — because the raw string ANDs
+#: the question word against every term and emptied the whole page ("lazio
+#: today" served 0 results while Lazio was playing). So these scans quote
+#: `_q_identity` where they used to quote `q`. Nothing they assert has changed:
+#: the contracts here are about the ACCESS PATH and the RANKING EXPRESSION, and
+#: the identifier holding the search string is no part of either. The sibling
+#: file `test_typeahead_fuzzy_index_lat_p135.py` states the same contracts over
+#: BOTH surfaces and matches the identifier generically for this reason.
 SEARCH_CODE = _strip_comments(SEARCH_SRC)
 
 # LAT-P013: the shortest term the OLD `len(term) < 3` gate would still admit. Any
@@ -189,14 +201,17 @@ def test_event_where_has_no_unindexable_fts_arm():
 def test_ts_rank_cd_still_orders_results():
     """Dropping FTS from the WHERE must not drop RANKING — ts_rank_cd still
     orders, computed only over the rows the trigram WHERE returned."""
-    assert "search_rank = _search_rank(_event_search_vector(), q)" in SEARCH_SRC
+    assert (
+        "search_rank = _search_rank(_event_search_vector(), _q_identity)"
+        in SEARCH_SRC
+    )
     assert "search_rank.desc()" in SEARCH_SRC
 
 
 def test_fuzzy_fallback_uses_the_indexable_similarity_operator():
     """`similarity(a,b) > 0.25` is the function form and cannot use
     ix_teams_name_trgm; the `%` operator can."""
-    assert 'Team.name.op("%")(q)' in SEARCH_SRC, (
+    assert 'Team.name.op("%")(_q_identity)' in SEARCH_SRC, (
         "the fuzzy fallback is back on the unindexable similarity() function form"
     )
 
@@ -206,7 +221,7 @@ def test_fuzzy_threshold_is_pinned_so_recall_is_unchanged():
     STRICTER than the 0.25 this path has always used. Without pinning it, switching
     to the operator would silently narrow "did you mean"."""
     assert "SET LOCAL pg_trgm.similarity_threshold = 0.25" in SEARCH_SRC
-    assert "func.similarity(Team.name, q) > 0.25" in SEARCH_SRC, (
+    assert "func.similarity(Team.name, _q_identity) > 0.25" in SEARCH_SRC, (
         "the exact boundary check must stay: `%` is >=, the contract is >"
     )
 

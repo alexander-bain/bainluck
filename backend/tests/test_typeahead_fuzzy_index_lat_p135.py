@@ -90,11 +90,28 @@ CONTRACT_THRESHOLD = 0.25
 #: re-deriving it would make the test depend on the data it exists to describe.
 LIVE_BAND_CASE = ("lakrs", 0.2667)
 
-_OPERATOR_FORM = 'Team.name.op("%")(q)'
+#: THE QUERY EXPRESSION, matched as a NAME rather than as the literal `q`
+#: (#5688). What these checks are about is the ACCESS PATH — the `%` operator
+#: the GIN can serve versus the `similarity()` function form it cannot — and the
+#: identifier holding the search string is no part of that contract. Keying on
+#: `q` made this guard fire on a pure rename: `/search` now resolves a reader's
+#: question to its SUBJECT and hands the filters `_q_identity`, which is the
+#: same access path spelled with a different name, and all five checks reddened
+#: on the one surface that changed while the defect they exist to catch was
+#: nowhere near it.
+#:
+#: `\w+` and not `.+`: it must still be a bare identifier, so a surface that
+#: starts interpolating an expression into the operator does NOT quietly satisfy
+#: these. The mutations that prove each check still bites are unchanged and
+#: still pass — they replace the access path, which is the thing being guarded.
+_IDENT = r"\w+"
+_OPERATOR_RE = r'Team\.name\.op\("%"\)\(' + _IDENT + r"\)"
 _PIN_PREFIX = "SET LOCAL pg_trgm.similarity_threshold"
-_BOUNDARY_RE = r"func\.similarity\(Team\.name, q\) > ([0-9.]+)"
+_BOUNDARY_RE = (
+    r"func\.similarity\(Team\.name, " + _IDENT + r"\) > ([0-9.]+)"
+)
 _PIN_RE = r"SET LOCAL pg_trgm\.similarity_threshold = ([0-9.]+)"
-_RANK_FORM = "func.similarity(Team.name, q).desc()"
+_RANK_RE = r"func\.similarity\(Team\.name, " + _IDENT + r"\)\.desc\(\)"
 
 
 def strip_comments(src: str) -> str:
@@ -122,7 +139,7 @@ def source_of(name: str) -> str:
 
 def check_uses_indexable_operator(code: str) -> str | None:
     """`similarity(a,b) > x` cannot use ix_teams_name_trgm; `%` can."""
-    if _OPERATOR_FORM not in code:
+    if re.search(_OPERATOR_RE, code) is None:
         return (
             "on the unindexable similarity() function form — a full Seq Scan of "
             "teams with three similarity() evaluations per row"
@@ -182,9 +199,10 @@ def check_pin_is_issued_before_the_query(code: str) -> str | None:
     line inside the same `if` block, with no branch between them. A substring
     test passes with the two lines swapped; this one does not.
     """
-    if _PIN_PREFIX not in code or _OPERATOR_FORM not in code:
+    operator = re.search(_OPERATOR_RE, code)
+    if _PIN_PREFIX not in code or operator is None:
         return "is missing the pin or the operator, so their order says nothing"
-    if code.index(_PIN_PREFIX) > code.index(_OPERATOR_FORM):
+    if code.index(_PIN_PREFIX) > operator.start():
         return (
             "issues the threshold pin AFTER the query it is supposed to govern — "
             "the query runs at the 0.3 default and recall narrows"
@@ -194,7 +212,7 @@ def check_pin_is_issued_before_the_query(code: str) -> str | None:
 
 def check_still_ranks_by_similarity(code: str) -> str | None:
     """Access-path-only. If the ORDER BY went too, this became a recall change."""
-    if _RANK_FORM not in code:
+    if re.search(_RANK_RE, code) is None:
         return (
             "no longer ranks candidates by similarity — the change was supposed "
             "to touch the access path and nothing else"
