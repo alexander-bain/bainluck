@@ -732,7 +732,7 @@ def upcoming_games_query(
     )
 
 
-def _folded_upcoming(events: list, sport_key: str) -> list:
+def _folded_upcoming(events: list) -> list:
     """One fixture, one card — the league-page half of #4100 (#5496).
 
     WHY THIS RAIL NEEDED ITS OWN CALL, WITH A DUPLICATE FILTER ALREADY ON IT.
@@ -766,6 +766,11 @@ def _folded_upcoming(events: list, sport_key: str) -> list:
     Gotcha #42 applied to a whole stage: the fold improves the rail, it is never
     a precondition for having one. If it raises, the unfolded rail is served —
     today's bug — rather than no page at all.
+
+    It takes NO `sport_key`, deliberately. It had one, purely to name the league
+    in its log lines, and that interpolation was a medium-severity
+    `py/log-injection` on a path parameter. A helper that cannot see the tainted
+    value cannot leak it, which is a stronger guarantee than remembering not to.
     """
     try:
         fold = fold_twin_events(events)
@@ -773,10 +778,20 @@ def _folded_upcoming(events: list, sport_key: str) -> list:
             for survivor_id, merged in fold.merged_sources.items():
                 survivor = next(e for e in fold.events if e.id == survivor_id)
                 set_committed_value(survivor, "win_probability_sources", merged)
+            # 🔴 `sport_key` IS NOT LOGGED HERE EITHER, and the first push of
+            # this branch is why the rule is written twice. It is a path
+            # parameter, so CodeQL graded the interpolation
+            # `py/log-injection`, MEDIUM security severity — a notice-32 refuse
+            # — on a line four above an `except` whose comment already said not
+            # to do it. Guarding the failure branch and not the success branch
+            # is the whole mistake.
+            #
+            # Nothing is lost: `dropped_ids` are OUR event ids, they identify
+            # the league more precisely than its key would, and they are the
+            # thing a person reading this line actually needs.
             logger.info(
-                "league page twin fold: %s collapsed %d duplicate event rows, "
+                "league page twin fold: collapsed %d duplicate event rows, "
                 "%d rows gained a venue (dropped=%s)",
-                sport_key,
                 fold.folded_count,
                 len(fold.merged_sources),
                 fold.dropped_ids[:20],
@@ -2332,7 +2347,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # competition share and the cap all have to be counting GAMES. Folding
         # after any of them would let a duplicate be counted as availability the
         # reader never gets.
-        _g_events = _folded_upcoming(_g_events, sport_key)
+        _g_events = _folded_upcoming(_g_events)
         # ── #3872: one competition may not take the whole rail ──
         #
         # Measured on production 2026-09-08, mid-US-Open: twelve Challenger

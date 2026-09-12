@@ -1,9 +1,16 @@
 """#5496 — the league page serves ONE card per fixture (#4100's fourth surface).
 
-THE DEFECT, measured on production `GET /api/leagues/baseball_mlb` at 05:0xZ
-2026-09-12: two of the eight `upcoming_games` slots were second copies of a game
-already in the list — Detroit–Colorado and NY Yankees–NY Mets, both on the next
-day's slate. 25% of the rail a reader checks before a game.
+THE DEFECT, seen on the live page (`/sport/baseball/mlb`) at 05:3xZ 2026-09-12:
+THREE fixtures in the LIVE & UPCOMING rail were each drawn twice — Tigers–
+Rockies, Yankees–Mets and Cubs–Pirates — **six of the eight slots**. Two of the
+three printed a DIFFERENT number for the same game side by side (63%/62% and
+53%/54%), which is the part that matters: not a wasted slot, but the site
+disagreeing with itself where a reader sees both at once.
+
+An API probe 25 minutes earlier found only two of them. The rail is
+clock-ordered, so live games push its contents along and the visible count
+moves; the stable population is the 114 MLB twin pairs on production. Do not
+read any single count here as a rate.
 
 WHY THE FILTER ALREADY ON THIS RAIL CANNOT HELP. `not_a_proven_duplicate`
 (#2263) reads a `provenance:duplicate-of:` tag that only a prover writes, and
@@ -20,8 +27,6 @@ one ordering is reversed.
 """
 
 from datetime import datetime, timedelta, timezone
-
-import pytest
 
 from app.models.models import Event
 from app.routes.league_futures import (
@@ -85,7 +90,7 @@ class TestTheRailFolds:
     def test_the_production_specimen_serves_one_card(self):
         """Tigers–Rockies twice in, once out."""
         rows = _pair(15310663, 15305270, "Detroit Tigers", "Colorado Rockies")
-        out = _folded_upcoming(rows, "baseball_mlb")
+        out = _folded_upcoming(rows)
         assert len(out) == 1, "two rows for one fixture must serve ONE card"
         # The ESPN-anchored row survives — the one the event page, the chart and
         # the settlement path can all reach. 148 measured this election over the
@@ -94,7 +99,7 @@ class TestTheRailFolds:
 
     def test_the_second_production_specimen_folds_too(self):
         rows = _pair(15310364, 15305271, "New York Yankees", "New York Mets")
-        assert len(_folded_upcoming(rows, "baseball_mlb")) == 1
+        assert len(_folded_upcoming(rows)) == 1
 
     def test_the_survivor_gains_the_twins_venue(self):
         """The union is the point: folding must not cost a reader a source.
@@ -103,7 +108,7 @@ class TestTheRailFolds:
         threw the other row's price away, which the blend ruling forbids.
         """
         rows = _pair(1, 2, "Detroit Tigers", "Colorado Rockies")
-        out = _folded_upcoming(rows, "baseball_mlb")
+        out = _folded_upcoming(rows)
         assert set(out[0].win_probability_sources) == {"betting", "kalshi"}
 
     def test_two_different_games_are_never_folded(self):
@@ -113,7 +118,7 @@ class TestTheRailFolds:
             _Row(1, "Detroit Tigers", "Colorado Rockies", BASE),
             _Row(2, "New York Yankees", "New York Mets", BASE),
         ]
-        assert len(_folded_upcoming(rows, "baseball_mlb")) == 2
+        assert len(_folded_upcoming(rows)) == 2
 
     def test_a_doubleheaders_second_leg_keeps_its_own_card(self):
         """MLB's back-to-back is the doubleheader and it is a REAL second game.
@@ -126,10 +131,10 @@ class TestTheRailFolds:
             _Row(1, "Cleveland Guardians", "Detroit Tigers", BASE),
             _Row(2, "Cleveland Guardians", "Detroit Tigers", BASE + timedelta(hours=8, minutes=5)),
         ]
-        assert len(_folded_upcoming(rows, "baseball_mlb")) == 2
+        assert len(_folded_upcoming(rows)) == 2
 
     def test_an_empty_rail_is_not_a_crash(self):
-        assert _folded_upcoming([], "baseball_mlb") == []
+        assert _folded_upcoming([]) == []
 
 
 class TestTheOrderingsThatMakeItCorrect:
@@ -182,7 +187,7 @@ class TestTheOrderingsThatMakeItCorrect:
                     BASE + timedelta(days=fixture),
                 )
             )
-        out = _folded_upcoming(rows, "baseball_mlb")
+        out = _folded_upcoming(rows)
         assert len(out) >= UPCOMING_GAMES_LIMIT, (
             f"an all-twin rail folded to {len(out)}, below the {UPCOMING_GAMES_LIMIT}"
             " card cap — the headroom is too small"
@@ -217,22 +222,49 @@ class TestItNeverTakesThePageDown:
             "app.routes.league_futures.fold_twin_events", _boom
         )
         rows = _pair(1, 2, "Detroit Tigers", "Colorado Rockies")
-        out = _folded_upcoming(rows, "baseball_mlb")
+        out = _folded_upcoming(rows)
         assert len(out) == 2, "a raising fold must return the rail it was given"
 
-    def test_the_failure_log_does_not_interpolate_the_path_parameter(self):
-        """`sport_key` is a path parameter; a log line carrying it is a
-        `py/log-injection` finding CodeQL grades medium-severity, and notice 32
-        refuses those. The neighbouring share fallback learned this the hard
-        way — see its comment."""
+    def test_the_helper_cannot_see_the_path_parameter_at_all(self):
+        """The guard for the class, written because the first push failed it.
+
+        `sport_key` is a path parameter, so interpolating it into a log is
+        `py/log-injection` — CodeQL graded it MEDIUM security severity on this
+        very function and notice 32 refuses that. The first version of this file
+        asserted only that the EXCEPT branch stayed clean, and the success
+        branch four lines above it leaked the value anyway.
+
+        So the assertion is no longer "does this branch avoid it". A helper that
+        never receives the tainted value cannot leak it from any branch, and
+        that is what is pinned here — signature first, then the whole source.
+        """
         import inspect
 
         from app.routes import league_futures
 
-        source = inspect.getsource(league_futures._folded_upcoming)
-        failure_branch = source.split("except Exception:")[1]
-        assert "serving the unfolded rail" in failure_branch
-        assert "sport_key" not in failure_branch.split("logger.exception")[1]
+        params = inspect.signature(league_futures._folded_upcoming).parameters
+        assert "sport_key" not in params, (
+            "the fold helper must not take the path parameter — a value it "
+            "cannot see is a value it cannot log"
+        )
+
+        # Read as CODE, not as text. The docstring and the comments name
+        # `sport_key` on purpose — they are the explanation — so a substring
+        # scan would fail on its own warning label. Only a real identifier
+        # reference counts.
+        import ast
+        import textwrap
+
+        tree = ast.parse(
+            textwrap.dedent(inspect.getsource(league_futures._folded_upcoming))
+        )
+        names = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        }
+        assert "sport_key" not in names, (
+            "the tainted path parameter is referenced as code inside the fold "
+            "helper — that is the py/log-injection shape CodeQL refuses"
+        )
 
 
 class TestTheRailIsStillWiredUp:
