@@ -22,6 +22,7 @@ import {
 import { sourceLabel } from "@/lib/sourceColors";
 import { impliedSpreadHomeMargin } from "@/lib/impliedSpreadAxis";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
+import { teamShortNames } from "@/lib/teamShortName";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import type {
   OddsHistoryPoint,
@@ -322,8 +323,17 @@ export default function ScoreDifferentialChart({
    * neither. Only the wrapping sentence is this widget's own.
    */
   // Short team names, for the axis labels and for the unit note below.
-  const homeShort = homeTeamAbbrev || homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeamAbbrev || awayTeam.split(" ").pop() || awayTeam;
+  //
+  // #4285 — the same two lines as `OddsChart.tsx`, and this file feeds them to
+  // four reader-visible places rather than one: the two axis labels, the goal
+  // margin map's PROJECTION (`leader`, below), and a whole SENTENCE in the unit
+  // note — which is how a page came to read "FC by 1.5+" and could read "FC won
+  // 2 to FC's 1". See OddsChart for the census and for why this is the PAIR
+  // form; the reasoning is identical and is not repeated here.
+  const { home: homeShort, away: awayShort } = teamShortNames(
+    { name: homeTeam, abbreviation: homeTeamAbbrev },
+    { name: awayTeam, abbreviation: awayTeamAbbrev },
+  );
 
   const unitMismatchNote = (() => {
     if (scoreboardCountsTheUnit) return null;
