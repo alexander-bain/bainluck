@@ -1434,13 +1434,55 @@ export default function EventPage({ params }: EventPageProps) {
               />
               )}
 
-              {/* Trend indicator — change since opening (live/pregame only) */}
-              {!isFinished && openingHomeProb !== null && homeProb !== null && (() => {
-                const delta = homeProb - openingHomeProb;
-                const absDelta = Math.abs(delta);
-                if (absDelta < 0.01) return null; // Less than 1% change — not meaningful
+              {/* Trend indicator — change since opening (live/pregame only).
+
+                  #5719 — POINTS, and the difference of the PRINTED levels.
+
+                  TWO DEFECTS ON ONE LINE. The caption said `%` over a move
+                  measured in percentage POINTS: Michigan 34 -> 75 is +41
+                  points, and as a percentage it is +121. It printed `+41%`
+                  directly above `Opened 34% – 66%`, which invites the reader to
+                  do the subtraction and then answers in the wrong unit. Tenth
+                  surface of the family #5623 / #5669 / #5686 walked through, and
+                  the biggest one.
+
+                  And it rounded a SECOND, DIFFERENT QUANTITY. The raw difference
+                  of the two probabilities is not the difference of the two
+                  integers this block prints around it, and the two disagree
+                  whenever their fractional parts straddle a boundary — #2951's
+                  finding, which #3051 caught on a tennis hero captioning `+3`
+                  between a printed 91 and a printed 95. Subtracting the PRINTED
+                  levels is the only definition under which `shown − caption =
+                  opened` holds on the reader's screen, which is the whole reason
+                  this hero prints all three numbers.
+
+                  🔴 SUBTRACTED HERE RATHER THAN THROUGH `renderedDuelMovePoints`,
+                  and that is not an oversight. #2951's helper re-derives BOTH
+                  pairs from probabilities. This hero's `homePct` may instead be
+                  the SERVED `current_odds.{home,away}_rendered_percent` — see
+                  `withRenderedPercents`, which takes them only on the branches
+                  that read `odds` — so re-deriving would measure the move against
+                  a level the page did not print, reintroducing the exact
+                  contradiction the helper exists to prevent. The rule is
+                  "difference of the printed levels"; `homePct` and
+                  `openingHomePct` ARE the printed levels, whichever end decided
+                  them.
+
+                  A sub-point move now prints nothing rather than `+1` between two
+                  equal numbers. That is #2951's own trade, taken deliberately:
+                  a move the levels cannot express is a move this line may not
+                  claim.
+
+                  Defect 3 on this line is NOT fixed here: the up arrow and its
+                  caption are `text-emerald-*`, which emits no CSS at all, so
+                  green-up has never rendered while red-down always has. That is
+                  #4040 — 195 dead numbered classes tree-wide — and it is a
+                  config decision with a blast radius, not this ship's. */}
+              {!isFinished && openingHomePct !== null && homePct !== null && (() => {
+                const deltaPoints = homePct - openingHomePct;
+                if (deltaPoints === 0) return null; // Did not move on screen — say nothing
                 const homeShort = heroShortNames.home;
-                const isPositive = delta > 0;
+                const isPositive = deltaPoints > 0;
                 return (
                   <div className="flex items-center gap-1.5 mt-2">
                     <svg
@@ -1456,7 +1498,14 @@ export default function EventPage({ params }: EventPageProps) {
                       )}
                     </svg>
                     <span className={`text-xs font-semibold ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
-                      {isPositive ? "+" : ""}{Math.round(delta * 100)}% {homeShort} since open
+                      {/* `pt` when it is one. Every other surface in the family
+                          prints a DECIMAL magnitude, where "1.0 pts" is right
+                          and the question never comes up; this caption prints a
+                          whole number, so the plural is visible and "+1 pts"
+                          would be the reader's first hint that a machine wrote
+                          the line. */}
+                      {isPositive ? "+" : ""}{deltaPoints}{" "}
+                      {Math.abs(deltaPoints) === 1 ? "pt" : "pts"} {homeShort} since open
                     </span>
                   </div>
                 );
