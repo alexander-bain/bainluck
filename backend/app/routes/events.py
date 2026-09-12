@@ -5299,10 +5299,35 @@ async def search_events(
     # than given competing rules. Every property the paragraph above claims is
     # preserved by the sum: still an adjustment on the page we looked at, still
     # an under-count on later pages, still floored at what is rendered.
+    #
+    # 🔴 AND THE PAGE COUNT IS NOT THE SAME QUESTION. `total_results` is a
+    # sentence about the rows ("· 16 games"); `total_pages` is a claim about
+    # what the NEXT button can still reach, and the two live in different
+    # spaces. `offset = (page - 1) * per_page` indexes the UNFOLDED result set
+    # — folding after the limit is what keeps it there (see the fold stage
+    # above) — so every page boundary is a raw-row boundary, and a page count
+    # derived from the adjusted number can retire a page that still holds rows.
+    #
+    # Measured by CERT-2694 on the first presentation of #5513: 26 raw matches,
+    # `per_page` 25, ONE twin pair on page one. The reader sees 24 rows,
+    # `total_results` reads 25, `total_pages` collapses to 1, `has_next` goes
+    # false — and the distinct 26th row at raw offset 25 becomes unreachable,
+    # because `search/page.tsx` hides the pager entirely when `total_pages`
+    # is 1. A collapse that was supposed to remove a DUPLICATE removed a GAME.
+    # #2623 shipped this arithmetic and #5513 fed a second population into it;
+    # the fix repairs both at once, and is the reason neither drop count may
+    # reach `total_pages`.
+    #
+    # An empty tail page cannot be the price of this. Both stages elect — a
+    # dominance pass keeps the dominant row, a twin fold keeps the survivor —
+    # so a group never collapses to nothing and a raw page holding N ≥ 1 rows
+    # always serves at least one. Raw reachability and non-empty pages are
+    # therefore both true, not traded off.
+    _raw_total_count = total_count
     _page_duplicates_dropped = _fixture_duplicates_dropped + _twin_duplicates_dropped
     if _page_duplicates_dropped:
         total_count = max(len(formatted_results), total_count - _page_duplicates_dropped)
-    total_pages = (total_count + per_page - 1) // per_page
+    total_pages = (_raw_total_count + per_page - 1) // per_page
 
     # Also search futures markets by name or outcome name.
     # #993 index-usage: recall is trigram-ILIKE only (name + outcome). The old

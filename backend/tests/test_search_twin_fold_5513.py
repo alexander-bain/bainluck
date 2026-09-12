@@ -354,3 +354,84 @@ async def test_a_single_row_page_is_untouched():
     payload = await _payload([_event(ESPN_ROW, espn_id="401816907")])
 
     assert _ids(payload) == [ESPN_ROW]
+
+
+@pytest.mark.asyncio
+async def test_a_folded_first_page_keeps_the_next_distinct_raw_row_reachable_5513():
+    """🔴 CERT-2694. A collapse that removes a DUPLICATE must not remove a GAME.
+
+    The arithmetic that adjusts `total_results` (#2623, extended by #5513) used
+    to feed `total_pages` as well, and the two are not the same question.
+    `offset = (page - 1) * per_page` indexes the UNFOLDED result set — folding
+    happens after the limit precisely to keep it there — so every page boundary
+    is a raw-row boundary. Subtracting the page's collapsed rows from the count
+    the pager is built on retires a page that still holds rows.
+
+    The specimen the grader reproduced: 26 raw matches, `per_page` 25, one twin
+    pair on page one. 24 rows served, `total_results` 25, and the old code then
+    reported ONE page with `has_next` false — while the distinct 26th row sits
+    at raw offset 25. `search/page.tsx` renders no pager at all when
+    `total_pages` is 1, so that row is not merely un-hinted, it is unreachable.
+    """
+    page_one = _production_pair() + [
+        _event(9000 + i, away=f"Away {i}", home=f"Home {i}",
+               commence=FIRST_PITCH + timedelta(days=i + 1))
+        for i in range(23)
+    ]
+    assert len(page_one) == 25, "the fixture must fill a whole raw page"
+
+    payload = await _payload(page_one, total=26, per_page=25)
+
+    # The fold fired: one of the 25 raw rows went.
+    assert len(payload["results"]) == 24, _ids(payload)
+
+    pag = payload["pagination"]
+    # The sentence about the rows still agrees with the rows (#2623 intact).
+    assert pag["total_results"] == 25
+
+    # And the pager still reaches the row the fold never touched.
+    assert pag["total_pages"] == 2, (
+        "the page count was derived from the adjusted total, so the 26th raw "
+        f"row is unreachable: {pag}"
+    )
+    assert pag["has_next"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_final_distinct_row_is_served_on_the_page_the_pager_offers():
+    """The other half of reachability: page two must actually hold the row.
+
+    The test above proves the NEXT button appears. This one walks through it —
+    same corpus, `page=2`, the raw tail — because a pager that offers a page the
+    route serves empty is the same defect wearing a different number.
+    """
+    tail = [_event(9999, away="Tail Away", home="Tail Home",
+                   commence=FIRST_PITCH + timedelta(days=40))]
+
+    payload = await _payload(tail, total=26, page=2, per_page=25)
+
+    assert _ids(payload) == [9999]
+    assert payload["pagination"]["has_next"] is False
+    assert payload["pagination"]["has_prev"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_unfolded_page_count_is_unchanged():
+    """CONTROL: the repair may not move the page count where nothing collapsed.
+
+    Two distinct fixtures, 26 in the corpus: two pages before and after. A fix
+    that reached for the raw count in the wrong place — or that stopped
+    adjusting `total_results` at all — is visible here and in the assertion on
+    `total_results` above, which still reads the FOLDED number.
+    """
+    rows = [
+        _event(1, away=ROYALS, home=RED_SOX, commence=FIRST_PITCH),
+        _event(2, away="Yankees", home=RED_SOX, commence=FIRST_PITCH + timedelta(days=1)),
+    ]
+
+    payload = await _payload(rows, total=26, per_page=25)
+
+    assert len(payload["results"]) == 2
+    assert payload["pagination"]["total_results"] == 26
+    assert payload["pagination"]["total_pages"] == 2
+    assert payload["pagination"]["has_next"] is True
