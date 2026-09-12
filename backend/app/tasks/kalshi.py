@@ -624,8 +624,102 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     return "other"
 
 
+#: Series ticker → the venue's sport tag (or ``None`` when it has none), for
+#: #5637. Plain strings only, never ORM rows — a module-global that outlives a
+#: session must hold data, not objects (gotcha #6). Negative results are cached
+#: too: a series with no tag is a fact worth remembering, and not caching it
+#: would re-fetch the same untagged series on every event in the beat.
+_SERIES_TAG_CACHE: dict[str, Optional[str]] = {}
+
+#: Series are a bounded catalogue (~3,800 across all Kalshi sports), and only
+#: the UNMAPPED ones ever reach the cache, so this ceiling is a safety net
+#: against a pathological ticker parse rather than an expected bound.
+_SERIES_TAG_CACHE_MAX = 5000
+
+
+async def _resolve_series_tag(service, event_ticker: Optional[str]) -> Optional[str]:
+    """The venue's sport tag for this event's series, when we need it (#5637).
+
+    Returns ``None`` — and makes NO network call — when the ticker already has
+    a mapping in `sport_keys.py`, because step 1 of the cascade wins there and
+    the tag could only agree with it or be less specific. The fetch happens
+    only for the tickers that would otherwise be name-guessed, which is the
+    population this ship is about.
+    """
+    if not event_ticker:
+        return None
+
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    if get_sport_key_from_ticker(event_ticker):
+        return None
+
+    from app.services.kalshi_api import event_series_ticker
+
+    series = event_series_ticker(event_ticker)
+    if not series:
+        return None
+    if series in _SERIES_TAG_CACHE:
+        return _SERIES_TAG_CACHE[series]
+
+    data = await service.get_series_metadata(series)
+    tags = (data or {}).get("tags") or []
+    tag = tags[0] if tags else None
+    if len(_SERIES_TAG_CACHE) < _SERIES_TAG_CACHE_MAX:
+        _SERIES_TAG_CACHE[series] = tag
+    return tag
+
+
+def series_tag_to_category(tag: Optional[str]) -> Optional[str]:
+    """Our sport category for a Kalshi SERIES tag, or ``None``.
+
+    #5637. Kalshi tags each series with its sport — measured 2026-09-12 against
+    ``/series?category=Sports``: 3,600 of 3,766 sports series (95.6%) carry
+    exactly one tag, from a small closed vocabulary (Soccer 1406, Football 557,
+    Basketball 535, Baseball 214, Tennis 141, Golf 119 …).
+
+    THIS TRANSLATION IS DERIVED, NOT WRITTEN, and that is the whole point. #5628
+    proposed closing the unmapped-ticker hole with a hand-written token
+    allowlist; censusing the live population (#5637) found four series it would
+    have missed, and the follow-up idea — derive the token from a sibling key
+    already in the ticker maps — is worse than the gap: of the five live
+    families two have no sibling at all, and ``kxargpremdivgame`` (Argentina
+    Primera División, soccer) would derive from ``kxarglnbgame`` (Argentina LNB,
+    **basketball**) and return a confident wrong answer.
+
+    So this reads the venue's own word through the maps we already maintain:
+    the tag lowercased is either one of our categories or one of our sport
+    prefixes. No per-series literals, nothing to edit when Kalshi adds a series.
+    Measured coverage of that rule over the same census: 3,394 of 3,660 tag
+    instances resolve, including ``Motorsport`` → ``motorsports`` and
+    ``Aussie Rules`` → ``aussierules`` via the prefix map.
+
+    Returns ``None`` — deliberately, so the caller falls through to today's
+    behaviour — for every tag that is not a sport we model: ``Olympics``,
+    ``Television``, ``Movies``, ``Music``, ``Trump``, ``Fed``, and genuine
+    sports with no prefix of ours (``Table Tennis``, ``Cycling``, ``Rowing``).
+    A fall-through is the safe failure here; a guess is not.
+    """
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+
+    if not tag:
+        return None
+    normalized = tag.strip().lower().replace(" ", "")
+    if not normalized:
+        return None
+    # `soccer`, `tennis`, `football` … are categories AND prefixes; `hockey` and
+    # `motorsports` are categories whose prefix differs (`icehockey`,
+    # `motorsport`), so the category check has to come first.
+    if normalized in set(SPORT_PREFIX_TO_LLM_CATEGORY.values()):
+        return normalized
+    return SPORT_PREFIX_TO_LLM_CATEGORY.get(normalized)
+
+
 def _categorize_kalshi_market(
-    market_name: str, kalshi_category: Optional[str], event_ticker: Optional[str] = None
+    market_name: str,
+    kalshi_category: Optional[str],
+    event_ticker: Optional[str] = None,
+    series_tag: Optional[str] = None,
 ) -> str:
     """
     Determine llm_sport_category for a Kalshi market using pattern matching.
@@ -633,6 +727,8 @@ def _categorize_kalshi_market(
     Classification cascade (first match wins):
     0. IPO check on market name (overrides ticker — "Kraken IPO" is economics, not hockey)
     1. Ticker prefix → sport key (authoritative — KXNHL is always hockey)
+    1b. The SERIES TAG the venue itself carries (#5637) — structural evidence,
+        so it outranks every guess made from the market's NAME below it
     2. Rules engine on market name
     3. League detection → sport inference
     4. Kalshi's own category as fallback
@@ -664,6 +760,23 @@ def _categorize_kalshi_market(
             prefix = sport_key.split("_")[0] if sport_key else None
             if prefix and prefix in SPORT_PREFIX_TO_LLM_CATEGORY:
                 return SPORT_PREFIX_TO_LLM_CATEGORY[prefix]
+
+    # 1b. The series tag (#5637). An UNMAPPED ticker used to fall straight
+    # through to the name rules below, which read club names that happen to be
+    # sport words: AFC Wimbledon → tennis, Racing Club/Avellaneda/Louisville →
+    # motorsports, "Fantasy Points" → basketball (#5621). Each wrong guess then
+    # minted a wrong-sport duplicate a reader hits by searching their own club.
+    #
+    # The venue already knows: KXEFLL1GAME is tagged `Soccer`, KXCFLTOTAL
+    # `Football`. This sits ABOVE the name rules because a tag the venue
+    # publishes is structural evidence and a name rule is a guess — notice 40's
+    # "the venue's own structure first", applied to sport rather than membership.
+    #
+    # It sits BELOW the ticker map because that map is more specific: it names
+    # the LEAGUE (`soccer_england_efl_cup`), while the tag names only the sport.
+    category_from_tag = series_tag_to_category(series_tag)
+    if category_from_tag:
+        return category_from_tag
 
     # 2. Pattern matching on market name
     result = categorize_by_rules(market_name)
@@ -1143,8 +1256,18 @@ async def _poll_kalshi_markets():
 
                     # Determine category and sport classification
                     category = _kalshi_category_to_internal(event.category)
+                    # #5637: one cached read per UNMAPPED series, so a club
+                    # whose name is a sport word ("AFC Wimbledon", "Racing
+                    # Club") is sorted by the venue's tag instead of by the
+                    # name rules. Mapped tickers make no call at all.
+                    series_tag = await _resolve_series_tag(
+                        service, event.event_ticker
+                    )
                     sport_category = _categorize_kalshi_market(
-                        event.title, event.category, event.event_ticker
+                        event.title,
+                        event.category,
+                        event.event_ticker,
+                        series_tag=series_tag,
                     )
 
                     # Skip crypto markets entirely — they consume DB space

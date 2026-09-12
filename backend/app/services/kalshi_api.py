@@ -872,6 +872,40 @@ class KalshiAPIService(BaseAPIClient):
                 return None
         return None
 
+    async def get_series_metadata(self, series_ticker: str) -> Optional[dict]:
+        """Get a single series by ticker. Returns None only for 404.
+
+        #5637. The sport tag lives on the SERIES — nothing in the `/events`
+        payload carries it — so an unmapped ticker needs this one read to be
+        classified by the venue's own word instead of by guessing at the
+        market's name. Fetched per SERIES and cached by the caller, never per
+        market: the whole sports catalogue is ~3,800 series and only the
+        handful with no ticker mapping ever reach here.
+
+        Shaped after `get_event` above, and for the same reason (gotcha #36):
+        `None` means "this series does not exist", 404 and nothing else. A 429
+        backs off and retries rather than reporting an absence.
+        """
+        import asyncio as _asyncio
+        for _attempt in range(3):
+            try:
+                response = await self.client.get(
+                    f"{self.BASE_URL}/series/{series_ticker}",
+                )
+                if response.status_code == 404:
+                    return None
+                if response.status_code == 429:
+                    await _asyncio.sleep(3 * (_attempt + 1))
+                    continue
+                response.raise_for_status()
+                return response.json().get("series")
+            except Exception:
+                if _attempt < 2:
+                    await _asyncio.sleep(1)
+                    continue
+                return None
+        return None
+
     async def get_series(
         self,
         category: Optional[str] = None,
