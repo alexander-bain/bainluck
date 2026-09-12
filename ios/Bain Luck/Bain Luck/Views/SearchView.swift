@@ -732,11 +732,14 @@ struct SearchView: View {
                 Section {
                     if sizeClass == .regular {
                         // #3723. `searchEventRow` is an `HStack` with a
-                        // `Spacer()` and a `lineLimit(1)` title, so this grid
-                        // really was close to uniform and it is not the one the
-                        // measurement caught. It is converted anyway: it held
-                        // the same idiom, and "close to uniform" is the excuse
-                        // that left the futures grid broken for two sessions.
+                        // `Spacer()` and a title that was `lineLimit(1)` then,
+                        // so this grid really was close to uniform and it is
+                        // not the one the measurement caught. It was converted
+                        // anyway: it held the same idiom, and "close to
+                        // uniform" is the excuse that left the futures grid
+                        // broken for two sessions. #5760 took that title to two
+                        // lines, so the grid is now genuinely ragged and the
+                        // masonry deal is what keeps it packed.
                         iPadCardGrid(results.results) { event in
                             Button {
                                 path.append(Route.eventDetail(id: event.id))
@@ -937,10 +940,18 @@ struct SearchView: View {
     private func searchEventRow(_ event: SearchEvent) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
+                // #5760 — two lines, the same as every other title on this
+                // screen. At one line the right arm (short name, probability,
+                // EI badge) left roughly 250pt here and "Kansas City Royals vs
+                // Boston Red Sox" does not fit in it, so a reader who searched
+                // "red sox" got a live row that never said "Red Sox" and two
+                // rows they could only tell apart by their chips. The dropped
+                // words are always the home side, which is the half a search
+                // term most often matches.
                 Text("\(event.awayTeam) vs \(event.homeTeam)")
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .lineLimit(1)
+                    .lineLimit(2)
 
                 HStack(spacing: 6) {
                     if let sport = event.sport {
