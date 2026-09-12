@@ -158,6 +158,10 @@ from app.utils.feed_reasons import (
     generate_futures_reason,
     humanize_binary_outcome_name,
     humanize_outcome_names_for_feed,
+    # The one formatter for "a probability delta, said out loud" — imported
+    # rather than re-derived so the golf card and the futures cards cannot
+    # drift into calling the same number by two different units again.
+    _points as format_movement_points,
 )
 from app.utils.external_curator_ground_truth import (
     load_external_curator_ground_truth_report_from_env,
@@ -11920,7 +11924,18 @@ async def _score_golf_tournaments(
         if leader.get("movement_24h") and abs(leader["movement_24h"]) >= 0.01:
             mv = leader["movement_24h"]
             direction = "up" if mv > 0 else "down"
-            reason += f" ({direction} {abs(round(mv * 100, 1))}% today)"
+            # POINTS, not "%". `movement_24h` is a probability DELTA in 0-1
+            # units (it falls back to `probability_change_24h`, which every
+            # writer stores as `new - previous`), so `mv * 100` is percentage
+            # POINTS. Printing it with a "%" told the reader a different, wrong
+            # number: Shane Lowry 37.8% -> 47.8% rendered as "up 10.0% today",
+            # which reads as a tenth more than he had rather than ten points.
+            # Same transform, same unit, same sentence family as the futures
+            # cards that say "Down 22.5 points since Feb 3" — so it uses their
+            # formatter rather than repeating the arithmetic, which is how the
+            # two drifted apart in the first place. #2757-adjacent, filed as a
+            # D1 clause (a) defect on a first-ten card.
+            reason += f" ({direction} {format_movement_points(mv)} today)"
 
         # Build headline
         headline = None

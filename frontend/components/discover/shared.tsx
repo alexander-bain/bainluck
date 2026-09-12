@@ -85,6 +85,14 @@ export function MovementBadge({ m, prob }: { m: number | null | undefined; prob?
   // (Mirrors the isTrending / eventConcept 0.05 floor.)
   if (prob != null && prob <= 0.05) return null;
   const up = points > 0;
+  // POINTS, and the badge now SAYS points. `movementPoints` already returned
+  // percentage points, and the `aria-label` below has always read them out
+  // correctly ("Up 10 points in the last 24h") — but the visible body printed
+  // `{pts}%`. So this badge told a screen reader the right unit and the eye the
+  // wrong one, and the eye's version understated every move: a 37.8% -> 47.8%
+  // leader rendered "10%", which reads as a tenth more than he had rather than
+  // the ten points he actually gained (#4066 / D1 clause (a)). The label was the
+  // spec sitting next to the bug the whole time.
   const pts = Math.abs(Math.round(points));
   // L2-156 Item 3 — the arrow is a 24h PROBABILITY move, not a rank change. Casual
   // fans can't tell without a label, so spell it out on hover / for screen readers.
@@ -96,7 +104,7 @@ export function MovementBadge({ m, prob }: { m: number | null | undefined; prob?
       className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}
     >
       <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">{up ? <path d="M4 1L7 5H1z" /> : <path d="M4 7L1 3h6z" />}</svg>
-      {pts}%
+      {pts} pts
     </span>
   );
 }
