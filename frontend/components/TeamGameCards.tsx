@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { SUSPENDED_LABEL } from "@/lib/eventState";
 import { isGameLive, teamLastScore, teamResult } from "@/lib/teamGames";
 import { teamShortNames } from "@/lib/teamShortName";
+import { teamTextColor } from "@/lib/teamColors";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -107,7 +108,7 @@ export function UpcomingGameCard({
           <div className="flex items-baseline justify-between">
             <span
               className="text-3xl font-mono font-bold"
-              style={{ color: teamColor || undefined }}
+              style={{ color: teamTextColor(teamColor) || undefined }}
             >
               {teamPct}%
             </span>

@@ -29,6 +29,7 @@ import {
 } from "@/lib/eventKeyStats";
 import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { teamShortNames } from "@/lib/teamShortName";
+import { teamTextColor } from "@/lib/teamColors";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -1617,7 +1618,7 @@ export default function OddsChart({
             <span
               aria-hidden="true"
               className="text-[11px] font-bold uppercase tracking-wider"
-              style={{ color: homeTeamColor || "#16a34a" }}
+              style={{ color: teamTextColor(homeTeamColor) || "#16a34a" }}
             >
               {"↑"} {homeShort}
             </span>
@@ -1637,7 +1638,7 @@ export default function OddsChart({
             <span
               aria-hidden="true"
               className="text-[11px] font-bold uppercase tracking-wider"
-              style={{ color: awayTeamColor || "#2563eb" }}
+              style={{ color: teamTextColor(awayTeamColor) || "#2563eb" }}
             >
               {"↓"} {awayShort}
             </span>

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ChampionshipPathEntry } from "@/lib/api";
 import { pathSeason } from "@/lib/teamSeason";
+import { teamTextColor } from "@/lib/teamColors";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 
 // ---------------------------------------------------------------------------
@@ -44,7 +45,7 @@ function Step({
       <div className="flex items-baseline gap-1.5">
         <span
           className="font-mono font-bold text-2xl leading-none tabular-nums"
-          style={{ color: color || undefined }}
+          style={{ color: teamTextColor(color) || undefined }}
         >
           {pct !== null ? `${pct}%` : "—"}
         </span>

@@ -3,6 +3,7 @@ import type { EventDetailResponse } from "@/lib/types";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { getSportLabel } from "@/lib/sportCategories";
 import { teamCrestBadge } from "@/lib/teamShortName";
+import { teamTextColor } from "@/lib/teamColors";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -70,6 +71,13 @@ export default async function Image({ params }: { params: { id: string } }) {
   );
   const homeColor = event?.home_team_data?.primary_color || "#2563eb";
   const awayColor = event?.away_team_data?.primary_color || "#dc2626";
+  // #5696 — the crest tiles and the split bar keep the raw brand colour as a
+  // FILL; the two big percents are TEXT and take #5165's floor. This canvas is
+  // `#f8fafc` rather than `--surface-card`'s `#FFFFFF`, so the helper's ratio
+  // is off by under 2% here — nowhere near enough to move a 3:1 standard, and
+  // a white club reads 1.02:1 against slate-50 just as invisibly.
+  const homeTextColor = teamTextColor(homeColor) || "#2563eb";
+  const awayTextColor = teamTextColor(awayColor) || "#dc2626";
   const awayTeam = event?.away_team || "Away";
   const homeTeam = event?.home_team || "Home";
   // #4839. This card is the first thing anyone sees of Bain Luck — a pasted
@@ -133,7 +141,7 @@ export default async function Image({ params }: { params: { id: string } }) {
               {teamCrestBadge(awayTeam)}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05 }}>{awayTeam}</div>
-            <div style={{ fontSize: 74, fontWeight: 950, color: awayColor }}>{awayPct}</div>
+            <div style={{ fontSize: 74, fontWeight: 950, color: awayTextColor }}>{awayPct}</div>
           </div>
 
           <div style={{ color: "#94a3b8", fontSize: 38, fontWeight: 800 }}>vs</div>
@@ -156,7 +164,7 @@ export default async function Image({ params }: { params: { id: string } }) {
               {teamCrestBadge(homeTeam)}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right" }}>{homeTeam}</div>
-            <div style={{ fontSize: 74, fontWeight: 950, color: homeColor }}>{homePct}</div>
+            <div style={{ fontSize: 74, fontWeight: 950, color: homeTextColor }}>{homePct}</div>
           </div>
         </div>
 
