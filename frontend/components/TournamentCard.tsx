@@ -337,9 +337,26 @@ function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardP
     return {
       name: lb.name,
       winProb: lb.win_prob,
-      score: lb.score,
-      hole: lb.thru && lb.thru !== "F" ? `H${lb.thru}` : (lb.thru === "F" ? "F" : undefined),
-      movement: lb.win_prob_change,
+      // 🔴 #5690 — THE TWO ARMS OF THIS FUNCTION DISAGREE ABOUT UNITS, AND ONLY
+      // ONE OF THEM USED TO SAY SO. `CardGolfer.movement` is consumed as a 0-1
+      // probability DELTA: the render multiplies it by 100 (via
+      // `formatMovementPoints`). The `golfers` arm below supplies exactly that.
+      // `GET /api/golf/leaderboard` does NOT — it serves percent-scaled numbers,
+      // `{"win_prob": 76.5, "win_prob_change": 28.2}` — so passing
+      // `win_prob_change` straight through fed a 28.2 into a `* 100` and the
+      // live Amgen Irish Open card read **"+2820.0 pts today"** beside a 76.5%
+      // hero, on production, during the final round.
+      //
+      // The tell was already in this object: `winProb` is taken raw here and
+      // `* 100`-ed on the other arm, because whoever wrote it knew the two
+      // sources disagree about probability. The same fact about `movement` one
+      // line down was missed.
+      //
+      // ⚠️ NORMALISE HERE, NOT AT THE RENDER. Dropping the `* 100` downstream
+      // would fix this arm and break the `golfers` arm, which is the COMMON
+      // path and is currently correct. The units have to be reconciled where
+      // the two sources meet.
+      movement: lb.win_prob_change == null ? null : lb.win_prob_change / 100,
     };
   }
   const g = tournament.golfers[0];
