@@ -63,11 +63,27 @@
 # confirm behaves the same way. The erase always clears it:
 #   xcrun simctl shutdown $SIM; xcrun simctl erase $SIM; xcrun simctl boot $SIM
 # Budget one erase per shoot session and read every PNG before believing it.
+#
+# ═══ WHICH BINARY GETS PHOTOGRAPHED (#5480, native/126) ═══
+#
+# `APP` was a hardcoded DerivedData path containing Xcode's per-machine hash. Two
+# ways that produced wrong evidence, both silent:
+#
+#   1. On any machine whose hash differs, `install` fails — loud, survivable.
+#   2. On THIS machine it always resolves, so a shoot taken before the build
+#      finished (or after a build that failed) photographs the PREVIOUS binary
+#      and prints `shot <path>.png` exactly as if it had worked. A LOOK is only
+#      evidence if it photographed the change, and nothing said which build it
+#      was. That is the same class as the gates script's wrong-tree green.
+#
+# So the app is resolved by glob, newest wins, and the binary's mtime is compared
+# against the newest Swift source in the tree. A source newer than the binary is
+# a REFUSAL, not a warning (`--allow-stale` overrides and says so in the output).
 set -u
-SIM=76D961F0-8575-479F-ABCE-652D8A79DBF9    # iPhone 17 — PIN IT, `booted` picks the iPad
+SIM="${NATIVE_SHOOT_SIM:-76D961F0-8575-479F-ABCE-652D8A79DBF9}"   # iPhone 17 — PIN IT, `booted` picks the iPad
 BUNDLE=com.bainluck.Bain-Luck
-APP="/Users/bain/Library/Developer/Xcode/DerivedData/Bain_Luck-bkmrwhmxuqqsseeuqlyqvcavesmz/Build/Products/Debug-iphonesimulator/Bain Luck.app"
 OUT="${NATIVE_SHOOT_OUT:-/Users/bain/bainluck-dev/native/artifacts-native-020}"
+DERIVED="${NATIVE_SHOOT_DERIVED:-$HOME/Library/Developer/Xcode/DerivedData}"
 
 LABEL="${1:?label required, e.g. discover / search-usopen}"
 ROUTE="${2:-}"
@@ -76,11 +92,15 @@ COUNTS=""
 COOLED=""
 SCROLL=""
 EXPAND=""
+ALLOW_STALE=""
+RESOLVE_ONLY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --counts) COUNTS=1 ;;
     --cooled) COOLED=1 ;;
     --expand) EXPAND=1 ;;
+    --allow-stale) ALLOW_STALE=1 ;;
+    --resolve-only) RESOLVE_ONLY=1 ;;
     --scroll)
       SCROLL="${2:?--scroll needs a point count, e.g. --scroll 1600}"
       shift
@@ -89,6 +109,70 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# ── RESOLVE THE APP, NEWEST WINS, AND SAY WHICH ──────────────────────────────
+NCAND=0
+if [ -n "${NATIVE_SHOOT_APP:-}" ]; then
+  APP="$NATIVE_SHOOT_APP"
+else
+  APP=""
+  # An ARRAY, not `ls` in a command substitution: the bundle is called
+  # "Bain Luck.app" and word-splitting tears it in half, which resolves to
+  # nothing and reads exactly like "you have not built yet".
+  shopt -s nullglob
+  CANDS=( "$DERIVED"/Bain_Luck-*/Build/Products/Debug-iphonesimulator/"Bain Luck.app" )
+  shopt -u nullglob
+  NCAND=${#CANDS[@]}
+  newest=0
+  # `${CANDS[@]+"${CANDS[@]}"}`, not `"${CANDS[@]}"`. macOS ships bash 3.2.57,
+  # where expanding an EMPTY array under `set -u` is an unbound-variable error
+  # and the script dies at exit 127 — gotcha #124's "the gate never ran", in
+  # place of the "NO BUILT APP FOUND — build first" message written right below.
+  for cand in ${CANDS[@]+"${CANDS[@]}"}; do
+    m=$(stat -f %m "$cand/Bain Luck" 2>/dev/null || stat -f %m "$cand" 2>/dev/null || echo 0)
+    if [ "$m" -gt "$newest" ]; then newest=$m; APP="$cand"; fi
+  done
+fi
+if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+  echo "NO BUILT APP FOUND — build first." >&2
+  echo "  looked under: $DERIVED/Bain_Luck-*/Build/Products/Debug-iphonesimulator/" >&2
+  echo "  (override with NATIVE_SHOOT_APP=/path/to/Bain Luck.app)" >&2
+  exit 1
+fi
+BIN="$APP/Bain Luck"
+APP_MTIME=$( [ -f "$BIN" ] && stat -f %m "$BIN" 2>/dev/null || stat -f %m "$APP" 2>/dev/null || echo 0 )
+echo "  app: $APP"
+echo "  built: $( [ "$APP_MTIME" -gt 0 ] && date -r "$APP_MTIME" '+%Y-%m-%d %H:%M:%S' || echo UNKNOWN )"
+# 28 DerivedData directories existed for this project on 2026-09-12. Picking the
+# newest is the right rule, but it is a guess among many and says so.
+[ "$NCAND" -gt 1 ] && echo "  (newest of $NCAND built copies under DerivedData)"
+
+# ── IS IT OLDER THAN THE SOURCE? ─────────────────────────────────────────────
+# The shoot is evidence about a change; a binary predating that change is not
+# evidence, it is the previous shot taken again.
+SRC_ROOT="$( ( cd "$(dirname "${BASH_SOURCE[0]}")" && git rev-parse --show-toplevel 2>/dev/null ) || true )"
+[ -n "$SRC_ROOT" ] || SRC_ROOT="$(pwd)"
+NEWEST_SRC=""
+NEWEST_SRC_MTIME=0
+if [ -d "$SRC_ROOT/ios" ]; then
+  while IFS= read -r f; do
+    m=$(stat -f %m "$f" 2>/dev/null || echo 0)
+    if [ "$m" -gt "$NEWEST_SRC_MTIME" ]; then NEWEST_SRC_MTIME=$m; NEWEST_SRC="$f"; fi
+  done < <(find "$SRC_ROOT/ios" -name '*.swift' -type f 2>/dev/null)
+fi
+if [ "$NEWEST_SRC_MTIME" -gt "$APP_MTIME" ] && [ "$APP_MTIME" -gt 0 ]; then
+  echo "  STALE BINARY — a Swift source is NEWER than the app you are about to photograph."
+  echo "    newest source: $(basename "$NEWEST_SRC")  ($(date -r "$NEWEST_SRC_MTIME" '+%Y-%m-%d %H:%M:%S'))"
+  echo "    the app       : $(date -r "$APP_MTIME" '+%Y-%m-%d %H:%M:%S')"
+  if [ -z "$ALLOW_STALE" ]; then
+    echo "  REFUSING — a shot of the previous build is wrong evidence, and it looks identical" >&2
+    echo "  to a right one. Rebuild, or pass --allow-stale if you MEANT to shoot this binary." >&2
+    exit 1
+  fi
+  echo "  --allow-stale given: shooting it anyway. SAY SO wherever you use this PNG."
+fi
+
+[ -n "$RESOLVE_ONLY" ] && { echo "  (--resolve-only: nothing installed, nothing shot)"; exit 0; }
 
 mkdir -p "$OUT"
 xcrun simctl bootstatus "$SIM" -b >/dev/null 2>&1
