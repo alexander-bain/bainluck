@@ -285,17 +285,67 @@ def test_the_cli_exit_codes_are_the_codes_the_workflow_branches_on():
 # ── the workflow and the script must agree ─────────────────────────────────────
 
 
-def test_the_workflows_cron_minute_is_inside_the_derived_band():
-    """The cross-check that catches a band moved without moving the schedule.
-
-    A cron outside the band would HOLD every run — the job would stay green and
-    sync nothing, which is this issue wearing a passing check.
-    """
+def _cron() -> re.Match[str]:
     cron = re.search(r"cron:\s*'(\S+)\s+(\S+)\s+\S+\s+\S+\s+\S+'", WORKFLOW.read_text())
     assert cron, "no cron found in the workflow"
-    minute = int(cron.group(1))
+    return cron
+
+
+def test_the_workflows_cron_minute_is_inside_the_derived_band():
+    """Kept for the punctual case, and NO LONGER the guard against syncing nothing.
+
+    #5662: this assertion used to carry the docstring "a cron outside the band
+    would HOLD every run — the job would stay green and sync nothing, which is
+    this issue wearing a passing check". It was aimed at the right failure and
+    keyed on the wrong quantity. Measured over all 100 `event=schedule` runs in
+    this repo, **0 of 98 fired within 5 minutes of their slot** (median 239m),
+    and four workflows with fixed cron minutes land across all six 10-minute
+    buckets. The minute asserted here is therefore not the minute the job reads,
+    so passing it never ruled the failure out — the sync-nothing guard is
+    `test_enough_attempts_that_a_random_fire_minute_reaches_the_band` below.
+
+    It still earns its place: it is the cross-check that a band moved by a
+    corrected measurement did not leave the nominal schedule behind, and it is
+    the property we would rely on again if the scheduler ever became punctual.
+    """
+    minute = int(_cron().group(1))
     opens, closes = sync.window_bounds()
     assert opens <= minute <= closes
+
+
+def test_enough_attempts_that_a_random_fire_minute_reaches_the_band():
+    """THE sync-nothing guard, keyed on the quantity that controls the outcome.
+
+    Since the fire minute is effectively uniform (#5662, measured), the only
+    lever on whether any run lands inside the band is HOW MANY runs there are.
+    At the derived band's width a 3-hourly cron was 8 attempts/day => ~8.3h
+    expected wait, against a design claiming to bound drift to ~3h; this pins
+    the schedule at hourly-or-better so the expected wait stays ~2.5h.
+
+    Attempts are near-free by construction and that is asserted, not assumed:
+    `decide` HOLDs on `main_live == heavy_live` BEFORE consulting the clock, so
+    an extra run against an already-synced app never deploys. If that ordering
+    is ever inverted, raising the frequency would start cycling the worker and
+    this test should stop licensing it.
+    """
+    hour_field = _cron().group(2)
+    assert hour_field == "*", (
+        f"heavy-sync must fire at least hourly, got hour field {hour_field!r}: the fire "
+        "minute is not controllable (#5662), so attempts are the only lever on the band"
+    )
+
+    # The ordering that makes hourly attempts cheap. Out-of-band on purpose: if
+    # the window were consulted first this would HOLD for the window's reason,
+    # or PUSH, instead of reporting "nothing to do".
+    opens, _ = sync.window_bounds()
+    in_sync = sync.decide(
+        main_live=A,
+        heavy_live=A,
+        heavy_is_ancestor=True,
+        now=datetime(2026, 9, 12, 12, (opens - 5) % 60, tzinfo=timezone.utc),
+    )
+    assert in_sync.code == HOLD
+    assert "nothing to do" in in_sync.reason
 
 
 def test_the_workflow_gates_the_push_on_the_decision():
