@@ -293,6 +293,42 @@ def _is_headline_market(name_lower: str) -> bool:
     )
 
 
+# A headline market answers "who wins this ONE contest", so its outcomes
+# partition that contest: they are mutually exclusive and their prices sum to
+# ~100%. "Who will announce a run" is a rack of INDEPENDENT binaries that
+# happens to be titled like a race, and its prices sum to many times that. The
+# title cannot tell the two apart — the prices can, and they do it without any
+# ground truth (the market refutes itself).
+#
+# #5541 is what merging the two looks like. The Polymarket slot was held by
+# "Who will announce Presidential run before 2028?" — 73 legs summing to
+# 2,274.6% — while the real partner, "Democratic Presidential Nominee 2028"
+# (46 clean legs, 90.0%), lost the outcome-count tiebreak 73-46 because 82 of
+# its 128 rows are `Person XX` placeholders that `clean_outcomes` strips. Every
+# downstream symptom followed from that one substitution: Vance, Cruz and
+# DeSantis entered a *Democratic* nomination race by name; the >105% guard
+# below rescaled every served number (Ossoff 16.5% -> 9.7%); and `change_7d`
+# subtracted an announce-a-run price from a nomination price to tell readers
+# "Pete Buttigieg, up 80.7 points" beside a probability of 5%.
+#
+# Measured on production 2026-09-12 across all 186 markets that reach this
+# predicate with >=3 clean outcomes: 182 survive the bound and 4 are refused,
+# and the two groups do not overlap or even come close. The highest-summing
+# genuine field is "GA-13 Democratic nominee?" at 124.1% (the highest
+# presidential one is "Navajo Nation presidential election winner?", 118.0%);
+# the lowest-summing rack is "Who will Trump endorse first in the 2028 US
+# presidential election?" at 301.4%. The bound sits in that empty gap — 1.2x
+# above the noisiest real field, 2.0x below the mildest rack — so it is a
+# separation the data already drew, not a constant tuned to a fixture.
+_MAX_FIELD_SUM_PCT = 150.0
+
+
+def _is_single_winner_field(outcomes: list) -> bool:
+    """Do these outcomes partition ONE contest, or are they independent bets?"""
+    total = sum(float(o.current_probability or 0) for o in outcomes)
+    return total * 100 <= _MAX_FIELD_SUM_PCT
+
+
 # ---------------------------------------------------------------------------
 # Presidential — merge candidates across Kalshi + Polymarket
 # ---------------------------------------------------------------------------
@@ -316,7 +352,11 @@ def _build_presidential(
             reverse=True,
         )
 
-        if _is_headline_market(name_lower) and len(outcomes) >= 3:
+        if (
+            _is_headline_market(name_lower)
+            and len(outcomes) >= 3
+            and _is_single_winner_field(outcomes)
+        ):
             src = _source(m)
             entry = {"market_id": m.id, "q": m.name, "outcomes": outcomes}
             if src == "kalshi":

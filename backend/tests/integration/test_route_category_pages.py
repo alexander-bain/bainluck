@@ -729,10 +729,14 @@ class TestCategoryMockedDataContracts:
                     external_id="kxpresident2028",
                     source="kalshi",
                     llm_sport_category="politics",
+                    # 50+42+26 = 118%: over the 105% normalisation trigger this
+                    # test asserts, and inside the 150% single-winner-field
+                    # bound added for #5541 (a 200% "race" is a rack of
+                    # independent binaries and no longer takes the headline).
                     outcomes=[
-                        _outcome("Donald Trump", 0.80, outcome_id=2010),
-                        _outcome("Kamala Harris", 0.70, outcome_id=2011),
-                        _outcome("Gavin Newsom", 0.50, outcome_id=2012),
+                        _outcome("Donald Trump", 0.50, outcome_id=2010),
+                        _outcome("Kamala Harris", 0.42, outcome_id=2011),
+                        _outcome("Gavin Newsom", 0.26, outcome_id=2012),
                     ],
                 )
             ]),
