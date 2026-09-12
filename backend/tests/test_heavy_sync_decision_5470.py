@@ -28,11 +28,17 @@ minute of the day.
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
 import re
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "heavy_sync_decision.py"
@@ -499,3 +505,212 @@ def test_an_unreadable_readback_does_not_fail_the_job():
     after_push = body.split('git push heroku-heavy "$MAIN_LIVE:refs/heads/master"')[-1]
     assert re.search(r"^\s*2\)\s*echo \"::warning::", after_push, re.M), after_push
     assert re.search(r"::warning::.*\n(.*\n)*?\s*exit 0", after_push)
+
+
+# ---------------------------------------------------------------------------
+# #5722 — HEROKU RELEASE PROTOCOL, the unit contract.
+#
+# `readback_verdict` and `poll_readback` above are tested with no network,
+# because they take their fact as an argument. `heroku_release_commit` is where
+# that fact is MANUFACTURED, and until now it had only a live two-arm proof
+# against the real API — which certifies today's behaviour and pins nothing.
+#
+# It is two hops (latest release -> that release's slug -> the slug's commit)
+# and every hop has a way of being quietly wrong that ends in the SAME failure
+# #5722 just closed: a job that reports a false claim about heavy's commit.
+# The Range header is the sharpest of them — Heroku's release list defaults to
+# ASCENDING from v1, so losing it does not error, it returns the app's FIRST
+# release forever and turns every sync red on a heavy that is perfectly fine.
+#
+# The fake below answers only the exact paths it is routed and raises on any
+# other, so a mutant that skips a hop or builds a malformed URL fails loudly
+# instead of falling through to a `None` that reads as a tidy UNREADABLE.
+# ---------------------------------------------------------------------------
+
+SLUG_ID = "0d1b2c3d-4e5f-6789-abcd-ef0123456789"
+
+
+class _FakeHeroku:
+    """A Platform API that serves the routes it is given and nothing else."""
+
+    def __init__(self, routes: dict[str, object]):
+        self.routes = routes
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+    def urlopen(self, req, timeout=None):
+        headers = {k.lower(): v for k, v in req.headers.items()}
+        self.calls.append((req.full_url, headers))
+        for path, payload in self.routes.items():
+            if req.full_url == f"https://api.heroku.com/{path}":
+                return io.BytesIO(json.dumps(payload).encode())
+        raise AssertionError(
+            f"the script asked for a path this contract does not serve: "
+            f"{req.full_url!r} (routed: {sorted(self.routes)})"
+        )
+
+    def install(self, monkeypatch):
+        monkeypatch.setattr(urllib.request, "urlopen", self.urlopen)
+        return self
+
+    @property
+    def paths(self) -> list[str]:
+        return [url.removeprefix("https://api.heroku.com/") for url, _ in self.calls]
+
+
+def _deployed(app: str = "bainluck-heavy", commit: str = A) -> _FakeHeroku:
+    """The ordinary case: the current release is a deploy, built from ``commit``."""
+    return _FakeHeroku(
+        {
+            f"apps/{app}/releases": [{"version": 11, "slug": {"id": SLUG_ID}}],
+            f"apps/{app}/slugs/{SLUG_ID}": {"id": SLUG_ID, "commit": commit},
+        }
+    )
+
+
+def test_the_commit_comes_from_the_slug_of_the_current_release(monkeypatch):
+    """The two-hop contract: the release names a slug, the SLUG names a commit.
+
+    A release record carries no commit of its own. Reading one off the release
+    (or off `slug` before dereferencing it) returns `None`, which the readback
+    correctly reports as UNREADABLE — so the job goes yellow forever on a heavy
+    that is fine, and #5470's whole point (drift must not be silent) is lost to
+    a warning nobody reads.
+    """
+    api = _deployed().install(monkeypatch)
+
+    assert sync.heroku_release_commit("bainluck-heavy", "tok") == A
+    assert api.paths == [
+        "apps/bainluck-heavy/releases",
+        f"apps/bainluck-heavy/slugs/{SLUG_ID}",
+    ], "both hops, in order, and no third request"
+
+
+def test_the_release_read_asks_for_the_LATEST_release_not_the_first(monkeypatch):
+    """THE ONE THAT CANNOT BE LEFT TO A LIVE PROOF.
+
+    `GET /apps/{app}/releases` is a paginated Heroku range resource and its
+    default order is ASCENDING, so a request with no Range header answers with
+    the app's FIRST release — v1, built from whatever commit created the app.
+    Nothing errors. The readback then compares the sha we just pushed against a
+    months-old one, reports MISMATCH, and fails a sync that worked: exactly the
+    bug #5722 closed, rebuilt one layer down.
+
+    The live two-arm proof cannot catch it either, because a real
+    `bainluck-heavy` with the header dropped still answers 200 with a real sha.
+    """
+    api = _deployed().install(monkeypatch)
+    sync.heroku_release_commit("bainluck-heavy", "tok")
+
+    _, headers = api.calls[0]
+    assert "range" in headers, "the release list must be ranged, or it reads v1"
+    assert "order=desc" in headers["range"], headers["range"]
+    assert headers["range"].startswith("version"), headers["range"]
+    assert "max=1" in headers["range"], headers["range"]
+
+    # The slug fetch is a plain GET of one resource: a Range there would be
+    # meaningless, and its presence would mean the two calls had been merged.
+    assert "range" not in api.calls[1][1]
+
+
+def test_a_config_only_release_is_unreadable_and_never_a_mismatch(monkeypatch):
+    """A release with no slug is a config change, not a deploy.
+
+    `heroku config:set` on heavy mints a release whose `slug` is null. It says
+    nothing about which commit is running, and the honest answer is "cannot
+    read" — which the poller retries and, if it persists, WARNS on (exit 0).
+    Answering anything else would fail a green sync on a config edit, and
+    inventing a commit would be worse: a false CONFIRMED is drift going silent,
+    which is the failure #5470 exists to end.
+
+    Both null-slug spellings Heroku emits are covered — the key present and
+    null, and the key absent.
+    """
+    for release in ({"version": 12, "slug": None}, {"version": 12}):
+        api = _FakeHeroku({"apps/bainluck-heavy/releases": [release]}).install(monkeypatch)
+
+        assert sync.heroku_release_commit("bainluck-heavy", "tok") is None
+        assert api.paths == ["apps/bainluck-heavy/releases"], (
+            "with no slug there is nothing to dereference; a second hop here "
+            "would be a request against a null id"
+        )
+
+        # …and the meaning downstream, which is the whole reason this case matters.
+        d = sync.readback_verdict(expected=A, observed=None)
+        assert d.code == UNREADABLE
+
+
+def test_an_answer_that_names_no_commit_is_unreadable_not_an_answer(monkeypatch):
+    """Every shape the API can return without naming a commit ends at None.
+
+    `_is_sha` guards the value, but only if the value ARRIVES. These are the
+    shapes that reach the readback as a fact rather than as an absence.
+    """
+    app = "bainluck-heavy"
+    shapes = {
+        "no releases at all (a brand new app)": {f"apps/{app}/releases": []},
+        "a null release row": {f"apps/{app}/releases": [None]},
+        "a slug with no id": {f"apps/{app}/releases": [{"slug": {"name": "web.1"}}]},
+        "a slug that names no commit": {
+            f"apps/{app}/releases": [{"slug": {"id": SLUG_ID}}],
+            f"apps/{app}/slugs/{SLUG_ID}": {"id": SLUG_ID},
+        },
+        "a slug body that is null": {
+            f"apps/{app}/releases": [{"slug": {"id": SLUG_ID}}],
+            f"apps/{app}/slugs/{SLUG_ID}": None,
+        },
+    }
+    for label, routes in shapes.items():
+        _FakeHeroku(routes).install(monkeypatch)
+        assert sync.heroku_release_commit(app, "tok") is None, label
+
+
+def test_the_request_carries_the_versioned_accept_and_the_bearer(monkeypatch):
+    """Both headers are load-bearing, and neither failure is visible locally.
+
+    Heroku serves a DIFFERENT, older schema without the versioned Accept, and
+    `slug` is not guaranteed on it — so dropping it degrades to the null-slug
+    path above and the sync warns forever. Dropping the bearer answers 401,
+    which `poll_readback` catches as UNREADABLE: same silent yellow.
+    """
+    api = _deployed().install(monkeypatch)
+    sync.heroku_release_commit("bainluck-heavy", "s3cr3t")
+
+    for _, headers in api.calls:
+        assert headers["accept"] == "application/vnd.heroku+json; version=3"
+        assert headers["authorization"] == "Bearer s3cr3t"
+
+
+def test_the_runtime_url_agrees_with_the_static_third_party_proof(monkeypatch):
+    """The runtime half of the exemption `test_agent_origin_outbound_tag` grants.
+
+    That guard lets this file skip the origin carrier ONLY because the source
+    text pins a host `is_our_host` says is not ours, and it can prove that only
+    while the literal prefix CLOSES the authority — `f"...heroku.com{path}"`
+    would leave the host to whatever `path` holds. The static proof reads the
+    source; this reads what is actually requested. If the two ever disagree, the
+    static claim has stopped being true and the exemption has to go with it.
+    """
+    api = _deployed().install(monkeypatch)
+    sync.heroku_release_commit("bainluck-heavy", "tok")
+
+    assert api.calls, "nothing was requested, so nothing was proven"
+    for url, _ in api.calls:
+        assert urllib.parse.urlsplit(url).hostname == "api.heroku.com", url
+        assert url.startswith("https://api.heroku.com/"), url
+        assert "//" not in url.removeprefix("https://"), f"malformed path: {url}"
+
+
+def test_the_app_name_is_the_one_asked_for(monkeypatch):
+    """`bainluck` and `bainluck-heavy` are one character apart in every command.
+
+    Reading the MAIN app's release here would CONFIRM every push — main deploys
+    itself from the same master — and heavy could sit a month behind, green.
+    """
+    api = _deployed(app="bainluck-heavy").install(monkeypatch)
+    assert sync.heroku_release_commit("bainluck-heavy", "tok") == A
+
+    # The fake refuses any path it does not serve, so asking for the wrong app
+    # is an error rather than a quiet wrong answer.
+    _deployed(app="bainluck-heavy").install(monkeypatch)
+    with pytest.raises(AssertionError, match="does not serve"):
+        sync.heroku_release_commit("bainluck", "tok")
