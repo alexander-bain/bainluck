@@ -110,6 +110,7 @@ import {
   hasAnyWinProbData,
   formatCountdown,
   shouldShowRefreshCountdown,
+  headerShowsAge,
   startClockState,
   formatEventStartLabel,
   resolveProbability,
@@ -958,16 +959,31 @@ export default function EventPage({ params }: EventPageProps) {
     refreshInterval,
   });
 
-  // The two cases that earn the age badge, named here so the header can render
-  // it exactly once (#4469). Mutually exclusive by construction: the first
-  // needs the stream, and `shouldShowRefreshCountdown` is false while the
-  // stream is connected.
+  // Which cases earn the age badge — one answer, in one pure place, because
+  // "how old is this number" must have exactly one (#4469). The rule, the two
+  // arms it gained for #5039/#5049, and why the polled arm is gated on liveness
+  // rather than on the ring's own window are all on `headerShowsAge`.
   //
   // #5459 — `onVisiblePoll`, NOT `showRefreshCountdown`. See its note: the age
   // badge is the admission that replaces the promise, so it must survive the
   // promise being withdrawn.
+  const showsAge = headerShowsAge({
+    isFinished,
+    streamConnected,
+    onVisiblePoll,
+    feedStalled,
+    effectivelyLive,
+    isSuspended,
+  });
+
+  // The sparkline keeps the pushed branch to itself: it is the last ten minutes
+  // of a number that is still arriving, and on a polled page it would be one
+  // more thing implying motion.
   const pushedAge = !isFinished && streamConnected;
-  const stalledAge = onVisiblePoll && feedStalled;
+
+  // #3802/#4861's ring, as one name — the header now composes it beside the age
+  // badge instead of choosing between them.
+  const ringVisible = showRefreshCountdown && !feedStalled;
 
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
@@ -1085,83 +1101,101 @@ export default function EventPage({ params }: EventPageProps) {
         </Link>
         </div>
 
-        {/* live/034 S2 — on a pushed event there is no "next update" to count
-            down to, because updates arrive. Show how old the number is instead.
-            The countdown stays for every event still on the poll.
+        {/* THE HEADER SAYS HOW OLD ITS NUMBER IS — live/034 S2, #4861, and now
+            on the polled path too (#5039/#5049, ship 5).
 
-            #4861 adds the second case that earns this badge: a POLLED page that
-            has stopped being fed. It is the same disclosure for the same reason
-            — past its own stale boundary the badge drops the green and the word
-            "live" by itself — so it is the same badge, rendered once.
+            It began as the pushed page's substitute for the countdown: on a
+            pushed event there is no "next update" to count down to, because
+            updates arrive, so the honest thing to show instead is the age. #4861
+            added the polled page that has stopped being fed. Both are still
+            here; `headerShowsAge` carries the whole rule and the case for the
+            arm that made a LIVE, polled page — a halftime, a suspension — say
+            its age as well.
 
             ONE CALL SITE, deliberately (#4469's guard): two would be two answers
             to "how old is this number", and the whole point of the badge is that
-            there is one. The two conditions cannot both hold — `pushedAge` needs
-            the stream, and `shouldShowRefreshCountdown` returns false while the
-            stream is connected — so `connected` is simply passed through and is
-            false on the stalled branch by construction.
+            there is one. `connected` is passed through rather than assumed,
+            because the branches are no longer mutually exclusive — a polled page
+            reaches this with `streamConnected` false, which is exactly the state
+            in which the dot must not pulse.
 
             The sparkline stays on the pushed branch only: it is the last ten
             minutes of a number that is still arriving, and on a page that has
-            stopped being fed it would be one more thing implying motion. */}
-        {(pushedAge || stalledAge) && (
+            stopped being fed it would be one more thing implying motion.
+
+            ONE right-hand group, not two. The badge and the ring used to be
+            mutually exclusive siblings, each carrying its own `ml-auto`; now
+            that a polled live page shows both, two auto margins would put them
+            on two ragged lines at 390px. Sharing the group's `gap-3` also means
+            they wrap together, as one unit, to the line below — and #3974's
+            alignment rule still reads one right-hand group with `ml-auto`. */}
+        {(showsAge || ringVisible) && (
           <div className="ml-auto flex items-center gap-3">
             {pushedAge && <LiveSparkline points={sparklinePoints} />}
-            <LiveAgeStamp
-              updatedAt={heroStamp.stamp}
-              oldestFact={heroStamp.fact}
-              connected={streamConnected}
-              // #5459 — the hero two lines below now reads "No result reported".
-              // Without this the badge would pulse a green `live · 20s ago`
-              // beside it on a pinned page, whose stamp really is that fresh.
-              claimWithdrawn={liveClaimUnbacked}
-            />
-          </div>
-        )}
+            {showsAge && (
+              <LiveAgeStamp
+                updatedAt={heroStamp.stamp}
+                oldestFact={heroStamp.fact}
+                connected={streamConnected}
+                // #5459 — the hero two lines below now reads "No result reported".
+                // Without this the badge would pulse a green `live · 20s ago`
+                // beside it on a pinned page, whose stamp really is that fresh.
+                claimWithdrawn={liveClaimUnbacked}
+              />
+            )}
 
-        {/* Visual countdown timer — #3802 gates it on proximity, not just on
-            "not finished and not pushed". #4861: and not while the page's own
-            fetches are failing — the ring is a `setInterval` that ticks whether
-            or not anything arrives, so it promised an update for three hours
-            over a game that had already ended. */}
-        {showRefreshCountdown && !feedStalled && (
-          <div className="ml-auto flex items-center gap-3">
-            <div className="flex items-center gap-2 text-sm">
-              {effectivelyLive && (
-                <span className="flex items-center gap-1.5 bg-emerald-500/15 text-emerald-600 px-2 py-1 rounded-full text-xs font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  LIVE
-                </span>
-              )}
-              <span className="text-text-secondary">Next update:</span>
-            </div>
-            {/* Circular countdown */}
-            <div className="relative w-10 h-10">
-              <svg className="w-10 h-10 transform -rotate-90">
-                <circle
-                  cx="20"
-                  cy="20"
-                  r="16"
-                  fill="none"
-                  stroke="#E5E7EB"
-                  strokeWidth="3"
-                />
-                <circle
-                  cx="20"
-                  cy="20"
-                  r="16"
-                  fill="none"
-                  stroke={effectivelyLive ? "#10B981" : "#6B7280"}
-                  strokeWidth="3"
-                  strokeDasharray={`${countdownProgress} 100`}
-                  strokeLinecap="round"
-                  className="transition-all duration-100"
-                />
-              </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold text-text-primary">
-                {countdown}
-              </span>
-            </div>
+            {/* Visual countdown timer — #3802 gates it on proximity, not just on
+                "not finished and not pushed". #4861: and not while the page's own
+                fetches are failing — the ring is a `setInterval` that ticks whether
+                or not anything arrives, so it promised an update for three hours
+                over a game that had already ended.
+
+                THE PILL IS GONE, not moved, and the badge is why: the pill drew
+                only here and only when `effectivelyLive`, and the badge is on
+                screen for every one of those inputs — `headerAgeSubsumesLivePill`
+                asserts exactly that, so the deletion is a reduction and not a
+                loss. Two green live claims side by side are two answers to one
+                question, and the pill was the worse one: keyed on the event's
+                STATUS, it stayed green and pulsing over a number of any age
+                (#5049), where the badge drops the green and the word "live" the
+                moment its own fact goes stale.
+
+                The ring and its label are untouched. "Next update:" is the one
+                sentence naming what the ring counts, and the ring is the only
+                thing on a still page that shows it is still trying — #5039's
+                complaint was never that the countdown exists, it was that the
+                age went away when the countdown arrived. */}
+            {ringVisible && (
+              <>
+                <span className="text-sm text-text-secondary">Next update:</span>
+                <div className="relative w-10 h-10">
+                  <svg className="w-10 h-10 transform -rotate-90">
+                    <circle
+                      cx="20"
+                      cy="20"
+                      r="16"
+                      fill="none"
+                      stroke="#E5E7EB"
+                      strokeWidth="3"
+                    />
+                    <circle
+                      cx="20"
+                      cy="20"
+                      r="16"
+                      fill="none"
+                      stroke={effectivelyLive ? "#10B981" : "#6B7280"}
+                      strokeWidth="3"
+                      strokeDasharray={`${countdownProgress} 100`}
+                      strokeLinecap="round"
+                      className="transition-all duration-100"
+                    />
+                  </svg>
+                  <span className="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold text-text-primary">
+                    {countdown}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
