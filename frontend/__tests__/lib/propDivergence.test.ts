@@ -191,6 +191,77 @@ describe("V3 — the disappearance taxonomy", () => {
     expect(res.nonBenignCount).toBe(0);
   });
 
+  it("drops a HALF-priced row — real price, absent baseline — instead of marking it from zero", () => {
+    // #5509's backend half refuses a `pregame_mark` pin captured after first pitch
+    // and falls through to `opening_probability`. Measured over 7 days of pinned
+    // production markets: 86.1% of legs under a late pin get a corrected number,
+    // and **13.9% — 2,466 legs — get `pregame_mark: null`**, having no opening to
+    // fall back to. Those rows are HALF priced: a real `over_probability`, no
+    // baseline. Every other null-mark row in this file carries `over_probability:
+    // null` as well, so this combination was uncovered when live named it as the
+    // risk of its own fix.
+    //
+    // A mark read as 0 would turn a leg that never moved into the biggest story on
+    // the page: `travel = |0.995 - 0|`. 0.995 is the real pin from the issue —
+    // Samad Taylor 1+, pinned 107 minutes after first pitch, when he already had
+    // the hit. The guard is `isFiniteNumber(pregameMark)` at `propDivergence.ts`,
+    // and it protects all four derived keys (travel, conviction, scriptSide and
+    // the settled surprise), which is why it is worth pinning here.
+    const halfPriced = {
+      market_name: "Samad Taylor: Hits O/U 0.5",
+      outcome_name: "Over",
+      threshold: 0.5,
+      over_probability: 0.995,
+      pregame_mark: null,
+      source: "polymarket",
+    } as unknown as PlayerPropRow;
+
+    const res = selectDivergenceRows({
+      playerProps: [polyRow("Real Player", "Hits", 1.5, 0.2, 0.5), halfPriced],
+      status: "scheduled",
+    });
+
+    // It never reaches the rail, and the priced row beside it is unaffected.
+    expect(res.rows.map((r) => r.player)).toEqual(["Real Player"]);
+    // The absence is counted and benign, not silent.
+    const drop = res.dropped.find((d) => d.reason === "no_real_price")!;
+    expect(drop.count).toBe(1);
+    expect(drop.benign).toBe(true);
+    expect(res.nonBenignCount).toBe(0);
+
+    // The manufactured-travel signature, asserted on what SURVIVED: no row on the
+    // rail is marked from zero, and none has travelled the whole board.
+    expect(res.rows.every((r) => r.pregameMark !== 0)).toBe(true);
+    expect(res.rows.every((r) => r.travel < 0.99)).toBe(true);
+  });
+
+  it("cannot fabricate a post-game SURPRISE out of an absent baseline", () => {
+    // Post-game the ranking key is `|resolution - pregameMark|`, so the same absent
+    // mark read as 0 would score a leg that resolved YES as a 100-point upset — top
+    // of the "biggest surprises" rail, off a number nobody ever published. #2011
+    // makes this the ONLY post-game key, so there is no second signal to catch it.
+    const halfPriced = {
+      market_name: "Jackson Merrill: Hits O/U 1.5",
+      outcome_name: "Over",
+      threshold: 1.5,
+      over_probability: 0.85,
+      pregame_mark: null,
+      source: "polymarket",
+      hit: true,
+    } as unknown as PlayerPropRow;
+
+    const res = selectDivergenceRows({
+      playerProps: [halfPriced],
+      status: "completed",
+    });
+
+    expect(res.rows).toHaveLength(0);
+    expect(res.dropped.find((d) => d.reason === "no_real_price")!.count).toBe(1);
+    // Nothing survived, and nothing was mis-read: a benign absence, not a poisoned
+    // one. `unreadable` here would mean a guard had fired on a row we could parse.
+    expect(res.emptyReason).toBe("clean");
+  });
+
   it("surfaces an unreadable row as UNKNOWN rather than claiming it never traded", () => {
     // Fable's amendment: a reason that reads UNKNOWN renders AS unknown, not as
     // silence, and never as a confident "no trading".
