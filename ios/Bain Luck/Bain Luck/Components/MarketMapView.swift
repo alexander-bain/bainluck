@@ -234,37 +234,58 @@ struct MarketMapView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 12) {
                     if showsAnyMarginMap {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("MARGIN MAPS")
-                                .font(.system(size: 11, weight: .heavy))
-                                .foregroundStyle(.secondary)
-                                .tracking(1)
-                            fullMarginMap
-                            halfMarginMaps
-                        }
-                        .frame(maxWidth: .infinity)
+                        VStack(alignment: .leading, spacing: 6) { marginCards }
+                            .frame(maxWidth: .infinity)
                     }
                     if showsAnyTotalMap {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("TOTAL MAPS")
-                                .font(.system(size: 11, weight: .heavy))
-                                .foregroundStyle(.secondary)
-                                .tracking(1)
-                            fullTotalMap
-                            halfTotalMaps
-                        }
-                        .frame(maxWidth: .infinity)
+                        VStack(alignment: .leading, spacing: 6) { totalCards }
+                            .frame(maxWidth: .infinity)
                     }
                 }
                 unitMismatchFootnote
             }
         } else {
             VStack(spacing: 12) {
-                if showsAnyMarginMap { fullMarginMap; halfMarginMaps }
-                if showsAnyTotalMap { fullTotalMap; halfTotalMaps }
+                if showsAnyMarginMap { marginCards }
+                if showsAnyTotalMap { totalCards }
                 unitMismatchFootnote
             }
         }
+    }
+
+    // MARK: - What each column says, said once (#5656)
+
+    /// The margin cards and the totals cards, ONE definition each, rendered by
+    /// both the wide and the narrow branch.
+    ///
+    /// #5656. The wide branch used to open each column with a heavy 11-point
+    /// `MARGIN MAPS` / `TOTAL MAPS`, and the narrow branch rendered the same two
+    /// cards with no headers at all. So the iPhone had never shown those words
+    /// and the iPad always had — photographed on ŠK Slovan Bratislava @ Paris
+    /// Saint-Germain, a Champions League tie, printing `TOTAL MAPS` over a
+    /// football match ("map" is a Counter-Strike round; on a football match it
+    /// names nothing a reader has, directly above a card already titled "Goals
+    /// map"). Standing notice 34 bars jargon on a reader's screen and notice 35
+    /// bars a page from getting a bespoke label because it is wider, so the
+    /// headers are gone rather than reworded: a label the phone does not need is
+    /// not one the iPad needs either, and the cards title themselves.
+    ///
+    /// They are shared definitions rather than two copies because the headers
+    /// are not really the finding — the finding is that **the wide layout is a
+    /// second layout nobody walks**, free to drift from the narrow one. With one
+    /// definition per column a label cannot be added to the iPad alone; it
+    /// appears on both or neither, which is what notice 35 asks for and what a
+    /// comment asking nicely would not have got.
+    @ViewBuilder
+    private var marginCards: some View {
+        fullMarginMap
+        halfMarginMaps
+    }
+
+    @ViewBuilder
+    private var totalCards: some View {
+        fullTotalMap
+        halfTotalMaps
     }
 
     /// Whether ANY map is on screen — the one selector the footnote and the
