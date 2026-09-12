@@ -25,6 +25,8 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 import {
+  HAND_PICKED_LABELS,
+  handPickedKey,
   isNonDistinctiveTrailingWord,
   teamCrestBadge,
   teamShortName,
@@ -385,6 +387,177 @@ describe("#4539 — one badge rule, two clients", () => {
     // `CrestBadgeInitialsTests` asserts the identical pair on the iPhone.
     expect(teamCrestBadge("Paris Saint Germain")).toBe("PSG");
     expect(teamCrestBadge("Paris Saint-Germain")).toBe("PSG");
+  });
+});
+
+/**
+ * #4627 — the hand-picked label, which is a TABLE and therefore the one kind of
+ * divergence this file was already shaped to catch.
+ *
+ * Alex ruled (option B, relayed by Fable-5 Sat 2026-09-12 6:14am PT) that Paris
+ * Saint-Germain is "PSG" on both clients: the crest letters, as an explicit
+ * entry, not a rule change that would turn the Lakers into "LAL". A list that is
+ * the same on both clients is exactly the thing that silently stops being the
+ * same, so it is read out of both sources here and transcribed into neither.
+ *
+ * native/131 wrote the iOS half (PR #5650) and deliberately did NOT write this
+ * block: with no web map to compare against it would have passed by comparing
+ * one thing to nothing, which is the vacuous guard this file exists to prevent.
+ *
+ * WEB MEASUREMENT, whole population, 13,630 distinct production team names from
+ * 45 days of `events` (ux/1219, 2026-09-12), real module before vs after:
+ * **3 labels change — the three PSG spellings — and 0 badges.** Over 24,499
+ * distinct (home, away) pairs: **26 move, all PSG fixtures, the opponent's label
+ * byte-identical in all 26, 0 new collisions.** The iOS numbers native measured
+ * the same day are 3 / 0 / 26 / 0 — the same shape on the same population.
+ */
+function dictionaryPairs(source: string, opener: RegExp): [string, string][] {
+  const start = source.search(opener);
+  if (start === -1) return [];
+  // The literal begins after the `=`, NOT at the first `[` — Swift writes the
+  // dictionary's TYPE in brackets too (`: [String: String] =`), and reading from
+  // that one yields the type annotation and no pairs at all. Caught by the
+  // reachability check below, which is what it is for.
+  const assign = source.indexOf("=", start);
+  const from = source.indexOf("[", assign);
+  const end = source.indexOf("]", from);
+  if (from === -1 || end === -1) return [];
+  const body = source
+    .slice(from, end)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  return Array.from(body.matchAll(/"([^"]+)"\s*:\s*"([^"]+)"/g), (m) => [
+    m[1],
+    m[2],
+  ]);
+}
+
+const swiftHandPicked = dictionaryPairs(
+  swiftSource,
+  /static let handPickedLabels\s*:\s*\[String\s*:\s*String\]\s*=/,
+);
+
+describe("#4627 — one hand-picked label table, two clients", () => {
+  it("the iPhone's table was actually found and read", () => {
+    // The reachability check this file demands of every parser it adds: a regex
+    // that matches nothing yields [], and "the two tables agree" then passes
+    // having compared an empty list to a map it never looked at.
+    expect(swiftHandPicked.length).toBeGreaterThanOrEqual(1);
+    expect(swiftHandPicked).toContainEqual(["paris saint germain", "PSG"]);
+    expect(HAND_PICKED_LABELS.size).toBeGreaterThanOrEqual(1);
+  });
+
+  it("the two tables are identical, in both directions", () => {
+    // A club labelled on one client and not the other is the divergence Alex's
+    // ruling was issued to end.
+    const swift = new Map(swiftHandPicked);
+    expect([...HAND_PICKED_LABELS].filter(([k, v]) => swift.get(k) !== v)).toEqual([]);
+    expect(
+      [...swift].filter(([k, v]) => HAND_PICKED_LABELS.get(k) !== v),
+    ).toEqual([]);
+  });
+
+  it("every key is already in the normalised form the lookup produces", () => {
+    // The DEAD-ENTRY guard, and the reason `handPickedKey` is exported. A key
+    // written "Paris Saint-Germain" is unreachable: nothing would ever look it
+    // up, and a test that could only call `teamShortName` would pass over it
+    // for as long as the entry existed.
+    for (const key of HAND_PICKED_LABELS.keys()) {
+      expect(handPickedKey(key)).toBe(key);
+    }
+    // …and the same rule holds on the iPhone's copy, which is the one a Swift
+    // test can check but CI cannot compile (#4302).
+    for (const [key] of swiftHandPicked) {
+      expect(handPickedKey(key)).toBe(key);
+    }
+  });
+
+  it("no two clubs claim the same label", () => {
+    const labels = [...HAND_PICKED_LABELS.values()];
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  it("all three live spellings of the club reach the entry", () => {
+    // The reader-visible point. These three are all on production — 14, 9 and 9
+    // events over 60 days — and they rendered as three different labels: the
+    // whole name, "Saint-Germain" and "Germain".
+    for (const spelling of [
+      "Paris Saint-Germain FC",
+      "Paris Saint-Germain",
+      "Paris Saint Germain",
+    ]) {
+      expect(handPickedKey(spelling)).toBe("paris saint germain");
+      expect(teamShortName(spelling)).toBe("PSG");
+    }
+    // The badge has been spelling-independent since #4539 and must not move.
+    for (const spelling of [
+      "Paris Saint-Germain FC",
+      "Paris Saint-Germain",
+      "Paris Saint Germain",
+    ]) {
+      expect(teamCrestBadge(spelling)).toBe("PSG");
+    }
+  });
+
+  it("CONTROL: a club with no entry is untouched by any of it", () => {
+    // An entry-driven override that changed anything else would be the rule
+    // change Alex explicitly did not want.
+    expect(teamShortName("Los Angeles Lakers")).toBe("Lakers");
+    expect(teamShortName("Sunderland AFC")).toBe("Sunderland AFC");
+    expect(teamShortName("Paris FC")).toBe("Paris FC");
+    expect(HAND_PICKED_LABELS.get(handPickedKey("Paris FC"))).toBeUndefined();
+  });
+
+  it("the two-token floor keeps clubs a designator distinguishes apart", () => {
+    // Without the floor "Manchester United" keys as `manchester`, which is what
+    // "Manchester City" keys as too, and one future entry would relabel both.
+    expect(handPickedKey("Manchester United")).toBe("manchester united");
+    expect(handPickedKey("Manchester United FC")).toBe("manchester united");
+    expect(handPickedKey("Manchester City")).toBe("manchester city");
+    expect(handPickedKey("Manchester United")).not.toBe(
+      handPickedKey("Manchester City"),
+    );
+    // The women's side keeps its own key rather than folding into the men's.
+    expect(handPickedKey("Arsenal W")).toBe("arsenal w");
+    expect(handPickedKey("Arsenal")).toBe("arsenal");
+  });
+
+  it("punctuation and accents key the way the iPhone keys them", () => {
+    // `alphanumeric` elsewhere in the module is ASCII-only; this key is not, on
+    // purpose. One club, one key, means one key across clients, and Swift's
+    // `isLetter` keeps the ö.
+    expect(handPickedKey("1. FC Köln")).toBe("1 fc köln");
+    expect(handPickedKey("Crimson (W)")).toBe("crimson w");
+  });
+
+  /**
+   * THE HAZARD THE FLOOR DOES NOT COVER, pinned before the list grows.
+   *
+   * The floor stops at TWO tokens, so a THREE-token name whose third token is a
+   * designator strips to a two-token key that another club can share. Measured
+   * over the same 13,630 production names: `handPickedKey` produces 13,308 keys,
+   * 298 of which are carried by more than one spelling, and **5 of those 298 are
+   * not one club spelled two ways**:
+   *
+   *     new mexico    <- "New Mexico State",  "New Mexico United"
+   *     los angeles   <- "Los Angeles FC",    "Los Angeles C/F/R"
+   *     new york      <- "New York City FC",  "New York G", "New York J"
+   *     bradford park avenue, exmouth town  (one club, bracketed or double suffix)
+   *
+   * None is in the table today, so nothing is mislabelled. This is the ratchet:
+   * adding any of them as an entry would relabel a club nobody named, and it
+   * would do so on BOTH clients, since the Swift shares the floor. Whoever wants
+   * one of these needs a longer floor or a per-club abbreviation (#3353) first.
+   */
+  it("no key in the table is one two different clubs share", () => {
+    const AMBIGUOUS = new Set(["new mexico", "los angeles", "new york"]);
+    const unsafe = [...HAND_PICKED_LABELS.keys()].filter((k) => AMBIGUOUS.has(k));
+    expect(unsafe).toEqual([]);
+    // POSITIVE CONTROL — the collision is real, not hypothetical, and the two
+    // names really do land on one key today.
+    expect(handPickedKey("New Mexico State")).toBe("new mexico");
+    expect(handPickedKey("New Mexico United")).toBe("new mexico");
+    expect(AMBIGUOUS.has(handPickedKey("New Mexico State"))).toBe(true);
   });
 });
 

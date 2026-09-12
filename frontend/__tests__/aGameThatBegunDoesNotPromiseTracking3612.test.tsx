@@ -152,9 +152,16 @@ beforeEach(() => {
  * full "Paris Saint-Germain" never appears in the markup. The score is asserted
  * too, because it is the thing the reader keeps when the chart card goes away —
  * if suppression ever took the hero with it, this is what would catch it.
+ *
+ * #4627 (ux/1219, 2026-09-12): the home side's short name is now "PSG", by
+ * Alex's ruling that this club takes its crest letters as a hand-picked label.
+ * This is the anchor moving with the label it reads, not the subject of this
+ * file changing — nothing about tracking, suppression or the chart card is
+ * touched, and the away side is left exactly as it was so the pair still proves
+ * the hero drew BOTH competitors.
  */
 function expectPageRendered(html: string) {
-  expect(html).toContain("Saint-Germain");
+  expect(html).toContain("PSG");
   expect(html).toContain("Bratislava");
 }
 
