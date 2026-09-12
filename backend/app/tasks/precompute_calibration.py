@@ -3907,6 +3907,61 @@ def _calibration_population_ctes(
                     cv.vm_id, cv.source, cv.category,
                     cv.eligible, cv.is_grouped,
                     (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
+                    -- #5305: a cumulative threshold ladder is ONE forecast.
+                    --
+                    -- ``is_multi`` is true for a LONE market with >=3 eligible
+                    -- outcomes, and ``deduped``'s multi arm then publishes every
+                    -- surviving rung. For a numeric ladder that is one question
+                    -- counted N times: Kalshi ``KXA100MON-26APR30`` ("Price of
+                    -- NVIDIA A100 compute by Apr 30") carries 40 rungs "Above
+                    -- $0.77" .. "Above $1.15" whose opening prices run 0.965 down
+                    -- to 0.06 and SUM TO 19.275, with 38 of the 40 resolving true.
+                    -- They are 40 nested readings of one number, not 40 forecasts,
+                    -- and publishing them puts ~36 correlated rows — most of them
+                    -- winners priced well under 1.0 — into one cell's ECE.
+                    --
+                    -- The ladder can never reach the partition arm above, so this
+                    -- is not a re-route of normalized fields: ``mex_field_candidates``
+                    -- gates on ``exclusivity_proved_sql``, which refuses a
+                    -- cumulative-threshold ladder BY NAME (gotcha #17 co-winners).
+                    -- Ordering this arm AFTER ``is_mex_normalized`` is still
+                    -- deliberate: a quantity market whose bins ARE a proven
+                    -- exclusive partition (a Polymarket temperature band) keeps
+                    -- publishing every member and sums to 1.0.
+                    --
+                    -- CO-WINNERS ARE THE DISCRIMINATOR, and ``market_type`` alone
+                    -- is NOT enough. ``quantity`` covers two different objects:
+                    --
+                    --   cumulative ladder   "Above $0.77" .. "Above $1.15"
+                    --                       nested, many rungs true, prices sum >>1
+                    --                       -> ONE question read N times
+                    --   exclusive bins      "peaks at #1" / "#2-5" / "#6-10"
+                    --                       disjoint, exactly one true, sum ~1
+                    --                       -> a DISTRIBUTION, legitimately N forecasts
+                    --
+                    -- Both are ``market_type='quantity'`` (the classifier checks
+                    -- quantity before field), and both are ineligible for the
+                    -- partition arm, because ``exclusivity_proved_sql`` requires
+                    -- ``market_type = 'field'``. So collapsing on shape alone would
+                    -- delete real, well-formed calibration data. MEASURED on the two
+                    -- cells this ships for: kalshi/entertainment holds 507 co-winner
+                    -- ladders but 651 single-winner bin markets, and kalshi/tech
+                    -- holds 86 against 13. Shape alone would have collapsed the 651.
+                    --
+                    -- ``win_count > 1`` is the gotcha #17 co-winner signature —
+                    -- the same evidence ``exclusivity_proved_sql`` refuses a ladder
+                    -- ON — so a market only collapses once its own resolutions have
+                    -- PROVED it is not a partition. Under-reaches by design on the
+                    -- ladder that happens to settle with a single rung true; that is
+                    -- the conservative direction. win_count = 0 is already withheld
+                    -- upstream as unknown truth (``no_winner_markets``).
+                    --
+                    -- Scoped to a LONE market (NOT is_grouped): a vm spanning 3+
+                    -- grouped quantity markets is plausibly the same defect, but it
+                    -- is unmeasured, so it keeps its behavior (#5305 residual).
+                    (COALESCE(vm.market_type = 'quantity', false)
+                     AND NOT cv.is_grouped
+                     AND COALESCE(mrs_lad.win_count, 0) > 1) AS is_threshold_ladder,
                     -- #940 phase-1: never-bid/never-traded Kalshi placeholders are
                     -- excluded from the published set (read-side only, gotcha #21).
                     {KALSHI_LIQUIDITY_EXISTS} AS is_liquid,
@@ -4088,6 +4143,10 @@ def _calibration_population_ctes(
                 LEFT JOIN orphan_partition_markets opm ON opm.market_id = fo.market_id
                 LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = fo.market_id
                 LEFT JOIN golf_placeholder_markets gpm ON gpm.market_id = fo.market_id
+                -- #5305: per-market winner cardinality for the ladder arm. One row
+                -- per market_id (``market_result_shape`` groups by market_id plus
+                -- two per-market columns), so this cannot multiply outcomes.
+                LEFT JOIN market_result_shape mrs_lad ON mrs_lad.market_id = fo.market_id
                 LEFT JOIN mex_field_candidates mfc ON mfc.market_id = fo.market_id
                 LEFT JOIN mex_field_divisor mfd ON mfd.market_id = fo.market_id
                 WHERE fo.opening_probability IS NOT NULL
@@ -4294,6 +4353,11 @@ def _calibration_population_ctes(
                         -- (0.99/0.20/0.001 -> tail dropped -> ~99.9%). Publish every
                         -- member of a complete field so the partition still sums to 1.
                         WHEN ro.is_mex_normalized THEN true
+                        -- #5305: one representative per threshold ladder. Same
+                        -- authority the ELSE arm uses (nearest 50%, ties by
+                        -- canonical outcome id), so the rung published is the
+                        -- most informative one and the choice is deterministic.
+                        WHEN ro.is_threshold_ladder THEN ro.rn = 1
                         WHEN ro.is_multi
                             THEN ro.adj_opening_probability > 0.005
                              AND ro.adj_opening_probability < 0.98
@@ -8385,7 +8449,17 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_golf_placeholder) AS excl_golf_placeholder,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_kalshi_prop_threshold) AS excl_kalshi_prop_threshold,
                         (SELECT COUNT(*) FROM ranked_outcomes WHERE is_weather_wide_spread) AS excl_weather_wide_spread,
-                        (SELECT COUNT(*) FROM normalized WHERE is_field_incomplete) AS excl_field_incomplete
+                        (SELECT COUNT(*) FROM normalized WHERE is_field_incomplete) AS excl_field_incomplete,
+                        -- #5305: the ladder arm's own receipt. Without it a guard
+                        -- that silently stops matching (a market_type backfill, a
+                        -- classifier change) is indistinguishable from one that had
+                        -- nothing to collapse — gotcha #53, "it returned" is not
+                        -- "it worked". Rungs SUPPRESSED, not rungs seen, so the
+                        -- number is the work the arm actually did.
+                        (SELECT COUNT(DISTINCT vm_id) FROM ranked_outcomes
+                          WHERE is_threshold_ladder) AS ladder_questions,
+                        (SELECT COUNT(*) FROM ranked_outcomes
+                          WHERE is_threshold_ladder AND rn <> 1) AS ladder_rungs_suppressed
                 ),
                 h_buckets AS (
                     SELECT
@@ -8405,7 +8479,8 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                     d.excl_illiquid, d.excl_poly_placeholder, d.excl_malformed_binary,
                     d.excl_esports_bundle, d.excl_golf_placeholder,
                     d.excl_kalshi_prop_threshold, d.excl_weather_wide_spread,
-                    d.excl_field_incomplete
+                    d.excl_field_incomplete,
+                    d.ladder_questions, d.ladder_rungs_suppressed
                 FROM h_diag d
                 LEFT JOIN h_buckets b ON true
                 ORDER BY b.bucket_idx, b.source, b.category
@@ -8531,6 +8606,15 @@ async def _compute_time_horizon_calibration():
                             "kalshi_prop_threshold": int(r.excl_kalshi_prop_threshold or 0),
                             "weather_wide_spread": int(r.excl_weather_wide_spread or 0),
                             "field_incomplete": int(r.excl_field_incomplete or 0),
+                        },
+                        # #5305. Deliberately a SIBLING of "excluded", not a rung
+                        # inside it: the coverage bridge treats the exclusion rungs
+                        # as a precedence PARTITION and sums them, and a ladder rung
+                        # is collapsed (one representative survives), not excluded.
+                        # Filed under "excluded" it would double-count the bridge.
+                        "threshold_ladder": {
+                            "questions": int(r.ladder_questions or 0),
+                            "rungs_suppressed": int(r.ladder_rungs_suppressed or 0),
                         },
                     }
                 if r.bucket_idx is None:

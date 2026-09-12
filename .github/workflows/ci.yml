@@ -991,6 +991,32 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration threshold-ladder collapse (real Postgres)
+        # #5305. A cumulative Kalshi ladder ("Above $0.77" .. "Above $1.15", 40
+        # nested rungs, 38 of them true) was published as ~36 independent
+        # forecasts because `is_multi` is `(is_grouped OR eligible >= 3)` and a
+        # lone 40-outcome market satisfies the second arm.
+        #
+        # Relational claim — it is about WHICH ROWS `deduped` selects — so it
+        # needs a real fixture, not a rendered-SQL assertion: every existing
+        # guard on that file was green while the 40 rungs were publishing.
+        #
+        # Two-armed on purpose. The ladder case asserts the collapse; the
+        # single-winner disjoint-bin case asserts a distribution still publishes
+        # every member, which is what fails if the arm is ever widened to
+        # `market_type='quantity'` alone (that widening would have collapsed 651
+        # real Kalshi entertainment markets). Same skip-detection as every gate
+        # in this job — and see the guard test that asserts this STEP exists,
+        # because a PG-gated file no step names skips silently and exits 0.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_threshold_ladder_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/ladder.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ladder.txt; then
+            echo "::error::calibration threshold-ladder contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Calibration mode-price source scope, peer sites (real Postgres)
         # #2098 / ruling 125, sites TWO and THREE — CAL-P091. The step above
         # guards the PRODUCER. The same three-line defect also sat in
