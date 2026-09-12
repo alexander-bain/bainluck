@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import NamedTuple, Optional
 
 from app.utils.graded_card import rendered_percent
-from app.utils.highlights import underdog_leads
+from app.utils.highlights import select_live_claim
 from app.utils.outcome_display_names import (
     display_outcome_name,
     display_outcome_names,
@@ -839,6 +839,106 @@ def compose_binary_card_copy(
     return BinaryCardCopy("", "", "")
 
 
+class LiveClaim(NamedTuple):
+    """One supported claim about a live card, with the sentence that states it.
+
+    The type travels WITH the sentence because two different slots need two
+    different things from the same decision: the caption needs the words, and
+    the ladder in `generate_event_reason` needs to know which rung the claim
+    belongs on. Recomputing the type from the string afterwards — sniffing for
+    the word "leading" — is how the pill and the caption drifted apart before.
+    """
+
+    claim_type: str
+    sentence: str
+
+
+def compose_live_claim(
+    *,
+    home_team: str,
+    away_team: str,
+    status: str,
+    home_probability: Optional[float],
+    away_probability: Optional[float],
+    opening_home_prob: Optional[float],
+    home_score: Optional[int],
+    away_score: Optional[int],
+) -> Optional[LiveClaim]:
+    """The one supported claim this live card may make, or None. (T10-1, #5439)
+
+    `select_live_claim` decides WHETHER and WHICH; this decides how to say it.
+    Splitting them that way is deliberate: the eligibility rules are about
+    evidence and belong beside the tri-state determinations in `highlights.py`,
+    and a renderer must not be able to create a claim by writing a sentence for
+    it. Returns None when nothing is supported — ruling 146, suppress the
+    sentence, never the card.
+
+    Callers: `generate_event_reason` (the `reason` field) and `routes/feed.py`
+    (the `headline` field, which is what the web caption chain actually renders
+    on a live card — see #4596).
+    """
+    claim = select_live_claim(
+        status=status,
+        opening_home_prob=opening_home_prob,
+        current_home_prob=home_probability,
+        home_score=home_score,
+        away_score=away_score,
+    )
+    if claim is None:
+        return None
+
+    # #4580 — this sentence says *leading*, so the scoreboard decides it. The
+    # `"favorite_switched" in reasons` co-gate is GONE (T10-1): whether the
+    # market has come round to the underdog is a different question from whether
+    # the underdog is ahead, and holding a true field sentence hostage to a price
+    # event is #4580's confusion run backwards. On a live card the underdog is
+    # often ahead long before the price crosses over, and those cards used to
+    # fall through to "Tight game".
+    #
+    # The baseline is now NAMED. "Boston leading as underdog" makes the reader
+    # take our word for the word "underdog"; "Boston leading after starting at
+    # 38%" hands them the number the claim rests on, and it is the number the
+    # card is not otherwise showing (the odds bar carries the LIVE price, not the
+    # pre-game one).
+    #
+    # Wording: "leading", not "leads". The subject is a team name and our
+    # subject-verb agreement is only decidable from `team_id`, which the feed
+    # does not have here (#4700 — "Los Angeles Dodgers leads at 30%" went to page
+    # one). A participle is correct for every name we serve. And "starting at",
+    # not "opening at": `claims_undated_baseline` bans the word "opening" without
+    # a date, rightly — but this baseline is the kickoff of a game the card says
+    # is LIVE, so the instant is not in doubt and the sentence should not borrow
+    # a phrase that means it is.
+    if claim == "underdog_lead":
+        underdog = away_team if opening_home_prob > 0.5 else home_team
+        underdog_opening = (
+            opening_home_prob if opening_home_prob < 0.5 else 1 - opening_home_prob
+        )
+        return LiveClaim(
+            "underdog_lead",
+            f"{underdog} leading after starting at {_display_pct(underdog_opening)}%",
+        )
+
+    # T10-1 — a MOVEMENT claim states its endpoints. "Milwaukee Brewers odds
+    # shifted 42%" is a delta with nothing to hang it on: a reader cannot tell
+    # 8%->50% from 50%->92%, and those are opposite stories. Naming both numbers
+    # also keeps the sentence honestly about the price, which is the one thing
+    # this evidence is about.
+    change = home_probability - opening_home_prob
+    if change > 0:
+        mover, was, now_prob = home_team, opening_home_prob, home_probability
+    else:
+        mover = away_team
+        was = 1 - opening_home_prob
+        now_prob = (
+            away_probability if away_probability is not None else 1 - home_probability
+        )
+    return LiveClaim(
+        "movement",
+        f"{mover} chance rose from {_display_pct(was)}% to {_display_pct(now_prob)}%",
+    )
+
+
 def generate_event_reason(
     home_team: str,
     away_team: str,
@@ -906,12 +1006,30 @@ def generate_event_reason(
         # fired when `opening_home_prob` was None, which is precisely when we
         # cannot name an underdog OR check the field. Falling through reaches
         # the price sentence below, which is true from what we do have.
-        if (
-            "favorite_switched" in reasons
-            and underdog_leads(opening_home_prob, home_score, away_score) is True
-        ):
-            underdog = away_team if opening_home_prob > 0.5 else home_team
-            return f"{underdog} leading as underdog"
+        # T10-1 (#5439) — WHICH claim this card may make is now one decision,
+        # taken by `select_live_claim` and rendered by `compose_live_claim`, and
+        # the label ladder in `highlights.py` answers from the same
+        # determination. Two ladders reading the same rows and reaching their
+        # own conclusions is how a card ends up with a pill and a caption
+        # describing different events (#4596).
+        #
+        # The selector's own order (field fact before price fact) is preserved
+        # below; the two arms it does not govern — "Virtually even" and "Tight
+        # game" — sit between them exactly where they always did. Those describe
+        # the STATE the card is already showing and claim no event.
+        claim = compose_live_claim(
+            home_team=home_team,
+            away_team=away_team,
+            status=status,
+            home_probability=home_probability,
+            away_probability=away_probability,
+            opening_home_prob=opening_home_prob,
+            home_score=home_score,
+            away_score=away_score,
+        )
+
+        if claim is not None and claim.claim_type == "underdog_lead":
+            return claim.sentence
 
         if "very_close" in reasons:
             return "Virtually even"
@@ -919,13 +1037,8 @@ def generate_event_reason(
         if "close_matchup" in reasons:
             return "Tight game"
 
-        if "major_prob_swing" in reasons:
-            if opening_home_prob is not None and home_probability is not None:
-                change = home_probability - opening_home_prob
-                direction_team = home_team if change > 0 else away_team
-                pct_change = abs(round(change * 100))
-                return f"{direction_team} odds shifted {pct_change}%"
-            return ""
+        if claim is not None and claim.claim_type == "movement":
+            return claim.sentence
 
         # Generic live — LIVE badge is sufficient
         return ""

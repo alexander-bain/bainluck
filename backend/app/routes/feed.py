@@ -147,6 +147,7 @@ from app.utils.feed_market_quality import (
     is_locked_near_certain,
 )
 from app.utils.feed_reasons import (
+    compose_live_claim,
     generate_event_reason,
     binary_affirmative_outcome,
     binary_affirmative_probability,
@@ -1214,7 +1215,24 @@ def _is_discover_event_demotion_exception(item: dict) -> bool:
     # the ones gotcha #24 describes as tier-gated, and the four words the arm used
     # to hard-code ("elimination", "buzzer", "walk-off", "historic") are absent
     # from every label `get_highlight_label` can emit.
-    headline = (item.get("headline") or "").lower()
+    #
+    # T10-1 (#5439): READ THE PILL, NOT THE CAPTION. Both fields carried
+    # `get_highlight_label(...)` verbatim until this ship, so this retarget is
+    # behaviour-preserving today — but `headline` now takes the specific claim
+    # sentence on a live card, and "Milwaukee Brewers leading after starting at
+    # 38%" does not contain the word "upset" that "Upset brewing" did. Left
+    # reading `headline`, a truth fix to the caption would have quietly demoted
+    # every live underdog-lead card by 60-odd points, which is exactly the shape
+    # notice 37 is about. `data.highlight.label` is written from the same call
+    # (`feed_scoring.build_event_feed_data`) and is the BUCKET, which is what
+    # this predicate has always been asking about.
+    #
+    # The `headline` fallback keeps every fixture and any caller that builds an
+    # item without a `highlight` block working unchanged; a live card always has
+    # a label (the ladder floors at "Live"), so the fallback cannot fire where
+    # the two now differ.
+    _label = ((item.get("data") or {}).get("highlight") or {}).get("label")
+    headline = (_label or item.get("headline") or "").lower()
     if (
         has_major_league_context
         and excitement >= 60
@@ -8218,6 +8236,22 @@ async def _score_events(
                     list(highlight_result.reasons) + _staleness_reasons
                 )
 
+            # T10-1 (#5439) — the one claim this live card is entitled to make,
+            # composed once and used twice: as the `reason` sentence (inside
+            # `generate_event_reason`, which calls the same composer) and as the
+            # `headline` the web caption chain actually renders. None on every
+            # non-live card and on any live card whose evidence supports nothing.
+            _live_claim = compose_live_claim(
+                home_team=event.home_team_name,
+                away_team=event.away_team_name,
+                status=event.status,
+                home_probability=current_home_prob,
+                away_probability=current_away_prob,
+                opening_home_prob=opening_home_prob,
+                home_score=event.home_score,
+                away_score=event.away_score,
+            )
+
             # Generate reason text
             reason = generate_event_reason(
                 home_team=event.home_team_name,
@@ -8344,7 +8378,32 @@ async def _score_events(
                 # completed-game freshness decay scales them by one shared factor.
                 "_rank_score": _rank_score,
                 "reason": reason,
-                "headline": get_highlight_label(highlight_result),
+                # T10-1 (#5439) resolves #4596 HERE, through claim selection.
+                #
+                # `feedContextSnippet` (frontend/components/discover/utils.ts)
+                # reads `item.headline || item.reason` on an unsettled card, so
+                # on a live card the caption line has always been the same
+                # bucket label the pill is already showing — measured at 11 of
+                # 11 live cards on #4596's census — and the specific sentence in
+                # `reason` was never rendered at all.
+                #
+                # NOT the blanket `reason || headline` flip that #4596 costed
+                # out: its census found that would improve 2 cards, probably
+                # improve 4 and make 3 flatter, because "Virtually even" and
+                # "Coin flip" are synonyms and the pill is the punchier of the
+                # two. The caption takes the sentence only when the sentence is
+                # a supported CLAIM, which is the case where it carries a number
+                # or names a side; every other card keeps the label it has.
+                #
+                # The pill is untouched: `data.highlight.label` is still
+                # `get_highlight_label`, so the card reads as label + sentence
+                # (#4596's option 1, "merge rather than choose") using the two
+                # fields the payload already has — no migration, per the ship.
+                "headline": (
+                    _live_claim.sentence
+                    if _live_claim is not None
+                    else get_highlight_label(highlight_result)
+                ),
                 "data": event_data,
                 "_sort_time": sort_time,
             }

@@ -161,8 +161,19 @@ class TestTheCapsule:
         assert result.flags.probability_swing == "major"
         assert get_highlight_label(result) == "Odds moved"
 
-    def test_momentum_shift_survives_when_the_field_moved_too(self):
-        """The other direction: a move AND a score is genuine momentum."""
+    def test_momentum_shift_does_not_survive_a_score_either(self):
+        """T10-1 (#5439), ppp default A — REVERSED, deliberately.
+
+        This assertion used to read ``== "Momentum shift"`` and was #4580's
+        positive control: a move AND a score was ruled to be genuine momentum.
+        The permission is withdrawn. Two numbers that say the price moved and
+        that the game is not level cannot establish a sequence of sporting
+        events, and on production 2026-09-12 the label came out five times on
+        one page — identically over a one-run game and a 17-0 rout.
+
+        Kept here rather than deleted so the reversal is visible at the exact
+        line that ratified it.
+        """
         result = _live(
             home_score=14,
             away_score=3,
@@ -170,7 +181,8 @@ class TestTheCapsule:
             current_home_prob=0.62,
         )
         assert result.flags.probability_swing == "major"
-        assert get_highlight_label(result) == "Momentum shift"
+        assert result.flags.someone_is_leading is True
+        assert get_highlight_label(result) == "Odds moved"
 
     def test_a_settled_upset_is_untouched(self):
         """#4094's neighbour. This guard is about LIVE cards only."""
@@ -212,21 +224,24 @@ class TestTheFooterBadge:
         assert "leading" not in self._reason(home_score=0, away_score=0)
 
     def test_the_0_0_card_falls_back_to_the_price_sentence(self):
+        """T10-1 restated the price sentence with both endpoints; the point of
+        #4580's assertion — that a 0-0 card talks about the PRICE — is
+        unchanged, and is now checkable by the reader."""
         assert self._reason(home_score=0, away_score=0) == (
-            "New England Patriots odds shifted 18%"
+            "New England Patriots chance rose from 38% to 56%"
         )
 
     def test_the_underdog_actually_ahead_keeps_its_sentence(self):
         """The other direction — the Orlando City shape, away side ahead."""
         assert self._reason(home_score=1, away_score=3) == (
-            "New England Patriots leading as underdog"
+            "New England Patriots leading after starting at 38%"
         )
 
     def test_a_home_underdog_ahead_is_named_correctly(self):
         """The mirror, so the test cannot pass on a hard-coded side."""
         assert self._reason(
             home_score=3, away_score=1, opening_home_prob=0.38
-        ) == "Seattle Seahawks leading as underdog"
+        ) == "Seattle Seahawks leading after starting at 38%"
 
     def test_the_favourite_ahead_is_not_reported_as_an_underdog(self):
         assert "underdog" not in self._reason(home_score=3, away_score=1)

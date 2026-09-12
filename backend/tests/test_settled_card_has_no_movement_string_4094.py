@@ -148,9 +148,15 @@ class TestTheDuringTheGameSentence:
         )
 
     def test_a_live_game_still_reports_its_movement(self):
-        """The other direction. Mid-game movement is news; the game is not over."""
+        """The other direction. Mid-game movement is news; the game is not over.
+
+        T10-1 (#5439) restated the LIVE movement sentence with both endpoints —
+        a bare "shifted 41%" cannot tell 55%->96% from 96%->55%, and those are
+        opposite stories. #4094's assertion is about which STATUS may carry a
+        movement sentence, and that is unchanged: live yes, settled no.
+        """
         assert self._reason("live", ["major_prob_swing"]) == (
-            "San Francisco Giants odds shifted 41%"
+            "San Francisco Giants chance rose from 55% to 96%"
         )
 
     def test_an_upcoming_game_still_reports_movement_since_open(self):

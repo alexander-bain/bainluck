@@ -561,15 +561,16 @@ class TestGetHighlightLabel:
         result = HighlightResult(flags=EventFlags(is_live=True, is_close_matchup=True))
         assert get_highlight_label(result) == "Close game"
 
-    def test_live_momentum_shift(self):
-        # #4580 — momentum needs a move AND a score; a swing over a game where
-        # nobody is ahead says "Odds moved" instead.
+    def test_live_major_swing_says_the_odds_moved(self):
+        # T10-1 (#5439) — "Momentum shift" is withdrawn. #4580 required a move
+        # AND a score for it; the score half was never evidence of momentum, so
+        # both cases now say the one thing that was observed: the price moved.
         result = HighlightResult(
             flags=EventFlags(
                 is_live=True, probability_swing="major", someone_is_leading=True
             )
         )
-        assert get_highlight_label(result) == "Momentum shift"
+        assert get_highlight_label(result) == "Odds moved"
 
     def test_starting_very_soon_close(self):
         result = HighlightResult(flags=EventFlags(
@@ -944,9 +945,9 @@ class TestGetHighlightLabelPriority:
         result = HighlightResult(flags=EventFlags(
             is_live=True,
             probability_swing="major",
-            someone_is_leading=True,  # #4580 — momentum needs a move AND a score
+            someone_is_leading=True,  # T10-1 — no longer buys a momentum claim
         ))
-        assert get_highlight_label(result) == "Momentum shift"
+        assert get_highlight_label(result) == "Odds moved"
 
     def test_line_moving_not_shown_when_live(self):
         """Pre-game 'Line moving' label is NOT shown for live games
@@ -1232,13 +1233,15 @@ class TestLevel2Scoring:
         assert not result.flags.has_recent_momentum
 
     def test_lead_changes_label_priority(self):
-        """Lead change label should beat close game for live events."""
+        """The 50%-crossing label still beats close game — and it no longer
+        claims the lead changed on the field (T10-1, #5439). The flag counts
+        PROBABILITY crossings; "Odds flipped" is that observation stated."""
         result = HighlightResult(flags=EventFlags(
             is_live=True,
             is_close_matchup=True,
             has_lead_changes=True,
         ))
-        assert get_highlight_label(result) == "Lead change"
+        assert get_highlight_label(result) == "Odds flipped"
 
     def test_live_lead_changes_always_highlighted(self):
         """Live games with lead changes should always be highlighted."""
