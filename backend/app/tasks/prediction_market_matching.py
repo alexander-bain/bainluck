@@ -5707,6 +5707,37 @@ def _clear_withdrawn_outcome(outcome, now, stats: dict) -> bool:
     return True
 
 
+#: The celery `task_time_limit` that KILLS this beat, mirrored here so the
+#: budget below can be sized off the bound that is actually enforced rather
+#: than off the 120 s cadence, which enforces nothing. The mirror is asserted
+#: against `app.tasks.CELERY_CONFIG` in
+#: `tests/test_live_poll_budget_5767.py` — two records of one capability that
+#: are allowed to drift are how a margin silently becomes negative.
+_LIVE_POLL_HARD_KILL_SECONDS = 300
+
+#: What the beat keeps back for its final commit, its terminal and its log
+#: line — the work that has to happen AFTER the last loop stops.
+_LIVE_POLL_BUDGET_MARGIN_SECONDS = 60
+
+#: What the beat gives itself before it stops cleanly and reports `partial`.
+#: A SIGKILLed fork writes no verdict, so the 300 s kill left `successes`,
+#: `failures`, `consecutive_failures` and `health` frozen at their pre-deploy
+#: values while the poll was in fact running and writing (#5767). DERIVED from
+#: the bound above rather than written out: a budget that has to be re-typed
+#: when the limit moves is a margin that goes negative in silence.
+_LIVE_POLL_BUDGET_SECONDS = (
+    _LIVE_POLL_HARD_KILL_SECONDS - _LIVE_POLL_BUDGET_MARGIN_SECONDS
+)
+
+#: The share of the budget the VENUE-FETCH stages may spend. The stages after
+#: them write `win_probability_sources` — the number the reader actually sees
+#: on the page — and they are database-only and quick. Letting ~100 fetches and
+#: their rate-limit sleeps consume the whole budget would refresh the outcome
+#: rows and never stamp the event, which is #5682's exact symptom arriving by a
+#: second road: rows fresh, page stale.
+_LIVE_POLL_FETCH_BUDGET_SHARE = 0.6
+
+
 @dataclass
 class _LivePollPopulation:
     """One live-poll beat's rows, addressable BY ID (#5682).
@@ -5780,6 +5811,27 @@ async def _load_live_poll_population(session, now) -> _LivePollPopulation:
                 ),
             ),
         )
+        # #5767: STALEST FIRST. A pass that cannot finish needs an ordering or
+        # its tail is permanently dark (gotcha #41) — and this one cannot
+        # finish: on 2026-09-12 every beat after the #5682 deploy was killed at
+        # the 300 s hard limit partway through an unordered population, so the
+        # same rows were reached every beat and the same rows were never
+        # reached. The sort key is the very number the ship is about: the
+        # event-level stamp this market's source last wrote.
+        #
+        # TEXT, not a cast. Every writer of this key uses
+        # `datetime.now(timezone.utc).isoformat()`, so the values are
+        # fixed-offset ISO-8601 and sort lexicographically in chronological
+        # order; casting would order identically and would raise the whole
+        # query on one malformed stamp, which is a worse trade for a tiebreak.
+        # A leg never written at all is NULL and sorts FIRST — it is the
+        # stalest thing there is.
+        .order_by(
+            func.jsonb_extract_path_text(
+                Event.win_probability_sources, FuturesMarket.source, "updated_at"
+            ).asc().nullsfirst(),
+            FuturesMarket.id.asc(),
+        )
     )
     rows = list(result.all())
 
@@ -5841,6 +5893,7 @@ async def _poll_live_prediction_market_prices():
     """
     import asyncio
     import json
+    import time
 
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -5888,6 +5941,28 @@ async def _poll_live_prediction_market_prices():
     }
 
     now = datetime.now(timezone.utc)
+
+    # #5767: the beat's two deadlines, taken from a monotonic clock at the top
+    # so nothing downstream can compute a time that only ever drifts ahead.
+    _started_at = time.monotonic()
+    _fetch_deadline = _started_at + (
+        _LIVE_POLL_BUDGET_SECONDS * _LIVE_POLL_FETCH_BUDGET_SHARE
+    )
+    _deadline = _started_at + _LIVE_POLL_BUDGET_SECONDS
+    #: stage -> items the budget cost this beat. Empty means the pass finished.
+    budget_stops: dict[str, int] = {}
+
+    def _out_of_budget(stage: str, deadline: float, remaining: int) -> bool:
+        """True when *stage* must stop now; records what stopping cost.
+
+        The count is the reason this returns rather than raising: a beat that
+        stopped 40 markets short is a different fact from one that stopped 2
+        short, and `terminal: partial` alone cannot say which.
+        """
+        if time.monotonic() < deadline:
+            return False
+        budget_stops[stage] = budget_stops.get(stage, 0) + max(remaining, 0)
+        return True
 
     async with get_task_session() as session:
         pop = await _load_live_poll_population(session, now)
@@ -6001,7 +6076,14 @@ async def _poll_live_prediction_market_prices():
 
             service = KalshiAPIService()
             try:
-                for market_id in kalshi_ids:
+                for _seen, market_id in enumerate(kalshi_ids):
+                    # #5767: the fetch stages stop first and leave the stamping
+                    # stages their share. The population is stalest-first, so
+                    # what is dropped here is the freshest end of it.
+                    if _out_of_budget(
+                        "kalshi_fetch", _fetch_deadline, len(kalshi_ids) - _seen
+                    ):
+                        break
                     market = pop.markets_by_id.get(market_id)
                     if market is None:
                         # Unlinked or gone since the plan was made, or dropped
@@ -6145,7 +6227,13 @@ async def _poll_live_prediction_market_prices():
             try:
                 # Group by external_id (Polymarket event ID) to avoid duplicate fetches
                 seen_events = {}
-                for market_id in polymarket_ids:
+                for _seen, market_id in enumerate(polymarket_ids):
+                    if _out_of_budget(
+                        "polymarket_fetch",
+                        _fetch_deadline,
+                        len(polymarket_ids) - _seen,
+                    ):
+                        break
                     market = pop.markets_by_id.get(market_id)
                     if market is None:
                         continue
@@ -6322,7 +6410,13 @@ async def _poll_live_prediction_market_prices():
                 )
             return groups
 
-        for key in list(blend_plan):
+        _blend_keys = list(blend_plan)
+        for _seen, key in enumerate(_blend_keys):
+            # #5767: this is the stage that writes `win_probability_sources` —
+            # the number on the page — so it gets the WHOLE budget, not the
+            # fetch stages' share.
+            if _out_of_budget("blend_stamp", _deadline, len(_blend_keys) - _seen):
+                break
             try:
                 # Primary selection happens INSIDE the per-event try, against
                 # the population as it stands now: a recovery two events ago
@@ -6474,7 +6568,9 @@ async def _poll_live_prediction_market_prices():
         # raw SQL against a live session, so it is as able to meet a deadlock
         # as anything above it.
         pregame_ids = [m.id for m, _e in pop.rows]
-        for market_id in pregame_ids:
+        for _seen, market_id in enumerate(pregame_ids):
+            if _out_of_budget("pregame_mark", _deadline, len(pregame_ids) - _seen):
+                break
             market = pop.markets_by_id.get(market_id)
             event = pop.event_by_market_id.get(market_id)
             if market is None or event is None:
@@ -6556,6 +6652,24 @@ async def _poll_live_prediction_market_prices():
     # that is not a finished run — and it must not read GREEN on the health
     # surfaces while the deadlocks are still happening.
     stats["terminal"] = "complete" if stats["session_recoveries"] == 0 else "partial"
+
+    # #5767: a beat that ran out of wall clock is `partial` whatever else went
+    # right, and it says what the budget cost. Before this, the 300 s celery
+    # kill took the fork down mid-pass and wrote NO terminal at all, so
+    # `successes_24h`, `consecutive_failures` and `health` sat frozen at their
+    # pre-deploy values while the poll was running and writing — the "it
+    # returned is not it worked" failure (gotcha #53) in its silent form, where
+    # nothing returns and nothing reports.
+    if budget_stops:
+        stats["terminal"] = "partial"
+        stats["budget_stops"] = dict(budget_stops)
+        stats["budget_seconds"] = _LIVE_POLL_BUDGET_SECONDS
+        stats["elapsed_seconds"] = round(time.monotonic() - _started_at, 1)
+        logger.warning(
+            "Live prediction market poll stopped on its %ss budget: %s",
+            _LIVE_POLL_BUDGET_SECONDS,
+            budget_stops,
+        )
 
     logger.info(
         "Live prediction market poll: events=%d, markets=%d, "
