@@ -469,21 +469,68 @@ def _match_sport_affinity(
     return best_match
 
 
+#: The two vocabularies a Discover interaction's `category` can be written in,
+#: and the map between them. CERT-2672's finding.
+#:
+#: An EVENT card reports the sport-key ROOT; a FUTURES card reports the LLM
+#: category. Measured over 30 days of `discover_interactions` on 2026-09-12:
+#:
+#:     football | native | futures | 520      americanfootball | native | event | 151
+#:     hockey   | native | futures | 470      americanfootball | web    | event |   4
+#:     football | web    | futures | 132      basketball       | native | event |  10
+#:
+#: — the same sport arriving under two keys from two card types. `basketball`
+#: agrees between the vocabularies, which is why the split was invisible: the
+#: scorer canonicalises to the futures vocabulary (`americanfootball_nfl` ->
+#: `football`), so every American-football and ice-hockey EVENT swipe has been
+#: counted into a bucket the event scorer never looks up. On the specimen
+#: #5453 was built from — Alex's own rows, 6 `americanfootball` swipes — the
+#: multiplier came back `1.0`.
+#:
+#: The four pairs are DERIVED, not guessed: every sport-key root served in the
+#: last 30 days, compared against the `llm_sport_category` vocabulary. The four
+#: that differ are below; `test_the_alias_map_covers_every_root_that_disagrees`
+#: re-derives the comparison so a new sport cannot join quietly.
+DISCOVER_CATEGORY_ALIASES: dict[str, str] = {
+    "americanfootball": "football",
+    "icehockey": "hockey",
+    "motorsport": "motorsports",
+    "rugbyleague": "rugby",
+    "rugbyunion": "rugby",
+}
+
+
+def canonical_discover_category(category: str | None) -> str | None:
+    """THE ONE KEY a Discover category affinity is stored and looked up under.
+
+    Every writer of a category key into an affinity rollup and every reader of
+    one goes through here, which is the whole point: two spellings of one sport
+    in one dictionary is a silent zero, not an error, and `.get(key, 0.0)` can
+    never tell you it happened.
+
+    Returns None for an absent or blank category so callers keep their existing
+    "no category, no opinion" branch; it does NOT invent `"other"`.
+    """
+    if not category:
+        return None
+    key = str(category).strip().lower()
+    if not key:
+        return None
+    return DISCOVER_CATEGORY_ALIASES.get(key, key)
+
+
 def _category_from_sport_key(sport_key: str | None) -> str | None:
     if not sport_key:
         return None
-    root = sport_key.split("_")[0].lower()
-    if root == "americanfootball":
-        return "football"
-    if root == "icehockey":
-        return "hockey"
-    return root
+    return canonical_discover_category(sport_key.split("_")[0])
 
 
 def _category_affinity_bonus(ctx: PersonalizationContext, category: str | None) -> float:
     if not category or not ctx.discover_category_affinities:
         return 0.0
-    normalized_category = category.lower()
+    normalized_category = canonical_discover_category(category)
+    if not normalized_category:
+        return 0.0
     value = ctx.discover_category_affinities.get(normalized_category, 0.0)
     if abs(value) < 0.01:
         return 0.0

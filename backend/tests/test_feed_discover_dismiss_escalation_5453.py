@@ -52,9 +52,7 @@ from app.routes.feed import (
 from app.utils.personalization import (
     CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY,
     CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY,
-    CATEGORY_DISMISS_MAX_PENALTY,
     CATEGORY_INTEREST_MAX_BONUS,
-    PersonalizationContext,
     _category_affinity_bonus,
 )
 
@@ -312,3 +310,223 @@ def test_categories_are_lowercased_like_the_affinity_builder():
     assert set(_build_discover_category_negative_counts(rows)) <= set(
         _build_discover_category_affinities(rows)
     )
+
+
+# ---------------------------------------------------------------------------
+# CERT-2672 — THE REPAIR: ONE CANONICAL CATEGORY KEY, WRITE THROUGH TO SCORING
+# ---------------------------------------------------------------------------
+#
+# The first presentation of this ship was BLOCKed, correctly, on a real served
+# path: everything above uses `politics`, a category whose two vocabularies
+# happen to agree, and the escalation is therefore proven only where the defect
+# could not occur.
+#
+# An EVENT card writes the sport-key ROOT (`americanfootball`); a FUTURES card
+# writes the LLM category (`football`); `compute_event_multiplier` looks up
+# `_category_from_sport_key("americanfootball_nfl")`, which is `football`. So an
+# NFL event swipe landed in a bucket the event scorer never reads, and the
+# staged production specimen — Alex's own rows — names six of them.
+#
+# Measured over 30 days on 2026-09-12, `discover_interactions`:
+#
+#     football | native | futures | 520   americanfootball | native | event | 151
+#     hockey   | native | futures | 470   americanfootball | web    | event |   4
+#     football | web    | futures | 132   basketball       | native | event |  10
+#
+# These drive the REAL loader and the REAL `compute_event_multiplier`, at every
+# rung, with the positive-engagement control beside them.
+
+
+def _nfl_multiplier(ctx):
+    """What a real NFL game card scores through the real event scorer."""
+    from app.utils.personalization import compute_event_multiplier
+
+    return compute_event_multiplier(
+        ctx,
+        home_team_id=None,
+        away_team_id=None,
+        sport_key="americanfootball_nfl",
+        event_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_eight_nfl_event_swipes_reach_the_eight_swipe_floor_5453():
+    """THE CERT-2672 SPECIMEN, end to end.
+
+    Eight NFL EVENT swipes — written under `americanfootball`, the only key a
+    web or native event card has ever produced — must reach the deepest floor
+    when the card they are meant to push down is scored. Before the repair this
+    returned multiplier 1.0 with no personalization reason at all: the rollup
+    key and the lookup key were two different strings, and `.get(key, 0.0)`
+    cannot report a miss.
+    """
+    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
+    result = _nfl_multiplier(ctx)
+
+    assert result.multiplier == pytest.approx(
+        1.0 + CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY
+    ), (
+        f"an NFL card scored {result.multiplier} after eight swipes away from "
+        f"NFL cards; reasons={result.reasons}"
+    )
+    assert any("discover_dismiss" in r for r in result.reasons), result.reasons
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "swipes,expected",
+    [
+        # -0.15 is master's shallow end and this tree keeps serving it: three
+        # swipes do not reach the -0.40 floor, because the floor is a BOUND and
+        # `max(floor, value)` returns the value. Same number as
+        # `test_three_swipes_are_unchanged_by_this_fix` asserts for politics —
+        # the point of repeating it here is that NFL must behave identically to
+        # a category whose two vocabularies never disagreed.
+        (3, -0.15),
+        (5, CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY),
+        (8, CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY),
+    ],
+)
+async def test_the_nfl_ladder_runs_through_the_real_event_scorer(swipes, expected):
+    """Every rung, on the vocabulary the defect lives in — not just the top one.
+
+    A single 8-swipe assertion would pass against a repair that merged the keys
+    but broke the ladder underneath it.
+    """
+    ctx = await _load([("americanfootball", "unlike", swipes), _WARM])
+
+    assert _nfl_multiplier(ctx).multiplier == pytest.approx(1.0 + expected)
+
+
+@pytest.mark.asyncio
+async def test_the_nfl_ladder_is_monotonic_through_the_real_event_scorer():
+    multipliers = [
+        _nfl_multiplier(
+            await _load([("americanfootball", "unlike", n), _WARM])
+        ).multiplier
+        for n in (3, 5, 8)
+    ]
+
+    assert multipliers == sorted(multipliers, reverse=True), multipliers
+    assert len(set(multipliers)) == 3, f"rungs must be distinguishable: {multipliers}"
+
+
+@pytest.mark.asyncio
+async def test_an_nfl_reader_who_also_engages_is_not_penalised():
+    """POSITIVE CONTROL. The repair must not become a mute button on NFL.
+
+    A reader who opens and likes football cards as well as swiping some away
+    keeps a non-negative multiplier — #1091 and notice 35 guard this side, and
+    a key merge is exactly the change that could over-collect negatives.
+    """
+    ctx = await _load(
+        [
+            ("americanfootball", "unlike", 3),
+            ("americanfootball", "open", 12),
+            ("americanfootball", "like", 8),
+            _WARM,
+        ]
+    )
+
+    assert _nfl_multiplier(ctx).multiplier >= 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_football_futures_swipe_and_an_nfl_event_swipe_are_one_reader():
+    """The merge itself: the two vocabularies must reach the SAME bucket.
+
+    Five swipes under each key is ten swipes at one sport, and a reader who has
+    said no ten times should be past the eight-swipe rung — not sitting at the
+    three-swipe floor twice over.
+    """
+    ctx = await _load(
+        [("americanfootball", "unlike", 5), ("football", "unlike", 5), _WARM]
+    )
+
+    assert ctx.discover_category_negative_counts == {"football": 10}
+    assert _nfl_multiplier(ctx).multiplier == pytest.approx(
+        1.0 + CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_sport_is_unaffected_by_the_merge():
+    """CONTROL. Merging football keys must not colour hockey, or anything else."""
+    from app.utils.personalization import compute_event_multiplier
+
+    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
+
+    assert compute_event_multiplier(
+        ctx,
+        home_team_id=None,
+        away_team_id=None,
+        sport_key="baseball_mlb",
+        event_id=None,
+    ).multiplier == 1.0
+
+
+def test_the_alias_map_covers_every_root_that_disagrees():
+    """The alias map is DERIVED, not remembered.
+
+    Every sport-key root served in the last 30 days (measured 2026-09-12), with
+    the `llm_sport_category` its futures cards report. The roots that already
+    agree are listed too, so a wrong alias fails here as loudly as a missing
+    one — a map asserted only against its own keys can never be wrong.
+    """
+    from app.utils.personalization import canonical_discover_category
+
+    served_roots_to_futures_category = {
+        "americanfootball": "football",
+        "icehockey": "hockey",
+        "motorsport": "motorsports",
+        "rugbyleague": "rugby",
+        "rugbyunion": "rugby",
+        # Agree already — the reason the split was invisible for years.
+        "soccer": "soccer",
+        "tennis": "tennis",
+        "baseball": "baseball",
+        "basketball": "basketball",
+        "mma": "mma",
+        "boxing": "boxing",
+        "cricket": "cricket",
+        "golf": "golf",
+        "esports": "esports",
+        "lacrosse": "lacrosse",
+        "handball": "handball",
+        "aussierules": "aussierules",
+        "rugby": "rugby",
+    }
+
+    for root, futures_category in served_roots_to_futures_category.items():
+        assert canonical_discover_category(root) == futures_category, root
+        # and the futures vocabulary is a fixed point — canonicalising twice
+        # must not walk further, or two readers could land in different buckets
+        assert canonical_discover_category(futures_category) == futures_category
+
+
+def test_the_canonicaliser_keeps_absence_absent():
+    """It normalises a spelling; it does not invent a category.
+
+    Returning `"other"` for a blank would file every unclassified swipe into one
+    real bucket and let it accumulate a penalty nobody asked for.
+    """
+    from app.utils.personalization import canonical_discover_category
+
+    assert canonical_discover_category(None) is None
+    assert canonical_discover_category("") is None
+    assert canonical_discover_category("   ") is None
+    assert canonical_discover_category("  AmericanFootball ") == "football"
+
+
+def test_the_two_builders_agree_on_the_canonical_key():
+    """RED CHECK for the repair itself: both dicts are one key space.
+
+    The BLOCKed tree passed every assertion above this section while these two
+    dictionaries were keyed differently from the scorer's lookup.
+    """
+    rows = [("americanfootball", "unlike", 6), _WARM]
+
+    assert _build_discover_category_negative_counts(rows) == {"football": 6}
+    assert "football" in _build_discover_category_affinities(rows)
+    assert "americanfootball" not in _build_discover_category_affinities(rows)

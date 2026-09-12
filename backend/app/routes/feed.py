@@ -231,6 +231,7 @@ from app.utils.outcome_display import (
 )
 from app.utils.personalization import (
     PersonalizationContext,
+    canonical_discover_category,
     compute_event_multiplier,
     compute_futures_multiplier,
     followed_sport_categories,
@@ -7254,9 +7255,22 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
     cold_start_boost = 2.0 if _cold_start else 1.0
     weights = {k: v * cold_start_boost for k, v in base_weights.items()}
     for category, action, count in all_rows:
-        if not category or action not in weights:
+        if action not in weights:
             continue
-        key = str(category).lower()
+        # CERT-2672: the rollup is keyed by ONE canonical category, not by
+        # whichever vocabulary the card that produced the swipe happened to use.
+        # An event card writes the sport-key root (`americanfootball`), a
+        # futures card writes the LLM category (`football`), and the scorer
+        # looks up the latter — so 151 of Alex's own event swipes were being
+        # counted into a bucket nothing reads. Canonicalising HERE rather than
+        # at the write is deliberate: it repairs the rows already in the table,
+        # which a write-side normaliser cannot reach, and it leaves the column
+        # itself carrying what the client actually said (story keys and the
+        # admin engagement rollups read that same column and must not be
+        # silently re-keyed — gotcha #25).
+        key = canonical_discover_category(category)
+        if not key:
+            continue
         n = int(count or 0)
         raw_scores[key] = raw_scores.get(key, 0.0) + weights[action] * n
         action_counts[key] = action_counts.get(key, 0) + n
@@ -7311,9 +7325,16 @@ def _build_discover_category_negative_counts(rows) -> dict[str, int]:
     """
     counts: dict[str, int] = {}
     for category, action, count in rows:
-        if not category or action not in _DISCOVER_NEGATIVE_ACTIONS:
+        if action not in _DISCOVER_NEGATIVE_ACTIONS:
             continue
-        key = str(category).lower()
+        # Same canonical key as the affinity builder above (CERT-2672). These
+        # two dictionaries are looked up with one category by
+        # `_category_affinity_bonus`/`_category_dismiss_floor`; keyed
+        # differently, the floor would silently read 0 for exactly the sports
+        # whose two vocabularies disagree.
+        key = canonical_discover_category(category)
+        if not key:
+            continue
         counts[key] = counts.get(key, 0) + int(count or 0)
     return counts
 
