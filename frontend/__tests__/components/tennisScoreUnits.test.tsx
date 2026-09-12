@@ -52,6 +52,46 @@ function visibleText(html: string): string {
     .trim();
 }
 
+/**
+ * #5484 — EVENT 15293830'S OWN NUMBERS, IN ONE PLACE, BECAUSE THEY HAVE TO
+ * AGREE WITH EACH OTHER.
+ *
+ * A negative `home_spread` means the HOME player is favoured (measured: event
+ * 15309206, Zverev home at 0.7966, `opening_home_spread` -5.5). Home here is
+ * Marozsan at **3.13%**, so both of this fixture's spreads are `+4.6` — he is
+ * the one receiving games. The file carried `homeSpread={-4.6}` beside
+ * `openingHomeSpread={4.6}` until #5484: two numbers for one quantity,
+ * disagreeing on which player was favoured, in a fixture whose whole subject is
+ * a widget printing a number in the wrong unit.
+ *
+ * They live here as named constants rather than as literals at the call site so
+ * the guard below and the render cannot drift apart — a self-consistency check
+ * on constants nobody renders would be worth nothing.
+ */
+const HOME_WIN_PROB = 0.0313;
+const AWAY_WIN_PROB = 0.9687;
+/** The LATEST snapshot's line. */
+const HOME_SPREAD = 4.6;
+/** The frozen pre-game line #5414 wired in. Same match, so the same sign. */
+const OPENING_HOME_SPREAD = 4.6;
+
+/**
+ * Does a home spread agree with a home win probability about who is favoured?
+ *
+ * The coinflip arm is not a fudge, it is the production measurement: over 30
+ * days, of 453 tennis events carrying an opening spread, 3 look inverted and
+ * all three are near-coinflips sitting on the other side of a half-point (home
+ * at 0.511 / 0.501 / 0.504, spread 0.5). A rule with no such band would call
+ * those three contradictions and be wrong three times.
+ */
+function spreadSignVerdict(
+  homeWinProb: number,
+  homeSpread: number
+): "agrees" | "contradicts" | "coinflip" {
+  if (Math.abs(homeWinProb - 0.5) <= 0.05) return "coinflip";
+  return homeWinProb > 0.5 === homeSpread < 0 ? "agrees" : "contradicts";
+}
+
 /** Event 15293830's own history, trimmed to the two fields these widgets read. */
 const HISTORY = [
   { timestamp: "2026-09-02T18:30:00Z", home_probability: 0.44, away_probability: 0.56, projected_home_score: 17.2, projected_away_score: 17.9, bookmaker_count: 9 },
@@ -124,42 +164,71 @@ function renderMaps(sportKey: string) {
       awayTeam="Michael Zheng"
       homeAbbr="MAR"
       awayAbbr="ZHE"
-      homeWinProb={0.0313}
-      awayWinProb={0.9687}
-      homeSpread={-4.6}
+      homeWinProb={HOME_WIN_PROB}
+      awayWinProb={AWAY_WIN_PROB}
+      homeSpread={HOME_SPREAD}
       overUnder={34.8}
-      /* #5414/CERT-2674: the frozen pre-game line this fixture predates, so its
-         `Pre-game` assertion keeps meaning "the pre-game half of the card
-         survives" now that the marker is drawn only where a pre-game reading
-         exists.
+      /* #5414/CERT-2674: the frozen pre-game line this fixture predates. It is
+         what draws `Pre-game ZHE by 4.6+` on the margin rail — measured, by
+         rendering this fixture and reading the markup, not assumed.
 
-         ⚠️ **POSITIVE 4.6, where the line above it is negative, and that is not
-         a typo.** A negative `home_spread` means the HOME player is favoured
-         (measured: event 15309206, Zverev home at 0.7966, `opening_home_spread`
-         -5.5). Home here is Marozsan at **3.13%**, so his line is `+4.6` — he
-         is the one receiving games. The `homeSpread={-4.6}` above contradicts
-         this fixture's own win probabilities and has never been visible on the
-         tennis arm because #2441 gates the derived rung off for tennis; wiring
-         the opening line in surfaced it, rendering `Pre-game MAR by 4.6+` under
-         a headline reading `ZHE 97%` — #4598's defect exactly.
-
-         This is a FIXTURE defect and not a data one; the convention holds in
-         production. Measured over 30 days: of 453 tennis events carrying an
-         opening spread, 3 look inverted and all three are coinflips on the
-         other side of a half-point (home at 0.511 / 0.501 / 0.504, spread 0.5).
-         Baseball's 29 are the runline working correctly — a marginal moneyline
-         favourite is an underdog to win BY 2+ — and NFL, NCAAF, WNBA and every
-         soccer league are 0 for 1,800+.
-
-         Filed as #5484 rather than rewritten here: the NBA control below uses
-         the same helper and that sign is load-bearing for it, so correcting it
-         means splitting the arms, which is more than this ship should carry. */
-      openingHomeSpread={4.6}
+         #5484 corrected `homeSpread` from `-4.6` to `+4.6` above; both spreads
+         now say what the win probabilities say. See the constants' note for the
+         convention and the production measurement behind it. */
+      openingHomeSpread={OPENING_HOME_SPREAD}
       openingOverUnder={34.8}
       sportKey={sportKey}
     />
   );
 }
+
+/**
+ * #5484 — THE FIXTURE IS CHECKED AGAINST ITSELF.
+ *
+ * The contradiction this closes was invisible for a reason worth keeping: with
+ * `openingHomeSpread` set, `MarketMapSection` never reads `homeSpread` at all
+ * (it takes the opening line first, and the derived rung behind it is gated on
+ * both `hasDerivedSpread` and `status === "pre"`). Measured: rendering this
+ * fixture with `homeSpread` at `-4.6` and at `+4.6` produces byte-identical
+ * markup on all four of tennis/basketball × scheduled/completed. So no
+ * assertion in this file can see the sign, and none ever will — which is
+ * exactly why the wrong sign survived, and why the guard has to be about the
+ * numbers rather than about the render.
+ */
+describe("#5484 — the fixture's own numbers do not contradict each other", () => {
+  it("gives the 3.13% player a spread he RECEIVES, on the latest line and the opening one", () => {
+    expect(HOME_WIN_PROB + AWAY_WIN_PROB).toBeCloseTo(1, 4);
+    expect(HOME_WIN_PROB).toBeLessThan(AWAY_WIN_PROB);
+
+    // Reported as strings so a failure names WHICH line is wrong rather than
+    // printing `false`.
+    expect([
+      `homeSpread ${spreadSignVerdict(HOME_WIN_PROB, HOME_SPREAD)}`,
+      `openingHomeSpread ${spreadSignVerdict(HOME_WIN_PROB, OPENING_HOME_SPREAD)}`,
+    ]).toEqual(["homeSpread agrees", "openingHomeSpread agrees"]);
+  });
+
+  /**
+   * THE CONTROL, and the whole reason the guard above is worth its lines: a
+   * verdict function that can only ever return "agrees" would pass it forever.
+   */
+  it("can actually say 'contradicts' — including for the value this file carried", () => {
+    // The literal that was here until #5484.
+    expect(spreadSignVerdict(0.0313, -4.6)).toBe("contradicts");
+    // …and its mirror, in case someone flips the favourite instead of the sign.
+    expect(spreadSignVerdict(0.9687, 4.6)).toBe("contradicts");
+
+    // Measured production rows, both directions of the convention.
+    expect(spreadSignVerdict(0.7966, -5.5)).toBe("agrees"); // event 15309206, Zverev home
+    expect(spreadSignVerdict(0.0313, 4.6)).toBe("agrees");
+
+    // The three of 453 that look inverted and are not.
+    for (const p of [0.511, 0.501, 0.504]) {
+      expect(spreadSignVerdict(p, 0.5)).toBe("coinflip");
+      expect(spreadSignVerdict(p, -0.5)).toBe("coinflip");
+    }
+  });
+});
 
 describe("ux/1034 B5 — the scoreboard's unit is declared, not assumed", () => {
   it("says tennis counts sets while its market quotes games", () => {
