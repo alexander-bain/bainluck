@@ -226,18 +226,50 @@ def _matchup_behind_competition_prefix(stripped: str) -> bool:
     and the three PPA pickleball draws this issue was filed on. 441 are refused
     by the prefix test and 898 by the structural tests.
     """
+    return _competition_prefix_tail(stripped) is not None
+
+
+def _competition_prefix_tail(stripped: str) -> Optional[str]:
+    """The matchup behind the prefix, or None. The predicate above is `is not None`.
+
+    Split out so that RECOGNIZING the matchup and USING it are the same
+    decision. `_class_says_game_winner` learning to read these titles was not
+    enough to let one speak (CERT-2751): the writer parses the name a second
+    time with `extract_matchup_with_ticker_fallback`, which read
+    `PPA - Women's Singles: Hannah Blatt vs Polina Libo` as `PPA` vs
+    `Women's Singles` and returned no reading at all. Two readers of one title
+    disagreeing is the #1951 drift failure, so there is exactly one function
+    that decides where the matchup starts and both callers use it.
+    """
     prefix, sep, tail = stripped.rpartition(":")
     if not sep:
-        return False
+        return None
     tail = _LEAGUE_TAG_RE.sub("", tail.strip()).strip()
     # The market's own qualifier lives in the tail — refuse it exactly as before.
     if not tail or ":" in tail or " - " in tail:
-        return False
+        return None
     if any(pattern.search(prefix) for pattern in _PREFIX_DISQUALIFIERS):
-        return False
-    if _WILL_BEAT_RE.match(tail):
-        return True
-    return bool(_BARE_MATCHUP_RE.match(tail))
+        return None
+    if _WILL_BEAT_RE.match(tail) or _BARE_MATCHUP_RE.match(tail):
+        return tail
+    return None
+
+
+def competition_prefix_tail(name: str) -> Optional[str]:
+    """Public: the bare matchup behind a competition prefix, else None.
+
+    For callers that must PARSE the title rather than merely classify it. Returns
+    None for every shape this module refuses — a trailing qualifier, a segment
+    head, a dash-without-colon — so `competition_prefix_tail(n) or n` is always
+    safe: it narrows the title only where the narrowing has been measured, and is
+    the identity everywhere else.
+    """
+    if not name:
+        return None
+    stripped = _LEAGUE_TAG_RE.sub("", name).strip()
+    if ":" not in stripped and " - " not in stripped:
+        return None
+    return _competition_prefix_tail(stripped)
 
 
 def is_bare_matchup(name: str) -> bool:

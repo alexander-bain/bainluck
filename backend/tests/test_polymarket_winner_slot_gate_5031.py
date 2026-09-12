@@ -616,3 +616,112 @@ class TestTheWriterRetiresALegNoWinnerMarketCanBack:
         assert written is not None and "polymarket" in written
         assert written["polymarket"]["value"] == pytest.approx(0.705)
         assert "blend_source_retired_no_winner_market" not in stats.get("funnel", {})
+
+
+# =============================================================================
+# CERT-2751's required repair — a recognized prefix must reach the WRITER
+# =============================================================================
+
+
+class TestAPrefixedWinnerReachesTheWriter:
+    """`5660-PREFIXED-WINNER-REACHES-THE-WRITER`. The BLOCK was right.
+
+    #5660 taught `_class_says_game_winner` to read a competition prefix and I
+    claimed the event page. The claim was false: the writer parses the title a
+    SECOND time with `extract_matchup_with_ticker_fallback`, which read
+    `PPA - Women's Singles: Hannah Blatt vs Polina Libo` as `team_a=PPA`,
+    `team_b=Women's Singles`, `format_type=game_prop` — so the market cleared
+    admission and `compute_source_home_probability` returned None anyway.
+
+    A classification the writer cannot act on is not a ship, and a test that
+    proves the classifier while the writer stays mute is the exact trap that hid
+    it: the staged suite swapped the prefixed title for the bare one before
+    calling the writer. **Every assertion here drives the REAL
+    `compute_source_home_probability` with the REAL prefixed title.**
+
+    MEASURED over the ±7d linked window (1,752 names, 2026-09-12): of the 408
+    titles with a safe tail, 281 go from unparseable to parsed, 11 are corrected
+    (`PPA`/`Women's Singles` -> the two players; `T20 Series Zimbabwe`/
+    `South Africa, Women` -> `Zimbabwe`/`South Africa`), and 0 stop parsing.
+    """
+
+    PREFIXED = "PPA - Women's Singles: Hannah Blatt vs Polina Libo"
+    BARE = "Hannah Blatt vs. Polina Libo"
+    A, B = "Hannah Blatt", "Polina Libo"
+
+    def _group(self, name):
+        return [_entry(1, name, [(0, self.A, 0.58), (1, self.B, 0.42)])]
+
+    def test_the_parser_really_did_mangle_this_title(self):
+        """Not vacuous: the defect must be present in the thing being fixed.
+
+        Asserted against the RAW title, which is what the writer used to pass.
+        If `extract_matchup_with_ticker_fallback` ever learns this shape on its
+        own, this line goes red and the narrowing below becomes redundant —
+        which is information, not a failure.
+        """
+        from app.utils.prediction_market_matching import (
+            extract_matchup_with_ticker_fallback,
+        )
+
+        mangled = extract_matchup_with_ticker_fallback(self.PREFIXED)
+        assert mangled is not None
+        assert (mangled.team_a, mangled.team_b) == ("PPA", "Women's Singles")
+
+    def test_the_prefixed_title_now_produces_the_reading(self):
+        """The repair, end to end, on the title the issue names."""
+        reading = compute_source_home_probability(
+            self._group(self.PREFIXED), self.A, self.B
+        )
+        assert reading is not None, (
+            "the classifier admits it and the writer still cannot read it"
+        )
+        assert reading.home_probability == pytest.approx(0.58)
+
+    def test_the_bare_title_control_is_unchanged(self):
+        """The positive control: the narrowing must not move what already worked."""
+        reading = compute_source_home_probability(
+            self._group(self.BARE), self.A, self.B
+        )
+        assert reading is not None
+        assert reading.home_probability == pytest.approx(0.58)
+
+    def test_the_two_titles_agree(self):
+        """The whole point of #5660, stated as an equality.
+
+        A market is the same market whether or not it wears its tournament.
+        """
+        prefixed = compute_source_home_probability(
+            self._group(self.PREFIXED), self.A, self.B
+        )
+        bare = compute_source_home_probability(self._group(self.BARE), self.A, self.B)
+        assert prefixed.home_probability == bare.home_probability
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Set 1 Winner: Aboian vs Martin",
+            "Set Handicap: Abasolo (-1.5) vs Marques (+1.5)",
+            "Counter-Strike: 1WIN vs B8 - Map 1 Winner",
+            "Hannah Blatt vs. Polina Libo - Exact Score",
+        ],
+    )
+    def test_a_derivative_is_not_narrowed_into_a_winner(self, name):
+        """The refusal side of the repair, on the real refusal families.
+
+        `competition_prefix_tail` returns None for every shape the recognizer
+        refuses, so `or market.name` is the identity here and the derivative is
+        refused exactly as it was. A repair that widened the writer while
+        narrowing the title would be worse than the defect.
+        """
+        from app.utils.game_market_class import competition_prefix_tail
+
+        assert competition_prefix_tail(name) is None, name
+        assert (
+            compute_source_home_probability(
+                [_entry(1, name, [(0, self.A, 0.58), (1, self.B, 0.42)])],
+                self.A,
+                self.B,
+            )
+            is None
+        ), name

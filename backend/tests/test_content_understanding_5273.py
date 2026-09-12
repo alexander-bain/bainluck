@@ -537,10 +537,20 @@ class TestTheParentRowIsAPricedRowInEveryShape:
     untyped, on every poll, forever, because the poll is the only writer.
     """
 
-    def test_single_market_event_persists_semantic_type_into_blend_record_5273(self):
+    @pytest.mark.parametrize("title", [PPA_BARE, PPA_TITLE])
+    def test_single_market_event_persists_semantic_type_into_blend_record_5273(
+        self, title
+    ):
         """Ingest → stored metadata → the eligibility record that rides the
-        served number. The named repair, end to end."""
-        event = _single_market_event()
+        served number. The named repair, end to end.
+
+        PARAMETRIZED OVER BOTH TITLES BY CERT-2751. This read as end-to-end
+        while riding only `PPA_BARE`, so it proved the chain on a title that
+        never had the defect — the prefixed row classified `moneyline` and then
+        died in the writer's own second parse, and nothing here noticed. The
+        prefixed case is the live row; the bare case is its control.
+        """
+        event = _single_market_event(title=title)
 
         understanding = polymarket_task.parent_content_understanding(
             event, sport="tennis"
@@ -561,7 +571,7 @@ class TestTheParentRowIsAPricedRowInEveryShape:
 
         group = [
             _entry(
-                1, PPA_BARE,
+                1, title,
                 [(1, PPA_HOME, 0.58), (2, PPA_AWAY, 0.42)],
                 external_id=event.id,
                 market_metadata=stored,
