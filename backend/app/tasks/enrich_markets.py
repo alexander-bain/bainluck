@@ -554,17 +554,14 @@ async def enrich_market_images(limit: int = 50):
     return stats
 
 
-def _load_polymarket_blurbs() -> list[dict]:
-    """Load curated Polymarket email blurbs for few-shot examples."""
-    import json
-    from pathlib import Path
-    blurb_file = Path(__file__).parent.parent / "data" / "polymarket_blurbs.json"
-    if not blurb_file.exists():
-        return []
-    try:
-        return json.loads(blurb_file.read_text())
-    except Exception:
-        return []
+#: T11-1 (#5461). A loader used to live here that read the newsletter blurb corpus under
+#: `app/data/`, and `enrich_market_hooks` pasted three of its sentences, sampled per
+#: market, into the production prompt as "Examples of great hooks". D138 forbids exactly
+#: that: the newsletters teach the SHAPE of a good description, and their prose never
+#: enters production generation. The loader is gone rather than left unused, so the path
+#: cannot be re-wired by accident; the examples and the criteria now live in
+#: `app/utils/hook_prompt.py`, are originally authored, and are the same for every market.
+#: The corpus filename is deliberately not written here — a guard scans this module for it.
 
 
 def _needs_regeneration(
@@ -608,9 +605,9 @@ def _needs_regeneration(
 
 async def enrich_market_hooks(limit: int = 50):
     """Generate Polymarket-style context blurbs for markets."""
-    import random
     from app.models.models import FuturesMarket, FuturesOutcome
     from app.services.llm import _get_client
+    from app.utils.hook_prompt import build_hook_prompt
     from sqlalchemy import case, or_
 
     client = _get_client()
@@ -620,8 +617,6 @@ async def enrich_market_hooks(limit: int = 50):
 
     now = datetime.now(timezone.utc)
     stats = {"processed": 0, "generated": 0, "regenerated": 0, "skipped": 0, "errors": 0}
-
-    blurbs = _load_polymarket_blurbs()
 
     async with get_task_session() as session:
         feed_categories = [
@@ -738,26 +733,16 @@ async def enrich_market_hooks(limit: int = 50):
                 elif vol >= 1_000:
                     volume_str = f"24h volume: ${vol/1_000:.0f}K"
 
-            # Pick 2-3 random Polymarket blurb examples for variety
-            examples = random.sample(blurbs, min(3, len(blurbs))) if blurbs else []
-            example_str = "\n".join(f'- "{ex["blurb"]}"' for ex in examples) if examples else (
-                '- "The son of former Brazilian president Bolsonaro has surged into the lead, buoyed by new polls showing right-wing momentum"\n'
-                '- "Cameron Young is running away with the Cadillac Championship after a tournament-record 64 in round one"\n'
-                '- "Fed Chair Powell hinted at rate cuts, sending this market surging — three of four economists now expect a cut by September"'
-            )
-
-            prompt = (
-                f"Write 1-2 sentences (max 250 chars) explaining WHY a reader should care about this topic RIGHT NOW. "
-                f"Write like a journalist, not a market description. Focus on what happened, what changed, or why this matters. "
-                f"NEVER include specific percentages or probability numbers — those are shown separately and go stale. "
-                f"NEVER reference prediction markets, Polymarket, Kalshi, odds, traders, betting, or gambling — write as pure news context.\n\n"
-                f"Market: {market.name}\n"
-                f"Category: {market.llm_sport_category or 'general'}\n"
-                f"Leaderboard:\n" + "\n".join(leaderboard_lines) + "\n"
-                f"{resolve_str}\n"
-                f"{volume_str}\n\n"
-                f"Examples of great hooks:\n{example_str}\n\n"
-                f"Your hook:"
+            # T11-1 (#5461): originally authored examples + abstract style criteria,
+            # identical for every market. The old block sampled three newsletter
+            # sentences per market, which both broke D138 and made the prompt
+            # irreproducible — no trace could say what a given hook was generated from.
+            prompt = build_hook_prompt(
+                market_name=market.name,
+                category=market.llm_sport_category or "general",
+                leaderboard_lines=leaderboard_lines,
+                resolve_str=resolve_str,
+                volume_str=volume_str,
             )
 
             try:
