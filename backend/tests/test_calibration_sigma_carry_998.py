@@ -53,6 +53,8 @@ import copy
 import importlib.util
 import pathlib
 
+import pytest
+
 _SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 
 
@@ -65,6 +67,22 @@ def _load(name: str):
 
 ledger_mod = _load("calibration_sigma_ledger")
 cs = _load("calibration_scorecard")
+
+
+# --------------------------------------------------------------------------
+# #5401 / method m2 (CAL-P1136, 2026-09-12). `kalshi/golf` — this file's
+# subject — is HELD BACK from the published score until its prices are
+# repaired. The carry rule is what is under test here, not the hold-back, and
+# the numbers below are the real measured ones for that exact cell, so the
+# carry is exercised with the hold-back set empty rather than re-pinned to a
+# cell whose sigmas nobody has measured.
+# Hold-back guard: tests/test_calibration_held_back_cells_5401.py.
+# --------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _carry_is_scored_without_the_5401_hold_back(monkeypatch):
+    from app.utils import calibration_scoring as _scoring
+
+    monkeypatch.setattr(_scoring, "HELD_BACK_CELLS", frozenset())
 
 
 # --------------------------------------------------------------------------
