@@ -483,6 +483,56 @@ class TestSilenceIsNotAgreement:
         assert out["unstamped_expected"] == ["worker-heavy"]
         assert out["verdict"] == "UNKNOWN_VERSION"
 
+    def test_main_only_census_cannot_match_when_heavy_slot_is_missing_5470(
+        self, fake, monkeypatch
+    ):
+        """CERT-2692's required repair `5470-CENSUS-REFUSES-A-PARTIAL-FLEET`,
+        by the name the block asked for, and through the READ PATH rather than
+        the pure verdict — the grader's probe went through Redis, and a pure
+        function passing says nothing about what the endpoint returns.
+
+        This is the exact production state on the day this ships: the main app's
+        two workers carry the recorder and stamp; `bainluck-heavy` is 84 commits
+        behind, carries no recorder, and writes nothing at all.
+        """
+        monkeypatch.setenv("HEROKU_SLUG_COMMIT", "137bf299")
+        for name in ("worker-realtime", "worker-background"):
+            fake.strings[f"{WORKER_CODE_PREFIX}:bainluck/{name}.1"] = _marker("137bf299")
+
+        report = redis_state.get_fleet_code_report()
+
+        assert report["verdict"] != "MATCHED"
+        assert report["verdict"] == "UNKNOWN_VERSION"
+        assert report["unstamped_expected"] == ["worker-heavy"]
+
+    def test_an_expired_marker_is_the_same_non_pass_as_one_never_written(
+        self, fake, monkeypatch
+    ):
+        """The second half of the required repair: TTL-expiry coverage.
+
+        A heavy slot that stamped once and then went away — scaled to zero, or
+        dead — loses its key when `WORKER_CODE_TTL_S` runs out. That is a
+        DIFFERENT cause from "too stale to carry the recorder" and arrives at the
+        same place: an absent key. It must not be the moment the census relaxes
+        into MATCHED, which is what a membership list built only from present
+        keys would do.
+
+        Expiry is modelled by deleting the key, because that is precisely what
+        Redis does at the TTL; the TTL VALUE itself is pinned separately in
+        `test_the_ttl_clears_the_slowest_cadence_and_is_still_bounded`.
+        """
+        monkeypatch.setenv("HEROKU_SLUG_COMMIT", "137bf299")
+        for name in redis_state.EXPECTED_WORKER_PROCESSES:
+            fake.strings[f"{WORKER_CODE_PREFIX}:bainluck/{name}.1"] = _marker("137bf299")
+
+        assert redis_state.get_fleet_code_report()["verdict"] == "MATCHED"
+
+        del fake.strings[f"{WORKER_CODE_PREFIX}:bainluck/worker-heavy.1"]
+
+        after = redis_state.get_fleet_code_report()
+        assert after["verdict"] == "UNKNOWN_VERSION"
+        assert after["unstamped_expected"] == ["worker-heavy"]
+
     def test_the_expectation_is_exactly_the_procfiles_celery_workers(self):
         """Parsed from the Procfile, because a hand-maintained list of dynos is
         wrong the first time the formation changes — and wrong in the quiet
