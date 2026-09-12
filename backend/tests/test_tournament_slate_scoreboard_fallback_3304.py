@@ -317,11 +317,35 @@ class TestTheReader:
         assert payload["scoreboard"] == "last_good"
 
     async def test_a_dead_redis_still_serves_the_page(self, redis):
+        """Still serves the page — and since #5728 it says WHY it is empty.
+
+        This test used to assert `unavailable`, the same word an absent key
+        gets, and that assertion was this file encoding the conflation #5728
+        exists to undo: on 2026-09-12 a raised read rewound the live US Open
+        page to its opening round because nothing downstream could tell "we
+        looked and there was nothing" from "we could not look". A dead Redis is
+        the second one. The claim in the test's NAME is unchanged and still
+        asserted below: the page is served, not 500'd.
+        """
         redis.get_raises = RuntimeError("redis down")
 
         payload = await _espn_results("us-open")
 
-        assert payload["scoreboard"] == "unavailable"
+        assert payload["scoreboard"] == "degraded"
+        assert payload["draws"] == {} and payload["errors"] == []
+
+    async def test_absent_and_unreadable_do_not_share_a_word_5728(self, redis):
+        """Both directions, in one test, because one direction is half a guard.
+
+        The pair is the whole point. Assert only that a dead Redis says
+        `degraded` and a future change could make EVERY miss say `degraded`,
+        losing the quiet-day case that #3304 settled — the register fallback is
+        correct then, and suppressing it would empty the card on a real day off.
+        """
+        assert (await _espn_results("us-open"))["scoreboard"] == "unavailable"
+
+        redis.get_raises = RuntimeError("redis down")
+        assert (await _espn_results("us-open"))["scoreboard"] == "degraded"
 
 
 class TestTheShip:

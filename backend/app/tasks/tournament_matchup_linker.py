@@ -50,6 +50,13 @@ logger = logging.getLogger(__name__)
 #: Where this writes and ``routes/tournaments.py`` reads.
 LINKS_PREFIX = "bainluck:tournament-links:"
 
+#: Key on :func:`read_links`' return marking a read that RAISED, as distinct
+#: from one that found nothing. #5728 / CERT-2766: those two outcomes were
+#: byte-identical here, so nothing downstream could tell a dead Redis from a
+#: cold cache. Always present, always this call's own verdict — never a value
+#: carried in from the cached payload.
+LINKS_DEGRADED = "degraded"
+
 #: Long relative to the 5-minute beat, so one missed run never blanks a card
 #: that was already lit, but finite so a genuinely dead task lets the links
 #: expire rather than pinning yesterday's market forever. The register's own
@@ -520,7 +527,34 @@ async def read_links(slug: str) -> dict[str, Any]:
     An absent overlay is not a failure state: it returns the page to exactly the
     register's own committed truth, which is where it was before this task
     existed.
+
+    ═══ #5728, CERT-2766: THE TWO OUTCOMES USED TO BE THE SAME BYTES ═══
+
+    A cold cache and a dropped Redis connection BOTH left here as ``{"links":
+    {}}``. That is gotcha #53 exactly — "an empty 200 is not an absence, it is a
+    response shape" — and it defeated #5728's first fix, which read the route's
+    degradation ledger to decide whether the page could be cached. The route
+    wrapped this call in ``try/except`` and recorded the failure there, but this
+    function does not raise, so the clause was dead on the only path production
+    actually takes: a link read that FAILED still reported a clean miss, the
+    ledger stayed empty, and the incomplete page was written to the 60s cache
+    and served to every reader for the life of the TTL.
+
+    So the contract is unchanged — **an overlay is never a gate, and this still
+    never raises** — but the outcome is now legible to the caller.
+    :data:`LINKS_DEGRADED` is True only when a read RAISED. The caller decides
+    what that is worth; this function still decides nothing.
+
+    A cached payload can never supply the flag itself: the success path
+    overwrites it, so the value is always this call's own verdict rather than
+    something a writer left behind.
+
+    Deliberately NOT marked degraded: a payload that parsed but failed the shape
+    check. That is a writer defect, not a transport one, and it has never
+    occurred in production — marking it would withhold live content on a bug of
+    ours, which is the worse direction to be wrong in.
     """
+    degraded = False
     try:
         from app.tasks.redis_state import get_async_redis_client
 
@@ -528,14 +562,16 @@ async def read_links(slug: str) -> dict[str, Any]:
         if raw:
             payload = json.loads(raw)
             if isinstance(payload, dict) and isinstance(payload.get("links"), dict):
-                return payload
+                return {**payload, LINKS_DEGRADED: False}
     except Exception as exc:  # noqa: BLE001 — an overlay is never a gate
+        degraded = True
         logger.warning("tournament link read failed for %s: %s", slug, exc)
-    return {"links": {}}
+    return {"links": {}, LINKS_DEGRADED: degraded}
 
 
 __all__ = [
     "CANDIDATE_WINDOW_DAYS",
+    "LINKS_DEGRADED",
     "LINKS_PREFIX",
     "LINKS_TTL_SECONDS",
     "MAX_CANDIDATE_MARKETS",
