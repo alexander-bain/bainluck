@@ -47,21 +47,20 @@ from app.utils.source_divergence import (
     assess_divergence,
 )
 
-
 # Base weights per source — higher = more influence on the aggregate
 SOURCE_WEIGHTS: dict[str, float] = {
-    "final_result": 5.0,   # Resolved game outcome from score (always correct)
-    "betting": 3.0,        # Sportsbook consensus (5-15 books)
-    "espn": 1.5,           # ESPN proprietary model
-    "stat_model": 1.0,     # Bain Luck statistical model
-    "kalshi": 0.8,         # Kalshi prediction market
-    "polymarket": 0.8,     # Polymarket prediction market
-    "mlb": 0.8,            # MLB Model (MLB Stats API)
+    "final_result": 5.0,  # Resolved game outcome from score (always correct)
+    "betting": 3.0,  # Sportsbook consensus (5-15 books)
+    "espn": 1.5,  # ESPN proprietary model
+    "stat_model": 1.0,  # Bain Luck statistical model
+    "kalshi": 0.8,  # Kalshi prediction market
+    "polymarket": 0.8,  # Polymarket prediction market
+    "mlb": 0.8,  # MLB Model (MLB Stats API)
 }
 
 # Staleness parameters (in seconds)
-STALENESS_GRACE_PERIOD = 120   # 2 min: no penalty
-STALENESS_DECAY_WINDOW = 180   # Next 3 min: linear decay to 0
+STALENESS_GRACE_PERIOD = 120  # 2 min: no penalty
+STALENESS_DECAY_WINDOW = 180  # Next 3 min: linear decay to 0
 MAX_STALENESS = STALENESS_GRACE_PERIOD + STALENESS_DECAY_WINDOW  # 5 min: fully stale
 
 # ── #1829: RECENCY DECAY + WEIGHT CAP (Alex ruling 2026-08-13) ───────────────
@@ -109,16 +108,16 @@ MAX_STALENESS = STALENESS_GRACE_PERIOD + STALENESS_DECAY_WINDOW  # 5 min: fully 
 # deploy and re-poll; the cap half is live immediately. Said plainly because
 # the two halves have different blast radii and only one is measurable before
 # the deploy.
-HERO_RELATIVE_GRACE_SECONDS = 600.0      # 10 min of age difference: no penalty
-HERO_RELATIVE_DECAY_SECONDS = 1800.0     # next 30 min: linear decay to the floor
-HERO_MIN_STALENESS_MULTIPLIER = 0.1      # a floor, not zero — see below
+HERO_RELATIVE_GRACE_SECONDS = 600.0  # 10 min of age difference: no penalty
+HERO_RELATIVE_DECAY_SECONDS = 1800.0  # next 30 min: linear decay to the floor
+HERO_MIN_STALENESS_MULTIPLIER = 0.1  # a floor, not zero — see below
 
 # The floor exists so decay DEMOTES a source instead of deleting it. A source
 # at 10% of its base weight cannot carry a median, but it still breaks ties and
 # still shows up in the envelope check — and "we stopped hearing from Kalshi"
 # is not the same claim as "Kalshi does not exist".
 
-MAX_SOURCE_WEIGHT_SHARE = 0.35           # no single source may exceed this share
+MAX_SOURCE_WEIGHT_SHARE = 0.35  # no single source may exceed this share
 MIN_SOURCES_FOR_WEIGHT_CAP = 3
 
 # WHY 0.35, DERIVED FROM THE SPECIMEN RATHER THAN PICKED. On event 15192596 the
@@ -166,6 +165,7 @@ _UNCAPPED_SOURCES = frozenset({"final_result"})
 @dataclass
 class TimestampedProb:
     """A probability reading at a point in time."""
+
     timestamp: datetime
     home_probability: float
 
@@ -173,6 +173,7 @@ class TimestampedProb:
 @dataclass
 class SourceReading:
     """Latest reading from a single source, with weight."""
+
     source: str
     probability: float
     weight: float
@@ -509,6 +510,59 @@ def _weighted_median(values: list[float], weights: list[float]) -> float:
 
     Sort values, accumulate weights, find the value at the 50th percentile
     of cumulative weight.
+
+    ON AN EXACT TIE THE STRADDLING PAIR IS AVERAGED (#5425), because otherwise
+    the answer is decided by an implementation accident. The weighted median is
+    the minimiser of ``sum(w_i * |x - x_i|)``. When the cumulative weight lands
+    EXACTLY on half, every point in ``[v_i, v_j]`` minimises it equally — the
+    statistic is genuinely ambiguous over that whole interval — and the loop
+    below used to break the tie with ``>=``, which silently means "take the
+    lower one, always".
+
+    That is not a rounding curiosity; it is the normal shape of a two-venue
+    event. Two sources at equal weight give ``cumulative == half`` at the first
+    value for ANY weight (``w + w`` is exact in binary floating point and so is
+    ``/2``), so kalshi-plus-polymarket ALWAYS published the lower venue. #1999
+    made that shape common by switching the pre-game decay off, which is what
+    turned an old latent bug into a visible one.
+
+    In play it is worse than arbitrary: replaying the Gauff-Rybakina tape
+    (event 15308901, 410 readings) through the shipped aggregator, 1,728 of
+    1,728 publications were one source's value verbatim and the selection
+    flipped 30 times — each flip teleporting the published number across the
+    whole inter-venue spread, up to 15.5 points, WITH THE WEIGHTS UNCHANGED at
+    0.8/0.8. Nothing happened in the match; the two venues merely crossed.
+
+    MEASURED, 2026-09-12 04:55Z, this function replayed over the raw
+    `win_probability_sources` of 1,639 production rows:
+
+        population                rows   reach median   move   median   max
+        board -6h/+48h             771            732     55   0.42pt  4.25pt
+        live/suspended/completed   868            765      4   0.17pt  0.48pt
+
+    Every mover is a TWO-source row. All 210 rows with three or more sources
+    are bit-for-bit unchanged, because the 3.0/1.5/1.5 and capped shapes do not
+    land on half exactly — so this cannot disturb the blends #1999's answered
+    question showed are held by a different mechanism.
+
+    WHAT THIS GIVES UP, SAID PLAINLY. Below the divergence threshold the hero
+    may now be a number no single source stated. That is a real change: until
+    now tier 1 always rendered some source's own figure. It is the right trade
+    only because the alternative is not "a source's figure" but "the lower of
+    two sources' figures, chosen by a comparison operator" — and because the
+    invariant that a rendered probability is one a source actually stated is
+    the DIVERGENCE GATE's (`utils/source_divergence.py`), scoped to pairs 40+
+    points apart, which return before ever reaching this function. Inside the
+    threshold the module's stated job is a blend, and the midpoint of two
+    venues that agree to within a point is the blend working.
+
+    The tie test is exact equality ON PURPOSE — no epsilon. A real tie is
+    produced by IDENTICAL weights, which are bit-identical floats, so exact
+    equality catches it every time; an epsilon would instead invent ties out of
+    near-misses, and averaging a near-miss moves the number by up to half the
+    spread when the correct answer was one endpoint. A false tie is expensive,
+    a missed one merely leaves today's behaviour, so the test that cannot
+    false-positive is the right one.
     """
     if not values:
         raise ValueError("Cannot compute weighted median of empty list")
@@ -526,10 +580,24 @@ def _weighted_median(values: list[float], weights: list[float]) -> float:
 
     half = total_weight / 2.0
     cumulative = 0.0
-    for value, weight in paired:
+    for index, (value, weight) in enumerate(paired):
         cumulative += weight
-        if cumulative >= half:
+        if cumulative > half:
             return value
+        if cumulative == half:
+            # The optimal interval is [value, the next value that carries any
+            # weight]. Zero-weight entries in between are not endpoints of it:
+            # they cost nothing to move across, so averaging against one would
+            # report a narrower ambiguity than the data actually has.
+            #
+            # The `value` default is unreachable rather than defensive, and is
+            # written as a default instead of a branch so that no dead arm sits
+            # here inviting a test that cannot reach it. Proof: if nothing after
+            # `index` carries weight then `cumulative == total_weight`, so
+            # `total_weight == total_weight / 2`, so `total_weight == 0` — which
+            # returned above. It degenerates to `value` either way.
+            next_value = next((v for v, w in paired[index + 1 :] if w > 0), value)
+            return (value + next_value) / 2.0
 
     # Shouldn't reach here, but return last value as fallback
     return paired[-1][0]
@@ -598,7 +666,9 @@ def compute_aggregated_probability(
         readings: list[SourceReading] = []
 
         for source_key, points in source_sorted.items():
-            base_weight = weights.get(source_key, 0.5)  # Default weight for unknown sources
+            base_weight = weights.get(
+                source_key, 0.5
+            )  # Default weight for unknown sources
 
             # Find latest reading at or before this bucket
             latest: Optional[TimestampedProb] = None
@@ -621,12 +691,14 @@ def compute_aggregated_probability(
             effective_weight = base_weight * stale_mult
 
             if effective_weight > 0:
-                readings.append(SourceReading(
-                    source=source_key,
-                    probability=latest.home_probability,
-                    weight=effective_weight,
-                    stale_seconds=stale_seconds,
-                ))
+                readings.append(
+                    SourceReading(
+                        source=source_key,
+                        probability=latest.home_probability,
+                        weight=effective_weight,
+                        stale_seconds=stale_seconds,
+                    )
+                )
 
         if not readings:
             continue
@@ -645,10 +717,12 @@ def compute_aggregated_probability(
         raw_aggregate = _weighted_median(values, wts)
 
         # No smoothing (ruling #4): emit the bucket's honest weighted median.
-        aggregated.append(TimestampedProb(
-            timestamp=bucket_time,
-            home_probability=round(raw_aggregate, 6),
-        ))
+        aggregated.append(
+            TimestampedProb(
+                timestamp=bucket_time,
+                home_probability=round(raw_aggregate, 6),
+            )
+        )
 
     return aggregated
 
@@ -834,7 +908,9 @@ def assess_event_divergence(
     return assess_divergence(dict(zip(keys, values)), dict(zip(keys, weights)))
 
 
-def compute_aggregate_probability(event, event_status: Optional[str] = None) -> Optional[float]:
+def compute_aggregate_probability(
+    event, event_status: Optional[str] = None
+) -> Optional[float]:
     """Compute aggregate home win probability from all available sources.
 
     Uses SOURCE_WEIGHTS to produce a weighted average of all available
