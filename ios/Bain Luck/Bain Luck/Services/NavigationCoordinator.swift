@@ -144,7 +144,11 @@ final class NavigationCoordinator: ObservableObject {
         case "category":
             if pathComponents.count >= 2 {
                 let key = pathComponents[1]
-                let name = sportCategories.first(where: { $0.id == key })?.name ?? key.capitalized
+                // #5723: the shared rule for the fallback title. A deep link to
+                // a category the served list does not carry used to title the
+                // screen with the raw key ("Table_Tennis").
+                let name = sportCategories.first(where: { $0.id == key })?.name
+                    ?? sportCategoryDisplayName(key)
                 navigate(to: .sportCategory(key: key, name: name), tab: .feed)
                 return true
             }
