@@ -143,6 +143,25 @@ class PersonalizationResult:
     multiplier: float = 1.0
     reasons: list[str] = field(default_factory=list)
     is_personalized: bool = False
+    #: The same multiplier with the DISMISSAL downrank left out — the number an
+    #: admission gate is allowed to read. CERT-2676.
+    #:
+    #: "Personalization is bounded and latency-safe — left-swipe is a soft
+    #: downrank, never a hard dismissal" (CLAUDE.md, the Discover operating
+    #: rules). `multiplier` alone cannot honour that, because every admission
+    #: gate in `routes/feed.py` compares `base_score * multiplier` against a
+    #: floor: at the eight-swipe rung the multiplier is 0.20, so base scores of
+    #: 40/60/98 arrive at the gate as 7/11/19 and every one of them is dropped.
+    #: The reader who swiped eight football cards away did not ask to stop
+    #: seeing football — they asked to see less of it — and #1091's rule is that
+    #: game events are never capped into an empty tab.
+    #:
+    #: Deliberately NOT "the multiplier without any penalty". The sport-level
+    #: gates are intentional exclusions the reader chose at onboarding — "Nah"
+    #: to a sport, "only if it's wild" — and they stay inside this number so
+    #: they keep filtering. Only the swipe-derived category dismissal is lifted
+    #: out; `rank` still sees the full penalty, which is the whole point.
+    admission_multiplier: float = 1.0
 
 
 def compute_event_multiplier(
@@ -178,6 +197,8 @@ def compute_event_multiplier(
         return PersonalizationResult()
 
     bonus = 0.0
+    # The part of `bonus` that came from a swipe-away (CERT-2676).
+    dismiss_bonus = 0.0
     reasons = []
 
     team_ids = [tid for tid in [home_team_id, away_team_id] if tid is not None]
@@ -240,6 +261,14 @@ def compute_event_multiplier(
     if category_bonus:
         bonus += category_bonus
         reasons.append(_category_affinity_reason(category_bonus))
+        # CERT-2676: a swipe-derived DOWNRANK is not an eligibility test. Held
+        # aside here and added back in `admission_multiplier` below, so the
+        # eighth swipe still ranks the category down hard and still leaves the
+        # card admissible. Only the negative side is held aside — a positive
+        # category affinity is a boost, and a boost that could not raise a card
+        # past an admission floor would be a different bug.
+        if category_bonus < 0:
+            dismiss_bonus += category_bonus
 
     feature_bonus, feature_reason = _feature_affinity_bonus(ctx, feature_tokens)
     if feature_bonus:
@@ -267,11 +296,15 @@ def compute_event_multiplier(
 
     # --- Clamp and return ---
     multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus))
+    admission_multiplier = max(
+        MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus - dismiss_bonus)
+    )
 
     return PersonalizationResult(
         multiplier=multiplier,
         reasons=reasons,
         is_personalized=bool(reasons),
+        admission_multiplier=admission_multiplier,
     )
 
 
@@ -312,6 +345,8 @@ def compute_futures_multiplier(
         return PersonalizationResult()
 
     bonus = 0.0
+    # The part of `bonus` that came from a swipe-away (CERT-2676).
+    dismiss_bonus = 0.0
     reasons = []
 
     # --- Check if any outcome team is a user favorite ---
@@ -386,6 +421,10 @@ def compute_futures_multiplier(
     if category_bonus:
         bonus += category_bonus
         reasons.append(_category_affinity_reason(category_bonus))
+        # CERT-2676, futures side. Same rule, same reason: `feed.py` gates
+        # futures on `personalized_score < 15` and on the low-affinity 55 bar.
+        if category_bonus < 0:
+            dismiss_bonus += category_bonus
 
     feature_bonus, feature_reason = _feature_affinity_bonus(ctx, feature_tokens)
     if feature_bonus:
@@ -404,11 +443,15 @@ def compute_futures_multiplier(
 
     # --- Clamp and return ---
     multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus))
+    admission_multiplier = max(
+        MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus - dismiss_bonus)
+    )
 
     return PersonalizationResult(
         multiplier=multiplier,
         reasons=reasons,
         is_personalized=bool(reasons),
+        admission_multiplier=admission_multiplier,
     )
 
 

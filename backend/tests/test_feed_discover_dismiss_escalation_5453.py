@@ -530,3 +530,237 @@ def test_the_two_builders_agree_on_the_canonical_key():
     assert _build_discover_category_negative_counts(rows) == {"football": 6}
     assert "football" in _build_discover_category_affinities(rows)
     assert "americanfootball" not in _build_discover_category_affinities(rows)
+
+
+# ---------------------------------------------------------------------------
+# CERT-2676 — A DOWNRANK IS NOT A FILTER
+# ---------------------------------------------------------------------------
+#
+# Presentation two was BLOCKed for the half the first two presentations did not
+# look at: once the multiplier finally reached NFL cards, it reached the
+# ADMISSION GATE with them. `feed.py` compared `base_score * multiplier` against
+# a floor, so at the eight-swipe rung (multiplier 0.20) base scores of 40, 60
+# and 98 arrived as 7, 11 and 19 — all three below the `min_score` of 30, all
+# three `continue`d. Futures had the same shape at the 15 and 55 bars.
+#
+# That is the standing Discover rule inverted: "personalization is bounded and
+# latency-safe — left-swipe is a soft downrank, never a hard dismissal"
+# (CLAUDE.md), and #1091's "game events are never capped into an empty tab".
+# A reader who swipes eight football cards away is asking for less football.
+#
+# `admission_multiplier` adds only the swipe-derived category dismissal back.
+# The onboarding gates — "Nah" to a sport, "only if it's wild" — are intentional
+# exclusions the reader chose, and they stay inside the number so they keep
+# filtering. The tests below assert BOTH: the downrank survives, and so do the
+# deliberate filters.
+
+_EVENT_MIN_SCORE = 30  # the ordinary event admission floor in `feed.py`
+_FUTURES_MIN_SCORE = 15  # the ordinary futures floor
+#: The three base scores CERT-2676's probe used: a weak card, a middling one,
+#: and one at the display cap.
+_BASE_SCORES = (40, 60, 98)
+
+
+def _futures_multiplier(ctx, sport_category="football"):
+    from app.utils.personalization import compute_futures_multiplier
+
+    return compute_futures_multiplier(
+        ctx,
+        sport_category=sport_category,
+        outcome_team_ids=[],
+        futures_market_id=None,
+        sport_key="americanfootball_nfl",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("base_score", _BASE_SCORES)
+async def test_eighth_nfl_swipe_downranks_without_filtering_the_event_5453(base_score):
+    """THE CERT-2676 SPECIMEN. Both halves, on one card, at three base scores.
+
+    Driven through the real `_discover_admission_score` — the function both
+    gates in `feed.py` call — rather than through a copy of its arithmetic.
+    """
+    from app.routes.feed import _discover_admission_score
+
+    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
+    p_result = _nfl_multiplier(ctx)
+
+    # It DOWNRANKS: the rank score still carries the full eight-swipe penalty.
+    ranked = min(98, int(base_score * p_result.multiplier))
+    assert ranked < base_score, "the eighth swipe stopped pushing the card down"
+
+    # It does NOT FILTER.
+    admission = _discover_admission_score(base_score, p_result)
+    assert admission >= _EVENT_MIN_SCORE, (
+        f"base {base_score} reaches the admission gate as {admission}, below the "
+        f"{_EVENT_MIN_SCORE} floor — eight swipes have become a hard dismissal "
+        f"(multiplier={p_result.multiplier}, "
+        f"admission_multiplier={p_result.admission_multiplier})"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("base_score", _BASE_SCORES)
+async def test_the_eighth_swipe_does_not_filter_a_futures_card_either_5453(base_score):
+    """The futures equivalent the repair asked for. Bars are 15 and 55."""
+    from app.routes.feed import _discover_admission_score
+
+    ctx = await _load([("football", "unlike", 8), _WARM])
+    p_result = _futures_multiplier(ctx)
+
+    assert min(98, int(base_score * p_result.multiplier)) < base_score
+    assert _discover_admission_score(base_score, p_result) >= _FUTURES_MIN_SCORE
+
+
+@pytest.mark.asyncio
+async def test_the_blocked_tree_is_what_this_guard_would_have_caught():
+    """RED CHECK, stated as the arithmetic CERT-2676 actually reported.
+
+    `base * multiplier` at the eight-swipe rung must be BELOW the floor — if it
+    were not, the two tests above would pass against the BLOCKed tree and prove
+    nothing. 40/60/98 -> 7/11/19 is the cert's own probe.
+    """
+    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
+    m = _nfl_multiplier(ctx).multiplier
+
+    dropped = [min(98, int(b * m)) for b in _BASE_SCORES]
+    assert dropped == [7, 11, 19], dropped  # CERT-2676's own probe
+    assert all(d < _EVENT_MIN_SCORE for d in dropped)
+
+
+@pytest.mark.asyncio
+async def test_the_downrank_still_reorders_against_an_untouched_sport():
+    """The ship itself, restated as ORDER rather than as a number.
+
+    Admitting the card is only correct if it still loses to a baseball card of
+    the same base score — otherwise the fix has quietly removed the penalty.
+    """
+    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
+    from app.utils.personalization import compute_event_multiplier
+
+    nfl = _nfl_multiplier(ctx).multiplier
+    mlb = compute_event_multiplier(
+        ctx, None, None, "baseball_mlb", None
+    ).multiplier
+
+    assert 60 * nfl < 60 * mlb
+
+
+@pytest.mark.asyncio
+async def test_a_nah_sport_is_still_filtered():
+    """CONTROL. The onboarding exclusions must keep excluding.
+
+    `sport_nah` is read off `p_result.reasons` by the gate and its penalty is
+    INSIDE `admission_multiplier`, so a "Nah" sport is untouched by this repair.
+    """
+    from app.utils.personalization import (
+        NAH_AFFINITY_PENALTY,
+        PersonalizationContext,
+        compute_event_multiplier,
+    )
+    from app.routes.feed import _discover_admission_score
+
+    ctx = PersonalizationContext(
+        is_authenticated=True, sport_affinities={"baseball_mlb": 1.0}
+    )
+    p_result = compute_event_multiplier(ctx, None, None, "americanfootball_nfl", None)
+
+    assert any("sport_nah" in r for r in p_result.reasons)
+    assert p_result.admission_multiplier == pytest.approx(1.0 + NAH_AFFINITY_PENALTY)
+    assert _discover_admission_score(40, p_result) < _EVENT_MIN_SCORE
+
+
+@pytest.mark.asyncio
+async def test_a_low_affinity_sport_still_faces_the_higher_bar():
+    """CONTROL. "Only if it's wild" is a reader's own choice, not a swipe."""
+    from app.utils.personalization import (
+        LOW_AFFINITY_PENALTY,
+        PersonalizationContext,
+        compute_event_multiplier,
+    )
+    from app.routes.feed import _discover_admission_score
+
+    ctx = PersonalizationContext(
+        is_authenticated=True, sport_affinities={"americanfootball_nfl": 0.1}
+    )
+    p_result = compute_event_multiplier(ctx, None, None, "americanfootball_nfl", None)
+
+    assert any("sport_suppress" in r for r in p_result.reasons)
+    assert p_result.admission_multiplier == pytest.approx(1.0 + LOW_AFFINITY_PENALTY)
+    assert _discover_admission_score(70, p_result) < 55
+
+
+@pytest.mark.asyncio
+async def test_a_positive_affinity_still_raises_the_admission_score():
+    """CONTROL. Only the NEGATIVE side is held out of the gate.
+
+    A boost that could not lift a card over an admission floor would be a
+    different bug introduced by the same edit.
+    """
+    from app.routes.feed import _discover_admission_score
+
+    ctx = await _load(
+        [("americanfootball", "open", 20), ("americanfootball", "share", 6), _WARM]
+    )
+    p_result = _nfl_multiplier(ctx)
+
+    assert p_result.multiplier > 1.0
+    assert p_result.admission_multiplier == pytest.approx(p_result.multiplier)
+    assert _discover_admission_score(40, p_result) > 40
+
+
+def test_an_unpersonalized_card_is_unchanged_by_the_split():
+    """CONTROL, the widest one: for every reader with no dismissals the two
+    numbers are the same, so this repair is inert everywhere it should be."""
+    from app.routes.feed import _discover_admission_score
+    from app.utils.personalization import PersonalizationContext, compute_event_multiplier
+
+    p_result = compute_event_multiplier(
+        PersonalizationContext(), None, None, "americanfootball_nfl", None
+    )
+
+    assert p_result.multiplier == 1.0
+    assert p_result.admission_multiplier == 1.0
+    assert _discover_admission_score(40, p_result) == 40
+
+
+def test_both_admission_gates_read_the_shared_helper():
+    """The wiring. Two gates computed the same expression separately, which is
+    why one could be repaired and the other left broken.
+
+    Reads the CALL SITES: a helper nothing calls is the same defect in a new
+    shape, and the futures gate must pass `recycled=`.
+    """
+    import ast
+    import inspect
+
+    import app.routes.feed as feed_module
+
+    tree = ast.parse(inspect.getsource(feed_module))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_discover_admission_score"
+    ]
+    assert len(calls) == 2, (
+        f"expected the event gate and the futures gate to share the helper, "
+        f"found {len(calls)} call sites"
+    )
+    assert any(
+        "recycled" in {kw.arg for kw in call.keywords} for call in calls
+    ), "the futures gate must keep applying the recycle penalty to admission"
+
+    # And no gate still compares a `personalized_score` against a floor.
+    source = inspect.getsource(feed_module)
+    for forbidden in (
+        "if personalized_score < min_score",
+        "and personalized_score < 55",
+        "and not my_teams_only and personalized_score < 15",
+    ):
+        assert forbidden not in source, (
+            f"{forbidden!r} is back: a swipe-derived downrank is deciding "
+            f"eligibility again (CERT-2676)"
+        )

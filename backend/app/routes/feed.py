@@ -7226,6 +7226,30 @@ async def _load_personalization_context(
     )
 
 
+def _discover_admission_score(
+    base_score: float,
+    p_result,
+    *,
+    recycled: bool = False,
+) -> int:
+    """The score an admission gate is allowed to read. CERT-2676.
+
+    ONE function rather than the same expression written at the event gate and
+    the futures gate, because the two drifted for exactly the reason this
+    repair exists: both were computing `base_score * multiplier` and neither
+    could be changed without remembering the other. `personalized_score` — the
+    full penalty — remains what RANKS; this is only ever compared to a floor.
+
+    The recycle penalty is inside it on the futures path: a recycled card
+    ranking below fresh ones is a deliberate implicit serving floor, not a
+    swipe-derived downrank, so it keeps deciding eligibility.
+    """
+    score = min(98, int(base_score * p_result.admission_multiplier))
+    if recycled:
+        score = max(1, int(score - FEED_RECYCLE_PENALTY))
+    return score
+
+
 def _build_discover_category_affinities(rows) -> dict[str, float]:
     """Convert recent Discover interaction counts into bounded category deltas.
 
@@ -8259,7 +8283,23 @@ async def _score_events(
                 min_score = 10
             else:
                 min_score = 30
-            if personalized_score < min_score:
+            # CERT-2676 — THE GATE READS THE ADMISSION SCORE, THE RANK READS THE
+            # PENALTY. "Left-swipe is a soft downrank, never a hard dismissal"
+            # (CLAUDE.md, Discover operating rules) is unenforceable while one
+            # number does both jobs: at the eight-swipe rung the multiplier is
+            # 0.20, so base scores of 40/60/98 reach this line as 7/11/19 and
+            # all three `continue`. A reader who swiped eight football cards
+            # away asked for less football, not for none — and #1091's rule is
+            # that game events are never capped into an empty tab.
+            #
+            # `admission_multiplier` is the same product with only the
+            # swipe-derived category dismissal added back. Every gate above it
+            # still bites: the "Nah" filter and the low-affinity 55 bar read
+            # `p_result.reasons` and the onboarding penalties are still inside
+            # this number. `personalized_score` — with the full penalty — is
+            # what ranks, which is the entire behaviour of #5453.
+            admission_score = _discover_admission_score(base_score, p_result)
+            if admission_score < min_score:
                 continue
 
             # --- Completed-game freshness decay (#3484) ---
@@ -10640,13 +10680,24 @@ async def _score_futures(
             if is_nah and not my_teams_only:
                 continue  # No override for futures — no "championship" equivalent
 
+            # CERT-2676, futures side — same rule as the event gate above: a
+            # swipe-derived downrank may set the ORDER and may not decide
+            # eligibility. Both bars below read the admission score, which still
+            # carries the onboarding "if it's wild" penalty that the 55 bar is
+            # there to enforce; only the category dismissal is added back.
+            # The recycle penalty stays applied to both, since a recycled card
+            # ranking below fresh ones IS an implicit serving floor by design.
+            admission_score = _discover_admission_score(
+                base_score, p_result, recycled=is_recycled
+            )
+
             # "If it's wild" — higher bar for low-affinity futures too
             is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
-            if is_low_affinity and not my_teams_only and personalized_score < 55:
+            if is_low_affinity and not my_teams_only and admission_score < 55:
                 continue
 
             # Filter low-signal futures (my_teams_only shows everything)
-            if not my_teams_only and personalized_score < 15:
+            if not my_teams_only and admission_score < 15:
                 continue
 
             reason = generate_futures_reason(
