@@ -91,6 +91,33 @@ function modifierChain(body: string, textLiteral: string): string {
   return chain.join("\n");
 }
 
+/**
+ * Every `Text(...)` in the file paired with the modifier chain hanging off it,
+ * walked LINE BY LINE.
+ *
+ * Deliberately not one regular expression: the first draft of the screen-wide
+ * assertion below wrote the chain as `(?:\s*\n\s*\.[^\n]*)*?` after a `\s*\n\s*`,
+ * and CodeQL `js/redos` caught it as exponential backtracking on repeated
+ * "\n\n." — a high-severity alert on a test file, which is still an alert
+ * (notice 32). A scan is linear in the file; the pattern matching is per line.
+ */
+function textChains(source: string): { head: string; chain: string[] }[] {
+  const lines = source.split("\n");
+  const found: { head: string; chain: string[] }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].includes("Text(")) continue;
+    const chain: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const line = lines[j];
+      if (line.trim() === "") continue;
+      if (!line.trimStart().startsWith(".")) break;
+      chain.push(line.trim());
+    }
+    found.push({ head: lines[i].trim(), chain });
+  }
+  return found;
+}
+
 describe("#5760 — Search titles get two lines", () => {
   const source = (() => {
     expect(existsSync(SEARCH_VIEW)).toBe(true);
@@ -147,10 +174,15 @@ describe("#5760 — Search titles get two lines", () => {
     // reasoned about and not measured, and this ship does not change a layout
     // it has never seen. Recorded here rather than left to be rediscovered:
     // whoever can photograph the dropdown decides it, and deletes this test.
-    const titleAtOneLine = /Text\((?![^)]*(?:shortPair|abbreviation|record))[^\n]*\)\s*\n\s*\.font\(\.subheadline\)(?:\s*\n\s*\.[^\n]*)*?\s*\n\s*\.lineLimit\(1\)/g;
-    const offenders = (source.match(titleAtOneLine) ?? []).map((m) =>
-      m.split("\n")[0].trim(),
-    );
+    const EXEMPT = /shortPair|abbreviation|record/;
+    const offenders = textChains(source)
+      .filter(
+        ({ head, chain }) =>
+          !EXEMPT.test(head) &&
+          chain.includes(".font(.subheadline)") &&
+          chain.includes(".lineLimit(1)"),
+      )
+      .map(({ head }) => head);
     expect(offenders).toEqual(["Text(suggestion.text)"]);
   });
 });
