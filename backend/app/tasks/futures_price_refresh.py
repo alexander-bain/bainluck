@@ -255,19 +255,110 @@ HIGH_VALUE_VOLUME_FLOOR = 10_000
 #: fixes that at the WRITE boundary — which can never reach a row nothing
 #: writes. A forward fix needs the row to be visited.
 #:
-#: The two halves are named separately because the selector has to plan them
+#: 🔴 AND THE THIRD ARM IS THE SAME HOLE ONE STEP WIDER AGAIN (#5781).
+#:
+#: #3315 said "we have not measured this" and "this is worthless" are opposite
+#: facts. #5268 said a SMALL measured number is not a reason to stop believing
+#: our own tier grade. Both closed the case for tier 1 and neither reached the
+#: row that has NEITHER: **tier 2+, volume NULL.** Nothing admits it. Not the
+#: measured arm (``NULL >= 10000`` is NULL, not true), not the tier arm.
+#:
+#: It is a FIXED POINT, which is what makes it different from ordinary
+#: ineligibility: the only writer that would give the row a volume is the poll
+#: that has stopped reaching it, and the sweep that would re-price it is gated on
+#: the volume. You need volume to be swept and you need to be swept to get volume,
+#: so the row never leaves the state it was born in.
+#:
+#: THE SPECIMEN, read on production 2026-09-12. ``NCAA Football 2026 Big Ten
+#: Conference: Winner`` (market 57792790, Gamma event 779028), tier 2, reachable
+#: by a reader through ``/api/events/search?q=Big+Ten+Conference``. Every rung was
+#: last written **2026-08-01** — the day the venue opened the book, before a game
+#: of the season was played, and the card was still serving it two game weeks in:
+#:
+#:   Michigan   4.5% served   vs  16.5% at the venue   +12.0 pts
+#:   USC        4.5%              16.0%                +11.5
+#:   Nebraska   4.0%              15.5%                +11.5
+#:   Ohio State 32.5%             28.5%                 -4.0
+#:
+#: ITS NULL IS A BIRTHDAY, NOT A VERDICT, and the row says so itself: the ingest
+#: of 2026-08-01 11:18Z wrote ``liquidity = 8930.67`` and ``volume = NULL`` in the
+#: SAME statement — a posted book with no first trade yet. The venue today reports
+#: volume 4,003.96 on that event. We never asked again.
+#:
+#: So the third positive value statement is the venue's OWN measure of the thing
+#: that is actually present: **a posted book at or above a floor, where volume was
+#: never measured.** ``fm.volume IS NULL`` is not decoration on it — without that
+#: half the arm would re-admit every market whose volume we DID measure and found
+#: tiny, which is a different question with a different answer (#5268 answered it
+#: for tier 1 on purpose and left tier 2+ alone on purpose).
+#:
+#: MEASURED on production 2026-09-12 under the full liveness predicate, tier <> 1,
+#: ``volume IS NULL``, by posted liquidity:
+#:
+#:   liquidity >= 10,000      polymarket   133     kalshi   0
+#:   liquidity 1,000-10,000                844              0
+#:   liquidity 100-1,000                 5,908              0
+#:   liquidity < 100                     7,807              0
+#:   liquidity NULL                      7,433          4,881
+#:
+#: AND THEN MEASURED AGAIN ON THE ARM ITSELF, because the table above is a census
+#: of a hand-written predicate and the arm is the thing that ships. Running
+#: ``LIVE_MARKET_SQL AND VALUE_LIQUID_SQL`` on production:
+#:
+#:   the arm selects                                   1,009   (100% polymarket)
+#:     already in the tier-1 pool, deduped by the UNION       38
+#:     NET-NEW candidates                                    971
+#:     of those, actually stale at any moment                851
+#:   by tier   t1 38 · t2 192 · t3 6 · t4 2 · t5 771
+#:
+#: 🔴 THREE QUARTERS OF THE ARM IS TIER 5 AND THAT IS THE POINT, NOT A SURPRISE.
+#: #3315's finding was that tier is a PRESENTATION grade and a bad value gate.
+#: A tier-5 market with a $1,000 book and no measured volume is the same row as
+#: the tier-2 specimen, one grade down; the thing that bounds this arm is the
+#: book, and the thing that protects the measured population from it is the outer
+#: ordering (see :data:`_CANDIDATE_SQL`), not a tier fence.
+#:
+#: The Polymarket backlog therefore goes ~1,974 -> ~2,825 against ``1,200 x 6 =
+#: 7,200``, and the pool scan costs **629 ms** more (measured with EXPLAIN
+#: ANALYZE on production 2026-09-12: value branch 831 ms / 3,969 rows, tier-1
+#: branch 919 ms / 2,523 rows, liquid branch 629 ms / 1,009 rows). The planner's
+#: COST estimate for the new CTE equals the other two — it is the same ~45,000
+#: row heap scan — but the measured time is not, so read the milliseconds.
+#:
+#: 🔴 KALSHI CARRIES NO ``liquidity`` AT ALL, so this arm admits **zero** Kalshi
+#: rows today. Be precise about what that is: the arm is SOURCE-BLIND — it names
+#: no source and would admit a Kalshi row the day we start writing the column —
+#: and the zero above is a measured property of the data on 2026-09-12, not a
+#: fence. Re-measure it before quoting it. The half that IS a code property, and
+#: the half the guard pins, is that a NULL ``liquidity`` never qualifies at any
+#: source: ``NULL >= 1000`` is NULL, which is the same NULL-rejecting semantics
+#: #3315 was written about, pointing the right way this time.
+#:
+#: On today's data that makes the cost argument hold: the rows it adds are all
+#: Polymarket, the batched source at ~0.065 s/market, against Kalshi's ~0.35 s.
+#: If Kalshi liquidity ever lands, ``liquid_pool_size`` is the number that says
+#: so before the budget does.
+#:
+#: The floor is the 1,000 boundary above and not a rounder number one line up:
+#: at 100 the arm takes 6,885 rows, which is larger than the entire value pool and
+#: would need a bigger budget rather than a bigger pool. 1,000 is where the
+#: distribution's tail starts and it is a real book — the specimen's is 8,930.
+POSTED_LIQUIDITY_FLOOR = 1_000
+
+#: The three halves are named separately because the selector has to plan them
 #: separately (see :data:`ELIGIBLE_POOL_SQL`) while every other reader wants the
-#: disjunction. Naming them once and composing both forms from the same two
+#: disjunction. Naming them once and composing both forms from the same three
 #: strings is what keeps "the pool" and "the predicate" from becoming two
 #: definitions of eligibility — the drift ``futures_liveness`` exists to prevent,
 #: one level down.
 VALUE_MEASURED_SQL = "fm.volume >= :volume_floor"
 VALUE_TIER1_SQL = "(fm.market_tier = 1)"
+VALUE_LIQUID_SQL = "(fm.volume IS NULL AND fm.liquidity >= :liquidity_floor)"
 
 #: One string, interpolated by every reader that wants the whole test, for the
 #: reason ``futures_liveness`` exists: six hand-copied WHERE blocks agree until
 #: the day one of them needs a sixth clause.
-HIGH_VALUE_SQL = f"({VALUE_MEASURED_SQL} OR {VALUE_TIER1_SQL})"
+HIGH_VALUE_SQL = f"({VALUE_MEASURED_SQL} OR {VALUE_TIER1_SQL} OR {VALUE_LIQUID_SQL})"
 
 #: A high-value open market older than this is stale. Matches the 6h
 #: ``LIVE_PRICE_STALE`` contract that ``utils/tournament_register.py`` already
@@ -414,8 +505,46 @@ KALSHI_DELISTED_CHECK_BUDGET = 60
 #: code. It does now (:data:`_STAT_TIER1_POOL_HIT`, set by :func:`_scan_candidates`),
 #: because raising a limit while trusting a breach signal that was never built
 #: is how the next silent starvation gets written.
+#: 🔴 THE LIQUID POOL IS THIRD AND IT IS ORDERED BY THE THING THAT ADMITS IT
+#: (#5781). Its rows have NO volume by definition, so ordering it by volume would
+#: order it by nothing: a stable arbitrary order under a binding limit is the
+#: fixed point the tier-1 note above describes. ``liquidity DESC`` is the only
+#: value key these rows have, and it is the one the arm selected on.
+#:
+#: Population 2026-09-12, measured by running the arm itself rather than by
+#: adding up a census: **1,009**, all Polymarket. 2,000 leads it by 50%, which is
+#: the headroom the value pool's 3% is a named risk for.
 VALUE_POOL_LIMIT = 4_500
 TIER1_POOL_LIMIT = 4_000
+LIQUID_POOL_LIMIT = 2_000
+
+
+def pool_bind_params() -> dict:
+    """Every bind :data:`ELIGIBLE_POOL_SQL` needs, in ONE place (#5781).
+
+    🔴 THIS EXISTS BECAUSE THE THIRD ARM'S BIND WAS FORGOTTEN AT A SITE NO LOCAL
+    TEST COULD REACH. ``HIGH_VALUE_SQL`` is composed by the PG-only integration
+    suite, which does not run without a database, so the missing
+    ``:liquidity_floor`` surfaced as ``InvalidRequestError`` in CI and nowhere
+    else. A missing bind does not degrade — SQLAlchemy refuses the statement —
+    and in the task's ``remaining_stale`` census it would do so inside a ``try``
+    that then reports a number about nobody.
+
+    The guard written first was a text scan asserting the parameter NAME appears
+    in each composing file. It passed on a mutant that deleted the bind from the
+    pool dict, because the same string appears three more times in that file for
+    other reasons. A text test cannot tell WHICH dict holds a key. So the bind
+    set is a value now, and the sites take it whole: adding a fourth arm's bind
+    here reaches every caller, which is the same argument ``LIVE_MARKET_SQL``
+    and ``ELIGIBLE_POOL_SQL`` are one string for.
+    """
+    return {
+        "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
+        "liquidity_floor": POSTED_LIQUIDITY_FLOOR,
+        "value_pool_limit": VALUE_POOL_LIMIT,
+        "tier1_pool_limit": TIER1_POOL_LIMIT,
+        "liquid_pool_limit": LIQUID_POOL_LIMIT,
+    }
 
 #: Fraction of a pool limit that must remain unused for the pool to be
 #: considered safely sized. Read in two places on purpose: the guard test
@@ -431,6 +560,7 @@ _POOL_LIMIT_HEADROOM_MIN = 0.02
 #: the population, decided who was eligible. See :data:`TIER1_POOL_LIMIT`.
 _STAT_TIER1_POOL_HIT = "tier1_pool_hit"
 _STAT_VALUE_POOL_HIT = "value_pool_hit"
+_STAT_LIQUID_POOL_HIT = "liquid_pool_hit"
 
 #: 🔴 THE ONE THAT ARRIVES IN TIME. A ``*_pool_hit`` says the pool truncated,
 #: which means markets were ALREADY starved on this run — it is a post-mortem,
@@ -500,12 +630,12 @@ _POLY_EVENT_ID_SQL = f"""
 
 #: 🔴 THE ELIGIBLE POPULATION, AS A CTE, AND BOTH SIDES OF THE INVARIANT USE IT.
 #:
-#: TWO POOLS, ONE PER VALUE REASON, and they are separate because the two
+#: THREE POOLS, ONE PER VALUE REASON, and they are separate because the three
 #: populations cannot be ordered by one key. A single ``ORDER BY fm.volume DESC
-#: NULLS LAST`` over both would sort every tier-1 row whose volume we do not have
-#: BELOW every row whose volume we do, so the arm added to admit them would be
+#: NULLS LAST`` over them would sort every row whose volume we do not have
+#: BELOW every row whose volume we do, so an arm added to admit them would be
 #: truncated out of existence by the arm it was added beside — a shared bound
-#: over two unequal populations, the same shape as the shared market budget the
+#: over unequal populations, the same shape as the shared market budget the
 #: per-source budgets replaced.
 #:
 #: The tier-1 pool orders by ``fm.id``: there is no value key to sort on, and
@@ -513,7 +643,12 @@ _POLY_EVENT_ID_SQL = f"""
 #: stable ordering is safe here BECAUSE the pool limit exceeds the population, so
 #: the Redis attempt markers — not the SQL — do the rotating.
 #:
-#: 🔴 THE TWO ARMS ARE NAMED CTEs RATHER THAN AN INLINE ``UNION`` SO THEIR SIZES
+#: The liquid pool (#5781) orders by ``fm.liquidity DESC``, which is the key that
+#: admitted it and the only value key its rows have. The same note applies: the
+#: limit leads the population (2,000 over 1,009), so the ordering is a preference
+#: and not a fence.
+#:
+#: 🔴 THE THREE ARMS ARE NAMED CTEs RATHER THAN AN INLINE ``UNION`` SO THEIR SIZES
 #: CAN BE READ. The union semantics are unchanged — still ``UNION`` (not ALL) on
 #: the id alone, which matters more since #5268 than it did before: a tier-1
 #: market whose volume clears the floor now satisfies BOTH arms, and the dedupe
@@ -526,8 +661,9 @@ _POLY_EVENT_ID_SQL = f"""
 #: reason ``LIVE_MARKET_SQL`` is: the task refreshes this set and
 #: ``/api/admin/source-health/futures-price-freshness`` asserts over it, and a
 #: guard covering a different population than the fix is how a breach reads
-#: green. Callers bind ``:volume_floor``, ``:value_pool_limit`` and
-#: ``:tier1_pool_limit``, and JOIN ``pool`` on ``fm.id``.
+#: green. Callers bind ``:volume_floor``, ``:liquidity_floor``,
+#: ``:value_pool_limit``, ``:tier1_pool_limit`` and ``:liquid_pool_limit``, and
+#: JOIN ``pool`` on ``fm.id``.
 ELIGIBLE_POOL_SQL = f"""
     WITH value_pool AS MATERIALIZED (
           SELECT fm.id
@@ -545,13 +681,48 @@ ELIGIBLE_POOL_SQL = f"""
            ORDER BY fm.id
            LIMIT :tier1_pool_limit
     ),
+    liquid_pool AS MATERIALIZED (
+          SELECT fm.id
+            FROM futures_markets fm
+           WHERE {LIVE_MARKET_SQL}
+             AND {VALUE_LIQUID_SQL}
+           ORDER BY fm.liquidity DESC
+           LIMIT :liquid_pool_limit
+    ),
     pool AS MATERIALIZED (
         SELECT id FROM value_pool
         UNION
         SELECT id FROM tier1_pool
+        UNION
+        SELECT id FROM liquid_pool
     )
 """
 
+#: 🔴 THE OUTER ORDERING IS THE LIQUID ARM'S WHOLE SAFETY ARGUMENT (#5781).
+#:
+#: ``fm.volume DESC NULLS LAST`` is unchanged and it is doing the work: every row
+#: the liquid arm adds has ``volume IS NULL`` by construction, so all 971 net-new
+#: ones sort BEHIND every measured market in the list :func:`_take_for_source`
+#: slices. The new arm therefore cannot displace a single measured market from a
+#: run's budget — it can only spend budget the measured population did not need.
+#: The rotation that eventually reaches it is the Redis attempt marker plus the 6h
+#: capture anti-join, exactly as for the tier-1 tail, and the arithmetic still
+#: holds: Polymarket's backlog grows ~1,974 -> ~2,825 against ``1,200 x 6 =
+#: 7,200``.
+#:
+#: 🔴 AND POSTGRES'S DEFAULT IS THE OPPOSITE OF THE ONE A TEST WILL TELL YOU.
+#: ``DESC`` sorts NULLs FIRST in Postgres and LAST in sqlite, so the two words
+#: ``NULLS LAST`` are the entire safety argument AND a sqlite-backed guard cannot
+#: see them go. Deleting them moves all 971 rows to the FRONT of the budget.
+#: ``test_the_volume_key_says_nulls_last_in_words`` is a text assertion for that
+#: reason and demonstrates the inversion in its own body.
+#:
+#: The two new tiebreakers order a tail that was previously ARBITRARY. Every
+#: NULL-volume row — the tier-1 ones since #5268 and the liquid ones now — used to
+#: come back in whatever order the plan produced, which under a binding budget is
+#: an unstated lottery. ``liquidity DESC NULLS LAST, id`` makes it the same value
+#: key the arm selected on, then deterministic. It cannot touch a measured row's
+#: position: those are separated by the first key before the second is read.
 _CANDIDATE_SQL = text(
     f"""
     {ELIGIBLE_POOL_SQL}
@@ -559,7 +730,8 @@ _CANDIDATE_SQL = text(
            {_POLY_EVENT_ID_SQL},
            fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since,
            (SELECT count(*) FROM value_pool) AS value_pool_size,
-           (SELECT count(*) FROM tier1_pool) AS tier1_pool_size
+           (SELECT count(*) FROM tier1_pool) AS tier1_pool_size,
+           (SELECT count(*) FROM liquid_pool) AS liquid_pool_size
       FROM futures_markets fm
       JOIN pool ON pool.id = fm.id
      WHERE NOT EXISTS (
@@ -569,7 +741,7 @@ _CANDIDATE_SQL = text(
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(hours => :stale_hours)
            )
-     ORDER BY fm.volume DESC NULLS LAST
+     ORDER BY fm.volume DESC NULLS LAST, fm.liquidity DESC NULLS LAST, fm.id
     """
 )
 
@@ -738,6 +910,8 @@ async def _scan_candidates(
     stale_hours: int,
     value_pool_limit: int = VALUE_POOL_LIMIT,
     tier1_pool_limit: int = TIER1_POOL_LIMIT,
+    liquid_pool_limit: int = LIQUID_POOL_LIMIT,
+    liquidity_floor: int = POSTED_LIQUIDITY_FLOOR,
     stats: dict | None = None,
 ) -> list[dict]:
     """Stale valuable markets, most valuable first, at ANY tier.
@@ -766,9 +940,11 @@ async def _scan_candidates(
             _CANDIDATE_SQL,
             {
                 "volume_floor": volume_floor,
+                "liquidity_floor": liquidity_floor,
                 "stale_hours": stale_hours,
                 "value_pool_limit": value_pool_limit,
                 "tier1_pool_limit": tier1_pool_limit,
+                "liquid_pool_limit": liquid_pool_limit,
             },
         )
     ).fetchall()
@@ -776,14 +952,17 @@ async def _scan_candidates(
     # diagnostic that can raise is a diagnostic that takes the sweep down with
     # it. `test_the_sizes_are_selected_from_the_materialised_pools` is what
     # holds the production statement to selecting them.
-    if stats is not None and rows and len(rows[0]) > 7:
+    if stats is not None and rows and len(rows[0]) > 8:
         value_size, tier1_size = int(rows[0][6]), int(rows[0][7])
+        liquid_size = int(rows[0][8])
         stats["value_pool_size"] = value_size
         stats["tier1_pool_size"] = tier1_size
+        stats["liquid_pool_size"] = liquid_size
         low = []
         for name, size, limit, hit_key in (
             ("value", value_size, value_pool_limit, _STAT_VALUE_POOL_HIT),
             ("tier1", tier1_size, tier1_pool_limit, _STAT_TIER1_POOL_HIT),
+            ("liquid", liquid_size, liquid_pool_limit, _STAT_LIQUID_POOL_HIT),
         ):
             if size >= limit:
                 stats[hit_key] = True
@@ -2281,10 +2460,11 @@ async def _refresh_stale_futures_prices(
                         """
                     ),
                     {
+                        **pool_bind_params(),
+                        # the run's own floor wins over the module default, so a
+                        # manual invocation's census measures what it swept.
                         "volume_floor": volume_floor,
                         "stale_hours": stale_hours,
-                        "value_pool_limit": VALUE_POOL_LIMIT,
-                        "tier1_pool_limit": TIER1_POOL_LIMIT,
                     },
                 )
             ).scalar()
