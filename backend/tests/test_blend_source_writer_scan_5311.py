@@ -161,9 +161,15 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
 #  * `admin_matching.py::relink_*` — an admin repair whose `source` is a runtime
 #    argument, so it can be either market-derived source. Unresolvable by
 #    construction, and graded REQUIRED for that reason.
+#
+# REPAIRED and removed, #5273 CU-1 clause (1): `admin_matching.py::
+# backfill_win_probability_sources`. Its `source` is still a runtime argument —
+# that was never the reason it could not carry a record. It could not carry one
+# because it did not ASK the gate: it selected a market by title and resolved an
+# outcome by containment, so it had no admission to name. It now calls
+# `admissible_as_blend_speaker` and mints from that, which is why this ledger is
+# a ratchet in both directions — the entry's own removal is the proof.
 KNOWN_UNRECORDED_MINTS: dict[tuple[str, str, str], str] = {
-    ("backend/app/routes/admin_matching.py", "backfill_win_probability_sources",
-     "<dynamic>"): "admin repair, source is a runtime argument",
     ("backend/app/tasks/backfill_combat_wps.py", "_backfill_combat_wps", "kalshi"):
         "combat-sports backfill, literal kalshi, no market named",
     ("backend/app/tasks/espn_sync.py", "_apply_final_pm_win_prob", "<dynamic>"):

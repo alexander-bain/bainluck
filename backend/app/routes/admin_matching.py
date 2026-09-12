@@ -4859,13 +4859,25 @@ async def backfill_win_probability_sources(
 
     import re as _re
 
+    from app.utils.live_blend import (
+        BLEND_ADMISSION_RULE,
+        admissible_as_blend_speaker,
+    )
     from app.utils.prediction_market_matching import (
         find_moneyline_outcome,
         extract_matchup_with_ticker_fallback,
         feeds_win_prob_blend,
     )
+    from app.utils.probability_eligibility import verified_record
 
-    stats = {"processed": 0, "written": 0, "skipped": 0, "errors": 0}
+    stats = {
+        "processed": 0, "written": 0, "skipped": 0, "errors": 0,
+        # Kept apart from `skipped` deliberately: `skipped` is "nothing to do
+        # here", this is "a number was available and the admission rule refused
+        # it" — the count that tells an operator this endpoint just declined to
+        # re-add a leg #5031 retired.
+        "refused_inadmissible": 0,
+    }
 
     # Only fetch GAME (moneyline) markets — much smaller than ALL linked markets
     query = (
@@ -4910,6 +4922,39 @@ async def backfill_win_probability_sources(
                 stats["skipped"] += 1
                 continue
 
+        # CU-1 clause (1) (#5273): THE FOURTH WRITER. `admissible_as_blend_speaker`
+        # is the one admission rule for this column, and this endpoint was writing
+        # around it — the query's own `% vs %` / `%game%` filter is a TITLE gate,
+        # exactly the instrument #5273 rung 1 measured as insufficient, and
+        # `find_moneyline_outcome` below then resolves a derivative's outcome by
+        # containment and stamps its price as the match winner.
+        #
+        # Measured on production 2026-09-12 11:5xZ over the whole (-6h, +72h)
+        # slate — 56 events holding a linked Polymarket market and NO polymarket
+        # leg, i.e. precisely the rows this endpoint is eligible to write: it
+        # wrote on 3 of them and the gate refuses all 3. Zero correct writes.
+        #   event 15296383  a `- Halftime Result` book stamped as the match
+        #                   winner at 0.87
+        #   event 15305044  (LIVE) `Eintracht Braunschweig (-1.5)` out of a
+        #                   `- More Markets` basket, at 0.165
+        #   event 15310749  `FK Livyi Bereh (-2.5)`, at 0.515
+        # All three have `count_admissible_speakers == 0`, so they are the exact
+        # population `_retire_unbacked_blend_source` (#5031) retires — this path
+        # re-adds the retired leg, because the retirement leaves the key ABSENT
+        # and absent is this loop's write condition. The gate that only refuses
+        # to write does not hold while a fourth writer can put the number back.
+        #
+        # `is_primary=True` is correct and is why the Kalshi delta is provably
+        # zero: the exemption inside the gate is per SOURCE (`kalshi and
+        # is_primary` returns True before the class recognizer runs), and every
+        # Kalshi row reaching here has already passed `feeds_win_prob_blend`,
+        # its own measured admission rule, immediately above.
+        if not admissible_as_blend_speaker(
+            market, is_primary=True, outcomes=list(market.outcomes),
+        ):
+            stats["refused_inadmissible"] += 1
+            continue
+
         try:
             # Combat fight-winner names carry a leading sport_id prefix
             # ("329: Saint-Denis vs Pimblett") that breaks the anchored matchup
@@ -4937,8 +4982,19 @@ async def backfill_win_probability_sources(
             home_prob = prob if yes_is_home else 1.0 - prob
 
             # #1829: value + write time, same as the live writers.
+            # CU-4 (#5311): and the record naming the rule that admitted it, so
+            # this writer's legs are not INDISTINGUISHABLE from a gated one's.
+            # Minted from the gate applied above, never asserted independently —
+            # `verified_record` is the same constructor `live_blend` uses.
             from app.utils.aggregation import stamp_source_reading
-            new_wps = stamp_source_reading(wps, source, round(home_prob, 4))
+            new_wps = stamp_source_reading(
+                wps, source, round(home_prob, 4),
+                eligibility=verified_record(
+                    rule=BLEND_ADMISSION_RULE,
+                    market_id=market.id,
+                    source_market_id=market.external_id,
+                ),
+            )
             await db.execute(
                 update(Event)
                 .where(Event.id == event_id)
