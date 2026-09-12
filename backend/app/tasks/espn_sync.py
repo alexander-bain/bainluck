@@ -5,6 +5,7 @@ ESPN live sync, metadata enrichment, and team logo backfill tasks.
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy import select, distinct, and_, or_, func
 from sqlalchemy.orm import selectinload
@@ -832,6 +833,181 @@ AUTHORITY_STRAGGLER_LOOKBACK = timedelta(hours=48)
 #: never races a genuinely live game to the settle door — and the door itself
 #: refuses anything ESPN has not marked ``completed`` regardless.
 AUTHORITY_STRAGGLER_MIN_AGE = timedelta(hours=2)
+
+#: The Redis key that turns the unreachable-suspended arm on, and the number of
+#: rows it may retire per pass. ABSENT OR 0 MEANS THE ARM DOES NOTHING — not
+#: "unbounded", not "default on" — and the arm does not even issue its SELECT.
+#:
+#: A BUDGET RATHER THAN A BOOLEAN, because this arm's population is a standing
+#: backlog and a flow at once and there is no row property that separates them
+#: (#5532: both are the same rows, distinguished only by whether they arrived
+#: before or after this ships). An unbounded first pass would retire ~10,700 rows
+#: in one 60-second beat with no backup taken — the thing D51 exists to stop. A
+#: per-pass budget makes the drain rate an attended decision: the D51 backup is
+#: taken, the key is set, the backlog drains at a chosen rate, and the key STAYS
+#: set so the door remains shut against the ~600/day that keep arriving.
+#:
+#: The one-command undo is ``DEL`` on this key, which is what lets it be flipped
+#: under D51(b) / standing notice 39 rather than needing a deploy.
+UNREACHABLE_SUSPENDED_BUDGET_KEY = "events:unreachable_suspended_budget"
+
+#: The D51 restore rail, and the arm's SECOND gate. Every row this arm retires is
+#: written here in the same transaction, so the undo is exact.
+#:
+#: 🔴 IT HAD TO BE AN ID LIST AND NOT THE PREDICATE, and the number says why.
+#: The obvious cheap restore is "un-void everything matching the retirement
+#: predicate" — no table, nothing to maintain. MEASURED on production
+#: 2026-09-12 (fingerprint ``295937d629781eeb``): of 4,320 rows already
+#: ``voided`` for entirely unrelated reasons, **2,544 match this predicate
+#: exactly**. That restore would have resurrected all 2,544 as ``suspended``,
+#: which is a bigger data defect than the one being undone, and it would have
+#: looked like a clean one-command rollback while doing it.
+#:
+#: ABSENT TABLE ⇒ THE ARM DOES NOT RUN. The table is created by the attended
+#: enable step (``backend/scripts/unreachable_suspended_door.py --create-backup``,
+#: runtime DDL behind a human invocation, standing notice 47(c)), so the arm
+#: cannot write a terminal anybody is unable to take back.
+UNREACHABLE_SUSPENDED_BACKUP_TABLE = "backup_unreachable_suspended_5532"
+
+#: Ceiling on whatever the key says, so a fat-fingered value cannot turn one beat
+#: into an unreviewable mass write. The key chooses a rate; this bounds the blast
+#: radius of choosing it wrong.
+UNREACHABLE_SUSPENDED_MAX_BUDGET = 500
+
+#: THE IN-FLIGHT REGISTRY, and it exists because closing the door is not enough
+#: (CERT-2757, repair ``5532-RESTORE-FENCES-IN-FLIGHT-RETIREMENT``).
+#:
+#: ``--restore`` deletes the budget key first, which stops every FUTURE pass. It
+#: does nothing about a pass that already read the key: that budget is latched in
+#: this process's memory, its transaction has not committed, and it will happily
+#: land a ``voided`` write AFTER the restore's UPDATE has handed the row back.
+#: Reproduced by the grader — restore reported 0 rows and the row finished
+#: ``voided``, which is the rollback silently reversing the operator in a second,
+#: subtler way than the one CERT-2753 caught.
+#:
+#: So the budget read and the retirement write are bracketed: a pass that latches
+#: a positive budget writes a field here before it reads, and clears it after its
+#: transaction has committed. Restore closes the door and then WAITS for this to
+#: drain. Registering BEFORE the read is the whole ordering — register after, and
+#: a pass that read a positive budget is invisible for the instant restore looks.
+UNREACHABLE_SUSPENDED_INFLIGHT_KEY = "events:unreachable_suspended_inflight"
+
+#: How long a marker is honoured when nobody clears it, and it is SIZED ON THE
+#: BOUND THAT IS ENFORCED, not on the one that is handy. The handy number is the
+#: 60s beat; the enforced number is Celery's global ``task_time_limit`` (300s),
+#: which is what actually stops this task — it declares no limit of its own, and
+#: it IS hard-killed in production. A pass killed mid-retirement can never clear
+#: its own marker, so without an expiry one hard kill would block every restore
+#: forever; with one sized under the kill, a live pass would lose its marker and
+#: the fence would open under it. Hence: the hard kill plus a margin.
+#:
+#: ``test_the_inflight_ttl_outlasts_the_hard_kill_that_is_enforced_5532`` asserts
+#: the gap against the configured limit, so the two cannot drift into a hole.
+UNREACHABLE_SUSPENDED_INFLIGHT_TTL = 360
+
+
+def _unreachable_suspended_budget() -> int:
+    """How many rows may this pass retire? 0 unless an attended step said so.
+
+    Every failure — no Redis, an unparseable value, a negative one — returns 0.
+    An arm that writes a terminal status must fail CLOSED: "the config read
+    broke" and "the operator asked for this" cannot be allowed to look alike.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(UNREACHABLE_SUSPENDED_BUDGET_KEY)
+        if raw is None:
+            return 0
+        budget = int(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception as exc:
+        logger.info(
+            "Unreachable-suspended budget unreadable, arm stays off: %s", exc
+        )
+        return 0
+    if budget <= 0:
+        return 0
+    return min(budget, UNREACHABLE_SUSPENDED_MAX_BUDGET)
+
+
+def _latch_unreachable_suspended_budget() -> tuple[int, Optional[str]]:
+    """Read the budget AND announce this pass, in that bracket, or refuse.
+
+    Returns ``(budget, token)``. A positive budget always comes with a token the
+    caller must hand back to :func:`_release_unreachable_suspended_inflight`
+    after its transaction has committed; ``(0, None)`` means this pass retires
+    nothing.
+
+    🔴 THE REGISTRATION PRECEDES THE READ, and reversing those two lines
+    reintroduces exactly the defect this exists to close (CERT-2757). Register
+    afterwards and there is an instant where a pass holds a positive budget and
+    nothing in Redis says so — restore looks, sees a clean registry, and updates
+    rows out from under a writer that is about to void them again.
+
+    A pass that cannot register does not run. That is the same fail-closed rule
+    the budget read already follows, for the same reason: "the fence is broken"
+    and "the operator asked for this" must not look alike. The cost of being
+    wrong here is a pass that retires nothing, which is the off state.
+    """
+    import time
+    import uuid
+
+    token = uuid.uuid4().hex
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        client.hset(
+            UNREACHABLE_SUSPENDED_INFLIGHT_KEY,
+            token,
+            str(time.time() + UNREACHABLE_SUSPENDED_INFLIGHT_TTL),
+        )
+        # Refreshed on every registration so the registry cannot outlive the
+        # passes in it. Each refresh is at least as long as the field just
+        # written, so the hash never expires under a live marker.
+        client.expire(
+            UNREACHABLE_SUSPENDED_INFLIGHT_KEY, UNREACHABLE_SUSPENDED_INFLIGHT_TTL
+        )
+    except Exception as exc:
+        logger.info(
+            "Unreachable-suspended pass could not register as in flight, "
+            "arm stays off: %s",
+            exc,
+        )
+        return 0, None
+
+    budget = _unreachable_suspended_budget()
+    if budget <= 0:
+        # Nothing to fence. Hand the marker back immediately rather than leaving
+        # a restore to wait out a pass that was never going to write.
+        _release_unreachable_suspended_inflight(token)
+        return 0, None
+    return budget, token
+
+
+def _release_unreachable_suspended_inflight(token: Optional[str]) -> None:
+    """Drop this pass's marker. Best effort — the TTL is the guarantee.
+
+    Called after the transaction has COMMITTED, never before: the marker exists
+    to cover the window in which a retirement is written but not yet durable,
+    and releasing inside that window is the same as never holding it.
+
+    A release that fails leaves restore waiting out the TTL, which is slower and
+    still correct. There is no failure mode here worth raising into a task that
+    has already done its work.
+    """
+    if not token:
+        return
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().hdel(UNREACHABLE_SUSPENDED_INFLIGHT_KEY, token)
+    except Exception as exc:
+        logger.info(
+            "Unreachable-suspended in-flight marker %s not cleared; the %ds "
+            "expiry will retire it: %s",
+            token, UNREACHABLE_SUSPENDED_INFLIGHT_TTL, exc,
+        )
 
 
 async def _settle_authority_stragglers(session, espn, now, stats, update_fields_fn):
@@ -2072,6 +2248,10 @@ async def _transition_event_statuses_impl() -> dict:
       snapshot ever — cannot be the long five-setter the tennis maximum was
       widened for, so it does not inherit the widening.
     - suspended → live: a source that reports on the game is captured again.
+    - suspended → retired: nothing can EVER select the row again — no provider
+      id of any kind, and past the resume window by a margin. Off by default and
+      budgeted per pass; see :data:`UNREACHABLE_SUSPENDED_BUDGET_KEY` and
+      :func:`~app.utils.event_completion.suspended_row_is_unreachable`.
 
     That second condition was claimed here for a long time but never actually
     implemented, which made this the producer of the CAL-P002 frozen-final-score
@@ -2118,6 +2298,11 @@ async def _transition_event_statuses_impl() -> dict:
     )
 
     stats = {"scheduled_to_live": 0, "live_to_suspended": 0, "suspended_to_live": 0}
+    # Declared out here because it is RELEASED out here — after the session
+    # block, which is where the transaction commits (`get_task_session` commits
+    # on a clean exit). Releasing inside the block would clear the fence while
+    # the retirement it is fencing is still uncommitted (CERT-2757).
+    unreachable_inflight_token: Optional[str] = None
 
     async with get_task_session() as session:
         now = datetime.now(timezone.utc)
@@ -2209,8 +2394,11 @@ async def _transition_event_statuses_impl() -> dict:
         from app.utils.event_completion import (
             EVENT_SUSPENDED,
             LAST_POST_COMMENCE_SNAPSHOT_SQL,
+            UNREACHABLE_SUSPENDED_MARGIN,
+            UNREACHABLE_SUSPENDED_TERMINAL,
             event_has_never_been_observed,
             game_may_still_be_running,
+            suspended_row_is_unreachable,
             wall_clock_bound_hours,
         )
 
@@ -2357,6 +2545,146 @@ async def _transition_event_statuses_impl() -> dict:
                         event.id, event.home_team_name, event.away_team_name,
                     )
 
+        # --- suspended → retired (the door that was never there) ---
+        #
+        # #5532/#5130. The arm above is the ONLY writer that re-selects a
+        # suspended row, and it looks back exactly SUSPENDED_RESUME_WINDOW. Past
+        # that window a row with no provider id has no writer left anywhere in
+        # the tree — the full enumeration, and the measurement, are in
+        # `suspended_row_is_unreachable`. So `suspended` stopped being the
+        # non-terminal state this file argues it is and became the quietest
+        # possible terminal: one that still says "paused" to every reader that
+        # buckets it, two years after the fixture.
+        #
+        # THE FLOOR IS DERIVED, NOT RESTATED. A margin on top of the very window
+        # the arm above uses, computed from that constant, so the two can never
+        # drift into a gap where a row is unreachable by one rule and still
+        # resumable by the other.
+        unreachable_floor = SUSPENDED_RESUME_WINDOW + UNREACHABLE_SUSPENDED_MARGIN
+        stats["unreachable_suspended_retired"] = 0
+        (
+            stats["unreachable_suspended_budget"],
+            unreachable_inflight_token,
+        ) = _latch_unreachable_suspended_budget()
+
+        if stats["unreachable_suspended_budget"] > 0:
+            # THE ANCHOR-ACQUISITION EXCLUSION, and it is the one channel that
+            # does not need an id (see the predicate's docstring). The SAME
+            # `ESPN_SPORT_MAPPING` keys `_backfill_espn_ids` resolves to sport
+            # ids, read the same way — not a copied list — so a sport added to
+            # ESPN coverage starts protecting rows here on the same deploy.
+            # MEASURED 2026-09-12: 111 of 10,704 rows are held by this.
+            espn_covered_ids = [
+                r[0] for r in (await session.execute(
+                    select(Sport.id).where(
+                        Sport.key.in_(list(ESPN_SPORT_MAPPING.keys()))
+                    )
+                )).all()
+            ]
+            # FAIL CLOSED ON AN EMPTY ALLOWLIST. `notin_([])` is TRUE in SQL, so
+            # an empty list does not exclude ESPN sports — it stops excluding
+            # anything, and the Python test `sport_id in []` agrees with it, so
+            # both halves of the guard would say "retire" in unison. 26 mapped
+            # keys resolving to zero sport rows is a broken read, never a real
+            # state; the arm declines the pass and says so.
+            if not espn_covered_ids:
+                stats["unreachable_suspended_budget"] = 0
+                logger.warning(
+                    "#5532 unreachable-suspended arm skipped: ESPN_SPORT_MAPPING "
+                    "(%d keys) resolved to no sport ids, so the anchor-"
+                    "acquisition exclusion cannot be applied.",
+                    len(ESPN_SPORT_MAPPING),
+                )
+            # THE RESTORE RAIL IS A GATE, NOT A LOG. No backup table, no writes
+            # — the arm cannot retire a row it would be unable to give back
+            # (D51). One `to_regclass` per pass, and only while the budget is
+            # set, so the off state still costs nothing.
+            backup_present = (await session.execute(
+                _sql_text("SELECT to_regclass(:t) IS NOT NULL"),
+                {"t": f"public.{UNREACHABLE_SUSPENDED_BACKUP_TABLE}"},
+            )).scalar()
+            if not backup_present:
+                stats["unreachable_suspended_budget"] = 0
+                logger.warning(
+                    "#5532 unreachable-suspended arm skipped: backup table %s "
+                    "does not exist, so a retirement could not be undone. Run "
+                    "scripts/unreachable_suspended_door.py --create-backup.",
+                    UNREACHABLE_SUSPENDED_BACKUP_TABLE,
+                )
+        else:
+            espn_covered_ids = []
+
+        if stats["unreachable_suspended_budget"] > 0:
+            # The SELECT is the cheap SCREEN; `suspended_row_is_unreachable` is
+            # the VERDICT, and it is re-asked on every row the screen returns.
+            # Deliberately not one query doing both: the predicate carries the
+            # score/`completed_at` refusals, and a rule that only ever exists as
+            # a WHERE clause is a rule no test can put a counter-example to.
+            # Oldest first — this drains a backlog and serves a flow at once, and
+            # newest-first starves the tail (gotcha #41). The floor is the other
+            # half of that bound: the population is not expiring, so a floor plus
+            # oldest-first is the whole ordering question here.
+            unreachable_result = await session.execute(
+                select(Event)
+                .where(
+                    Event.status == EVENT_SUSPENDED,
+                    Event.external_id.is_(None),
+                    Event.espn_id.is_(None),
+                    Event.statpal_fixture_id.is_(None),
+                    Event.home_score.is_(None),
+                    Event.away_score.is_(None),
+                    Event.completed_at.is_(None),
+                    Event.sport_id.notin_(espn_covered_ids),
+                    Event.commence_time < now - unreachable_floor,
+                )
+                .order_by(Event.commence_time.asc())
+                .limit(stats["unreachable_suspended_budget"])
+            )
+            for event in unreachable_result.scalars().all():
+                if not suspended_row_is_unreachable(
+                    event.status,
+                    event.commence_time,
+                    event.external_id,
+                    event.espn_id,
+                    event.statpal_fixture_id,
+                    event.home_score,
+                    event.away_score,
+                    event.completed_at,
+                    event.sport_id in espn_covered_ids,
+                    now,
+                    unreachable_floor,
+                ):
+                    continue
+                # BACKUP FIRST, IN THE SAME TRANSACTION. If this insert raises,
+                # the status write never happens — which is the ordering D51
+                # asks for, stated as code rather than as a runbook step.
+                await session.execute(
+                    _sql_text(
+                        f"INSERT INTO {UNREACHABLE_SUSPENDED_BACKUP_TABLE} "
+                        "(event_id, previous_status, commence_time, retired_at) "
+                        "VALUES (:id, :prev, :commence, NOW()) "
+                        "ON CONFLICT (event_id) DO NOTHING"
+                    ),
+                    {
+                        "id": event.id,
+                        "prev": event.status,
+                        "commence": event.commence_time,
+                    },
+                )
+                event.status = UNREACHABLE_SUSPENDED_TERMINAL
+                stats["unreachable_suspended_retired"] += 1
+                logger.info(
+                    "#5532 retired event %s (%s vs %s) suspended→%s: no "
+                    "external_id, espn_id or statpal_fixture_id, %.0fh past its "
+                    "own start and %.0fh past the resume window, no score and no "
+                    "completed_at. Nothing can reach this row again.",
+                    event.id, event.home_team_name, event.away_team_name,
+                    UNREACHABLE_SUSPENDED_TERMINAL,
+                    (now - event.commence_time).total_seconds() / 3600,
+                    (now - event.commence_time - SUSPENDED_RESUME_WINDOW)
+                    .total_seconds() / 3600,
+                )
+
         # --- Repair: completed with 0-0 → scheduled/live ---
         # The Odds API occasionally returns completed=true for games that
         # haven't started. Reset these to the correct status.
@@ -2418,19 +2746,30 @@ async def _transition_event_statuses_impl() -> dict:
                 or stats["suspended_to_live"] > 0
                 or stats["repaired_bogus_completed"] > 0
                 or stats["unsettled_future_commence"] > 0
-                or stats["held_derived_start"] > 0):
+                or stats["held_derived_start"] > 0
+                or stats["unreachable_suspended_retired"] > 0):
             logger.info(
                 "Status transitions: %d scheduled→live, %d live→suspended, "
                 "%d suspended→live, %d repaired, %d un-settled-future-commence, "
-                "%d held (derived start), %d held (still running)",
+                "%d held (derived start), %d held (still running), "
+                "%d suspended→%s (unreachable, budget %d)",
                 stats["scheduled_to_live"], stats["live_to_suspended"],
                 stats["suspended_to_live"],
                 stats["repaired_bogus_completed"],
                 stats["unsettled_future_commence"],
                 stats["held_derived_start"],
                 stats["held_still_running"],
+                stats["unreachable_suspended_retired"],
+                UNREACHABLE_SUSPENDED_TERMINAL,
+                stats["unreachable_suspended_budget"],
             )
 
+    # OUTSIDE THE BLOCK ON PURPOSE: the `async with` above is what commits, so
+    # this is the first line at which any retirement this pass wrote is durable
+    # and a restore may safely act (CERT-2757). An exception skips it and the
+    # marker's expiry cleans up — which is the right direction, because an
+    # exception also rolled the retirement back.
+    _release_unreachable_suspended_inflight(unreachable_inflight_token)
     return stats
 
 

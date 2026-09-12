@@ -488,6 +488,121 @@ def started_without_result(status, commence_time, now) -> bool:
 RETIRED_STATUSES = frozenset({"merged", "voided"})
 
 
+#: The terminal :data:`EVENT_SUSPENDED` becomes when NOTHING CAN EVER REACH THE
+#: ROW AGAIN. Named rather than inlined because it is the single line decision
+#: D-live176 changes: option B (a new ``abandoned`` word) is this constant and a
+#: vocabulary rollout, option A is this constant as it stands.
+#:
+#: ``voided`` is chosen over a new word for the reason :data:`RETIRED_STATUSES`
+#: gives in full: it is already in that set, so every by-id read that consults
+#: the vocabulary already hides it and every list-shaped surface already excludes
+#: it by allowlist. Nothing has to be taught a word — which is the precondition
+#: that §R's amendment above says a new state is not shipped without.
+UNREACHABLE_SUSPENDED_TERMINAL = "voided"
+
+#: How long past :data:`~app.tasks.espn_sync.SUSPENDED_RESUME_WINDOW` a suspended
+#: row must sit before the last door is agreed to be shut.
+#:
+#: THE FLOOR IS DERIVED FROM THE RESUME WINDOW, NEVER RESTATED. Both doors out of
+#: ``suspended`` are bounded by that same 48h — ``_settle_authority_stragglers``
+#: (``AUTHORITY_STRAGGLER_LOOKBACK``, whose own comment says the two arms
+#: deliberately share the number) and the ``suspended → live`` arm — so the
+#: instant a row passes it, neither can select the row again for the rest of
+#: time. This margin is the slack on top: a full day in which a stalled beat, a
+#: long release, or a queue backlog can still get a late pass in. Sized off the
+#: ENFORCED bound (the 48h in the two WHERE clauses), not off the 60s cadence
+#: that happens to drive them.
+UNREACHABLE_SUSPENDED_MARGIN = timedelta(hours=24)
+
+
+def suspended_row_is_unreachable(
+    status,
+    commence_time,
+    external_id,
+    espn_id,
+    statpal_fixture_id,
+    home_score,
+    away_score,
+    completed_at,
+    anchor_acquirable,
+    now,
+    floor,
+) -> bool:
+    """Can anything, ever, change this suspended row again? (#5532/#5130)
+
+    ``suspended`` is documented above as escapable, and the claim is conditional
+    on a precondition it never states: **both doors need something upstream to
+    reach the row.** Every writer that can move a suspended row is keyed on a
+    provider id, and every one of them is also time-bounded:
+
+      * ``espn_sync._settle_authority_stragglers`` — ``espn_id IS NOT NULL`` and
+        ``commence_time >= now - 48h``. It matches on ``espn_id`` ONLY, on
+        purpose (its own docstring: name matching here is gotcha #32's class);
+      * ``espn_sync``'s ``suspended → live`` resume arm — ``commence_time >=
+        now - SUSPENDED_RESUME_WINDOW``, and the play-reporting snapshot it
+        needs comes from ESPN or StatPal, i.e. from an anchored row;
+      * ``espn_helpers`` / ``espn_tennis_anchor`` — dereference ``espn_id``;
+      * ``statpal_sync`` and ``odds_polling``'s scores path — both write a
+        terminal only ``if event.status == "live"``, so neither is a door out of
+        ``suspended`` at all.
+
+    🔴 ``anchor_acquirable`` IS THE ONE CHANNEL THAT DOES NOT NEED AN ID, AND IT
+    IS WHY THIS PARAMETER EXISTS. ``espn_sync._backfill_espn_ids`` is the
+    exception to the sentence above: it is the pass that *goes and gets* the
+    ``espn_id``, so it selects on ``espn_id IS NULL`` — exactly our rows — with
+    **no time window at all**, and #3790 deliberately widened it to admit
+    ``suspended`` on the argument that for an unanchored row it is not the best
+    door but the ONLY one. Retiring such a row would take it out of
+    ``AUTHORITY_BACKFILL_STATUSES`` and make that the last word. It is bounded by
+    ``Event.sport_id.in_(espn_sport_ids)`` — the 26 keys of ``ESPN_SPORT_MAPPING``
+    — and that bound is the whole of its reach, so the caller passes True for a
+    row in one of those sports and this refuses.
+
+    That channel is also ordered ``commence_time DESC`` with a limit, so an old
+    row is starved in practice (gotcha #41). **Starved is not unreachable**, and
+    the difference is the point: a starving order can be fixed, a retired status
+    cannot be re-selected by the pass that would have fixed it.
+
+    MEASURED, production 2026-09-12 (fingerprints ``e48d6a8fe259b231`` /
+    ``30e8106636cf022b`` / ``d38af42ed4dd42ed``): 10,704 rows clear the id and
+    result tests, of which **111 are in an ESPN-covered sport and are refused
+    here**, leaving 10,593. They arrive at ~600/day and run two years deep at the
+    tail. **Not one of the 10,704 carries a score, and not one carries a
+    ``completed_at``** — 0 on both, so retiring them can destroy no result.
+    10,703 of the 10,704 were minted from a venue question
+    (``commence_time_source`` ``kalshi`` / ``polymarket`` / ``kalshi_ticker`` /
+    ``kalshi_occurrence``); exactly one came from ESPN.
+
+    THE SCORE AND ``completed_at`` TESTS ARE NOT DECORATION. They are measured
+    empty today and this predicate is what keeps that true: a row that acquired a
+    result between the census and the write is a row something DID reach, which
+    refutes the premise directly. They fail closed — anything present, and the
+    answer is False.
+
+    ``floor`` is passed in rather than read from a module constant so the caller
+    that owns :data:`~app.tasks.espn_sync.SUSPENDED_RESUME_WINDOW` derives it
+    from that window and this file never restates the number it must exceed.
+    """
+    if status != EVENT_SUSPENDED:
+        return False
+    if commence_time is None or now is None or floor is None:
+        return False
+    # An empty string is not an id, and a provider that writes one has told us
+    # nothing. `or None` would be the terser spelling and would also swallow a
+    # literal 0; these columns are strings, but the explicit test says what it
+    # means without depending on that.
+    for provider_id in (external_id, espn_id, statpal_fixture_id):
+        if provider_id is not None and str(provider_id).strip() != "":
+            return False
+    if home_score is not None or away_score is not None:
+        return False
+    if completed_at is not None:
+        return False
+    if anchor_acquirable:
+        return False
+    return commence_time < now - floor
+
+
 def is_retired_event_status(status) -> bool:
     """Has this row been taken off the schedule without being deleted?
 
@@ -515,6 +630,18 @@ def play_resumes(status) -> bool:
     twin in the terminal direction is :func:`authority_may_settle`; between
     them, a suspended row is reachable from both of the states it can legally
     become, which is what stops the new state being a trap.
+
+    ⚠️ THAT LAST SENTENCE WAS TRUE OF THE PREDICATES AND FALSE OF THE ROWS
+    (#5532/#5130). A predicate returning True says a door is *permitted*, not
+    that anything will ever walk through it. Every writer on the other side of
+    both doors is keyed on a provider id AND bounded to 48h past kick-off, so a
+    row with no id — measured 2026-09-12: **10,704 of them, arriving at ~600 a
+    day, the oldest two years old** — satisfies both predicates forever and is
+    reached by neither. It read "paused" to every surface that buckets it.
+    :func:`suspended_row_is_unreachable` is the missing test and the arm in
+    ``espn_sync._transition_event_statuses_impl`` is the door that was never
+    there. The claim above holds only with its precondition stated: *reachable*
+    means something upstream can still select the row.
 
     Deliberately NOT true for ``completed``/``closed``: un-settling a row that
     something with standing settled is a bigger claim and keeps its own
