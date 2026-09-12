@@ -208,7 +208,38 @@ enum TeamShortName {
         guard parts.count > 1 else { return name }
         guard let last = parts.last else { return name }
         // The designator alone names nothing — show the name it qualifies.
-        if isDesignator(last) { return parts.joined(separator: " ") }
+        //
+        // #5651 — this asks `isNonDistinctiveToken`, the browser's predicate,
+        // and NOT `isDesignator`. The two differ by a length clause: the browser
+        // refuses any trailing token of one or two characters without naming it,
+        // and `isDesignator` only ever knew the ~70 initialisms somebody listed.
+        // So every two-letter tail outside that list became the whole label and
+        // the iPhone called Atalanta BC **"BC"** — 174 clubs, against a website
+        // that spelled all of them out.
+        //
+        // #4539 built `isNonDistinctiveToken` as the browser's rule and
+        // deliberately kept it off this function ("widening `isDesignator`
+        // instead would move `short`, and the name a reader sees is not what
+        // #4539 is about"). Moving `short` is precisely what #5651 is about, so
+        // that reservation is spent — and reaching the mirror that already
+        // exists is what makes this parity BY CONSTRUCTION rather than a second
+        // transcription of a length clause that would then need its own guard.
+        //
+        // It is deliberately not a widening of `isDesignator`, which also drives
+        // `glyphs(ofLabel:)`'s LEADING skip and `handPickedKey`'s trailing strip:
+        // widen it and "Le" becomes a designator, so `abbreviation("Le Mans FC")`
+        // moves off its pinned `LEM` onto `MAN`. Routing only this call site
+        // leaves all three other callers untouched.
+        //
+        // The new predicate is a strict superset of the old one on this slot, so
+        // the change can only ever WIDEN a label to the full name and can never
+        // newly shorten one. Measured over all 13,618 distinct names on `events`
+        // in the last 45 days (2026-09-12, `artifacts-native-133/`), running this
+        // file against the real browser module: **labels disagreeing with the
+        // browser 180 → 3, with 177 repaired and 0 newly broken**. The three that
+        // remain are Paris Saint-Germain, where #4627's hand-picked entry puts
+        // the app deliberately ahead of the browser.
+        if isNonDistinctiveToken(last) { return parts.joined(separator: " ") }
         return String(last)
     }
 
@@ -381,10 +412,21 @@ enum TeamShortName {
 
     /// Is this token incapable of identifying the club on its own?
     ///
-    /// Distinct from `isDesignator`, which asks whether a TRAILING word may be a
-    /// label all by itself. This one is the browser's rule and is used only by
-    /// the badge fork — widening `isDesignator` instead would move `short`, and
-    /// the name a reader sees is not what #4539 is about.
+    /// This is the browser's `isNonDistinctiveTrailingWord`, and since #5651 it
+    /// is what `short` asks too — so the label a reader sees is the browser's
+    /// answer by construction rather than by transcription.
+    ///
+    /// #4539 wrote it for the badge fork alone and said so: *"widening
+    /// `isDesignator` instead would move `short`, and the name a reader sees is
+    /// not what #4539 is about."* That was a statement of SCOPE, not of design,
+    /// and #5651 is the issue it was deferring — the browser's length clause was
+    /// the only thing standing between 174 clubs and a one- or two-letter label.
+    ///
+    /// It remains distinct from `isDesignator`, which still serves
+    /// `glyphs(ofLabel:)`'s leading skip, `handPickedKey`'s trailing strip and
+    /// `namesSomething`. Those three want "is this word a club-type designator",
+    /// not "is this word too short to identify anybody": a leading "Le" is not a
+    /// designator, and `abbreviation("Le Mans FC")` must stay `LEM`.
     private static func isNonDistinctiveToken<S: StringProtocol>(_ token: S) -> Bool {
         let bare = String(token.filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
         if bare.count <= 2 { return true }

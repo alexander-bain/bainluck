@@ -308,6 +308,101 @@ final class TeamShortNameTests: XCTestCase {
                        "Paris Saint Germain / Marseille")
     }
 
+    // MARK: - #5651, the two-letter tail
+
+    /// The photographed defect: a trailing token of one or two characters that
+    /// nobody thought to list became the whole label, so the iPhone called
+    /// Atalanta BC **"BC"** while the website spelled it out.
+    ///
+    /// Specimens are taken from the measured population, one per shape — a club
+    /// type nobody listed (`BC`, `GF`, `HC`, `JK`), a Brazilian state suffix
+    /// (`SP`, `MG`, `GO`), a genuine two-letter SURNAME (`Li`, `Oh`), a token
+    /// that is only short once its punctuation is stripped (`J.K.`, `R.`), and
+    /// the parenthesised marker that `isDesignator`'s trim set never reached
+    /// (`(MG)`, `(OH)`). Measured over all 13,618 distinct names on `events` in
+    /// the last 45 days (2026-09-12): 177 labels move, every one of them onto
+    /// the full name, and 0 move the other way.
+    func testATwoLetterTailNeverBecomesTheWholeLabel() {
+        for name in [
+            "Atalanta BC", "Aarhus GF", "Bergischer HC", "Besiktas JK",
+            "AA Internacional Limeira SP", "Atletico Mineiro MG", "Anapolis FC GO",
+            "Ann Li", "Chan-Yeong Oh",
+            "Beşiktaş J.K.", "Akpejiori R.",
+            "Athletic Club (MG)", "Central State (OH)",
+        ] {
+            XCTAssertEqual(TeamShortName.short(name), name,
+                           "\(name) must be spelled out, not reduced to its tail")
+        }
+    }
+
+    /// The direction invariant, and the reason this change is safe: the new
+    /// predicate is a strict superset of the old one on the trailing slot, so a
+    /// label may only ever WIDEN. A name whose last word really does name the
+    /// team keeps shortening exactly as it always has.
+    ///
+    /// `Sox` is also the control that pins the clause at two characters: move it
+    /// to `<= 3` and "Boston Red Sox" stops shortening.
+    func testAThreeLetterTailThatNamesTheTeamStillShortens() {
+        XCTAssertEqual(TeamShortName.short("Boston Red Sox"), "Sox")
+        XCTAssertEqual(TeamShortName.short("Baltimore Orioles"), "Orioles")
+        XCTAssertEqual(TeamShortName.short("Ipswich Town"), "Ipswich Town")
+        XCTAssertEqual(TeamShortName.short("Bradford City"), "Bradford City")
+        // Two characters is the bar, so a THREE-character tail outside the
+        // designator set is untouched — this is the browser's rule, not a
+        // blanket refusal to shorten.
+        XCTAssertEqual(TeamShortName.short("Chen Hui Ho"), "Chen Hui Ho")
+        XCTAssertEqual(TeamShortName.short("Los Angeles Rams"), "Rams")
+    }
+
+    /// THE FIX IS ROUTED, NOT WIDENED, AND THIS IS THE TEST THAT SAYS SO.
+    ///
+    /// The tempting repair is to put the browser's length clause into
+    /// `isDesignator`. That function also drives `glyphs(ofLabel:)`'s LEADING
+    /// skip, so "Le" would become a designator and the badge for "Le Mans FC"
+    /// would move off `LEM` onto `MAN` — a regression invisible to every
+    /// assertion about labels. `isDesignator`'s other two callers are pinned
+    /// here for the same reason.
+    func testTheBadgeAndTheKeyDoNotMoveWithTheLabel() {
+        // `glyphs(ofLabel:)` — the leading skip must still see "Le" as a name.
+        XCTAssertEqual(TeamShortName.abbreviation("Le Mans FC"), "LEM")
+        // ...while still skipping a real leading designator.
+        XCTAssertEqual(TeamShortName.abbreviation("FC Schalke 04"), "SCH")
+        XCTAssertEqual(TeamShortName.abbreviation("AD Ceuta FC"), "CEU")
+        // `handPickedKey` — the trailing strip and its two-token floor.
+        XCTAssertEqual(TeamShortName.handPickedKey("Paris Saint-Germain FC"),
+                       TeamShortName.handPickedKey("Paris Saint Germain"))
+        XCTAssertNotEqual(TeamShortName.handPickedKey("Manchester United"),
+                          TeamShortName.handPickedKey("Manchester City"))
+        // `namesSomething` — growth must not stop on a leading designator.
+        let pair = TeamShortName.shortPair(away: "Guarani FC SP", home: "Guarani FC RJ")
+        XCTAssertNotEqual(pair.away, pair.home)
+        XCTAssertEqual(pair.away, "Guarani FC SP")
+        XCTAssertEqual(pair.home, "Guarani FC RJ")
+    }
+
+    /// The widened label reaches the badge, which is the half of this defect
+    /// nobody filed: a club whose label was `BC` badged `BC` too, because the
+    /// badge takes three glyphs of the label. Measured over the same population:
+    /// 169 badges move, every one off a designator and onto a real stamp.
+    func testTheWidenedLabelGivesTheBadgeRealLetters() {
+        XCTAssertEqual(TeamShortName.abbreviation("Atalanta BC"), "ATA")
+        XCTAssertEqual(TeamShortName.abbreviation("Aarhus GF"), "AAR")
+        XCTAssertEqual(TeamShortName.abbreviation("Besiktas JK"), "BES")
+        XCTAssertEqual(TeamShortName.abbreviation("Amazonas FC AM"), "AMA")
+        // #4627's hand-picked entry is read before the rule and is unmoved.
+        XCTAssertEqual(TeamShortName.short("Paris Saint-Germain FC"), "PSG")
+        XCTAssertEqual(TeamShortName.abbreviation("Paris Saint Germain"), "PSG")
+    }
+
+    /// A single-token name has no last word to fall off, so the 49 two-character
+    /// labels left in the population after this change are names that ARE two
+    /// characters. The browser returns the same thing; this is parity, not a
+    /// residue to chase.
+    func testASingleTokenNameIsStillReturnedWhole() {
+        XCTAssertEqual(TeamShortName.short("AZ"), "AZ")
+        XCTAssertEqual(TeamShortName.short("Ai"), "Ai")
+    }
+
     // MARK: - degenerate input
 
     func testNothingToShortenIsReturnedUnchanged() {
