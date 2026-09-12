@@ -875,6 +875,172 @@ enum MarketMapRail {
         return start ..< (start + limit)
     }
 
+    // MARK: - What the full-game totals map has ALREADY shown the reader (#4782)
+
+    /// One rung of a full-game totals ladder: where it sits in the array it was
+    /// read from, and the line it draws.
+    ///
+    /// The index is what lets a caller get back to the rung's own row — its
+    /// price, its market name — after the selection below has sorted and
+    /// windowed. Returning values alone would force every caller to re-find
+    /// them by threshold, which is a second lookup to get wrong.
+    struct TotalRung: Equatable {
+        let index: Int
+        let threshold: Double
+    }
+
+    /// How many rungs the FULL-GAME totals map draws.
+    ///
+    /// A constant rather than a literal because ``TotalPointsSpectrumView`` now
+    /// has to ask what that map drew (#4782) and a second `6` written down
+    /// beside this one is the whole failure this section exists to prevent.
+    static let totalMapLadderLimit = 6
+
+    /// The line an outcome draws on a totals ladder, or `nil` where the row is
+    /// not one of its rungs.
+    ///
+    /// This is `MarketMapView.extractTotalThresholds`' per-rung rule, lifted out
+    /// unchanged so that the half maps, the full map and the Projected scoring
+    /// card cannot disagree about which rows are rungs. Only outcomes NAMED
+    /// "over" parse — an "Under" row prices the same line from the other side
+    /// and would draw a second rung at the same threshold.
+    static func totalRungThreshold(outcomeName: String, threshold: Double?) -> Double? {
+        guard outcomeName.lowercased().contains("over") else { return nil }
+        return threshold ?? numberAtEnd(of: outcomeName)
+    }
+
+    /// Every full-game Over rung, ascending by line.
+    static func fullTotalRungs(
+        outcomeNames: [String], thresholds: [Double?]
+    ) -> [TotalRung] {
+        outcomeNames.indices.compactMap { i in
+            totalRungThreshold(
+                outcomeName: outcomeNames[i],
+                threshold: i < thresholds.count ? thresholds[i] : nil
+            ).map { TotalRung(index: i, threshold: $0) }
+        }
+        .sorted { $0.threshold < $1.threshold }
+    }
+
+    /// The slice of an ascending ladder a card draws: the lowest `limit` lines
+    /// before a result, and the lines the result actually decided after one.
+    ///
+    /// The `nil` arm is the expression that used to sit inline in
+    /// `MarketMapView.totalMapCard`; naming it is what lets the Projected
+    /// scoring card ask the same question without copying it.
+    static func totalLadderWindow(
+        sortedThresholds: [Double], settledTotal: Int?, limit: Int
+    ) -> Range<Int> {
+        guard let settledTotal else {
+            return 0 ..< Swift.min(limit, sortedThresholds.count)
+        }
+        return settledLadderWindow(
+            sortedThresholds: sortedThresholds, finalTotal: settledTotal, limit: limit
+        )
+    }
+
+    /// The rungs the full-game totals map actually PRINTS.
+    ///
+    /// #4782 — the map card builds its ladder from this, and
+    /// ``TotalPointsSpectrumView`` asks it what the reader has already been
+    /// shown. One composition, called twice, so the two cards cannot come to
+    /// different conclusions about the same page.
+    static func drawnFullTotalRungs(
+        outcomeNames: [String],
+        thresholds: [Double?],
+        settledTotal: Int?,
+        limit: Int
+    ) -> [TotalRung] {
+        let all = fullTotalRungs(outcomeNames: outcomeNames, thresholds: thresholds)
+        let window = totalLadderWindow(
+            sortedThresholds: all.map(\.threshold), settledTotal: settledTotal, limit: limit
+        )
+        return Array(all[window])
+    }
+
+    /// The final a full-game totals card may grade its own ladder against.
+    ///
+    /// Both cards on the page need this and they need the SAME answer, because
+    /// it is what picks the settled ladder's window (#3823) — a card reading it
+    /// differently would judge a different six rungs to have been drawn.
+    ///
+    /// `mapUnit == sportUnit` is the soccer-corners guard: a map whose rungs
+    /// quote something the scoreboard does not count has a final and must not
+    /// grade a single row with it.
+    static func fullTotalSettledScore(
+        isDone: Bool,
+        scoreboardCountsTheSportUnit: Bool,
+        mapUnit: String,
+        sportUnit: String,
+        homeScore: Int?,
+        awayScore: Int?
+    ) -> Int? {
+        guard isDone, scoreboardCountsTheSportUnit, mapUnit == sportUnit,
+              let home = homeScore, let away = awayScore else { return nil }
+        return home + away
+    }
+
+    /// Has the totals map already printed every line this card was about to?
+    ///
+    /// #4782. A reader scrolling one event page met the same threshold and the
+    /// same percentage twice, a screen-third apart, in two notations (`Over 5.5`
+    /// and `5.5+`). The map card owns the distribution — projection, rail,
+    /// ladder — so where it has already drawn every line the Projected scoring
+    /// card would repeat, that card says nothing new and does not say it.
+    ///
+    /// 🔴 **EVERY line, not most of them.** Measured on production 2026-09-12
+    /// over 162 pages that draw the scoring card: 133 also draw the map, and on
+    /// **43** of those the scoring card holds a rung the map does not — the
+    /// map's window is the six LOWEST lines while this card strides across the
+    /// whole range, so an NCAAF page draws `44.5 / 47.5 / 50.5` here and nowhere
+    /// else. Deferring on a partial overlap would delete those from the page.
+    /// `testAPartialOverlapIsNotARestatement` is that measurement as a test.
+    ///
+    /// An empty `printing` is not a restatement: there is nothing to defer, and
+    /// answering `true` (vacuously, as `allSatisfy` would) would withhold a card
+    /// on the strength of it having had nothing to say.
+    static func totalsAreRestated(printing: [Double], alreadyShown: [Double]) -> Bool {
+        guard !printing.isEmpty, !alreadyShown.isEmpty else { return false }
+        let shown = Set(alreadyShown)
+        return printing.allSatisfy { shown.contains($0) }
+    }
+
+    /// Whether the Projected scoring card draws at all.
+    ///
+    /// #4782. It restates the map AND has nothing else to show: either it is in
+    /// the minimal layout — one line and its clearing probability, which is the
+    /// whole card — or its projection strip is absent, so dropping the restated
+    /// rows would leave a heading over nothing. #4018 already ruled on that
+    /// shape when it refused to blank `minimalView`'s contents in place.
+    ///
+    /// A card that restates the map but DOES have a strip keeps the strip: the
+    /// pace narrative ("+8 projected", "Pace projects +3.2 vs pre-game
+    /// expectation") is the one thing the map cannot say. Measured 2026-09-12,
+    /// that is 71 of the 90 restating pages; the other 19 go.
+    static func spectrumDrawsNothingNew(
+        printing: [Double],
+        alreadyShown: [Double],
+        isMinimalLayout: Bool,
+        hasProjectionStrip: Bool
+    ) -> Bool {
+        totalsAreRestated(printing: printing, alreadyShown: alreadyShown)
+            && (isMinimalLayout || !hasProjectionStrip)
+    }
+
+    /// The last number in a string — `"Over 21.5"` → `21.5`.
+    ///
+    /// Lifted from `MarketMapView.extractNumber` so ``totalRungThreshold(outcomeName:threshold:)``
+    /// can be the one place a rung's line is parsed.
+    private static func numberAtEnd(of text: String) -> Double? {
+        let range = NSRange(text.startIndex..., in: text)
+        guard let last = Self.trailingNumberRE.matches(in: text, range: range).last,
+              let matched = Range(last.range(at: 1), in: text) else { return nil }
+        return Double(text[matched])
+    }
+
+    /// Compiled once — every rung of every map on the page runs it, per redraw.
+    private static let trailingNumberRE = try! NSRegularExpression(pattern: #"(\d+\.?\d*)"#)
+
     // MARK: - Which rungs may share ONE combined-scoring ladder (#3925 item 2)
 
     /// The sub-contest scopes a totals market names in its own title.

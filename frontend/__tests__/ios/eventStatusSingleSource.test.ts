@@ -535,8 +535,19 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
     // after-shot, with the Runs-map tile correctly gone and this one still there).
     //
     // KILLS THE MUTANT: reverting to `thresholds.count < 5 && isPre`.
+    //
+    // #4782 MOVED THIS CONDITION, IT DID NOT WEAKEN IT. The route is now
+    // `else if wouldBeMinimal {`, because #4782 has to know which layout the
+    // card will take BEFORE `body` routes — which numbers it is about to print
+    // depends on it. So the property is pinned at BOTH ends instead of at the
+    // inline `if`: the route reads the named flag, and the flag is all three
+    // clauses. That is strictly stronger than the single match it replaces,
+    // which could not see a second, ungated branch added beside it.
     const code = read(SPECTRUM);
-    expect(code).toMatch(/else if thresholds\.count < 5, isPre, canStillBeGraded \{/);
+    expect(code).toMatch(/else if wouldBeMinimal \{/);
+    expect(code).toMatch(
+      /private var wouldBeMinimal: Bool \{\s*thresholds\.count < 5 && isPre && canStillBeGraded\s*\}/,
+    );
     // Steering to `fullView` is only honest if the ladder it lands on stops
     // captioning every rung `PRE-GAME` — otherwise the fix trades one false
     // pre-game line for four. Asserted here rather than in its own block because
@@ -568,7 +579,12 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
     // Stated as a ban as well: the `&&` form cannot come back by itself, and a
     // positive-only assertion would still pass if someone added a second,
     // ungated branch beside it.
-    expect(code).not.toMatch(/thresholds\.count < 5 && isPre/);
+    //
+    // The lookahead is #4782's: `wouldBeMinimal` spells the gated rule with the
+    // same three tokens, so a bare substring ban now fires on the CORRECT code.
+    // What is banned is the clause ENDING at `isPre` — the ungated form — which
+    // is the thing #4018 photographed.
+    expect(code).not.toMatch(/thresholds\.count < 5 && isPre(?! && canStillBeGraded)/);
   });
 
   it("the event page hands both cards a commence time", () => {

@@ -555,12 +555,19 @@ struct MarketMapView: View {
         // out so the two cannot disagree about whether the scoreboard counts
         // what the rungs are quoted in. A soccer corners map on a goals
         // scoreboard has a final and must not grade a single row with it.
-        let settledTotal: Int? = {
-            guard isDone, scoreboardIsComparable,
-                  let homeScoreValue = scoredHomeScore,
-                  let awayScoreValue = scoredAwayScore else { return nil }
-            return homeScoreValue + awayScoreValue
-        }()
+        //
+        // #4782 — the rule itself moved to `MarketMapRail` so the Projected
+        // scoring card can reach the same answer. It has to: this value picks
+        // the ladder WINDOW, so a card that computed it differently would judge
+        // a different six rungs to have been drawn.
+        let settledTotal = MarketMapRail.fullTotalSettledScore(
+            isDone: isDone,
+            scoreboardCountsTheSportUnit: vocab.scoreboardCountsTheUnit,
+            mapUnit: mapUnit,
+            sportUnit: vocab.unit,
+            homeScore: scoredHomeScore,
+            awayScore: scoredAwayScore
+        )
 
         // #4907 — the same read, mid-game, for the per-rung live grade only. It
         // is deliberately NOT merged into `settledTotal`: that value also picks
@@ -576,29 +583,34 @@ struct MarketMapView: View {
 
         // #3823 — before the result, the lowest lines; after it, the lines the
         // result actually decided. `settledLadderWindow` carries the argument.
-        let ladderLimit = 6
-        let window = settledTotal.map {
-            MarketMapRail.settledLadderWindow(
-                sortedThresholds: allThresh, finalTotal: $0, limit: ladderLimit
-            )
-        } ?? 0 ..< Swift.min(ladderLimit, thresholds.count)
-        let ladder: [LadderRow] = window.map { i in
-            LadderRow(
-                label: "Over \(formatThreshold(thresholds[i].threshold))",
-                prob: thresholds[i].overProb,
+        //
+        // #4782 — one composition, `MarketMapRail.drawnFullTotalRungs`, shared
+        // with the Projected scoring card. `thresholds` still feeds the rail's
+        // density and bounds, which read every rung rather than the drawn six.
+        let drawnRungs = MarketMapRail.drawnFullTotalRungs(
+            outcomeNames: fullGameTotals.map(\.outcomeName),
+            thresholds: fullGameTotals.map(\.threshold),
+            settledTotal: settledTotal,
+            limit: MarketMapRail.totalMapLadderLimit
+        )
+        let ladder: [LadderRow] = drawnRungs.map { rung in
+            let outcome = fullGameTotals[rung.index]
+            return LadderRow(
+                label: "Over \(formatThreshold(rung.threshold))",
+                prob: outcome.overProbability ?? outcome.probability ?? 0.5,
                 color: Color(hex: "#7c3aed"),
                 result: settledTotal.map {
                     MarketMapRail.totalLadderResult(
-                        threshold: thresholds[i].threshold, finalTotal: $0
+                        threshold: rung.threshold, finalTotal: $0
                     )
                 } ?? liveTotalSoFar.flatMap {
                     // #4907 — fallback, never an override: after the final,
                     // `settledTotal` decides every rung and `liveTotalSoFar` is
                     // nil regardless (`isLive` and `isDone` are exclusive).
                     MarketMapRail.liveTotalLadderResult(
-                        threshold: thresholds[i].threshold,
+                        threshold: rung.threshold,
                         scoreSoFar: $0,
-                        marketName: thresholds[i].marketName
+                        marketName: outcome.marketName
                     )
                 }
             )
@@ -1281,26 +1293,26 @@ struct MarketMapView: View {
     /// and that question is answerable here and nowhere downstream — the tuple
     /// used to drop the name on the floor. Nothing else reads the new member, so
     /// no existing rung changes.
+    ///
+    /// #4782 — the per-rung rule and the sort now live in
+    /// ``MarketMapRail/fullTotalRungs(outcomeNames:thresholds:)``, because the
+    /// Projected scoring card underneath this one has to be able to ask what
+    /// this map drew. Behaviour is unchanged and every caller comes along:
+    /// the half maps below parse their rungs by the same rule they always did.
     private func extractTotalThresholds(
         _ outcomes: [GameMarketOutcome]
     ) -> [(threshold: Double, overProb: Double, marketName: String?)] {
-        outcomes.compactMap { t in
-            let name = t.outcomeName.lowercased()
-            guard name.contains("over") else { return nil }
-            let threshold = t.threshold ?? Self.extractNumber(from: t.outcomeName)
-            guard let th = threshold else { return nil }
-            return (th, t.overProbability ?? t.probability ?? 0.5, t.marketName)
+        MarketMapRail.fullTotalRungs(
+            outcomeNames: outcomes.map(\.outcomeName),
+            thresholds: outcomes.map(\.threshold)
+        ).map { rung in
+            let outcome = outcomes[rung.index]
+            return (
+                rung.threshold,
+                outcome.overProbability ?? outcome.probability ?? 0.5,
+                outcome.marketName
+            )
         }
-        .sorted(by: { $0.threshold < $1.threshold })
-    }
-
-    private static func extractNumber(from text: String) -> Double? {
-        let pattern = try! NSRegularExpression(pattern: #"(\d+\.?\d*)"#)
-        let range = NSRange(text.startIndex..., in: text)
-        let matches = pattern.matches(in: text, range: range)
-        guard let last = matches.last else { return nil }
-        let matchRange = Range(last.range(at: 1), in: text)!
-        return Double(text[matchRange])
     }
 
     // MARK: - Density Computation

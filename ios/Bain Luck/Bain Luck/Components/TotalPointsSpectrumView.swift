@@ -142,8 +142,76 @@ struct TotalPointsSpectrumView: View {
         )
     }
 
+    // MARK: - What the totals map above has already said (#4782)
+
+    /// The rows the full-game totals map reads — its own filter, not this
+    /// card's: the halves are the ones with a `":"`.
+    private var fullGameTotals: [GameMarketOutcome] {
+        (gameMarkets.totals ?? []).filter { !$0.outcomeName.contains(":") }
+    }
+
+    /// The lines the totals map on this same page has already printed.
+    ///
+    /// Read through ``MarketMapRail/drawnFullTotalRungs(outcomeNames:thresholds:settledTotal:limit:)``,
+    /// which is the composition `MarketMapView.totalMapCard` builds its own
+    /// ladder from — not a second opinion about it.
+    private var totalsMapRungs: [Double] {
+        MarketMapRail.drawnFullTotalRungs(
+            outcomeNames: fullGameTotals.map(\.outcomeName),
+            thresholds: fullGameTotals.map(\.threshold),
+            settledTotal: MarketMapRail.fullTotalSettledScore(
+                isDone: isDone,
+                scoreboardCountsTheSportUnit: countsTheUnit,
+                mapUnit: vocab.totalsUnit(quotedBy: fullGameTotals.map(\.marketName)),
+                sportUnit: vocab.unit,
+                homeScore: gameMarkets.homeScore ?? homeScore,
+                awayScore: gameMarkets.awayScore ?? awayScore
+            ),
+            limit: MarketMapRail.totalMapLadderLimit
+        ).map(\.threshold)
+    }
+
+    /// Whether this card would take the minimal layout. Named because #4782
+    /// needs the answer BEFORE `body` routes on it: the minimal layout is
+    /// nothing but one line and its clearing probability, so which numbers this
+    /// card is about to print depends on which layout it is about to take.
+    private var wouldBeMinimal: Bool {
+        thresholds.count < 5 && isPre && canStillBeGraded
+    }
+
+    /// The lines this card is about to print, exactly as the two layouts print
+    /// them — `minimalView`'s single line, or `ladderView`'s rungs.
+    private var printedTotals: [Double] {
+        wouldBeMinimal ? [centerLine ?? 0] : ladderThresholds.map { $0.threshold ?? 0 }
+    }
+
+    /// Every line this card would print is already on the map card above it.
+    private var restatesTheMap: Bool {
+        MarketMapRail.totalsAreRestated(
+            printing: printedTotals, alreadyShown: totalsMapRungs
+        )
+    }
+
+    /// #4782 — what is left when the restated numbers go.
+    ///
+    /// The ladder and the minimal line are the whole of this card's overlap with
+    /// the map; the projection strip is the part the map cannot say (the pace
+    /// narrative, the final in the card's own words). So a restating card keeps
+    /// its strip and drops its rows — unless it has no strip, in which case
+    /// dropping the rows would leave a heading over nothing, and #4018 already
+    /// ruled on that shape: a card that is only its own heading does not draw.
+    private var saysNothingNew: Bool {
+        MarketMapRail.spectrumDrawsNothingNew(
+            printing: printedTotals,
+            alreadyShown: totalsMapRungs,
+            isMinimalLayout: wouldBeMinimal,
+            hasProjectionStrip: strip != nil
+        )
+    }
+
     var body: some View {
         if thresholds.isEmpty { EmptyView() }
+        else if saysNothingNew { EmptyView() }
         // #4018 — `canStillBeGraded` GATES THE LAYOUT CHOICE, NOT JUST THE STRIP,
         // and this line is the second half of the fix. `isPre` is TRUE for an
         // abandoned game (it is neither live nor finished), so a suspended match
@@ -158,7 +226,7 @@ struct TotalPointsSpectrumView: View {
         // that is only a heading; `fullView` already draws the honest version of
         // this state — the strip suppressed, the threshold ladder kept — so an
         // ungradeable game is sent there and the reader keeps the real prices.
-        else if thresholds.count < 5, isPre, canStillBeGraded {
+        else if wouldBeMinimal {
             minimalView
         } else {
             fullView
@@ -223,7 +291,11 @@ struct TotalPointsSpectrumView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             projectionStrip
-            ladderView
+            // #4782 — the map card above owns the distribution. Where it has
+            // already drawn every one of these rungs, repeating them a
+            // screen-third lower in a second notation (`Over 5.5` there, `5.5+`
+            // here) tells the reader nothing and reads as a different quantity.
+            if !restatesTheMap { ladderView }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -265,24 +337,45 @@ struct TotalPointsSpectrumView: View {
 
     // MARK: - Projection Strip
 
+    /// Which of the strip's three tenses this page is in, or `nil` for none.
+    ///
+    /// #4018 — an abandoned game matches NONE of them, and that is the intended
+    /// outcome: it has no pre-game expectation worth stating in the present
+    /// tense, no pace, and no final. The strip is absent rather than re-worded,
+    /// which is the same trade `EventState.noGameMarketsLine` makes — drop the
+    /// false promise and claim nothing in its place.
+    ///
+    /// #4782 lifted this out of `projectionStrip`'s `if`/`else if` chain because
+    /// ``saysNothingNew`` has to know whether a strip will draw BEFORE the body
+    /// routes. Asking the question twice is how the two answers drift, and the
+    /// cost of drift here is a card rendered as a bare heading.
+    private enum ProjectionTense { case pregame, live, final }
+
+    private var strip: ProjectionTense? {
+        if isPre, canStillBeGraded { return .pregame }
+        if isLive, countsTheUnit, let pace = gameMarkets.pace,
+           pace.projectedTotal != nil, pace.totalScored != nil { return .live }
+        if isDone, actualTotal != nil { return .final }
+        return nil
+    }
+
     @ViewBuilder
     private var projectionStrip: some View {
         let ouLine = centerLine ?? 0
 
-        // #4018 — an abandoned game matches NONE of these three branches, and
-        // that is the intended outcome: it has no pre-game expectation worth
-        // stating in the present tense, no pace, and no final. The strip is
-        // absent rather than re-worded, which is the same trade
-        // `EventState.noGameMarketsLine` makes — drop the false promise and
-        // claim nothing in its place. The threshold ladder below is untouched.
-        if isPre, canStillBeGraded {
+        switch strip {
+        case .pregame:
             preGameStrip(ouLine: ouLine)
-        } else if isLive, countsTheUnit, let pace = gameMarkets.pace,
-                  let paceTotal = pace.projectedTotal,
-                  let scored = pace.totalScored {
-            liveStrip(ouLine: ouLine, paceTotal: paceTotal, scored: scored)
-        } else if isDone, let actual = actualTotal {
-            finalStrip(actual: actual)
+        case .live:
+            if let pace = gameMarkets.pace,
+               let paceTotal = pace.projectedTotal,
+               let scored = pace.totalScored {
+                liveStrip(ouLine: ouLine, paceTotal: paceTotal, scored: scored)
+            }
+        case .final:
+            if let actual = actualTotal { finalStrip(actual: actual) }
+        case nil:
+            EmptyView()
         }
     }
 
