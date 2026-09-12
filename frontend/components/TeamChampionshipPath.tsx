@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ChampionshipPathEntry } from "@/lib/api";
 import { pathSeason } from "@/lib/teamSeason";
+import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 
 // ---------------------------------------------------------------------------
 // Championship-path progression (L2-162). The team's path to a title shown as a
@@ -47,14 +48,17 @@ function Step({
         >
           {pct !== null ? `${pct}%` : "—"}
         </span>
-        {entry.movement !== null && entry.movement !== 0 && (
+        {/* UX-P275: `!== 0` admitted a move that rounds to nothing, so a rounding
+            residue produced a coloured "+0.0". `isRenderedMove` gates on the
+            printed string instead. */}
+        {isRenderedMove(entry.movement) && (
           <span
             className={`text-[11px] font-mono ${
-              entry.movement > 0 ? "text-accent-live" : "text-accent-danger"
+              entry.movement! > 0 ? "text-accent-live" : "text-accent-danger"
             }`}
           >
-            {entry.movement > 0 ? "+" : ""}
-            {(entry.movement * 100).toFixed(1)}
+            {entry.movement! > 0 ? "+" : "-"}
+            {formatMovementPoints(entry.movement)}
           </span>
         )}
       </div>

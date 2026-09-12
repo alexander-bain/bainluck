@@ -12,6 +12,7 @@ import LoadingState from "@/components/LoadingState";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
 import { sportKeyToGridSlug } from "@/lib/gridSlug";
+import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { buildDivisionRace } from "@/lib/teamDivisionRace";
 import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
 import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
@@ -296,13 +297,18 @@ export default function TeamPage() {
             >
               {Math.round(headline.probability * 100)}%
             </span>
-            {headline.movement !== null && headline.movement !== 0 && (
+            {/* UX-P275: ask the STRING, not the number. `!== 0` let a move that
+                rounds to nothing through, so a 0.0034-point drift printed a
+                coloured "↑ 0.0% today". `isRenderedMove` derives the gate from
+                the same function that prints the magnitude, so the two cannot
+                disagree at any `decimals`. */}
+            {isRenderedMove(headline.movement) && (
               <span
                 className={`font-mono text-xs font-semibold tabular-nums ${
-                  headline.movement > 0 ? "text-accent-live" : "text-accent-danger"
+                  headline.movement! > 0 ? "text-accent-live" : "text-accent-danger"
                 }`}
               >
-                {headline.movement > 0 ? "↑" : "↓"} {Math.abs(headline.movement * 100).toFixed(1)}% today
+                {headline.movement! > 0 ? "↑" : "↓"} {formatMovementPoints(headline.movement)}% today
               </span>
             )}
           </div>
@@ -445,20 +451,21 @@ function FutureRow({ item }: { item: TeamFutureItem }) {
             #{item.rank} of {item.total_outcomes}
           </div>
         )}
-        {!settledWon &&
-          item.probability_change_24h !== null &&
-          item.probability_change_24h !== 0 && (
-            <div
-              className={`text-xs ${
-                item.probability_change_24h > 0
-                  ? "text-accent-live"
-                  : "text-accent-danger"
-              }`}
-            >
-              {item.probability_change_24h > 0 ? "+" : ""}
-              {(item.probability_change_24h * 100).toFixed(1)}%
-            </div>
-          )}
+        {/* UX-P275, same class as the headline above: the specimen for #5652 was
+            this row — Boston Red Sox / MLB World Series Winner at
+            `probability_change_24h = 0.000034`, printed as a green "+0.0%". */}
+        {!settledWon && isRenderedMove(item.probability_change_24h) && (
+          <div
+            className={`text-xs ${
+              item.probability_change_24h! > 0
+                ? "text-accent-live"
+                : "text-accent-danger"
+            }`}
+          >
+            {item.probability_change_24h! > 0 ? "+" : "-"}
+            {formatMovementPoints(item.probability_change_24h)}%
+          </div>
+        )}
       </div>
     </Link>
   );
