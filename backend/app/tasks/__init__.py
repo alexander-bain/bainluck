@@ -6237,6 +6237,23 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 100, "mode": "open_sparse"},
         "options": {"queue": "background"},
     },
+    # #5612: the third mode of the same rail — a prop we first saw mid-game has
+    # no pregame price in ANY column we hold, so "opened at" renders blank or
+    # quotes an in-play number. This asks the venue for the window ENDING at
+    # first pitch and takes its last candle. Separate beat because it is a
+    # different question with a different candidate set, and because the two
+    # modes above must keep their own cadence and limit.
+    #
+    # `limit` is 200 rather than 500: this mode makes one candlestick call per
+    # OUTCOME (the pregame window differs per event, so the batch endpoint's
+    # shared window does not apply), and 4 runs/day x 200 clears the measured
+    # Kalshi backlog well inside the retention floor the rail sorts within.
+    "backfill-kalshi-pregame-openings": {
+        "task": "app.tasks.backfill_kalshi_history",
+        "schedule": crontab(minute=20, hour="2,8,14,20"),
+        "kwargs": {"limit": 200, "mode": "pregame_gap"},
+        "options": {"queue": "background"},
+    },
     "backfill-kalshi-settled-events": {
         "task": "app.tasks.backfill_kalshi_settled",
         "schedule": crontab(minute=0, hour="5,11,17,23"),  # Every 6h, offset from candlestick backfill
