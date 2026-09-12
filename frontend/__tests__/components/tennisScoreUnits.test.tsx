@@ -141,9 +141,19 @@ function renderMaps(sportKey: string) {
          this fixture's own win probabilities and has never been visible on the
          tennis arm because #2441 gates the derived rung off for tennis; wiring
          the opening line in surfaced it, rendering `Pre-game MAR by 4.6+` under
-         a headline reading `ZHE 97%` — #4598's defect exactly. Filed for the
-         owning lane rather than rewritten here: the NBA control below uses the
-         same helper and that sign is load-bearing for it. */
+         a headline reading `ZHE 97%` — #4598's defect exactly.
+
+         This is a FIXTURE defect and not a data one; the convention holds in
+         production. Measured over 30 days: of 453 tennis events carrying an
+         opening spread, 3 look inverted and all three are coinflips on the
+         other side of a half-point (home at 0.511 / 0.501 / 0.504, spread 0.5).
+         Baseball's 29 are the runline working correctly — a marginal moneyline
+         favourite is an underdog to win BY 2+ — and NFL, NCAAF, WNBA and every
+         soccer league are 0 for 1,800+.
+
+         Filed as #5484 rather than rewritten here: the NBA control below uses
+         the same helper and that sign is load-bearing for it, so correcting it
+         means splitting the arms, which is more than this ship should carry. */
       openingHomeSpread={4.6}
       openingOverUnder={34.8}
       sportKey={sportKey}
