@@ -190,6 +190,15 @@ SEASON_CALENDARS: dict[str, tuple[int, int]] = {
 # The two names below close the measured hole; `_beyond_regulation_is_knowable`
 # closes the mechanism, so the NEXT league we ingest is safe before anyone
 # remembers to add it here.
+#
+# #5588 — THIS MAP AND `sport_keys.EXPECTED_GAME_STATE_INDICATORS` ANSWER THE SAME
+# QUESTION, so they are held in agreement by
+# `tests/test_period_maps_cannot_silently_disagree_5588.py`. They had drifted:
+# this map said `basketball_wncaab: 4` and the authority said `2`. THIS map was
+# the correct one — women's NCAA plays four quarters — so the authority was
+# corrected to match rather than the reverse, which is why deriving one from the
+# other would have shipped a regression. Change a value in either and the guard
+# fails until both move.
 SPORT_TOTAL_PERIODS: dict[str, int] = {
     "basketball_nba": 4,
     "basketball_ncaab": 2,

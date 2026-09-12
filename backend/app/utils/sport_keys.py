@@ -76,11 +76,14 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "americanfootball_ncaaf": 4,
     "americanfootball_cfl": 4,
     "americanfootball_ufl": 4,
-    # Basketball — 4 quarters (halves for college, but ESPN reports 2 halves)
+    # Basketball — the two college games DIFFER and the old comment here
+    # ("halves for college") lumped them together, which is how `wncaab` came to
+    # say 2. NCAA women's basketball has played four 10-minute QUARTERS since
+    # 2015-16; the NCAA men's game is still two 20-minute HALVES. (#5588)
     "basketball_nba": 4,
     "basketball_wnba": 4,
     "basketball_ncaab": 2,
-    "basketball_wncaab": 2,
+    "basketball_wncaab": 4,
     # Baseball — 9 innings
     "baseball_mlb": 9,
     "baseball_mlb_preseason": 9,
@@ -95,6 +98,8 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "soccer_germany_bundesliga": 2,
     "soccer_italy_serie_a": 2,
     "soccer_france_ligue_one": 2,
+    "soccer_mexico_ligamx": 2,
+    "soccer_fifa_world_cup": 2,
     # Lacrosse — 4 quarters
     "lacrosse_ncaa": 4,
     "lacrosse_pll": 4,
