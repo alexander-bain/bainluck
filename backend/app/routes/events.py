@@ -10550,11 +10550,16 @@ async def _pinned_live_probability(db: AsyncSession, event) -> dict | None:
     """
     from app.models.models import WinProbSnapshot
     from app.utils.pinned_live_probability import (
+        a_score_is_evidence_of_play,
         league_may_be_judged_by_flatness,
         probability_series_is_pinned,
     )
 
     if event.status != "live" or event.completed_at is not None:
+        return None
+    # A visible score outranks a flat price (CERT-2669). 4 of 40 live anchorless
+    # rows carry one, so this is a real population.
+    if a_score_is_evidence_of_play(event.home_score, event.away_score):
         return None
     # Free, and it can only ever agree with the `event_has_espn_anchor` arm of
     # the rule below — this is that arm run early to skip the queries, not a

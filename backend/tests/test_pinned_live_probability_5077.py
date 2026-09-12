@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.utils.pinned_live_probability import (
+    a_score_is_evidence_of_play,
     MIN_OBSERVATIONS,
     MIN_SPAN_SECONDS,
     SLOWEST_MEASURED_CADENCE_SECONDS,
@@ -161,6 +162,31 @@ class TestTheFloors:
         assert MIN_OBSERVATIONS <= reachable_within_the_span_floor
 
 
+class TestAScoreIsEvidenceOfPlay:
+    """CERT-2669's BLOCK. #5077 is "live, with NO SCORE, and the number has not
+    moved" — the predicate shipped without the second half of its own subject."""
+
+    def test_no_score_at_all_leaves_the_rule_free_to_speak(self):
+        assert not a_score_is_evidence_of_play(None, None)
+
+    @pytest.mark.parametrize(
+        "home,away",
+        [(1, 0), (0, 1), (0, 0), (3, 2), (1, None), (None, 1)],
+        ids=["1-0", "0-1", "0-0", "3-2", "home-only", "away-only"],
+    )
+    def test_any_reported_score_is_evidence_of_play(self, home, away):
+        """EITHER side is enough, and 0-0 counts.
+
+        `0` is a score and `None` is the absence of one — a rule written with
+        truthiness (`if home_score or away_score`) reads 0-0 as no score, which
+        is the one scoreline a real game spends its first minutes at.
+
+        A half-populated score is still a report of play, so requiring both sides
+        would admit a `1-None` row on exactly the reasoning this refuses.
+        """
+        assert a_score_is_evidence_of_play(home, away)
+
+
 class TestTheScope:
     """`league_may_be_judged_by_flatness` — the ruling's load-bearing half."""
 
@@ -214,6 +240,8 @@ def _event(
     sport_key="tennis_atp",
     event_id=15309549,
     hours_past_kickoff=3.0,
+    home_score=None,
+    away_score=None,
 ):
     ev = MagicMock()
     ev.id = event_id
@@ -221,6 +249,8 @@ def _event(
     ev.completed_at = completed_at
     ev.espn_id = espn_id
     ev.commence_time = _now() - timedelta(hours=hours_past_kickoff)
+    ev.home_score = home_score
+    ev.away_score = away_score
     ev.sport = MagicMock()
     ev.sport.key = sport_key
     return ev
@@ -400,6 +430,33 @@ class TestTheServedSignal:
         # query — so the two are distinguishable.
         assert "coalesce" in session.flatness_sql
         assert "valid_until" in session.flatness_sql
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "home,away",
+        [(1, 0), (0, 0), (2, None)],
+        ids=["1-0", "0-0", "home-only"],
+    )
+    async def test_a_scored_live_event_is_never_signalled_as_unbacked_5077(
+        self, home, away
+    ):
+        """The repair CERT-2669 named, end to end through the helper.
+
+        A live event with a score is visibly being played and reported, whatever
+        its price is doing — a 1-0 grind over a market that has stopped moving is
+        a quiet market, not an unbacked live claim. Measured 2026-09-12 01:40Z, 4
+        of 40 live anchorless rows carry a score, so this arm has a population.
+
+        Series held at the fully qualifying shape so the refusal can only be
+        coming from the score.
+        """
+        from app.routes.events import _pinned_live_probability
+
+        session = _session(agg=_flat_agg())
+        event = _event(home_score=home, away_score=away)
+
+        assert await _pinned_live_probability(session, event) is None
+        assert session.execute.await_count == 0
 
     @pytest.mark.asyncio
     async def test_a_pregame_flat_stretch_does_not_make_a_match_look_finished(self):

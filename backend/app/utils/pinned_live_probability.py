@@ -141,6 +141,31 @@ def probability_series_is_pinned(
     return span_seconds >= MIN_SPAN_SECONDS
 
 
+def a_score_is_evidence_of_play(home_score, away_score) -> bool:
+    """Is there a score on this row, and therefore a game visibly in progress?
+
+    CERT-2669's BLOCK, and it is right. #5077 is "live, **with no score**, and the
+    number has not moved" from its title down: every specimen ever filed on it
+    carries `home_score` and `away_score` NULL, and the issue's own framing calls
+    the absence of any score the second half of the defect. The predicate shipped
+    without the term, so a live 1-0 event whose price happened to be pinned got
+    the signal — measured on production 2026-09-12 01:40Z, **4 of 40** live
+    anchorless rows carry a score, so this was a live population and not a
+    hypothetical.
+
+    A score is a positive signal that something is being played and reported, and
+    it outranks a flat price: a genuine 1-0 grind with a market that has stopped
+    moving is a quiet market, not an unbacked live claim. EITHER side being
+    non-null is enough — a half-populated score is still a report of play, and
+    requiring both would let a 1-`NULL` row through on the same reasoning this
+    exists to refuse.
+
+    0-0 is a score. It is `0`, not `None`, and the distinction is the whole point:
+    `None` means nothing ever wrote one.
+    """
+    return home_score is not None or away_score is not None
+
+
 def league_may_be_judged_by_flatness(
     *,
     league_has_espn_anchors: bool | None,
