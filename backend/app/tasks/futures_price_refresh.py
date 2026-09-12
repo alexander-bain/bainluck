@@ -1077,6 +1077,20 @@ async def _write_prices(
 # --- source adapters ---------------------------------------------------------
 
 
+def _venue_answered(result) -> bool:
+    """Has Kalshi declared this contract's outcome?
+
+    ``result`` is ``'yes'`` / ``'no'`` once the venue settles and the EMPTY
+    STRING while the contract trades — not ``None``. So the test is truthiness
+    after a strip, never ``is not None``: `result is not None` is true of every
+    active market Kalshi sends and would retire the whole book.
+
+    Read off whichever shape the caller holds (raw dict value or the parsed
+    ``KalshiMarket.result``); both carry the venue's own word verbatim.
+    """
+    return bool(str(result or "").strip())
+
+
 async def _fetch_kalshi_prices(service, external_id: str):
     """Prices for one Kalshi event ticker.
 
@@ -1084,20 +1098,55 @@ async def _fetch_kalshi_prices(service, external_id: str):
     :class:`_VenueSettled`):
 
     * ``None`` — the event could not be read at all (404, or a parse failure).
-    * :data:`VENUE_SETTLED` — the event reads fine and **carries no markets**.
-      Kalshi keeps event rows forever and purges market rows (gotcha #35), so an
-      event with an empty book is a settled contest whose book has aged out, and
-      no number will ever come back from it. Measured 2026-08-30 on all eighteen
-      Kalshi rows in #2222's population: HTTP 200, zero markets, unanimous.
-      The control that makes that reading mean something is ``KXSB-27`` (live,
-      73M volume, same unauthenticated call): **32** markets.
+    * :data:`VENUE_SETTLED` — the event reads fine and the venue says the
+      contest is over. TWO shapes say that, and the second is #5771's:
+
+      1. it **carries no markets**. Kalshi keeps event rows forever and purges
+         market rows (gotcha #35), so an event with an empty book is a settled
+         contest whose book has aged out, and no number will ever come back
+         from it. Measured 2026-08-30 on all eighteen Kalshi rows in #2222's
+         population: HTTP 200, zero markets, unanimous. The control that makes
+         that reading mean something is ``KXSB-27`` (live, 73M volume, same
+         unauthenticated call): **32** markets.
+      2. **every market it carries has a declared** ``result``. Between
+         settlement and the purge there is a 74-to-86-day window (gotcha #35)
+         in which the venue still LISTS the book and has already answered it.
+         A finalized Kalshi market quotes ``yes_bid 0.0000 / yes_ask 1.0000``,
+         which is the empty book — and ``_kalshi_yes_probability`` deliberately
+         falls THROUGH that to the last trade (see its own docstring: the
+         fall-through is load-bearing for ``kalshi_resolution_sweep``). So the
+         settlement artifact ``0.0100`` / ``0.9900`` arrives here wearing the
+         shape of a price, and we wrote it.
+
     * a list — the venue has a book; the list holds whatever survived the price
       guards, and may be empty if every quote was refused.
 
-    The emptiness is read off the RAW payload, not off ``event.markets``.
-    ``_parse_market`` drops a market it cannot parse, so a parsed-empty list is
-    ambiguous between "no book" and "we failed to read the book" — and calling a
-    parse failure a settlement is how a live market gets retired quietly.
+    🔴 WHAT (2) COSTS A READER, measured on production 2026-09-12 22:2xZ. Of the
+    24 events kicking off in the future whose stored Kalshi blend leg sat at
+    <=2% or >=98%, a venue read of all 24 tickers split them cleanly:
+
+    * **13 NCAAF events read** ``status=active``\\ **, two-sided books, real
+      24h volume** — LSU 99.5% over Louisiana Tech is a genuine blowout line and
+      must not move. They are the control, and they are why the test here is the
+      venue's ``result`` and not "the ladder looks extreme".
+    * **10 read** ``status=finalized``\\ **, every rung at 0.00 bid / 1.00 ask,
+      a declared result on every market.** `KXLALIGAGAME-26SEP13SEVVCF` settled
+      2026-09-11T21:34Z for a game its own rules call "originally scheduled for
+      Sep 13", and bainluck.com/events/15298125 served **99% – 1%** under a
+      "Sep 13, 2026 · 12:00 PM PDT" header for a match that had not kicked off.
+
+    The emptiness is read off the RAW payload, not off ``event.markets``, and so
+    is the answered test. ``_parse_market`` drops a market it cannot parse, so a
+    parsed-empty list is ambiguous between "no book" and "we failed to read the
+    book" — and calling a parse failure a settlement is how a live market gets
+    retired quietly. The same asymmetry applies to (2): deciding "the whole
+    event is answered" over the parsed subset would let one dropped live market
+    turn a mixed event into a settlement.
+
+    A MIXED event is not a settlement. Kalshi settles a game's legs together,
+    but a series event can hold both, so the answered markets are skipped
+    individually and the rest are priced — the per-leg care CERT-751 already
+    forced on the Polymarket resolved-status sweep, for the same reason.
 
     Two deliberate reuses rather than reimplementations:
 
@@ -1108,14 +1157,20 @@ async def _fetch_kalshi_prices(service, external_id: str):
       ``0.95`` is expected is a coherent-looking wrong price, the worst kind.
     * ``_kalshi_yes_probability`` for the price itself — the same spread /
       one-sided-book guard the main poll applies, so this path cannot fabricate a
-      price the poll would have refused.
+      price the poll would have refused. It is NOT touched here: its empty-book
+      fall-through is depended on elsewhere, so the settled market is removed
+      from its input rather than the helper taught a new refusal.
     """
     from app.tasks.kalshi import _kalshi_yes_probability
 
     raw = await service.get_event(external_id, with_nested_markets=True)
     if not raw:
         return None
-    if not (raw.get("markets") or []):
+    raw_markets = raw.get("markets") or []
+    if not raw_markets:
+        return VENUE_SETTLED
+    # #5771 shape (2). Over the RAW list, for the reason the docstring gives.
+    if all(_venue_answered(m.get("result")) for m in raw_markets):
         return VENUE_SETTLED
     event = service._parse_event(raw)
     if not event:
@@ -1124,6 +1179,10 @@ async def _fetch_kalshi_prices(service, external_id: str):
     priced: list[dict] = []
     for market in event.markets:
         if not market.ticker:
+            continue
+        if _venue_answered(market.result):
+            # A mixed event's answered leg. Its quote is a settlement artifact,
+            # not a price — see the docstring.
             continue
         prob = _kalshi_yes_probability(
             market.yes_bid, market.yes_ask, market.last_price
@@ -1282,6 +1341,54 @@ _KALSHI_MARKET_NOW_GRADED_SQL = text(
               WHERE crowned.market_id = :market_id
                 AND crowned.is_winner IS TRUE
            )
+    """
+)
+
+
+#: #5771's SECOND HALF: unfreeze the settlement artifact this market already left
+#: on a game that has not kicked off.
+#:
+#: A gate that only refuses to WRITE leaves the old number exactly where it was —
+#: the lesson #5031 and #5273 both paid for, and it applies here with force,
+#: because the number the gate now refuses is the number already on the row. The
+#: page renders ``futures_outcomes`` and ``events.win_probability_sources``, not
+#: this task's verdict, so without this statement `_fetch_kalshi_prices`'s new
+#: refusal changes nothing a reader sees.
+#:
+#: 🔴 THE EVENT'S OWN CLOCK IS THE WHOLE SCOPE, AND IT IS WHY THIS IS SAFE.
+#: "Settled means settled" — a finished contest SHOULD carry its terminal legs,
+#: and withdrawing those would delete the result the hero and the card are built
+#: to show. This statement fires only where the linked event is still
+#: ``scheduled`` with a ``commence_time`` in the FUTURE: a row asserting the
+#: answer to a contest that has not happened is refuted by its own event row, no
+#: venue read required. On a completed or live event it is inert by construction.
+#:
+#: ``is_winner`` IS NOT EXCLUDED, and that is deliberate rather than an oversight
+#: copied past. `KXLALIGAGAME-26SEP13SEVVCF` carries ``is_winner = TRUE`` at
+#: 0.9900 on a match kicking off the following day — the crown is exactly the
+#: half that reaches the hero, so a ``is_winner IS NOT TRUE`` clause borrowed
+#: from :data:`_KALSHI_RETIRE_DELISTED_SQL` would leave the 99% on the screen and
+#: withdraw only the two 1% rungs beside it. The crown itself is left standing:
+#: this withdraws a QUOTE, it does not ungrade anything (grading is
+#: `kalshi_resolution_sweep`'s rail, and asserting "Sevilla won" a day early
+#: would be a worse lie than the price).
+#:
+#: ``last_updated`` is not stamped, for the reason
+#: :data:`_KALSHI_RETIRE_DELISTED_SQL` records: a fresh stamp advertises a
+#: current price at the moment we stop having one.
+_KALSHI_WITHDRAW_PRE_KICKOFF_SQL = text(
+    """
+    UPDATE futures_outcomes fo
+       SET current_probability = NULL,
+           current_american_odds = NULL
+      FROM futures_markets fm
+      JOIN events e ON e.id = fm.event_id
+     WHERE fo.market_id = :market_id
+       AND fm.id = :market_id
+       AND fo.current_probability IS NOT NULL
+       AND e.status = 'scheduled'
+       AND e.commence_time > NOW()
+ RETURNING fo.id
     """
 )
 
@@ -1795,6 +1902,14 @@ async def _refresh_stale_futures_prices(
         # be shown to be working on the passes where it doesn't.
         "delisted_refused_market_graded": 0,
         "delisted_check_budget_hit": False,
+        # #5771. Quotes withdrawn because the venue had already answered a
+        # contest whose event has not started. Unconditional, same rule again:
+        # a run that found nothing frozen and a run whose withdrawal statement
+        # silently matched nothing both report "0" otherwise, and this one sits
+        # behind `venue_settled`, which is itself rare — so the pair
+        # (`venue_settled`, `pre_kickoff_quotes_withdrawn`) is the only way to
+        # read whether the second half ever fires.
+        "pre_kickoff_quotes_withdrawn": 0,
         # The #4253 reach arm (`_sweep_unreached_kalshi_frozen`). Reported
         # unconditionally, same rule as above: `unreached_markets_found` at 0 and
         # `unreached_markets_checked` at 0 are DIFFERENT passes — the first says
@@ -2171,12 +2286,32 @@ async def _refresh_stale_futures_prices(
                     stats["venue_settled"] += 1
                     try:
                         await _stamp_venue_settled(session, market["id"])
+                        # #5771's second half — see
+                        # `_KALSHI_WITHDRAW_PRE_KICKOFF_SQL`. Same transaction as
+                        # the stamp: the stamp is what stops us re-reading this
+                        # market, so a withdrawal that committed separately could
+                        # be lost while the "don't look again" marker survived.
+                        withdrawn = (
+                            await session.execute(
+                                _KALSHI_WITHDRAW_PRE_KICKOFF_SQL,
+                                {"market_id": market["id"]},
+                            )
+                        ).fetchall()
                         await session.commit()
                     except Exception as exc:
                         await session.rollback()
                         stats["errors"].append(
                             f"kalshi stamp {market['external_id']}: {exc}"
                         )
+                    else:
+                        if withdrawn:
+                            stats["pre_kickoff_quotes_withdrawn"] += len(withdrawn)
+                            logger.info(
+                                "futures_price_refresh: withdrew %s settled Kalshi "
+                                "quote(s) on market %s (%s) — the venue answered a "
+                                "contest that has not started (#5771)",
+                                len(withdrawn), market["id"], market["external_id"],
+                            )
                     continue
                 if priced is None:
                     stats["not_found"] += 1
