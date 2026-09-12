@@ -410,10 +410,36 @@ def _row(instance: Any, columns: tuple[str, ...]) -> list[Any]:
 
 
 #: Read-only stand-in for the instance dict of a `__slots__` row, so the folds
-#: below keep using `__dict__.get` (never `getattr` — gotcha #42) on a carrier
+#: below keep reading `__dict__` (never `getattr` — gotcha #42) on a carrier
 #: that has no instance dict. Module-level and shared because it is never
 #: written to; a fresh `{}` per outcome would allocate once per leg per fold.
 _NO_INSTANCE_DICT: dict[str, Any] = {}
+
+
+def _instance_dict(obj: Any) -> dict[str, Any] | None:
+    """`obj.__dict__`, or `None` for a `__slots__` row that has none (#5778).
+
+    🔴 `try`/`except AttributeError`, never the three-argument `getattr` form,
+    and the distinction is not cosmetic. `test_feed_dead_market_clock_uxp251`
+    asserts that call form never appears in `price_poll_stamp`, and it is right
+    to assert the mechanism rather than the outcome: reaching `__dict__` that
+    way is harmless in itself, but it is one edit from the same call on a
+    MAPPED attribute, which lazy-loads and raises `MissingGreenlet` inside the
+    per-item serializer — emptying the whole futures pool instead of dropping
+    one card (gotcha #42). This form cannot become that one by accident.
+
+    (Spelled without the open paren on purpose: the scan that pins this rule
+    matches the call form as a substring, and a docstring is source too.)
+
+    Extracted rather than inlined so `price_poll_stamp` and `_price_polled_at`
+    answer the carrier question identically; the `None`-vs-`{}` distinction is
+    the caller's, because only `price_poll_stamp` needs to tell "this row has
+    no instance dict" from "it has one and the key is missing".
+    """
+    try:
+        return obj.__dict__
+    except AttributeError:
+        return None
 
 
 def _price_polled_at(outcomes: Iterable[Any]) -> Any:
@@ -442,7 +468,7 @@ def _price_polled_at(outcomes: Iterable[Any]) -> Any:
     stamps = [
         stamp
         for stamp in (
-            getattr(o, "__dict__", _NO_INSTANCE_DICT).get("last_updated")
+            (_instance_dict(o) or _NO_INSTANCE_DICT).get("last_updated")
             for o in outcomes
         )
         if stamp is not None
@@ -536,23 +562,36 @@ def price_poll_stamp(market: Any) -> Any:
     nor the outcome column: it reads `None`, "we do not know", never a wrong
     stamp.
     """
-    state = getattr(market, "__dict__", None)
+    state = _instance_dict(market)
     if state is None:
         # THIRD CARRIER (#5778): a `__slots__` row. `tennis_population.MarketRow`
         # is "deliberately duck-type-identical to the ORM object it replaces" —
         # and it is, for every reader that uses attributes. This module does not:
-        # it reads `__dict__` on purpose (a deferred attribute lazy-loads and
-        # raises `MissingGreenlet` on the async path), and a slots class has no
-        # instance dict at all, so the two branches below both raise
-        # `AttributeError` on it rather than degrading.
+        # it reads `__dict__` on purpose, and a slots class has no instance dict
+        # at all, so both branches below raised `AttributeError` on it rather
+        # than degrading (nine tennis tests, not a wrong number).
         #
         # Such a row can only ever hold the outcome carrier — there is no folded
-        # `price_polled_at` slot to read — and its outcomes are real hydrated
-        # rows, so the fold answers normally. An empty `outcomes` (the row was
-        # never selected for the page, which is exactly what the two-phase load
-        # leaves behind) folds to `None`: "we do not know", the same honest
-        # degradation as every other unreadable case here.
-        return _price_polled_at(getattr(market, "outcomes", None) or [])
+        # `price_polled_at` slot to read.
+        #
+        # 🔴 THE ATTRIBUTE READ BELOW IS SAFE, AND ONLY HERE. Touching
+        # `.outcomes` on a mapped object is precisely what this module forbids:
+        # it is a relationship, and on an unloaded one it emits IO and raises
+        # `MissingGreenlet`. It cannot happen on this line, because this line is
+        # only reachable when the object has NO instance dict — and every
+        # SQLAlchemy-mapped instance has one. A slots row's `outcomes` is a
+        # plain slot holding an already-materialised list; there is no loader
+        # behind it to fire.
+        #
+        # An empty or absent `outcomes` (the row was never selected for the
+        # page, which is exactly what the two-phase load leaves behind) folds to
+        # `None`: "we do not know", the same honest degradation as every other
+        # unreadable case here.
+        try:
+            outcomes = market.outcomes
+        except AttributeError:
+            return None
+        return _price_polled_at(outcomes or [])
     if "price_polled_at" in state:
         return state["price_polled_at"]
     return _price_polled_at(state.get("outcomes") or [])

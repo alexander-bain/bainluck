@@ -225,6 +225,56 @@ def test_guard_a_slots_market_with_datable_outcomes_still_answers():
     )
 
 
+def test_guard_a_market_with_an_instance_dict_is_never_touched_by_attribute():
+    """GUARD: the slots branch is unreachable for anything SQLAlchemy maps.
+
+    `test_feed_dead_market_clock_uxp251` scans `price_poll_stamp` for the word
+    `getattr` — the right assertion, and it caught this change when the slots
+    branch first read `getattr(market, "outcomes", None)`. A source scan can
+    only see the word, though, and the hazard is the MECHANISM: reading
+    `.outcomes` on a mapped object emits IO and raises `MissingGreenlet` inside
+    the per-item serializer, emptying the whole futures pool (gotcha #42).
+
+    So this asserts the mechanism directly. The market below has a real
+    instance dict and a `outcomes` PROPERTY that raises the way an unloaded
+    relationship does. If the fold ever reaches it by attribute, this test
+    raises instead of returning — which no string scan could tell you.
+    """
+
+    class _Exploding:
+        """An unloaded relationship: present on the class, fatal to touch."""
+
+        def __init__(self):
+            self.__dict__["price_polled_at"] = FIVE_HOURS
+
+        @property
+        def outcomes(self):  # pragma: no cover - reaching this IS the failure
+            raise AssertionError(
+                "price_poll_stamp touched `.outcomes` by attribute on a market "
+                "that has an instance dict — on a real mapped row that is a "
+                "lazy load and a MissingGreenlet inside the serializer"
+            )
+
+    assert price_observed_at_iso(_Exploding()) == FIVE_HOURS.isoformat()
+
+
+def test_guard_the_carrier_helper_does_not_reintroduce_getattr():
+    """GUARD: the rule survives being factored out of `price_poll_stamp`.
+
+    The upstream scan reads `price_poll_stamp`'s source only, so moving the
+    `__dict__` read into a helper would slip past it — which would be dodging
+    the guard rather than satisfying it. This extends the same assertion to
+    the helper the read now lives in.
+    """
+    from app.utils import futures_market_snapshot as snap
+
+    src = inspect.getsource(snap._instance_dict)
+    assert "getattr(" not in src, (
+        "_instance_dict must reach __dict__ by try/except, not getattr — one "
+        "edit from a getattr on a mapped column (gotcha #42)"
+    )
+
+
 def test_control_a_missing_market_degrades_rather_than_raising():
     """CONTROL: `None` in, `None` out — soccer's arm with no winner market.
 
