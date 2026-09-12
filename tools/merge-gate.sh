@@ -495,6 +495,157 @@ composition_scan () {
   fi
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# The verdict vocabulary. Defined HERE, above `--selftest`, rather than beside
+# the gate run that uses it: a helper defined after the selftest block cannot be
+# called by it, and "the summary line reports the right number" is a claim that
+# should be executed, not read (#5605).
+# ─────────────────────────────────────────────────────────────────────────────
+stops=0
+warns=0
+inconcs=0
+unanswered=0
+
+# `pass`/`stop`/`warn` are the only three verdicts. A gate that cannot be
+# EVALUATED is a `stop`, never a `warn` — an unreadable ledger and a clean
+# ledger must not look the same.
+pass () { printf '  \033[32mPASS\033[0m  %-26s %s\n' "$1" "$2"; }
+warn () { printf '  \033[33mWARN\033[0m  %-26s %s\n' "$1" "$2"; warns=$((warns + 1)); }
+stop () { printf '  \033[31mSTOP\033[0m  %-26s %s\n' "$1" "$2"; stops=$((stops + 1)); }
+# `stopq` is a STOP. Same colour, same `stops` counter, same exit 1, and it is
+# emphatically NOT `inconc` — no other authority answers this question, so the
+# merge does not proceed on it.
+#
+# What it adds is the CAUSE. "The gate refused" and "GitHub did not answer" are
+# opposite instructions — fix the sha, versus press up-arrow — and until #5605
+# the summary line laundered both into the single word "refused". That is
+# gotcha #124 one level up: exit `1` is a result, and everything else is a story
+# about the harness. A desk reading `STOP — 1 gate(s) refused` at minute 12 of
+# an eighteen-minute push window cannot afford to re-derive which it was, and
+# the expensive direction is not the re-run: it is believing the sha is at
+# fault. See `pr_state_scan` for what that belief cost once.
+stopq () {
+  printf '  \033[31mSTOP\033[0m  %-26s %s\n' "$1" \
+    "$2 [UNANSWERED — an API did not answer; RE-RUN. Not a finding about the sha.]"
+  stops=$((stops + 1))
+  unanswered=$((unanswered + 1))
+}
+# The fourth, and deliberately not one of the three above: "this check could not
+# take its baseline, and a NAMED other authority answers the same question". It
+# is legal only where that authority exists and is printed beside it — today,
+# composition alone (see composition_scan). Reaching for it anywhere else
+# re-opens the hole the comment above closes.
+inconc () { printf '  \033[36m????\033[0m  %-26s %s\n' "$1" "$2"; inconcs=$((inconcs + 1)); }
+
+# The closing line, composed from the counters alone so that it can be asserted
+# rather than described. An unanswered gate is still a STOP and is still inside
+# `stops`; what it must never do is reach the reader wearing the word "refused".
+final_verdict_text () {
+  local inote="" unote=""
+  [ "$inconcs" -gt 0 ] && inote=", $inconcs inconclusive (a check could not take its baseline — read its line)"
+  [ "$unanswered" -gt 0 ] && unote=", $unanswered UNANSWERED (an API did not answer — RE-RUN; not a finding about the sha)"
+  if [ "$stops" -eq 0 ]; then
+    printf 'GO — %s warning(s)%s. True at %sZ and not one second longer.' \
+      "$warns" "$inote" "$(date -u +%H:%M:%S)"
+  else
+    printf 'STOP — %s gate(s) refused%s, %s warning(s)%s.' \
+      "$((stops - unanswered))" "$unote" "$warns" "$inote"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The two PR gates, split into FETCH and DECIDE (#5605). The decision halves are
+# pure: they take a string and set a verdict, touch no network, and are
+# therefore testable offline — which is the only reason the cases below are
+# guarded at all.
+#
+# Both exist because of one property of `gh`: when the API does not answer it
+# prints NOTHING to stdout. The empty string then flows into a branch written
+# for a value GitHub actually sent, and comes out the far side as a confident
+# statement about the sha.
+# ─────────────────────────────────────────────────────────────────────────────
+PRL_VERDICT=""; PRL_DETAIL=""; PRL_NUM=""
+pulls_lookup_scan () {
+  local raw="$1" rc="$2"
+  local open_csv total
+  # One call answers both halves: `<open-pr-numbers-csv>|<total-prs>`. A commit
+  # with no PRs at all answers "|0" — non-empty, so "answered: none" and "did
+  # not answer" stop being the same string. Before this, an API failure here
+  # degraded the gate to a WARN, which this file's own rule forbids: a gate that
+  # cannot be evaluated is a stop, never a warn.
+  if [ "$rc" -ne 0 ] || [ -z "$raw" ]; then
+    PRL_VERDICT=unanswered
+    PRL_NUM=""
+    PRL_DETAIL="the commit→pulls API did not answer (exit $rc). An empty answer here is NOT 'there is no open PR' — and this is the gate that catches CONFLICTING before notice 28 has to, so it is not skippable on a blank"
+    return 0
+  fi
+  open_csv="${raw%%|*}"
+  total="${raw##*|}"
+  if [ -z "$open_csv" ]; then
+    PRL_VERDICT=none
+    PRL_NUM=""
+    PRL_DETAIL="answered: ${total:-0} PR(s) reference this commit, none of them OPEN"
+  else
+    PRL_VERDICT=found
+    PRL_NUM="${open_csv%%,*}"
+    PRL_DETAIL="open PR #$PRL_NUM"
+  fi
+}
+
+PRS_VERDICT=""; PRS_DETAIL=""
+pr_state_scan () {
+  local line="$1" sha="$2"
+  local is_draft mergeable mstate head_oid
+  # THE BUG THIS FUNCTION IS NAMED AFTER. When `gh pr view` did not answer,
+  # `pr_line` was empty, every field was empty, and `"" != "MERGEABLE"` fell
+  # through to the conflict branch — so a one-second GitHub blip printed
+  # `#5598 is / — a conflicting PR gets NO pull_request CI run at all`.
+  #
+  # That is not a noisy STOP, it is a wrong instruction. What a lane does with
+  # CONFLICTING is REBASE; rebasing changes the sha; a changed sha breaks the
+  # notice-13 grep and, by notice 28's corollary, the granted token is then DEAD
+  # rather than pending. The blip cost a cert and a re-grade cycle.
+  #
+  # So emptiness is checked FIRST and named for what it is, and the "not
+  # MERGEABLE" branch is reachable only by a value GitHub actually sent.
+  #
+  # This branch and the blank-field branch below reach the SAME verdict, which
+  # is what makes it tempting to delete one of them — and `if false` here left
+  # the whole selftest green, exactly as the release-required guard's own
+  # comment warns further down this file. They are kept apart because the two
+  # DETAILS are different instructions to whoever is reading the row at minute
+  # twelve of a push window: "the API said nothing, press up-arrow" is not "the
+  # API answered and GitHub has not finished computing mergeability, wait".
+  # The selftest pins the detail, not just the verdict, so that this stays true.
+  if [ -z "$line" ]; then
+    PRS_VERDICT=unanswered
+    PRS_DETAIL="the PR view API returned nothing at all. NOT a conflict — do NOT rebase: rebasing changes the sha, which breaks the notice-13 ledger check and kills the token"
+    return 0
+  fi
+  IFS='|' read -r is_draft mergeable mstate head_oid <<< "$line"
+  if [ "$is_draft" = "true" ]; then
+    PRS_VERDICT=draft
+    PRS_DETAIL="is a DRAFT"
+  elif [ -z "$mergeable" ] || [ "$mergeable" = "UNKNOWN" ]; then
+    # UNKNOWN is GitHub computing mergeability asynchronously; empty is a
+    # partial or failed read. Neither is a conflict, and both want the same
+    # next action, so they share a verdict — and the retry loop breaks on this
+    # verdict rather than on the literal string, which is what stopped the
+    # blank case from being retried at all.
+    PRS_VERDICT=unanswered
+    PRS_DETAIL="mergeability reads '${mergeable:-<empty>}' after the retries — GitHub has not computed it. NOT a conflict, do NOT rebase"
+  elif [ "$mergeable" != "MERGEABLE" ]; then
+    PRS_VERDICT=conflict
+    PRS_DETAIL="is $mergeable/$mstate — a conflicting PR gets NO pull_request CI run at all"
+  elif [ "$head_oid" != "$sha" ]; then
+    PRS_VERDICT=moved
+    PRS_DETAIL="head is $head_oid, NOT the gated sha — the branch moved under the cert"
+  else
+    PRS_VERDICT=ok
+    PRS_DETAIL="OPEN, non-draft, $mergeable/$mstate, head == gated sha"
+  fi
+}
+
 if [ -z "$SHA_IN" ]; then
   echo "usage: tools/merge-gate.sh <sha> [<repo-path>]" >&2
   echo "       tools/merge-gate.sh --orphans [--all] [<repo-path>]" >&2
@@ -993,6 +1144,141 @@ FIXEOF
       "printf '%s' \"\$out\" | /usr/bin/grep -q 'VERDICT:'"
   fi
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # #5605 — "the gate refused" is not "GitHub did not answer".
+  #
+  # The incident: on 2026-09-12 at 11:40:37Z the desk got `STOP — 1 gate(s)
+  # refused` on e80b0e76; two re-runs 46 s and 74 s later returned GO 7/7 and
+  # the sha merged clean. The gate had not found anything — an API had blinked.
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # The headline regression. An empty line is what `gh` prints when it fails,
+  # and it used to reach `"" != "MERGEABLE"` and come out as CONFLICTING — a
+  # STOP whose instruction is "rebase", which changes the sha, which kills the
+  # token. Anything but `unanswered` here is that bug back.
+  pr_state_scan "" abc123
+  check "pr_state_scan: an empty read is UNANSWERED, never a conflict (the e80b0e76 STOP)" \
+    "[ \"$PRS_VERDICT\" = unanswered ]"
+  check "pr_state_scan: and it says do NOT rebase — the instruction is what cost the token" \
+    "printf '%s' \"\$PRS_DETAIL\" | /usr/bin/grep -qi 'do NOT rebase'"
+  # The verdict alone does NOT pin this branch: the blank-field branch below
+  # reaches the same verdict, so `if false` here leaves every other check on
+  # this function green (measured — it did). The DETAIL is what differs, and
+  # what a reader acts on, so the detail is what is asserted.
+  check "pr_state_scan: an empty read is named as no answer at all, not as a slow one" \
+    "printf '%s' \"\$PRS_DETAIL\" | /usr/bin/grep -q 'returned nothing at all'"
+
+  # A line arrives but the field is blank: a partial read, not a verdict.
+  pr_state_scan "false||BLOCKED|abc123" abc123
+  check "pr_state_scan: a blank mergeable field is UNANSWERED, not a conflict" \
+    "[ \"$PRS_VERDICT\" = unanswered ]"
+  check "pr_state_scan: and a blank field is NOT reported as 'no answer at all' — different cause, different row" \
+    "! printf '%s' \"\$PRS_DETAIL\" | /usr/bin/grep -q 'returned nothing at all'"
+
+  pr_state_scan "false|UNKNOWN|BLOCKED|abc123" abc123
+  check "pr_state_scan: UNKNOWN is UNANSWERED (GitHub is still computing it)" \
+    "[ \"$PRS_VERDICT\" = unanswered ]"
+
+  # The other direction, and the one that matters most: widening "unanswered"
+  # must not have swallowed a real refusal. A conflict GitHub actually reported
+  # still stops, and still stops as a conflict.
+  pr_state_scan "false|CONFLICTING|DIRTY|abc123" abc123
+  check "pr_state_scan: a REAL conflict still refuses, and is still called a conflict" \
+    "[ \"$PRS_VERDICT\" = conflict ]"
+
+  pr_state_scan "true|MERGEABLE|CLEAN|abc123" abc123
+  check "pr_state_scan: a draft still refuses" "[ \"$PRS_VERDICT\" = draft ]"
+
+  pr_state_scan "false|MERGEABLE|CLEAN|deadbeef" abc123
+  check "pr_state_scan: a head that moved under the cert still refuses" \
+    "[ \"$PRS_VERDICT\" = moved ]"
+
+  pr_state_scan "false|MERGEABLE|CLEAN|abc123" abc123
+  check "pr_state_scan: and the clean case still passes" "[ \"$PRS_VERDICT\" = ok ]"
+
+  # The fail-OPEN half. `gh` prints the same empty string for "this commit has
+  # no open PR" and "the API did not answer", and the second used to arrive as
+  # a WARN — which this file's own rule forbids.
+  pulls_lookup_scan "" 1
+  check "pulls_lookup_scan: a failed lookup is UNANSWERED, not 'no open PR' (the fail-open)" \
+    "[ \"$PRL_VERDICT\" = unanswered ]"
+  pulls_lookup_scan "" 0
+  check "pulls_lookup_scan: an empty body at exit 0 is also UNANSWERED" \
+    "[ \"$PRL_VERDICT\" = unanswered ]"
+  pulls_lookup_scan "|0" 0
+  check "pulls_lookup_scan: '|0' is ANSWERED — genuinely no PR, and that is only a warn" \
+    "[ \"$PRL_VERDICT\" = none ]"
+  pulls_lookup_scan "5598|2" 0
+  check "pulls_lookup_scan: an open PR is found and carries its number" \
+    "[ \"$PRL_VERDICT\" = found ] && [ \"$PRL_NUM\" = 5598 ]"
+  pulls_lookup_scan "5598,5599|3" 0
+  check "pulls_lookup_scan: two open PRs take the first, not the whole csv" \
+    "[ \"$PRL_NUM\" = 5598 ]"
+
+  # The summary line, which is the only part of this the desk reads under time
+  # pressure. Counters are saved and restored: the live run has not started yet
+  # at --selftest time, but leaving them dirty is the kind of thing that makes a
+  # guard alter its subject.
+  _sv_s=$stops; _sv_w=$warns; _sv_i=$inconcs; _sv_u=$unanswered
+  stops=0; warns=0; inconcs=0; unanswered=0
+  stop "x" "a real refusal" >/dev/null
+  check "stop: counts as refused and not as unanswered" \
+    "[ $stops -eq 1 ] && [ $unanswered -eq 0 ]"
+  _line="$(final_verdict_text)"
+  check "verdict: one real refusal reads '1 gate(s) refused' with no UNANSWERED clause" \
+    "printf '%s' \"\$_line\" | /usr/bin/grep -q '1 gate(s) refused' && ! printf '%s' \"\$_line\" | /usr/bin/grep -q 'UNANSWERED'"
+
+  stops=0; warns=0; inconcs=0; unanswered=0
+  # NOT `_out="$(stopq ...)"`: a command substitution is a subshell, so the
+  # increments would be discarded and the two counter checks below would pass
+  # for the wrong reason — a vacuous guard, on a session whose whole subject is
+  # a check that could not tell what it was looking at.
+  stopq "x" "the runs API did not answer" > "$fx/stopq.out"
+  _out="$(cat "$fx/stopq.out")"
+  check "stopq: is a STOP — it increments the stop counter, it is not a warn or an inconc" \
+    "[ $stops -eq 1 ] && [ $warns -eq 0 ] && [ $inconcs -eq 0 ]"
+  check "stopq: and it is separately counted as unanswered" "[ $unanswered -eq 1 ]"
+  check "stopq: its row tells the reader to RE-RUN rather than to fix the sha" \
+    "printf '%s' \"\$_out\" | /usr/bin/grep -q 'UNANSWERED' && printf '%s' \"\$_out\" | /usr/bin/grep -q 'RE-RUN'"
+  _line="$(final_verdict_text)"
+  check "verdict: a lone unanswered gate reads '0 gate(s) refused' — the e80b0e76 line, fixed" \
+    "printf '%s' \"\$_line\" | /usr/bin/grep -q '0 gate(s) refused' && printf '%s' \"\$_line\" | /usr/bin/grep -q '1 UNANSWERED'"
+
+  stops=0; warns=0; inconcs=0; unanswered=0
+  stop "x" "real" >/dev/null; stopq "y" "blink" >/dev/null; stopq "z" "blink" >/dev/null
+  _line="$(final_verdict_text)"
+  check "verdict: mixed causes are reported separately (1 refused, 2 unanswered)" \
+    "printf '%s' \"\$_line\" | /usr/bin/grep -q '1 gate(s) refused' && printf '%s' \"\$_line\" | /usr/bin/grep -q '2 UNANSWERED'"
+
+  # An unanswered gate is still a STOP. If this ever reads GO the fix has become
+  # the hole it was built beside.
+  check "verdict: unanswered never becomes a GO — the merge still does not proceed" \
+    "! printf '%s' \"\$_line\" | /usr/bin/grep -q '^GO'"
+  stops=$_sv_s; warns=$_sv_w; inconcs=$_sv_i; unanswered=$_sv_u
+
+  # Structural: the live gate must DELEGATE to the decision functions. Both bugs
+  # above lived in an inline branch, and an inline branch is what the tests
+  # cannot reach. Comments are stripped — this file discusses these names at
+  # length and a scan that cannot tell code from prose measures neither.
+  _code="$(sed -e 's/#.*//' "$self")"
+  check "the PR gate routes through pr_state_scan, not an inline mergeable branch" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q 'pr_state_scan \"\$pr_line\"'"
+  check "the PR lookup routes through pulls_lookup_scan" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q 'pulls_lookup_scan \"\$pulls_raw\"'"
+  # The retry existed before and was bypassed by the blank it was added for,
+  # because it compared against the literal string. It must break on the verdict.
+  check "the mergeability retry breaks on the VERDICT, not on the literal 'UNKNOWN'" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q 'PRS_VERDICT\" = unanswered \\] || break'"
+  # Named one gate at a time rather than counted: a count over the whole file
+  # mixes these call sites with the selftest's own, and would go green again as
+  # soon as someone added a test. Flipping any one of these back to `stop` is
+  # the regression — the row still stops, and silently starts claiming the sha
+  # is at fault.
+  check "each live gate that can go unanswered reports the cause (notice 28, notice 32, PR state)" \
+    "printf '%s' \"\$_code\" | /usr/bin/grep -q 'stopq \"notice 28 exact-sha CI\"' \
+     && printf '%s' \"\$_code\" | /usr/bin/grep -q 'stopq \"notice 32 check-runs\"' \
+     && [ \$(printf '%s' \"\$_code\" | /usr/bin/grep -c 'stopq \"PR state\"') -eq 2 ]"
+
   echo
   if [ "$fails" -eq 0 ]; then
     echo "  selftest: PASS"
@@ -1414,23 +1700,6 @@ if [ "$SHA_IN" = "--orphans" ]; then
   exit 1
 fi
 
-stops=0
-warns=0
-inconcs=0
-
-# `pass`/`stop`/`warn` are the only three verdicts. A gate that cannot be
-# EVALUATED is a `stop`, never a `warn` — an unreadable ledger and a clean
-# ledger must not look the same.
-pass () { printf '  \033[32mPASS\033[0m  %-26s %s\n' "$1" "$2"; }
-warn () { printf '  \033[33mWARN\033[0m  %-26s %s\n' "$1" "$2"; warns=$((warns + 1)); }
-stop () { printf '  \033[31mSTOP\033[0m  %-26s %s\n' "$1" "$2"; stops=$((stops + 1)); }
-# The fourth, and deliberately not one of the three above: "this check could not
-# take its baseline, and a NAMED other authority answers the same question". It
-# is legal only where that authority exists and is printed beside it — today,
-# composition alone (see composition_scan). Reaching for it anywhere else
-# re-opens the hole the comment above closes.
-inconc () { printf '  \033[36m????\033[0m  %-26s %s\n' "$1" "$2"; inconcs=$((inconcs + 1)); }
-
 echo
 echo "merge-gate  repo=$REPO_PATH  ledger=$LEDGER"
 
@@ -1579,7 +1848,7 @@ fi
 RUNS_URL="repos/$REPO_SLUG/actions/runs?head_sha=$SHA&per_page=100"
 total="$(gh api "$RUNS_URL" --jq '.total_count' 2>/dev/null)"
 if [ -z "$total" ]; then
-  stop "notice 28 exact-sha CI" "the runs API did not answer — re-run, do not merge"
+  stopq "notice 28 exact-sha CI" "the runs API did not answer"
 elif [ "$total" -eq 0 ]; then
   # total_count 0 means "the API could not match this commit", i.e. the sha is
   # unpushed — a fixable mistake, NOT evidence about CI.
@@ -1613,7 +1882,7 @@ refusal="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" \
   --jq '.check_runs[]|select((.conclusion=="failure") or (((.output.title) // "")|test("high|critical|security vulnerability";"i")))|"\(.name): \(.conclusion) — \((.output.title) // "null")"' 2>/dev/null)"
 refusal_rc=$?
 if [ "$refusal_rc" -ne 0 ]; then
-  stop "notice 32 check-runs" "the check-runs query failed (exit $refusal_rc) — re-run; an empty result here is NOT a pass"
+  stopq "notice 32 check-runs" "the check-runs query failed (exit $refusal_rc); an empty result here is NOT a pass"
 elif [ -z "$refusal" ]; then
   n_runs="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" --jq '.check_runs|length' 2>/dev/null)"
   pass "notice 32 check-runs" "refusal set empty at exit 0 over ${n_runs:-?} check-runs"
@@ -1629,36 +1898,45 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # `gh pr list --search` is unreliable for finding a PR by sha; the commit's own
 # `/pulls` endpoint is the direct question and answers it exactly.
-pr_num="$(gh api "repos/$REPO_SLUG/commits/$SHA/pulls" --jq '.[]|select(.state=="open")|.number' 2>/dev/null | head -1)"
-if [ -z "$pr_num" ]; then
-  warn "PR state" "no open PR found for this sha (fine for a direct merge; check if you expected one)"
-else
-  # GitHub computes mergeability ASYNCHRONOUSLY and answers `UNKNOWN` for a
-  # short while after any push. Reporting that as a conflict is a wrong answer
-  # in the same family as the ones this script exists to prevent — it tells a
-  # lane to rebase a branch that is perfectly clean. Give it a few seconds.
-  mergeable=UNKNOWN
-  for _attempt in 1 2 3 4; do
-    pr_line="$(gh pr view "$pr_num" --repo "$REPO_SLUG" \
-      --json isDraft,mergeable,mergeStateStatus,headRefOid \
-      --jq '"\(.isDraft)|\(.mergeable)|\(.mergeStateStatus)|\(.headRefOid)"' 2>/dev/null)"
-    IFS='|' read -r is_draft mergeable mstate head_oid <<< "$pr_line"
-    [ "$mergeable" = "UNKNOWN" ] || break
-    sleep 3
-  done
-  # `gh --jq` renders a JSON boolean as lowercase `true`/`false`.
-  if [ "$is_draft" = "true" ]; then
-    stop "PR state" "#$pr_num is a DRAFT"
-  elif [ "$mergeable" = "UNKNOWN" ]; then
-    stop "PR state" "#$pr_num mergeability still UNKNOWN after 4 reads — GitHub has not computed it yet, re-run (this is NOT a conflict)"
-  elif [ "$mergeable" != "MERGEABLE" ]; then
-    stop "PR state" "#$pr_num is $mergeable/$mstate — a conflicting PR gets NO pull_request CI run at all"
-  elif [ "$head_oid" != "$SHA" ]; then
-    stop "PR state" "#$pr_num head is $head_oid, NOT the gated sha — the branch moved under the cert"
-  else
-    pass "PR state" "#$pr_num OPEN, non-draft, $mergeable/$mstate, head == gated sha"
-  fi
-fi
+pulls_raw="$(gh api "repos/$REPO_SLUG/commits/$SHA/pulls" \
+  --jq '"\([.[]|select(.state=="open")|.number]|join(","))|\(length)"' 2>/dev/null)"
+pulls_rc=$?
+pulls_lookup_scan "$pulls_raw" "$pulls_rc"
+case "$PRL_VERDICT" in
+  unanswered)
+    stopq "PR state" "$PRL_DETAIL"
+    ;;
+  none)
+    warn "PR state" "no open PR found for this sha — $PRL_DETAIL (fine for a direct merge; check if you expected one)"
+    ;;
+  found)
+    pr_num="$PRL_NUM"
+    # GitHub computes mergeability ASYNCHRONOUSLY and answers `UNKNOWN` for a
+    # short while after any push. Reporting that as a conflict is a wrong answer
+    # in the same family as the ones this script exists to prevent — it tells a
+    # lane to rebase a branch that is perfectly clean. Give it a few seconds.
+    #
+    # The loop breaks on the VERDICT, not on the literal string `UNKNOWN`. That
+    # is the #5605 fix and not a stylistic one: `""` is not `UNKNOWN`, so an API
+    # failure used to break this loop on attempt 1 — the retry was bypassed by
+    # precisely the failure mode it was added for. One definition of
+    # "unanswered", shared by the retry and the verdict, cannot drift apart.
+    pr_line=""
+    for _attempt in 1 2 3 4; do
+      pr_line="$(gh pr view "$pr_num" --repo "$REPO_SLUG" \
+        --json isDraft,mergeable,mergeStateStatus,headRefOid \
+        --jq '"\(.isDraft)|\(.mergeable)|\(.mergeStateStatus)|\(.headRefOid)"' 2>/dev/null)"
+      pr_state_scan "$pr_line" "$SHA"
+      [ "$PRS_VERDICT" = unanswered ] || break
+      [ "$_attempt" -lt 4 ] && sleep 3
+    done
+    case "$PRS_VERDICT" in
+      ok)         pass  "PR state" "#$pr_num $PRS_DETAIL" ;;
+      unanswered) stopq "PR state" "#$pr_num $PRS_DETAIL" ;;
+      *)          stop  "PR state" "#$pr_num $PRS_DETAIL" ;;
+    esac
+    ;;
+esac
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Composition at the CURRENT master. A cert composes against the master it saw;
@@ -1728,11 +2006,6 @@ echo
 # An inconclusive never turns a STOP into a GO, but it must never be lost inside
 # one either: it is reported in BOTH verdict lines, so "the gate said GO" can
 # always be reread as "and one check could not answer".
-inconc_note=""
-[ "$inconcs" -gt 0 ] && inconc_note=", $inconcs inconclusive (a check could not take its baseline — read its line)"
-if [ "$stops" -eq 0 ]; then
-  verdict "GO — $warns warning(s)$inconc_note. True at $(date -u +%H:%M:%S)Z and not one second longer."
-  exit 0
-fi
-verdict "STOP — $stops gate(s) refused, $warns warning(s)$inconc_note."
+verdict "$(final_verdict_text)"
+[ "$stops" -eq 0 ] && exit 0
 exit 1
