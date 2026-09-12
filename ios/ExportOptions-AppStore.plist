@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  App Store export options for `tools/native-upload.sh` (native, build 8 path).
+
+  Tracked on purpose: every value here is a decision, and a plist that lives only
+  in one laptop's /tmp is the same lost work as an untracked runner script.
+  It holds NO credential — the App Store Connect key is read from the
+  environment at run time and never written anywhere tracked.
+
+  manageAppVersionAndBuildNumber is NO deliberately. Left at its YES default,
+  Xcode silently renumbers the build during export, so the number in the archive
+  we graded is not the number TestFlight receives — the one fact an unattended
+  path most needs to be able to state.
+
+  signingStyle is automatic to match the project (CODE_SIGN_STYLE = Automatic),
+  and the two "iOS Team Store Provisioning Profile" profiles this needs — for
+  com.bainluck.Bain-Luck and com.bainluck.Bain-Luck.BainLuckWidget — are already
+  installed on the build machine. The script's preflight asserts both, because
+  their absence is an export failure five minutes into an archive, not at the
+  start.
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>teamID</key>
+	<string>J893F72P4R</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>testFlightInternalTestingOnly</key>
+	<false/>
+</dict>
+</plist>
