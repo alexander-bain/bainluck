@@ -440,16 +440,9 @@ struct OnboardingView: View {
             .zIndex(10)
     }
 
-    private func sportDisplayName(for key: String) -> String {
-        let map: [String: String] = [
-            "basketball_nba": "NBA", "americanfootball_nfl": "NFL",
-            "baseball_mlb": "MLB", "icehockey_nhl": "NHL",
-            "soccer_usa_mls": "MLS", "basketball_wnba": "WNBA",
-            "basketball_ncaab": "NCAAB", "basketball_wncaab": "WNCAAB",
-            "americanfootball_ncaaf": "NCAAF",
-        ]
-        return map[key] ?? key.split(separator: "_").last.map(String.init)?.uppercased() ?? key.uppercased()
-    }
+    // #5780 — a private ninth-of-the-league map used to live here and SHADOW the
+    // shared `sportDisplayName(for:)`, with the same last-token fallback
+    // ("tennis_atp_us_open" → "OPEN"). Deleted; the global rule answers now.
 
     private func affinityRow(item: SportItem) -> some View {
         HStack(spacing: 10) {
@@ -520,7 +513,7 @@ private struct SearchDropdownView: View {
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             } else if let sport = result.sportKey {
-                                Text(displayName(sport))
+                                Text(sportDisplayName(for: sport))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -554,7 +547,11 @@ private struct SearchDropdownView: View {
                         } label: {
                             HStack(spacing: 10) {
                                 Spacer().frame(width: 24)
-                                Text(variant.sportDisplay ?? variant.sportKey ?? "")
+                                // #5780 — the served display name first, then the
+                                // app's shared rule. The old fallback was the raw
+                                // key, so a payload without `sport_display` would
+                                // print "baseball_milb" at a reader.
+                                Text(variant.sportDisplay ?? sportDisplayName(for: variant.sportKey))
                                     .font(.caption)
                                     .fontWeight(.medium)
                                     .foregroundStyle(.blue)
@@ -578,13 +575,6 @@ private struct SearchDropdownView: View {
         .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
     }
 
-    private func displayName(_ key: String) -> String {
-        let map: [String: String] = [
-            "basketball_nba": "NBA", "americanfootball_nfl": "NFL",
-            "baseball_mlb": "MLB", "icehockey_nhl": "NHL",
-            "soccer_usa_mls": "MLS", "basketball_wnba": "WNBA",
-            "basketball_ncaab": "NCAAB", "americanfootball_ncaaf": "NCAAF",
-        ]
-        return map[key] ?? key.split(separator: "_").last.map(String.init)?.uppercased() ?? key
-    }
+    // #5780 — the fifth copy of the league map lived here too, eight keys deep
+    // and with the same fragment fallback. The shared rule owns it now.
 }
