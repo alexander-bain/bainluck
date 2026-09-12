@@ -191,10 +191,36 @@ describe("buildMarketSection — graceful degradation (both-direction guard)", (
     expect(categorizeMarketName("Anything Else").category).toBe("Other Markets");
   });
 
-  test("fewer than three rows renders nothing, as before", () => {
-    expect(buildMarketSection([{ market_name: "a", outcome_name: "b", probability: 0.5, source: PM }]).categories).toEqual([]);
+  test("nothing surviving renders nothing", () => {
+    // #5540 CHANGED THIS TEST, AND THE OLD NAME SAID WHY IT HAD TO.
+    // It read "fewer than three rows renders nothing, as before", and the
+    // "as before" was honest: the floor was `kept.length < 3`, mirroring the
+    // event page's `(gameMarkets.other?.length ?? 0) >= 3`. The same 3 counting
+    // two different populations — the page counts the wire, this counted the
+    // survivors — so a page could mount the section and get null back. Measured
+    // over 22 real payloads, that hid a live `Set 1 Winner` market on three
+    // tennis matches at once. The floor is now zero; see `buildMarketSection`.
+    //
+    // What remains here is the invariant that did NOT change: no survivors, no
+    // section. The single-row case moved to the other side of the line and is
+    // pinned, with the real wire, in `setWinnerSurvivesTheFloor5540.test.ts`.
     expect(buildMarketSection(undefined).categories).toEqual([]);
     expect(buildMarketSection(null).categories).toEqual([]);
+    expect(buildMarketSection([]).categories).toEqual([]);
+    // Survivors of the filters, not of the wire: a lone moneyline row is a row
+    // the hero already answers, so it is dropped and the section stays dark.
+    expect(
+      buildMarketSection([{ market_name: "Moneyline", outcome_name: "Yankees", probability: 0.6, source: PM }]).categories,
+    ).toEqual([]);
+  });
+
+  test("a single surviving row now renders — the floor is zero, not three", () => {
+    // The mutation guard for the line above: a floor of 1, 2 or 3 all fail here.
+    const section = buildMarketSection([
+      { market_name: "a", outcome_name: "b", probability: 0.5, source: PM },
+    ]);
+    expect(section.categories).toHaveLength(1);
+    expect(section.renderedOutcomes).toBe(1);
   });
 
   test("spread / moneyline rows stay filtered out", () => {
