@@ -196,6 +196,8 @@ from app.utils.calibration_invalidation import (
     obligation_retry_instruction,
 )
 from app.utils.kalshi_fabricated_loss import (
+    HARM_COHORT_HAVING_SQL,
+    IMPLIED_LOSS_EXCLUSION_SQL,
     POPULATION_HAVING_SQL,
     REPAIRABLE_SOURCE,
     RETENTION_BAND_SQL,
@@ -374,31 +376,49 @@ def declared_curve_movement(
     enough that being wrong is visible. The rail's own docstring used to predict
     the wrong sign, so the numbers replace it:
 
-    **The retraction arm moves the published curve by ZERO.** This rail's
-    population is the same predicate as the curve's own ``no_winner_markets``
-    exclusion (a resolved market with ``n_outcomes >= 2`` and ``win_count = 0``),
-    and CAL-P057 measured the whole 0–86 day work band in 15 shards with none
-    skipped: **2,887 of 2,887 target markets — 100%, 18,688 legs — are already
-    excluded.** A row that is not on the curve cannot be removed from it.
+    🔴 **CAL-P1124 INVERTS THE RETRACTION ARM'S SIGN, AND THAT INVERSION IS THE
+    SHIP.** Everything this function declared until now rested on CONTAINMENT:
+    the rail's population was the same predicate as the curve's own
+    ``no_winner_markets`` exclusion, so a retraction could not remove a published
+    row, and the declared delta was zero. That was never a property of the
+    defect. It was a property of the first two conjuncts of
+    ``POPULATION_HAVING_SQL`` happening to BE ``no_winner_markets`` — and those
+    conjuncts were excluding 96% of the defect, which is why #3617 item C retired
+    them. Measured 2026-09-12 over the reachable floor: the rail reached 225
+    markets / 1,964 ``api_settlement`` losses and left 1,965 markets / 18,427
+    behind it.
 
-    **CAL-P1015 replaces that census with a containment argument, because a
-    census of a moving population goes stale and this does not.** The two
-    predicates are the same aggregate on the same basis, and each says so:
+    The widened population deliberately contains markets the curve PUBLISHES:
 
-    * :data:`~app.utils.kalshi_fabricated_loss.POPULATION_HAVING_SQL` opens with
-      ``COUNT(*) >= 2 AND COUNT(*) FILTER (WHERE fo.is_winner) = 0``, and
-      ``_WORK_SQL`` applies it through a LATERAL over ALL outcomes of the market
-      with no leg filter;
-    * ``no_winner_markets`` is ``n_outcomes >= 2 AND win_count = 0`` over
-      ``market_result_shape``, whose comment states the counts are *"over ALL
-      outcomes of the market (never the eligibility-filtered subset)"*;
-    * every published row passes ``AND NOT ro.is_no_winner_market``.
+    * ``no_winner_markets`` needs ``n_outcomes >= 2``, so the 628 single-leg
+      markets were never excluded by it;
+    * it needs ``win_count = 0``, so the 1,315 crowned non-exclusive markets —
+      17,217 legs, the largest slice — were never excluded by it either;
+    * ``malformed_binaries`` needs ``n_outcomes = 2`` and catches neither.
 
-    So a target inside ``market_info`` is necessarily excluded, and a target
-    outside it has no legs on the curve at all. And retraction cannot move that
-    membership either way: it writes ``resolution_source`` and leaves
-    ``is_winner = false``, so ``win_count`` stays 0. The shrink is unreachable
-    rather than merely unobserved.
+    **So the declared movement on the retraction arm is now a SUBTRACTION, and
+    its magnitude is the count of retracted legs that were on the curve.** A
+    retraction writes ``ungradeable_result``, which is not in
+    ``CALIBRATION_TRUTH_ELIGIBLE_SOURCES``, so the leg leaves the published
+    population. This is the ship stated as a number: the accuracy page stops
+    counting losses the venue never declared, and a rail that could only ever
+    move the curve by zero could not have delivered it.
+
+    **The bound, against the publish gate.** Every target leg carries
+    ``api_settlement`` and is a loss, so the whole widened population is an upper
+    bound on the shrink: 18,427 legs measured against the curve's ~741,487
+    published outcomes is **-2.5% for a drain of the ENTIRE widened population**,
+    inside the gate's ±5% ``POPULATION_TOLERANCE``. It is an upper bound twice
+    over — most legs are judged ``confirmed_loss`` and written to never (150 of
+    152 in the module's own specimen), and the drain is attended and incremental.
+    Re-read both numbers from ``GET /api/calibration``; neither needs a query.
+
+    ⚠️ **The mutually-exclusive crowned slice is EXCLUDED, and it is excluded to
+    protect this arm.** See
+    :data:`~app.utils.kalshi_fabricated_loss.IMPLIED_LOSS_EXCLUSION_SQL`. Those
+    1,533 markets / 2,105 legs lost by exclusion, so retracting them would remove
+    CORRECT losses and leave the surviving bucket publishing a higher accuracy
+    than it earned — fabricating the number from the other side.
 
     **The growth has a published ceiling too** (CAL-P1015, #2528). The restore
     arm's addition is bounded by the curve's own ``no_winner_filter.excluded`` —
@@ -412,27 +432,53 @@ def declared_curve_movement(
     surviving leg set is ADMITTED. So the predicted sign is **positive n**, and
     the magnitude to declare is the count of admitted legs, never retracted ones.
 
-    **A curve that moves on the retraction arm is a HALT, not a success.** It
-    would mean the population predicate and the exclusion predicate have drifted
-    apart, which invalidates the reason this repair was safe to run at all.
+    🔴 **THE OLD HALT RULE IS RETIRED AND MUST NOT BE RE-ARMED.** It read "a
+    curve that moves on the retraction arm is a HALT". Under the widened
+    population that rule fires on SUCCESS — a zero delta is now the anomaly,
+    because it would mean the rail retracted legs the curve was not publishing
+    after all. What replaces it is a BOUND, not a point: a shrink larger than the
+    retracted-leg count is a halt (a retraction can only remove the leg it wrote
+    to, so anything larger means the write reached rows the plan never named),
+    and so is a shrink that breaches the publish gate's tolerance.
     """
     return {
         "ruling": "050 — armed control, declared BEFORE the recompute",
         "retraction_arm": {
             "legs_retracted": losses_retracted,
-            "predicted_curve_delta": 0,
+            "predicted_sign": "negative — a SUBTRACTION, and it is the ship",
+            "predicted_curve_delta_max": -losses_retracted,
             "why": (
-                "the rail's population is CONTAINED IN the curve's own "
-                "no_winner_markets exclusion — the same aggregate over the same "
-                "all-outcomes basis, and retraction leaves is_winner false so "
-                "membership cannot move (CAL-P1015). A row that is not on the "
-                "curve cannot be removed from it. CAL-P057 measured the same "
-                "thing as a census: 2,887/2,887 markets, 18,688 legs"
+                "CAL-P1124 widened the population past the curve's own "
+                "no_winner_markets exclusion ON PURPOSE — that exclusion needs "
+                "n_outcomes >= 2 and win_count = 0, and the single-leg and "
+                "crowned slices satisfy neither, which is why they were 96% of "
+                "the defect and 0% of the reach. Those legs ARE published, so "
+                "retracting them removes them: ungradeable_result is not in "
+                "CALIBRATION_TRUTH_ELIGIBLE_SOURCES"
             ),
-            "if_it_moves": (
-                "HALT. A non-zero delta on this arm means the population and "
-                "exclusion predicates have drifted apart, which is the premise "
-                "the repair's safety rests on."
+            "bound": (
+                "at most one published row per retracted leg. A drain of the "
+                "ENTIRE widened population is 18,427 legs against ~741,487 "
+                "published outcomes = -2.5%, inside the publish gate's +/-5% "
+                "POPULATION_TOLERANCE (both numbers re-readable from "
+                "GET /api/calibration)"
+            ),
+            "if_it_moves_more": (
+                "HALT. A shrink larger than legs_retracted means the write "
+                "reached rows the reviewed plan never named."
+            ),
+            "if_it_does_not_move": (
+                "INVESTIGATE, and note this is the OPPOSITE of the pre-CAL-P1124 "
+                "rule, which halted on any movement. A zero delta now means the "
+                "retracted legs were not on the curve — so either the widening "
+                "did not take effect or the drain is still inside the old "
+                "contained population."
+            ),
+            "excluded_by_design": (
+                "mutually-exclusive markets holding exactly one winner (1,533 "
+                "markets / 2,105 legs measured 2026-09-12): their losses are "
+                "TRUE by exclusion, and retracting them would raise the "
+                "published accuracy of every bucket they sit in"
             ),
         },
         "restore_arm": {
@@ -494,15 +540,38 @@ def declared_curve_movement(
 #: Both bounds are CAST. asyncpg prepares this with no parameter types and infers
 #: them from the text alone — the same trap that left the work selection's
 #: ``:sport`` unable to prepare at all (see ``_WORK_SQL``).
+#: CAL-P1124: the census reports the implied-loss slice INSTEAD OF FILTERING IT
+#: OUT, and the distinction is the whole reason it is a column rather than a
+#: ``WHERE``. A conjunct that silently removes rows from a census leaves the next
+#: session reading a smaller population with no way to tell a repaired row from
+#: an unreachable one — which is how the three retired conjuncts hid 96% of this
+#: defect for a month. ``slice`` is therefore a DIMENSION: ``target`` is what the
+#: drain will reach, ``implied_loss_excluded`` is what
+#: :data:`~app.utils.kalshi_fabricated_loss.IMPLIED_LOSS_EXCLUSION_SQL` holds
+#: back, and both are published so the second number has an owner.
+#:
+#: The exclusion is evaluated on the OUTER side because ``mutually_exclusive``
+#: lives on ``futures_markets``, which this query does not join until after the
+#: grouped pass — the same reason #3195 put the bound inside the subquery. The
+#: aggregate itself is untouched, so the cost profile that issue measured holds.
 _CENSUS_SQL = f"""
     SELECT fm.source AS source,
            fm.mutually_exclusive AS mutex,
            {RETENTION_BAND_SQL} AS retention_band,
+           CASE
+             WHEN {
+                 IMPLIED_LOSS_EXCLUSION_SQL.format(
+                     mutex="fm.mutually_exclusive", win_count="mx.n_win"
+                 )
+             } THEN 'target'
+             ELSE 'implied_loss_excluded'
+           END AS slice,
            COUNT(*) AS markets,
            SUM(mx.n_out) AS outcomes
     FROM (
       SELECT fo.market_id,
-             COUNT(*) AS n_out
+             COUNT(*) AS n_out,
+             COUNT(*) FILTER (WHERE fo.is_winner) AS n_win
       FROM futures_outcomes fo
       WHERE fo.market_id > CAST(:lo AS bigint)
         AND fo.market_id <= CAST(:hi AS bigint)
@@ -510,8 +579,8 @@ _CENSUS_SQL = f"""
       HAVING {POPULATION_HAVING_SQL}
     ) mx
     JOIN futures_markets fm ON fm.id = mx.market_id
-    GROUP BY 1, 2, 3
-    ORDER BY 4 DESC
+    GROUP BY 1, 2, 3, 4
+    ORDER BY 5 DESC
 """
 
 #: The walk's upper bound. Index-only backward scan, so it is cheap, but it gets
@@ -526,7 +595,16 @@ _CENSUS_MAX_ID_SQL = "SELECT MAX(market_id) AS hi FROM futures_outcomes"
 #: rail accumulates server-side and the last call returns the whole-population
 #: breakdown, the same shape the single-shot census used to return.
 CENSUS_IDENTITY = "calibration:repair:kalshi_fabricated_loss:census"
-CENSUS_SCHEMA = "kalshi_fabricated_loss_census_v1"
+#: CAL-P1124 bumped v1 -> v2. The population predicate widened and the breakdown
+#: grew a ``slice`` dimension, so a v1 record is not a resumable prefix of a v2
+#: walk — it is a count of a different population. The version is the refusal:
+#: ``read_snapshot_standalone`` checks it, so a banked v1 walk is declined and
+#: re-walked rather than stitched onto chunks that counted something else.
+CENSUS_SCHEMA = "kalshi_fabricated_loss_census_v2"
+
+#: The two values of the census ``slice`` dimension.
+CENSUS_SLICE_TARGET = "target"
+CENSUS_SLICE_IMPLIED = "implied_loss_excluded"
 
 #: A banked walk older than this is not resumable. The population moves, and
 #: stitching today's chunks onto last week's is a fabricated total — precisely
@@ -548,7 +626,7 @@ def _census_fold(acc: dict[tuple, dict[str, int]], rows) -> None:
     equality is the property the guard suite asserts directly.
     """
     for r in rows:
-        key = (r.source, r.mutex, r.retention_band)
+        key = (r.source, r.mutex, r.retention_band, r.slice)
         cell = acc.setdefault(key, {"markets": 0, "outcomes": 0})
         cell["markets"] += int(r.markets or 0)
         cell["outcomes"] += int(r.outcomes or 0)
@@ -561,10 +639,11 @@ def _census_breakdown(acc: dict[tuple, dict[str, int]]) -> list[dict[str, Any]]:
             "source": source,
             "mutually_exclusive": mutex,
             "retention_band": band,
+            "slice": slice_,
             "markets": cell["markets"],
             "outcomes": cell["outcomes"],
         }
-        for (source, mutex, band), cell in acc.items()
+        for (source, mutex, band, slice_), cell in acc.items()
     ]
     rows.sort(key=lambda r: r["markets"], reverse=True)
     return rows
@@ -578,6 +657,11 @@ def _census_acc_from_payload(payload: Any) -> dict[tuple, dict[str, int]]:
             cell.get("source"),
             cell.get("mutually_exclusive"),
             cell.get("retention_band"),
+            # CAL-P1124 added this dimension. A v1 record cannot reach here (the
+            # schema version below is bumped, so a banked v1 walk is refused
+            # rather than resumed), but the default keeps a hand-fed payload from
+            # keying every cell on None and silently merging the two slices.
+            cell.get("slice", CENSUS_SLICE_TARGET),
         )
         acc[key] = {
             "markets": int(cell.get("markets") or 0),
@@ -671,7 +755,13 @@ def _census_record(
 def _census_summary(breakdown: list[dict[str, Any]]) -> dict[str, Any]:
     """The published split. Unchanged in shape from the single-shot census —
     what changed is that it can now be reached."""
-    kalshi = [b for b in breakdown if b["source"] == "kalshi"]
+    # CAL-P1124: every headline below is the TARGET slice only. The breakdown
+    # carries both, and summing it whole would report the implied-loss markets as
+    # work the drain is going to do — a number the operator would plan calls
+    # against and never see fall.
+    target = [b for b in breakdown if b.get("slice", CENSUS_SLICE_TARGET) == CENSUS_SLICE_TARGET]
+    implied = [b for b in breakdown if b.get("slice") == CENSUS_SLICE_IMPLIED]
+    kalshi = [b for b in target if b["source"] == "kalshi"]
 
     def _sum(rows_, key, **match):
         return sum(r[key] for r in rows_ if all(r[k] == v for k, v in match.items()))
@@ -679,8 +769,24 @@ def _census_summary(breakdown: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "breakdown": breakdown,
         "totals": {
-            "markets": _sum(breakdown, "markets"),
-            "outcomes": _sum(breakdown, "outcomes"),
+            "markets": _sum(target, "markets"),
+            "outcomes": _sum(target, "outcomes"),
+        },
+        "implied_loss_excluded": {
+            "markets": _sum(implied, "markets"),
+            "outcomes": _sum(implied, "outcomes"),
+            "why": (
+                "mutually-exclusive markets holding exactly one winner: the "
+                "remaining legs lost BY EXCLUSION, so the venue licensed those "
+                "losses even where its per-leg record is blank. classify_leg is "
+                "handed one leg at a time and would retract them, which would "
+                "delete correct rows from the published curve and leave the "
+                "surviving bucket reading higher than it is."
+            ),
+            "reachable_by": (
+                "market-level entailment, which is a separate ship and a "
+                "separate ruling — not by widening this predicate"
+            ),
         },
         "kalshi": {
             "markets": _sum(kalshi, "markets"),
@@ -1146,7 +1252,22 @@ _WORK_SQL = f"""
       SELECT COUNT(*) AS n_out
       FROM futures_outcomes fo
       WHERE fo.market_id = s.id
+      -- CAL-P1124. Three predicates, and they are three different KINDS of
+      -- thing, which is why they are three constants and not one:
+      --   * the POPULATION — who has the defect at all (now leg-level);
+      --   * the SAFETY EXCLUSION — who we must not judge per-leg, evaluated
+      --     against `s` because the flag lives on futures_markets;
+      --   * the COHORT — which of the population this WALK is draining, the
+      --     harm threshold, NULL-transparent so an unfiltered walk is the
+      --     whole population and not an empty one (gotcha #53).
+      -- The LIMIT still stops the scan because every one of them is answered by
+      -- the same per-market probe the rail already ran.
       HAVING {POPULATION_HAVING_SQL}
+         AND {IMPLIED_LOSS_EXCLUSION_SQL.format(
+                 mutex="s.mutually_exclusive",
+                 win_count="COUNT(*) FILTER (WHERE fo.is_winner)",
+             )}
+         AND {HARM_COHORT_HAVING_SQL}
     ) mx
     -- The inner ORDER BY is the one the planner USES. THIS one is the one the
     -- rail may RELY on. A subquery's ordering is not contractually preserved
@@ -2038,6 +2159,7 @@ async def repair(
     band: str | None = None,
     band_as_of: str | None = None,
     plan_hash: str | None = None,
+    min_harm: float | None = None,
 ) -> dict[str, Any]:
     """Per-leg retraction/restoration against the venue's own declaration.
 
@@ -2109,6 +2231,24 @@ async def repair(
                 ),
                 "elapsed_s": round(time.monotonic() - started, 1),
             }
+        if min_harm is not None:
+            # CAL-P1124, refused for the reason ?band= is and BY ITS OWN NAME.
+            # A threshold on an apply would read, in scrollback, exactly like a
+            # promise that only the worst rows were written — while the apply
+            # writes every leg id the reviewed plan already named.
+            return {
+                "measured": False,
+                "refused": "MIN_HARM_ON_APPLY",
+                "presented_min_harm": min_harm,
+                "reason": (
+                    "?min_harm= is a cohort selector for the DRY RUN. An apply "
+                    "executes the reviewed plan by leg id and selects nothing, "
+                    "so a threshold here would narrow nothing while appearing "
+                    "to. The threshold the plan was built under is in its own "
+                    "context."
+                ),
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
         return await _apply_reviewed_plan(session, plan_hash, started)
 
     return await _dry_run(
@@ -2120,6 +2260,7 @@ async def repair(
         started,
         band=band,
         band_as_of=band_as_of,
+        min_harm=min_harm,
     )
 
 
@@ -2194,12 +2335,68 @@ _BAND_FORM = re.compile(r"^(\d+)\s*-\s*(\d+)$")
 
 
 class BandRefused(ValueError):
-    """A ``?band=`` this rail will not run, carrying its own refusal name."""
+    """A ``?band=`` this rail will not run, carrying its own refusal name.
+
+    Also carries :func:`parse_min_harm`'s refusals. The name is historical and
+    the shape is the contract — a named refusal plus the sentence an operator
+    reads — so a second exception class carrying the same two fields would add a
+    class and no information.
+    """
 
     def __init__(self, refused: str, reason: str) -> None:
         super().__init__(reason)
         self.refused = refused
         self.reason = reason
+
+
+def parse_min_harm(min_harm: Any) -> float | None:
+    """``?min_harm=`` -> a probability, or ``None`` for the whole population.
+
+    CAL-P1124 arm B. The threshold reads the CURVE's price for a leg —
+    ``COALESCE(calibration_probability, opening_probability)`` — so its units are
+    a probability and its range is the open interval the curve itself publishes
+    on. It selects a cohort to drain first; it changes no verdict and excludes no
+    market from the population.
+
+    **Refused rather than clamped, in both directions, and for the same reason
+    ``?band=`` refuses an inverted pair.** A clamp turns an operator's typo into a
+    different, successful run:
+
+    * ``min_harm=90`` (percent, not a probability) would clamp to 1.0 and select
+      NOTHING, and an empty page reads as "the cohort is drained" — gotcha #53,
+      and the exact misreading that makes a zero-yield run dangerous;
+    * ``min_harm=0`` or a negative would select the whole population while the
+      operator's scrollback says they narrowed it to the worst rows.
+
+    ``1.0`` is refused too: it is the settled price, so it can only match legs
+    the venue has already resolved to certainty, which is never this cohort.
+    """
+    if min_harm is None:
+        return None
+    try:
+        value = float(min_harm)
+    except (TypeError, ValueError):
+        raise BandRefused(
+            "MIN_HARM_UNPARSEABLE",
+            f"?min_harm= must be a probability between 0 and 1 exclusive; "
+            f"got {min_harm!r}.",
+        ) from None
+    if value != value:  # NaN — every comparison against it is false in SQL
+        raise BandRefused(
+            "MIN_HARM_UNPARSEABLE",
+            "?min_harm=nan compares false against every price, so it would "
+            "select an empty page and report it as a drained cohort.",
+        )
+    if not (0.0 < value < 1.0):
+        raise BandRefused(
+            "MIN_HARM_OUT_OF_RANGE",
+            f"?min_harm= is a PROBABILITY and must sit strictly between 0 and "
+            f"1; got {value}. It is refused rather than clamped because both "
+            f"clamps lie: a percentage like 90 would select nothing and read as "
+            f"a drained cohort, and 0 would select everything while the "
+            f"scrollback said otherwise. For the 90%+ rows pass 0.9.",
+        )
+    return value
 
 
 def parse_band(band: str | None) -> tuple[int, int] | None:
@@ -2337,12 +2534,31 @@ def parse_band_as_of(
 
 
 async def _dry_run(
-    session, limit, after_id, after_date, sport, started, band=None, band_as_of=None
+    session,
+    limit,
+    after_id,
+    after_date,
+    sport,
+    started,
+    band=None,
+    band_as_of=None,
+    min_harm=None,
 ):
     """Select, ask the venue, judge, and emit the reviewed plan. No writes."""
     from app.services.kalshi_api import KalshiAPIService
 
     window = min(int(limit or APPLY_MARKET_CAP), APPLY_MARKET_CAP)
+
+    try:
+        min_harm = parse_min_harm(min_harm)
+    except BandRefused as e:
+        return {
+            "measured": False,
+            "refused": e.refused,
+            "presented_min_harm": min_harm,
+            "reason": e.reason,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
     if (after_id is None) != (after_date is None):
         return {
             "measured": False,
@@ -2421,6 +2637,7 @@ async def _dry_run(
                     "band_min_age": band_min_age,
                     "band_max_age": band_max_age,
                     "band_as_of": anchor,
+                    "min_harm": min_harm,
                 },
             )
         ).all()
@@ -2582,6 +2799,11 @@ async def _dry_run(
         context={
             "rail": "kalshi-fabricated-loss",
             "sport": sport,
+            # CAL-P1124: the cohort this plan was selected under travels WITH the
+            # plan, for the reason the band does — the apply refuses ?min_harm=,
+            # so this is the only record of which slice of the population the
+            # reviewed legs came from.
+            "min_harm": min_harm,
             "band": band if parsed_band else None,
             "band_as_of": url_safe_isoformat(anchor) if parsed_band else None,
             "window": window,
@@ -2616,6 +2838,18 @@ async def _dry_run(
             "limit": window,
             "returned": len(rows),
             "sport": sport,
+            # CAL-P1124 arm B. Echoed PARSED and always present, including as
+            # null: an `exhausted` page is only exhausted OF THIS COHORT, and an
+            # operator who cannot see which threshold ran cannot tell a drained
+            # population from a drained 90%+ slice of one.
+            "min_harm": min_harm,
+            "min_harm_means": (
+                "legs are selected on the curve's own price, "
+                "COALESCE(calibration_probability, opening_probability); "
+                "`exhausted` at a threshold says nothing about rows beneath it"
+            )
+            if min_harm is not None
+            else None,
             # #3257: echoed PARSED, not as presented. An operator reading their
             # own string back learns nothing about whether it took effect.
             "band": (

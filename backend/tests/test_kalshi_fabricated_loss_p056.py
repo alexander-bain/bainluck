@@ -18,7 +18,10 @@ from pathlib import Path
 
 import pytest
 
+from app.tasks import repair_kalshi_fabricated_loss as rail
 from app.utils.kalshi_fabricated_loss import (
+    HARM_COHORT_HAVING_SQL,
+    IMPLIED_LOSS_EXCLUSION_SQL,
     POPULATION_HAVING_SQL,
     REPAIRABLE_SOURCE,
     RETENTION_BAND_SQL,
@@ -26,6 +29,7 @@ from app.utils.kalshi_fabricated_loss import (
     WRITING_VERDICTS,
     classify_leg,
     classify_market,
+    market_loss_is_implied,
 )
 from app.utils.kalshi_retention import AT_RISK_AGE_DAYS, PROVABLY_PURGED_AGE_DAYS
 from app.utils.resolution_authority import (
@@ -207,12 +211,99 @@ class TestSqlContracts:
     """The fragments are single-sourced, so the census and the repair cannot
     drift from each other. Adjudicated against production PostgreSQL, not here."""
 
-    def test_the_population_excludes_single_leg_markets(self):
-        assert "COUNT(*) >= 2" in POPULATION_HAVING_SQL
+    def test_the_population_selects_at_the_leg_not_the_market_shape(self):
+        """CAL-P1124 arm A. The unit of selection is one defective LEG.
 
-    def test_the_population_requires_zero_winners_and_a_full_api_badge(self):
-        assert "COUNT(*) FILTER (WHERE fo.is_winner) = 0" in POPULATION_HAVING_SQL
-        assert "'api_settlement'" in POPULATION_HAVING_SQL
+        The behavioural proof is in the real-Postgres gate, which seeds each
+        previously-excluded shape and requires the drain to reach it; this is the
+        cheap contract beside it.
+        """
+        assert "fo.is_winner = false" in POPULATION_HAVING_SQL
+        assert f"'{REPAIRABLE_SOURCE}'" in POPULATION_HAVING_SQL
+        assert ">= 1" in POPULATION_HAVING_SQL
+
+    def test_the_retired_market_shape_conjuncts_are_gone(self):
+        """The regression guard for the widening itself.
+
+        These three conjuncts reached 225 markets and left 1,965 behind
+        (measured 2026-09-12). Re-introducing any of them un-ships #3617 item C
+        while every OTHER test in this file still passes — the population would
+        simply be smaller, and nothing else asserts its size. So the absence is
+        asserted directly, and by the exact text that was removed.
+        """
+        for retired in (
+            "COUNT(*) >= 2",
+            "COUNT(*) FILTER (WHERE fo.is_winner) = 0",
+            "COUNT(*) = COUNT(*) FILTER",
+        ):
+            assert retired not in POPULATION_HAVING_SQL, (
+                f"{retired!r} is back in the population predicate. It was "
+                "retired by CAL-P1124 because it excluded a large slice of the "
+                "defect; if it is needed again that needs a ruling, not an edit."
+            )
+
+    def test_the_implied_loss_exclusion_is_a_template_both_sites_must_fill(self):
+        """The one exclusion that stays, and it must not be silently droppable."""
+        assert "{mutex}" in IMPLIED_LOSS_EXCLUSION_SQL
+        assert "{win_count}" in IMPLIED_LOSS_EXCLUSION_SQL
+
+        # Both shipping statements bind it, asserted by RENDERING the template
+        # with each site's own operands and finding that exact text. A loose
+        # substring check ("NOT (" appears somewhere) would pass against SQL that
+        # had stopped excluding anything — and a call site that stopped binding
+        # this would be offering mutually-exclusive crowned legs to the per-leg
+        # judgment, which retracts true losses off the published curve.
+        assert (
+            IMPLIED_LOSS_EXCLUSION_SQL.format(
+                mutex="s.mutually_exclusive",
+                win_count="COUNT(*) FILTER (WHERE fo.is_winner)",
+            )
+            in rail._WORK_SQL
+        )
+        assert (
+            IMPLIED_LOSS_EXCLUSION_SQL.format(
+                mutex="fm.mutually_exclusive", win_count="mx.n_win"
+            )
+            in rail._CENSUS_SQL
+        )
+
+    def test_the_harm_cohort_is_null_transparent(self):
+        """Gotcha #53: an unfiltered walk must be the whole population.
+
+        If the threshold stopped being NULL-transparent, an operator running
+        without ``?min_harm=`` would get an empty page and read it as a drained
+        population.
+        """
+        assert "IS NULL" in HARM_COHORT_HAVING_SQL
+        assert "OR" in HARM_COHORT_HAVING_SQL
+
+    def test_the_harm_cohort_reads_the_curves_own_price(self):
+        """Gotcha #144 / ruling 103: the curve price is a COALESCE.
+
+        Reading ``calibration_probability`` alone would score every
+        opening-priced leg NULL and quietly make the worst of them undrainable.
+        """
+        assert (
+            "COALESCE(fo.calibration_probability, fo.opening_probability)"
+            in HARM_COHORT_HAVING_SQL
+        )
+
+    @pytest.mark.parametrize(
+        "mutex,win_count,implied",
+        [
+            (True, 1, True),
+            (True, 0, False),
+            (True, 2, False),
+            (False, 1, False),
+            (False, 0, False),
+            (None, 1, False),
+            (True, None, False),
+        ],
+    )
+    def test_market_loss_is_implied_table(self, mutex, win_count, implied):
+        """The Python twin of the SQL exclusion. Agreement with the SQL itself is
+        asserted against real Postgres in the bind-contract gate."""
+        assert market_loss_is_implied(mutex, win_count) is implied
 
     def test_the_retention_bands_are_the_measured_constants_not_literals(self):
         assert f"INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'" in RETENTION_BAND_SQL
