@@ -133,6 +133,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import {
+  HAND_PICKED_LABELS,
+  handPickedKey,
   teamShortName,
   teamShortNames,
   isNonDistinctiveTrailingWord,
@@ -251,10 +253,35 @@ describe("UX-1065: the measured population", () => {
     expect(new Set(NAMES).size).toBe(4701);
   });
 
-  it("479 of 4,701 distinct names (10.2%) stop being shortened", () => {
+  it("481 of 4,701 distinct names (10.2%) stop being shortened", () => {
     const changed = NAMES.filter((n) => teamShortName(n) !== n.split(" ").pop());
-    expect(changed).toHaveLength(479);
+    expect(changed).toHaveLength(481);
     expect(Math.round((changed.length / NAMES.length) * 1000) / 10).toBe(10.2);
+  });
+
+  /**
+   * #4627 — the TWO this corpus gained, named rather than counted, for the same
+   * reason the #4250 eight are named below: a count can be re-baselined by
+   * anyone who has not looked at what moved.
+   *
+   * Both are the same club, and that is the ship: Alex ruled (option B, relayed
+   * by Fable-5 2026-09-12) that Paris Saint-Germain is "PSG" on both clients,
+   * and `handPickedKey` collapses its spellings so the label does not depend on
+   * which one the row carries. Unlike every other name in this file these two do
+   * NOT go "designator gives way to a name" — they take a label that is in
+   * neither the name nor its last word, which is why the fail-safe invariant
+   * below had to be amended rather than left alone.
+   */
+  it("the two #4627 added are one club, and its hand-picked label", () => {
+    const gained = ["Paris Saint Germain", "Paris Saint-Germain"];
+    for (const name of gained) {
+      expect(NAMES).toContain(name);
+      expect(teamShortName(name)).toBe("PSG");
+      expect(handPickedKey(name)).toBe("paris saint germain");
+    }
+    expect(gained).toHaveLength(481 - 479);
+    // …and the table did not grow past them on the way in.
+    expect(HAND_PICKED_LABELS.size).toBe(1);
   });
 
   /**
@@ -283,14 +310,33 @@ describe("UX-1065: the measured population", () => {
 
   it("the other 89.8% keep split-pop output byte for byte", () => {
     const same = NAMES.filter((n) => teamShortName(n) === n.split(" ").pop());
-    expect(same).toHaveLength(4222);
+    expect(same).toHaveLength(4220);
   });
 
-  it("FAILS SAFE: every output is the last word or the full name, never a new string", () => {
+  /**
+   * AMENDED BY #4627, and narrowed in the same breath.
+   *
+   * The original sentence was "every output is the last word or the full name,
+   * never a new string", and it was true because every branch returned one of
+   * those two. A hand-picked label IS a new string — that is what Alex ruled it
+   * should be — so the invariant now admits a third arm and pins it to the
+   * TABLE rather than to "anything goes": an output that is neither the name,
+   * nor its last word, nor this club's entry is still the failure this was
+   * written to catch.
+   *
+   * The second assertion is the narrowing. Without it a future rule that
+   * invented labels would satisfy the first one by adding itself to the table,
+   * so the names allowed to take the third arm are named, not counted.
+   */
+  it("FAILS SAFE: every output is the last word, the full name, or this club's hand-picked label", () => {
+    const handPicked: string[] = [];
     for (const n of NAMES) {
       const out = teamShortName(n);
-      expect(out === n || out === n.split(" ").pop()).toBe(true);
+      const picked = HAND_PICKED_LABELS.get(handPickedKey(n));
+      if (out !== n && out !== n.split(" ").pop()) handPicked.push(n);
+      expect(out === n || out === n.split(" ").pop() || out === picked).toBe(true);
     }
+    expect(handPicked).toEqual(["Paris Saint Germain", "Paris Saint-Germain"]);
   });
 
   it("no output is a non-distinctive word — that is the whole ship", () => {

@@ -99,8 +99,35 @@ describe("#4466 the badge derivation", () => {
     const badge = teamCrestBadge(spelling);
     expect(badge).not.toBe("GER");
     expect(badge).not.toBe("SAI");
-    // The discriminator: this is the value the reverted call site produces.
-    expect(badge).not.toBe(teamShortName(spelling).slice(0, 3).toUpperCase());
+    expect(badge).toBe("PSG");
+  });
+
+  /**
+   * THE DISCRIMINATOR MOVED OFF PSG, AND #4627 IS WHY (ux/1219, 2026-09-12).
+   *
+   * This assertion used to live in the case above as
+   * `expect(badge).not.toBe(teamShortName(spelling).slice(0,3).toUpperCase())`
+   * — the value the reverted call site produces. Alex's #4627 ruling gives this
+   * club a hand-picked LABEL of "PSG", so `teamShortName` now returns "PSG" for
+   * it and the reverted expression yields "PSG" too. The two computations agree
+   * on this one club, which does not make the badge wrong — it makes PSG unable
+   * to tell the two apart, and an assertion that cannot fail is not a guard.
+   *
+   * So the discriminator is restated on clubs the hand-picked table does not
+   * cover and never will. Measured over the 13,630 distinct production team
+   * names: **1,313 names still separate the two expressions**, so the guard has
+   * lost none of its reach — only its specimen. These three are from that list.
+   */
+  it.each([
+    ["ADO Den Haag", "ADH", "HAA"],
+    ["AFC Rushden and Diamonds", "RAD", "DIA"],
+    ["AD Municipal Pérez Zeledón", "MPZ", "ZEL"],
+  ])("%s badges %s, not the reverted call site's %s", (name, badge, reverted) => {
+    expect(teamCrestBadge(name)).toBe(badge);
+    expect(teamShortName(name).slice(0, 3).toUpperCase()).toBe(reverted);
+    expect(teamCrestBadge(name)).not.toBe(
+      teamShortName(name).slice(0, 3).toUpperCase(),
+    );
   });
 
   it("gives one club the SAME badge under both stored spellings", () => {

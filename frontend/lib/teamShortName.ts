@@ -110,6 +110,82 @@ function alphanumeric(token: string): string {
 }
 
 /**
+ * Whitespace OR a dash of any kind, so "Paris Saint-Germain" and "Paris Saint
+ * Germain" — both live on production the same afternoon — tokenise alike.
+ *
+ * Named because two things now share it: `teamCrestBadge`'s distinctive-token
+ * count (#4466) and `handPickedKey` below (#4627). The iPhone's
+ * `TeamShortName.tokenSeparators` is the same set, and the badge has been
+ * spelling-independent since #4539 — the LABEL was not, which is the half of
+ * #4627 nobody had named.
+ */
+const TOKEN_SEPARATORS = /[\s‐-―-]+/;
+
+/**
+ * Clubs whose compact label the rule cannot derive, decided by hand (#4627).
+ *
+ * Alex's ruling (option B, relayed by Fable-5 Sat 2026-09-12 6:14am PT): Paris
+ * Saint-Germain is "PSG" — the crest letters, as an explicit entry, NOT a rule
+ * change that would turn the Lakers into "LAL". "Germain" is a fragment and
+ * "Lakers" is a name, and no test on the string alone tells them apart, so this
+ * is a hand-kept list and it is meant to STAY SMALL. Per-club abbreviation data
+ * (#3353) is the real answer and was deliberately deferred.
+ *
+ * Exported, like the key function below, so the guard can assert the two things
+ * that are invisible from outside and would otherwise rot silently: that no two
+ * clubs claim one label, and that every key is already in the normalised form
+ * `handPickedKey` produces. A key written "Paris Saint-Germain" would be a DEAD
+ * entry that every test calling only `teamShortName` would pass straight over.
+ *
+ * The iPhone's `TeamShortName.handPickedLabels` is the same table, and
+ * `teamDesignatorParityAcrossClients.test.ts` reads both out of source rather
+ * than transcribing either — a transcribed copy is the third implementation
+ * that whole file exists to prevent.
+ */
+export const HAND_PICKED_LABELS: ReadonlyMap<string, string> = new Map([
+  ["paris saint germain", "PSG"],
+]);
+
+/**
+ * The lookup key for `HAND_PICKED_LABELS`: one club, one key, however the row
+ * spells it.
+ *
+ * Three normalisations, each paying for a spelling that is live on production
+ * today. Measured over 60 days of `events` on 2026-09-12 by native/131, this
+ * club alone has THREE — "Paris Saint-Germain FC" (14 events),
+ * "Paris Saint-Germain" (9) and "Paris Saint Germain" (9) — rendering as three
+ * different labels: the full name, "Saint-Germain" and "Germain".
+ *
+ *  1. Split on dashes as well as whitespace (`TOKEN_SEPARATORS`).
+ *  2. Drop everything that is not a letter or a digit, so "1. FC …" and
+ *     "Crimson (W)" key on their words rather than on their punctuation. This
+ *     uses a UNICODE-aware class rather than `alphanumeric` above, deliberately:
+ *     `alphanumeric` is ASCII and would key "1. FC Köln" as `1 fc kln` while the
+ *     iPhone's `isLetter` keeps the ö. One club, one key, means one key ACROSS
+ *     CLIENTS, so this half has to follow the Swift and not the neighbour.
+ *  3. Strip trailing designators — but NEVER below two tokens. The floor is the
+ *     whole of the rule: without it "Manchester United" keys as `manchester`,
+ *     which is what "Manchester City" keys as too, and a future entry for either
+ *     silently relabels the other. It also keeps "Arsenal W" off "Arsenal". A
+ *     loop, not one step, because both suffixes of "Manchester United FC" are
+ *     designators — and it stops at the floor.
+ *
+ * Every name in the population runs through this, so it may not be expensive to
+ * be wrong in: a key that matches nothing costs one map miss and the last-word
+ * rule decides exactly as it did before.
+ */
+export function handPickedKey(name: string): string {
+  const tokens = name
+    .split(TOKEN_SEPARATORS)
+    .map((token) => token.replace(/[^\p{L}\p{N}]/gu, ""))
+    .filter(Boolean);
+  while (tokens.length >= 3 && isNonDistinctiveTrailingWord(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+  return tokens.join(" ").toLowerCase();
+}
+
+/**
  * #3110 — a doubles PAIR is one competitor written as two surnames, and the
  * last-word rule silently deletes the first one: "Siniakova / Townsend" became
  * "Townsend", so the US Open women's doubles final read as a singles match
@@ -294,7 +370,7 @@ export function teamCrestBadge(name: string | null | undefined): string {
   // Hyphen splits like a space so that "Paris Saint-Germain" and "Paris Saint
   // Germain" — both live on production the same afternoon — agree.
   const distinctive = full
-    .split(/[\s‐-―-]+/)
+    .split(TOKEN_SEPARATORS)
     .filter(Boolean)
     .filter(token => !isNonDistinctiveTrailingWord(token));
   const shipped = teamShortName(full).slice(0, 3).toUpperCase();
@@ -399,6 +475,11 @@ export function teamShortName(
   if (!full) return "";
   // #3110: both halves of a doubles pair, or neither.
   if (isDoublesPair(full)) return full;
+  // #4627 — a hand-picked label is FINAL, and it is read BEFORE the rule rather
+  // than applied as a repair afterwards, so what a reader sees does not depend
+  // on which of the club's three live spellings the row happens to carry.
+  const picked = HAND_PICKED_LABELS.get(handPickedKey(full));
+  if (picked) return picked;
   const words = full.split(/\s+/);
   if (words.length < 2) return full;
   if (isNonDistinctiveTrailingWord(words[words.length - 1])) return full;
