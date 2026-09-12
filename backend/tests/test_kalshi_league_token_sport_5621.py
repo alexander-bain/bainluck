@@ -1,20 +1,38 @@
-"""#5621 — the basketball page stops serving NFL games.
+"""#5621 — searching your club stops returning the game as basketball.
 
 ## The ship
 
-`GET /api/leagues/basketball_other`, read on production Sat 2026-09-12 13:28Z,
-the day before NFL Week 1 Sunday. Its LIVE & UPCOMING rail, all eight slots:
+`https://bainluck.com/search?q=Jacksonville` at 390px, production Sat
+2026-09-12 13:55Z, the day before NFL Week 1 Sunday. Two ADJACENT cards:
 
-    1  Toronto Argonauts @ Ottawa Redblacks          CFL
-    2  Winnipeg Blue Bombers @ Saskatchewan Rough..  CFL
-    3  Houston @ Buffalo                             NFL
-    4  Minnesota @ Green Bay                         NFL
-    5  British Columbia Lions @ Montreal Alouettes   CFL
-    6  Tennessee @ New York J                        NFL
-    7  Cincinnati @ Tampa Bay                        NFL
-    8  Jacksonville @ Cleveland                      NFL
+    NFL                Tomorrow 10:00 AM
+    Jacksonville Jaguars                      79%
+    Cleveland Browns                          21%
+    Proj 24-16                                CBS
 
-Not one of the eight upcoming "basketball" games was basketball.
+    OTHER BASKETBALL   Tomorrow  1:00 PM
+    C  Cleveland
+       No price yet
+    J  Jacksonville
+
+One fixture, twice: once correctly, once labelled **OTHER BASKETBALL** with the
+teams reversed, the kickoff three hours out, no price, and generic initial
+avatars where the club badges belong. That is the front door (SHIP 7) and
+"appear once, everywhere" (SHIP 3), on the busiest NFL weekend of the season.
+The same pair is served for "Houston" and "Cincinnati".
+
+## The league page is NOT the reach, recorded so nobody re-derives it
+
+`/api/leagues/basketball_other` serves these rows too — 8 of 8 upcoming cards
+were football when read at 13:28Z (5 NFL, 3 CFL). It is tempting and WRONG to
+call that the harm: `/sport/basketball/other` renders *"League 'other' not
+found in Basketball"*, because the page resolves its league from
+`/api/sports/hierarchy/basketball`, which lists exactly `nba`, `wnba`, `ncaab`
+and `wncaab`. An endpoint with no route in front of it is a mechanism, not a
+reader (gotcha: an unguarded serving path does not prove reach). Search is
+where these rows actually reach a person, and the ONLY reason the earlier
+negative read clean is that the phantoms carry CITY names — a search for
+"Jaguars" or "Texans" misses them; "Jacksonville" and "Houston" do not.
 
 ## One unmapped series, and the scatter that names it
 

@@ -1,9 +1,18 @@
 """#5621 — the historical cleanup: retire the games an NFL prop minted as basketball.
 
-THE SHIP: the basketball page stops serving NFL games. Read on production
-Sat 2026-09-12 13:28Z, the day before NFL Week 1 Sunday, the LIVE & UPCOMING
-rail of `/api/leagues/basketball_other` held eight cards — five NFL, three CFL.
-Not one of the eight upcoming "basketball" games was basketball.
+THE SHIP: searching your club stops returning the game twice, the second time
+as basketball. `https://bainluck.com/search?q=Jacksonville`, production Sat
+2026-09-12 13:55Z, the day before NFL Week 1 Sunday — two ADJACENT cards:
+
+    NFL               Tomorrow 10:00 AM   Jaguars 79% / Browns 21%  Proj 24-16
+    OTHER BASKETBALL  Tomorrow  1:00 PM   Cleveland / Jacksonville  No price yet
+
+The second is a row this series minted: teams reversed, kickoff three hours
+out, no price, initial avatars where the badges belong. Same for "Houston" and
+"Cincinnati". (`/api/leagues/basketball_other` carries them too, but
+`/sport/basketball/other` renders "League 'other' not found" — the basketball
+hierarchy lists only nba/wnba/ncaab/wncaab, so that endpoint has no reader
+route and is NOT the reach.)
 
 PREVENTION SHIPS FIRST — PR #5624 maps `kxnflffpts` into
 `KALSHI_TICKER_TO_SPORT_KEY`, so step 1 of `_categorize_kalshi_market` answers
