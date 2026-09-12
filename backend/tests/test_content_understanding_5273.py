@@ -8,12 +8,22 @@ the poller could see it. This clause stores it, beside our own reading of the
 question, at `market_metadata['content_understanding_v1']`.
 
 🔴 THE SPECIMEN THIS SUITE EXISTS FOR: `child_moneyline`. It is winner-SHAPED
-and it is NOT the contest's winner — the observed row is
-`Counter-Strike: Nemiga vs Just Players - Map 1 Winner`. Our title recognizer
-reads it as a winner (it carries the word "Winner"); Gamma calls it
-`child_moneyline`; and the two disagreeing is the signal. Publishing that row's
-price as the match winner is the same defect class as #5432 and #5311, where a
-derivative's price was served as the match result.
+and it is NOT the contest's winner. Our title recognizer reads it as a winner;
+Gamma calls it `child_moneyline`; and the two disagreeing is the signal.
+Publishing that row's price as the match winner is the same defect class as
+#5432 and #5311, where a derivative's price was served as the match result.
+
+THE SPECIMEN MOVED ONCE, AND THAT IS THIS SUITE WORKING (#5698). It was
+`Counter-Strike: Nemiga vs Just Players - Map 1 Winner`, which disagreed only
+because our own title layer wrongly called it a winner on the bare word
+"Winner". #5698 fixed that layer, so the row now CORROBORATES and is refused
+before this clause is consulted — pinned in
+`test_the_old_specimen_is_now_repaired_at_the_title_layer`, kept so the
+regression has somewhere to show up. The live specimen is now
+`CHILD_MONEYLINE_BARE`: a child wearing a plain "A vs B" title, where no
+segment word exists for any title layer to find and the venue's label is the
+only signal there will ever be. That is the residue clause (2) is FOR, and it
+is strictly harder than the one it replaced.
 
 WHY THE VENUE'S LABEL MAY NEVER GATE. It is absent on 21% of markets, and
 `is_full_contest_winner_type` returns False for a missing label. Reading that
@@ -62,6 +72,18 @@ MAP_WINNER = "Counter-Strike: Nemiga vs Just Players - Map 1 Winner"
 CS_HOME = "Nemiga"
 CS_AWAY = "Just Players"
 
+# THE LIVE CONTRADICTION, AFTER #5698 REPAIRED THE OLD ONE. `MAP_WINNER` no
+# longer contradicts anything: #5698 taught the title recognizer that a bare
+# "Winner" must say what it is the winner OF, so our own reading of that string
+# is now `other` and it AGREES with Gamma's `child_moneyline`. Tests about the
+# contradiction machinery therefore ride this shape instead — a map-winner child
+# wearing a BARE MATCHUP title, which this suite already measured as "a real
+# Polymarket shape and the one that resolves" (see
+# `test_a_contradicted_market_that_speaks_records_the_disagreement`). It is a
+# genuine disagreement: the title carries no segment word at all, so nothing in
+# the title layer can ever refuse it, and only the venue's own label knows.
+CHILD_MONEYLINE_BARE = f"{CS_HOME} vs {CS_AWAY}"
+
 
 # =============================================================================
 # Fakes — only the attributes the code under test actually reads
@@ -108,21 +130,44 @@ class TestTheVenueLabelCorroboratesOrContradicts:
         assert u["venue_type"] == "moneyline"
         assert u["agreement"] == CORROBORATED
 
-    def test_child_moneyline_map_winner_is_CONTRADICTED(self):
+    def test_child_moneyline_bare_matchup_is_CONTRADICTED(self):
         """🔴 The specimen. Winner-shaped title, venue says it is a map winner.
 
         A containment test (`"moneyline" in "child_moneyline"`) would call this
         corroborated and hand a map winner to the winner slot.
+
+        THE SPECIMEN MOVED (#5698), and the move is the point: this used to be
+        `MAP_WINNER`, whose title said "Map 1 Winner" out loud. The title layer
+        now refuses that by name, so it is no longer a disagreement — see
+        `test_the_old_specimen_is_now_repaired_at_the_title_layer`. This shape
+        carries no segment word at all, so the venue's label remains the ONLY
+        signal that it is a child, which is exactly the case clause (2) exists
+        to write down.
+        """
+        u = build_content_understanding(
+            name=CHILD_MONEYLINE_BARE, sports_market_type="child_moneyline"
+        )
+        assert u["semantic_type"] == "moneyline", (
+            "our title recognizer reads a bare matchup as a winner — that is "
+            "the whole reason a second, independent signal is needed"
+        )
+        assert u["venue_type"] == "child_moneyline"
+        assert u["agreement"] == CONTRADICTED
+
+    def test_the_old_specimen_is_now_repaired_at_the_title_layer(self):
+        """`Map 1 Winner` stopped being a disagreement because it stopped being
+        wrong (#5698).
+
+        Kept as a guard, not deleted: if the title layer ever re-admits a
+        segment winner as the match winner, this suite is where the regression
+        shows up as a resurrected contradiction, and the number that row would
+        publish is a map's price on the match hero.
         """
         u = build_content_understanding(
             name=MAP_WINNER, sports_market_type="child_moneyline"
         )
-        assert u["semantic_type"] == "moneyline", (
-            "our title recognizer reads the word 'Winner' — that is the whole "
-            "reason a second, independent signal is needed"
-        )
-        assert u["venue_type"] == "child_moneyline"
-        assert u["agreement"] == CONTRADICTED
+        assert u["semantic_type"] != "moneyline"
+        assert u["agreement"] == CORROBORATED
 
     def test_a_derivative_both_signals_reject_is_corroborated(self):
         """Agreement is agreement on the WINNER question, in both directions."""
@@ -253,7 +298,7 @@ class TestTheDisputedEncodingCannotDrift:
 
     def test_a_contradicted_type_is_reported_as_disputed(self):
         u = build_content_understanding(
-            name=MAP_WINNER, sports_market_type="child_moneyline"
+            name=CHILD_MONEYLINE_BARE, sports_market_type="child_moneyline"
         )
         assert record_semantic_type(u) == "moneyline:disputed"
         assert is_disputed(record_semantic_type(u))
@@ -269,7 +314,7 @@ class TestTheDisputedEncodingCannotDrift:
         """A round trip through the real writer, so the suffix cannot be
         changed on one side only."""
         cases = [
-            (build_content_understanding(name=MAP_WINNER,
+            (build_content_understanding(name=CHILD_MONEYLINE_BARE,
                                          sports_market_type="child_moneyline"), True),
             (build_content_understanding(name=f"{HOME} vs. {AWAY}",
                                          sports_market_type="moneyline"), False),
@@ -408,7 +453,7 @@ class TestNothingAboutAdmissionChanges:
         population nobody has measured — and on the 21% it cannot see at all.
         """
         assert admissible_as_blend_speaker(
-            _Market(1, MAP_WINNER), is_primary=True
+            _Market(1, CHILD_MONEYLINE_BARE), is_primary=True
         ) is True, (
             "clause (2) must not gate — it writes the disagreement down so a "
             "quarantine can be built on it later, on a measured population"
@@ -416,8 +461,16 @@ class TestNothingAboutAdmissionChanges:
         # ...and the same is true of the row when it is not the primary, which
         # is the stricter of the two burdens.
         assert admissible_as_blend_speaker(
-            _Market(1, MAP_WINNER), is_primary=False
+            _Market(1, CHILD_MONEYLINE_BARE), is_primary=False
         ) is True
+        # THE BOUNDARY IS STILL A BOUNDARY, and `MAP_WINNER` no longer tests it.
+        # That row IS refused now — by the TITLE layer (#5698), which reads the
+        # segment out of its own name and never consults Gamma's label. Asserting
+        # it here would have this suite claiming credit for a gate it does not
+        # own, and would go green if clause (2) ever started gating.
+        assert admissible_as_blend_speaker(
+            _Market(1, MAP_WINNER), is_primary=True
+        ) is False
 
     def test_a_contradicted_market_that_speaks_records_the_disagreement(self):
         """The other half: admitting it is not the same as trusting it silently.
