@@ -175,6 +175,7 @@ from app.services.statpal_api import (
     StatPalFixture,
     get_statpal_service,
 )
+from app.tasks.reconcile_shared_fixture_ids import reconcile_shared_fixture_ids
 from app.utils.authority_agreement import (
     JoinStrategy,
     Side,
@@ -1548,6 +1549,19 @@ async def _run_stamp_v1_statpal_fixtures(
                 sources_read=run.sources_read,
                 is_anchor_id=is_statpal_contest_id,
             ),
+            # The duplicate reconciliation is keyed on the fixtures this pass
+            # read, so zero fixtures is zero work — stated as the same keys the
+            # normal path returns rather than omitted, because a reader that has
+            # to branch on key presence cannot tell "no contests" from "the
+            # reconciliation did not run at all" (gotcha #53).
+            "shared_fixture_duplicates": {
+                "fixtures_examined": 0,
+                "tags_planned": 0,
+                "tags_written": 0,
+                "duplicate_tag_receipts": [],
+                "duplicate_refusal_receipts": [],
+                "failed_event_ids": [],
+            },
         }
 
     starts = [f.start_time for f in fixtures if f.start_time]
@@ -1832,6 +1846,26 @@ async def _run_stamp_v1_statpal_fixtures(
             _note_unknown_names(run, spec, row.get("home"), row.get("away"))
             run.unmatched_rows.append(_row_receipt(row))
 
+        # #5746/#5779, ship 3. `VERDICT_AMBIGUOUS` above sees "two of our rows
+        # for one contest" on a NAME window and rightly refuses to act on it.
+        # This is the same population read the other way round — by the contest
+        # id both rows already carry — which is the id-anchored correspondence
+        # ruling 048 names, and it is the evidence the name window is not. It
+        # writes one `provenance:duplicate-of:` element and nothing else; the
+        # read side (`proven_duplicates`) has been able to consume that tag
+        # since #2263 and has had no writer for this case.
+        #
+        # Here rather than on its own beat because this pass already holds the
+        # authority's own fixture list for this league, in a session, at one
+        # moment: a separate rail would have to re-read StatPal to learn the
+        # same ids, an hour later, and compare two different afternoons (D46).
+        duplicates = await reconcile_shared_fixture_ids(
+            session,
+            [f.fixture_id for f in fixtures],
+            is_contest_id=is_statpal_contest_id,
+            apply=apply,
+        )
+
     agreement = build_agreement_row(
         sport_key=spec.sport_key,
         fixtures=[
@@ -1908,6 +1942,10 @@ async def _run_stamp_v1_statpal_fixtures(
         # other list here so one reader rule covers the whole dict.
         "committed_write_receipts": run.committed_writes,
         "planned_write_receipts": run.planned_writes,
+        # #5746/#5779. Counts AND the two receipt lists, because the refusals are
+        # the actionable half: a `KICKOFF_DIFFERS` row is a fabricated id to
+        # repair, not a duplicate to hide.
+        "shared_fixture_duplicates": duplicates,
     }
 
 
