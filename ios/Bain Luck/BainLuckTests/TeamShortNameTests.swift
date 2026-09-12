@@ -185,6 +185,129 @@ final class TeamShortNameTests: XCTestCase {
         XCTAssertEqual(TeamShortName.abbreviation("Harvard Crimson (W)"), "HAR")
     }
 
+    // MARK: - #4627, the hand-picked label
+
+    /// The photographed defect. `bainluck://events/15296760`, Champions League,
+    /// shot 2026-09-09: the hero read "Germain Win".
+    ///
+    /// Alex ruled the list, not a rule (2026-09-12, option B): "PSG Win", as an
+    /// explicit entry. All three spellings are live on production — measured over
+    /// 60 days of `events` on 2026-09-12 — and they produced three DIFFERENT
+    /// labels before this entry, which is the half of the defect the issue did
+    /// not name.
+    func testTheHandPickedLabelNamesTheClubOnEverySpellingProductionCarries() {
+        for name in [
+            "Paris Saint Germain",    // 9 events — was "Germain"
+            "Paris Saint-Germain",    // 9 events — was "Saint-Germain"
+            "Paris Saint-Germain FC", // 14 events — was the whole name
+        ] {
+            XCTAssertEqual(TeamShortName.short(name), "PSG", "for \(name)")
+        }
+    }
+
+    /// The control Alex named in the ruling itself: this may not become a rule
+    /// that turns the Lakers into "LAL Win". The badge's three-distinctive-token
+    /// fork counts all three of these as three distinctive tokens, so a label
+    /// built on it would rewrite every one of them.
+    func testTheListDoesNotBecomeARuleAboutThreeWordNames() {
+        for (name, expected) in [
+            ("Los Angeles Lakers", "Lakers"),
+            ("Boston Red Sox", "Sox"),
+            ("Texas Tech Red Raiders", "Raiders"),
+            ("New England Revolution", "Revolution"),
+            ("Baltimore Orioles", "Orioles"),
+        ] {
+            XCTAssertEqual(TeamShortName.short(name), expected, "for \(name)")
+        }
+    }
+
+    /// A key is only worth anything if a real row reaches it. One written in the
+    /// spelling a human types — "Paris Saint-Germain", capitals and a dash — can
+    /// never be looked up, and every test that went through `short` alone would
+    /// still pass because the rule would answer instead.
+    func testEveryHandPickedKeyIsReachable() {
+        XCTAssertFalse(TeamShortName.handPickedLabels.isEmpty)
+        for key in TeamShortName.handPickedLabels.keys {
+            XCTAssertEqual(TeamShortName.handPickedKey(key), key,
+                           "\(key) is not in normalised form, so no name can reach it")
+        }
+    }
+
+    /// Two clubs claiming one label is #3430's photographed defect ("Tigers 10 -
+    /// Tigers 51") reintroduced by hand, and the pair rule cannot repair it —
+    /// growth works on the raw names and would hand back the fragments this list
+    /// exists to remove.
+    func testNoTwoClubsClaimTheSameHandPickedLabel() {
+        let values = Array(TeamShortName.handPickedLabels.values)
+        XCTAssertEqual(Set(values).count, values.count,
+                       "two entries share a label: \(values.sorted())")
+    }
+
+    /// The key folds the spellings of ONE club together and no further. The
+    /// two-token floor is the whole of that second half: without it "Manchester
+    /// United" keys as `manchester`, which is also what "Manchester City" would
+    /// key as, and a future entry for either would silently relabel the other.
+    func testTheKeyFoldsSpellingsWithoutMergingClubs() {
+        // One club, four spellings, one key.
+        for spelling in ["Paris Saint Germain", "Paris Saint-Germain",
+                         "Paris Saint-Germain FC", "Paris Saint Germain W"] {
+            XCTAssertEqual(TeamShortName.handPickedKey(spelling), "paris saint germain",
+                           "for \(spelling)")
+        }
+        // Different clubs, different keys — the designator is the only thing
+        // telling these apart, so the floor is what keeps them apart.
+        XCTAssertEqual(TeamShortName.handPickedKey("Manchester United"), "manchester united")
+        XCTAssertEqual(TeamShortName.handPickedKey("Manchester United FC"), "manchester united")
+        XCTAssertEqual(TeamShortName.handPickedKey("Manchester City"), "manchester city")
+        XCTAssertNotEqual(TeamShortName.handPickedKey("Manchester United"),
+                          TeamShortName.handPickedKey("Manchester City"))
+        // A squad marker is not noise either: the women's side keeps its own key.
+        XCTAssertNotEqual(TeamShortName.handPickedKey("Arsenal W"),
+                          TeamShortName.handPickedKey("Arsenal"))
+        XCTAssertNotEqual(TeamShortName.handPickedKey("Arsenal WFC"),
+                          TeamShortName.handPickedKey("Arsenal"))
+        // Punctuation is not part of a club's identity.
+        XCTAssertEqual(TeamShortName.handPickedKey("1. FC Köln"),
+                       TeamShortName.handPickedKey("1 FC Köln"))
+    }
+
+    /// The badge has printed `PSG` correctly since #4539 and must not move: the
+    /// initials fork reaches the same three letters from the raw name, so the
+    /// label changing underneath it is a no-op there. Measured over all 13,651
+    /// distinct production names on 2026-09-12: **3 labels change and 0 badges**.
+    func testTheHandPickedLabelLeavesTheBadgeWhereItWas() {
+        for name in ["Paris Saint Germain", "Paris Saint-Germain", "Paris Saint-Germain FC"] {
+            XCTAssertEqual(TeamShortName.abbreviation(name), "PSG", "for \(name)")
+        }
+        // The controls, one from each branch of `abbreviation`.
+        XCTAssertEqual(TeamShortName.abbreviation("Charlotte FC"), "CHA")
+        XCTAssertEqual(TeamShortName.abbreviation("Los Angeles Lakers"), "LAL")
+        XCTAssertEqual(TeamShortName.abbreviation("Siniakova / Townsend"), "SIN")
+    }
+
+    /// The photographed matchup, end to end. The other side is returned
+    /// byte-identical: measured over the 23,402 distinct (away, home) pairs on
+    /// events in the last 45 days, 26 matchups move and every one is a PSG
+    /// fixture whose opponent's label is unchanged.
+    func testTheHandPickedLabelSurvivesTheMatchupRule() {
+        let shot = TeamShortName.shortPair(away: "ŠK Slovan Bratislava",
+                                           home: "Paris Saint Germain")
+        XCTAssertEqual(shot.home, "PSG")
+        XCTAssertEqual(shot.away, "Bratislava")
+        let french = TeamShortName.shortPair(away: "Paris Saint-Germain FC",
+                                             home: "Olympique de Marseille")
+        XCTAssertEqual(french.away, "PSG")
+        XCTAssertEqual(french.home, "Marseille")
+    }
+
+    /// #4626's invariant is read FIRST and this list does not reopen it: a pair is
+    /// two names, and a name that happens to contain a listed club is still a pair.
+    func testADoublesPairIsStillReturnedWhole() {
+        XCTAssertEqual(TeamShortName.short("Siniakova / Townsend"), "Siniakova / Townsend")
+        XCTAssertEqual(TeamShortName.short("Paris Saint Germain / Marseille"),
+                       "Paris Saint Germain / Marseille")
+    }
+
     // MARK: - degenerate input
 
     func testNothingToShortenIsReturnedUnchanged() {

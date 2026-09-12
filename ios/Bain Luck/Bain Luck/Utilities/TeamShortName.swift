@@ -89,6 +89,48 @@ enum TeamShortName {
         "jr", "sr",
     ]
 
+    /// The clubs whose label is chosen by hand instead of derived from the name.
+    ///
+    /// #4627 — the photographed defect is the NAME slot, not the badge. On the
+    /// Champions League page Alex shot on 2026-09-09 the nav title read
+    /// `SLB 1 - Germain 6`, the hero read **"Germain Win"** and both chart axes
+    /// read `GERMAIN`: four labels on one screen and not one of them says Paris
+    /// Saint-Germain. The rule above is right for `<place> <nickname>` and wrong
+    /// for a compound whose distinctive part is three words, where the last word
+    /// is a fragment rather than a name anybody uses.
+    ///
+    /// ALEX RULED A LIST, NOT A RULE (2026-09-12, option B of
+    /// `alex-inbox/native-127-what-should-the-app-call-paris-saint-germain.md`):
+    /// *"'PSG Win': the crest letters for Paris Saint-Germain, as an explicit
+    /// short-name entry (not a rule change that turns the Lakers into 'LAL
+    /// Win')"*. The automatic candidate — reuse the badge's own three-distinctive-
+    /// token fork, which already prints `PSG` correctly — counts "Los Angeles
+    /// Lakers" as three distinctive tokens too, so the hero would read "LAL Win".
+    /// Three letters are a stamp on a crest and gibberish in a sentence, and no
+    /// test on the string alone separates "Germain is a fragment" from "Lakers is
+    /// the name". So this is a hand-kept list and it is meant to stay small;
+    /// abbreviation data for every club (#3353) is the real answer and is option
+    /// C, deliberately deferred.
+    ///
+    /// THE KEY IS A NORMALISED NAME, NOT A SPELLING, because the same club is
+    /// stored several ways and every one of them reaches a reader. Measured over
+    /// 60 days of `events` on 2026-09-12, this club alone has **three** live
+    /// spellings — "Paris Saint-Germain FC" (14 events), "Paris Saint-Germain"
+    /// (9) and "Paris Saint Germain" (9) — and they render as three different
+    /// labels today: the full name, "Saint-Germain" and "Germain". One entry
+    /// covers all three, which is the half of this defect nobody had named: the
+    /// badge has been spelling-independent since #4539 and the label was not, so
+    /// the same club read two ways on two pages while both crests said `PSG`.
+    /// INTERNAL, not private, so `TeamShortNameTests` can assert the two things
+    /// that are invisible from outside and would otherwise rot silently: that no
+    /// two clubs claim the same label, and that every key is already in the
+    /// normalised form `handPickedKey` produces. A key written as "Paris
+    /// Saint-Germain" would be unreachable — a dead entry that every test using
+    /// only `short` would pass over.
+    static let handPickedLabels: [String: String] = [
+        "paris saint germain": "PSG",
+    ]
+
     /// Three-glyph strings that may never appear on a crest, whatever produces
     /// them.
     ///
@@ -158,6 +200,10 @@ enum TeamShortName {
         // the competitor's whole name, and the doubles final reads as a singles
         // match between two people who were not playing singles.
         if isDoublesPair(name) { return name }
+        // #4627 — a hand-picked label is final. It is read BEFORE the rule and
+        // not as a repair afterwards, so what a reader sees does not depend on
+        // which of the club's spellings the row happens to carry.
+        if let picked = handPickedLabels[handPickedKey(name)] { return picked }
         let parts = name.split(separator: " ").filter { !$0.isEmpty }
         guard parts.count > 1 else { return name }
         guard let last = parts.last else { return name }
@@ -291,6 +337,47 @@ enum TeamShortName {
         set.insert(charactersIn: Unicode.Scalar(0x2010)!...Unicode.Scalar(0x2015)!)
         return set
     }()
+
+    /// The lookup key for `handPickedLabels`: one club, one key, however the row
+    /// spells it.
+    ///
+    /// #4627. Three normalisations, each one paying for a spelling that is live
+    /// on production today:
+    ///
+    /// 1. **Split on dashes as well as whitespace**, borrowing `tokenSeparators`
+    ///    from the badge, so "Paris Saint-Germain" and "Paris Saint Germain" are
+    ///    one club and not two.
+    /// 2. **Drop everything that is not a letter or a digit**, so "1. FC …" and
+    ///    "Crimson (W)" key on their words rather than on their punctuation.
+    /// 3. **Drop TRAILING designators, but never below two tokens.** "Paris
+    ///    Saint-Germain FC" must reach the same entry as "Paris Saint-Germain",
+    ///    and the floor is what stops that from merging clubs that a designator
+    ///    is the only thing distinguishing: "Manchester United" → `manchester
+    ///    united` (not `manchester`, which "Manchester City" would also become),
+    ///    "Arsenal W" → `arsenal w` (the women's side keeps its own key),
+    ///    "Sunderland AFC" → `sunderland afc`. Stripping is a loop rather than
+    ///    one step because both suffixes of "Manchester United FC" are in the
+    ///    set, and it stops at the floor.
+    ///
+    /// Every name in the population runs through this, so it may not be
+    /// expensive to be wrong in: a key that matches nothing costs one dictionary
+    /// miss and the rule below decides, exactly as it did before.
+    ///
+    /// INTERNAL for the same reason the table above is. The two-token floor is
+    /// unobservable through `short` while the list holds one club — remove it and
+    /// every label in the population is byte-identical — so a test that could only
+    /// call `short` would be asserting nothing about the clause that stops
+    /// "Manchester United" and "Manchester City" becoming one key.
+    static func handPickedKey(_ name: String) -> String {
+        var tokens = name
+            .components(separatedBy: tokenSeparators)
+            .map { String($0.filter { $0.isLetter || $0.isNumber }) }
+            .filter { !$0.isEmpty }
+        while tokens.count >= 3, isDesignator(tokens[tokens.count - 1]) {
+            tokens.removeLast()
+        }
+        return tokens.joined(separator: " ").lowercased()
+    }
 
     /// Is this token incapable of identifying the club on its own?
     ///
