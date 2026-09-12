@@ -938,9 +938,97 @@ def test_a_small_plan_names_which_of_its_two_causes_happened():
         explain_small_plan,
     )
 
-    assert explain_small_plan(SANITY_FLOOR, 0) == ""
-    assert "ALREADY APPLIED" in explain_small_plan(10, SANITY_FLOOR)
-    assert "FILTER BROKE" in explain_small_plan(10, 10)
+    assert explain_small_plan(SANITY_FLOOR, 0).message == ""
+    assert "ALREADY APPLIED" in explain_small_plan(10, SANITY_FLOOR).message
+    assert "FILTER BROKE" in explain_small_plan(10, 10).message
+
+
+def test_the_discriminator_decides_the_write_and_not_only_the_wording():
+    """The half of the floor rule that was decorative for two sessions.
+
+    The test above asserted only on the MESSAGE, so it passed against a function
+    whose two branches refused `--apply` identically — the discriminator changed
+    the wording of the refusal and nothing else. That is the one-sided shape: it
+    proves the diagnosis is computed, never that the diagnosis is USED. It cost
+    the #5246 re-drain a session, on the exact branch the design was written to
+    let through.
+
+    So assert the two causes DIVERGE, and assert it on the field the caller
+    branches on:
+
+      * `FILTER BROKE`     -> blocks (the cause the floor exists for)
+      * `ALREADY APPLIED`  -> does NOT block (a drained backlog is a done job)
+      * plan above floor   -> does NOT block, and says nothing
+
+    A guard that refuses everything passes every one-sided test, so this one
+    pins both sides.
+    """
+    from scripts.repair_5246_settled_outcomes_still_carrying_a_price import (
+        SANITY_FLOOR,
+        explain_small_plan,
+    )
+
+    broke = explain_small_plan(10, 10)
+    drained = explain_small_plan(10, SANITY_FLOOR)
+    big = explain_small_plan(SANITY_FLOOR, 0)
+
+    assert broke.blocks_apply is True
+    assert drained.blocks_apply is False
+    assert big.blocks_apply is False
+
+    # The two small-plan causes must not agree — that agreement WAS the bug.
+    assert broke.blocks_apply != drained.blocks_apply
+
+    # A drained backlog still explains itself; silence would hide a real state.
+    assert drained.message
+    assert big.message == ""
+
+
+def test_the_boundary_of_the_drained_backlog_branch_is_the_floor_itself():
+    """Pin the threshold from BOTH sides, or a tuned constant is unguarded.
+
+    `manifest + plan >= SANITY_FLOOR` is the whole discriminator, so a mutation
+    to `>` or to `SANITY_FLOOR + 1` must be caught. One row either side of the
+    boundary flips the verdict, and this asserts both.
+    """
+    from scripts.repair_5246_settled_outcomes_still_carrying_a_price import (
+        SANITY_FLOOR,
+        explain_small_plan,
+    )
+
+    plan = 10
+    exactly_at = explain_small_plan(plan, SANITY_FLOOR - plan)
+    one_short = explain_small_plan(plan, SANITY_FLOOR - plan - 1)
+
+    assert exactly_at.blocks_apply is False
+    assert "ALREADY APPLIED" in exactly_at.message
+    assert one_short.blocks_apply is True
+    assert "FILTER BROKE" in one_short.message
+
+
+def test_apply_is_refused_on_a_broken_filter_and_reached_on_a_drained_backlog():
+    """The caller's branch, read from the source it actually runs.
+
+    The two tests above bind the verdict; this binds the ONE line that consumes
+    it. `if small:` (the old form) is truthy for both causes; `if
+    small.blocks_apply:` is the fix. A source-scan proves the text is present,
+    not that it runs — so this is deliberately narrow: it asserts the refusal is
+    keyed on the field, and that the bare-truthiness form is gone.
+    """
+    import inspect
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    src = inspect.getsource(mod.run)
+
+    assert "if small.blocks_apply:" in src, (
+        "the apply refusal must branch on the discriminator's verdict"
+    )
+    assert "if small:" not in src, (
+        "bare truthiness refuses BOTH causes — that was the defect"
+    )
+    # The explanation is still printed for every small plan, blocking or not.
+    assert "if small.message:" in src
 
 
 def test_the_repair_writes_only_the_price_columns():

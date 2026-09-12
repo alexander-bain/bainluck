@@ -122,6 +122,7 @@ import asyncio
 import collections
 import os
 import sys
+from typing import NamedTuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -281,28 +282,64 @@ def backup_is_exact(recon) -> bool:
     return bool(recon) and all(n == 0 for n in recon.values())
 
 
-def explain_small_plan(plan_count: int, manifest_rows: int) -> str:
+class SmallPlanVerdict(NamedTuple):
+    """A small plan's diagnosis AND what it means for `--apply`.
+
+    These are two facts, and collapsing them into one string is what made the
+    discriminator below decorative. See `explain_small_plan`.
+    """
+
+    #: True only for the cause that must stop a write.
+    blocks_apply: bool
+    #: Operator-facing explanation; "" when the plan is not small at all.
+    message: str
+
+
+def explain_small_plan(plan_count: int, manifest_rows: int) -> SmallPlanVerdict:
     """Why is the plan below the floor — a broken filter, or a done job?
 
     A sanity floor that names two causes needs a DISCRIMINATOR, not an override
     flag: `--allow-small` would let the broken-filter case through wearing the
     completed-run case's clothes. The manifest is the discriminator, because
     only a successful forward write puts a row in it.
+
+    THE DISCRIMINATOR HAS TO REACH THE DECISION, AND FOR TWO SESSIONS IT DID
+    NOT. This returned a bare `str`, and the caller's test was `if small:` — so
+    both causes refused `--apply` identically and the discriminator only ever
+    changed the wording of the refusal. It cost the #5246 re-drain a session:
+    the drain leaked 189 rows, the guard (#5411) shipped, and the re-run that
+    was supposed to clear the residue could not write, on the one branch the
+    docstring was written to let through. A handoff then recorded "the floor
+    will NOT block you" from reading THIS docstring, which describes the design
+    correctly and the behaviour not at all — the definition read right and the
+    enforcement was the bug.
+
+    So the verdict is now structured, and the two facts are separate: every
+    small plan still gets an explanation printed, and only `FILTER BROKE`
+    stops the write. Fail-closed stays the default — an unrecognised shape
+    would have to be added here deliberately, as a blocking one.
     """
     if plan_count >= SANITY_FLOOR:
-        return ""
+        return SmallPlanVerdict(blocks_apply=False, message="")
     if manifest_rows + plan_count >= SANITY_FLOOR:
-        return (
-            f"ALREADY APPLIED — {manifest_rows} rows are in {MANIFEST_TABLE} and "
-            f"{plan_count} remain clearable; together they clear the floor of "
-            f"{SANITY_FLOOR}. This is a drained backlog, not a broken filter."
+        return SmallPlanVerdict(
+            blocks_apply=False,
+            message=(
+                f"ALREADY APPLIED — {manifest_rows} rows are in {MANIFEST_TABLE} "
+                f"and {plan_count} remain clearable; together they clear the "
+                f"floor of {SANITY_FLOOR}. This is a drained backlog, not a "
+                f"broken filter, so --apply proceeds."
+            ),
         )
-    return (
-        f"FILTER BROKE — only {plan_count} rows are clearable and "
-        f"{manifest_rows} were ever applied, so {plan_count + manifest_rows} of "
-        f"an expected {SANITY_FLOOR}+ are accounted for. Either the cohort SQL "
-        f"stopped matching or markets left `open` faster than expected. Do NOT "
-        f"lower the floor; find the rows."
+    return SmallPlanVerdict(
+        blocks_apply=True,
+        message=(
+            f"FILTER BROKE — only {plan_count} rows are clearable and "
+            f"{manifest_rows} were ever applied, so {plan_count + manifest_rows} "
+            f"of an expected {SANITY_FLOOR}+ are accounted for. Either the "
+            f"cohort SQL stopped matching or markets left `open` faster than "
+            f"expected. Do NOT lower the floor; find the rows."
+        ),
     )
 
 
@@ -380,9 +417,9 @@ async def run(args) -> None:
 
         manifest_rows = await manifest_count(s)
         small = explain_small_plan(len(clear), manifest_rows)
-        if small:
+        if small.message:
             print(f"\n⚠️  plan is below the sanity floor of {SANITY_FLOOR}.")
-            print(f"   {small}")
+            print(f"   {small.message}")
 
         if not args.backup and not args.apply:
             print("\nplan only — pass --backup to stage an undo, then --apply.")
@@ -407,7 +444,7 @@ async def run(args) -> None:
             print("\nbackup staged — re-run with --apply to write.")
             return
 
-        if small:
+        if small.blocks_apply:
             print("REFUSING --apply: plan is below the sanity floor (see above).")
             return
 
