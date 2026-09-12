@@ -304,7 +304,23 @@ _REPAIRS = {
     # that has just passed it. Page one now MINTS a `band_as_of` and hands it
     # back inside `next_cursor`; a banded resume without it is REFUSED rather
     # than silently re-anchored. Paste the whole next_cursor.
-    # Accepts ?limit=&sport=&band=&band_as_of=&after_id=&after_date=&plan_hash=.
+    # CAL-P1124 (#3617 item C): the population is now selected AT THE LEG — a
+    # Kalshi market holding at least one api_settlement loss — instead of by the
+    # three market-shape conjuncts that reached 225 markets and left 1,965
+    # behind. ?min_harm= drains the worst-priced cohort first (arm B; it is a
+    # threshold and not a re-sort, because sorting on a per-market aggregate
+    # re-introduces the #2528 timeout). CAL-P1125 (CERT-2705): ?min_harm= is a
+    # COHORT selector exactly as ?band= is, so it scopes the two completion keys
+    # the same way — `exhausted_scope` names every selector in force
+    # ("min_harm", or "band+min_harm" for both) and `population_exhausted` can
+    # only be true when neither is. A drained 90%+ slice is not a drained
+    # population, and the attended run must not halt as though it were.
+    # Mutually-exclusive markets holding
+    # exactly one winner are EXCLUDED by design — their remaining legs lost by
+    # exclusion, so retracting them would delete correct rows from the curve.
+    # Unlike every earlier version of this rail, the retraction arm now MOVES the
+    # published curve, downward, and that is the ship.
+    # Accepts ?limit=&sport=&band=&band_as_of=&min_harm=&after_id=&after_date=&plan_hash=.
     # ATTENDED ONLY: never wire this to a beat.
     "kalshi-fabricated-loss": (
         "app.tasks.repair_kalshi_fabricated_loss",
@@ -883,6 +899,21 @@ async def run_repair(
                     "REFUSED, not re-anchored. Refused with no ?band= and on "
                     "apply=true, both of which select nothing.",
     ),
+    min_harm: float = Query(
+        None,
+        description="Drain the WORST-PRICED cohort of a keyset walk first, as a "
+                    "probability on the curve's own price for a leg "
+                    "(COALESCE(calibration_probability, opening_probability)); "
+                    "min_harm=0.9 selects markets holding a graded loss we still "
+                    "price at 90%+. Like ?band= it is a cohort selector, not a "
+                    "verdict: it excludes no market from the population and "
+                    "changes no judgment, and it is REFUSED rather than clamped "
+                    "outside (0,1) because both clamps lie — a percentage like "
+                    "90 would select nothing and read as a drained cohort. "
+                    "Refused on apply=true, which selects nothing. NOTE that "
+                    "`exhausted` under a threshold means the COHORT is drained "
+                    "and says nothing about rows beneath it.",
+    ),
     population: str = Query(
         None,
         description="Which reviewed population a plan-bound repair acts on "
@@ -931,6 +962,7 @@ async def run_repair(
             ("after_id", after_id), ("after_date", after_date),
             ("since", since), ("until", until),
             ("band", band), ("band_as_of", band_as_of),
+            ("min_harm", min_harm),
             ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
             ("population", population),

@@ -50,10 +50,14 @@ class _StatementTimeout(Exception):
 
 
 class _Row:
-    def __init__(self, source, mutex, retention_band, markets, outcomes) -> None:
+    def __init__(self, source, mutex, retention_band, slice_, markets, outcomes) -> None:
         self.source = source
         self.mutex = mutex
         self.retention_band = retention_band
+        # CAL-P1124 added `slice` to the census grouping. Named `slice` on the
+        # row because that is the column the SQL emits and `_census_fold` reads;
+        # the trailing underscore is only the Python argument.
+        self.slice = slice_
         self.markets = markets
         self.outcomes = outcomes
 
@@ -93,28 +97,45 @@ class _Clock:
 #: Spread across a wide, SPARSE id space on purpose — production runs
 #: market_id 1 .. 60,261,730 over 3.97M legs, and the density is skewed ~6x
 #: toward the recent end, which is why no single chunk width is safe.
-#: (market_id, source, mutually_exclusive, retention_band, legs)
+_TARGET = rail.CENSUS_SLICE_TARGET
+_IMPLIED = rail.CENSUS_SLICE_IMPLIED
+
+#: (market_id, source, mutually_exclusive, retention_band, legs, slice)
+#:
+#: CAL-P1124: the walk now folds a second SLICE — the mutually-exclusive crowned
+#: markets the repair deliberately will not touch. One is included here on
+#: purpose. The fold has to carry it (it is part of the census the operator
+#: reads) while every headline total has to leave it out (it is not work the
+#: drain will ever do), and a population with only ``target`` rows cannot tell
+#: those two requirements apart.
 _POPULATION = [
-    (10, "kalshi", True, "reachable", 3),
-    (150_000, "kalshi", True, "reachable", 2),
-    (399_999, "kalshi", False, "at_risk", 5),
-    (400_000, "kalshi", True, "provably_purged", 4),
-    (400_001, "polymarket", True, "reachable", 2),
-    (900_000, "kalshi", True, "future_date", 6),
-    (1_100_000, "kalshi", True, "reachable", 2),
-    (1_599_999, "polymarket", False, "unknown_date", 3),
-    (1_600_000, "kalshi", True, "at_risk", 7),
-    (1_999_999, "kalshi", False, "reachable", 2),
+    (10, "kalshi", True, "reachable", 3, _TARGET),
+    (150_000, "kalshi", True, "reachable", 2, _TARGET),
+    (399_999, "kalshi", False, "at_risk", 5, _TARGET),
+    (400_000, "kalshi", True, "provably_purged", 4, _TARGET),
+    (400_001, "polymarket", True, "reachable", 2, _TARGET),
+    (900_000, "kalshi", True, "future_date", 6, _TARGET),
+    (1_100_000, "kalshi", True, "reachable", 2, _TARGET),
+    (1_599_999, "polymarket", False, "unknown_date", 3, _TARGET),
+    (1_600_000, "kalshi", True, "at_risk", 7, _TARGET),
+    (1_750_000, "kalshi", True, "reachable", 3, _IMPLIED),
+    (1_999_999, "kalshi", False, "reachable", 2, _TARGET),
 ]
 
 _MAX_MARKET_ID = 2_000_000
 
 
+def _target_rows(population=_POPULATION):
+    return [p for p in population if p[5] == _TARGET]
+
+
 def _expected_cells(population=_POPULATION):
     """The answer, computed in the test rather than by the code under test."""
     cells: dict[tuple, dict[str, int]] = {}
-    for _mid, source, mutex, band, legs in population:
-        cell = cells.setdefault((source, mutex, band), {"markets": 0, "outcomes": 0})
+    for _mid, source, mutex, band, legs, slice_ in population:
+        cell = cells.setdefault(
+            (source, mutex, band, slice_), {"markets": 0, "outcomes": 0}
+        )
         cell["markets"] += 1
         cell["outcomes"] += legs
     return cells
@@ -122,7 +143,12 @@ def _expected_cells(population=_POPULATION):
 
 def _cells_from(breakdown):
     return {
-        (b["source"], b["mutually_exclusive"], b["retention_band"]): {
+        (
+            b["source"],
+            b["mutually_exclusive"],
+            b["retention_band"],
+            b["slice"],
+        ): {
             "markets": b["markets"],
             "outcomes": b["outcomes"],
         }
@@ -189,16 +215,16 @@ class _CensusSession:
 
         self.served.append((lo, hi))
         cells: dict[tuple, dict[str, int]] = {}
-        for mid, source, mutex, band, legs in self.population:
+        for mid, source, mutex, band, legs, slice_ in self.population:
             if lo < mid <= hi:
                 cell = cells.setdefault(
-                    (source, mutex, band), {"markets": 0, "outcomes": 0}
+                    (source, mutex, band, slice_), {"markets": 0, "outcomes": 0}
                 )
                 cell["markets"] += 1
                 cell["outcomes"] += legs
         return _Result(
-            _Row(s, m, b, c["markets"], c["outcomes"])
-            for (s, m, b), c in cells.items()
+            _Row(s, m, b, sl, c["markets"], c["outcomes"])
+            for (s, m, b, sl), c in cells.items()
         )
 
     async def rollback(self):
@@ -442,15 +468,47 @@ class TestTheChunkedTotalsAreThePopulation:
 
         result = await rail.census(session)
 
-        assert result["totals"]["markets"] == len(_POPULATION)
-        assert result["totals"]["outcomes"] == sum(p[4] for p in _POPULATION)
+        # CAL-P1124: the headline totals are the TARGET slice. The boundary
+        # property being tested is unchanged — what changed is that the
+        # denominator is now the work, not the work plus what is excluded from it.
+        assert result["totals"]["markets"] == len(_target_rows())
+        assert result["totals"]["outcomes"] == sum(p[4] for p in _target_rows())
+
+    @pytest.mark.asyncio
+    async def test_the_implied_loss_slice_is_reported_and_never_counted_as_work(
+        self, store
+    ):
+        """CAL-P1124: the excluded slice is PUBLISHED, not filtered away.
+
+        The three retired conjuncts hid 96% of this defect precisely because a
+        predicate that drops rows leaves no trace of what it dropped. So the one
+        slice this repair still declines to touch is carried through the whole
+        walk as its own cell and reported under its own name — and it must not
+        leak into any number an operator would plan venue calls against.
+        """
+        result = await rail.census(_CensusSession())
+
+        implied = [p for p in _POPULATION if p[5] == _IMPLIED]
+        assert implied, "this arm is vacuous without an excluded row"
+
+        assert result["implied_loss_excluded"]["markets"] == len(implied)
+        assert result["implied_loss_excluded"]["outcomes"] == sum(p[4] for p in implied)
+        # Present in the breakdown the operator reads...
+        assert any(b["slice"] == _IMPLIED for b in result["breakdown"])
+        # ...and absent from every count that means "work remaining".
+        assert result["totals"]["markets"] == len(_target_rows())
+        assert result["kalshi"]["markets"] == sum(
+            1 for p in _target_rows() if p[1] == "kalshi"
+        )
 
     @pytest.mark.asyncio
     async def test_the_kalshi_split_survives_the_walk(self, store):
         result = await rail.census(_CensusSession())
 
         kalshi = result["kalshi"]
-        assert kalshi["markets"] == sum(1 for p in _POPULATION if p[1] == "kalshi")
+        assert kalshi["markets"] == sum(
+            1 for p in _target_rows() if p[1] == "kalshi"
+        )
         # reachable + at_risk + future_date, never provably_purged (ruling 054:
         # the excluded number is PUBLISHED, not folded into the denominator).
         assert kalshi["repairable_bands"] == 7  # 4 reachable + 2 at_risk + 1 future

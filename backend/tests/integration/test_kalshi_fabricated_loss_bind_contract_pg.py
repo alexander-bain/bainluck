@@ -46,8 +46,11 @@ import pytest
 
 from app.tasks import repair_kalshi_fabricated_loss as rail
 from app.utils.kalshi_fabricated_loss import (
+    HARM_COHORT_HAVING_SQL,
+    IMPLIED_LOSS_EXCLUSION_SQL,
     POPULATION_HAVING_SQL,
     REPAIRABLE_SOURCE,
+    market_loss_is_implied,
 )
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
@@ -155,6 +158,9 @@ async def _work(session, **params):
         # CAL-P1018: absent means "measure the ages from NOW()", which is the
         # pre-repair behaviour every test above was written against.
         "band_as_of": None,
+        # CAL-P1124: absent means "the whole population", so every test written
+        # before the cohort filter existed keeps selecting what it selected.
+        "min_harm": None,
     }
     args.update(params)
     return (await session.execute(text(rail._WORK_SQL), args)).all()
@@ -412,13 +418,25 @@ _WORK_SQL_BEFORE_THE_LATERAL = f"""
            EXTRACT(EPOCH FROM (NOW() - fm.resolution_date)) / 86400.0 AS age_days
     FROM (
       SELECT fo.market_id,
-             COUNT(*) AS n_out
+             COUNT(*) AS n_out,
+             COUNT(*) FILTER (WHERE fo.is_winner) AS n_win,
+             {HARM_COHORT_HAVING_SQL} AS in_cohort
       FROM futures_outcomes fo
       GROUP BY fo.market_id
       HAVING {POPULATION_HAVING_SQL}
     ) mx
     JOIN futures_markets fm ON fm.id = mx.market_id
     WHERE fm.source = 'kalshi'
+      -- CAL-P1124: the safety exclusion and the cohort filter are INTERPOLATED
+      -- FROM THE SHIPPED CONSTANTS like the population predicate above, for the
+      -- reason this file's header gives — a re-typed copy is what rots. They sit
+      -- on the outer side here because `mutually_exclusive` lives on
+      -- futures_markets, which the grouped form does not join until now. That is
+      -- a difference in SHAPE, which is the thing this gate is comparing.
+      AND {IMPLIED_LOSS_EXCLUSION_SQL.format(
+              mutex="fm.mutually_exclusive", win_count="mx.n_win"
+          )}
+      AND mx.in_cohort
       AND fm.resolution_date IS NOT NULL
       AND fm.resolution_date >= NOW() - INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'
       AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
@@ -508,7 +526,17 @@ async def _seed_market(
 async def _reference_work(session, **params):
     from sqlalchemy import text
 
-    args = {"lim": 10, "sport": None, "after_date": None, "after_id": None}
+    args = {
+        "lim": 10,
+        "sport": None,
+        "after_date": None,
+        "after_id": None,
+        # CAL-P1124: the reference interpolates HARM_COHORT_HAVING_SQL from the
+        # shipped constant, so it carries that constant's bind too. NULL keeps
+        # the reference the WHOLE population, which is what the equivalence
+        # tests compare against.
+        "min_harm": None,
+    }
     args.update(params)
     return (
         await session.execute(text(_WORK_SQL_BEFORE_THE_LATERAL), args)
@@ -536,8 +564,13 @@ async def _mixed_population(session):
     oldest = await _seed_market(session, ext="KXWORK-OLD", days_ago=60)
     middle = await _seed_market(session, ext="KXWORK-MID", days_ago=40)
 
-    # Near-misses, one per exclusion the population predicate makes.
-    await _seed_market(session, ext="KXWORK-ONELEG", days_ago=30, legs=("YES",))
+    # CAL-P1124 arm A promoted this one from near-miss to MEMBER: a one-leg
+    # market is published by the curve (no_winner_markets needs n_outcomes >= 2)
+    # and was unreachable for as long as COUNT(*) >= 2 stood. At 30 days it sorts
+    # between `middle` and `recent`, so it also keeps this fixture's id-order and
+    # date-order disagreeing, which is the anti-vacuity property above.
+    oneleg = await _seed_market(session, ext="KXWORK-ONELEG", days_ago=30, legs=("YES",))
+    # Near-misses, one per exclusion that SURVIVES CAL-P1124.
     await _seed_market(
         session, ext="KXWORK-WON", days_ago=30, winner_leg="YES"
     )
@@ -556,7 +589,7 @@ async def _mixed_population(session):
         session, ext="KXWORK-PURGED", days_ago=PROVABLY_PURGED_AGE_DAYS + 5
     )
 
-    return [oldest, middle, recent, future]
+    return [oldest, middle, oneleg, recent, future]
 
 
 async def test_the_lateral_rewrite_selects_exactly_what_the_grouped_form_did(
@@ -665,26 +698,50 @@ async def test_the_work_selection_is_ordered_oldest_first_not_by_id(pg_session):
 
 
 async def test_the_near_misses_stay_out_of_the_lateral_form(pg_session):
-    """The three exclusions, each proven by a market that differs in one field.
+    """The exclusions that SURVIVE CAL-P1124, each differing in one field.
 
-    The LATERAL restates the population predicate against a single market rather
-    than a GROUP BY, and the case that changes shape is the one-leg market: it
-    used to fail to form a group, and now it forms an aggregate row that HAVING
-    must reject. If ``COUNT(*) >= 2`` were dropped, 4,372 correctly-settled
-    one-leg binaries would enter the drain's work list and be sent to the venue.
+    Two of the five near-misses this test was written around are no longer near
+    misses. ``COUNT(*) >= 2`` and the source-purity conjunct were retired by
+    #3617 item C arm A because they were excluding 96% of the defect, so the
+    one-leg market is now WORK — asserted as such below rather than deleted,
+    because an exclusion that silently becomes an inclusion is the change this
+    file exists to make visible.
+
+    What still excludes, and why each is a different kind of reason:
+
+    * ``KXWORK-WON`` — still out, but no longer because "a market with a winner
+      is not all-loser". It is mutually exclusive with exactly one winner, so its
+      losers lost BY EXCLUSION and the per-leg judgment would wrongly retract
+      them (``IMPLIED_LOSS_EXCLUSION_SQL``). Same row, different rule.
+    * ``KXWORK-MANUAL`` — every leg carries another rail's badge, so there is no
+      ``api_settlement`` loss to repair. Note this is now a LEG-level miss: the
+      same market with one api_settlement loss beside the manual one WOULD be
+      selected, which is the mixed-source slice arm A opened.
+    * ``KXWORK-POLY`` / ``KXWORK-PURGED`` — the rail's source and floor,
+      untouched by this change.
     """
     await _mixed_population(pg_session)
 
     selected = {r.event_ticker for r in await _work(pg_session, lim=50)}
 
     for excluded, why in (
-        ("KXWORK-ONELEG", "a one-leg binary that settled NO is an ordinary loser"),
-        ("KXWORK-WON", "a market with a winner is not all-loser"),
-        ("KXWORK-MANUAL", "only api_settlement losses are fabricated ones"),
+        (
+            "KXWORK-WON",
+            "mutually exclusive with one winner: its losses are true by "
+            "exclusion and must not be offered to the per-leg judgment",
+        ),
+        ("KXWORK-MANUAL", "no api_settlement loss on any leg"),
         ("KXWORK-POLY", "this rail is Kalshi's"),
         ("KXWORK-PURGED", "past the purge bound the venue cannot answer"),
     ):
         assert excluded not in selected, why
+
+    assert "KXWORK-ONELEG" in selected, (
+        "CAL-P1124 arm A: a one-leg market is reachable work. The curve's "
+        "no_winner_markets exclusion needs n_outcomes >= 2, so these legs are "
+        "PUBLISHED, and COUNT(*) >= 2 kept the rail from ever reaching them. "
+        "If this fails the widening has been reverted."
+    )
 
 
 async def _band_population(session):
@@ -1001,3 +1058,265 @@ async def test_the_per_market_leg_read_executes(pg_session):
     assert len(legs) == 2
     assert {leg.resolution_source for leg in legs} == {REPAIRABLE_SOURCE}
     assert not any(leg.is_winner for leg in legs)
+
+
+# =============================================================================
+# CAL-P1124 (#3617 item C) — the widening, proved on rows rather than on text
+#
+# Arm A retires three market-SHAPE conjuncts that were excluding 96% of the
+# defect. A source-scan assertion that the conjuncts are gone would pass just as
+# happily if the LATERAL had stopped selecting anything at all, so the proof here
+# is the population itself: seed one market of each previously-excluded shape and
+# require the drain to reach it. Measured against production 2026-09-12, the
+# shapes below are 1,965 markets / 18,427 legs the rail could not see.
+# =============================================================================
+
+
+async def _seed_shaped_market(
+    session,
+    *,
+    ext,
+    mutex,
+    legs,
+    sport="baseball",
+    age_days=None,
+):
+    """Seed one Kalshi market with arbitrary leg shapes.
+
+    ``legs`` is a list of ``(is_winner, resolution_source, price)``. ``price``
+    writes ``calibration_probability``, the first arm of the curve's own
+    COALESCE, so the harm threshold is exercised on the column it actually reads.
+    """
+    from sqlalchemy import text
+
+    if age_days is None:
+        age_days = PROVABLY_PURGED_AGE_DAYS - 5
+    resolved = datetime.now(timezone.utc) - timedelta(days=age_days)
+    market_id = (
+        await session.execute(
+            text("""
+                INSERT INTO futures_markets
+                    (name, source, category, mutually_exclusive, status,
+                     resolution_date, external_id, llm_sport_category)
+                VALUES
+                    (:name, 'kalshi', 'championship', :mutex, 'resolved',
+                     :resolved, :ext, :sport)
+                RETURNING id
+                """),
+            {
+                "name": f"CAL-P1124 {ext}",
+                "mutex": mutex,
+                "resolved": resolved,
+                "ext": ext,
+                "sport": sport,
+            },
+        )
+    ).scalar()
+
+    for i, (is_winner, source, price) in enumerate(legs):
+        await session.execute(
+            text("""
+                INSERT INTO futures_outcomes
+                    (market_id, name, external_id, is_winner, resolution_source,
+                     calibration_probability)
+                VALUES (:mid, :name, :ext, :win, :source, :price)
+                """),
+            {
+                "mid": market_id,
+                "name": f"Leg {i}",
+                "ext": f"{ext}-{i}",
+                "win": is_winner,
+                "source": source,
+                "price": price,
+            },
+        )
+
+    await session.commit()
+    return market_id
+
+
+_LOSS = (False, REPAIRABLE_SOURCE, 0.5)
+_WIN = (True, REPAIRABLE_SOURCE, 0.5)
+
+
+async def test_the_single_leg_market_is_now_reached(pg_session):
+    """``COUNT(*) >= 2`` excluded 628 markets that the CURVE PUBLISHES.
+
+    ``no_winner_markets`` — the curve exclusion that made the old population
+    provably harmless — needs ``n_outcomes >= 2``, so a one-leg market never
+    satisfied it and its fabricated loss was on the accuracy page the whole time.
+    """
+    market_id = await _seed_shaped_market(
+        pg_session, ext="KXP1124-SINGLE", mutex=False, legs=[_LOSS]
+    )
+
+    assert market_id in [r.market_id for r in await _work(pg_session)]
+
+
+async def test_the_crowned_non_exclusive_market_is_now_reached(pg_session):
+    """The largest slice: 1,315 markets / 17,217 legs, and all of them published.
+
+    A non-exclusive market is a bundle of independent binaries, so one leg
+    winning says nothing about another leg losing — each still needs the venue's
+    own word, which is exactly what ``classify_leg`` asks for.
+    """
+    market_id = await _seed_shaped_market(
+        pg_session, ext="KXP1124-CROWNED", mutex=False, legs=[_WIN, _LOSS, _LOSS]
+    )
+
+    assert market_id in [r.market_id for r in await _work(pg_session)]
+
+
+async def test_the_mixed_source_market_is_now_reached(pg_session):
+    """Source purity was never protective — ``classify_leg`` already refuses.
+
+    A leg carrying another rail's badge returns ``foreign_authority`` and is
+    never written. Excluding the whole MARKET for holding one only hid this
+    rail's own legs sitting beside it.
+    """
+    market_id = await _seed_shaped_market(
+        pg_session,
+        ext="KXP1124-MIXED",
+        mutex=False,
+        legs=[_LOSS, (False, "clob_never_graded", 0.5)],
+    )
+
+    assert market_id in [r.market_id for r in await _work(pg_session)]
+
+
+async def test_the_mutually_exclusive_crowned_market_stays_out(pg_session):
+    """🔴 THE SAFETY EXCLUSION, and the one arm that must fail closed.
+
+    A mutex market with exactly one winner has losers that lost BY EXCLUSION.
+    ``classify_leg`` sees one leg at a time and would return
+    ``retract_fabricated`` for every one of them — deleting CORRECT losses from
+    the published curve and leaving the surviving bucket reading higher than it
+    earned. 1,533 markets / 2,105 legs measured 2026-09-12.
+
+    This is the arm that catches a future 'simplification' of the predicate: a
+    widening that drops this exclusion passes every other test in this file.
+    """
+    excluded = await _seed_shaped_market(
+        pg_session, ext="KXP1124-MEXCROWN", mutex=True, legs=[_WIN, _LOSS, _LOSS]
+    )
+    # The control, one field over: same shape, NOT mutually exclusive.
+    reached = await _seed_shaped_market(
+        pg_session, ext="KXP1124-MEXCTRL", mutex=False, legs=[_WIN, _LOSS, _LOSS]
+    )
+
+    selected = [r.market_id for r in await _work(pg_session)]
+
+    assert excluded not in selected, (
+        "a mutually-exclusive market with one winner must NOT be offered to the "
+        "per-leg judgment — its remaining losses are true by exclusion"
+    )
+    assert reached in selected, (
+        "the exclusion must key on mutual exclusivity, not on holding a winner"
+    )
+
+
+async def test_the_exclusion_keys_on_exactly_one_winner(pg_session):
+    """Two winners on a mutex market is OUR contradiction, not an entailment.
+
+    Nothing is implied by a field that recorded two champions, so those legs go
+    back to the venue like any other. Keying the exclusion on ``win_count >= 1``
+    instead of ``= 1`` would swallow them silently.
+    """
+    two_winners = await _seed_shaped_market(
+        pg_session, ext="KXP1124-MEXTWO", mutex=True, legs=[_WIN, _WIN, _LOSS]
+    )
+
+    assert two_winners in [r.market_id for r in await _work(pg_session)]
+
+
+async def test_the_sql_exclusion_and_its_python_twin_agree(pg_session):
+    """The template and :func:`market_loss_is_implied` are one rule, twice.
+
+    The SQL is what ships and the Python is what the unit suite can reach, so
+    they are checked against each other on the same table of cases rather than
+    trusted to stay in step.
+    """
+    cases = [
+        ("MEXONE", True, [_WIN, _LOSS]),
+        ("MEXTWO", True, [_WIN, _WIN, _LOSS]),
+        ("MEXNONE", True, [_LOSS, _LOSS]),
+        ("NONEXONE", False, [_WIN, _LOSS]),
+        ("NONEXNONE", False, [_LOSS, _LOSS]),
+    ]
+    seeded = {}
+    for name, mutex, legs in cases:
+        seeded[name] = await _seed_shaped_market(
+            pg_session, ext=f"KXP1124-AGREE-{name}", mutex=mutex, legs=legs
+        )
+
+    selected = {r.market_id for r in await _work(pg_session)}
+
+    for name, mutex, legs in cases:
+        win_count = sum(1 for is_winner, _, _ in legs if is_winner)
+        python_says_implied = market_loss_is_implied(mutex, win_count)
+        sql_says_implied = seeded[name] not in selected
+        assert python_says_implied == sql_says_implied, (
+            f"{name}: market_loss_is_implied said {python_says_implied} but the "
+            f"shipping SQL said {sql_says_implied}"
+        )
+
+
+async def test_the_harm_threshold_selects_the_worst_and_refuses_nothing_else(
+    pg_session,
+):
+    """Arm B. A cohort selector on the curve's own price, not a re-sort.
+
+    The re-sort the brief asked for cannot ship: ``ORDER BY`` on a per-market
+    aggregate forces every candidate's probe before the first row, which is the
+    unbounded scan #2528 removed (measured 2026-09-12: statement_timeout at
+    LIMIT 40 against production). A threshold rides the probe that already runs.
+    """
+    high = await _seed_shaped_market(
+        pg_session,
+        ext="KXP1124-HIGH",
+        mutex=False,
+        legs=[(False, REPAIRABLE_SOURCE, 0.95)],
+    )
+    low = await _seed_shaped_market(
+        pg_session,
+        ext="KXP1124-LOW",
+        mutex=False,
+        legs=[(False, REPAIRABLE_SOURCE, 0.02)],
+    )
+
+    worst = [r.market_id for r in await _work(pg_session, min_harm=0.9)]
+    assert high in worst
+    assert low not in worst, "the threshold must actually narrow the cohort"
+
+    # NULL-transparent: no threshold is the whole population, never an empty
+    # page (gotcha #53 — an empty result reads as 'nothing left to repair').
+    everything = [r.market_id for r in await _work(pg_session)]
+    assert high in everything and low in everything
+
+
+async def test_the_threshold_reads_the_curves_coalesce_not_one_column(pg_session):
+    """Gotcha #144 / ruling 103: the curve price is a COALESCE, not an exclusion.
+
+    A leg priced only by ``opening_probability`` is on the curve at that price.
+    A threshold that read ``calibration_probability`` alone would score it NULL,
+    drop it from every cohort, and leave the worst rows undrainable while
+    reporting the cohort exhausted.
+    """
+    from sqlalchemy import text
+
+    market_id = await _seed_shaped_market(
+        pg_session,
+        ext="KXP1124-OPENONLY",
+        mutex=False,
+        legs=[(False, REPAIRABLE_SOURCE, None)],
+    )
+    await pg_session.execute(
+        text(
+            "UPDATE futures_outcomes SET opening_probability = 0.97 "
+            "WHERE market_id = :mid"
+        ),
+        {"mid": market_id},
+    )
+    await pg_session.commit()
+
+    assert market_id in [r.market_id for r in await _work(pg_session, min_harm=0.9)]
