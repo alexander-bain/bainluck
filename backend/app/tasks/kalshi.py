@@ -4,6 +4,7 @@ Kalshi prediction market polling task.
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -624,8 +625,236 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     return "other"
 
 
+#: Series ticker → the venue's sport tag (or ``None`` when the venue answered
+#: and it has none), for #5637. Plain strings only, never ORM rows — a
+#: module-global that outlives a session must hold data, not objects (gotcha
+#: #6). A venue-confirmed absence IS cached: "this series carries no tag" is a
+#: fact, and not caching it would re-fetch the same untagged series on every
+#: event in the beat.
+#:
+#: 🔴 CERT-2737: a lookup that FAILED is never cached. It used to be, and one
+#: sick request therefore froze a whole series into name-guessed classification
+#: until the dyno restarted — hours of fresh wrong-sport rows bought by a single
+#: timeout. Only :class:`SeriesTagResult` with ``resolved=True`` reaches here.
+_SERIES_TAG_CACHE: dict[str, Optional[str]] = {}
+
+#: Series are a bounded catalogue (~3,800 across all Kalshi sports), and only
+#: the UNMAPPED ones ever reach the cache, so this ceiling is a safety net
+#: against a pathological ticker parse rather than an expected bound.
+_SERIES_TAG_CACHE_MAX = 5000
+
+#: Series ticker → the monotonic clock reading after which a FAILED lookup may
+#: be retried. Separate from `_SERIES_TAG_CACHE` on purpose: that one holds the
+#: venue's answers and is permanent, this one holds our own inability to ask and
+#: expires by itself.
+#:
+#: 🔴 The first cut of #5637 had only the permanent cache and wrote failures into
+#: it, which is what CERT-2737 blocked: one timeout froze a series into
+#: name-guessed classification until the dyno restarted. Deleting the caching
+#: outright is the obvious fix and it is the wrong one — a sick series would then
+#: cost one 3-attempt call PER EVENT in the beat, and
+#: `test_a_sick_series_is_only_looked_up_once_per_beat` was written against that
+#: real hazard. The honest answer is that a failure is cacheable but PERISHABLE.
+_SERIES_TAG_FAILURE_UNTIL: dict[str, float] = {}
+
+#: How long a failed lookup suppresses a retry. Sized to cover one beat and no
+#: more: `poll_kalshi_markets` runs every 2h and bounds itself at 540s after the
+#: fetch, so 600s means a sick series costs exactly one call within any single
+#: beat, and every later beat asks again. The recovery is automatic and needs no
+#: restart, which is the whole of CERT-2737's second finding.
+_SERIES_TAG_FAILURE_TTL_SECONDS = 600.0
+
+
+def _series_tag_clock() -> float:
+    """The monotonic reading the failure TTL is measured against.
+
+    A function rather than a bare `time.monotonic()` call so a test can travel
+    past the TTL without sleeping through it and without monkeypatching
+    `time.monotonic` itself — patching the stdlib clock globally reaches pytest,
+    asyncio and every other thing in the process, which is a wide blast radius
+    for a 600-second assertion. `time` is imported inside it because this module
+    imports `time` function-locally throughout (gotcha #7: a module-level name
+    plus a function-local `import time` is exactly the shadowing shape that
+    raises `UnboundLocalError`, and several functions here do the latter).
+    """
+    import time
+
+    return time.monotonic()
+
+
+@dataclass(frozen=True)
+class SeriesTagResult:
+    """What the venue said about a series — and whether it said anything at all.
+
+    #5637 / CERT-2737. ``tag`` alone cannot carry this: ``None`` has to mean
+    both "the venue lists this series and it has no sport tag" and "we could
+    not reach the venue", and those two demand opposite handling. Collapsing
+    them is what let one transient failure be cached as a verdict.
+
+    * ``resolved=True,  tag='Football'`` — the venue's word. Cacheable, and
+      strong enough for the repair rail to write on.
+    * ``resolved=True,  tag=None`` — asked and answered: no tag, or no such
+      series (404). Cacheable; the caller falls through to the name rules.
+    * ``resolved=False, tag=None`` — INDETERMINATE. Not cached, never written,
+      counted by the repair rail and retried on the next pass.
+
+    ``not_asked`` marks the third shape apart from the second for a reader of
+    the counters: a mapped ticker short-circuits before any call, and a pass
+    whose rows were all mapped should not read as a pass the venue answered.
+    """
+
+    tag: Optional[str] = None
+    resolved: bool = True
+    not_asked: bool = False
+    #: True only when this result cost an actual `/series/{ticker}` request.
+    #: False for a mapped ticker, a cache hit and a TTL-suppressed retry — all
+    #: three answer without touching the venue. The repair rail meters its
+    #: budget on this rather than on distinct series, because a field called
+    #: "series we asked the venue about" that counts cache hits is a field that
+    #: says something the code does not do.
+    called: bool = False
+
+
+async def _resolve_series_tag_result(
+    service, event_ticker: Optional[str]
+) -> SeriesTagResult:
+    """The venue's sport tag for this event's series, when we need it (#5637).
+
+    Makes NO network call — and reports ``not_asked`` — when the ticker already
+    has a mapping in `sport_keys.py`, because step 1 of the cascade wins there
+    and the tag could only agree with it or be less specific. The fetch happens
+    only for the tickers that would otherwise be name-guessed, which is the
+    population this ship is about.
+    """
+    if not event_ticker:
+        return SeriesTagResult(not_asked=True)
+
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    if get_sport_key_from_ticker(event_ticker):
+        return SeriesTagResult(not_asked=True)
+
+    from app.services.kalshi_api import event_series_ticker
+
+    series = event_series_ticker(event_ticker)
+    if not series:
+        return SeriesTagResult(not_asked=True)
+    if series in _SERIES_TAG_CACHE:
+        return SeriesTagResult(tag=_SERIES_TAG_CACHE[series])
+
+    # A recent failure suppresses the retry, but only until it expires — and it
+    # still reports UNRESOLVED, never "no tag", so nothing downstream can write
+    # on it. Suppressing the call and lying about the answer are two different
+    # things, and the first cut of this ship did both.
+    retry_after = _SERIES_TAG_FAILURE_UNTIL.get(series)
+    if retry_after is not None:
+        if _series_tag_clock() < retry_after:
+            return SeriesTagResult(resolved=False)
+        del _SERIES_TAG_FAILURE_UNTIL[series]
+
+    # The tag is an ENRICHMENT and ingestion is critical, so a failure here
+    # degrades to the pre-#5637 cascade instead of taking the beat down. Found
+    # the hard way: the first CI run of this ship reported
+    # "Kalshi poll processed 0/1 events — ingestion may be broken" because one
+    # raise inside this resolve aborted the whole poll at the top level.
+    #
+    # Narrow on purpose — it wraps the single service call and nothing else —
+    # and LOUD, not silent (gotcha #53): the warning names the series.
+    #
+    # 🔴 What CERT-2737 corrected is the LINE AFTER the log. This branch used to
+    # fall through to the same cache write as a success, so the degrade was not
+    # "for this beat" at all — it was permanent. A failure now returns
+    # unresolved and caches nothing, so the next beat asks again.
+    try:
+        data = await service.get_series_metadata(series)
+    except Exception as exc:
+        logger.warning(
+            "#5637: could not resolve the Kalshi series tag for %s (%s) — "
+            "falling back to name-based classification for this series and "
+            "retrying in %.0fs; the miss is NOT recorded as an answer",
+            series,
+            exc,
+            _SERIES_TAG_FAILURE_TTL_SECONDS,
+        )
+        _SERIES_TAG_FAILURE_UNTIL[series] = (
+            _series_tag_clock() + _SERIES_TAG_FAILURE_TTL_SECONDS
+        )
+        return SeriesTagResult(resolved=False, called=True)
+
+    tags = (data or {}).get("tags") or []
+    tag = tags[0] if tags else None
+    if len(_SERIES_TAG_CACHE) < _SERIES_TAG_CACHE_MAX:
+        _SERIES_TAG_CACHE[series] = tag
+    # An answer retires the failure record. Leaving it would be harmless today
+    # (the permanent cache is consulted first) and a trap the moment anything
+    # reads the failure map on its own.
+    _SERIES_TAG_FAILURE_UNTIL.pop(series, None)
+    return SeriesTagResult(tag=tag, called=True)
+
+
+async def _resolve_series_tag(service, event_ticker: Optional[str]) -> Optional[str]:
+    """:func:`_resolve_series_tag_result`'s tag, for the poller.
+
+    The poller's handling of "no tag" and "could not ask" is identical — fall
+    through to the cascade below step 1b — so it takes the simple shape. The
+    distinction still matters to it, but it matters in the CACHE, which
+    :func:`_resolve_series_tag_result` owns. The repair rail
+    (`repair_kalshi_series_tag_category`) needs the distinction at the call
+    site, because it decides whether to WRITE, and takes the result form.
+    """
+    return (await _resolve_series_tag_result(service, event_ticker)).tag
+
+
+def series_tag_to_category(tag: Optional[str]) -> Optional[str]:
+    """Our sport category for a Kalshi SERIES tag, or ``None``.
+
+    #5637. Kalshi tags each series with its sport — measured 2026-09-12 against
+    ``/series?category=Sports``: 3,600 of 3,766 sports series (95.6%) carry
+    exactly one tag, from a small closed vocabulary (Soccer 1406, Football 557,
+    Basketball 535, Baseball 214, Tennis 141, Golf 119 …).
+
+    THIS TRANSLATION IS DERIVED, NOT WRITTEN, and that is the whole point. #5628
+    proposed closing the unmapped-ticker hole with a hand-written token
+    allowlist; censusing the live population (#5637) found four series it would
+    have missed, and the follow-up idea — derive the token from a sibling key
+    already in the ticker maps — is worse than the gap: of the five live
+    families two have no sibling at all, and ``kxargpremdivgame`` (Argentina
+    Primera División, soccer) would derive from ``kxarglnbgame`` (Argentina LNB,
+    **basketball**) and return a confident wrong answer.
+
+    So this reads the venue's own word through the maps we already maintain:
+    the tag lowercased is either one of our categories or one of our sport
+    prefixes. No per-series literals, nothing to edit when Kalshi adds a series.
+    Measured coverage of that rule over the same census: 3,394 of 3,660 tag
+    instances resolve, including ``Motorsport`` → ``motorsports`` and
+    ``Aussie Rules`` → ``aussierules`` via the prefix map.
+
+    Returns ``None`` — deliberately, so the caller falls through to today's
+    behaviour — for every tag that is not a sport we model: ``Olympics``,
+    ``Television``, ``Movies``, ``Music``, ``Trump``, ``Fed``, and genuine
+    sports with no prefix of ours (``Table Tennis``, ``Cycling``, ``Rowing``).
+    A fall-through is the safe failure here; a guess is not.
+    """
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+
+    if not tag:
+        return None
+    normalized = tag.strip().lower().replace(" ", "")
+    if not normalized:
+        return None
+    # `soccer`, `tennis`, `football` … are categories AND prefixes; `hockey` and
+    # `motorsports` are categories whose prefix differs (`icehockey`,
+    # `motorsport`), so the category check has to come first.
+    if normalized in set(SPORT_PREFIX_TO_LLM_CATEGORY.values()):
+        return normalized
+    return SPORT_PREFIX_TO_LLM_CATEGORY.get(normalized)
+
+
 def _categorize_kalshi_market(
-    market_name: str, kalshi_category: Optional[str], event_ticker: Optional[str] = None
+    market_name: str,
+    kalshi_category: Optional[str],
+    event_ticker: Optional[str] = None,
+    series_tag: Optional[str] = None,
 ) -> str:
     """
     Determine llm_sport_category for a Kalshi market using pattern matching.
@@ -633,6 +862,8 @@ def _categorize_kalshi_market(
     Classification cascade (first match wins):
     0. IPO check on market name (overrides ticker — "Kraken IPO" is economics, not hockey)
     1. Ticker prefix → sport key (authoritative — KXNHL is always hockey)
+    1b. The SERIES TAG the venue itself carries (#5637) — structural evidence,
+        so it outranks every guess made from the market's NAME below it
     2. Rules engine on market name
     3. League detection → sport inference
     4. Kalshi's own category as fallback
@@ -664,6 +895,23 @@ def _categorize_kalshi_market(
             prefix = sport_key.split("_")[0] if sport_key else None
             if prefix and prefix in SPORT_PREFIX_TO_LLM_CATEGORY:
                 return SPORT_PREFIX_TO_LLM_CATEGORY[prefix]
+
+    # 1b. The series tag (#5637). An UNMAPPED ticker used to fall straight
+    # through to the name rules below, which read club names that happen to be
+    # sport words: AFC Wimbledon → tennis, Racing Club/Avellaneda/Louisville →
+    # motorsports, "Fantasy Points" → basketball (#5621). Each wrong guess then
+    # minted a wrong-sport duplicate a reader hits by searching their own club.
+    #
+    # The venue already knows: KXEFLL1GAME is tagged `Soccer`, KXCFLTOTAL
+    # `Football`. This sits ABOVE the name rules because a tag the venue
+    # publishes is structural evidence and a name rule is a guess — notice 40's
+    # "the venue's own structure first", applied to sport rather than membership.
+    #
+    # It sits BELOW the ticker map because that map is more specific: it names
+    # the LEAGUE (`soccer_england_efl_cup`), while the tag names only the sport.
+    category_from_tag = series_tag_to_category(series_tag)
+    if category_from_tag:
+        return category_from_tag
 
     # 2. Pattern matching on market name
     result = categorize_by_rules(market_name)
@@ -1143,8 +1391,18 @@ async def _poll_kalshi_markets():
 
                     # Determine category and sport classification
                     category = _kalshi_category_to_internal(event.category)
+                    # #5637: one cached read per UNMAPPED series, so a club
+                    # whose name is a sport word ("AFC Wimbledon", "Racing
+                    # Club") is sorted by the venue's tag instead of by the
+                    # name rules. Mapped tickers make no call at all.
+                    series_tag = await _resolve_series_tag(
+                        service, event.event_ticker
+                    )
                     sport_category = _categorize_kalshi_market(
-                        event.title, event.category, event.event_ticker
+                        event.title,
+                        event.category,
+                        event.event_ticker,
+                        series_tag=series_tag,
                     )
 
                     # Skip crypto markets entirely — they consume DB space

@@ -41,6 +41,17 @@ except ImportError:  # pragma: no cover - exercised only where orjson is absent
     _HAS_ORJSON = False
 
 
+class KalshiSeriesLookupError(Exception):
+    """The venue could not be asked about a series — NOT a fact about the series.
+
+    #5637 / CERT-2737. :meth:`KalshiAPIService.get_series_metadata` returns
+    ``None`` for a 404 and only a 404. Every other way the read can end — a 429
+    that outlived its backoff, a 5xx, a timeout, a dropped connection — raises
+    this instead, so no caller can write "this series has no sport tag" down on
+    the strength of a request that never got an answer (gotchas #36 and #53).
+    """
+
+
 class KalshiMarket(BaseModel):
     """Represents a single Kalshi market (binary outcome)."""
     ticker: str
@@ -871,6 +882,59 @@ class KalshiAPIService(BaseAPIClient):
                     continue
                 return None
         return None
+
+    async def get_series_metadata(self, series_ticker: str) -> Optional[dict]:
+        """Get a single series by ticker. Returns None only for 404.
+
+        #5637. The sport tag lives on the SERIES — nothing in the `/events`
+        payload carries it — so an unmapped ticker needs this one read to be
+        classified by the venue's own word instead of by guessing at the
+        market's name. Fetched per SERIES and cached by the caller, never per
+        market: the whole sports catalogue is ~3,800 series and only the
+        handful with no ticker mapping ever reach here.
+
+        Shaped after `get_event` above, and for the same reason (gotcha #36):
+        `None` means "this series does not exist", 404 and nothing else.
+
+        🔴 CERT-2737 found this docstring describing a contract the body did not
+        keep. Every other exit — a 429 that outlived its retries, a 5xx, a
+        timeout, a transport error — also `return None`, so "the venue has no
+        such series" and "we could not ask the venue" arrived at the caller as
+        the same value. The caller then cached that answer for the life of the
+        process, which is gotcha #53 exactly: an empty result is a response
+        SHAPE, not an absence.
+
+        So a persistent failure now RAISES :class:`KalshiSeriesLookupError`. The
+        caller decides — the poller degrades to the old cascade for this beat
+        and declines to cache, the repair rail counts the row `indeterminate`
+        and writes nothing. Neither can any longer mistake a sick request for a
+        verdict about the series.
+        """
+        import asyncio as _asyncio
+        last_error: Optional[str] = None
+        for _attempt in range(3):
+            try:
+                response = await self.client.get(
+                    f"{self.BASE_URL}/series/{series_ticker}",
+                )
+                if response.status_code == 404:
+                    return None
+                if response.status_code == 429:
+                    last_error = "429 from the venue"
+                    await _asyncio.sleep(3 * (_attempt + 1))
+                    continue
+                response.raise_for_status()
+                return response.json().get("series")
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                if _attempt < 2:
+                    await _asyncio.sleep(1)
+                    continue
+                break
+        raise KalshiSeriesLookupError(
+            f"could not read Kalshi series {series_ticker} after 3 attempts "
+            f"({last_error or 'no response'})"
+        )
 
     async def get_series(
         self,

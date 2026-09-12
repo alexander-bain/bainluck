@@ -32,7 +32,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | futures-person-seed-purge | golf-round-closing-line
              | kalshi-empty-book-openings
              | kalshi-empty-book-openings-restore
-             | pm-ungraded-loss | pm-ungraded-loss-restore }
+             | pm-ungraded-loss | pm-ungraded-loss-restore
+             | kalshi-series-tag-category }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -543,6 +544,53 @@ _REPAIRS = {
     # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
     "kalshi-nhl-prop-category": (
         "app.tasks.repair_kalshi_nhl_prop_category",
+        "repair",
+    ),
+    # #5637 (authority/157, the repair CERT-2737 required): the rows #5637's
+    # classifier fix cannot reach. Step 1b sorts an UNMAPPED Kalshi series by the
+    # sport tag the venue publishes, which stops the defect being MINTED — but
+    # #1888's `coalesce(nullif(existing,'other'), new)` means a row already
+    # stamped with a WRONG sport keeps it forever. Measured on production
+    # 2026-09-12 over the five families #5637 censused: 28 open rows wrong and
+    # frozen (17 basketball incl. 14 NFL "Fantasy Points" and 3 CFL totals,
+    # 9 tennis on AFC Wimbledon fixtures, 1 baseball, 1 motorsports), every one
+    # a game played 9/12-9/17. 74 more are `other` and converge by themselves.
+    #
+    # 🔴 PREDICATE, NOT A FROZEN ID LIST — unlike its two enumerated siblings,
+    # and for a reason about this defect: the classifier fix is merged but lives
+    # in a HEAVY_TASKS path, so it mints nothing until `bainluck-heavy` carries
+    # it (notice 48). The population is still GROWING, and an id list measured
+    # today would be silently incomplete by apply time. The gate the id lists
+    # exist to protect is kept: the SHIPPED cascade must independently agree,
+    # per row, at run time.
+    #
+    # No sport vocabulary of its own — no target category, no ticker literal, no
+    # name regex. It cannot know what it will write until the venue answers, and
+    # a guard pins that absence. Nothing is written on a venue failure
+    # (`indeterminate`, #36 — and the cursor does not advance past it), on a tag
+    # we do not model (`no_usable_tag`), when the cascade disagrees
+    # (`cascade_disagrees`), on a mapped ticker (`mapped_ticker`, no call made),
+    # or when the row is already right (`already_correct`).
+    #
+    # TWO ARMS. (a) `futures_markets.llm_sport_category`, compare-and-set on the
+    # value read. (b) the ghost EVENT the wrong category already minted — CERT-2744
+    # blocked the first cut for scoping this out, correctly: search serves EVENTS,
+    # so correcting the badge alone leaves `q=Redblacks` returning the game twice.
+    # An event is retired (`status='voided'`, never deleted) only on proof it is a
+    # duplicate: minted by us (no external_id, kalshi commence source, both team ids
+    # NULL, kalshi-only markets), in the WRONG sport, and a real counterpart exists
+    # with BOTH team ids bound, same teams either orientation, within 36h, IN the
+    # venue's sport. Measured 2026-09-12: 13 candidates, only 4 pass — the other 9
+    # are the only row we hold for that match and retiring one would remove the game,
+    # not a duplicate. Its markets are then unhooked (`event_id` NULL) so they can
+    # reach the real fixture (gotcha #15). Ceiling refuses, never trims.
+    # No price, outcome, `is_winner` or resolution field is read or written.
+    # D51: every planned row carries its `before` and the payload carries a
+    # runnable `restore_sql`, on the dry run as well as the apply.
+    # Accepts ?after_date=&after_id= for keyset resumption; page until
+    # `scan_exhausted`. ATTENDED ONLY: never wire this to a beat.
+    "kalshi-series-tag-category": (
+        "app.tasks.repair_kalshi_series_tag_category",
         "repair",
     ),
     # #1796/#1902 (queue 369): the attended event-CREATE consumer. Alex approved
