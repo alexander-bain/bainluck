@@ -5382,9 +5382,13 @@ async def search_events(
                         )
                     )
                     total_count = _rescue_count
+                    # The reader's own string is NOT logged here. CodeQL flags
+                    # it as log injection (`q` is user-provided and reaches the
+                    # log verbatim, newlines and all), and the club names say
+                    # what the query was anyway — they are the registry's words,
+                    # not the reader's.
                     logger.info(
-                        "search resolved-team rescue for %r -> %s (%d events)",
-                        q,
+                        "search resolved-team rescue -> %s (%d events)",
                         ", ".join(name for name, _ in _resolved_teams),
                         _rescue_count,
                     )
@@ -5395,7 +5399,8 @@ async def search_events(
             # InFailedSqlTransaction (#1494 (1e)), which does not care what
             # aborted it. Failing closed means `_resolved_teams` stays empty and
             # the fuzzy path below behaves exactly as it does today.
-            logger.warning("search resolved-team rescue failed for %r: %s", q, exc)
+            # `q` withheld for the reason the info line above gives.
+            logger.warning("search resolved-team rescue failed: %s", exc)
             await _recover_search_session(db, _deadline)
             _resolved_teams = []
 
