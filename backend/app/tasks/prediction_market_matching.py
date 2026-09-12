@@ -942,6 +942,126 @@ async def _check_polymarket_fixture_reason(session, event_id: int, market):
     return None
 
 
+async def _venue_confirmed_covered_fixture(session, matchup, market, linked_event):
+    """The real covered-league fixture this market's OWN venue instant names. #5544.
+
+    CERT-2708's finding, and the half the minting refusal cannot reach. Declining
+    to mint stops the next phantom; it does nothing for the ones already
+    standing, and their markets do not migrate on their own. Measured on
+    production 2026-09-12: four real MLB fixtures serve 0 markets while a
+    listing-time phantom holds each one's Polymarket price, and Phase 1.5 walks
+    past them every 15 minutes. The scorer is why — reproduced on the exact sha,
+    it picks phantom 15310210 at **30.5729** over the real 15310673, so
+    ``better_match`` comes back as the row we are already on, the pass sees no
+    improvement, and the ``is_auto_created`` arm falls through to ``pass``.
+
+    WHAT MAKES THIS DECIDABLE WITHOUT A NEW SIGNAL. The phantom is already
+    known-bad by a guard this module has shipped since #4965: its
+    ``commence_time`` is Gamma's ``startDate``, the LISTING stamp, so
+    :func:`_check_polymarket_fixture_reason` puts it ~147h from the venue's own
+    fixture instant and would refuse the link outright. That guard was only ever
+    asked about a PROPOSED link, never about the one already in place. The caller
+    asks it about the current link first; this function is only reached once the
+    venue has said "the row you are on is not this game".
+
+    So the move is not name-and-time absorption and ruling 048 is untouched
+    (gotcha #32): no event absorbs another, nothing is deleted, and the phantom
+    row stays exactly where it is for #1946's id-keyed drain to reach. Only the
+    market's ``event_id`` moves — from a row the venue refuses to the row the
+    venue names.
+
+    FOUR CONDITIONS, EVERY ONE FAILING CLOSED — this MOVES a link rather than
+    declining one, so the safe direction is inverted from the rest of this file:
+
+      1. Polymarket only. Kalshi states its referent in the ticker and has arm
+         (a)/(b) of the linkage guard for it.
+      2. ``covered_league_for_matchup`` — the SAME resolver the minting refusal
+         calls, so the two halves of #5544 cannot drift onto two answers. NPB,
+         CPBL, FIBA and the European hockey rows resolve to nothing here and are
+         never touched, which is the measured reason that refusal is club-level
+         and not family-level.
+      3. The candidate is NOT itself auto-created, and is not the row we are on.
+         Moving a market between two phantoms is churn wearing a fix's clothes.
+      4. Its ``commence_time`` is inside ``_PM_FIXTURE_MAX_DIFF_HOURS`` of the
+         venue instant, and EXACTLY ONE candidate qualifies. Zero means the
+         schedule has not carried the game yet — the forward path will link it
+         when it does, which is the minting half's whole argument. More than one
+         means a doubleheader or a twin pair, and a pass that cannot tell them
+         apart must not pick; #1946 owns that, not this.
+
+    Returns a ``better_match``-shaped dict, or None to leave the link alone.
+    """
+    from app.models.models import Event, Sport
+
+    if market.source != "polymarket":
+        return None
+
+    fixture = venue_game_start(market)
+    if fixture is None:
+        return None  # no signal — see the docstring on venue_game_start
+
+    league = await covered_league_for_matchup(
+        session, matchup.team_a, matchup.team_b,
+    )
+    if league is None:
+        return None
+
+    window = timedelta(hours=_PM_FIXTURE_MAX_DIFF_HOURS)
+    candidates = (await session.execute(
+        select(
+            Event.id, Event.sport_id, Event.home_team_name, Event.away_team_name,
+        )
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(
+            # The league key the resolver returned, exactly. The phantom sits on
+            # the `<prefix>_other` catch-all, so this alone excludes it — but
+            # condition 3 below states that independently rather than relying on
+            # a bucket name to carry a correctness property.
+            Sport.key == league,
+            Event.id != linked_event.id,
+            or_(
+                Event.external_id.is_(None),
+                ~Event.external_id.startswith("pm_"),
+            ),
+            Event.commence_time >= fixture - window,
+            Event.commence_time <= fixture + window,
+        )
+    )).all()
+
+    # The team test stays in Python: `_fuzzy_team_match` is what every other arm
+    # of this pass compares with, and re-expressing it in SQL would be a second
+    # definition of "same club" that could drift from the one above it.
+    confirmed = [
+        row for row in candidates
+        if (
+            _fuzzy_team_match(matchup.team_a, row.home_team_name)
+            or _fuzzy_team_match(matchup.team_a, row.away_team_name)
+        ) and (
+            _fuzzy_team_match(matchup.team_b, row.home_team_name)
+            or _fuzzy_team_match(matchup.team_b, row.away_team_name)
+        )
+    ]
+    if len(confirmed) != 1:
+        if confirmed:
+            logger.info(
+                "Venue-confirmed relink declined for polymarket %s: %d real %s "
+                "fixtures sit within %dh of %s (%s) — ambiguous, leaving the "
+                "link on event %d for #1946",
+                market.external_id, len(confirmed), league,
+                _PM_FIXTURE_MAX_DIFF_HOURS, fixture.isoformat(),
+                [row.id for row in confirmed], linked_event.id,
+            )
+        return None
+
+    row = confirmed[0]
+    logger.info(
+        "Venue-confirmed relink (#5544): polymarket %s names %s, which is real "
+        "%s event %d — moving it off listing-time phantom %d",
+        market.external_id, fixture.isoformat(), league, row.id, linked_event.id,
+    )
+    return {"event_id": row.id, "sport_id": row.sport_id}
+
+
 async def _check_duplicate_kalshi_linkage_reason(
     session, event_id: int, market, ticker_game_date,
 ) -> str | None:
@@ -3284,6 +3404,34 @@ async def _phase15_revalidate(
                     session, matchup, market, ticker_game_date,
                     allow_unclassified_bucket=True,
                 )
+
+            # #5544 (CERT-2708): the scorer prefers the phantom we are already
+            # on, so "no better match" is not the same as "this link is right".
+            # Only reached when the row is auto-created AND the venue's own
+            # instant refuses the link we are sitting on — that refusal is the
+            # entry condition, not a formality, and it is the shipped #4965
+            # guard asked about the CURRENT link for the first time. The answer
+            # then goes through the ordinary relink below, including
+            # `_check_duplicate_kalshi_linkage_reason`, which re-confirms the
+            # venue instant against the new candidate by a separate call.
+            if (
+                is_auto_created
+                and market.source == "polymarket"
+                and (
+                    not better_match
+                    or better_match["event_id"] == linked_event.id
+                )
+                and await _check_polymarket_fixture_reason(
+                    session, linked_event.id, market,
+                )
+            ):
+                venue_match = await _venue_confirmed_covered_fixture(
+                    session, matchup, market, linked_event,
+                )
+                if venue_match:
+                    better_match = venue_match
+                    stats["funnel"].setdefault("phase15_phantom_venue_relinked", 0)
+                    stats["funnel"]["phase15_phantom_venue_relinked"] += 1
 
             # #210 Item 1c: Phase 1.5's relink previously bypassed the
             # duplicate-linkage guard, letting a re-validated market land on an
