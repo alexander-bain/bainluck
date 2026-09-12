@@ -1437,6 +1437,75 @@ export function computeRealStartTime(
 // ---------------------------------------------------------------------------
 
 /**
+ * #5521 — DOES THE StatPal SNAPSHOT ARM OUTRANK THE ESPN-SHAPED HISTORY ARM?
+ *
+ * Strictly newer wins. A tie keeps the ESPN arm, and so does any comparison
+ * either side of which cannot be parsed: *"we cannot say which is newer"* and
+ * *"the snapshot is newer"* are different claims, and only the second may move
+ * a number a reader is looking at. That is the same rule `heroStampIsStale` and
+ * `liveClaimIsUnbacked` (#5459) are written to, one helper further in.
+ *
+ * Pure and exported so a guard can hold the comparison itself rather than
+ * re-deriving it from a rendered score — the seam, not the symptom.
+ */
+export function scoreSnapshotOutranksHistory(
+  snapshotStamp: string | null | undefined,
+  historyStamp: string | null | undefined,
+): boolean {
+  const snap = snapshotStamp ? Date.parse(snapshotStamp) : NaN;
+  const hist = historyStamp ? Date.parse(historyStamp) : NaN;
+  if (Number.isNaN(snap) || Number.isNaN(hist)) return false;
+  return snap > hist;
+}
+
+/**
+ * #5521 — resolve ONE side of the score from the two observation series.
+ *
+ * ═══ 🔴 THE SNAPSHOT ARM MAY REPLACE AN ESPN READING, NEVER FILL IN FOR AN
+ * ABSENT ONE — AND THAT BOUNDARY IS MEASURED, NOT TASTE ═══
+ *
+ * The tempting version of this fix makes `score_history` a third fallback, so
+ * it supplies the score wherever `espn_history` is silent. Censused on
+ * production 2026-09-12 06:55Z over a 72-hour window, that is 134 events (45
+ * competitions, overwhelmingly soccer) — and on 132 of them the last snapshot
+ * equals the event row, so the change would be inert. On the two where it does
+ * NOT, it is a REGRESSION, and on exactly the pages that matter most:
+ *
+ *   15307525 Zverev v van de Zandschulp (US Open, completed) — event row 3–0,
+ *            last snapshot 2–0, captured 32 min before `completed_at`
+ *   15308966 Gauff v Rybakina (US Open, completed) — event row 1–2,
+ *            last snapshot 1–1, captured 48 min before `completed_at`
+ *
+ * The snapshot series simply STOPS before the final set; the event row is
+ * overwritten in place and is therefore the current value by construction. So a
+ * series that lags cannot outrank a value that does not. It may only argue with
+ * the OTHER series — where the argument is decidable, because both sides carry
+ * their own clock.
+ *
+ * Where the argument IS decidable the fix is right every time it fires: of 41
+ * events carrying both series in the same window, 10 change, and on 10 of 10
+ * the new number matches the event row (0 of 10 break agreement with it).
+ *
+ * Rates in this comment are the population deltas, not a live percentage — a
+ * rate written into a durable artifact decays and then invents a regression.
+ */
+function pickHistorySide(
+  espnValue: number | null | undefined,
+  espnStamp: string | null,
+  snapValue: number | null | undefined,
+  snapStamp: string | null,
+  snapWins: boolean,
+): { value: number | null; stamp: string | null } {
+  // `== null` on the VALUE, not on the row: an ESPN row present but holding a
+  // null score is a side ESPN did not speak for, and #4571 already falls it
+  // through to the event row with its stamp. The snapshot does not get to
+  // intercept that fall — see the boundary above.
+  if (espnValue == null) return { value: null, stamp: null };
+  if (snapWins && snapValue != null) return { value: snapValue, stamp: snapStamp };
+  return { value: espnValue, stamp: espnStamp };
+}
+
+/**
  * Compute the most recent chart point for GamePlayCard default display.
  */
 export function computeLastChartPoint(
@@ -1556,19 +1625,60 @@ export function computeLastChartPoint(
   // carries its own timestamp; it is only a LABEL naming ESPN that would lie. So
   // the field says which array the number came out of, which is all this layer
   // can honestly know, and `scoreFrom` is not an attribution — see its docstring.
-  const resolvedHomeScore = lastEspn?.home_score ?? homeScore ?? null;
-  const resolvedAwayScore = lastEspn?.away_score ?? awayScore ?? null;
+  // #5521 — AND BETWEEN THE TWO OBSERVATION SERIES, THE NEWER ONE SPEAKS.
+  //
+  // `espn_history` was the only series this cascade read. `score_history` — the
+  // StatPal `score_snapshots` series, in the SAME payload — was never consulted
+  // at all, and the sibling helper forty lines up (`computeRealStartTime`)
+  // documents its own priority as *"StatPal score_history > ESPN > win_prob"*.
+  // One helper in this file called that array the most authoritative and the one
+  // picking the number a reader sees did not look at it.
+  //
+  // Production 15304937 (Athletics v Mariners, MLB, 06:02Z): `espn_history[-1]`
+  // at 04:50:54Z said 4–5, `score_history[-1]` at 04:55:24Z said 6–5, and the
+  // event row said 6–5. The hero printed 4–5 for over an hour — the WRONG TEAM
+  // AHEAD on a game it was calling live — while "Runs pace" three inches below
+  // read `11 scored` off the other arm. The page held its own refutation twice.
+  //
+  // So the pick is by AGE, not by arm. `page.tsx:622` states the old premise out
+  // loud — *"prefer latest ESPN history (more frequent updates)"* — which is an
+  // empirical claim about relative freshness that nothing re-checked at runtime.
+  const scoreSnaps = historyData.score_history;
+  const lastScoreSnap = scoreSnaps?.length ? scoreSnaps[scoreSnaps.length - 1] : null;
   const espnStamp = lastEspn?.timestamp || null;
+  const snapStamp = lastScoreSnap?.timestamp || null;
+  const snapWins = scoreSnapshotOutranksHistory(snapStamp, espnStamp);
+
+  const homeHist = pickHistorySide(
+    lastEspn?.home_score,
+    espnStamp,
+    lastScoreSnap?.home_score,
+    snapStamp,
+    snapWins,
+  );
+  const awayHist = pickHistorySide(
+    lastEspn?.away_score,
+    espnStamp,
+    lastScoreSnap?.away_score,
+    snapStamp,
+    snapWins,
+  );
+
+  const resolvedHomeScore = homeHist.value ?? homeScore ?? null;
+  const resolvedAwayScore = awayHist.value ?? awayScore ?? null;
   const eventStamp = eventScoreObservedAt ?? null;
 
+  // `period` and `clock` below stay ESPN's, because `score_history` carries
+  // neither. A snapshot-supplied score can therefore sit beside an ESPN period,
+  // which is the honest shape: each field is the newest reading OF THAT FIELD.
   const arms: Array<{ from: "history" | "event"; stamp: string | null }> = [];
   if (resolvedHomeScore !== null) {
-    const fromEspn = lastEspn?.home_score != null;
-    arms.push({ from: fromEspn ? "history" : "event", stamp: fromEspn ? espnStamp : eventStamp });
+    const fromHistory = homeHist.value !== null;
+    arms.push({ from: fromHistory ? "history" : "event", stamp: fromHistory ? homeHist.stamp : eventStamp });
   }
   if (resolvedAwayScore !== null) {
-    const fromEspn = lastEspn?.away_score != null;
-    arms.push({ from: fromEspn ? "history" : "event", stamp: fromEspn ? espnStamp : eventStamp });
+    const fromHistory = awayHist.value !== null;
+    arms.push({ from: fromHistory ? "history" : "event", stamp: fromHistory ? awayHist.stamp : eventStamp });
   }
 
   let scoreStamp: string | null = null;
