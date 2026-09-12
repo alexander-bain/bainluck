@@ -116,7 +116,7 @@ def test_futures_reason_explains_opening_surprise_with_market_context():
 
     assert (
         reason
-        == "No change is up 21.0 points since Mar 4 in Fed Decision in July?"
+        == "No change is up 21 points since Mar 4 in Fed Decision in July?"
     )
     assert "from opening" not in reason
 
@@ -177,7 +177,7 @@ def test_futures_reason_describes_movement_as_points_not_percent():
         top_mover_change=0.08,
     )
 
-    assert reason == "Patrick Mahomes moved up 8.0 points today in NFL MVP"
+    assert reason == "Patrick Mahomes moved up 8 points today in NFL MVP"
 
 
 def test_futures_reason_names_leader_when_sources_disagree():
@@ -406,7 +406,7 @@ def test_futures_headline_formats_binary_side_naturally():
         now=NOW,
     )
 
-    assert headline == "No side up 30.0 points since Mar 4"
+    assert headline == "No side up 30 points since Mar 4"
 
 
 def test_futures_context_summary_expands_generic_resolving_copy():

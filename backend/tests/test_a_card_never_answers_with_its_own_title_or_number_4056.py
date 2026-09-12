@@ -296,7 +296,7 @@ def test_the_title_is_still_used_as_a_SUBJECT_when_a_clause_follows_it():
         top_mover_change=0.08,
     )
     assert headline == (
-        "Will Utah Mammoth advance to the Second Round of the... odds up 8.0 points"
+        "Will Utah Mammoth advance to the Second Round of the... odds up 8 points"
     ), headline
     # The subject is a chop, and the chop still obeys the invariant.
     assert_whole_word_prefix(headline.split(" odds up")[0], UTAH)

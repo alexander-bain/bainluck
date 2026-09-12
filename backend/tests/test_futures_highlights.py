@@ -487,7 +487,7 @@ class TestDeterministicFuturesHeadlines:
             top_mover_name=result.top_mover_name,
             top_mover_change=-0.07,
         )
-        assert headline == "Patrick Mahomes down 7.0 points today"
+        assert headline == "Patrick Mahomes down 7 points today"
 
     def test_binary_yes_mover_is_humanized_before_headline(self):
         """Binary futures should name the subject, not the raw Yes/No side."""
@@ -537,9 +537,9 @@ class TestDeterministicFuturesHeadlines:
             top_mover_name=display_mover,
             top_mover_change=0.08,
         )
-        assert headline == "Anthropic up 8.0 points today"
+        assert headline == "Anthropic up 8 points today"
         assert reason == (
-            "Anthropic moved up 8.0 points today in "
+            "Anthropic moved up 8 points today in "
             "Will Anthropic IPO before OpenAI?"
         )
 
@@ -656,9 +656,9 @@ class TestDeterministicFuturesHeadlines:
             top_surprise_opened_at=opened_at,
             now=now,
         )
-        assert headline == "OpenAI release up 27.0 points since Mar 4"
+        assert headline == "OpenAI release up 27 points since Mar 4"
         assert reason == (
-            "OpenAI release is up 27.0 points since Mar 4 in "
+            "OpenAI release is up 27 points since Mar 4 in "
             "Will OpenAI release GPT-5 before July?"
         )
         assert "from opening" not in headline

@@ -1211,8 +1211,8 @@ def generate_futures_reason(
             if _weak_outcome_label(top_mover_name):
                 return f"Big odds movement in {market_name}"
             direction = "up" if top_mover_change > 0 else "down"
-            pct = _point_change(top_mover_change)
-            return f"{_side_label(top_mover_name)} moved {direction} {pct} points today in {market_name}"
+            pts = _points(top_mover_change)
+            return f"{_side_label(top_mover_name)} moved {direction} {pts} today in {market_name}"
         return f"Big odds movement in {market_name}"
 
     # (No `rank_shakeup` branch. "Multiple ranking changes" described the ordering
@@ -1227,8 +1227,8 @@ def generate_futures_reason(
             if _weak_outcome_label(top_mover_name):
                 return f"Odds shifting in {market_name}"
             direction = "up" if top_mover_change > 0 else "down"
-            pct = _point_change(top_mover_change)
-            return f"{_side_label(top_mover_name)} odds shifted {direction} {pct} points today in {market_name}"
+            pts = _points(top_mover_change)
+            return f"{_side_label(top_mover_name)} odds shifted {direction} {pts} today in {market_name}"
         return f"Odds shifting in {market_name}"
 
     # Resolving soon
@@ -1267,9 +1267,9 @@ def generate_futures_reason(
     ):
         if not _weak_outcome_label(top_surprise_name):
             direction = "up" if top_surprise_change > 0 else "down"
-            pct = _point_change(top_surprise_change)
+            pts = _points(top_surprise_change)
             return (
-                f"{_side_label(top_surprise_name)} is {direction} {pct} points "
+                f"{_side_label(top_surprise_name)} is {direction} {pts} "
                 f"since {since_opening} in {market_name}"
             )
         return f"{market_name} has shifted since {since_opening}"
@@ -1362,8 +1362,8 @@ def generate_futures_headline(
     ):
         direction = "up" if top_mover_change > 0 else "down"
         if _weak_outcome_label(top_mover_name) and market_name:
-            return f"{_short_market_name(market_name)} odds {direction} {_point_change(top_mover_change)} points"
-        return f"{_side_label(top_mover_name)} {direction} {_point_change(top_mover_change)} points today"
+            return f"{_short_market_name(market_name)} odds {direction} {_points(top_mover_change)}"
+        return f"{_side_label(top_mover_name)} {direction} {_points(top_mover_change)} today"
 
     # (No `rank_shakeup` branch — see `generate_futures_reason`.)
 
@@ -1374,8 +1374,8 @@ def generate_futures_headline(
     ):
         direction = "up" if top_mover_change > 0 else "down"
         if _weak_outcome_label(top_mover_name) and market_name:
-            return f"{_short_market_name(market_name)} odds {direction} {_point_change(top_mover_change)} points"
-        return f"{_side_label(top_mover_name)} {direction} {_point_change(top_mover_change)} points today"
+            return f"{_short_market_name(market_name)} odds {direction} {_points(top_mover_change)}"
+        return f"{_side_label(top_mover_name)} {direction} {_points(top_mover_change)} today"
 
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
@@ -1405,7 +1405,7 @@ def generate_futures_headline(
             return f"{_short_market_name(market_name)} shifted since {since_opening}"
         return (
             f"{_side_label(top_surprise_name)} {direction} "
-            f"{_point_change(top_surprise_change)} points since {since_opening}"
+            f"{_points(top_surprise_change)} since {since_opening}"
         )
 
     # (No `multi_source` branch — see `generate_futures_reason`. "Tracked by 2
