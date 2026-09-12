@@ -21,6 +21,8 @@ anchor). Ages are written as offsets from one module-level `NOW`.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from app.utils.feed_cache import feed_edition_token
@@ -379,6 +381,86 @@ def test_a_manifest_with_no_members_is_expired_not_a_pin_to_nothing():
         now=NOW,
     )
     assert items is None and status == EDITION_STATUS_EXPIRED
+
+
+# ---------------------------------------------------------------------------
+# H. The route's wiring order — silently breakable, so pinned in source
+# ---------------------------------------------------------------------------
+
+
+def test_the_fingerprint_is_computed_after_the_server_side_defaulting():
+    """🔴 ORDER IS LOAD-BEARING AND ITS FAILURE IS INVISIBLE.
+
+    ``get_feed`` rewrites its own build inputs before caching: a bare Discover
+    request arrives with ``event_pct=None, mode=None`` and is defaulted to
+    ``0.15`` / ``"discover"``. The edition fingerprint must be taken AFTER that,
+    or one reader sending ``?mode=discover`` explicitly and another sending
+    nothing would fingerprint differently while reading the identical build —
+    every pin between them reporting `superseded`.
+
+    That failure degrades to exactly today's behaviour, which is why nothing
+    else would catch it: the feature would simply stop working, quietly, and
+    the tests would all still pass. Hence a source-order assertion.
+    """
+    from app.routes.feed import get_feed
+
+    src = inspect.getsource(get_feed)
+    defaulting = src.index('event_pct = 0.15')
+    fingerprint = src.index("_edition_policy = edition_policy_fingerprint(")
+    assert defaulting < fingerprint, (
+        "the Discover defaulting must run BEFORE the edition fingerprint"
+    )
+
+
+def test_the_fingerprint_is_computed_after_the_principal_is_resolved():
+    """Same class, the other input. ``feed_user``/``feed_session_id`` are what
+    make an edition principal-bound (the design's "auth change = new edition");
+    fingerprinting before they are resolved would bind every reader to the
+    anonymous edition and let one reader pin another's personalized order."""
+    from app.routes.feed import get_feed
+
+    src = inspect.getsource(get_feed)
+    principal = src.index("feed_session_id = None if debug_global else session_id")
+    fingerprint = src.index("_edition_policy = edition_policy_fingerprint(")
+    assert principal < fingerprint
+
+
+def test_the_route_actually_passes_the_principal_into_the_fingerprint():
+    """🔴 FOUND BY MUTATION, AND IT SURVIVED THE FIRST CUT OF THIS FILE.
+
+    ``test_signing_in_is_a_new_edition`` proves the FUNCTION separates
+    principals. It says nothing about whether the ROUTE hands it one — and
+    deleting the ``principal=`` argument from the call site passed all 46 tests.
+    That mutant is the security-shaped one: with no principal in the
+    fingerprint, every reader shares the anonymous edition, so a signed-in
+    reader can pin — and be served — an order minted for someone else.
+
+    The guarded property is the call site, not the helper: both identity
+    sources must reach it, or "auth change = new edition" is a docstring.
+    """
+    from app.routes.feed import get_feed
+
+    src = inspect.getsource(get_feed)
+    call = src[src.index("_edition_policy = edition_policy_fingerprint(") :]
+    call = call[: call.index("\n    )\n")]
+    assert "principal=" in call, "the route must bind the edition to a principal"
+    assert "feed_user" in call and "feed_session_id" in call, (
+        "both an authenticated user and a session must reach the fingerprint"
+    )
+
+
+def test_the_manifest_is_not_republished_on_a_pinned_serve():
+    """The lease is measured from the MINT. Republishing on every pinned page
+    would reset it on each scroll and turn a 30-minute browsing lease into "as
+    long as you keep scrolling" — a reader pinned to an hours-old slate."""
+    from app.routes.feed import get_feed
+
+    src = inspect.getsource(get_feed)
+    publish = src[src.index("_publish_edition_manifest") - 900 :]
+    publish = publish[: publish.index("schedule_background")]
+    assert "EDITION_STATUS_PINNED" in publish, (
+        "the manifest publish must be guarded on NOT having served a pin"
+    )
 
 
 def test_a_duplicate_identity_in_the_build_resolves_deterministically():
