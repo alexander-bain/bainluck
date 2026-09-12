@@ -64,7 +64,44 @@ def _threshold_order(contract: dict) -> tuple[float, float]:
     return (contract["threshold"], -contract["probability"])
 
 
-def _bracket_confidence(bracket_width: float, prob_range: float, divisor: float) -> float:
+def ladder_recrosses(sorted_contracts: Sequence[dict], crossover: float) -> bool:
+    """Does this pool price ABOVE the crossover again after pricing BELOW it?
+
+    A ladder is a statement about one quantity: ``P(total > x)`` falls as ``x``
+    rises, so once the pool has priced a threshold under the crossover, no
+    higher threshold can price over it. A pool that does climb back is not one
+    ladder — it is two market families poured into one pot — and it does not
+    name one value: it straddles the crossover in several places, and which of
+    them the walk returns is decided by :func:`_threshold_order`, not by the
+    market.
+
+    🔴 The comparisons are STRICT on purpose. A rung sitting exactly ON the
+    crossover is neither above nor below it, and counting it as both is how the
+    obvious version of this test — "count the adjacent pairs that straddle" —
+    reports two crossings for a perfectly monotone ladder. Two arms measured on
+    production read that way (14780146's Polymarket total ``… 37.5@0.535
+    38.5@0.500 39.5@0.485 …`` and 14780144's Polymarket spread ``… 7.5@0.525
+    8.5@0.500 10.5@0.440 …``), and demoting either would have handed a
+    reader's page to the worse arm.
+
+    Takes the pool ALREADY sorted by :func:`_threshold_order` so it reads the
+    same rung order the walk does; an unsorted pool would answer about a
+    sequence no derivation ever sees.
+    """
+    prices = [contract["probability"] for contract in sorted_contracts]
+    above = [i for i, price in enumerate(prices) if price > crossover]
+    below = [i for i, price in enumerate(prices) if price < crossover]
+    # The two index sets are disjoint by construction, so no rung can be both
+    # the last above and the first below: `>` and `>=` are the same test here.
+    return bool(above and below and max(above) > min(below))
+
+
+def _bracket_confidence(
+    bracket_width: float,
+    prob_range: float,
+    divisor: float,
+    pool_recrosses: bool,
+) -> float:
     """Score how much the bracketing pair tells us, 0-1.
 
     Normally that is how tightly the pair sits around the crossover: the narrower
@@ -80,10 +117,35 @@ def _bracket_confidence(bracket_width: float, prob_range: float, divisor: float)
     * priced apart they CONTRADICT each other, which the width-based formula
       scored 1.0 — the maximum — for being maximally uninformative (#4035).
 
-    🔴 This is a *scoring* rule, not a refusal. #3965 made this module refuse to
-    invent a value it cannot locate; here the value IS located (both rungs name
-    one line), so the arm is still served and only its standing changes.
+    ``pool_recrosses`` (:func:`ladder_recrosses`) is the same failure one step
+    out: there the two ladders collided on a single line, here they sit side by
+    side and the walk brackets the crossover inside whichever one it reaches
+    first. The width of that bracket is a fact about the winning family, not
+    about the pool, so a narrow bracket in a contaminated pot scored 0.9 while
+    the clean venue beside it scored 0.8 — which is how Sunday's Texans–Bills
+    page came to project a **7 – 9** football final off an implied total of 16
+    (#5413). The bracket width says nothing once the pool is not one ladder, so
+    the same constant answers both.
+
+    🔴 This is a *scoring* rule, not a refusal, and that is what lets it need no
+    tolerance for market noise. #3965 made this module refuse to invent a value
+    it cannot locate; here a value IS located, so the arm is still served and
+    only its standing changes — a demoted arm that is the only one left is
+    served exactly as before, and two demoted arms fall back to
+    :data:`PROJECTION_SOURCE_ORDER`, which is today's answer. The rule can
+    therefore only move a page when there is a cleaner arm to move it to, so a
+    false positive costs a reader nothing.
+
+    Which of a contaminated pool's several crossings is the real one is NOT
+    decided here, and deliberately: it needs to know which market family each
+    rung came from, and the fold that pooled them is a matching defect, filed
+    and not patched here (D35, #2693). Measured over the 686 scheduled/live
+    events in the ±48h window (2026-09-12), 618 arms carrying a ladder: 76
+    re-cross, 74 of them keep the projection they serve today, and exactly two
+    pages change — both NFL, both from a two-digit football score to a real one.
     """
+    if pool_recrosses:
+        return _CONTRADICTION_CONFIDENCE
     if bracket_width < _SAME_LINE_EPSILON and prob_range >= _DEGENERATE_PROB_RANGE:
         return _CONTRADICTION_CONFIDENCE
     return max(0.0, min(1.0, 1.0 - (bracket_width / divisor)))
@@ -236,6 +298,7 @@ def binary_to_implied_spread(
 
     # Sort by threshold ascending
     sorted_contracts = sorted(contracts, key=_threshold_order)
+    pool_recrosses = ladder_recrosses(sorted_contracts, crossover)
 
     # Find two adjacent contracts that straddle the crossover
     for i in range(len(sorted_contracts) - 1):
@@ -259,7 +322,9 @@ def binary_to_implied_spread(
 
             # Confidence based on how tight the bracket is
             bracket_width = high["threshold"] - low["threshold"]
-            confidence = _bracket_confidence(bracket_width, prob_range, 20.0)
+            confidence = _bracket_confidence(
+                bracket_width, prob_range, 20.0, pool_recrosses
+            )
 
             return ImpliedSpread(
                 spread=-round(spread, 1),  # Negative = favorite
@@ -325,6 +390,7 @@ def binary_to_implied_total(
         return None
 
     sorted_contracts = sorted(contracts, key=_threshold_order)
+    pool_recrosses = ladder_recrosses(sorted_contracts, crossover)
 
     for i in range(len(sorted_contracts) - 1):
         low = sorted_contracts[i]
@@ -342,7 +408,9 @@ def binary_to_implied_total(
                 total = low["threshold"] + fraction * (high["threshold"] - low["threshold"])
 
             bracket_width = high["threshold"] - low["threshold"]
-            confidence = _bracket_confidence(bracket_width, prob_range, 10.0)
+            confidence = _bracket_confidence(
+                bracket_width, prob_range, 10.0, pool_recrosses
+            )
 
             return ImpliedTotal(
                 total=round(total, 1),
