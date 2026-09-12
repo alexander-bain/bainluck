@@ -96,6 +96,42 @@ function card(Component: unknown, tournament: GolfTournament): string {
 const BADGE = /animate-pulse"><\/span>([^<]*)<\/span>/;
 const pulses = (markup: string) => BADGE.test(markup);
 
+// #5623 — the movement caption legitimately changed unit ("+2.6% today" ->
+// "+2.6 pts today"), and the CONTROL below compares this card byte-for-byte
+// against the frozen pre-fix fixture. That control means "the UX-P180 fix did
+// not widen"; it does not mean "this card never changes again". So the claim is
+// kept at full strength by splitting it rather than weakened by a normaliser:
+// the remainder must still be byte-identical, and the movement span is asserted
+// separately and POSITIVELY on both sides.
+//
+// 🔴 NOT a normaliser. Rewriting the legacy render into the new form would
+// encode the answer and pass whatever shipped (ux/1217's warning). These helpers
+// only PARTITION the markup; neither side is edited to look like the other, and
+// `assertOnlyTheMovementUnitMoved` requires the legacy side to still carry the
+// OLD `%` string — so if the fix silently stopped applying, the assertion fails
+// instead of passing quietly.
+const MOVEMENT_SPAN = /<span class=" text-(?:green|red)-600 font-semibold">[^<]*<\/span>/g;
+const withoutMovement = (markup: string) => markup.replace(MOVEMENT_SPAN, "");
+const movementSpans = (markup: string) => markup.match(MOVEMENT_SPAN) ?? [];
+
+function assertOnlyTheMovementUnitMoved(fixed: string, legacy: string) {
+  // 1. everything that is not the movement caption is untouched
+  expect(withoutMovement(fixed)).toBe(withoutMovement(legacy));
+  // 2. both sides HAVE the caption, and it is the only thing that differs
+  const after = movementSpans(fixed);
+  const before = movementSpans(legacy);
+  expect(after).toHaveLength(before.length);
+  if (before.length === 0) return; // a rung with no move: nothing to compare
+  // 3. positive on both sides — the new form says `pts`, the frozen one said `%`
+  for (const span of after) {
+    expect(span).toMatch(/ pts today<\/span>$/);
+    expect(span).not.toContain("% today");
+  }
+  for (const span of before) {
+    expect(span).toMatch(/% today<\/span>$/);
+  }
+}
+
 function visibleText(markup: string): string {
   return markup
     .replace(/<[^>]*>/g, " ")
@@ -143,8 +179,14 @@ describe("UX-P180 artifact", () => {
 
     // ── CONTROL: the fix is invisible everywhere it should be ──
     expect(pulses(midWindow)).toBe(true);
-    expect(midWindow).toBe(at(MID_WINDOW, () => card(TournamentCardLegacy, TOUR_CHAMPIONSHIP)));
-    expect(windowless).toBe(at(MID_WINDOW, () => card(TournamentCardLegacy, WINDOWLESS)));
+    assertOnlyTheMovementUnitMoved(
+      midWindow,
+      at(MID_WINDOW, () => card(TournamentCardLegacy, TOUR_CHAMPIONSHIP)),
+    );
+    assertOnlyTheMovementUnitMoved(
+      windowless,
+      at(MID_WINDOW, () => card(TournamentCardLegacy, WINDOWLESS)),
+    );
 
     // ── the defect is zone-independent: assert it rather than gate on a zone ──
     // Both symptoms are `now` compared against a midnight-UTC stamp, so the

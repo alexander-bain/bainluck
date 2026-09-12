@@ -149,6 +149,32 @@ function markup(Component: unknown, t: GolfTournament): string {
   );
 }
 
+// #5623 — see the twin comment in `golfTournamentCardLiveWindowArtifact.test.tsx`.
+// The movement caption legitimately changed unit ("+11.1% today" -> "+11.1 pts
+// today"). This control means "the UX-P180 fix did not widen", not "this card
+// never changes again", so the claim is SPLIT rather than weakened: remainder
+// byte-identical, movement span asserted positively on both sides. It is a
+// partition, not a normaliser — the legacy side is required to still carry the
+// old `%`, so a fix that silently stopped applying fails here instead of passing.
+const MOVEMENT_SPAN = /<span class=" text-(?:green|red)-600 font-semibold">[^<]*<\/span>/g;
+const withoutMovement = (m: string) => m.replace(MOVEMENT_SPAN, "");
+const movementSpans = (m: string) => m.match(MOVEMENT_SPAN) ?? [];
+
+function assertOnlyTheMovementUnitMoved(fixed: string, legacy: string) {
+  expect(withoutMovement(fixed)).toBe(withoutMovement(legacy));
+  const after = movementSpans(fixed);
+  const before = movementSpans(legacy);
+  expect(after).toHaveLength(before.length);
+  if (before.length === 0) return;
+  for (const span of after) {
+    expect(span).toMatch(/ pts today<\/span>$/);
+    expect(span).not.toContain("% today");
+  }
+  for (const span of before) {
+    expect(span).toMatch(/% today<\/span>$/);
+  }
+}
+
 /**
  * The live badge, and its label. `animate-pulse` appears exactly twice in the
  * component — the main card's badge and `CupCard`'s — and both ARE the live dot,
@@ -323,7 +349,8 @@ describe("UX-P180 · the windowless population is untouched", () => {
       // have neither. These are long-horizon futures and the two mis-filed
       // non-golf markets; they are still decided by the price signal alone.
       const now = "2026-08-29T20:39:00Z";
-      expect(at(now, () => markup(TournamentCard, t))).toBe(
+      assertOnlyTheMovementUnitMoved(
+        at(now, () => markup(TournamentCard, t)),
         at(now, () => markup(TournamentCardLegacy, t)),
       );
     },

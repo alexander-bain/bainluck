@@ -282,7 +282,25 @@ describe("UX-P274 — the strip agrees with the card 600px below it", () => {
       const cardMarkup = renderToStaticMarkup(
         <TournamentCard tournament={tournament(name, movement, probability)} />,
       );
-      const cardMatch = /([-+]?\d+\.\d+)% today/.exec(decodeEntities(cardMarkup));
+      // #5623 moved the CARD's unit from `%` to ` pts` — `movement` is a
+      // probability delta, so `* 100` was always POINTS and the `%` was a
+      // mislabel. Only the scrape moved; the claim below is untouched, and it
+      // still fails if the card stops printing a one-decimal magnitude at all
+      // (`cardMatch` goes null) or if the two surfaces disagree on the number.
+      //
+      // THE STRIP HAS NOT MOVED YET, AND THAT IS A KNOWN OPEN WINDOW, not an
+      // oversight: `MoversStrip` still renders `{formatMovementPoints(...)}%`
+      // — the points formatter under a percent sign — so /golf currently reads
+      // "▲ 9.7%" here and "+9.7 pts today" 600px below. Filed as #5666 and
+      // routed to ux, who own this component and the `magnitudeOf` helper that
+      // requires the trailing `%`. It was left out of #5623 deliberately:
+      // closing it means rewriting that helper, which owes this suite's own
+      // red arm, and ux had already scoped #5623 to three files.
+      //
+      // This suite's subject survives the window. Its defect was two different
+      // NUMBERS for one move ("▲ 1%" over "+0.5% today"); the magnitudes here
+      // still agree to the digit, which is exactly what the assertion checks.
+      const cardMatch = /([-+]?\d+\.\d+) pts today/.exec(decodeEntities(cardMarkup));
       expect(cardMatch).not.toBeNull();
       const card = String(Math.abs(Number(cardMatch![1])));
 
