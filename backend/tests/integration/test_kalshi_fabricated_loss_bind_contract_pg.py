@@ -526,7 +526,17 @@ async def _seed_market(
 async def _reference_work(session, **params):
     from sqlalchemy import text
 
-    args = {"lim": 10, "sport": None, "after_date": None, "after_id": None}
+    args = {
+        "lim": 10,
+        "sport": None,
+        "after_date": None,
+        "after_id": None,
+        # CAL-P1124: the reference interpolates HARM_COHORT_HAVING_SQL from the
+        # shipped constant, so it carries that constant's bind too. NULL keeps
+        # the reference the WHOLE population, which is what the equivalence
+        # tests compare against.
+        "min_harm": None,
+    }
     args.update(params)
     return (
         await session.execute(text(_WORK_SQL_BEFORE_THE_LATERAL), args)
