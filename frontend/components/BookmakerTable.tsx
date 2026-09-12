@@ -3,6 +3,7 @@
 import type { BookmakerOddsDetail } from "@/lib/types";
 import { isNamedSource, sourceLabel } from "@/lib/sourceLabels";
 import { formatSourceAge, formatSourceStamp } from "@/lib/sourceAge";
+import { teamShortNames } from "@/lib/teamShortName";
 
 interface BookmakerTableProps {
   bookmakerOdds: BookmakerOddsDetail[];
@@ -102,9 +103,18 @@ export default function BookmakerTable({
   ).length;
   const activeCount = oddsWithProbability.length - staleCount;
 
-  // Shorten team names for table header
-  const shortHomeTeam = homeTeam.split(" ").pop() || homeTeam;
-  const shortAwayTeam = awayTeam.split(" ").pop() || awayTeam;
+  // Shorten team names for table header.
+  //
+  // #5671 — via the shared pair helper, the adoption #4285 made on the charts.
+  // These two are COLUMN HEADERS standing side by side over the same table, so
+  // the collision case is the one that matters most here: the last-word rule
+  // headed both columns "Town" on Mansfield Town v Huddersfield Town, and a
+  // reader cannot tell which column is whose price. One side alone cannot see
+  // that, which is why this is the pair form and not two calls.
+  const { home: shortHomeTeam, away: shortAwayTeam } = teamShortNames(
+    { name: homeTeam },
+    { name: awayTeam },
+  );
 
   // Check if any SHOWN sportsbook has projected scores — reading the unfiltered
   // array here would head a column "(proj. score)" that no visible row fills.

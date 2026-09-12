@@ -63,7 +63,7 @@
 
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
-import { teamShortNames } from "@/lib/teamShortName";
+import { teamCrestBadge, teamShortNames } from "@/lib/teamShortName";
 
 const COMPONENTS = join(process.cwd(), "components");
 
@@ -134,24 +134,103 @@ describe("#4285 one team-shortening rule, and the chart uses it", () => {
     },
   );
 
-  it("no NEW component grows a fourth implementation", () => {
-    // A RATCHET, not a clean sweep. These three still derive a team label
-    // themselves and are recorded on #4285 rather than fixed here — widening
-    // this ship to a badge rule (`PlayerPropsDashboard` slices to three letters,
-    // which is #4466/#4537 territory and carries UNSHIPPABLE_BADGES with it)
-    // would be a different change on another issue's evidence. The list may
-    // SHRINK freely; anything new in it is a fourth copy of a rule that has now
-    // been wrong four times.
-    const known = [
-      "SeriesProbability.tsx",
-      "BookmakerTable.tsx",
-      "PlayerPropsDashboard.tsx",
-    ];
+  it("no component derives a team label of its own", () => {
+    // THE RATCHET IS NOW EMPTY (#5671). It shipped holding the three sites
+    // #4285 deliberately left — `SeriesProbability` and `BookmakerTable` (the
+    // pair form) and `PlayerPropsDashboard` (the badge ladder, #4466/#4537
+    // territory, which is why it was a separate change and not a wider #4285).
+    // The list was allowed to shrink freely and has shrunk to nothing, so the
+    // assertion is now the flat one: there is ONE team-shortening rule in this
+    // tree and every component asks for it.
     const offenders = files
       .filter((f) => DERIVES_A_TEAM_LABEL.test(rendered(readFileSync(f, "utf8"))))
       .map((f) => f.split("/").pop()!)
       .sort();
-    expect(offenders).toEqual([...known].sort());
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("#5671 the three sites #4285 left behind", () => {
+  const files = tsxFilesUnder(COMPONENTS);
+  const sourceOf = (name: string) =>
+    rendered(readFileSync(files.find((f) => f.endsWith(name))!, "utf8"));
+
+  // ADOPTION, NOT ABSENCE. Every rule here has an absence half already covered
+  // by the ratchet above, and an absence assertion passes on a DELETION — a
+  // component that stopped labelling its two sides at all would satisfy it
+  // while rendering nothing. So each site is also asserted to ASK for the
+  // helper it should be asking for, and for the right one: the two that print
+  // a NAME take the pair form, the one that prints a BADGE takes the badge.
+  it.each(["SeriesProbability.tsx", "BookmakerTable.tsx"])(
+    "%s names both sides through the pair helper",
+    (name) => {
+      const source = sourceOf(name);
+      expect(source).toContain("teamShortNames(");
+      expect(source).toMatch(/name:\s*homeTeam/);
+      expect(source).toMatch(/name:\s*awayTeam/);
+      // The pair form specifically — `teamShortName` twice cannot see the
+      // collision, which is the whole reason the pair form exists. `\(` cannot
+      // match `teamShortNames(`, so this catches the singular at any argument
+      // (a negative lookahead on the ARGUMENT would miss `teamShortName(side)`).
+      expect(source).not.toMatch(/\bteamShortName\(/);
+    },
+  );
+
+  it("PlayerPropsDashboard takes the badge ladder, not the name helper", () => {
+    const source = sourceOf("PlayerPropsDashboard.tsx");
+    expect(source).toContain("teamCrestBadge(");
+    // A three-glyph chip is not a name slot: `teamShortName` FAILS SAFE by
+    // returning the full name, and slicing that to three prints a fragment
+    // with a space in it ("AC Milan U20" -> "AC "). That is #4466 by name.
+    expect(source).not.toContain("teamShortNames(");
+    expect(source).not.toMatch(/slice\(0,\s*3\)\.toUpperCase\(\)/);
+  });
+
+  it("the pair helper answers the three sites' own production specimens", () => {
+    // Not examples — rows these three components actually draw. The series bar
+    // and the sportsbook table both render on MLB and EFL event pages.
+    const { home, away } = teamShortNames(
+      { name: "Boston Red Sox" },
+      { name: "Kansas City Royals" },
+    );
+    expect(home).toBe("Sox");
+    expect(away).toBe("Royals");
+
+    // The collision the column headers could not see. Both sides fall back to
+    // their full names rather than heading two columns with one word.
+    const towns = teamShortNames(
+      { name: "Mansfield Town" },
+      { name: "Huddersfield Town" },
+    );
+    expect(towns.home.toLowerCase()).not.toEqual(towns.away.toLowerCase());
+
+    // And the designator case, which the last-word rule gets wrong on one side
+    // while looking fine on the other.
+    const cf = teamShortNames({ name: "Cádiz CF" }, { name: "Arsenal" });
+    expect(cf.home).not.toBe("CF");
+    expect("Cádiz CF".split(" ").pop()).toBe("CF"); // the specimen is a specimen
+  });
+
+  it("the badge helper answers PlayerPropsDashboard's own specimens", () => {
+    // Three glyphs kept, so the filter chips do not change width.
+    expect(teamCrestBadge("Boston Red Sox")).toHaveLength(3);
+    expect(teamCrestBadge("Kansas City Royals")).toHaveLength(3);
+
+    // The spelling-independence the shipped rule did not have. Both of these
+    // were live on production the same afternoon (#4466).
+    expect(teamCrestBadge("Paris Saint-Germain")).toEqual(
+      teamCrestBadge("Paris Saint Germain"),
+    );
+    // ...and the shipped rule disagreed with itself on them, which is why the
+    // assertion above is not trivially true.
+    const shipped = (n: string) => n.split(" ").pop()!.slice(0, 3).toUpperCase();
+    expect(shipped("Paris Saint-Germain")).not.toEqual(
+      shipped("Paris Saint Germain"),
+    );
+
+    // An empty name gets a readable chip rather than an empty one.
+    expect(teamCrestBadge("") || "HOME").toBe("HOME");
+    expect(teamCrestBadge(null) || "AWAY").toBe("AWAY");
   });
 });
 
