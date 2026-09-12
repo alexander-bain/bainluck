@@ -150,15 +150,98 @@ def test_verify_says_how_much_of_its_skew_estimate_is_actually_measured(monkeypa
 def test_the_shipped_hints_are_not_stale_right_now():
     """The state LAT-P183 left the repo in, pinned so a silent decay is visible.
 
-    Deliberately asserts against the SAME threshold `--verify` warns on, so this
-    test and CI's warning can never disagree about what stale means.
+    #3497: this asserts a COUNT of unmeasured files, not a coverage ratio. A ratio
+    falls on every push that adds a test file, so it decays to the floor on its own
+    and reds master on no branch's change — twice in five days, both times reading
+    89.90%. The count means the same thing at any suite size.
+
+    `--verify` warns at `STALE_HINTS_WARN_UNMEASURED` and this fails at
+    `STALE_HINTS_MAX_UNMEASURED`; the gap is deliberate runway, so CI asks for a
+    refresh for days before anything can go red.
     """
     files = ci_shard.discover_test_files()
     weights = json.loads((BACKEND / "scripts" / "ci_shard_durations.json").read_text())["files"]
-    measured = sum(1 for f in files if f in weights)
-    coverage = 100.0 * measured / len(files)
-    assert coverage >= ci_shard.STALE_HINTS_COVERAGE_PCT, (
-        f"only {measured}/{len(files)} ({coverage:.0f}%) test files have a measured duration. "
-        "The shards are being packed by guess and the wall clock is paying for it. "
-        "Refresh from a CI run's logs: python scripts/ci_shard.py --record <log>"
+    measured, unmeasured = ci_shard.hint_coverage(files, weights)
+    assert not ci_shard.hints_are_stale(unmeasured), (
+        f"{unmeasured} of {len(files)} test files have no measured duration "
+        f"(limit {ci_shard.STALE_HINTS_MAX_UNMEASURED}). The shards are being packed by guess "
+        "and the wall clock is paying for it. Refresh from a CI run's own logs: download the "
+        "four backend-tests job logs and run "
+        "`python scripts/ci_shard.py --record <concatenated.log>` — Actions' timestamp prefix "
+        "is stripped for you."
     )
+
+
+def test_the_staleness_guard_does_not_decay_as_the_suite_grows():
+    """The #3497 property itself: adding test files must not move the verdict.
+
+    This is the regression that would have caught both master-reddening crossings.
+    Under the old ratio, holding the measurements fixed and growing only the
+    denominator walked coverage down to the floor and failed. The budget is a
+    count, so a suite that doubles with every new file measured is still healthy,
+    and one that adds unmeasured files fails only once there are genuinely too
+    many of them — never because the suite got bigger.
+    """
+    limit = ci_shard.STALE_HINTS_MAX_UNMEASURED
+
+    # Built through the REAL pair — `hint_coverage` then `hints_are_stale` — so
+    # this fails if either the accounting or the verdict re-acquires a dependence
+    # on the suite size. A local re-implementation here would pass no matter what
+    # the shipped guard did.
+    def stale_for(measured: int, unmeasured: int) -> bool:
+        files = [f"tests/test_m{i}.py" for i in range(measured)]
+        files += [f"tests/test_u{i}.py" for i in range(unmeasured)]
+        weights = {f: 1.0 for f in files if f.startswith("tests/test_m")}
+        got_measured, got_unmeasured = ci_shard.hint_coverage(files, weights)
+        assert (got_measured, got_unmeasured) == (measured, unmeasured)
+        return ci_shard.hints_are_stale(got_unmeasured)
+
+    # Growth with everything measured is healthy at any size.
+    assert not stale_for(1_000, 0) and not stale_for(20_000, 0)
+
+    # THE REGRESSION, and the arm that would have caught both master-reddening
+    # crossings. Identical absolute staleness, two suite sizes three orders of
+    # magnitude apart. Under the old ratio the first passes (~99.9% covered) and
+    # the second fails (~66% covered) on the SAME 10 unmeasured files.
+    assert not stale_for(10_000, 10), "a big suite with 10 stale files is not stale"
+    assert not stale_for(20, 10), (
+        "the verdict moved when only the suite size changed — the guard has "
+        "re-acquired a dependence on the denominator (#3497)"
+    )
+
+    # Genuine neglect still fails, at the same count regardless of suite size.
+    assert stale_for(10_000, limit + 1)
+    assert stale_for(0, limit + 1)
+
+    # Exactly at the limit is healthy; one past it is not. Pins the boundary so a
+    # `>=`/`>` slip is a failure rather than a silent one-file drift.
+    assert not stale_for(100, limit)
+    assert stale_for(100, limit + 1)
+
+    # And the warning must fire strictly before the failure, or there is no runway.
+    assert ci_shard.STALE_HINTS_WARN_UNMEASURED < limit
+    assert ci_shard.hints_need_refresh(ci_shard.STALE_HINTS_WARN_UNMEASURED + 1)
+    assert not ci_shard.hints_need_refresh(ci_shard.STALE_HINTS_WARN_UNMEASURED)
+
+
+def test_record_parses_a_github_actions_log_not_just_a_local_pytest_run():
+    """#3497: the remedy the guard prints has to work on the log it names.
+
+    `--record` is advertised in the failure message as the fix, and the only log a
+    lane can obtain is a downloaded Actions one — where every line is
+    timestamp-prefixed. The line-anchored pattern matched none of them, so the
+    tool exited 1 saying no durations were found, which reads as operator error.
+    """
+    local = "1.23s call     tests/test_alpha.py::TestA::test_one"
+    zipped = "2026-09-11T11:49:57.5647990Z 1.23s call     tests/test_alpha.py::TestA::test_one"
+    gh_cli = (
+        "backend-tests (1)\tRun tests (shard 1/4)\t"
+        "2026-09-11T11:49:57.5647990Z 1.23s call     tests/test_alpha.py::TestA::test_one"
+    )
+    bom = "﻿2026-09-11T11:49:57.5647990Z 1.23s call     tests/test_alpha.py::TestA::test_one"
+
+    for label, line in [("local", local), ("zip", zipped), ("gh", gh_cli), ("bom", bom)]:
+        assert ci_shard._strip_log_prefix(line) == local, f"{label} prefix survived stripping"
+
+    # A line that merely looks timestamp-ish must not be mangled into a match.
+    assert ci_shard._strip_log_prefix("not a duration line") == "not a duration line"

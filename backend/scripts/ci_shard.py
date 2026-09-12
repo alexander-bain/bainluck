@@ -57,10 +57,89 @@ DURATIONS_FILE = Path(__file__).resolve().parent / "ci_shard_durations.json"
 # whichever bin happens to be last.
 DEFAULT_WEIGHT = 2.0
 
-# Below this share of files carrying a real measurement, `--verify` stops
-# presenting its skew estimate as informative and says the hints are stale.
-# See the long comment in `cmd_verify` for why this warns rather than fails.
-STALE_HINTS_COVERAGE_PCT = 90.0
+# HOW MANY UNMEASURED FILES IS "STALE" — A COUNT, NOT A RATIO (#3497).
+#
+# This was `STALE_HINTS_COVERAGE_PCT = 90.0` and it took master red twice in five
+# days (2026-09-06 and 2026-09-11), each time on no branch's change. A ratio
+# cannot work here: adding a test file raises the denominator and leaves the
+# numerator frozen, so coverage falls on every push and the numerator only moves
+# when a human runs `--record`. The metric therefore decays monotonically and the
+# repo grows into the threshold on whichever push happens to be in the slot.
+#
+# Both crossings read 89.90%. That is the tell — it does not wander, it sits just
+# above the floor and steps through, because the crossing is an artifact of where
+# the denominator landed rather than a statement about the hints. Measured: 134
+# unmeasured files at the first crossing, 167 at the second, with the suite going
+# 1,335 -> 1,654 files in five days (~60 new test files a day, and ~1,080 -> 1,654
+# since 2026-09-01 at the same rate).
+#
+# So the guard now counts UNMEASURED FILES. That number means the same thing at
+# any suite size: how many files are being packed at DEFAULT_WEIGHT instead of a
+# measurement. It still rises as files are added, but a crossing now says
+# "nobody has refreshed in N days" instead of "the suite grew".
+#
+# WHY THE HARD LIMIT IS GENEROUS AND THE WARNING IS TIGHT. The two errors are not
+# symmetric. Being too loose costs WALL CLOCK on one CI shard — `--verify` proves
+# the partition stays total and disjoint whatever the weights say, so correctness
+# is never at stake. Being too tight reds master for EVERY lane at once: on
+# 2026-09-11 that was ~62 minutes with `deploy` skipped, production pinned an hour
+# behind, and three lanes independently building the same one-file repair. The
+# expensive failure is the false red, so the hard limit sits where only genuine
+# neglect reaches it (~10 days of total silence at the measured rate) and the
+# warning fires early enough to make refreshing a scheduled chore instead of an
+# emergency.
+STALE_HINTS_WARN_UNMEASURED = 150
+STALE_HINTS_MAX_UNMEASURED = 600
+
+
+# A GitHub Actions log line is never bare, and the parser below is line-anchored.
+#
+# #3497: the failing guard told the reader to run `--record <log>` on "a CI run's
+# logs" — the only log a lane can actually obtain — and that command exited 1 on
+# it, every time. `^([0-9.]+)s` cannot match a line beginning with a timestamp:
+# `[0-9.]+` eats `2026` and then wants an `s`. Zero lines matched, so `--record`
+# took its own "no duration lines found" branch and sent the reader off to
+# re-check `--durations=0`, which had been correct all along. It survived because
+# it reads as operator error rather than a defect. Two lanes hit it independently
+# on 2026-09-11 and both worked around it by hand.
+#
+# Two prefix shapes reach a lane, and both are handled:
+#   zip artifact      "2026-09-11T11:49:57.5647990Z 1.23s call tests/x.py::T::t"
+#   gh run view --log "job\tstep\t2026-09-11T11:49:57.5647990Z 1.23s call ..."
+# Some runners also emit a UTF-8 BOM on the first line of a step.
+_LOG_LINE_PREFIX = re.compile(r"^(?:[^\t]*\t)*\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+")
+
+
+def hint_coverage(files: list[str], weights: dict) -> tuple[int, int]:
+    """`(measured, unmeasured)` for these files against these weights."""
+    measured = sum(1 for f in files if f in weights)
+    return measured, len(files) - measured
+
+
+def hints_are_stale(unmeasured: int) -> bool:
+    """THE staleness verdict. One function so two callers cannot drift apart.
+
+    The pytest guard and `--verify` used to each compute this inline against a
+    shared constant, which is a convention rather than a guarantee. It is a
+    function now so the #3497 property — the verdict depends on the number of
+    unmeasured files and NOT on the size of the suite — has one place to be true
+    and one place to be tested.
+    """
+    return unmeasured > STALE_HINTS_MAX_UNMEASURED
+
+
+def hints_need_refresh(unmeasured: int) -> bool:
+    """The earlier, warn-only threshold. Crossing this is a chore, not a failure."""
+    return unmeasured > STALE_HINTS_WARN_UNMEASURED
+
+
+def _strip_log_prefix(line: str) -> str:
+    """A raw log line reduced to what pytest actually printed.
+
+    A no-op on local `pytest --durations=0` output, so one code path serves both
+    a piped local run and a downloaded Actions log.
+    """
+    return _LOG_LINE_PREFIX.sub("", line.lstrip("﻿").strip())
 
 
 def discover_test_files() -> list[str]:
@@ -211,7 +290,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     # step that acquires a `|| true`. The threshold sits far below normal churn:
     # at 1,080 files it takes ~108 unmeasured newcomers to trip, which is
     # staleness rather than a busy week.
-    measured = sum(1 for f in ours if f in weights)
+    measured, unmeasured = hint_coverage(ours, weights)
     coverage = 100.0 * measured / len(ours) if ours else 0.0
     if loads and min(loads) > 0:
         skew = (max(loads) - min(loads)) / min(loads) * 100
@@ -220,13 +299,22 @@ def cmd_verify(args: argparse.Namespace) -> int:
             f"{measured}/{len(ours)} measured files ({coverage:.0f}% of the suite); "
             f"the rest are packed at the {DEFAULT_WEIGHT}s DEFAULT_WEIGHT placeholder"
         )
-    if coverage < STALE_HINTS_COVERAGE_PCT:
+    if hints_need_refresh(unmeasured):
+        # Deliberately still a WARNING at this level, and the pytest guard uses
+        # STALE_HINTS_MAX_UNMEASURED rather than this one. The gap between the two
+        # is the runway: CI says "this needs refreshing soon" for days before
+        # anything can red. Crossing the warning is a chore; crossing the hard
+        # limit is neglect.
+        headroom = STALE_HINTS_MAX_UNMEASURED - unmeasured
         print(
-            f"::warning::shard balance hints are STALE — only {measured}/{len(ours)} files "
-            f"({coverage:.0f}%) have a measured duration, so the skew above is largely "
-            f"fiction and the shards are packed by guess. Refresh from a CI run's own logs: "
-            f"download the four backend-tests job logs, strip the timestamp prefix, and run "
-            f"`python scripts/ci_shard.py --record <concatenated.log>`."
+            f"::warning::shard balance hints are going STALE — {unmeasured} of {len(ours)} files "
+            f"have no measured duration ({coverage:.0f}% covered), so the skew above is largely "
+            f"fiction and those files are packed at the {DEFAULT_WEIGHT}s placeholder. "
+            f"{headroom} more unmeasured files and the guard fails "
+            f"(limit {STALE_HINTS_MAX_UNMEASURED}). Refresh from a CI run's own logs: download "
+            f"the four backend-tests job logs and run "
+            f"`python scripts/ci_shard.py --record <concatenated.log>` — the timestamp prefix "
+            f"Actions puts on every line is stripped for you."
         )
 
     if failures:
@@ -269,13 +357,17 @@ def cmd_record(args: argparse.Namespace) -> int:
     printed_count: dict[str, int] = {}
     # e.g. "1.23s call     tests/test_x.py::TestY::test_z"
     pat = re.compile(r"^([0-9.]+)s\s+(?:call|setup|teardown)\s+(tests/[^:\s]+\.py)::")
-    for line in text.splitlines():
-        m = pat.match(line.strip())
+    for raw in text.splitlines():
+        m = pat.match(_strip_log_prefix(raw))
         if m:
             per_file[m.group(2)] = per_file.get(m.group(2), 0.0) + float(m.group(1))
             printed_count[m.group(2)] = printed_count.get(m.group(2), 0) + 1
     if not per_file:
-        print("::error::no `Ns call tests/...` duration lines found — was --durations=0 used?")
+        print(
+            "::error::no `Ns call tests/...` duration lines found — was --durations=0 used? "
+            "(Actions timestamp/job prefixes are stripped automatically, so this really does "
+            "mean the log has no per-test durations in it.)"
+        )
         return 1
 
     # Census the suite so files whose tests were all below the print threshold
