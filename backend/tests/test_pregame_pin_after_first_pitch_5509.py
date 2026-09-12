@@ -154,7 +154,7 @@ class TestPinsThatMustSurvive:
         assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.40, COMMENCE) == 0.40
 
     def test_a_legacy_pin_a_clear_margin_before_commence_still_wins(self):
-        m = _pinned(0.62, COMMENCE - timedelta(seconds=121))
+        m = _pinned(0.62, COMMENCE - timedelta(seconds=301))
         assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.40, COMMENCE) == 0.62
 
     def test_the_under_orientation_conversion_is_untouched(self):
@@ -184,10 +184,10 @@ class TestTheBoundary:
         assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.40, COMMENCE) == 0.40
 
     def test_the_legacy_margin_is_pinned_on_both_sides(self):
-        """So the constant cannot drift to 0, 60 or 300."""
-        ok = _pinned(0.62, COMMENCE - timedelta(seconds=121))
+        """So the constant cannot drift to 0, 60, 120 or 600."""
+        ok = _pinned(0.62, COMMENCE - timedelta(seconds=301))
         assert _resolve_pregame_mark(ok, _outcome(7), True, False, 0.40, COMMENCE) == 0.62
-        bad = _pinned(0.62, COMMENCE - timedelta(seconds=119))
+        bad = _pinned(0.62, COMMENCE - timedelta(seconds=299))
         assert _resolve_pregame_mark(bad, _outcome(7), True, False, 0.40, COMMENCE) == 0.40
 
     def test_an_observed_pin_needs_no_margin_at_all(self):
@@ -207,18 +207,47 @@ class TestTheBoundary:
         m = _pinned(0.62, COMMENCE + timedelta(minutes=5))
         assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.40, COMMENCE) == 0.40
 
-    def test_the_legacy_margin_is_the_writers_poll_cadence(self):
-        """Not a tuned number: `poll_live_prediction_markets` beats every 120s,
-        which bounds a run that has not overlapped itself."""
+    def test_the_legacy_margin_is_the_enforced_task_time_limit(self):
+        """Not a tuned number — and CERT-2736 is why it is THIS number.
+
+        The first spelling used the BEAT INTERVAL (120s). The beat bounds how
+        often the task STARTS, not how long it takes to reach the pin write, and
+        this task laps its own beat: its docstring records "120 s beat against a
+        measured p95 of 208 s" (#3251). The quantity that actually bounds
+        task-entry → price-read is Celery's hard `task_time_limit`, which is
+        ENFORCED by killing the worker — so a run that exceeds it never reaches
+        the pin write, and every pin that exists came from a run inside it.
+
+        Read off the live config, so the constant cannot drift from the limit.
+        """
         from app.tasks import celery_app
 
-        beat = celery_app.conf.beat_schedule
-        entry = next(
-            e
-            for e in beat.values()
-            if e["task"] == "app.tasks.poll_live_prediction_markets"
+        limit = celery_app.conf.task_time_limit
+        assert limit is not None, "no hard time limit — the margin has no bound"
+        task = celery_app.tasks.get("app.tasks.poll_live_prediction_markets")
+        assert getattr(task, "time_limit", None) is None, (
+            "this task now overrides the global limit; the margin must follow "
+            "the override, not the global"
         )
-        assert _PREGAME_MARK_LEGACY_MARGIN_S == entry["schedule"]
+        assert _PREGAME_MARK_LEGACY_MARGIN_S == float(limit)
+
+    def test_the_margin_clears_the_documented_p95_runtime(self):
+        """The gap CERT-2736 required, asserted rather than assumed.
+
+        208s is the measured p95 in the task's own docstring. A margin at or
+        below it accepts pins whose price was read after first pitch.
+        """
+        assert _PREGAME_MARK_LEGACY_MARGIN_S > 208.0
+
+    def test_the_documented_p95_is_still_in_the_tasks_docstring(self):
+        """If #3251's number moves, this margin must be re-derived rather than
+        silently keep clearing a figure nobody re-checked."""
+        from app.tasks import poll_live_prediction_markets
+
+        assert "p95 of 208 s" in (poll_live_prediction_markets.__doc__ or ""), (
+            "the measured p95 changed or moved; re-derive the legacy margin "
+            "against the new number and the enforced task_time_limit"
+        )
 
 
 class TestWhatCannotBeJudged:
@@ -559,3 +588,81 @@ class TestTaskStartsBeforeFirstPitchButFetchCompletesAfter5509:
         assert (
             _resolve_pregame_mark(m, _outcome(7), True, False, 0.40, COMMENCE) == 0.585
         )
+
+
+class TestALegacyPinCannotHideAnInPlayRead5509:
+    """`test_a_legacy_pin_cannot_hide_an_in_play_read_5509` — the repair
+    CERT-2736 required, through the SERVED route, using the documented 208s.
+
+    WHAT THE SECOND BLOCK FOUND. CERT-2719's repair made new pins trustworthy but
+    left the legacy margin at 120s — the BEAT INTERVAL. The beat bounds how often
+    the task starts; it says nothing about how long a run takes to reach the pin
+    write, and this task laps its own beat ("120 s beat against a measured p95 of
+    208 s", #3251). So a legacy pin stamped 121s before first pitch was accepted
+    while its price could have been read ~87s AFTER it — an in-play quote served
+    as "opened at", which is the whole defect #5509 exists for.
+
+    THE BOUND THAT IS REAL. Celery's hard `task_time_limit` (300s, global, no
+    per-task override) is enforced by killing the worker, so a run that exceeds it
+    never reaches the pin write. Every pin that EXISTS therefore came from a run
+    that finished inside 300s, which makes `captured_at + 300s` a true upper bound
+    on the read — structural, not observed.
+    """
+
+    P95_RUNTIME_S = 208.0  # the figure in the task's own docstring (#3251)
+
+    def test_the_p95_specimen_is_refused_through_the_served_route(self):
+        """A legacy pin stamped exactly one p95 before first pitch.
+
+        Under the 120s margin this was ACCEPTED and could carry a price read at
+        commence itself. It must be refused: the opening line is served instead.
+        """
+        m = _pinned(0.995, COMMENCE - timedelta(seconds=self.P95_RUNTIME_S))
+        assert (
+            _resolve_pregame_mark(m, _outcome(7), True, False, 0.585, COMMENCE)
+            == 0.585
+        )
+        assert (
+            _pregame_mark_is_pregame(m.market_metadata["pregame_mark"], COMMENCE)
+            is False
+        )
+
+    def test_the_blocks_exact_specimen_is_refused(self):
+        """CERT-2736 quoted `captured_at=commence-121s` returning
+        `reader_accepts_as_pregame=True`. It must now return False."""
+        pm = {
+            "captured_at": (COMMENCE - timedelta(seconds=121)).isoformat(),
+            "commence_time": COMMENCE.isoformat(),
+            "outcomes": {"7": 0.995},
+        }
+        assert _pregame_mark_is_pregame(pm, COMMENCE) is False
+
+    def test_the_margin_covers_the_whole_runtime_distribution_not_just_p95(self):
+        """p95 is not a bound — 5% of runs are slower. The margin is the ENFORCED
+        limit, so sweep the entire admissible runtime range and require that a pin
+        accepted as pregame could not have been read after first pitch."""
+        from app.tasks import celery_app
+
+        hard_limit = float(celery_app.conf.task_time_limit)
+        for runtime in range(0, int(hard_limit) + 1, 7):
+            stamp = COMMENCE - timedelta(seconds=_PREGAME_MARK_LEGACY_MARGIN_S)
+            pm = {
+                "captured_at": stamp.isoformat(),
+                "commence_time": COMMENCE.isoformat(),
+                "outcomes": {"7": 0.62},
+            }
+            if _pregame_mark_is_pregame(pm, COMMENCE):
+                read_at = stamp + timedelta(seconds=runtime)
+                assert read_at <= COMMENCE, (
+                    f"accepted a pin whose price could have been read {runtime}s "
+                    f"after task entry, i.e. {(read_at - COMMENCE).total_seconds()}s "
+                    "after first pitch"
+                )
+
+    def test_an_observed_pin_is_unaffected_by_the_bigger_margin(self):
+        """The margin is a legacy crutch. A pin that names its own write is still
+        judged on the boundary, so going forward this costs nothing at all."""
+        m = _observed(0.62, COMMENCE - timedelta(seconds=1))
+        assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.40, COMMENCE) == 0.62
+        m2 = _observed(0.62, COMMENCE - timedelta(seconds=250))
+        assert _resolve_pregame_mark(m2, _outcome(7), True, False, 0.40, COMMENCE) == 0.62

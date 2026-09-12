@@ -12431,26 +12431,38 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
 # price. Measured: only 198 of 10,091 pinned markets (2.0%) land in the 0–5 min
 # band at all, so the boundary decides almost nothing — 30 markets sit inside
 # one cadence, 168 between two and five minutes and are refused.
-# CERT-2719: how much EARLIER than commence a LEGACY pin (one with no
-# `observed_at`) must be stamped to be trusted.
+# CERT-2719 / CERT-2736: how much EARLIER than commence a LEGACY pin (one with
+# no `observed_at`) must be stamped to be trusted.
 #
 # This REPLACES `_PREGAME_MARK_MAX_LATENESS_S`, which allowed a pin to be stamped
 # up to one cadence AFTER commence. A legacy pin's `captured_at` is the poller's
 # task-entry clock, read before the venue fetches — so it is a LOWER bound on
 # when the price was actually read, not the read itself. Granting such a stamp
 # extra lateness is exactly backwards: the true read is always at or after the
-# stamp, so lateness must be subtracted, not added. Legacy pins are therefore
-# required to sit a margin BEFORE commence.
+# stamp, so lateness must be subtracted, not added.
 #
-# The margin is the writer's poll cadence (120s), not a tuned number, and it is
-# the same constant for the same reason — one cadence bounds a run that has not
-# overlapped itself. Measured upper bound on the real gap is far smaller: task
-# `2638df63` on 2026-09-12 spent 16.9s between its entry stamp and this loop.
-# Measured cost, all 75,095 pinned markets on production: 534 pins sit in the
-# 0-60s band before commence and 123 in the 60-120s band, so this refuses 657
-# rows (0.9%) that the old rule accepted. 29,658 pins sit in the 5-15 min band
-# (the writer only fires inside a 15-minute lead) and are untouched.
-_PREGAME_MARK_LEGACY_MARGIN_S = 120.0
+# THE SIZE OF THE MARGIN IS A RUNTIME QUESTION, NOT A CADENCE ONE. CERT-2736
+# blocked the first spelling of this for using 120s, the BEAT INTERVAL. The beat
+# bounds how often the task STARTS, not how long it takes to reach the pin write,
+# and `poll_live_prediction_markets` is documented in its own task docstring as
+# "120 s beat against a measured p95 of 208 s — it laps, so it takes an in-flight
+# lease" (#3251). A 120s margin therefore accepts a pin stamped 121s before first
+# pitch whose price was read ~87s AFTER it.
+#
+# The bound that is actually ENFORCED is Celery's hard `task_time_limit` — 300s,
+# global, with no per-task override on this task. It is enforced by killing the
+# worker process, so a run that exceeds it never reaches the pin write at all:
+# every pin that EXISTS was written by a run that completed inside 300s. That
+# makes `captured_at + 300s` a true upper bound on the read, and the margin is
+# therefore the time limit and not a number chosen to look safe.
+# `test_the_legacy_margin_is_the_enforced_task_time_limit` reads it off
+# `celery_app.conf` so the two cannot drift apart.
+#
+# Measured cost over all 75,095 pinned markets on production: refuses the 534
+# pins in the 0-60s band, 123 in 60-120s and 757 in the 2-5 min band — 1,414 rows
+# (1.9%), up from 657 under the 120s spelling. The 29,658 pins in the 5-15 min
+# band are untouched, because the writer only fires inside a 15-minute lead.
+_PREGAME_MARK_LEGACY_MARGIN_S = 300.0
 
 
 def _coerce_utc_datetime(value):
