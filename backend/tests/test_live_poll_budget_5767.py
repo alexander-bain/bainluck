@@ -53,10 +53,16 @@ from sqlalchemy.dialects import postgresql
 from app.tasks import prediction_market_matching as pmm
 
 from tests.test_live_poll_commit_boundary_5682 import (  # noqa: E402
+    _Event,
     _KalshiService,
+    _Market,
+    _Outcome,
+    _PolyService,
+    _Population,
     _Session,
     _kalshi_beat,
     _leg,
+    _poly_event,
     _run,
 )
 
@@ -330,3 +336,198 @@ class TestThePopulationIsOrderedStalestFirst:
 
         order_by = " ".join(captured["sql"].split()).split("ORDER BY", 1)[1]
         assert "CAST" not in order_by.upper(), order_by
+
+
+# --------------------------------------------------------------------------
+# 5. one venue cannot eat the other's fetch budget (repairs CERT-2770)
+# --------------------------------------------------------------------------
+#
+# The BLOCK, in one sentence: the stalest-first ordering is computed over the
+# COMBINED population and then split into two sequential loops, and the first
+# cut gave both loops the same fetch deadline — so the venue that runs first
+# could spend all of it. With 1,327 Kalshi keys ahead of 428 Polymarket ones
+# that is not a risk, it is the steady state: zero Polymarket calls, every beat.
+#
+# It is also strictly worse than the unordered pass it replaced. Unordered, the
+# tail that starves is whichever rows the kill happened to land on, and it moves
+# between beats; ordered-then-split, the starved set is always the same venue —
+# gotcha #41's permanently-dark tail, arriving through the repair for it.
+
+
+class TestNeitherVenueCanBeStarvedOfTheFetchBudget:
+    """A fake monotonic clock, advanced BY THE FETCHES, is the whole rig.
+
+    Wall-clock sleeps would make these arms slow and flaky, and — worse — a
+    budget test that waits for real time cannot distinguish "the loop stopped
+    because of the deadline" from "the loop stopped because it ran out of
+    items". Charging the clock per fetch makes the deadline the only thing that
+    can end the stage, so the arm is about the deadline.
+    """
+
+    @staticmethod
+    def _mixed_beat(n_kalshi: int, n_poly: int) -> _Population:
+        rows, outcomes = [], []
+        for i in range(1, n_kalshi + 1):
+            rows.append((_Market(i, "kalshi", f"KXNFLGAME-EVT{i}"), _Event(100 + i)))
+            outcomes.append(
+                _Outcome(1000 + i, i, f"KXNFLGAME-EVT{i}-LAR", "Los Angeles R")
+            )
+        for j in range(1, n_poly + 1):
+            mid = 500 + j
+            rows.append((_Market(mid, "polymarket", f"poly-evt-{j}"), _Event(200 + j)))
+            outcomes.append(_Outcome(2000 + j, mid, f"cond-{j}", "Los Angeles R"))
+        return _Population(rows, outcomes)
+
+    @staticmethod
+    def _clock(monkeypatch):
+        import time
+
+        state = {"t": 0.0}
+        monkeypatch.setattr(time, "monotonic", lambda: state["t"])
+        return state
+
+    @classmethod
+    def _venues(cls, journal, clock, *, n_kalshi, n_poly, kalshi_cost, poly_cost):
+        class _SlowKalshi(_KalshiService):
+            async def get_markets(self, *a, **kw):
+                clock["t"] += kalshi_cost
+                return await super().get_markets(*a, **kw)
+
+        class _SlowPoly(_PolyService):
+            async def get_event_by_id(self, *a, **kw):
+                clock["t"] += poly_cost
+                return await super().get_event_by_id(*a, **kw)
+
+        kalshi = _SlowKalshi(
+            {f"KXNFLGAME-EVT{i}": [_leg(f"KXNFLGAME-EVT{i}-LAR", f"KXNFLGAME-EVT{i}")]
+             for i in range(1, n_kalshi + 1)},
+            journal,
+        )
+        poly = _SlowPoly(
+            {f"poly-evt-{j}": _poly_event(f"cond-{j}") for j in range(1, n_poly + 1)},
+            journal,
+        )
+        return kalshi, poly
+
+    @staticmethod
+    def _fetches(journal):
+        got = [t for kind, t in journal if kind == "fetch"]
+        return (
+            [t for t in got if str(t).startswith("KXNFLGAME")],
+            [t for t in got if str(t).startswith("poly-evt")],
+        )
+
+    async def test_kalshi_population_cannot_starve_polymarket_from_the_budget(
+        self, monkeypatch
+    ):
+        """THE REPAIR ARM (CERT-2770).
+
+        Three Kalshi keys at 50 s each against a 144 s fetch window (240 s
+        budget x 0.6). Two Polymarket keys, cheap. Shared-deadline arithmetic:
+        Kalshi's three fetches reach t=150, the window closes at 144, and
+        Polymarket makes ZERO calls — which is what the grader reproduced 1/1
+        against the blocked sha. With each venue reserved its proportional share
+        (Polymarket 2 of 5 rows, so Kalshi may use 144 x 0.6 = 86.4 s) Kalshi
+        stops after two and Polymarket runs.
+        """
+        clock = self._clock(monkeypatch)
+        journal = []
+        beat = self._mixed_beat(3, 2)
+        session = _Session([beat, beat], journal=journal)
+        kalshi, poly = self._venues(
+            journal, clock, n_kalshi=3, n_poly=2, kalshi_cost=50, poly_cost=1
+        )
+
+        stats = await _run(monkeypatch, session, kalshi=kalshi, poly=poly)
+
+        kalshi_fetches, poly_fetches = self._fetches(journal)
+        assert poly_fetches, (
+            "Polymarket made ZERO venue calls — the Kalshi loop spent the whole "
+            f"fetch window. budget_stops={stats.get('budget_stops')}"
+        )
+        assert len(poly_fetches) == 2, poly_fetches
+        assert len(kalshi_fetches) == 2, (
+            "Kalshi should have been stopped at its own share, not run to the "
+            f"end of the shared window: {kalshi_fetches}"
+        )
+        assert stats["budget_stops"]["kalshi_fetch"] == 1, stats["budget_stops"]
+
+    async def test_a_lone_venue_still_gets_the_whole_window(self, monkeypatch):
+        """THE SYMMETRIC CONTROL, and the arm that stops the repair overcorrecting.
+
+        A reservation that charged Kalshi for Polymarket's share even when there
+        are no Polymarket rows would cut the common case's fetch window for
+        nothing. Same three 50 s Kalshi keys, no Polymarket: all three must run,
+        because Polymarket's share of an empty population is zero.
+        """
+        clock = self._clock(monkeypatch)
+        journal = []
+        beat = self._mixed_beat(3, 0)
+        session = _Session([beat, beat], journal=journal)
+        kalshi, poly = self._venues(
+            journal, clock, n_kalshi=3, n_poly=0, kalshi_cost=50, poly_cost=1
+        )
+
+        stats = await _run(monkeypatch, session, kalshi=kalshi, poly=poly)
+
+        kalshi_fetches, poly_fetches = self._fetches(journal)
+        assert len(kalshi_fetches) == 3, kalshi_fetches
+        assert poly_fetches == []
+        assert "kalshi_fetch" not in stats.get("budget_stops", {})
+
+    async def test_the_mirror_image_polymarket_only(self, monkeypatch):
+        """And the other way round: Kalshi's empty population reserves nothing."""
+        clock = self._clock(monkeypatch)
+        journal = []
+        beat = self._mixed_beat(0, 3)
+        session = _Session([beat, beat], journal=journal)
+        kalshi, poly = self._venues(
+            journal, clock, n_kalshi=0, n_poly=3, kalshi_cost=50, poly_cost=50
+        )
+
+        stats = await _run(monkeypatch, session, kalshi=kalshi, poly=poly)
+
+        kalshi_fetches, poly_fetches = self._fetches(journal)
+        assert kalshi_fetches == []
+        assert len(poly_fetches) == 3, poly_fetches
+        assert "polymarket_fetch" not in stats.get("budget_stops", {})
+
+    async def test_polymarket_inherits_what_kalshi_did_not_spend(self, monkeypatch):
+        """The reserve is a FLOOR, not a quota — nothing is left on the table.
+
+        Polymarket's deadline is the full window, so a cheap Kalshi stage hands
+        it everything unspent. Without this the repair would trade one kind of
+        waste for another: three Polymarket keys needing more than their own
+        2/5 share still all run, because Kalshi finished in 3 s.
+        """
+        clock = self._clock(monkeypatch)
+        journal = []
+        beat = self._mixed_beat(2, 3)
+        session = _Session([beat, beat], journal=journal)
+        kalshi, poly = self._venues(
+            journal, clock, n_kalshi=2, n_poly=3, kalshi_cost=1, poly_cost=40
+        )
+
+        stats = await _run(monkeypatch, session, kalshi=kalshi, poly=poly)
+
+        kalshi_fetches, poly_fetches = self._fetches(journal)
+        assert len(kalshi_fetches) == 2, kalshi_fetches
+        # 2 s of Kalshi, then 3 x 40 s of Polymarket = 122 s, inside the 144 s
+        # window but far past Polymarket's own 3/5 reserve of 86.4 s.
+        assert len(poly_fetches) == 3, poly_fetches
+        assert stats["terminal"] == "complete"
+
+    async def test_the_two_venues_have_two_deadlines_at_all(self, monkeypatch):
+        """The structural arm. Both loops reading one name is the defect itself,
+        and it survives every behavioural arm above on a population small enough
+        to fit — which is what the first cut's own green suite was."""
+        import inspect
+
+        src = inspect.getsource(pmm._poll_live_prediction_market_prices)
+        assert '"kalshi_fetch",\n                        _kalshi_fetch_deadline,' in src
+        assert '"polymarket_fetch",\n                        _polymarket_fetch_deadline,' in src
+        assert "_fetch_deadline," not in src.replace(
+            "_kalshi_fetch_deadline,", ""
+        ).replace("_polymarket_fetch_deadline,", ""), (
+            "a loop is still reading the shared deadline"
+        )

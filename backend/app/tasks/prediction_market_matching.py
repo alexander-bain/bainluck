@@ -5945,7 +5945,10 @@ async def _poll_live_prediction_market_prices():
     # #5767: the beat's two deadlines, taken from a monotonic clock at the top
     # so nothing downstream can compute a time that only ever drifts ahead.
     _started_at = time.monotonic()
-    _fetch_deadline = _started_at + (
+    #: The window the VENUE-FETCH stages share. It is a window and not a single
+    #: deadline because the two venues each get a floor of it — see the
+    #: per-venue deadlines derived from it once the populations are known.
+    _venue_fetch_window = (
         _LIVE_POLL_BUDGET_SECONDS * _LIVE_POLL_FETCH_BUDGET_SHARE
     )
     _deadline = _started_at + _LIVE_POLL_BUDGET_SECONDS
@@ -5985,6 +5988,40 @@ async def _poll_live_prediction_market_prices():
         # time the loop reached them (gotcha #6).
         kalshi_ids = [m.id for m, _e in pop.rows if m.source == "kalshi"]
         polymarket_ids = [m.id for m, _e in pop.rows if m.source != "kalshi"]
+
+        # #5767 repair (CERT-2770): EVERY VENUE GETS A FLOOR OF THE FETCH BUDGET.
+        #
+        # The stalest-first ordering is computed over the COMBINED population and
+        # then split into these two lists, which run as two sequential loops. The
+        # first cut gave both loops the same `_fetch_deadline`, so the venue that
+        # runs first could spend all of it: with 1,327 Kalshi keys ahead of 428
+        # Polymarket keys, a slow Kalshi stage ends the fetch window before one
+        # Polymarket call is made, every beat, forever. That is gotcha #41's
+        # permanently-dark tail arriving through the repair for it — and it is
+        # WORSE than an unordered pass, because the starvation is now systematic
+        # rather than random.
+        #
+        # Each venue is reserved its PROPORTIONAL share, and the reserve is
+        # subtracted from whoever runs first rather than added to whoever runs
+        # last. Kalshi may use the whole window minus Polymarket's share;
+        # Polymarket's own deadline is the full window, so anything Kalshi leaves
+        # unspent still falls to it. Nothing is wasted and neither venue can be
+        # zeroed by the other's population.
+        #
+        # Proportional and not a fixed 50/50 on purpose: the two populations are
+        # wildly unequal and a fixed split would hand 428 keys the same seconds as
+        # 1,327, starving the big venue to feed the small one. A share of zero is
+        # correct when a venue has no rows — the loop does not run.
+        _venue_total = len(kalshi_ids) + len(polymarket_ids)
+        _polymarket_share = (
+            len(polymarket_ids) / _venue_total if _venue_total else 0.0
+        )
+        _kalshi_fetch_deadline = _started_at + _venue_fetch_window * (
+            1.0 - _polymarket_share
+        )
+        # The FULL window, deliberately: Polymarket runs second, so its deadline
+        # is the global one and it inherits every second Kalshi did not use.
+        _polymarket_fetch_deadline = _started_at + _venue_fetch_window
 
         # #5682: the counters that describe WRITES, as opposed to the ones that
         # describe what the venue said. A write counter that survives the
@@ -6081,7 +6118,9 @@ async def _poll_live_prediction_market_prices():
                     # stages their share. The population is stalest-first, so
                     # what is dropped here is the freshest end of it.
                     if _out_of_budget(
-                        "kalshi_fetch", _fetch_deadline, len(kalshi_ids) - _seen
+                        "kalshi_fetch",
+                        _kalshi_fetch_deadline,
+                        len(kalshi_ids) - _seen,
                     ):
                         break
                     market = pop.markets_by_id.get(market_id)
@@ -6230,7 +6269,7 @@ async def _poll_live_prediction_market_prices():
                 for _seen, market_id in enumerate(polymarket_ids):
                     if _out_of_budget(
                         "polymarket_fetch",
-                        _fetch_deadline,
+                        _polymarket_fetch_deadline,
                         len(polymarket_ids) - _seen,
                     ):
                         break
