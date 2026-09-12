@@ -4949,8 +4949,20 @@ async def backfill_win_probability_sources(
         # is_primary` returns True before the class recognizer runs), and every
         # Kalshi row reaching here has already passed `feeds_win_prob_blend`,
         # its own measured admission rule, immediately above.
+        #
+        # #4854: and the EVENT's kickoff travels too, for the same reason. This
+        # endpoint's write condition is "the key is ABSENT", which is exactly
+        # the state `_retire_unbacked_blend_source` leaves behind — so without
+        # the kickoff it would abstain from the observation clause and re-add a
+        # leg the matcher retired minutes earlier, the fourth-writer hole again
+        # in a second costume. `event.commence_time` and not the market's: the
+        # market's own clock disagrees with the event's by over an hour on 315
+        # of 337 live Polymarket rows.
         if not admissible_as_blend_speaker(
-            market, is_primary=True, outcomes=list(market.outcomes),
+            market,
+            is_primary=True,
+            outcomes=list(market.outcomes),
+            event_commence_time=getattr(event, "commence_time", None),
         ):
             stats["refused_inadmissible"] += 1
             continue

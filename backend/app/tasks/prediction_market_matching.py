@@ -50,6 +50,7 @@ from app.utils.prediction_market_matching import (
 from app.utils.live_blend import (
     MarketOutcomes as _LiveBlendGroup,
     admissible_speakers_are_all_settled,
+    admissible_speakers_are_unobserved_since_kickoff,
     compute_source_home_probability as _compute_source_home_probability,
     count_admissible_speakers,
     select_primary_market as _select_primary_market,
@@ -3641,8 +3642,15 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     # will again. Both are permanent; the transient case this must not touch — an
     # admissible winner market that is merely unpriced right now — is excluded by
     # `_is_settled_book` requiring every outcome to be priced AND terminal.
+    #
+    # A BOOK NOBODY HAS LOOKED AT SINCE KICKOFF IS THE THIRD (#4854), and it
+    # arrives here already counted as the first: the observation clause lives in
+    # `admissible_as_blend_speaker`, so such a group reaches this line with zero
+    # speakers. It has to be asked apart — see the funnel keys below — because a
+    # new cause folded into an old counter reads as a spike in the old one.
     speakers = count_admissible_speakers(blend_group)
     settled_book = admissible_speakers_are_all_settled(blend_group)
+    unobserved = admissible_speakers_are_unobserved_since_kickoff(blend_group)
     if speakers > 0 and not settled_book:
         return False
 
@@ -3663,11 +3671,12 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     # Counted apart so the funnel says WHICH silence retired the leg. Folding
     # #5548 into #5031's counter would make a new cause look like a spike in an
     # old one, and the two need separate reach measurements.
-    funnel_key = (
-        "blend_source_retired_settled_book"
-        if speakers > 0
-        else "blend_source_retired_no_winner_market"
-    )
+    if speakers > 0:
+        funnel_key = "blend_source_retired_settled_book"
+    elif unobserved:
+        funnel_key = "blend_source_retired_unobserved_since_kickoff"
+    else:
+        funnel_key = "blend_source_retired_no_winner_market"
     funnel[funnel_key] = funnel.get(funnel_key, 0) + 1
     logger.info(
         "Retired %s blend leg on event %s — %s (%d linked markets)",
@@ -3676,7 +3685,11 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
         (
             "every market admitted to speak is a settled book"
             if speakers > 0
-            else "group holds no market admitted to speak for the winner"
+            else (
+                "no market admitted to speak has been observed since kickoff"
+                if unobserved
+                else "group holds no market admitted to speak for the winner"
+            )
         ),
         len(blend_group),
     )
@@ -3740,7 +3753,17 @@ async def _phase2_persist_group_reading(
         outcomes_by_market.setdefault(outcome_row.market_id, []).append(outcome_row)
 
     blend_group = [
-        _LiveBlendGroup(market=ref, outcomes=outcomes_by_market.get(ref.market_id, []))
+        _LiveBlendGroup(
+            market=ref,
+            outcomes=outcomes_by_market.get(ref.market_id, []),
+            # #4854: the EVENT's kickoff, which the market row does not carry —
+            # `futures_markets.commence_time` is the market's own clock and
+            # disagrees with the event's by over an hour on 315 of 337 live
+            # Polymarket rows. This scalar copy already holds it, so the
+            # observation gate can be asked here without a second query; a
+            # caller that does not supply it leaves the gate abstaining.
+            event_commence_time=ref.event_commence_time,
+        )
         for ref in refs
     ]
     reading = _compute_source_home_probability(

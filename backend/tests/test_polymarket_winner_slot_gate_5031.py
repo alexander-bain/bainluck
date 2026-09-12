@@ -266,12 +266,17 @@ class TestThePrimaryIsNoLongerExemptFromAdmission:
         assert alone[0].market.name.endswith("First Team to Score")
         assert admissible_as_blend_speaker(alone[0].market, is_primary=True) is False
 
-        # `outcomes` is accepted and ignored (#5273): this stub reproduces the
+        # `outcomes` is accepted and ignored (#5273), and so are
+        # `event_commence_time` and `now` (#4854): this stub reproduces the
         # pre-#5031 rule, which was "the primary is exempt" and consulted
-        # nothing else. Dropping the parameter would make the double reject the
+        # nothing else. Dropping a parameter would make the double reject the
         # call its subject now makes, which is a harness failure wearing the
-        # costume of a regression.
-        def _exempt_primary(market, *, is_primary, outcomes=None):
+        # costume of a regression. Each new parameter the real gate grows is
+        # added here as accepted-and-ignored for exactly that reason — the stub
+        # must stay callable by the subject while still deciding the old way.
+        def _exempt_primary(
+            market, *, is_primary, outcomes=None, event_commence_time=None, now=None
+        ):
             return True if is_primary else False
 
         original = live_blend.admissible_as_blend_speaker
