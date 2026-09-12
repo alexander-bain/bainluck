@@ -1058,23 +1058,86 @@ FIXEOF
   # ── --orphans, behavioural. THE EMPTINESS GUARD IS THE POINT: a sweep whose
   # parser stops matching reports an empty orphan list, and empty reads as a
   # clean board. It must exit 2 (rig failure), never 0.
+  #
+  # THESE FOUR CHECKS NEED A CHECKOUT, AND MUST NOT TAKE IT FROM THE CWD.
+  # `--orphans` resolves origin/master and runs ancestry, so outside a
+  # repository it refuses at `not a git repository` before it ever opens the
+  # ledger. Run that way, the two checks below that asserted only `exit 2`
+  # PASSED — on the wrong cause, since a missing repo also exits 2 — while the
+  # two asserting output text FAILED, and the suite reported "2 FAILED" about a
+  # tool that was working perfectly. Measured on ONE byte-identical file:
+  # `selftest: PASS` from a checkout, `selftest: 2 FAILED` from /tmp. A desk
+  # reads this file out with `git show origin/master:tools/merge-gate.sh`
+  # (notice 18's mechanized form), so running it from outside a tree is the
+  # normal path, not an exotic one.
+  #
+  # So the repo is resolved from THIS SCRIPT's own location rather than from
+  # wherever the selftest was launched — the arbiter must not depend on the tree
+  # you happen to be standing in (#5029) — and passed to `--orphans`, which
+  # already takes it as an argument.
+  orph_repo="$(git -C "$(dirname "$self")" rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$orph_repo" ] || orph_repo="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  env_unanswered=0
+  check_orph () {
+    # The live gate's own contract, applied to the guard that tests it: an
+    # environment that CANNOT answer is UNANSWERED, never a finding about the
+    # subject. This is the same distinction #5605 shipped one row above, and the
+    # selftest was the last place in this file still collapsing it.
+    if [ -z "$orph_repo" ]; then
+      echo "  ????  $1"
+      echo "        [UNANSWERED — no checkout to run --orphans against; re-run from a"
+      echo "         working tree. NOT a finding about the gate.]"
+      env_unanswered=$((env_unanswered + 1))
+      return
+    fi
+    check "$1" "$2"
+  }
+
+  # UNANSWERED is the right answer only when there is genuinely no checkout. If
+  # one is reachable and the resolution above still came back empty, that is a
+  # broken resolver quietly dropping four checks behind a PASS — the exact
+  # vacuous-coverage failure the note in the summary exists to make visible, and
+  # a note nobody reads is not a guard. So: silent from /tmp, red in a tree.
+  check "the --orphans fixtures resolve a checkout whenever one is reachable" \
+    "[ -n \"$orph_repo\" ] || [ -z \"\$(git rev-parse --show-toplevel 2>/dev/null)\" ]"
+
   cat > "$fx/noledger.md" <<'FIXEOF'
 | CERT-9001 -- SUBJECT | 2026-09-11 10:00Z | lane | BLOCK -- TOKEN WITHHELD | nothing granted here |
 FIXEOF
-  out="$(MERGE_GATE_LEDGER="$fx/noledger.md" bash "$self" --orphans 2>&1)"; rc=$?
-  check "--orphans: a ledger with zero granted rows is a RIG FAILURE (exit 2), not a clean board" \
-    "[ $rc -eq 2 ]"
-  check "--orphans: and it says so in words, not just in an exit code" \
+  out="$(MERGE_GATE_LEDGER="$fx/noledger.md" bash "$self" --orphans $orph_repo 2>&1)"; rc=$?
+  # Pin each exit-code assertion to the cause it NAMES. `--orphans` has three
+  # separate ways to exit 2 — empty population, unreadable ledger, no repository
+  # — so `[ $rc -eq 2 ]` on its own is satisfied by all three and tests none of
+  # them. Each check below therefore says which one it saw.
+  check_orph "--orphans: a ledger with zero granted rows is a RIG FAILURE (exit 2), not a clean board" \
+    "[ $rc -eq 2 ] && ! printf '%s' \"\$out\" | /usr/bin/grep -q 'ledger unreadable'"
+  check_orph "--orphans: and it says so in words, not just in an exit code" \
     "printf '%s' \"\$out\" | /usr/bin/grep -q 'RIG FAILURE'"
 
-  out="$(MERGE_GATE_LEDGER=/nonexistent/ledger.md bash "$self" --orphans 2>&1)"; rc=$?
-  check "--orphans: an unreadable ledger exits 2, never 0" "[ $rc -eq 2 ]"
+  out="$(MERGE_GATE_LEDGER=/nonexistent/ledger.md bash "$self" --orphans $orph_repo 2>&1)"; rc=$?
+  check_orph "--orphans: an unreadable ledger exits 2, and says the ledger was unreadable" \
+    "[ $rc -eq 2 ] && printf '%s' \"\$out\" | /usr/bin/grep -q 'ledger unreadable'"
 
   # It must print its denominator every run. A coverage number whose population
   # nobody stated is the failure that read 674 priced legs out of 2,652.
-  out="$(bash "$self" --orphans 2>&1)"
-  check "--orphans: prints its population (granted rows -> unique shas)" \
+  out="$(bash "$self" --orphans $orph_repo 2>&1)"
+  check_orph "--orphans: prints its population (granted rows -> unique shas)" \
     "printf '%s' \"\$out\" | /usr/bin/grep -q 'population:.*granted row'"
+
+  # This one takes the non-repo path as an ARGUMENT, so it needs no checkout and
+  # runs identically everywhere — it is the check whose absence let the four
+  # above be read as a verdict about the gate. It guards the fail-closed
+  # behaviour directly: asked about somewhere that is not a repository,
+  # `--orphans` must say which thing was missing and must land on INCONCLUSIVE,
+  # because "I could not look" and "I looked and found nothing" are the two
+  # answers a sweep must never merge (notice 31(b) exists because an empty tray
+  # read as a clean board).
+  out="$(bash "$self" --orphans /tmp 2>&1)"; rc=$?
+  check "--orphans: a path that is not a repository is INCONCLUSIVE, not an empty board" \
+    "[ $rc -eq 2 ] \
+     && printf '%s' \"\$out\" | /usr/bin/grep -q 'not a git repository' \
+     && printf '%s' \"\$out\" | /usr/bin/grep -q 'INCONCLUSIVE' \
+     && ! printf '%s' \"\$out\" | /usr/bin/grep -q 'population:'"
 
   check "--orphans: --all cannot widen past a shallow clone's floor" \
     "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'window clamped to'"
@@ -1279,12 +1342,23 @@ FIXEOF
      && printf '%s' \"\$_code\" | /usr/bin/grep -q 'stopq \"notice 32 check-runs\"' \
      && [ \$(printf '%s' \"\$_code\" | /usr/bin/grep -c 'stopq \"PR state\"') -eq 2 ]"
 
+  # The summary cannot be tested by running this mode (it would recurse), so it
+  # is pinned to the line it guards — the failure being guarded is someone
+  # deleting the note and leaving a reduced-coverage run printing a bare PASS.
+  check "the PASS line carries the unanswered count, so a short run cannot read as a full one" \
+    "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'selftest: PASS\$_enote'"
+
   echo
+  # A PASS that silently covered fewer checks than usual is the vacuous-guard
+  # failure this file exists to prevent, so the unanswered count is always in
+  # the summary line — never only in the rows above, which scroll.
+  _enote=""
+  [ "${env_unanswered:-0}" -gt 0 ] && _enote=" ($env_unanswered UNANSWERED — not run: no checkout)"
   if [ "$fails" -eq 0 ]; then
-    echo "  selftest: PASS"
+    echo "  selftest: PASS$_enote"
     exit 0
   fi
-  echo "  selftest: $fails FAILED"
+  echo "  selftest: $fails FAILED$_enote"
   exit 1
 fi
 
