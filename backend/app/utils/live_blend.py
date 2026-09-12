@@ -34,6 +34,7 @@ expression, moved.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 
 from app.utils.game_market_class import (
@@ -81,10 +82,24 @@ class MarketOutcomes:
     ``market`` must expose ``id``, ``source``, ``external_id`` and ``name``.
     ``outcomes`` items must expose ``rank``, ``name`` and ``current_probability``
     (``find_moneyline_outcome`` reads the latter two).
+
+    ``event_commence_time`` is the EVENT's kickoff, and it is a field here rather
+    than an attribute read off ``market`` because the market row does not carry
+    it. Measured on production 2026-09-12 17:0xZ over every linked market on a
+    `status='live'` event: `futures_markets.commence_time` agrees with
+    `events.commence_time` to within five minutes on **21 of 337** Polymarket
+    rows and **52 of 477** Kalshi rows, and is off by more than an hour on 315
+    and 375 of them respectively. It is the market's own clock — for Kalshi
+    routinely the CLOSE time (gotcha #14) — so it cannot stand in for kickoff.
+
+    It defaults to None, which is "no evidence", and the observation gate that
+    reads it abstains on None. A construction site that does not supply it keeps
+    exactly the behaviour it has today rather than silently acquiring a gate.
     """
 
     market: Any
     outcomes: Sequence[Any]
+    event_commence_time: Optional[datetime] = None
 
 
 def is_game_winner_market(market: Any) -> bool:
@@ -207,8 +222,158 @@ def _class_says_game_winner(market: Any) -> bool:
     ) == "moneyline"
 
 
+# ── The kickoff grace, DERIVED from the observer's enforced clock (#4854) ────
+#
+# The obvious predicate — "every price predates kickoff" — is TRUE for a couple
+# of minutes at EVERY kickoff, because the last healthy poll landed just before
+# the whistle. Retiring on it bare would drop and re-add the leg at the start of
+# every game, which is precisely the twitch `count_admissible_speakers`'
+# docstring exists to forbid. So the predicate needs a grace, and the grace is
+# derived rather than picked.
+#
+# The live poll is the fastest observer of one of these books, so how long a leg
+# the poller is actually reaching can sit unobserved is a property of that task's
+# clock. It is sized off the bound that is ENFORCED, never off the cadence or a
+# p95: the beat is 120s (`poll-live-prediction-markets`, `schedule: 120.0`) and
+# the global `task_time_limit` is 300s — a HARD limit, Celery SIGKILLs the child,
+# and `poll_live_prediction_markets` declares no override — so a pass cannot
+# outrun it before the next beat starts clean. One beat plus one maximal pass is
+# therefore the longest a healthy leg can go unobserved.
+#
+# The 15-minute matcher is deliberately NOT the basis: it re-derives from rows it
+# already holds instead of re-observing, so its cadence says nothing about when
+# we last heard from the venue.
+_LIVE_POLL_BEAT_SECONDS = 120
+_LIVE_POLL_ENFORCED_HARD_KILL_SECONDS = 300
+UNOBSERVED_SINCE_KICKOFF_GRACE = timedelta(
+    seconds=_LIVE_POLL_BEAT_SECONDS + _LIVE_POLL_ENFORCED_HARD_KILL_SECONDS
+)
+
+# ── And the window CLOSES, because a stale leg stops being this defect ───────
+#
+# The window is two-sided for a reason that is this issue's own scope boundary
+# rather than a convenience. latency/346 sized the class on live pages and split
+# it explicitly: of the marked rows, the ones **over 24h old all carry a
+# settlement flag** and are #4024's wrong-fixture attachment, a different defect
+# with a different fix; the band that belongs here is the two-to-six-hour one on
+# a game actually in progress. An event still marked `live` half a day after its
+# kickoff is not a long match, it is a status or attachment defect, and silently
+# retiring its leg would hide that rather than fix it.
+#
+# It costs this ship nothing, which is the test of an honest bound: measured on
+# production 2026-09-12 17:3xZ, every frozen Polymarket leg on a `status='live'`
+# event is under **3.4 hours** past kickoff — the whole population sits in the
+# first quarter of the window.
+#
+# It also keeps the gate off rows whose clock cannot be trusted at all. This is
+# the only clause here that reads the wall clock, and gotcha #44's lesson is that
+# a fixed-date fixture replayed months later drifts arbitrarily far from its own
+# anchor; outside this window the gate abstains rather than acting on a date it
+# has no business trusting.
+UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES = timedelta(hours=12)
+
+
+def _as_utc(value: Any) -> Optional[datetime]:
+    """A timezone-aware UTC datetime, or None if it is not one at all.
+
+    Naive stamps are read as UTC because that is what every writer on this path
+    stores. Anything that is not a datetime — a test double's string, a None —
+    is "no evidence" and the caller abstains rather than guessing.
+    """
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _last_observation(outcomes: Optional[Sequence[Any]]) -> Optional[datetime]:
+    """When we last OBSERVED this book, or None if we cannot tell.
+
+    `futures_outcomes.last_updated` is the right stamp and the price itself is
+    the wrong one. The pollers write `last_updated` unconditionally on every
+    successful read, so it records that we HEARD from the venue, not that the
+    number moved — which is exactly the question here. A price that has not
+    changed in an hour on a quiet book is fine; a price nobody has looked at
+    since before kickoff is not.
+
+    The NEWEST stamp in the book wins: one outcome lagging is not evidence the
+    book is unobserved, and taking the oldest would fire on a half-written one.
+    """
+    newest: Optional[datetime] = None
+    for outcome in outcomes or ():
+        stamp = _as_utc(getattr(outcome, "last_updated", None))
+        if stamp is not None and (newest is None or stamp > newest):
+            newest = stamp
+    return newest
+
+
+def speaker_unobserved_since_kickoff(
+    market: Any,
+    outcomes: Optional[Sequence[Any]],
+    event_commence_time: Optional[datetime],
+    now: Optional[datetime] = None,
+) -> bool:
+    """Whether this market's book has not been observed since the game started.
+
+    THE THIRD WAY A SOURCE FALLS SILENT (#4854), and the one the other two
+    cannot see. `count_admissible_speakers` catches a group holding nothing but
+    Player Props; `admissible_speakers_are_all_settled` catches a winner market
+    that has stopped being able to answer. Neither catches the case where the
+    winner market is right there, admissible, and PRICED — with a price from
+    before the whistle. That book resolves a side perfectly well, so the reading
+    is not None, the retirement path is never reached, and a pre-kickoff number
+    goes on deciding a live match's published probability.
+
+    Measured on production 2026-09-12 17:0xZ, `status='live'` events: of 323
+    Polymarket legs, **134 carry no observation since their event's kickoff**,
+    and all 134 are past the grace below. A further 8 legs sat 6 minutes past
+    kickoff — inside the grace, protected, and the reason the grace exists.
+
+    DECAY IS NOT ENOUGH, which is why this retires rather than demotes. Making
+    the stamp honest lets `_relative_staleness_multiplier` demote the leg, and a
+    demoted leg is still a leg: a weighted median is decided by POSITION, not by
+    weight, so a 10%-weight source still chooses the published number when it
+    sits in the middle. Only removing it removes it.
+
+    Three abstentions, all "no evidence" rather than "fresh":
+
+      * no ``event_commence_time`` — the caller does not know when the game
+        started, so it cannot know whether we have heard since;
+      * no readable ``last_updated`` on any outcome — an unfetched book, which
+        is the transient case this must not touch;
+      * the game has not been underway longer than the grace — see
+        ``UNOBSERVED_SINCE_KICKOFF_GRACE`` for why that window is 7 minutes and
+        why it is derived from the poll's enforced hard kill rather than chosen;
+      * the game has been "underway" for longer than
+        ``UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES``, which is not a long match but
+        a status or attachment defect — #4024's class, which latency/346
+        measured and excluded from this one.
+    """
+    kickoff = _as_utc(event_commence_time)
+    if kickoff is None:
+        return False
+    moment = _as_utc(now) or datetime.now(timezone.utc)
+    underway_for = moment - kickoff
+    if not (
+        UNOBSERVED_SINCE_KICKOFF_GRACE
+        < underway_for
+        < UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES
+    ):
+        return False
+    observed = _last_observation(outcomes)
+    if observed is None:
+        return False
+    return observed < kickoff
+
+
 def admissible_as_blend_speaker(
-    market: Any, *, is_primary: bool, outcomes: Optional[Sequence[Any]] = None
+    market: Any,
+    *,
+    is_primary: bool,
+    outcomes: Optional[Sequence[Any]] = None,
+    event_commence_time: Optional[datetime] = None,
+    now: Optional[datetime] = None,
 ) -> bool:
     """Whether this market may speak for its source — primary or not (#5031).
 
@@ -276,14 +441,41 @@ def admissible_as_blend_speaker(
     ``outcomes`` defaults to None, which is "no evidence" and refuses nothing,
     so a caller that has not loaded them — `event_chart_backfill` — keeps the
     behaviour it has today rather than silently acquiring a new gate.
+
+    ── ``event_commence_time``: has anyone looked since kickoff? (#4854) ─────
+
+    A market can be the right KIND of question, carry outcomes that refute
+    nothing, and still be quoting a price from before the whistle. That is
+    `speaker_unobserved_since_kickoff`, and it is asked here — rather than in
+    the retirement path beside the other two silences — because the retirement
+    path is only reached when the reading is None, and this book's whole problem
+    is that it resolves perfectly well. Gating admission is what makes the
+    reading None, and the existing `count_admissible_speakers == 0` retirement
+    then clears the stored leg with no new wiring at all.
+
+    NOT ASKED OF KALSHI, and the delta there is provably zero. The class is
+    Polymarket's: on `status='live'` events 134 of 323 Polymarket legs carry no
+    post-kickoff observation, and latency/346 measured 55.7% of Polymarket legs
+    over 30 minutes old against Kalshi's 4.6%. Kalshi's primary returns True
+    above before any clause runs, so a Kalshi group always keeps a speaker and
+    could never be retired by this anyway — asking it of Kalshi's FALLBACKS
+    would only change which Kalshi row speaks, in a population this queue did
+    not measure, for no ship. Same reasoning the outcomes test is held off the
+    Kalshi primary above.
     """
     if getattr(market, "source", None) == "kalshi" and is_primary:
         return True
     if not _class_says_game_winner(market):
         return False
-    return not outcomes_refute_game_winner(
+    if outcomes_refute_game_winner(
         [getattr(o, "name", None) for o in outcomes] if outcomes else None
-    )
+    ):
+        return False
+    if getattr(market, "source", None) != "kalshi" and speaker_unobserved_since_kickoff(
+        market, outcomes, event_commence_time, now
+    ):
+        return False
+    return True
 
 
 def count_admissible_speakers(group: Sequence[MarketOutcomes]) -> int:
@@ -312,8 +504,19 @@ def count_admissible_speakers(group: Sequence[MarketOutcomes]) -> int:
     return len(admissible_speakers(group))
 
 
-def admissible_speakers(group: Sequence[MarketOutcomes]) -> list[MarketOutcomes]:
+def admissible_speakers(
+    group: Sequence[MarketOutcomes],
+    *,
+    now: Optional[datetime] = None,
+    apply_observation_gate: bool = True,
+) -> list[MarketOutcomes]:
     """The entries in this group ALLOWED to speak for the source.
+
+    ``apply_observation_gate=False`` withholds the kickoff from the admission
+    call, which makes #4854's observation clause abstain by construction. It is
+    how `admissible_speakers_are_unobserved_since_kickoff` asks "would anything
+    have spoken but for that clause" without writing a second admission rule —
+    see that function. Nothing on the writing path passes it.
 
     Factored out so `count_admissible_speakers` and
     `admissible_speakers_are_all_settled` cannot drift into two opinions of
@@ -335,8 +538,41 @@ def admissible_speakers(group: Sequence[MarketOutcomes]) -> list[MarketOutcomes]
             entry.market,
             is_primary=entry.market.id == primary_id,
             outcomes=entry.outcomes,
+            event_commence_time=(
+                getattr(entry, "event_commence_time", None)
+                if apply_observation_gate
+                else None
+            ),
+            now=now,
         )
     ]
+
+
+def admissible_speakers_are_unobserved_since_kickoff(
+    group: Sequence[MarketOutcomes], now: Optional[datetime] = None
+) -> bool:
+    """Whether the observation gate is what silenced this whole group (#4854).
+
+    Purely a question about WHICH CAUSE, asked so the funnel can say it. Once
+    `speaker_unobserved_since_kickoff` is part of admission, a group frozen since
+    before kickoff arrives at the retirement with zero admissible speakers and is
+    indistinguishable there from #5031's group-of-Player-Props. Folding a new
+    cause into an old counter makes it look like a spike in the old one, and the
+    two need separate reach measurements.
+
+    Asked by running the SAME admission function twice — once with the kickoff
+    and once without — rather than by re-deriving which rows are stale beside it.
+    Withholding ``event_commence_time`` makes the observation clause abstain by
+    construction, so the second call is this module's own rule minus exactly one
+    clause, never a second copy of it (the #1951 drift failure).
+
+    Returns False when the group has no speaker even with the gate off: that is
+    the structural-silence case and `count_admissible_speakers` already owns it.
+    """
+    without_gate = admissible_speakers(group, apply_observation_gate=False)
+    if not without_gate:
+        return False
+    return not admissible_speakers(group, now=now)
 
 
 def _is_settled_book(entry: MarketOutcomes) -> bool:
@@ -509,7 +745,14 @@ def compute_source_home_probability(
     for entry in ordered_entries:
         is_primary = entry.market.id == primary.market.id
         if not admissible_as_blend_speaker(
-            entry.market, is_primary=is_primary, outcomes=entry.outcomes
+            entry.market,
+            is_primary=is_primary,
+            outcomes=entry.outcomes,
+            # #4854: a book nobody has looked at since kickoff may not speak.
+            # Passed here as well as in `admissible_speakers` because these are
+            # the two places admission is asked, and they must not disagree —
+            # the writer would publish a number the retirement then clears.
+            event_commence_time=getattr(entry, "event_commence_time", None),
         ):
             continue
         found = _reading_for_entry(entry, home_team_name, away_team_name)
@@ -579,7 +822,13 @@ def compute_source_home_probability(
                 if not is_game_winner_market(sibling.market):
                     continue
             elif not admissible_as_blend_speaker(
-                sibling.market, is_primary=False, outcomes=sibling.outcomes
+                sibling.market,
+                is_primary=False,
+                outcomes=sibling.outcomes,
+                # A CONTRIBUTOR IS GATED LIKE A SPEAKER (CERT-2646), and #4854
+                # is part of the gate now. Without this the devig could average
+                # a live price with a pre-kickoff one and publish the mean.
+                event_commence_time=getattr(sibling, "event_commence_time", None),
             ):
                 continue
             sibling_reading = _home_probability_for_market(
