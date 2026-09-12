@@ -1644,6 +1644,14 @@ _SEARCH_FUTURES_PAGE = 10      # rows the flat `futures` bucket returns
 _SEARCH_FUTURES_WINDOW = 20    # rows fetched before rerank + dedup
 _SEARCH_FUTURES_REFILL = 40    # rank 21-60, fetched ONLY on an observed collapse
 
+# #5773 — clubs the resolved-team rescue arm will build event arms for. FIVE
+# because that is what the teams bucket itself prints (`matched_teams` caps at 5
+# at :6716), and the rescue exists to give those exact rows their games: a sixth
+# arm would search for a club the reader is not being shown. `phil` is the
+# specimen that needs more than one — Phillies, Flyers, 76ers, Eagles and Union
+# all resolve, and all five are the right answer.
+_RESOLVED_TEAM_RESCUE_CAP = 5
+
 
 async def _fetch_futures_window(
     db,
@@ -2432,6 +2440,71 @@ def _event_name_match(term: str, expansion: str | None):
             _build_expanded_fts(Event.home_team_name, term, expansion),
             _build_expanded_fts(Event.away_team_name, term, expansion),
         ),
+    )
+
+
+def _rescue_teams_from_rows(rows) -> list[tuple[str, str]]:
+    """#5773: the clubs a resolved-team rescue may build event arms for.
+
+    The Python half of the teams rail, applied to the teams rail's OWN rows:
+    strip the individual-sport entries, drop repeats, cap at
+    `_RESOLVED_TEAM_RESCUE_CAP`. Pure, so the judgment is testable without a
+    database.
+
+    **The strip is the safety property, not a tidy-up.** Tennis players, MMA
+    fighters, golfers and boxers are modelled as "teams" by the Odds API, and
+    they are precisely the population `fed` -> `Federico` was made of — the
+    defect LAT-P033/LAT-P034 measured and closed. Removing them here is what
+    lets the rescue reuse a PREFIX-matched team without reopening it: measured on
+    production 2026-09-12, `fed` and `apple` resolve no surviving row at all and
+    so build no arm, while `yank`, `dodg` and `phil` resolve real clubs.
+
+    A row with no `sport_key` is dropped rather than kept: the arm it would build
+    is unscoped, and an unscoped arm is the cross-league fan-out that
+    `team_nickname_event_expansions` exists to prevent (`Patriots` reaching a
+    Caribbean Premier League cricket side).
+    """
+
+    resolved: list[tuple[str, str]] = []
+    for row in rows:
+        sport_key = getattr(row, "sport_key", None)
+        if not sport_key or _is_individual_sport(sport_key):
+            continue
+        pair = (row.name, sport_key)
+        if pair in resolved:
+            continue
+        resolved.append(pair)
+        if len(resolved) >= _RESOLVED_TEAM_RESCUE_CAP:
+            break
+    return resolved
+
+
+def _resolved_team_event_filter(resolved: list[tuple[str, str]]):
+    """#5773: games played by clubs the page has already resolved, sport-scoped.
+
+    One arm per club, each carrying its OWN sport key, OR-ed together. The scope
+    is not a nicety and the reasoning is `team_nickname_event_expansions`',
+    verbatim: event team names are the words venues print, so a bare club token
+    reaches another league's side of the same name.
+
+    Substring ILIKE on the full canonical name, deliberately — the same test the
+    fuzzy fallback one screen down applies to the name IT guessed, on the same
+    trigram GINs, with the difference that this name was RESOLVED rather than
+    guessed. No tsquery: LAT-P002/#1494 (1c) keeps the event predicate FTS-free
+    because no tsvector index exists on these columns, and this arm honours that.
+    """
+
+    return or_(
+        *[
+            and_(
+                Sport.key == sport_key,
+                or_(
+                    Event.home_team_name.ilike(f"%{name}%"),
+                    Event.away_team_name.ilike(f"%{name}%"),
+                ),
+            )
+            for name, sport_key in resolved
+        ]
     )
 
 
@@ -5191,6 +5264,141 @@ async def search_events(
     else:
         had_substring_match = False
 
+    # #5773 — THE RESOLVED-TEAM RESCUE ARM: reuse the club this page has ALREADY
+    # matched, instead of guessing at a spelling neighbour.
+    #
+    # Ship 7's own acceptance sentence failed on production 2026-09-12 23:0xZ:
+    # `?q=yank` served the New York Yankees team row and **zero games**. Measured
+    # the same minute, `dodg` and `phil` do it too — 1 and 5 real clubs resolved,
+    # 0 game cards each. "The team first, its game next" has no second half.
+    #
+    # THE WORD TEST IS NOT THE BUG AND IS NOT TOUCHED. `_event_name_match` ANDs an
+    # FTS whole-word arm onto the ILIKE, and `yank` is not a lexeme of `yankees`
+    # (which stems to `yanke`) exactly as `fed` is not a lexeme of `Federico`.
+    # LAT-P034 refuses prefix matching in this file "in full", LAT-P037 names this
+    # very query while doing it, and a minimum-length constant is the other repair
+    # it measured and rejected (it lets `apple` -> `Appleton` straight back in).
+    # Both refusals stand; nothing below widens either arm.
+    #
+    # What LAT-P034 said the separation actually needs is "the team registry
+    # (`Yankees` is a team, `Federico` is a first name)" — and THIS PAGE HAS
+    # ALREADY ASKED IT. `_build_team_search_filter` carries #4126's last-token
+    # prefix arm, and the teams rail then strips individual-sport rows (tennis
+    # players, MMA fighters, golfers, boxers), which is precisely the population
+    # `fed` -> `Federico` was made of. So the registry's answer costs one small
+    # indexed query over a curated table, and it is STRUCTURALLY immune to the
+    # defect the refusal is about. Measured on production 2026-09-12 23:0xZ:
+    #
+    #     query   teams it resolves                              games today
+    #     yank    New York Yankees (MLB)                          0
+    #     dodg    Los Angeles Dodgers (MLB)                       0
+    #     phil    Phillies, Flyers, 76ers, Eagles, Union          0
+    #     fed     -- nothing --                                   0
+    #     apple   -- nothing --                                   0
+    #
+    # `fed` and `apple` resolve NO team, so they keep the honest empty rail. That
+    # is the entire safety argument, and it is a property of the registry rather
+    # than of a constant somebody can tune.
+    #
+    # ONLY ON THE EMPTY RAIL. The query runs where the (more expensive) trigram
+    # "did you mean" lookup was already about to run, and it runs FIRST: knowing
+    # what `yank` names is strictly better than guessing its nearest spelling,
+    # which is the judgment #4809 wrote one screen down for `niners` -> `UTEP
+    # Miners`. On every query whose rail is not empty the compiled SQL is
+    # unchanged and no extra statement is issued.
+    #
+    # SCOPE COMES FROM `event_scope_conditions`, NOT A HAND-ROLLED COPY. The fuzzy
+    # path below rebuilds its own condition list and has had to be repaired twice
+    # for a clause left behind in it (#2263's proven-duplicate, #4794's
+    # blank-card); reusing the shared list makes this arm immune to that class by
+    # construction rather than by review.
+    _resolved_teams: list[tuple[str, str]] = []
+    if total_count == 0 and not degraded and not sport_alias_keys:
+        try:
+            # 25 then cap, the same shape as the teams bucket itself (:6638) —
+            # the individual-sport strip runs in Python there and here, so the
+            # real contenders have to be in hand before the cap is applied.
+            _resolved_rows = (
+                await db.execute(
+                    select(Team.name, Sport.key.label("sport_key"))
+                    .join(Sport, Team.sport_id == Sport.id, isouter=True)
+                    .where(_build_team_search_filter(_q_identity))
+                    .order_by(_team_search_rank(_q_identity).desc(), Team.name)
+                    .limit(25)
+                )
+            ).all()
+            _resolved_teams = _rescue_teams_from_rows(_resolved_rows)
+
+            if _resolved_teams:
+                _rescue_conditions = [
+                    _resolved_team_event_filter(_resolved_teams),
+                    *event_scope_conditions,
+                ]
+                # `execute(...).scalar()`, not `db.scalar(...)`: both counts
+                # already in this function are built that way (the primary one
+                # above and the fuzzy fallback's below), and the number lands in
+                # `total_count`, which the response arithmetic then compares and
+                # divides. One count idiom per function is worth more than one
+                # saved line.
+                _rescue_count_r = await db.execute(
+                    select(func.count())
+                    .select_from(Event)
+                    .join(Sport, Event.sport_id == Sport.id)
+                    .where(*_rescue_conditions)
+                )
+                _rescue_count = _rescue_count_r.scalar()
+                # Counted BEFORE `query` is replaced, so a rail that is still
+                # empty leaves the primary statement exactly as it was.
+                if _rescue_count:
+                    query = (
+                        select(Event)
+                        .join(Sport, Event.sport_id == Sport.id)
+                        .options(selectinload(Event.sport))
+                        .where(*_rescue_conditions)
+                        .order_by(
+                            *((_day_boost,) if _day_boost is not None else ()),
+                            status_order,
+                            tag_boost,
+                            # `search_rank` is deliberately absent. Every row
+                            # here scores 0 against the literal query — that IS
+                            # the defect being repaired — so including the key
+                            # would order nothing while reading as relevance.
+                            case(
+                                (
+                                    Event.status.in_(["live", "scheduled"]),
+                                    Event.commence_time,
+                                ),
+                                else_=None,
+                            ).asc().nulls_last(),
+                            case(
+                                (
+                                    Event.status.in_(
+                                        ["completed", "closed", EVENT_SUSPENDED]
+                                    ),
+                                    Event.commence_time,
+                                ),
+                                else_=None,
+                            ).desc().nulls_last(),
+                        )
+                    )
+                    total_count = _rescue_count
+                    logger.info(
+                        "search resolved-team rescue for %r -> %s (%d events)",
+                        q,
+                        ", ".join(name for name, _ in _resolved_teams),
+                        _rescue_count,
+                    )
+        except Exception as exc:  # noqa: BLE001 — the rescue is best-effort
+            # Recovered on ANY failure, not only a timeout, for the reason the
+            # word-boundary guard above gives: any error here leaves the
+            # transaction aborted and would fail every later stage on
+            # InFailedSqlTransaction (#1494 (1e)), which does not care what
+            # aborted it. Failing closed means `_resolved_teams` stays empty and
+            # the fuzzy path below behaves exactly as it does today.
+            logger.warning("search resolved-team rescue failed for %r: %s", q, exc)
+            await _recover_search_session(db, _deadline)
+            _resolved_teams = []
+
     # #4809 — a query that resolved a CURATED nickname is never "corrected".
     #
     # `_event_nickname_arms` above fixes the empty rail; this fixes what filled it
@@ -5208,6 +5416,16 @@ async def search_events(
     # We KNOW what `niners` names: the map is curated, franchise-anchored and
     # sport-keyed. Guessing at a spelling neighbour is strictly worse than showing
     # the honest empty rail, and the markets and team rails still answer.
+    #
+    # #5773 extends that same judgment to `_resolved_teams`, and it is the second
+    # of the rescue arm's two halves rather than a tidy-up. The arm above replaces
+    # `query` only when the resolved clubs actually HAVE games in the window; a bye
+    # week, an off-season or a narrow `days_back` leaves the count at 0 with the
+    # club still positively identified, and that is exactly the state in which the
+    # trigram would answer `yank` with `Petr Yan`'s fights (sim 0.273, measured in
+    # the table below). We know what `yank` names for the same reason we know what
+    # `niners` names — the registry told us — so the correction is declined on the
+    # same terms, with the same "the markets and team rails still answer" backstop.
     if (
         total_count == 0
         and not degraded
@@ -5215,6 +5433,7 @@ async def search_events(
         and not sport_alias_keys
         and not had_substring_match
         and not _event_nickname_arms
+        and not _resolved_teams
     ):
         try:
             # LAT-P002/#1494 (1c): the WHERE uses the `%` OPERATOR, which the
@@ -5758,6 +5977,48 @@ async def search_events(
         # that outcome-only matches already score ~0 on the name vector, so the real
         # defect may be that tier separation is not enforced at the page boundary —
         # a RANKING fix, not a recall one. Verify that before deleting anything.
+        #
+        # #5773 TRIED THE WORD TEST HERE AND MEASURED IT DOWN. Read this before
+        # proposing it a third time.
+        #
+        # The case FOR it looked strong: `?q=yank` on production 2026-09-12 22:48Z
+        # served three markets reached only through an outcome the four letters
+        # are spelled inside — `Yankiel Rivera` (WBC Flyweight Title), `Priyanka
+        # Gandhi Vadra` (Prime Minister of India), `Priyanka` (Love Is Blind).
+        # That is `fed` -> `Federico` one column over, and it also refutes half of
+        # the paragraph above: the tier split IS enforced (`_futures_name_tier` is
+        # the first key of the one ORDER BY) and the junk reached a reader anyway,
+        # because `yank` has exactly ONE tier-0 row and nineteen window slots
+        # after it. Ranking cannot repair a page whose junk is all that is left to
+        # rank. So a tier fix is NOT the answer either.
+        #
+        # But the arm fix is worse. Measured on production the same night, markets
+        # whose outcomes the term reaches, before and after an AND-ed word test::
+        #
+        #     term      ILIKE markets    surviving a word test
+        #     lebro            367                 0
+        #     ohtan            987                 0
+        #     yank             438                 0
+        #     fed            1,379                38
+        #     mahom             72                72   <- `Mahomes` STEMS to `mahom`
+        #     lebron           364               364
+        #     judge            391               391
+        #
+        # A reader four letters into "lebron" or "ohtani" would lose every market
+        # about that player — 367 and 987 of them. Whole words are untouched and
+        # `fed` gets its precision, but progressive typing is the common case on a
+        # phone, and this arm is the only thing serving it for a PERSON. The event
+        # rail can accept the same loss (LAT-P034) because the TEAMS registry
+        # rescues it with #4126's prefix arm behind the individual-sport strip;
+        # #5773 extended that rescue to game cards. There is NO equivalent
+        # registry for an outcome, so here the loss is unrescued and total.
+        #
+        # The junk and the rescue are therefore the same mechanism, and separating
+        # them needs to know which outcome names are entities the reader means —
+        # the alias/identity layer again, not a predicate in this file. Left
+        # deliberately unfixed, now with the numbers that say why.
+        # `test_search_latency_contract.py::test_the_outcome_arm_is_deliberately_
+        # not_word_tested` is the guard, and it was right.
         if not _has_extractable_trigram(term):
             futures_outcome_match = (
                 _outcome_id_match(exp, None) if exp else None
