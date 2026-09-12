@@ -5707,6 +5707,114 @@ def _clear_withdrawn_outcome(outcome, now, stats: dict) -> bool:
     return True
 
 
+@dataclass
+class _LivePollPopulation:
+    """One live-poll beat's rows, addressable BY ID (#5682).
+
+    The live poll used to hold every row it had loaded in local lists and write
+    them all inside ONE transaction. A single database error — in production an
+    asyncpg ``DeadlockDetectedError`` on **102 of 111 starts** in the 24 h to
+    2026-09-12 17:06Z — therefore cost the beat twice over: everything already
+    priced was rolled back, and every statement after it raised
+    ``PendingRollbackError`` until the closing ``commit()`` took the task down
+    with it. Live events served event-level stamps up to 5 h 35 m behind their
+    own outcome rows: the fetch reached the market, the write never landed.
+
+    The repair is Phase 2's discipline (gotcha #13) — a commit boundary per
+    market — and it needs this object because of gotcha #6: ``rollback()``
+    expires every persistent instance in the session, ``expire_on_commit=False``
+    notwithstanding. A loop iterating preloaded instances therefore has its
+    UNREACHED rows expired by the failure of an earlier one, and the next
+    attribute read raises ``MissingGreenlet`` outside the per-item catcher —
+    trading a lost beat for a differently-lost beat. So every loop in the poll
+    iterates IDS and resolves them here, and a recovery rebuilds this object
+    from the database before the next id is touched.
+    """
+
+    rows: list
+    markets_by_id: dict
+    event_by_market_id: dict
+    outcome_lookup: dict
+    outcomes_by_market: dict
+    live_event_ids: set
+
+    @classmethod
+    def empty(cls) -> "_LivePollPopulation":
+        """The fail-closed population: every id resolves to nothing.
+
+        Used when the re-read after a rollback itself fails. The beat then
+        finishes doing nothing rather than raising, because the rows it already
+        committed are the point and a raise here would report the whole pass as
+        thrown — the exact false signal this repair exists to remove.
+        """
+        return cls([], {}, {}, {}, {}, set())
+
+
+async def _load_live_poll_population(session, now) -> _LivePollPopulation:
+    """Read the beat's linked markets, their events, and their outcomes.
+
+    Split out of :func:`_poll_live_prediction_market_prices` so the SAME read
+    serves the first pass and every post-rollback recovery. Two reads, both
+    batched: one join for the rows, one ``IN`` for their outcomes.
+    """
+    from app.models.models import Event, FuturesMarket, FuturesOutcome
+
+    # Live events OR events starting within 3 hours. Pre-game prop prices
+    # undergo price discovery in the hours before game time — polling only live
+    # events misses this entirely and leaves props with 1-2 snapshots from the
+    # 2h full-poll interval.
+    upcoming_cutoff = now + timedelta(hours=3)
+    result = await session.execute(
+        select(FuturesMarket, Event)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.isnot(None),
+            or_(
+                Event.status == "live",
+                and_(
+                    Event.status == "scheduled",
+                    Event.commence_time.isnot(None),
+                    Event.commence_time <= upcoming_cutoff,
+                    Event.commence_time > now,
+                ),
+            ),
+        )
+    )
+    rows = list(result.all())
+
+    markets_by_id: dict = {}
+    event_by_market_id: dict = {}
+    live_event_ids: set = set()
+    for market, event in rows:
+        markets_by_id[market.id] = market
+        event_by_market_id[market.id] = event
+        live_event_ids.add(event.id)
+
+    # Batch-load all outcomes for linked markets to avoid N+1
+    outcome_lookup: dict = {}
+    outcomes_by_market: dict = {}
+    if markets_by_id:
+        outcomes_result = await session.execute(
+            select(FuturesOutcome).where(
+                FuturesOutcome.market_id.in_(list(markets_by_id))
+            )
+        )
+        for o in outcomes_result.scalars().all():
+            if o.external_id:
+                outcome_lookup[(o.market_id, o.external_id)] = o
+            outcomes_by_market.setdefault(o.market_id, []).append(o)
+
+    return _LivePollPopulation(
+        rows=rows,
+        markets_by_id=markets_by_id,
+        event_by_market_id=event_by_market_id,
+        outcome_lookup=outcome_lookup,
+        outcomes_by_market=outcomes_by_market,
+        live_event_ids=live_event_ids,
+    )
+
+
 async def _poll_live_prediction_market_prices():
     """
     Fast-poll current prices for prediction markets linked to LIVE events.
@@ -5736,9 +5844,10 @@ async def _poll_live_prediction_market_prices():
 
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-    from app.models.models import (
-        FuturesMarket, FuturesOddsSnapshot, FuturesOutcome, Event, WinProbSnapshot,
-    )
+    # The market/event/outcome rows are read by `_load_live_poll_population`
+    # (#5682), which owns their query; what is still needed HERE is the
+    # snapshot table this loop writes and the event row it stamps.
+    from app.models.models import Event, FuturesOddsSnapshot
     from app.tasks.snapshots import _create_or_update_win_prob_snapshot
     from app.utils.odds_math import probability_to_american
 
@@ -5767,70 +5876,118 @@ async def _poll_live_prediction_market_prices():
         "snapshots_written": 0,
         "snapshots_deduped": 0,
         "pregame_marks_written": 0,
+        # #5682. `commits` counts the beat's DURABLE boundaries — the number of
+        # times work stopped being losable. `deadlocks` and `session_recoveries`
+        # count what the single-transaction shape used to hide inside one
+        # thrown task: the former names the class, the latter counts every
+        # rollback the pass survived, deadlock or not.
+        "commits": 0,
+        "deadlocks": 0,
+        "session_recoveries": 0,
         "errors": [],
     }
 
     now = datetime.now(timezone.utc)
 
     async with get_task_session() as session:
-        # Find linked prediction markets where the event is live OR starting
-        # within 3 hours. Pre-game prop prices undergo price discovery in the
-        # hours before game time — polling only live events misses this entirely
-        # and leaves props with 1-2 snapshots from the 2h full-poll interval.
-        from datetime import timedelta
-        upcoming_cutoff = now + timedelta(hours=3)
-        result = await session.execute(
-            select(FuturesMarket, Event)
-            .join(Event, FuturesMarket.event_id == Event.id)
-            .where(
-                FuturesMarket.source.in_(["kalshi", "polymarket"]),
-                FuturesMarket.event_id.isnot(None),
-                or_(
-                    Event.status == "live",
-                    and_(
-                        Event.status == "scheduled",
-                        Event.commence_time.isnot(None),
-                        Event.commence_time <= upcoming_cutoff,
-                        Event.commence_time > now,
-                    ),
-                ),
-            )
-        )
-        rows = result.all()
+        pop = await _load_live_poll_population(session, now)
 
-        if not rows:
+        if not pop.rows:
             logger.debug("No live or upcoming linked prediction markets to poll")
+            # A finished run over an empty population, not a declined one: at
+            # 4am there are no live games to price, and every unit this beat
+            # owed — zero of them — is done. `no_work` is reserved for a run
+            # that deliberately banked nothing it could have banked.
+            stats["terminal"] = "complete"
             return stats
 
-        live_event_ids = set()
-        kalshi_markets = []
-        polymarket_markets = []
+        stats["live_events"] = len(pop.live_event_ids)
+        stats["linked_markets"] = len(pop.rows)
 
-        for market, event in rows:
-            live_event_ids.add(event.id)
-            if market.source == "kalshi":
-                kalshi_markets.append((market, event))
-            else:
-                polymarket_markets.append((market, event))
+        # #5682: THE BEAT'S PLAN IS A LIST OF IDS. Fixed here, resolved against
+        # `pop` one item at a time, because a recovery replaces `pop` wholesale
+        # and any list of instances captured now would be expired rows by the
+        # time the loop reached them (gotcha #6).
+        kalshi_ids = [m.id for m, _e in pop.rows if m.source == "kalshi"]
+        polymarket_ids = [m.id for m, _e in pop.rows if m.source != "kalshi"]
 
-        stats["live_events"] = len(live_event_ids)
-        stats["linked_markets"] = len(rows)
+        # #5682: the counters that describe WRITES, as opposed to the ones that
+        # describe what the venue said. A write counter that survives the
+        # rollback of the write it counted is a lying counter — and it would lie
+        # in the one direction that hides this outage, reporting prices the
+        # database threw away. Fetch/observation counters are NOT here: the
+        # request really was made and the book really was unreadable.
+        _durable_counters = (
+            "outcomes_updated",
+            "kalshi_outcomes_updated",
+            "kalshi_outcomes_withdrawn_cleared",
+            "futures_snapshots_written",
+            "snapshots_written",
+            "snapshots_deduped",
+            "pregame_marks_written",
+        )
+        committed_counts = {k: stats[k] for k in _durable_counters}
 
-        # Batch-load all outcomes for linked markets to avoid N+1
-        all_market_ids = [market.id for market, event in rows]
-        outcome_lookup = {}
-        outcomes_by_market = {}
-        if all_market_ids:
-            outcomes_result = await session.execute(
-                select(FuturesOutcome).where(FuturesOutcome.market_id.in_(all_market_ids))
-            )
-            for o in outcomes_result.scalars().all():
-                if o.external_id:
-                    outcome_lookup[(o.market_id, o.external_id)] = o
-                outcomes_by_market.setdefault(o.market_id, []).append(o)
+        async def _commit_boundary() -> None:
+            """Make this item's writes durable and let go of its locks.
+
+            The lock window was previously the WHOLE pass — including ~100
+            venue fetches and their 0.3 s rate-limit sleeps — against a matcher
+            and a WebSocket fast lane writing the same rows. That window is
+            what deadlocked; per-item commits collapse it to one market.
+            """
+            await session.commit()
+            stats["commits"] += 1
+            committed_counts.update({k: stats[k] for k in _durable_counters})
+
+        async def _recover(label: str, exc: Exception) -> None:
+            """Record one item's failure and hand the pass back a usable session.
+
+            Modelled on Phase 1's :func:`_abandon_attempt`, for the same reason:
+            a Postgres error aborts the transaction, so every later statement
+            raises ``PendingRollbackError`` until someone rolls back. Rolling
+            back expires the instances the rest of the pass was going to use, so
+            the expired ones are expunged and the population is re-read before
+            the next id is resolved.
+            """
+            nonlocal pop
+            # The database threw this item's writes away; the numbers that
+            # counted them go with it, back to the last durable boundary.
+            for _counter in _durable_counters:
+                stats[_counter] = committed_counts[_counter]
+            if "deadlock" in str(exc).lower():
+                stats["deadlocks"] += 1
+            stats["errors"].append(f"{label}: {str(exc)[:100]}")
+            stats["session_recoveries"] += 1
+            try:
+                await session.rollback()
+            except Exception:
+                # A rollback that itself fails means the connection is gone.
+                # There is nothing left to undo and nothing to add to the error
+                # already recorded; re-raising would turn one lost market into
+                # a lost beat, which is the defect.
+                pass
+            expunge_all = getattr(session, "expunge_all", None)
+            if expunge_all is not None:
+                try:
+                    expunge_all()
+                except Exception:  # pragma: no cover — see the rollback above
+                    logger.debug(
+                        "expunge after %s failed; the session is already gone",
+                        label,
+                    )
+            try:
+                pop = await _load_live_poll_population(session, now)
+            except Exception as reload_exc:
+                # Fail closed: every remaining id resolves to nothing and the
+                # beat ends quietly, keeping what it has already committed.
+                stats["errors"].append(
+                    f"reload_after_{label}: {str(reload_exc)[:100]}"
+                )
+                pop = _LivePollPopulation.empty()
 
         # ── Fetch Kalshi prices ────────────────────────────────────────
-        if kalshi_markets:
+        if kalshi_ids:
             from app.services.kalshi_api import KalshiAPIService
 
             # #3569: the 2-hour poll's price policy, imported rather than
@@ -5844,11 +6001,19 @@ async def _poll_live_prediction_market_prices():
 
             service = KalshiAPIService()
             try:
-                for market, event in kalshi_markets:
+                for market_id in kalshi_ids:
+                    market = pop.markets_by_id.get(market_id)
+                    if market is None:
+                        # Unlinked or gone since the plan was made, or dropped
+                        # by a recovery's re-read. The next beat is 2 min away.
+                        continue
+                    # Captured as a plain string BEFORE any write: the error
+                    # path below cannot read it off an expired instance.
+                    event_ticker = market.external_id
                     try:
                         # Kalshi external_id is the event ticker
                         markets_data, _ = await service.get_markets(
-                            event_ticker=market.external_id,
+                            event_ticker=event_ticker,
                             status=None,  # Get all statuses
                             limit=10,
                         )
@@ -5904,7 +6069,7 @@ async def _poll_live_prediction_market_prices():
 
                             # Find matching outcome by ticker (batch-loaded)
                             ticker = km.ticker or ""
-                            outcome = outcome_lookup.get((market.id, ticker))
+                            outcome = pop.outcome_lookup.get((market_id, ticker))
 
                             if withdrawn:
                                 # NO single-outcome fallback on this path. The
@@ -5922,7 +6087,7 @@ async def _poll_live_prediction_market_prices():
                                 continue
 
                             if not outcome:
-                                market_outcomes = outcomes_by_market.get(market.id, [])
+                                market_outcomes = pop.outcomes_by_market.get(market_id, [])
                                 if len(market_outcomes) == 1:
                                     outcome = market_outcomes[0]
                                 else:
@@ -5959,34 +6124,43 @@ async def _poll_live_prediction_market_prices():
                             )
                             stats["futures_snapshots_written"] += 1
 
+                        # #5682: this market's prices are durable HERE, before
+                        # the next venue fetch. A deadlock on the market after
+                        # it can no longer un-write them.
+                        await _commit_boundary()
+
                         # Rate limit between Kalshi requests
                         await asyncio.sleep(0.3)
 
                     except Exception as e:
-                        stats["errors"].append(f"kalshi_{market.external_id}: {str(e)[:100]}")
+                        await _recover(f"kalshi_{event_ticker}", e)
 
             finally:
                 await service.close()
 
         # ── Fetch Polymarket prices ────────────────────────────────────
-        if polymarket_markets:
+        if polymarket_ids:
             from app.services.polymarket_api import PolymarketAPIService
             poly_service = PolymarketAPIService()
             try:
                 # Group by external_id (Polymarket event ID) to avoid duplicate fetches
                 seen_events = {}
-                for market, event in polymarket_markets:
-                    if market.external_id in seen_events:
+                for market_id in polymarket_ids:
+                    market = pop.markets_by_id.get(market_id)
+                    if market is None:
+                        continue
+                    poly_event_id = market.external_id
+                    if poly_event_id in seen_events:
                         continue
 
                     try:
-                        event_data = await poly_service.get_event_by_id(market.external_id)
+                        event_data = await poly_service.get_event_by_id(poly_event_id)
                         stats["polymarket_fetched"] += 1
 
                         if not event_data:
                             continue
 
-                        seen_events[market.external_id] = event_data
+                        seen_events[poly_event_id] = event_data
 
                         # Parse markets from event data
                         poly_markets = event_data.get("markets", [])
@@ -6009,7 +6183,7 @@ async def _poll_live_prediction_market_prices():
                                 continue
 
                             # Find matching outcome by condition_id (batch-loaded)
-                            outcome = outcome_lookup.get((market.id, condition_id))
+                            outcome = pop.outcome_lookup.get((market_id, condition_id))
                             if not outcome:
                                 continue
 
@@ -6101,11 +6275,16 @@ async def _poll_live_prediction_market_prices():
                             )
                             stats["futures_snapshots_written"] += 1
 
+                        # #5682: durable before the next fetch, same reason as
+                        # the Kalshi branch — one Polymarket event's deadlock
+                        # may not un-price the events already read.
+                        await _commit_boundary()
+
                         # Rate limit between Polymarket requests
                         await asyncio.sleep(0.3)
 
                     except Exception as e:
-                        stats["errors"].append(f"polymarket_{market.external_id}: {str(e)[:100]}")
+                        await _recover(f"polymarket_{poly_event_id}", e)
 
             finally:
                 await poly_service.close()
@@ -6118,12 +6297,14 @@ async def _poll_live_prediction_market_prices():
         # are linked to the same event. We pick a primary market for
         # processing but AVERAGE both sides to cancel vig when computing
         # the home probability.
-        all_per_event_source_live: dict[tuple[int, str], list[tuple]] = {}
-        for market, event in rows:
+        #
+        # #5682: the groups are MARKET IDS, and the blend loop is another pass
+        # that owns ids rather than rows — one event's failed snapshot write
+        # used to expire every event after it.
+        blend_plan: dict[tuple[int, str], list[int]] = {}
+        for market, event in pop.rows:
             key = (event.id, market.source)
-            if key not in all_per_event_source_live:
-                all_per_event_source_live[key] = []
-            all_per_event_source_live[key].append((market, event))
+            blend_plan.setdefault(key, []).append(market.id)
 
         # Q460: primary selection + moneyline + devig now live in
         # `app/utils/live_blend.py`, because the WebSocket fast lane writes this
@@ -6131,28 +6312,28 @@ async def _poll_live_prediction_market_prices():
         # A second copy of this arithmetic would not throw when it drifted — the
         # hero would just flicker between two opinions every two minutes.
         def _group_for(key) -> list[_LiveBlendGroup]:
-            return [
-                _LiveBlendGroup(market=m, outcomes=outcomes_by_market.get(m.id, []))
-                for m, _e in all_per_event_source_live.get(key, [])
-            ]
+            groups = []
+            for mid in blend_plan.get(key, ()):
+                m = pop.markets_by_id.get(mid)
+                if m is None:
+                    continue
+                groups.append(
+                    _LiveBlendGroup(market=m, outcomes=pop.outcomes_by_market.get(mid, []))
+                )
+            return groups
 
-        best_per_event_source: dict[tuple[int, str], tuple] = {}
-        for key, group in all_per_event_source_live.items():
-            primary_entry = _select_primary_market(
-                [
-                    _LiveBlendGroup(market=m, outcomes=outcomes_by_market.get(m.id, []))
-                    for m, _e in group
-                ]
-            )
-            if primary_entry is None:
-                continue
-            for market, event in group:
-                if market.id == primary_entry.market.id:
-                    best_per_event_source[key] = (market, event)
-                    break
-
-        for market, event in best_per_event_source.values():
+        for key in list(blend_plan):
             try:
+                # Primary selection happens INSIDE the per-event try, against
+                # the population as it stands now: a recovery two events ago
+                # may have dropped a market out from under this key.
+                primary_entry = _select_primary_market(_group_for(key))
+                if primary_entry is None:
+                    continue
+                market = primary_entry.market
+                event = pop.event_by_market_id.get(market.id)
+                if event is None:
+                    continue
                 reading = _compute_source_home_probability(
                     _group_for((event.id, market.source)),
                     event.home_team_name,
@@ -6268,8 +6449,14 @@ async def _poll_live_prediction_market_prices():
                     .values(win_probability_sources=_pm_wps2)
                 )
 
+                # #5682: the hero's number for THIS event is durable here. It
+                # is also the statement that deadlocks most readily — the
+                # matcher and the WebSocket fast lane write the same event row
+                # — so it is the one that most needs its own boundary.
+                await _commit_boundary()
+
             except Exception as e:
-                stats["errors"].append(f"snapshot_{market.id}: {str(e)[:100]}")
+                await _recover(f"snapshot_{key[0]}_{key[1]}", e)
 
         # ── #195: pregame-mark pinning (THE SCRIPT baseline for props) ────
         # At/just-before commence, snapshot each linked market's current
@@ -6283,7 +6470,15 @@ async def _poll_live_prediction_market_prices():
         # CAST to dodge the asyncpg ':param::jsonb' bind trap, preserving any
         # existing keys (shape, discover_llm, ...).
         pregame_cutoff = now + timedelta(minutes=_PREGAME_MARK_LEAD_MINUTES)
-        for market, event in rows:
+        # #5682: ids again, resolved one at a time — the pin is written with
+        # raw SQL against a live session, so it is as able to meet a deadlock
+        # as anything above it.
+        pregame_ids = [m.id for m, _e in pop.rows]
+        for market_id in pregame_ids:
+            market = pop.markets_by_id.get(market_id)
+            event = pop.event_by_market_id.get(market_id)
+            if market is None or event is None:
+                continue
             commence = event.commence_time
             if commence is None:
                 continue
@@ -6295,7 +6490,7 @@ async def _poll_live_prediction_market_prices():
             if isinstance(existing_meta, dict) and "pregame_mark" in existing_meta:
                 continue
             outcome_probs = {}
-            for o in outcomes_by_market.get(market.id, []):
+            for o in pop.outcomes_by_market.get(market_id, []):
                 if o.current_probability is not None:
                     outcome_probs[str(o.id)] = round(float(o.current_probability), 6)
             if not outcome_probs:
@@ -6339,22 +6534,40 @@ async def _poll_live_prediction_market_prices():
                         "AND NOT jsonb_exists("
                         "COALESCE(market_metadata, '{}'::jsonb), 'pregame_mark')"
                     ),
-                    {"mark": json.dumps(mark_payload), "id": market.id},
+                    {"mark": json.dumps(mark_payload), "id": market_id},
                 )
                 stats["pregame_marks_written"] += 1
+                await _commit_boundary()
             except Exception as e:
-                stats["errors"].append(f"pregame_mark_{market.id}: {str(e)[:100]}")
+                await _recover(f"pregame_mark_{market_id}", e)
 
-        await session.commit()
+        try:
+            await session.commit()
+            stats["commits"] += 1
+        except Exception as e:
+            # Everything before the last boundary is already durable; a failure
+            # here loses one item, not a beat, and must not be reported as a
+            # thrown task.
+            await _recover("final_commit", e)
+
+    # #5682: a returned dict is not a worked beat (gotcha #53). `complete` is
+    # earned only by a pass that lost nothing; a pass that rolled an item back
+    # and carried on is exactly what `partial` is for — real, visible progress
+    # that is not a finished run — and it must not read GREEN on the health
+    # surfaces while the deadlocks are still happening.
+    stats["terminal"] = "complete" if stats["session_recoveries"] == 0 else "partial"
 
     logger.info(
         "Live prediction market poll: events=%d, markets=%d, "
         "kalshi=%d, polymarket=%d, outcomes=%d, "
-        "futures_snaps=%d, wp_snaps=%d (deduped=%d)",
+        "futures_snaps=%d, wp_snaps=%d (deduped=%d), "
+        "commits=%d, recoveries=%d (deadlocks=%d), terminal=%s",
         stats["live_events"], stats["linked_markets"],
         stats["kalshi_fetched"], stats["polymarket_fetched"],
         stats["outcomes_updated"], stats["futures_snapshots_written"],
         stats["snapshots_written"], stats["snapshots_deduped"],
+        stats["commits"], stats["session_recoveries"], stats["deadlocks"],
+        stats["terminal"],
     )
     return stats
 

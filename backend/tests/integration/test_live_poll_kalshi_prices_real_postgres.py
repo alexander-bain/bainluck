@@ -643,3 +643,234 @@ class TestTheLivePollerCannotRestoreAWithdrawnLeg:
             "cleared the only outcome in the market on the strength of a leg "
             "the venue named differently"
         )
+
+
+# =============================================================================
+# #5682: one deadlock costs one market, and the rest of the beat is DURABLE
+# =============================================================================
+#
+# The unit arms in `tests/test_live_poll_commit_boundary_5682.py` prove the
+# pass survives a poisoned transaction and commits per item. They cannot prove
+# the one word that matters — PERSISTED. A fake session records that `commit()`
+# was called; only a real server can be asked afterwards what it is holding.
+#
+# Production, 24 h to 2026-09-12 17:06Z: `prediction_market_live` threw on
+# **102 of 111 starts** with an asyncpg `DeadlockDetectedError ... waits for
+# ShareLock on transaction -> PendingRollbackError`, and live events served
+# event-level stamps up to 5 h 35 m behind their own outcome rows.
+#
+# The error injected below is a REAL one (`SELECT 1/0`) executed inside the
+# task's own transaction, so Postgres aborts that transaction exactly as a
+# deadlock does: every later statement fails until someone rolls back. That is
+# the property the repair has to survive, and no mock of it would do.
+
+D_TICKERS = ["KXNFLGAME-26SEP21AAA", "KXNFLGAME-26SEP21BBB", "KXNFLGAME-26SEP21CCC"]
+
+
+def _priced_leg(event_ticker: str) -> dict:
+    """One tight two-sided book, in the venue's CURRENT dialect (#3569)."""
+    return {
+        "ticker": f"{event_ticker}-LAR",
+        "event_ticker": event_ticker,
+        "title": "Los Angeles R wins",
+        "yes_sub_title": "Los Angeles R",
+        "status": "active",
+        "yes_bid_dollars": "0.6000",
+        "yes_ask_dollars": "0.6200",
+        "last_price_dollars": "0.6100",
+        "volume_fp": "1000",
+    }
+
+
+async def _seed_three_live_games(session):
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+
+    sport = Sport(key="americanfootball_nfl", name="NFL", group="American Football")
+    session.add(sport)
+    await session.flush()
+
+    for i, ticker in enumerate(D_TICKERS):
+        event = Event(
+            sport_id=sport.id,
+            home_team_name="Los Angeles R",
+            away_team_name=f"Opponent {i}",
+            commence_time=datetime.now(timezone.utc) - timedelta(minutes=30),
+            status="live",
+        )
+        session.add(event)
+        await session.flush()
+        market = FuturesMarket(
+            source="kalshi",
+            external_id=ticker,
+            event_id=event.id,
+            name=f"Opponent {i} at Los Angeles R",
+            category="championship",
+            llm_sport_category="football",
+            market_type="game_winner",
+            status="open",
+        )
+        session.add(market)
+        await session.flush()
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=f"{ticker}-LAR",
+                name="Los Angeles R",
+                current_probability=None,
+                is_winner=None,
+            )
+        )
+    await session.flush()
+    await session.commit()
+
+
+async def _run_poll_with_a_poisoned_transaction(session):
+    """Run the real poll; abort the transaction during the SECOND fetch.
+
+    Which market is second is decided by the task's own (unordered) population
+    query, so the poison follows the fetch ORDER rather than a ticker guessed
+    here — a fixed ticker would silently stop being the middle market.
+    """
+    from app.services.kalshi_api import KalshiAPIService
+
+    fetched: list[str] = []
+
+    service = KalshiAPIService(api_key="test-key")
+
+    async def _get_markets(event_ticker=None, status=None, limit=None):
+        fetched.append(event_ticker)
+        if len(fetched) == 2:
+            await session.execute(text("SELECT 1/0"))
+        return [_priced_leg(event_ticker)], None
+
+    service.get_markets = _get_markets
+    service.close = AsyncMock()
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield session
+
+    with ExitStack() as es:
+        es.enter_context(
+            patch("app.services.kalshi_api.KalshiAPIService", return_value=service)
+        )
+        es.enter_context(
+            patch("app.tasks.prediction_market_matching.get_task_session", _session_cm)
+        )
+        from app.tasks.prediction_market_matching import (
+            _poll_live_prediction_market_prices,
+        )
+
+        stats = await _poll_live_prediction_market_prices()
+
+    return stats, fetched
+
+
+async def _prices_by_event_ticker(session):
+    rows = await session.execute(
+        text(
+            "SELECT m.external_id, o.current_probability "
+            "FROM futures_outcomes o JOIN futures_markets m ON m.id = o.market_id "
+            "WHERE m.source = 'kalshi'"
+        )
+    )
+    return {r[0]: r[1] for r in rows.fetchall()}
+
+
+class TestADeadTransactionCostsOneMarketNotTheBeat:
+    async def test_the_market_before_the_failure_is_in_the_table_afterwards(
+        self, pg_session
+    ):
+        await _seed_three_live_games(pg_session)
+
+        stats, fetched = await _run_poll_with_a_poisoned_transaction(pg_session)
+
+        # Read through a rolled-back session: what comes back is what the
+        # server is actually holding, which is the whole question.
+        await pg_session.rollback()
+        priced = await _prices_by_event_ticker(pg_session)
+
+        assert priced[fetched[0]] is not None, (
+            f"the market polled BEFORE the aborted transaction has no price. "
+            f"stats: {stats}"
+        )
+        assert float(priced[fetched[0]]) == pytest.approx(0.61, abs=0.0001)
+
+    async def test_the_market_after_the_failure_is_in_the_table_too(self, pg_session):
+        await _seed_three_live_games(pg_session)
+
+        stats, fetched = await _run_poll_with_a_poisoned_transaction(pg_session)
+
+        await pg_session.rollback()
+        priced = await _prices_by_event_ticker(pg_session)
+
+        assert len(fetched) == 3, (
+            f"the pass stopped at the dead transaction: fetched {fetched}"
+        )
+        assert priced[fetched[2]] is not None, (
+            "the market polled AFTER the abort has no price — the session was "
+            f"still poisoned when it was reached. stats: {stats}"
+        )
+
+    async def test_only_the_failed_market_is_lost(self, pg_session):
+        await _seed_three_live_games(pg_session)
+
+        stats, fetched = await _run_poll_with_a_poisoned_transaction(pg_session)
+
+        await pg_session.rollback()
+        priced = await _prices_by_event_ticker(pg_session)
+
+        assert priced[fetched[1]] is None, (
+            "the market whose transaction died came back priced, which would "
+            "mean the write survived a rollback — read the injection again"
+        )
+        assert stats["session_recoveries"] == 1
+        assert stats["kalshi_outcomes_updated"] == 2, (
+            "the write counters must describe DURABLE writes only. "
+            f"stats: {stats}"
+        )
+        assert stats["terminal"] == "partial"
+
+    async def test_a_clean_beat_prices_every_market_and_reads_complete(
+        self, pg_session
+    ):
+        """The control: without an injected abort nothing is lost or skipped."""
+        await _seed_three_live_games(pg_session)
+
+        from app.services.kalshi_api import KalshiAPIService
+
+        service = KalshiAPIService(api_key="test-key")
+
+        async def _get_markets(event_ticker=None, status=None, limit=None):
+            return [_priced_leg(event_ticker)], None
+
+        service.get_markets = _get_markets
+        service.close = AsyncMock()
+
+        @asynccontextmanager
+        async def _session_cm():
+            yield pg_session
+
+        with ExitStack() as es:
+            es.enter_context(
+                patch("app.services.kalshi_api.KalshiAPIService", return_value=service)
+            )
+            es.enter_context(
+                patch(
+                    "app.tasks.prediction_market_matching.get_task_session",
+                    _session_cm,
+                )
+            )
+            from app.tasks.prediction_market_matching import (
+                _poll_live_prediction_market_prices,
+            )
+
+            stats = await _poll_live_prediction_market_prices()
+
+        await pg_session.rollback()
+        priced = await _prices_by_event_ticker(pg_session)
+
+        assert all(p is not None for p in priced.values()), priced
+        assert stats["errors"] == []
+        assert stats["terminal"] == "complete"
+        assert stats["session_recoveries"] == 0
