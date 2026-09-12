@@ -175,3 +175,46 @@ const SETTLED_STATUSES: ReadonlySet<string> = new Set([
 export function isSettledStatus(status?: string | null): boolean {
   return SETTLED_STATUSES.has((status || "").toLowerCase());
 }
+
+/**
+ * THE SECOND HALF OF THE SAME MOVE (#4970's card half).
+ *
+ * The block above tells this story once already, and it repeated exactly:
+ * `isPregameStatus` stayed behind in `propDivergence` when `isSettledStatus`
+ * came across, so the first surface to need the OTHER end of the same triple
+ * was pulled straight back into the verdict closure — the same file,
+ * `SpecialEventMarkets`, and the same guard, on the same line. Splitting a
+ * three-valued lifecycle predicate across two modules meant the fix only ever
+ * held for the value that had already caused trouble.
+ *
+ * So the whole triple lives here now. `propDivergence` re-exports the name, as
+ * it does for `isSettledStatus`, and no existing caller changed.
+ */
+const LIVE_STATUSES: ReadonlySet<string> = new Set([
+  "live",
+  "in_progress",
+  "inprogress",
+  "in progress",
+  "halftime",
+  "delayed",
+  "suspended",
+]);
+
+/**
+ * The event has not started.
+ *
+ * NOT `!settled` — that would put a live game on THE SCRIPT and hand it a
+ * ranking key of zero movement while the movement is the entire story. And NOT
+ * an allowlist of `scheduled`, either: the status vocabulary on this payload is
+ * provider-shaped and an unrecognised value must not silently become a pregame
+ * page for a game already in the third inning.
+ *
+ * So it is a triple: settled → landed, live → moving, anything else → script.
+ * An UNKNOWN status therefore lands on THE SCRIPT, which is the safe end — the
+ * script states pregame marks, which are true at every point in the game; the
+ * other two states make claims about a clock we would be guessing at.
+ */
+export function isPregameStatus(status?: string | null): boolean {
+  const s = (status || "").toLowerCase();
+  return !isSettledStatus(s) && !LIVE_STATUSES.has(s);
+}

@@ -1191,6 +1191,27 @@ export interface GameMarketsResponse {
     outcome_name: string;
     probability: number | null;
     source: string;
+    /**
+     * #4970 card half. When we last SAW this row's price — the newest
+     * `captured_at` behind the number, served by #5325.
+     *
+     * 🔴 OPTIONAL BECAUSE THE WIRE MAKES IT OPTIONAL, not as defensive padding.
+     * latency/342's contract says the key is always present and only the value
+     * is nullable, measured `ABSENT: 0` over 2,652 legs — but that sample was
+     * eight LIVE events. Censused over the whole slate (119 events + one live
+     * specimen, 601 priced legs, 2026-09-12 00:30Z) the key is **absent
+     * entirely** on 23 of them, and every single absence is on a `completed`
+     * event (16 in `other`, 5 in `totals`, 2 in `spreads`; 15 of the 23 carry
+     * `resolution_source: api_settlement`). Six more are present-and-null, also
+     * all completed.
+     *
+     * Absent and null mean the same thing to a reader — "no observation on
+     * record" — and `formatSourceAge` collapses them, so declaring it `?:` and
+     * `| null` is the honest type rather than two states nobody can act on.
+     * Typing it as required would compile and then be wrong on every settled
+     * event. See #4970's comment thread.
+     */
+    observed_at?: string | null;
   }[];
   pace: {
     total_scored: number;
