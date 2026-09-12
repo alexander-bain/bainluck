@@ -639,6 +639,126 @@ _REFUSAL_VENUE_FIXTURE = "venue_fixture"  # (c) #4965: PM fixture vs the event
 #: 24h and 48h out.
 _PM_FIXTURE_MAX_DIFF_HOURS = 3
 
+#: The leagues The Odds API covers end to end, and therefore the leagues
+#: `_create_event_from_prediction_market` must NEVER mint a row for: a real
+#: event is coming from the schedule, so a market-born row can only be a twin
+#: of it, carrying a market-shaped time (gotcha #14).
+#:
+#: Module-level so :func:`covered_league_for_matchup` and the prefix test at the
+#: auto-create boundary read ONE list. They were one list in two places for
+#: about four hours of my life; see the docstring below for what that cost.
+ODDS_API_COVERED_PREFIXES = (
+    "basketball_nba", "basketball_ncaab", "basketball_wnba",
+    "americanfootball_nfl", "americanfootball_ncaaf",
+    "baseball_mlb", "icehockey_nhl",
+    "soccer_usa_mls",
+)
+
+
+def _sport_key_is_odds_api_covered(sport_key: str | None) -> bool:
+    """Whether a league key names a competition the Odds API covers end to end."""
+    return bool(sport_key) and any(
+        sport_key.startswith(prefix) for prefix in ODDS_API_COVERED_PREFIXES
+    )
+
+
+async def covered_league_for_matchup(session, team_a, team_b) -> str | None:
+    """The covered league BOTH sides of this matchup play in, or None. #5544.
+
+    THE GUARD ABOVE THE AUTO-CREATE WAS AIMED ONE LEVEL TOO LOW. It refuses on
+    ``sport_key.startswith("baseball_mlb")``, but a market with no ticker — i.e.
+    every Polymarket market — gets its key from
+    ``auto_create_sport_key_from_category``, which can only ever return the
+    ``<prefix>_other`` CATCH-ALL. ``"baseball_other".startswith("baseball_mlb")``
+    is False, so the refusal written to prevent this defect could never fire for
+    the population that generates it.
+
+    Measured on production 2026-09-12. Nine real MLB fixtures were minted at
+    2026-09-11 13:24Z as ``baseball_other`` rows, unbound (both team ids NULL),
+    each stamped with Gamma's ``startDate`` — the LISTING stamp, #4965 — rather
+    than a start: ``2026-09-11 13:00:3xZ``, seconds incrementing down the batch.
+    Their real StatPal rows arrived 15 hours later, so nothing existed to match
+    at mint time and the create was reached honestly; only the row it wrote was
+    wrong. Four are exact twins TODAY, to the minute::
+
+        15310210 Brewers/Pirates  13:00:30Z   vs  15310673 @ 09-17 16:35Z
+        15310206 Dodgers/Reds     13:00:31Z   vs  15310674 @ 09-17 16:40Z
+        15310214 Athletics/Rays   13:00:32Z   vs  15310675 @ 09-17 17:10Z
+        15310212 Padres/Rockies   13:00:35Z   vs  15310676 @ 09-17 19:10Z
+
+    and the market sits on the PHANTOM: all four real rows serve 0 markets while
+    each twin holds the Polymarket one. That is the user-visible cost — a real
+    MLB game five days out showing no Polymarket price, against the marquee
+    axiom.
+
+    WHY NOT SIMPLY REFUSE THE WHOLE ``_other`` FAMILY. Because the catch-all is
+    genuinely mixed, and the split is measured, not assumed — of the Polymarket
+    fixture markets sitting on ``_other`` events on 2026-09-12:
+
+        baseball_other     9 MLB   + 6 NPB/CPBL (Hanshin Tigers, Wei Chuan Dragons)
+        icehockey_other   10 NHL   + 7 European (Frolunda HC, KooKoo, TPS Turku)
+        basketball_other   5 WNBA  + 2 FIBA national sides
+
+    A family-wide refusal would drop 15 real rows for leagues the Odds API does
+    NOT carry. So the discriminator has to be the one signal that actually knows:
+    ``teams`` already records which league a club plays in.
+
+    STRICTLY EXACT, on ``name`` or ``alternate_names``, and never a substring.
+    A token test would read "Hanshin Tigers" as the Detroit Tigers and refuse the
+    NPB market — the over-refusal this whole function exists to avoid. Measured:
+    exact resolves `Milwaukee Brewers`/`Pittsburgh Pirates`/`Athletics` to
+    ``baseball_mlb``, `Hanshin Tigers`/`Yomiuri Giants` to ``baseball_npb``
+    (untouched), `Maple Leafs` to ``icehockey_nhl`` via its alternates, and
+    `Las Vegas Aces` to ``basketball_wnba``; CPBL clubs are absent from ``teams``
+    entirely and so resolve to nothing, which is the correct answer.
+
+    BOTH SIDES MUST LAND IN THE SAME LEAGUE. One side is not a matchup, and bare
+    alternates collide across sports — "Giants" is both San Francisco and New
+    York. Requiring the intersection makes a single ambiguous nickname unable to
+    refuse anything on its own.
+
+    Returns the covered league key, or None to let the create proceed. Fails OPEN
+    on every no-signal case, because an over-refusing guard silently drops real
+    markets — the same trade :func:`_check_polymarket_fixture_reason` makes.
+    """
+    from app.models.models import Sport, Team
+
+    sides = [s.strip() for s in (team_a, team_b) if s and s.strip()]
+    if session is None or len(sides) != 2:
+        # No session is a no-signal case like any other, and this is the only
+        # refusal here that needs one. `test_unanchored_create_loop_2020` drives
+        # the whole create path with `session=None` to prove #2020's stamp
+        # survives it; refusing that row — or raising on it — would be this
+        # guard deciding an outcome it has no evidence for.
+        return None
+
+    lowered = [s.lower() for s in sides]
+    # Bounded in SQL to the covered leagues themselves — a few hundred clubs —
+    # rather than filtered in Python after loading every team that has an
+    # alternate name. The exact test still happens below, because
+    # ``alternate_names`` is JSONB and its containment operators are
+    # case-SENSITIVE, which is the one thing this must not be.
+    result = await session.execute(
+        select(Team.name, Team.alternate_names, Sport.key)
+        .join(Sport, Sport.id == Team.sport_id)
+        .where(
+            or_(*[Sport.key.startswith(p) for p in ODDS_API_COVERED_PREFIXES])
+        )
+    )
+
+    leagues_by_side: list[set[str]] = [set(), set()]
+    for name, alternates, sport_key in result:
+        known = {(name or "").lower()}
+        if isinstance(alternates, list):
+            known |= {str(a).lower() for a in alternates if a}
+        for index, side in enumerate(lowered):
+            if side in known:
+                leagues_by_side[index].add(sport_key)
+
+    shared = leagues_by_side[0] & leagues_by_side[1]
+    return sorted(shared)[0] if shared else None
+
+
 #: Which funnel counter a refusal increments. A mapping rather than the
 #: two-armed conditional it replaces, because that conditional's ELSE meant
 #: "sibling ticker" — so a third reason added to it would have been counted as a
@@ -5216,13 +5336,7 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     # These sports always have events from the Odds API; auto-creating from
     # prediction markets causes duplicates with wrong commence_times
     # (Kalshi uses market resolution date, not game date).
-    _ODDS_API_COVERED_PREFIXES = (
-        "basketball_nba", "basketball_ncaab", "basketball_wnba",
-        "americanfootball_nfl", "americanfootball_ncaaf",
-        "baseball_mlb", "icehockey_nhl",
-        "soccer_usa_mls",
-    )
-    if any(sport_key.startswith(prefix) for prefix in _ODDS_API_COVERED_PREFIXES):
+    if _sport_key_is_odds_api_covered(sport_key):
         logger.debug(
             "Skipping auto-create for '%s' — sport %s is covered by The Odds API",
             market.name, sport_key,
@@ -5281,6 +5395,27 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
             "at commence=%s that _check_duplicate_kalshi_linkage_reason is "
             "guaranteed to refuse — the create cannot converge",
             market.external_id, commence_time.isoformat(),
+        )
+        return None
+
+    # #5544: the covered-league refusal again, for the rows whose sport key
+    # cannot SPELL the league. A market with no ticker lands in
+    # `<prefix>_other`, which no covered prefix is a prefix of, so the prefix
+    # test far above reads clean while the matchup is Brewers/Pirates. Ask the
+    # clubs instead — see `covered_league_for_matchup` for the measured
+    # MLB-vs-NPB split that rules out doing this by sport family.
+    #
+    # LAST, and deliberately so. This is the only refusal on the path that
+    # touches the DB, and #2020's and #4242's call-site tests pass `session=None`
+    # to prove their own predicates are reached before anything is read or
+    # written. Putting a query ahead of them broke that contract and cost a
+    # round trip on every market those two already refuse for free.
+    covered_league = await covered_league_for_matchup(session, team_a, team_b)
+    if covered_league:
+        logger.info(
+            "Skipping auto-create for '%s' (#5544) — %s would mint a %s row for "
+            "a %s fixture, and the schedule is about to carry it",
+            market.name, sport_key, sport_key, covered_league,
         )
         return None
 
