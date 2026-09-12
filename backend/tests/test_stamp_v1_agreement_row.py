@@ -55,6 +55,8 @@ from app.utils.authority_agreement import (
 #: the same name, so a dotted import can hand back the task object instead of
 #: the module. `import_module` reads `sys.modules` and is unambiguous.
 task = import_module("app.tasks.stamp_v1_statpal_fixtures")
+#: The duplicate reconciliation the pass runs at the end of its session (#5746).
+reconcile = import_module("app.tasks.reconcile_shared_fixture_ids")
 
 NOW = datetime(2026, 9, 4, 12, 17, tzinfo=timezone.utc)
 TIPOFF = datetime(2026, 10, 20, 19, 0, tzinfo=timezone.utc)
@@ -84,6 +86,12 @@ class FakeResult:
         self.rowcount = rowcount
 
     def fetchall(self):
+        return self._rows
+
+    def all(self):
+        #: `reconcile_shared_fixture_ids` reads through `.all()`; the stamp
+        #: statements read through `.fetchall()`. Same rows either way, so the
+        #: fake cannot answer one caller and starve the other.
         return self._rows
 
 
@@ -122,6 +130,22 @@ class RecordingSession:
         if sql == task.SET_FIXTURE_ID:
             self.updates.append(dict(params or {}))
             return FakeResult(rowcount=self._update_rowcount)
+        if sql == reconcile.SELECT_ROWS_FOR_FIXTURES:
+            # #5746 — the duplicate reconciliation the pass runs at the end of
+            # this session. Declared here rather than left to the catch-all, and
+            # it answers NO ROWS, which is honest only because this guard's
+            # inventory never holds one contest twice. The assertion is what
+            # keeps that true: a fixture that gains a second candidate has to be
+            # projected into that SELECT's own column order, not folded away by
+            # a fake that finds nothing (the exact gotcha #53 this class exists
+            # to refuse).
+            wanted = set((params or {}).get("fixture_ids") or ())
+            held = [c[4] for c in self._candidates if c[4] in wanted]
+            assert len(held) == len(set(held)), (
+                "this guard's inventory now holds one contest twice — project "
+                "those rows into SELECT_ROWS_FOR_FIXTURES instead of answering none"
+            )
+            return FakeResult([])
         raise AssertionError(
             "the task executed a statement this guard does not know:\n"
             f"{sql}\nAdd it here deliberately — do not let it return nothing."

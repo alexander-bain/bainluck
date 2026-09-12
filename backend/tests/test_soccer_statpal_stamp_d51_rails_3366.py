@@ -579,6 +579,14 @@ class TestTheWriterRecordsWhatItWrote:
             def fetchall(self):
                 return list(rows)
 
+            def all(self):
+                # #5746's duplicate reconciliation reads through `.all()`; every stamp
+                # statement reads through `.fetchall()`. It answers NO ROWS because
+                # this guard's inventory is one row per contest, so there is no pair
+                # to fold — a second row for one fixture must be projected into
+                # `SELECT_ROWS_FOR_FIXTURES`'s own column order, not hidden here.
+                return []
+
         class _Session:
             async def execute(self, statement, params=None):
                 # The attribution of a CONFIRMED-path column write is a
