@@ -291,3 +291,199 @@ def test_the_floor_sits_below_the_measured_plan_5432(repair):
     """
     assert 0 < repair.SANITY_FLOOR < 140_978
     assert repair.SANITY_FLOOR > 140_978 * 0.5
+
+
+# ── #5595: the backup is checked by content, not by id ──────────────────────
+#
+# `bak_copy` skips any id already in the backup and the old reconciliation
+# asked only "is this id present?". So a row staged in one session, re-parented
+# to another `event_id`, then deleted by a later pass reconciled CLEAN — the
+# delete's CAS covers source and producer name, not parentage — and the
+# documented undo reinserted the backup's stale `event_id`, hanging a snapshot
+# on a game it never belonged to. These are the guards for that class.
+
+
+class _RecordingSession:
+    """Records the SQL `backup()` issues, in order, and fakes rowcounts."""
+
+    def __init__(self, evicted=0):
+        self.statements = []
+        self._evicted = evicted
+        self.commits = 0
+
+    async def execute(self, statement, params=None):
+        self.statements.append(str(statement))
+        return _Result(self._evicted)
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _Result:
+    def __init__(self, rowcount):
+        self.rowcount = rowcount
+
+
+def _index_of(session, sql_key, repair):
+    """Position of the first statement matching SQL[sql_key]."""
+    needle = repair.SQL[sql_key]
+    for i, s in enumerate(session.statements):
+        if s == needle:
+            return i
+    return -1
+
+
+def test_a_stale_backup_row_refuses_apply_5595(repair):
+    """A backup that disagrees with the live row is not an undo.
+
+    `missing == 0` is no longer sufficient: the row is *there*, and restoring
+    it would write the wrong event.
+    """
+    assert repair.backup_is_exact(
+        {"win_prob_snapshots": 0, "stale_backup_rows": 0}
+    ) is True
+    assert repair.backup_is_exact(
+        {"win_prob_snapshots": 0, "stale_backup_rows": 1}
+    ) is False
+
+
+def test_missing_and_stale_are_reported_separately_5595(repair):
+    """Two causes must not be summed into one count.
+
+    They have different remedies — a missing row needs staging, a stale row
+    needs evicting — so a single number would hide which one fired.
+    """
+    recon = {"win_prob_snapshots": 3, "stale_backup_rows": 5}
+    assert recon["win_prob_snapshots"] != recon["stale_backup_rows"]
+    assert repair.backup_is_exact(recon) is False
+
+
+def test_the_staleness_test_compares_the_whole_row_5595(repair):
+    """Not `event_id`, and not the id it already had.
+
+    A whole-row `IS DISTINCT FROM` also keeps covering a column added to
+    `win_prob_snapshots` later, which an enumerated column list would silently
+    stop doing.
+    """
+    sql = repair.SQL["bak_stale"]
+    assert "(b.*) IS DISTINCT FROM (s.*)" in sql
+    assert repair.BAK_TABLE in sql
+    # it must not be satisfiable by mere presence
+    assert "NOT EXISTS" not in sql
+
+
+def test_the_eviction_runs_before_the_copy_5595(repair):
+    """Ordering IS the fix.
+
+    `bak_copy` skips ids already present, so evicting after copying would leave
+    every divergent row exactly as stale as it was found.
+    """
+    import asyncio
+
+    session = _RecordingSession()
+    asyncio.run(repair.backup(session, [1, 2, 3]))
+
+    evict = _index_of(session, "bak_evict_stale", repair)
+    copy = _index_of(session, "bak_copy", repair)
+    assert evict >= 0, "the eviction statement never ran"
+    assert copy >= 0, "the copy statement never ran"
+    assert evict < copy, "evicting after the copy re-stages nothing"
+
+
+def test_backup_reports_what_it_refreshed_5595(repair):
+    """A silent self-repair is a lost signal — the operator is told."""
+    import asyncio
+
+    assert asyncio.run(repair.backup(_RecordingSession(evicted=0), [1])) == 0
+    assert asyncio.run(repair.backup(_RecordingSession(evicted=7), [1])) == 7
+
+
+def test_the_backup_still_commits_5595(repair):
+    """The refresh must not cost the backup its durability."""
+    import asyncio
+
+    session = _RecordingSession()
+    asyncio.run(repair.backup(session, [1, 2]))
+    assert session.commits == 1
+
+
+class _ScalarSession:
+    """Answers each statement with a scalar keyed by which SQL it matches.
+
+    Drives `reconcile_backup` end to end. The hand-built-dict tests above
+    exercise the GATE; this exercises the function that builds the dict the
+    gate reads, which is where a dropped key would otherwise hide.
+    """
+
+    def __init__(self, repair, *, exists=True, missing=0, stale=0):
+        self._repair = repair
+        self._answers = {
+            repair.SQL["bak_exists"]: exists,
+            repair.SQL["bak_missing"]: missing,
+            repair.SQL["bak_stale"]: stale,
+        }
+        self.seen = []
+
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.seen.append(sql)
+        if sql not in self._answers:
+            raise AssertionError(f"unexpected statement: {sql[:80]}")
+        return _Scalar(self._answers[sql])
+
+
+class _Scalar:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one(self):
+        return self._value
+
+
+def test_the_reconciliation_actually_asks_about_staleness_5595(repair):
+    """The gate can only refuse on a key the reconciliation returns.
+
+    Kills the mutation that drops `stale_backup_rows` from the returned
+    mapping: every gate test above still passes without it, because they build
+    the mapping by hand.
+    """
+    import asyncio
+
+    recon = asyncio.run(
+        repair.reconcile_backup(_ScalarSession(repair, missing=0, stale=4), [1, 2])
+    )
+    assert recon["stale_backup_rows"] == 4
+    assert recon["win_prob_snapshots"] == 0
+    assert repair.backup_is_exact(recon) is False
+
+
+def test_the_staleness_statement_is_actually_issued_5595(repair):
+    """Not merely reported — the query runs against the database."""
+    import asyncio
+
+    session = _ScalarSession(repair, missing=0, stale=0)
+    asyncio.run(repair.reconcile_backup(session, [1]))
+    assert repair.SQL["bak_stale"] in session.seen
+    assert repair.SQL["bak_missing"] in session.seen
+
+
+def test_a_clean_reconciliation_still_passes_5595(repair):
+    """The new key must not refuse a backup that is genuinely exact."""
+    import asyncio
+
+    recon = asyncio.run(
+        repair.reconcile_backup(_ScalarSession(repair, missing=0, stale=0), [1])
+    )
+    assert recon == {"win_prob_snapshots": 0, "stale_backup_rows": 0}
+    assert repair.backup_is_exact(recon) is True
+
+
+def test_no_backup_table_still_reads_as_not_a_pass_5595(repair):
+    """gotcha #53 is unchanged by the new key: `{}` is still a refusal."""
+    import asyncio
+
+    recon = asyncio.run(
+        repair.reconcile_backup(_ScalarSession(repair, exists=False), [1])
+    )
+    assert recon == {}
+    assert repair.backup_is_exact(recon) is False
