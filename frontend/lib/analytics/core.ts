@@ -11,6 +11,7 @@
 
 import { GA_CONFIG, getPlatform, getStoredConsent, isAnalyticsConfigured } from './config';
 import { sanitizeEvent } from './sanitize';
+import { dropPendingFirstPartyMirror, mirrorToFirstPartySink } from './firstPartySink';
 import type {
   AnalyticsEventMap,
   AnalyticsEventName,
@@ -188,6 +189,10 @@ export function updateConsent(level: 'all' | 'analytics' | 'none'): void {
     withheldPageView = null;
     // …nor any event already handed to the idle queue under the old grant.
     cancelPendingSends();
+    // …nor any packet sitting in the first-party mirror's coalescing queue,
+    // which can hold one for up to FLUSH_DELAY_MS — exactly the window a
+    // revoke has to win.
+    dropPendingFirstPartyMirror();
   }
 
   if (isAnalyticsReady()) {
@@ -378,6 +383,18 @@ export function trackEvent<E extends AnalyticsEventName>(
     }
 
     window.gtag('event', sanitized.name, sanitized.params);
+
+    // LAT-P232 (#2751): mirror the three performance packets to a
+    // first-party sink the latency lane can actually read.
+    //
+    // THIS LINE'S POSITION IS THE PRIVACY CLAIM. It is after `sanitizeEvent`,
+    // after the queue-time consent check, after the execution-time re-check,
+    // and immediately after the gtag call — so it can only ever forward a
+    // packet that Google is receiving in the same breath, from a reader who has
+    // granted consent, with every key already stripped to the per-event
+    // allowlist. Move it earlier and the claim "nothing is collected from
+    // anyone from whom nothing is collected today" stops being true.
+    mirrorToFirstPartySink(sanitized.name, sanitized.params);
 
     if (GA_CONFIG.DEBUG_MODE) {
       console.log('[Analytics] Event tracked:', sanitized.name, sanitized.params);

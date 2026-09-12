@@ -290,17 +290,45 @@ def test_upgrade_creates_all_four_tables_and_the_receipt_column(round_trip, pg):
 
 def test_head_is_single_after_this_migration(round_trip):
     """Two heads fail the Heroku release phase outright — the site does not
-    deploy at all. Read from the migrated database, not from the files."""
-    result = _alembic(round_trip["url"], "current")
-    assert result.returncode == 0, result.stderr
-    assert THIS_REVISION in result.stdout, result.stdout
-    # `current` prints one line per head; more than one head means a branch.
-    head_lines = [
-        line
-        for line in result.stdout.splitlines()
-        if line.strip() and "(head)" in line
-    ]
-    assert len(head_lines) == 1, f"expected a single head, got: {head_lines}"
+    deploy at all. Read from the migrated database, not from the files.
+
+    THE ASSERTION USED TO BE POSITIONAL, AND IT ROTTED THE FIRST TIME ANOTHER
+    MIGRATION LANDED. It ran ``alembic current`` and counted lines carrying the
+    ``(head)`` marker. But ``current`` reports where the DATABASE stands, and
+    this fixture deliberately upgrades to ``THIS_REVISION`` rather than to
+    ``head`` — so the marker only appeared while ``containers_phase1`` happened
+    to still be the newest revision in the repo. The moment LAT-P232's
+    ``add_client_timing_events`` chained onto it, ``current`` printed
+    ``containers_phase1`` with no marker at all and the test failed with
+    ``expected a single head, got: []`` — zero, not two. A branchpoint and a
+    successor are opposite conditions, and that assertion could not tell them
+    apart: it read a healthy chain as a broken one.
+
+    So the two properties are now asserted separately, each against the command
+    that actually answers it:
+
+    1. **One head**, read from ``alembic heads`` — the revision GRAPH, which is
+       where a branchpoint lives. This is the property that breaks a deploy.
+    2. **This migration ran**, read from ``alembic current`` — the DATABASE.
+
+    Both survive the next migration; neither survives a real defect. This is
+    the same repair the sibling guard in
+    ``tests/test_uq_event_espn_id_migration.py`` already carries.
+    """
+    current = _alembic(round_trip["url"], "current")
+    assert current.returncode == 0, current.stderr
+    assert THIS_REVISION in current.stdout, current.stdout
+
+    heads = _alembic(round_trip["url"], "heads")
+    assert heads.returncode == 0, heads.stderr
+    head_lines = [line for line in heads.stdout.splitlines() if line.strip()]
+    assert len(head_lines) == 1, (
+        f"expected a single head, got {len(head_lines)}: {head_lines}. "
+        "Two heads fail the Heroku release phase outright — nothing deploys. "
+        "A migration added on a branch must chain onto the CURRENT head, and "
+        "rebasing does not do that for you: the parent is data in the "
+        "migration file, not a position in git history."
+    )
 
 
 # ---------------------------------------------------------------------------
