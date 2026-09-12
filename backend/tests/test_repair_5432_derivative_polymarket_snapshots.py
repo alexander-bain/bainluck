@@ -372,6 +372,18 @@ def test_the_staleness_test_compares_the_whole_row_5595(repair):
     assert "NOT EXISTS" not in sql
 
 
+def test_the_reconciliation_queries_are_bounded_by_the_planned_ids_5595(repair):
+    """Both halves of the reconciliation ask about THIS plan, not the table.
+
+    Added because a mis-targeted mutation showed nothing asserted these bounds:
+    an unbounded `bak_stale` would count drift anywhere in the backup table and
+    refuse `--apply` forever, and an unbounded `bak_missing` would do the same.
+    A gate that can never pass is as broken as one that always does.
+    """
+    for key in ("bak_stale", "bak_missing", "bak_copy", "bak_evict_stale"):
+        assert "ANY(CAST(:ids AS int[]))" in repair.SQL[key], key
+
+
 def test_the_eviction_runs_before_the_copy_5595(repair):
     """Ordering IS the fix.
 
@@ -487,3 +499,58 @@ def test_no_backup_table_still_reads_as_not_a_pass_5595(repair):
     )
     assert recon == {}
     assert repair.backup_is_exact(recon) is False
+
+
+# ── #5595, second half (CERT-2724): the delete swaps on the backed-up ROW ────
+#
+# Refreshing the backup at `--backup` time closes the window between an EARLIER
+# session and this pass. It does NOT close the window inside this one:
+# `reconcile_backup` reads without a lock and commits nothing, so a row
+# re-parented between the clean reconciliation and the delete was still
+# removed — a re-parent leaves source and producer name untouched, so the old
+# CAS was blind to it — and the undo then restored the stale `event_id`.
+
+
+def test_reparent_after_reconciliation_is_declined_not_deleted_5595(repair):
+    """The delete's premise is the BACKUP ROW, not just source and producer.
+
+    This is the CERT-2724 repair. A row whose backup copy no longer matches it
+    must fail the swap and survive, so that the invariant the undo depends on
+    holds unconditionally: every removed row has a byte-identical backup.
+    """
+    sql = repair.SQL["delete"]
+    # the swap is correlated against the backup table, whole-row
+    assert repair.BAK_TABLE in sql, "the delete does not consult the backup at all"
+    assert "(b.*) IS NOT DISTINCT FROM (s.*)" in sql, (
+        "the delete does not require whole-row equality with the backup, so a "
+        "row re-parented after reconciliation is still deleted and the undo "
+        "restores a stale event_id"
+    )
+    assert "EXISTS" in sql
+    # and the pre-existing premise is still checked, not replaced by it
+    assert "source = 'polymarket'" in sql
+    assert repair.PRODUCER_KEY in sql
+
+
+def test_the_delete_still_reports_what_it_removed_5595(repair):
+    """`declined` is the signal the repair leans on, so RETURNING must survive.
+
+    A row that fails the new swap is counted as declined — "the row moved under
+    us — the good case" — and that count only exists because the delete returns
+    its rows.
+    """
+    sql = repair.SQL["delete"]
+    assert "RETURNING" in sql
+    assert "id" in sql.split("RETURNING", 1)[1]
+    assert "event_id" in sql.split("RETURNING", 1)[1]
+
+
+def test_the_delete_is_still_bounded_by_the_planned_ids_5595(repair):
+    """Widening the swap must not widen the population.
+
+    The backup correlation is an ADDITIONAL conjunct; if it ever became the
+    only bound, every backed-up row in the table would be a delete candidate.
+    """
+    sql = repair.SQL["delete"]
+    assert "s.id = ANY(CAST(:ids AS int[]))" in sql
+    assert sql.count("AND") >= 3
