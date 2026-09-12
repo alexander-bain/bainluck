@@ -1448,6 +1448,15 @@ export interface FeedConceptData {
   // not 100. Absent (not null) when the card has no priced main event, which is
   // what makes `leader` still the fallback rather than dead code.
   headline_bout?: FeedConceptBout | null;
+  // #5778: when the prices behind `leader` were last polled, as a UTC ISO
+  // instant. Same key and same level as `FeedFuturesData`'s (#5752), so both
+  // cards hand `ActionBar` the same prop from the same path.
+  //
+  // `null` is "we checked and this market cannot be dated" — golf, a concept
+  // with no futures market, tennis's compact cached row; `undefined` is a
+  // payload built before #5778. `PriceAgeMark` draws nothing for either, and
+  // nothing for a price inside 30 minutes, which is most of them.
+  price_observed_at?: string | null;
 }
 
 /** The two sides of one bout, favourite first. */

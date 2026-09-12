@@ -245,6 +245,12 @@ export function ConceptCard({
           contentType="grid"
           itemId={data.key}
           onShare={onShare}
+          // #5778 — the same prop a futures card passes (#5752), from the same
+          // path. `PriceAgeMark` decides whether to draw: nothing inside 30
+          // minutes, nothing for a price we cannot date. The measured specimen
+          // is this card: the Vuelta GC field led Discover at 96% under a LIVE
+          // pill on a price 5h01m old.
+          priceObservedAt={data.price_observed_at}
         />
       </div>
     </div>
