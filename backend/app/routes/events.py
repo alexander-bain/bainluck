@@ -826,6 +826,21 @@ def _phrase_alias_alternatives(terms: list[str]) -> list[list[str]]:
 _EASTERN_TZ_NAME = "America/New_York"
 
 
+#: The intent kinds whose qualifier is a TIME BAND rather than a thing to match,
+#: and therefore the only kinds whose subject `/search` resolves identity on
+#: (CERT-2756). "today" and "2026" name no market and no entity: ANDing them
+#: into every filter is what emptied the page. "playoffs", "division",
+#: "next team", a win total and a make-cut all name markets that exist and that
+#: this route finds by matching the word — so for those the reader's own string
+#: IS the identity, exactly as it was before #5688.
+#:
+#: A frozenset rather than an `in (a, b)`, so the set is one readable thing a
+#: guard can assert against and a future kind is added deliberately.
+_IDENTITY_SUBSTITUTED_KINDS: frozenset[str] = frozenset(
+    {INTENT_TODAY, INTENT_SEASON_YEAR}
+)
+
+
 def _intent_day_order_key(intent, now: datetime):
     """A sort key that puts the day the reader named FIRST, or ``None``.
 
@@ -4712,8 +4727,29 @@ async def search_events(
     # `query.order_by(...)` call below for why it is in the SQL and not a
     # partition over the page. `_intent` is resolved once, here, and used by
     # both halves.
+    #
+    # SCOPED TO THE TWO TIME KINDS (CERT-2756's required repair,
+    # `5688-NON-TIME-QUESTION-KEEPS-ITS-ANSWER`). The first presentation
+    # substituted the subject for all seven kinds, and the other five name a
+    # MARKET rather than a time band: `patriots playoffs` is answered on
+    # production by an actual playoff future, which this route finds because
+    # "playoffs" is one of the terms it ANDs. Dropping the word to leave
+    # "patriots" returns the broad team page — the reader who asked the more
+    # precise question gets the vaguer answer, which is #5688's own defect
+    # pointed the other way.
+    #
+    # `/typeahead` substitutes for every kind and is right to: it re-promotes
+    # the answering row afterwards through `promote_answering_rows`, so the
+    # qualifier's answer comes back at the top. This route has no such
+    # composition step, so here the qualifier has to keep doing its own work.
+    # Widening this set therefore requires the promotion half to land first —
+    # that is #5060's shape, not a one-line change.
     _intent = parse_intent(q)
-    _q_identity = _intent.subject if _intent else q
+    _q_identity = (
+        _intent.subject
+        if _intent is not None and _intent.kind in _IDENTITY_SUBSTITUTED_KINDS
+        else q
+    )
 
     # `search_pattern = f"%{q}%"` STOOD HERE AND WAS DEAD — assigned on this line
     # and read nowhere in the backend (one occurrence in the tree). It is deleted

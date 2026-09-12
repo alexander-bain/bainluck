@@ -674,3 +674,127 @@ class TestTheReaderSeesWhatTheyTyped:
         values = recorder.team_values()
         assert values, "no teams SELECT was issued"
         assert "lazio" in " ".join(values).lower()
+
+
+class TestANonTimeQuestionKeepsItsAnswer:
+    """CERT-2756's required repair: `5688-NON-TIME-QUESTION-KEEPS-ITS-ANSWER`.
+
+    The first presentation of #5688 substituted the subject for ALL SEVEN
+    intent kinds. Two of them — `today` and `season_year` — name a time band
+    that matches no row, and ANDing them into every filter is what emptied the
+    page. The other five name a MARKET THAT EXISTS. The grader read production:
+
+        q=patriots playoffs   ->  exactly the answering playoff future
+        the same query on the branch's head  ->  the broad "patriots" team
+
+    Dropping "playoffs" from every identity statement hands the reader who
+    asked the more precise question the vaguer answer. That is #5688's own
+    defect pointed the other way, and it is why the substitution is now scoped
+    to `_IDENTITY_SUBSTITUTED_KINDS`.
+
+    WHY BOUND VALUES AND NOT "THE MARKET IS FIRST". The served `futures` list
+    is empty in this rig for every query alike — the arm's dedup, family
+    roll-up and formatter read attributes a `SimpleNamespace` seed does not
+    carry, as the note in `TestTheQualifierDoesNotEmptyThePage` records in
+    detail. So "first" is unreachable here for the same reason it was there,
+    and the provable statement is the one that decides it upstream: the
+    qualifier is still a term the row has to match, exactly as on the
+    pre-#5688 route. The served-payload half of this repair's evidence is the
+    production before/after in the ship's report.
+    """
+
+    async def test_non_time_question_keeps_its_answering_scaffold_5688(
+        self, client, recorder
+    ):
+        """The named repair test. Every arm still matches on "playoffs"."""
+        await client.get(f"{SEARCH}?q=patriots playoffs")
+
+        for arm, values in (
+            ("teams", recorder.team_values()),
+            ("futures", recorder.futures_values()),
+            ("events", recorder.event_values()),
+        ):
+            assert values, f"no {arm} SELECT was issued — the guard is vacuous"
+            joined = " ".join(values).lower()
+            assert "playoff" in joined, (
+                f"the {arm} arm no longer matches on the reader's qualifier, so "
+                "the answering playoff market is not what comes back — it is "
+                f"the bare-subject search. bound values: {values}"
+            )
+
+    async def test_the_qualified_question_is_not_the_bare_subject_search(
+        self, client, recorder
+    ):
+        """`patriots playoffs` must not compile to `patriots`.
+
+        The strongest available statement of "the response did not become the
+        bare-subject search": the two queries build DIFFERENT statements. A
+        repair that merely re-added the word to one arm would pass the test
+        above and fail here if the rest still collapsed.
+        """
+        await client.get(f"{SEARCH}?q=patriots playoffs")
+        qualified = sorted(v.lower() for v in recorder.all_values())
+
+        recorder.statements.clear()
+        await client.get(f"{SEARCH}?q=patriots")
+        bare = sorted(v.lower() for v in recorder.all_values())
+
+        assert qualified != bare, (
+            "the qualified question compiled to exactly the bare-subject "
+            "search: the reader's extra word changed nothing at all"
+        )
+
+    @pytest.mark.parametrize(
+        "query, qualifier",
+        [
+            ("patriots playoffs", "playoff"),
+            ("patriots win the division", "division"),
+            ("mahomes next team", "next"),
+            ("patriots 10 wins", "wins"),
+            ("scheffler make the cut", "cut"),
+        ],
+    )
+    async def test_every_market_naming_kind_keeps_its_qualifier(
+        self, client, recorder, query, qualifier
+    ):
+        """All five non-time kinds, because the repair is a KIND SET.
+
+        A repair that special-cased `playoffs` alone — the kind the grader
+        happened to name — would leave the other four exactly as broken.
+        """
+        await client.get(f"{SEARCH}?q={query.replace(' ', '%20')}")
+        joined = " ".join(recorder.all_values()).lower()
+        assert qualifier in joined, (
+            f"'{query}' dropped '{qualifier}' from every statement it built, "
+            "so whatever market answers it is no longer being asked for"
+        )
+
+    @pytest.mark.parametrize("query", ["lazio today", "lazio 2026"])
+    async def test_the_two_time_kinds_still_drop_theirs(
+        self, client, recorder, query
+    ):
+        """The scope must not be narrowed to nothing.
+
+        The obvious over-correction for the block above is to stop
+        substituting at all, which restores the empty page this whole ship is
+        about. These are the two kinds that MUST still lose their qualifier.
+        """
+        await client.get(f"{SEARCH}?q={query.replace(' ', '%20')}")
+        word = query.split()[-1]
+        leaked = [v for v in recorder.all_values() if word in v.lower()]
+        assert not leaked, (
+            f"'{query}' still binds '{word}' as a term to match — the page it "
+            f"emptied on production is empty again: {leaked}"
+        )
+
+    async def test_the_substituted_set_is_exactly_the_two_time_kinds(self):
+        """The set itself, so a widening is a deliberate edit with a guard.
+
+        Adding a kind here without the promotion half `/typeahead` has is the
+        regression CERT-2756 caught; this arm makes that a red test rather
+        than a code review someone has to remember to do.
+        """
+        from app.routes.events import _IDENTITY_SUBSTITUTED_KINDS
+        from app.utils.search_intent import INTENT_SEASON_YEAR, INTENT_TODAY
+
+        assert _IDENTITY_SUBSTITUTED_KINDS == {INTENT_TODAY, INTENT_SEASON_YEAR}
