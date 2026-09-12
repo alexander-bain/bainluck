@@ -313,6 +313,108 @@ export function shouldShowRefreshCountdown(args: {
 }
 
 /**
+ * Does the header say HOW OLD its number is? (#5039 / #5049 — ship 5, "honest
+ * about its age")
+ *
+ * ═══ THE DEFECT ═══
+ *
+ * The age badge was written for the PUSHED path and given to it alone: on a
+ * polled page the header showed `LIVE` and a `Next update: 27` ring instead.
+ * Shopped on SF@LAR (2026-09-10, notice 42) that swap is visible on one page
+ * that was never reloaded — `live · 4s ago` at 6:56pm, and at halftime, with
+ * the same tab open, `LIVE   Next update: (27)`.
+ *
+ * It is the wrong way round twice over. A countdown answers *"when will we next
+ * try?"* — our plumbing, which a reader cannot act on (notice 34 / D102). The
+ * age answers *"how old is this number?"*, which is the reader's question, and
+ * it is worth most exactly where it was withheld: during a twelve-minute
+ * halftime nothing else on the page moves, so the age is the only thing that
+ * can distinguish a working page from a frozen one.
+ *
+ * ═══ WHY IT IS NOT SIMPLY "ALWAYS SHOW IT" ═══
+ *
+ * The badge's fresh presentation says the word *live* (`live · 8s ago`). The
+ * ring, since #3802, also draws on a PREGAME page up to three hours out, where
+ * the price stamp is seconds old and a green `live · 8s ago` would be a true
+ * sentence about our write and a false one about the match. So the polled arm
+ * is gated on the same liveness the pill it replaces was gated on, not on the
+ * ring's own window.
+ *
+ * `feedStalled` stays as its own arm rather than folding into the two above:
+ * #4861 earned the badge for a page that has stopped being fed whatever its
+ * state, including that pregame case, and there the age is by construction past
+ * its stale boundary, so it prints a grey `4m ago` and claims nothing.
+ *
+ * ═══ WHAT THIS RETIRES ═══
+ *
+ * The header's `LIVE` pill rendered only inside the ring group and only when
+ * `effectivelyLive` — and every one of those inputs returns true here, so the
+ * badge is present wherever the pill was. Two green live claims side by side is
+ * two answers to one question, and the pill was the worse of the two: it was
+ * keyed on the event's STATUS, so it stayed green and pulsing over a number of
+ * any age (#5049), while this badge drops the green and the word "live" as soon
+ * as its own fact goes stale. `headerAgeSubsumesLivePill` below is that
+ * argument as an assertion, so nobody has to take it on trust.
+ *
+ * Pure and exported for the same reason `shouldShowRefreshCountdown` is: a
+ * Next.js page may not carry named exports, so this is the only seam a guard
+ * can hold.
+ */
+export function headerShowsAge(args: {
+  isFinished: boolean;
+  /** The SSE stream is delivering — the original, pushed case. */
+  streamConnected: boolean;
+  /** `shouldShowRefreshCountdown` WITHOUT the #5459 withdrawal. */
+  onVisiblePoll: boolean;
+  /** #4861 — the page's own fetches have stopped landing. */
+  feedStalled: boolean;
+  /** The page's one motion answer: `isLive && !liveClaimUnbacked`. */
+  effectivelyLive: boolean;
+  /** `hasNoReportedResult(...) || liveClaimUnbacked`. */
+  isSuspended: boolean;
+}): boolean {
+  const {
+    isFinished,
+    streamConnected,
+    onVisiblePoll,
+    feedStalled,
+    effectivelyLive,
+    isSuspended,
+  } = args;
+
+  // A finished page has no age to disclose — it has a result (settled means
+  // settled), and this badge is about a number that is still supposed to move.
+  if (isFinished) return false;
+
+  if (streamConnected) return true;
+  if (!onVisiblePoll) return false;
+
+  return effectivelyLive || isSuspended || feedStalled;
+}
+
+/**
+ * The pill's retirement, stated as a predicate so a test can hold it (#5039).
+ *
+ * True when the header's old `LIVE` pill WOULD have drawn — the ring group is
+ * on screen and the page is effectively live — and the age badge is not there
+ * to carry the claim instead. It must be false for every reachable input, which
+ * is what makes deleting the pill a reduction rather than a loss: wherever it
+ * spoke, `live · Ns ago` now speaks, and says one true thing more.
+ */
+export function headerAgeSubsumesLivePill(args: {
+  isFinished: boolean;
+  streamConnected: boolean;
+  onVisiblePoll: boolean;
+  feedStalled: boolean;
+  effectivelyLive: boolean;
+  isSuspended: boolean;
+  /** `showRefreshCountdown && !feedStalled` — the ring group is rendered. */
+  ringVisible: boolean;
+}): boolean {
+  return args.ringVisible && args.effectivelyLive && !headerShowsAge(args);
+}
+
+/**
  * Does the authority actually KNOW when this event starts? (#3829)
  *
  * ═══ THE DEFECT ═══
