@@ -79,9 +79,17 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
     /// A team-label derivation, as opposed to a player's surname or initials —
     /// which are a different question entirely (#4623/#4624) and are NOT in
     /// scope. The discriminator is the variable being shortened.
+    ///
+    /// COMMENTS ARE STRIPPED FIRST, and that is not a nicety. On its very first
+    /// run this scan failed on `WidgetAPIClient.swift` — the file it had just
+    /// been written to certify — because the fix's own comment QUOTES the line
+    /// it removed, so that a later reader can see what was wrong. A guard that
+    /// cannot tell a defect from a description of a defect punishes documenting
+    /// the fix, and the pressure it applies is to delete the explanation.
     private func shortensATeamName(_ line: String) -> Bool {
-        guard handRolledShorteners.contains(where: { line.contains($0) }) else { return false }
-        let lower = line.lowercased()
+        let code = line.components(separatedBy: "//").first ?? line
+        guard handRolledShorteners.contains(where: { code.contains($0) }) else { return false }
+        let lower = code.lowercased()
         return lower.contains("team") && !lower.contains("player")
     }
 
