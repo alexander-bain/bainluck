@@ -171,3 +171,77 @@ describe("#5690 — the two arms must agree on the unit", () => {
     expect(decode(renderWithLeaderboard(76.5, 28.2))).toMatch(/pts today/);
   });
 });
+
+/**
+ * #5713 — the eight arms above all read the caption through `captionMove`, which
+ * regexes ONLY `<n> pts today`. So every one of them passed while #5690's own
+ * diff deleted `score` and `hole` from the same object literal it was editing,
+ * and the live card shipped reading
+ *
+ *     Leader +32.4 pts today          instead of
+ *     Leader · -16 · H18 +32.4 pts today
+ *
+ * `_buildChasers` kept both fields, so the card showed the CHASERS' positions and
+ * not the leader's — which is how the after-LOOK caught it.
+ *
+ * The lesson is about the guard's aim, not the arithmetic: a suite that asserts
+ * one field of a multi-field object is blind to a sibling field vanishing from
+ * the same literal. These arms assert the whole leader line, so the next edit to
+ * this object cannot drop a field silently.
+ */
+describe("#5713 — the leader line keeps its score and hole, not just its caption", () => {
+  test("THE REGRESSION: the leaderboard arm renders the leader's score AND hole", () => {
+    const markup = decode(renderWithLeaderboard(76.5, 28.2));
+    expect(markup).toMatch(/-16/);
+    expect(markup).toMatch(/H15/);
+  });
+
+  test("the whole leader line reads as one sentence, in order", () => {
+    // The specimen the after-LOOK photographed, asserted end to end: dropping any
+    // one of the three parts fails here, which is what the caption-only arms could
+    // not do.
+    expect(decode(renderWithLeaderboard(76.5, 28.2))).toMatch(
+      /Leader\s*·\s*-16\s*·\s*H15[\s\S]{0,80}\+28\.2 pts today/,
+    );
+  });
+
+  test("a finished round prints F, not HF", () => {
+    const markup = renderToStaticMarkup(
+      <TournamentCard
+        tournament={tournament("Shane Lowry", 0.0, 0.765)}
+        leaderboard={[{ ...lbPlayer("Shane Lowry", 76.5, 28.2), thru: "F" } as GolfLeaderboardPlayer]}
+      />,
+    );
+    expect(decode(markup)).toMatch(/·\s*F\b/);
+    expect(decode(markup)).not.toMatch(/HF/);
+  });
+
+  test("score and hole survive the null-movement path too", () => {
+    // The caption is absent here, so a guard written only around the caption has
+    // nothing to say about this row at all — yet the score must still print.
+    const markup = decode(renderWithLeaderboard(76.5, null));
+    expect(markup).not.toMatch(/pts today/);
+    expect(markup).toMatch(/-16/);
+    expect(markup).toMatch(/H15/);
+  });
+
+  test("the fields are genuinely CARRIED, not coincidental text in the markup", () => {
+    // gotcha #43 / vacuity: prove the assertions above can fail. A leaderboard row
+    // with no score and no thru must print neither, so "-16"/"H15" passing above
+    // is the data travelling and not some other part of the card.
+    const markup = renderToStaticMarkup(
+      <TournamentCard
+        tournament={tournament("Shane Lowry", 0.0, 0.765)}
+        leaderboard={[
+          // `as unknown as` per this file's existing idiom: the type declares
+          // `score`/`thru` non-nullable, but the render guards both with `&&`,
+          // and feeding the absent case is the whole point of this control.
+          { ...lbPlayer("Shane Lowry", 76.5, 28.2), score: null, thru: null } as unknown as GolfLeaderboardPlayer,
+        ]}
+      />,
+    );
+    expect(decode(markup)).not.toMatch(/-16/);
+    expect(decode(markup)).not.toMatch(/H15/);
+    expect(decode(markup)).toMatch(/\+28\.2 pts today/);
+  });
+});
