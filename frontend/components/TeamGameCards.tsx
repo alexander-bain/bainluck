@@ -5,6 +5,7 @@ import type { TeamGameBrief } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { SUSPENDED_LABEL } from "@/lib/eventState";
 import { isGameLive, teamLastScore, teamResult } from "@/lib/teamGames";
+import { teamShortNames } from "@/lib/teamShortName";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -42,7 +43,31 @@ export function UpcomingGameCard({
   const wp = game.win_probability; // team-relative, 0-1
   const teamPct = wp !== null && wp !== undefined ? Math.round(wp * 100) : null;
   const oppPct = teamPct !== null ? 100 - teamPct : null;
-  const teamShort = teamName.split(" ").pop() || teamName;
+  // #5546: BOTH ENDS OF THE BAR ARE NAMED BY ONE RULE.
+  //
+  // This read `teamName.split(" ").pop()` on the left while the right printed
+  // `opponent` untouched, so a bar comparing two clubs named them two different
+  // ways: "Sox" against "Kansas City Royals" on
+  // `/sport/baseball/mlb/team/boston-red-sox`. The backend is not involved — it
+  // serves both names in full — so the asymmetry was entirely this line.
+  //
+  // `teamShortNames` is the pair helper (UX-1065 / #2936) that exists to
+  // replace the raw `.pop()`, and taking the PAIR rather than shortening each
+  // side alone is what buys the collision backstop: Boston Red Sox against
+  // Chicago White Sox both shorten to "Sox", and the pair form falls both back
+  // to their full names rather than drawing "Sox" against "Sox".
+  //
+  // ⚠️ **THIS DOES NOT MAKE "Sox" UNAMBIGUOUS, AND IS NOT MEANT TO.** The
+  // helper deliberately keeps the last word for the American
+  // `<place> <nickname>` convention, so Red Sox v Royals still renders "Sox"
+  // against "Royals". That residual is #5546's second half and #5634's subject
+  // (the last-word rule naming a city or a shared nickname); it needs a rule
+  // change in `teamShortName`, not a call-site change here, and making it here
+  // would put a third naming rule on the page.
+  const { home: teamShort, away: opponentShort } = teamShortNames(
+    { name: teamName },
+    { name: opponent }
+  );
 
   const teamScore = game.is_home ? game.home_score : game.away_score;
   const oppScore = game.is_home ? game.away_score : game.home_score;
@@ -107,7 +132,7 @@ export function UpcomingGameCard({
           <div className="flex justify-between text-[11px] text-text-muted mt-1">
             <span className="truncate">{teamShort}</span>
             <span className="truncate ml-2">
-              {opponent} {oppPct}%
+              {opponentShort} {oppPct}%
             </span>
           </div>
         </>
