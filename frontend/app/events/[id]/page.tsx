@@ -9,6 +9,7 @@ import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, 
 import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
+import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
@@ -1369,7 +1370,7 @@ export default function EventPage({ params }: EventPageProps) {
                 ) : null}
                 <span
                   className={`text-sm font-extrabold ${(event.home_team_data?.logo_large || espnTeamLogoByName(event.home_team, event.sport_key)) ? "hidden" : ""}`}
-                  style={{ color: event.home_team_data?.primary_color || "#94A3B8" }}
+                  style={{ color: teamTextColor(event.home_team_data?.primary_color) || "var(--text-secondary)" }}
                 >
                   {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                 </span>
@@ -1549,7 +1550,7 @@ export default function EventPage({ params }: EventPageProps) {
                 ) : null}
                 <span
                   className={`text-sm font-extrabold ${(event.away_team_data?.logo_large || espnTeamLogoByName(event.away_team, event.sport_key)) ? "hidden" : ""}`}
-                  style={{ color: event.away_team_data?.primary_color || "#64748B" }}
+                  style={{ color: teamTextColor(event.away_team_data?.primary_color) || "#64748B" }}
                 >
                   {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                 </span>

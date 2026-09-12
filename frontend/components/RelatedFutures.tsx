@@ -8,6 +8,7 @@ import { fetchRelatedFutures, formatProbability } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { disambiguateLabels } from "@/lib/labelDisambiguation";
 import { teamShortName, teamShortNames } from "@/lib/teamShortName";
+import { teamTextColor } from "@/lib/teamColors";
 import EntityImage from "./EntityImage";
 import AdvancementPath from "@/components/event/AdvancementPath";
 
@@ -361,7 +362,7 @@ function HeroFutureCard({
           <div className="flex items-baseline gap-2">
             <span
               className="text-2xl font-bold tabular-nums tracking-tight"
-              style={{ color: teamColor }}
+              style={{ color: teamTextColor(teamColor) || "var(--text-primary)" }}
             >
               {formatProbability(future.probability)}
             </span>
@@ -498,7 +499,7 @@ function AwardCard({
         <div className="flex items-center gap-1.5 justify-end">
           <span
             className="text-xl font-bold tabular-nums"
-            style={{ color: teamColor }}
+            style={{ color: teamTextColor(teamColor) || "var(--text-primary)" }}
           >
             {formatProbability(future.probability)}
           </span>
@@ -712,7 +713,7 @@ function GameMarketsGrid({
                     <span
                       className="text-[13px] font-bold tabular-nums"
                       style={{
-                        color: favored ? teamColor : "var(--text-muted)",
+                        color: favored ? (teamTextColor(teamColor) || "var(--text-primary)") : "var(--text-muted)",
                       }}
                     >
                       {formatProbabilityPercent(prob)}
@@ -852,7 +853,7 @@ function StatGauge({
       </svg>
       <span
         className="text-[13px] font-bold tabular-nums -mt-1.5"
-        style={{ color: pct >= 50 ? teamColor : "var(--text-muted)" }}
+        style={{ color: pct >= 50 ? (teamTextColor(teamColor) || "var(--text-primary)") : "var(--text-muted)" }}
       >
         {pct}%
       </span>
@@ -1111,7 +1112,7 @@ function StatPropsSection({
                         </div>
                         <div
                           className="text-xl font-black tabular-nums mt-0.5 leading-none"
-                          style={{ color: teamColor }}
+                          style={{ color: teamTextColor(teamColor) || "var(--text-primary)" }}
                         >
                           {actualValue}
                         </div>
@@ -1133,7 +1134,7 @@ function StatPropsSection({
                         </div>
                         <div
                           className="text-xl font-black tabular-nums mt-0.5 leading-none"
-                          style={{ color: teamColor }}
+                          style={{ color: teamTextColor(teamColor) || "var(--text-primary)" }}
                         >
                           {actualValue}
                         </div>
@@ -1158,7 +1159,7 @@ function StatPropsSection({
                         {row.line && (
                           <div
                             className="text-lg font-black tabular-nums mt-0.5 leading-none"
-                            style={{ color: teamColor }}
+                            style={{ color: teamTextColor(teamColor) || "var(--text-primary)" }}
                           >
                             {row.line}
                           </div>
@@ -1241,7 +1242,7 @@ function TitleComparison({
             <MovementPill change={homeChamp.probability_change_24h} />
             <span
               className="text-2xl font-bold tabular-nums"
-              style={{ color: homeTeamColor }}
+              style={{ color: teamTextColor(homeTeamColor) || "var(--text-primary)" }}
             >
               {formatProbability(homeChamp.probability)}
             </span>
@@ -1260,7 +1261,7 @@ function TitleComparison({
           <div className="flex items-center gap-2">
             <span
               className="text-2xl font-bold tabular-nums"
-              style={{ color: awayTeamColor }}
+              style={{ color: teamTextColor(awayTeamColor) || "var(--text-primary)" }}
             >
               {formatProbability(awayChamp.probability)}
             </span>
@@ -1493,7 +1494,7 @@ function SeasonStatRow({ future, teamColor }: { future: RelatedFuture; teamColor
       <span className="text-[10px] text-text-secondary flex-1 truncate">{label}</span>
       <span
         className="text-[11px] font-bold font-mono shrink-0"
-        style={{ color: prob >= 0.10 ? teamColor : "var(--text-muted)" }}
+        style={{ color: prob >= 0.10 ? (teamTextColor(teamColor) || "var(--text-primary)") : "var(--text-muted)" }}
       >
         {formatProbability(future.probability)}
       </span>
@@ -1598,7 +1599,7 @@ function WinTotalsGauge({
             {shortName.slice(0, 3).toUpperCase()}
           </div>
         )}
-        <span className="text-[10px] font-bold" style={{ color: teamColor }}>
+        <span className="text-[10px] font-bold" style={{ color: teamTextColor(teamColor) || "var(--text-primary)" }}>
           {teamName}
         </span>
       </div>
@@ -1625,7 +1626,7 @@ function WinTotalsGauge({
           >
             <div
               className="absolute top-0 left-1/2 -translate-x-1/2 text-[8px] font-bold whitespace-nowrap"
-              style={{ color: teamColor, top: "-12px" }}
+              style={{ color: teamTextColor(teamColor) || "var(--text-primary)", top: "-12px" }}
             >
               {wins}W
             </div>
@@ -1643,7 +1644,7 @@ function WinTotalsGauge({
       </div>
 
       {/* Interesting line callout */}
-      <div className="text-[11px] font-extrabold mb-0.5" style={{ color: teamColor }}>
+      <div className="text-[11px] font-extrabold mb-0.5" style={{ color: teamTextColor(teamColor) || "var(--text-primary)" }}>
         {interestingLine.value}+ wins: {interestingProb}%
       </div>
       <div className="text-[9px] text-text-secondary">The interesting line</div>
@@ -2706,7 +2707,7 @@ export default function RelatedFutures({
                               <div className="flex items-center gap-3 flex-wrap">
                                 {p.awards.map((a, i) => (
                                   <span key={i} className="text-[10px] text-text-secondary">
-                                    {a.label} <span className="font-bold font-mono" style={{ color: hColor }}>{Math.round(a.prob * 100)}%</span>
+                                    {a.label} <span className="font-bold font-mono" style={{ color: teamTextColor(hColor) || "var(--text-primary)" }}>{Math.round(a.prob * 100)}%</span>
                                   </span>
                                 ))}
                               </div>
@@ -2772,7 +2773,7 @@ export default function RelatedFutures({
                               <div className="flex items-center gap-3 flex-wrap">
                                 {p.awards.map((a, i) => (
                                   <span key={i} className="text-[10px] text-text-secondary">
-                                    {a.label} <span className="font-bold font-mono" style={{ color: aColor }}>{Math.round(a.prob * 100)}%</span>
+                                    {a.label} <span className="font-bold font-mono" style={{ color: teamTextColor(aColor) || "var(--text-primary)" }}>{Math.round(a.prob * 100)}%</span>
                                   </span>
                                 ))}
                               </div>

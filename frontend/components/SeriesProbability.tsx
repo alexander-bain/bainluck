@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { teamTextColor } from "@/lib/teamColors";
 
 // ── Negative binomial series probability (ported from backend) ──
 
@@ -98,6 +99,14 @@ export default function SeriesProbability({
 
   const homeColor = homeTeamColor || "#16a34a";
   const awayColor = awayTeamColor || "#2563eb";
+  // #5696 — the same colour is a FILL here (the win dots, the bar) and a TEXT
+  // colour (the club abbreviations beside them). Only the text gets the #5165
+  // contrast floor: flooring the fill would repaint the dots, which is a design
+  // change and not this bug. A white club's dot being white-on-white is a
+  // FILL-on-surface problem — it needs a border, not a text floor — and is left
+  // alone deliberately.
+  const homeTextColor = teamTextColor(homeColor) || "#16a34a";
+  const awayTextColor = teamTextColor(awayColor) || "#2563eb";
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
   const homeSeriesPct = Math.round(result.homeSeriesProb * 100);
@@ -125,7 +134,7 @@ export default function SeriesProbability({
       {/* Series win dots */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-text-secondary mr-1" style={{ color: homeColor }}>
+          <span className="text-xs text-text-secondary mr-1" style={{ color: homeTextColor }}>
             {homeShort}
           </span>
           {homeDots.map((won, i) => (
@@ -150,7 +159,7 @@ export default function SeriesProbability({
               }}
             />
           ))}
-          <span className="text-xs text-text-secondary ml-1" style={{ color: awayColor }}>
+          <span className="text-xs text-text-secondary ml-1" style={{ color: awayTextColor }}>
             {awayShort}
           </span>
         </div>

@@ -12,6 +12,7 @@
  */
 
 import { teamCrestBadge, teamShortNames } from "@/lib/teamShortName";
+import { teamTextColor } from "@/lib/teamColors";
 import { KernelCard, type KernelState, type KernelGrade } from "./KernelCard";
 import type { AngleValue } from "./AngleBadge";
 import { CATEGORY_GRADIENTS } from "../constants";
@@ -77,6 +78,11 @@ export function DuelKernel(props: DuelKernelProps) {
   } = props;
   const awayColor = props.awayColor || "#6b7280";
   const homeColor = props.homeColor || "#374151";
+  // #5696 — these colours are the split bar's FILL as well as the two
+  // percents' text. Only the text takes #5165's contrast floor; a brand
+  // colour is a legitimate fill and repainting the bar would be a redesign.
+  const awayTextColor = teamTextColor(awayColor) || "#6b7280";
+  const homeTextColor = teamTextColor(homeColor) || "#374151";
   const isLive = state === "live";
   const settled = state === "settled";
   const showScores = isLive || settled;
@@ -120,9 +126,9 @@ export function DuelKernel(props: DuelKernelProps) {
       {!settled && awayProb != null && homeProb != null && (
         <div className="mt-0.5">
           <div className="mb-1 flex items-center justify-between text-sm">
-            <span className="font-bold" style={{ color: awayColor }}>{awayPct}%</span>
+            <span className="font-bold" style={{ color: awayTextColor }}>{awayPct}%</span>
             <span className="text-[10px] text-text-muted">Win Probability</span>
-            <span className="font-bold" style={{ color: homeColor }}>{homePct}%</span>
+            <span className="font-bold" style={{ color: homeTextColor }}>{homePct}%</span>
           </div>
           <div className="flex h-2.5 overflow-hidden rounded-full">
             <div className="transition-all duration-500" style={{ width: `${awayPct}%`, backgroundColor: awayColor }} />

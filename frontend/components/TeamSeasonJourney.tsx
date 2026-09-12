@@ -6,6 +6,7 @@ import type { TeamFutureItem } from "@/lib/api";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
 import { journeyRangeLabel } from "@/lib/teamSeason";
+import { teamTextColor } from "@/lib/teamColors";
 import { FuturesChart } from "@/components/FuturesChart";
 
 // ---------------------------------------------------------------------------
@@ -92,7 +93,7 @@ export function TeamSeasonJourney({
           {currentPct !== null && (
             <span
               className="ml-auto font-mono font-bold text-lg tabular-nums"
-              style={{ color: teamColor || undefined }}
+              style={{ color: teamTextColor(teamColor) || undefined }}
             >
               {currentPct}%
             </span>

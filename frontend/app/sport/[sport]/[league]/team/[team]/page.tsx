@@ -14,6 +14,7 @@ import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
 import { sportKeyToGridSlug } from "@/lib/gridSlug";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { buildDivisionRace } from "@/lib/teamDivisionRace";
+import { teamTextColor } from "@/lib/teamColors";
 import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
 import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
 import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
@@ -293,7 +294,7 @@ export default function TeamPage() {
             </span>
             <span
               className="font-mono font-bold text-3xl leading-none tabular-nums"
-              style={{ color: team.primary_color || undefined }}
+              style={{ color: teamTextColor(team.primary_color) || undefined }}
             >
               {Math.round(headline.probability * 100)}%
             </span>

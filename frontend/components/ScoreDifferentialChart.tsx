@@ -23,6 +23,7 @@ import { sourceLabel } from "@/lib/sourceColors";
 import { impliedSpreadHomeMargin } from "@/lib/impliedSpreadAxis";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import { teamShortNames } from "@/lib/teamShortName";
+import { teamTextColor } from "@/lib/teamColors";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import type {
   OddsHistoryPoint,
@@ -812,7 +813,7 @@ export default function ScoreDifferentialChart({
             {homeTeamLogo && (
               <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
             )}
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: homeTeamColor || "#16a34a" }}>
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: teamTextColor(homeTeamColor) || "#16a34a" }}>
               {homeShort}
             </span>
           </div>
@@ -820,7 +821,7 @@ export default function ScoreDifferentialChart({
             {awayTeamLogo && (
               <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
             )}
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: awayTeamColor || "#2563eb" }}>
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: teamTextColor(awayTeamColor) || "#2563eb" }}>
               {awayShort}
             </span>
           </div>

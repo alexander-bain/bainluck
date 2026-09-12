@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { teamTextColor } from '../lib/teamColors';
+
 /**
  * The event page hero's two giant percents — #2085.
  *
@@ -141,8 +143,25 @@ export default function EventHeroProbabilityPair({
   probSourceLabel,
   animate = false,
 }: EventHeroProbabilityPairProps) {
-  const home = homeColor || "#111827";
-  const away = awayColor || "#94A3B8";
+  // #5696 — THE BIGGEST NUMBER ON THE SITE, PAINTED WHITE ON A WHITE CARD.
+  //
+  // `/events/15297678` (Everton at Tottenham, live 76', 2026-09-12) rendered
+  // `– 37 %`: Tottenham's 63% was in the DOM at full opacity, on screen, and
+  // computed `rgb(255, 255, 255)`. Spurs' stored `primary_color` is `#ffffff`
+  // and `--surface-card` is `#FFFFFF`. A reader saw one number and could not
+  // tell whose it was, while `Opened 64% – 36%` two lines below printed both.
+  //
+  // #5165 already shipped the floor for exactly this class; it had been adopted
+  // in one component. This is the same floor, not a new rule.
+  //
+  // THE AWAY FALLBACK MOVED, AND THAT IS PART OF THE FIX. It was `#94A3B8`
+  // (slate-400), which is 2.56:1 against the card — below the very floor this
+  // routes to it, so a white away club would have traded 1.00:1 for 2.56:1 and
+  // the guard would have been circular. `--text-secondary` (#6B7280, 4.83:1) is
+  // what #5165 chose for the same reason and is still visibly the quieter of
+  // the two, so the home/away hierarchy the slate was carrying survives.
+  const home = teamTextColor(homeColor) || "#111827";
+  const away = teamTextColor(awayColor) || "var(--text-secondary)";
 
   // The pair is ONE decision (#2085), so only ONE side is counted and the other
   // is derived from it. Tweening the two independently would let them disagree
