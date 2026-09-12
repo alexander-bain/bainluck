@@ -458,6 +458,46 @@ _BOUT_CALLED_OFF = frozenset(
 )
 
 
+def _bout_going_ahead(bout) -> bool:
+    """Is this bout still going to be fought? (Deny-list — see `_BOUT_CALLED_OFF`.)"""
+    return (getattr(bout, "status", None) or "").strip().lower() not in _BOUT_CALLED_OFF
+
+
+def card_is_called_off(bouts) -> bool:
+    """Every bout on this card has been called off — the night is not happening.
+
+    CERT-2727. Distinct from "this card has no bouts": a card we simply have no
+    rows for is unknown, while a card whose every row is suspended/cancelled is
+    known to be off. Only the second may never wear the live pill.
+    """
+    rows = [b for b in bouts if getattr(b, "commence_time", None) is not None]
+    return bool(rows) and not any(_bout_going_ahead(b) for b in rows)
+
+
+def card_status_from_bouts(bouts, now, *, fallback_first=None, fallback_last=None):
+    """The card's status — THE sanctioned entry point for all three serve paths.
+
+    CERT-2727 blocked the first spelling of #5603 because the all-called-off case
+    was handled at the span helper, which each adapter was then free to override
+    with its own fallback (and one of them did, by design, for Kalshi-only cards).
+    So the rule lives here instead, ahead of any fallback, and the three call
+    sites — the concept lister and both adapter envelopes — share it. An adapter
+    cannot reinstate a live pill on a card that is off without deleting this call.
+
+    ``fallback_*`` is the pair to use when we hold no bout rows of our own (a
+    Kalshi-only card): unknown, not off, so it classifies exactly as before.
+    """
+    if card_is_called_off(bouts):
+        # Terminal, so it drops out of the upcoming/live surfaces. NOT routed
+        # through `combat_status`: there is no time arithmetic that can make
+        # "nothing will be fought" produce a live window.
+        return "settled"
+    first, last = card_status_span(bouts)
+    if last is None:
+        first, last = fallback_first, fallback_last
+    return combat_status(last, now, first)
+
+
 def card_status_span(bouts):
     """The ``(first, last)`` commence pair that decides a card's LIVE window.
 
@@ -484,19 +524,23 @@ def card_status_span(bouts):
     promotion still shares the token and still drags the window back. That is the
     date-token key itself (#5602, lane1/D35) and is not touched here.
 
-    Returns ``(None, None)`` for no usable rows. When every bout is called off the
-    full span is kept rather than invented from nothing: that card is past its
-    main event anyway and `combat_status`'s trailing arm still settles it.
+    Returns ``(None, None)`` when no bout is going ahead — either there are no
+    usable rows at all, or every one of them has been called off. A card with no
+    surviving bout has no live window to describe, so it gets no span; deciding
+    what such a card IS belongs to :func:`card_status_from_bouts`, not here.
+
+    CERT-2727: this used to fall back to the FULL span when everything was called
+    off, on the docstringed reasoning that "that card is past its main event
+    anyway and `combat_status`'s trailing arm still settles it". That was an
+    assertion, not a measurement, and it is false for the ~6h the trailing arm
+    keeps open: two suspended bouts probed at 18:00Z came back ``live``. An
+    all-called-off card is precisely the one that can never be live.
     """
     rows = [b for b in bouts if getattr(b, "commence_time", None) is not None]
-    if not rows:
+    going_ahead = [b for b in rows if _bout_going_ahead(b)]
+    if not going_ahead:
         return None, None
-    going_ahead = [
-        b
-        for b in rows
-        if (getattr(b, "status", None) or "").strip().lower() not in _BOUT_CALLED_OFF
-    ]
-    times = [b.commence_time for b in (going_ahead or rows)]
+    times = [b.commence_time for b in going_ahead]
     # min/max, not [0]/[-1]: the callers' sorts are total orders over the FULL
     # list, and dropping rows out of the middle must not make the pair depend on
     # which ones happened to be dropped.
@@ -791,11 +835,10 @@ async def list_card_concepts(
         # STATUS skips bouts that have been called off (`card_status_span`); the
         # pair that DESCRIBES the card — `start_date`, the sort key, `fight_count`,
         # the rendered bout list — is untouched, so a suspended bout still shows.
-        if bouts:
-            status_first, status_last = card_status_span(bouts)
-        else:
-            status_first, status_last = earliest, latest
-        status = combat_status(status_last, now, status_first)
+        # CERT-2727: and a card whose bouts are ALL called off can never be live.
+        status = card_status_from_bouts(
+            bouts, now, fallback_first=earliest, fallback_last=latest
+        )
         if status not in statuses:
             continue
 
@@ -1055,16 +1098,26 @@ class CombatEventAdapter:
         # #5603: the STATUS pair skips bouts that have been called off, so the page
         # behind the card agrees with the card about whether the night is on.
         # `authoritative_commence` still carries `start_date` — display unchanged.
-        if bouts:
-            status_first, status_last = card_status_span(bouts)
-        else:
-            status_first, status_last = first_commence, authoritative_commence
+        card_status_value = card_status_from_bouts(
+            bouts,
+            now,
+            fallback_first=first_commence,
+            fallback_last=authoritative_commence,
+        )
 
         # #1803, second reachable instance — found by censusing the class rather
         # than trusting its golf-shaped scoping. The card's ASSIGNED status is
-        # computed below for `event.status`; it is hoisted here because `_child`
+        # reused below for `event.status`; it is hoisted here because `_child`
         # needs it to floor its own settled inference. Same authority, one call.
-        card_settled = combat_status(status_last, now, status_first) == "settled"
+        #
+        # CERT-2727: "terminal" and "settled" part company for an all-called-off
+        # card. It is terminal — nothing will be fought, so it may not wear the
+        # live pill — but nothing WAS fought either, so no child may inherit an
+        # assigned-settled floor from it. #1803's term is "the card's fights are
+        # done", and here they are off. Children fall back to the price test
+        # exactly as they do for a card in play, which can only ever make a child
+        # LESS settled — the direction #1803's docstring says is safe.
+        card_settled = card_status_value == "settled" and not card_is_called_off(bouts)
 
         def _fight_outcomes(m):
             outs = sorted(
@@ -1178,7 +1231,7 @@ class CombatEventAdapter:
                 "slug": card_slug(card_name or main_event.name, target),
                 "domain": cfg.domain,
                 "name": card_name or main_event.name,  # numbered/Fight-Night card
-                "status": combat_status(status_last, now, status_first),
+                "status": card_status_value,
                 "start_date": (
                     authoritative_commence.isoformat()
                     if authoritative_commence is not None
@@ -1244,10 +1297,11 @@ class CombatEventAdapter:
         # `bouts` is sorted ascending by `bout_order_key`. #5603: the pair handed to
         # `combat_status` skips bouts that have been called off; `latest_commence`
         # still names the main event for `start_date`.
+        # CERT-2727: and an all-called-off card is terminal, never live.
         first_commence = bouts[0].commence_time if bouts else None
-        status_first, status_last = card_status_span(bouts)
-        if status_last is None:
-            status_first, status_last = first_commence, latest_commence
+        card_status_value = card_status_from_bouts(
+            bouts, now, fallback_first=first_commence, fallback_last=latest_commence
+        )
 
         def _child(ev):
             outs = _competitors(ev)
@@ -1273,7 +1327,7 @@ class CombatEventAdapter:
                 "slug": card_slug(card_name or headline, target),
                 "domain": cfg.domain,
                 "name": card_name or headline,
-                "status": combat_status(status_last, now, status_first),
+                "status": card_status_value,
                 "start_date": (
                     latest_commence.isoformat() if latest_commence is not None else None
                 ),

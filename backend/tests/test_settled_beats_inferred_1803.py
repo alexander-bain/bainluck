@@ -90,17 +90,23 @@ class TestCombatStatusIsTheAuthorityFeeding_It:
 
         src = inspect.getsource(event_combat.CombatEventAdapter)
         # #4505 added the card's own first bout as a third argument to every
-        # `combat_status` call, and #5603 replaced the pair it is given with
-        # `card_status_span`'s (bouts that have been called off leave the window).
-        # The authority this test guards is unchanged through both — the child's
-        # settledness still comes from the SAME call that decides the banner — so
-        # the scan follows the call, it does not exempt it.
-        assert 'card_settled = combat_status(status_last, now, status_first) == "settled"' in src
-        # The child's settledness above, plus the banner `status` on each of the
-        # adapter's two envelopes: three calls, argument for argument. Spellings
-        # that drifted apart would be two opinions about when the card is over,
-        # which is the whole defect this file exists for.
-        assert src.count("combat_status(status_last, now, status_first)") == 3
+        # `combat_status` call; #5603 filtered the pair it is given (bouts that
+        # have been called off leave the window); CERT-2727 moved the decision
+        # behind `card_status_from_bouts`. The authority this test guards is
+        # unchanged through all three — the child's settledness still comes from
+        # the SAME determination that decides the banner — and it is now literally
+        # the same VALUE rather than a second call spelled the same way, which is
+        # a stronger form of the property, not a weaker one.
+        assert 'card_settled = card_status_value == "settled"' in src
+        assert '"status": card_status_value' in src
+        assert src.count('"status": card_status_value') == 2
+        # CERT-2727's one principled divergence, asserted so it cannot be dropped
+        # silently and cannot spread. A card whose every bout is called off is
+        # TERMINAL — nothing will be fought, so it may not wear the live pill —
+        # but nothing WAS fought either, so it grades no child. That is the only
+        # licensed gap between the banner and the child authority.
+        assert 'and not card_is_called_off(bouts)' in src
+        assert src.count("card_is_called_off(") == 1
         assert "fight_child_settled(lead_prob, card_settled)" in src
 
     def test_combat_status_still_classifies_the_specimen_as_settled(self):
