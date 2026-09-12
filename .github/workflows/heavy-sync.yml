@@ -1,0 +1,174 @@
+name: Heavy app sync
+
+# #5470 — keep `bainluck-heavy` on the code the main app is actually serving.
+#
+# THE FAILURE. Since the heavy split (9/11 ~1pm PT) the main site deploys itself
+# and the heavy app does not. It sat 84 commits behind at 12:48am Sat, and 158
+# commits / 42 `backend/app` files behind again seven hours after Alex's manual
+# redeploy. Every background-job fix merged in between is "live" on the website
+# and NOT running — #5505 passed review, merged, and changed nothing, with 109
+# published Polymarket legs waiting on a worker that never got the code.
+# `/health`, `heroku releases -a bainluck` and a LOOK at the page are all blind
+# to it; the LOOK is the most misleading, because the page renders a number the
+# shipped gate would have changed.
+#
+# WHY THIS IS A SEPARATE, SCHEDULED WORKFLOW and not a line in ci.yml's `deploy`
+# job — the mechanism notice 48 names in its parenthetical:
+#
+#   * a heavy release cycles `worker-heavy.1`, and a dyno cycle kills whatever it
+#     is mid-way through. That is the exact failure ship 2 ended by moving the
+#     worker into its own app. There were 31 backend deploys in 24h (measured
+#     2026-09-12), so per-release hands ship 2 back 31 times a day for code that
+#     mostly does not change what heavy runs;
+#   * this file cannot wedge the main deploy path. A bug in the block below
+#     reddens a scheduled job; a bug in `deploy` stops the site shipping.
+#
+# The full derivation — including why a clock-picked window is not a guess here,
+# and the measurement that makes a cycle cheap (one unit, not a pass) — is in
+# `scripts/heavy_sync_decision.py`. The decision lives in that script rather than
+# inline for the reason `heroku-release-required.sh` states about itself: an
+# inline heredoc in a workflow is unreachable by every gate we own, which is how
+# a deploy-path decision rots unnoticed. It is executed by
+# `backend/tests/test_heavy_sync_decision_5470.py`.
+
+on:
+  schedule:
+    # Every 3 hours, bounding drift to ~3h against the ~7h that re-accumulated
+    # 158 commits. :42 sits inside the band `window_bounds()` derives (:34-:58);
+    # the job re-reads the clock itself, so a late-firing cron HOLDs rather than
+    # landing on the rebuild — GitHub's scheduler is routinely minutes late and
+    # is never trusted as the window.
+    - cron: '42 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Sync bainluck-heavy to the main app's live commit
+    runs-on: ubuntu-latest
+    # NOT `heroku-deploy`. That group is held by ci.yml's deploy job with
+    # `cancel-in-progress: false`, under which a newly queued job cancels the
+    # previously PENDING one — so joining it would let 31 main deploys a day
+    # starve this sync of its slot, silently, which is the drift again.
+    # Different apps, different git refs: the two pushes cannot conflict.
+    concurrency:
+      group: heavy-deploy
+      cancel-in-progress: false
+    env:
+      HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      DISPATCHED: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Ancestry needs both live commits as real objects, not refs.
+          fetch-depth: 0
+
+      - name: Sync heavy (never-backwards guarded, window-gated)
+        run: |
+          set -uo pipefail
+
+          # Gotcha #9: the secret is checked inside the run block, never in a
+          # step-level `if`.
+          if [ -z "${HEROKU_API_KEY:-}" ]; then
+            echo "HEROKU_API_KEY is not set — neither app can be read."
+            echo "Failing rather than skipping: a silent skip is the exact shape"
+            echo "of the drift this job exists to end (gotcha #53)."
+            exit 1
+          fi
+
+          git remote add heroku-main \
+            "https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck.git" 2>/dev/null || true
+          git remote add heroku-heavy \
+            "https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck-heavy.git" 2>/dev/null || true
+
+          # THE MAIN APP'S LIVE COMMIT IS THE TARGET, NOT origin/master. Heavy's
+          # release phase skips `alembic upgrade heads` (Procfile, HEAVY_APP=1)
+          # but still runs `assert_migrations_applied.py`, so heavy must never be
+          # ahead of the migrations the PRIMARY app has applied. Tracking main's
+          # live ref makes that structural: the sha has already passed CI and
+          # already released on main, migrations and all.
+          MAIN_LIVE="$(git ls-remote heroku-main refs/heads/master 2>/dev/null | cut -f1)"
+          HEAVY_LIVE="$(git ls-remote heroku-heavy refs/heads/master 2>/dev/null | cut -f1)"
+          echo "main  live: ${MAIN_LIVE:-<unreadable>}"
+          echo "heavy live: ${HEAVY_LIVE:-<unreadable>}"
+
+          git fetch --quiet heroku-main refs/heads/master 2>/dev/null || true
+          git fetch --quiet heroku-heavy refs/heads/master 2>/dev/null || true
+
+          # Ask whether we HOLD each object before asking about ancestry.
+          # `merge-base --is-ancestor` on a commit we never fetched exits
+          # non-zero, which reads identically to a truthful "no" — the
+          # distinction ci.yml's deploy guard draws with its own `HAVE_LIVE`.
+          ANCESTOR=unknown
+          if [ -n "$MAIN_LIVE" ] && [ -n "$HEAVY_LIVE" ] \
+             && git cat-file -e "${MAIN_LIVE}^{commit}" 2>/dev/null \
+             && git cat-file -e "${HEAVY_LIVE}^{commit}" 2>/dev/null; then
+            if git merge-base --is-ancestor "$HEAVY_LIVE" "$MAIN_LIVE"; then
+              ANCESTOR=true
+            else
+              ANCESTOR=false
+            fi
+          fi
+          echo "heavy-is-ancestor: $ANCESTOR"
+
+          DISPATCH_FLAG=""
+          if [ -n "${DISPATCHED:-}" ]; then
+            DISPATCH_FLAG="--dispatched"
+          fi
+
+          # Never piped, and the VALUE of the code is what is read (gotcha #54).
+          set +e
+          python3 scripts/heavy_sync_decision.py decide \
+            --main-live "${MAIN_LIVE:-}" \
+            --heavy-live "${HEAVY_LIVE:-}" \
+            --heavy-is-ancestor "$ANCESTOR" \
+            $DISPATCH_FLAG
+          DECISION=$?
+          set -e
+
+          # The push is gated on the verdict, not merely reported beside it.
+          case "$DECISION" in
+            0) echo "Decision: PUSH." ;;
+            1) echo "Decision: HOLD — nothing to do this run, exiting green."
+               exit 0 ;;
+            2) echo "Decision: REFUSE — somebody should look. Failing loudly."
+               exit 1 ;;
+            *) echo "Decision script exited $DECISION (usage/crash), which is a"
+               echo "story about the harness, not a verdict — refusing."
+               exit 1 ;;
+          esac
+
+          BEHIND="$(git rev-list --count "${HEAVY_LIVE}..${MAIN_LIVE}" 2>/dev/null || echo '?')"
+          echo "Pushing $MAIN_LIVE to bainluck-heavy ($BEHIND commits behind)."
+
+          # No --force, ever. A rejection can perfectly well mean something newer
+          # is already live on heavy, and forcing then rewinds it. Let git refuse
+          # the non-fast-forward and let the next run re-read and re-judge.
+          if ! git push heroku-heavy "$MAIN_LIVE:refs/heads/master"; then
+            echo "Push rejected. NOT retrying with --force: the next scheduled run"
+            echo "re-reads both live refs and re-judges from scratch."
+            exit 1
+          fi
+
+          HEAVY_NOW="$(git ls-remote heroku-heavy refs/heads/master 2>/dev/null | cut -f1)"
+          echo "heavy live after push: ${HEAVY_NOW:-<unreadable>}"
+          {
+            echo "### Heavy app sync"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| pushed | \`${MAIN_LIVE}\` |"
+            echo "| heavy was | \`${HEAVY_LIVE}\` (${BEHIND} commits behind) |"
+            echo "| heavy now | \`${HEAVY_NOW:-unreadable}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # The ref moving is not the ship. `worker-heavy` must come up on it —
+          # read `/api/admin/celery/fleet-code` (notice 48), which reports
+          # MATCHED only once the heavy worker names this slug itself.
+          if [ -n "$HEAVY_NOW" ] && [ "$HEAVY_NOW" != "$MAIN_LIVE" ]; then
+            echo "Heavy's ref is ${HEAVY_NOW}, not the ${MAIN_LIVE} just pushed."
+            exit 1
+          fi
+          echo "Heavy is on the main app's live commit."
