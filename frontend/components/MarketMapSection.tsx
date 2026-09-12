@@ -26,6 +26,7 @@ import {
   selectGameTotalRungs,
   selectHalfTotalRungs,
   ladderQuotesALine,
+  probabilitiesQuoteALine,
   TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
 
@@ -823,17 +824,43 @@ export default function MarketMapSection({
         }
       }
 
-      // Projection / Pre-game spread
-      halfMarkers.push({
-        key: "proj",
-        // #5206: the half maps already made this exact distinction for a
-        // finished game; an unreported match earns it for the same reason.
-        type: isDone || noForecast ? "pre" : "proj",
-        value: projMargin,
-        label: isDone || noForecast ? "Pre-game" : "Projection",
-        displayValue: formatMarginLabel(projMargin, projTeam, closest50.threshold),
-        logoFallback: projTeam,
-      });
+      // Projection / Pre-game spread.
+      //
+      // #5488: NOT on a finished half whose ladder has stopped quoting. The
+      // marker's value is `closest50`, the rung nearest a coin flip in the
+      // ladder AS IT STANDS. Before the whistle that is a reading. After it the
+      // rungs are the settled ones, every one of them ~0.99 or ~0.01, and
+      // "nearest a coin flip" returns whichever rung the step happens to sit on
+      // — an artefact of where settlement landed, printed under a label that
+      // claims somebody expected it. The full-game rail above escapes by
+      // falling back to the frozen `opening_home_spread` (#5414); there is no
+      // `opening_half_spread` column, so a half has no pre-game quantity at all
+      // and the honest finished card carries no such tile.
+      //
+      // The test is the ladder's shape and NOT `isDone`, which is the same
+      // choice #5143 made for the half TOTALS map below and pinned a control
+      // against — see `settledHalfMapDropsFakePregame5143`. This is that rule's
+      // body, reached through `probabilitiesQuoteALine` rather than copied, so
+      // the two half maps cannot drift on where the interior is.
+      //
+      // Measured on production 2026-09-11 via `/api/events/<id>/game-markets`,
+      // both settled and both failing the interior test: `/events/15303008`
+      // (Stade Rennais 1-0 Marseille) printed `PRE-GAME OLM by 1.5+` on its 2nd
+      // half off four rungs reading 0.02 / 0.005 / 0.01 / 0.01, and
+      // `/events/15304450` (Boston College 28-21 Rutgers) carried 21 rungs of
+      // which every single one is 0.99, 0.04 or 0.01.
+      if (!isDone || probabilitiesQuoteALine(parsed.map((p) => p.probability))) {
+        halfMarkers.push({
+          key: "proj",
+          // #5206: the half maps already made this exact distinction for a
+          // finished game; an unreported match earns it for the same reason.
+          type: isDone || noForecast ? "pre" : "proj",
+          value: projMargin,
+          label: isDone || noForecast ? "Pre-game" : "Projection",
+          displayValue: formatMarginLabel(projMargin, projTeam, closest50.threshold),
+          logoFallback: projTeam,
+        });
+      }
 
       // Final actual for completed games
       if (isDone && halfScores) {
