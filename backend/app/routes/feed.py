@@ -52,6 +52,7 @@ from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenanc
 # a string this route silently stops matching (CERT-786).
 from app.utils.event_completion import EVENT_SUSPENDED, finished_event_end_time
 from app.utils.event_rails import started_live
+from app.utils.lifecycle import served_event_status
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
 )
@@ -8178,6 +8179,43 @@ async def _score_events(
                 if "preseason" in sport_key_str:
                     importance = "exhibition"
 
+            # ── #5324 — THE CARD STOPS SAYING LIVE BEFORE ANYONE HAS SERVED ────
+            #
+            # `events.status` is a LATCH. `transition_event_statuses` promotes
+            # `scheduled → live` when `commence_time <= now` and nothing ever
+            # re-derives it, so when ESPN slides a start forward — which we
+            # ingest correctly — the row keeps asserting `live` against its own
+            # start time. ux/1198 caught it on a US Open semifinal: at 19:04Z
+            # the row read `status=live, 0–0, period null, clock null` while its
+            # own `commence_time` said 19:05Z and ESPN's order-of-play said
+            # `upcoming`. Our tournament hub rendered the same match, the same
+            # minute, as a normal scheduled card. Two of our surfaces
+            # contradicted each other about whether a Slam semifinal was on.
+            #
+            # `served_event_status` is the rule that already exists for exactly
+            # this ("a public surface may not print `live` before the start it
+            # is derived from"), and `routes/events.py`, `teams.py`,
+            # `league_futures.py`, `march_madness.py` and `futures.py` all go
+            # through it. THIS MODULE NEVER IMPORTED IT — every card served the
+            # raw column, so the one surface with no repair was the feed.
+            #
+            # Computed ONCE and handed to the consumers that DESCRIBE the row to
+            # a reader. Deliberately NOT handed to:
+            #   * `compute_highlight` — it takes `commence_time` and already
+            #     enforces the same invariant itself (`flags.is_live = status ==
+            #     "live" and live_start_satisfied(...)`). It is also the SCORING
+            #     input, and re-deriving a score from a repaired status would
+            #     move rankings for a display fix (ruling 021 — share the
+            #     decision, not the ingredient).
+            #   * the `event_status=` snapshot filters below, which are data
+            #     selection, not description, and whose numbers must not move.
+            #
+            # Terminal statuses are untouched: the helper only ever rewrites
+            # `live`, and only when this row's own start is still ahead of us.
+            served_status = served_event_status(
+                event.status, event.commence_time, now
+            )
+
             highlight_result = compute_highlight(
                 status=event.status,
                 commence_time=event.commence_time,
@@ -8361,7 +8399,11 @@ async def _score_events(
             _live_claim = compose_live_claim(
                 home_team=event.home_team_name,
                 away_team=event.away_team_name,
-                status=event.status,
+                # #5324 — this composer has no `commence_time`, so it cannot
+                # enforce the invariant itself; it must be handed a status that
+                # already has. Its whole contract is "the one claim this LIVE
+                # card may make", and a match nobody has served in may make none.
+                status=served_status,
                 home_probability=current_home_prob,
                 away_probability=current_away_prob,
                 opening_home_prob=opening_home_prob,
@@ -8373,7 +8415,8 @@ async def _score_events(
             reason = generate_event_reason(
                 home_team=event.home_team_name,
                 away_team=event.away_team_name,
-                status=event.status,
+                # #5324 — the card's sentence. Same argument as the claim above.
+                status=served_status,
                 highlight_reasons=highlight_result.reasons,
                 home_probability=current_home_prob,
                 away_probability=current_away_prob,
@@ -8386,7 +8429,12 @@ async def _score_events(
             # Compute event_tags on-the-fly (fresh, not stale persisted)
             inline_tags = compute_event_tags(
                 sport_key=event.sport.key if event.sport else "",
-                status=event.status,
+                # #5324 — it takes `commence_time` but does not enforce on it,
+                # so it emitted `status:live` on a row whose start was still
+                # ahead. The tag travels in the payload beside the repaired
+                # `status`; leaving it raw is how one response contradicts
+                # itself.
+                status=served_status,
                 commence_time=event.commence_time,
                 llm_importance=importance,
                 llm_gender=getattr(event, "llm_gender", None),
@@ -8414,7 +8462,10 @@ async def _score_events(
                 home_team=event.home_team_name,
                 away_team=event.away_team_name,
                 commence_time=event.commence_time,
-                status=event.status,
+                # #5324 — THE CARD'S OWN `status`, and the reader's LIVE chip.
+                # `frontend/app/events/[id]/page.tsx` derives `isLive` from this
+                # field; every other surface already hands it the repaired one.
+                status=served_status,
                 home_score=event.home_score,
                 away_score=event.away_score,
                 current_home_prob=current_home_prob,
@@ -8442,7 +8493,10 @@ async def _score_events(
                 hero=resolve_hero(event),
             )
             event_data["temporal_badge"] = _compute_temporal_badge(
-                status=event.status,
+                # #5324 — this one takes NO `commence_time` at all, so `live`
+                # in, "Live" badge out, unconditionally. It is the second of the
+                # two live assertions a Discover card makes.
+                status=served_status,
                 now=now,
             )
             event_data["sport_label"] = _get_sport_label(sport_key)
