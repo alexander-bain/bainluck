@@ -3437,29 +3437,20 @@ class TestBareNflSeriesAreTickerMapped:
 
         `_create_event_from_prediction_market` refuses to auto-create for sports
         the Odds API already covers, so once these series resolve to
-        `americanfootball_nfl` they can only LINK to a real game. Read out of the
-        AST rather than by a substring scan of the source, because the tuple is
-        written across several lines and a `in source` test would be defeated by
-        the line break.
+        `americanfootball_nfl` they can only LINK to a real game.
+
+        #5544 lifted the tuple to module scope so the auto-create boundary and
+        `covered_league_for_matchup` cannot drift onto two copies of it. It is
+        therefore imported here rather than parsed back out of the AST: this
+        reads the object the refusal actually consults, where the parse could
+        only ever read one spelling of its source. The assertion is unchanged.
         """
-        import ast
-        import inspect
+        from app.tasks.prediction_market_matching import (
+            ODDS_API_COVERED_PREFIXES,
+            _sport_key_is_odds_api_covered,
+        )
 
-        from app.tasks import prediction_market_matching as task_module
-
-        tree = ast.parse(inspect.getsource(task_module))
-        covered = None
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Assign)
-                and any(
-                    isinstance(t, ast.Name)
-                    and t.id == "_ODDS_API_COVERED_PREFIXES"
-                    for t in node.targets
-                )
-            ):
-                covered = ast.literal_eval(node.value)
-                break
-
-        assert covered is not None, "_ODDS_API_COVERED_PREFIXES no longer assigned"
-        assert "americanfootball_nfl" in covered
+        assert "americanfootball_nfl" in ODDS_API_COVERED_PREFIXES
+        # ...and the predicate the boundary calls agrees, so a future refactor
+        # cannot satisfy the tuple while the gate reads something else.
+        assert _sport_key_is_odds_api_covered("americanfootball_nfl")
