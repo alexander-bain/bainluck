@@ -833,6 +833,70 @@ AUTHORITY_STRAGGLER_LOOKBACK = timedelta(hours=48)
 #: refuses anything ESPN has not marked ``completed`` regardless.
 AUTHORITY_STRAGGLER_MIN_AGE = timedelta(hours=2)
 
+#: The Redis key that turns the unreachable-suspended arm on, and the number of
+#: rows it may retire per pass. ABSENT OR 0 MEANS THE ARM DOES NOTHING — not
+#: "unbounded", not "default on" — and the arm does not even issue its SELECT.
+#:
+#: A BUDGET RATHER THAN A BOOLEAN, because this arm's population is a standing
+#: backlog and a flow at once and there is no row property that separates them
+#: (#5532: both are the same rows, distinguished only by whether they arrived
+#: before or after this ships). An unbounded first pass would retire ~10,700 rows
+#: in one 60-second beat with no backup taken — the thing D51 exists to stop. A
+#: per-pass budget makes the drain rate an attended decision: the D51 backup is
+#: taken, the key is set, the backlog drains at a chosen rate, and the key STAYS
+#: set so the door remains shut against the ~600/day that keep arriving.
+#:
+#: The one-command undo is ``DEL`` on this key, which is what lets it be flipped
+#: under D51(b) / standing notice 39 rather than needing a deploy.
+UNREACHABLE_SUSPENDED_BUDGET_KEY = "events:unreachable_suspended_budget"
+
+#: The D51 restore rail, and the arm's SECOND gate. Every row this arm retires is
+#: written here in the same transaction, so the undo is exact.
+#:
+#: 🔴 IT HAD TO BE AN ID LIST AND NOT THE PREDICATE, and the number says why.
+#: The obvious cheap restore is "un-void everything matching the retirement
+#: predicate" — no table, nothing to maintain. MEASURED on production
+#: 2026-09-12 (fingerprint ``295937d629781eeb``): of 4,320 rows already
+#: ``voided`` for entirely unrelated reasons, **2,544 match this predicate
+#: exactly**. That restore would have resurrected all 2,544 as ``suspended``,
+#: which is a bigger data defect than the one being undone, and it would have
+#: looked like a clean one-command rollback while doing it.
+#:
+#: ABSENT TABLE ⇒ THE ARM DOES NOT RUN. The table is created by the attended
+#: enable step (``backend/scripts/unreachable_suspended_door.py --create-backup``,
+#: runtime DDL behind a human invocation, standing notice 47(c)), so the arm
+#: cannot write a terminal anybody is unable to take back.
+UNREACHABLE_SUSPENDED_BACKUP_TABLE = "backup_unreachable_suspended_5532"
+
+#: Ceiling on whatever the key says, so a fat-fingered value cannot turn one beat
+#: into an unreviewable mass write. The key chooses a rate; this bounds the blast
+#: radius of choosing it wrong.
+UNREACHABLE_SUSPENDED_MAX_BUDGET = 500
+
+
+def _unreachable_suspended_budget() -> int:
+    """How many rows may this pass retire? 0 unless an attended step said so.
+
+    Every failure — no Redis, an unparseable value, a negative one — returns 0.
+    An arm that writes a terminal status must fail CLOSED: "the config read
+    broke" and "the operator asked for this" cannot be allowed to look alike.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(UNREACHABLE_SUSPENDED_BUDGET_KEY)
+        if raw is None:
+            return 0
+        budget = int(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception as exc:
+        logger.info(
+            "Unreachable-suspended budget unreadable, arm stays off: %s", exc
+        )
+        return 0
+    if budget <= 0:
+        return 0
+    return min(budget, UNREACHABLE_SUSPENDED_MAX_BUDGET)
+
 
 async def _settle_authority_stragglers(session, espn, now, stats, update_fields_fn):
     """End a match the authority finished on a board day we never asked about.
@@ -2072,6 +2136,10 @@ async def _transition_event_statuses_impl() -> dict:
       snapshot ever — cannot be the long five-setter the tennis maximum was
       widened for, so it does not inherit the widening.
     - suspended → live: a source that reports on the game is captured again.
+    - suspended → retired: nothing can EVER select the row again — no provider
+      id of any kind, and past the resume window by a margin. Off by default and
+      budgeted per pass; see :data:`UNREACHABLE_SUSPENDED_BUDGET_KEY` and
+      :func:`~app.utils.event_completion.suspended_row_is_unreachable`.
 
     That second condition was claimed here for a long time but never actually
     implemented, which made this the producer of the CAL-P002 frozen-final-score
@@ -2209,8 +2277,11 @@ async def _transition_event_statuses_impl() -> dict:
         from app.utils.event_completion import (
             EVENT_SUSPENDED,
             LAST_POST_COMMENCE_SNAPSHOT_SQL,
+            UNREACHABLE_SUSPENDED_MARGIN,
+            UNREACHABLE_SUSPENDED_TERMINAL,
             event_has_never_been_observed,
             game_may_still_be_running,
+            suspended_row_is_unreachable,
             wall_clock_bound_hours,
         )
 
@@ -2357,6 +2428,143 @@ async def _transition_event_statuses_impl() -> dict:
                         event.id, event.home_team_name, event.away_team_name,
                     )
 
+        # --- suspended → retired (the door that was never there) ---
+        #
+        # #5532/#5130. The arm above is the ONLY writer that re-selects a
+        # suspended row, and it looks back exactly SUSPENDED_RESUME_WINDOW. Past
+        # that window a row with no provider id has no writer left anywhere in
+        # the tree — the full enumeration, and the measurement, are in
+        # `suspended_row_is_unreachable`. So `suspended` stopped being the
+        # non-terminal state this file argues it is and became the quietest
+        # possible terminal: one that still says "paused" to every reader that
+        # buckets it, two years after the fixture.
+        #
+        # THE FLOOR IS DERIVED, NOT RESTATED. A margin on top of the very window
+        # the arm above uses, computed from that constant, so the two can never
+        # drift into a gap where a row is unreachable by one rule and still
+        # resumable by the other.
+        unreachable_floor = SUSPENDED_RESUME_WINDOW + UNREACHABLE_SUSPENDED_MARGIN
+        stats["unreachable_suspended_retired"] = 0
+        stats["unreachable_suspended_budget"] = _unreachable_suspended_budget()
+
+        if stats["unreachable_suspended_budget"] > 0:
+            # THE ANCHOR-ACQUISITION EXCLUSION, and it is the one channel that
+            # does not need an id (see the predicate's docstring). The SAME
+            # `ESPN_SPORT_MAPPING` keys `_backfill_espn_ids` resolves to sport
+            # ids, read the same way — not a copied list — so a sport added to
+            # ESPN coverage starts protecting rows here on the same deploy.
+            # MEASURED 2026-09-12: 111 of 10,704 rows are held by this.
+            espn_covered_ids = [
+                r[0] for r in (await session.execute(
+                    select(Sport.id).where(
+                        Sport.key.in_(list(ESPN_SPORT_MAPPING.keys()))
+                    )
+                )).all()
+            ]
+            # FAIL CLOSED ON AN EMPTY ALLOWLIST. `notin_([])` is TRUE in SQL, so
+            # an empty list does not exclude ESPN sports — it stops excluding
+            # anything, and the Python test `sport_id in []` agrees with it, so
+            # both halves of the guard would say "retire" in unison. 26 mapped
+            # keys resolving to zero sport rows is a broken read, never a real
+            # state; the arm declines the pass and says so.
+            if not espn_covered_ids:
+                stats["unreachable_suspended_budget"] = 0
+                logger.warning(
+                    "#5532 unreachable-suspended arm skipped: ESPN_SPORT_MAPPING "
+                    "(%d keys) resolved to no sport ids, so the anchor-"
+                    "acquisition exclusion cannot be applied.",
+                    len(ESPN_SPORT_MAPPING),
+                )
+            # THE RESTORE RAIL IS A GATE, NOT A LOG. No backup table, no writes
+            # — the arm cannot retire a row it would be unable to give back
+            # (D51). One `to_regclass` per pass, and only while the budget is
+            # set, so the off state still costs nothing.
+            backup_present = (await session.execute(
+                _sql_text("SELECT to_regclass(:t) IS NOT NULL"),
+                {"t": f"public.{UNREACHABLE_SUSPENDED_BACKUP_TABLE}"},
+            )).scalar()
+            if not backup_present:
+                stats["unreachable_suspended_budget"] = 0
+                logger.warning(
+                    "#5532 unreachable-suspended arm skipped: backup table %s "
+                    "does not exist, so a retirement could not be undone. Run "
+                    "scripts/unreachable_suspended_door.py --create-backup.",
+                    UNREACHABLE_SUSPENDED_BACKUP_TABLE,
+                )
+        else:
+            espn_covered_ids = []
+
+        if stats["unreachable_suspended_budget"] > 0:
+            # The SELECT is the cheap SCREEN; `suspended_row_is_unreachable` is
+            # the VERDICT, and it is re-asked on every row the screen returns.
+            # Deliberately not one query doing both: the predicate carries the
+            # score/`completed_at` refusals, and a rule that only ever exists as
+            # a WHERE clause is a rule no test can put a counter-example to.
+            # Oldest first — this drains a backlog and serves a flow at once, and
+            # newest-first starves the tail (gotcha #41). The floor is the other
+            # half of that bound: the population is not expiring, so a floor plus
+            # oldest-first is the whole ordering question here.
+            unreachable_result = await session.execute(
+                select(Event)
+                .where(
+                    Event.status == EVENT_SUSPENDED,
+                    Event.external_id.is_(None),
+                    Event.espn_id.is_(None),
+                    Event.statpal_fixture_id.is_(None),
+                    Event.home_score.is_(None),
+                    Event.away_score.is_(None),
+                    Event.completed_at.is_(None),
+                    Event.sport_id.notin_(espn_covered_ids),
+                    Event.commence_time < now - unreachable_floor,
+                )
+                .order_by(Event.commence_time.asc())
+                .limit(stats["unreachable_suspended_budget"])
+            )
+            for event in unreachable_result.scalars().all():
+                if not suspended_row_is_unreachable(
+                    event.status,
+                    event.commence_time,
+                    event.external_id,
+                    event.espn_id,
+                    event.statpal_fixture_id,
+                    event.home_score,
+                    event.away_score,
+                    event.completed_at,
+                    event.sport_id in espn_covered_ids,
+                    now,
+                    unreachable_floor,
+                ):
+                    continue
+                # BACKUP FIRST, IN THE SAME TRANSACTION. If this insert raises,
+                # the status write never happens — which is the ordering D51
+                # asks for, stated as code rather than as a runbook step.
+                await session.execute(
+                    _sql_text(
+                        f"INSERT INTO {UNREACHABLE_SUSPENDED_BACKUP_TABLE} "
+                        "(event_id, previous_status, commence_time, retired_at) "
+                        "VALUES (:id, :prev, :commence, NOW()) "
+                        "ON CONFLICT (event_id) DO NOTHING"
+                    ),
+                    {
+                        "id": event.id,
+                        "prev": event.status,
+                        "commence": event.commence_time,
+                    },
+                )
+                event.status = UNREACHABLE_SUSPENDED_TERMINAL
+                stats["unreachable_suspended_retired"] += 1
+                logger.info(
+                    "#5532 retired event %s (%s vs %s) suspended→%s: no "
+                    "external_id, espn_id or statpal_fixture_id, %.0fh past its "
+                    "own start and %.0fh past the resume window, no score and no "
+                    "completed_at. Nothing can reach this row again.",
+                    event.id, event.home_team_name, event.away_team_name,
+                    UNREACHABLE_SUSPENDED_TERMINAL,
+                    (now - event.commence_time).total_seconds() / 3600,
+                    (now - event.commence_time - SUSPENDED_RESUME_WINDOW)
+                    .total_seconds() / 3600,
+                )
+
         # --- Repair: completed with 0-0 → scheduled/live ---
         # The Odds API occasionally returns completed=true for games that
         # haven't started. Reset these to the correct status.
@@ -2418,17 +2626,22 @@ async def _transition_event_statuses_impl() -> dict:
                 or stats["suspended_to_live"] > 0
                 or stats["repaired_bogus_completed"] > 0
                 or stats["unsettled_future_commence"] > 0
-                or stats["held_derived_start"] > 0):
+                or stats["held_derived_start"] > 0
+                or stats["unreachable_suspended_retired"] > 0):
             logger.info(
                 "Status transitions: %d scheduled→live, %d live→suspended, "
                 "%d suspended→live, %d repaired, %d un-settled-future-commence, "
-                "%d held (derived start), %d held (still running)",
+                "%d held (derived start), %d held (still running), "
+                "%d suspended→%s (unreachable, budget %d)",
                 stats["scheduled_to_live"], stats["live_to_suspended"],
                 stats["suspended_to_live"],
                 stats["repaired_bogus_completed"],
                 stats["unsettled_future_commence"],
                 stats["held_derived_start"],
                 stats["held_still_running"],
+                stats["unreachable_suspended_retired"],
+                UNREACHABLE_SUSPENDED_TERMINAL,
+                stats["unreachable_suspended_budget"],
             )
 
     return stats
