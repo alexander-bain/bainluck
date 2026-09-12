@@ -5054,6 +5054,78 @@ async def search_events(
             )
     _mark("event_fixture_dedup")
 
+    # #5513: and then the TWIN fold, which is a different collapse for a
+    # different population — not a widening of the one above.
+    #
+    # `collapse_duplicate_fixtures` is a DOMINANCE test scoped to individual
+    # sports: a row goes only when another row on the page is strictly more
+    # specific, and the scope is measured (run on team sports it ate consecutive
+    # games of an MLB series, because a club plays the same opponent on
+    # back-to-back days as a matter of routine). Its own docstring names the
+    # rows it therefore declines and says why:
+    #
+    #     "The duplicate rows that pass 5 found in MLB are real ... but they are
+    #      a DIFFERENT shape: equally specific, equally scored, so no dominance
+    #      test can pick a survivor and none should try."
+    #
+    # `fold_twin_events` (#4100) is what was written for that declined shape. It
+    # does not rank by specificity at all — it keys on `(sport_id, normalised
+    # away, normalised home, commence MINUTE)`, ELECTS a survivor by
+    # `twin_identity_rank`, and unions the loser's venues onto it. The minute is
+    # what makes it safe on team sports where the dominance test is not: a
+    # doubleheader is the same clubs on the same DAY and never the same MINUTE.
+    # Authority/148 measured the Δt distribution and found a 220x gap with
+    # nothing between 300s and 66,000s, so the key is measured, not tuned.
+    #
+    # Search was the last read path without it: `/api/feed`, `GET /api/events`
+    # and `/api/teams/{identifier}` (authority's #5487) all fold already.
+    # Measured on production 2026-09-12, `q=red sox` page 1 carried THREE
+    # duplicate `(commence_time, home, away)` groups out of 22 — a second card
+    # for the next Red Sox game reading "No price yet", a 0-0 MLB FINAL, and an
+    # undated "No result reported" row.
+    #
+    # This widens no key and adds no correspondence, so D35 does not bar it: the
+    # rows stay in the database, visible to the sentinels and to #2693, which is
+    # still the durable repair.
+    #
+    # ORDER. After the `offset`/`limit` at the top of this block, for the reason
+    # `list_events` spells out: folding after the limit keeps `offset` in
+    # raw-row space, so no row is skipped or repeated across pages and only the
+    # page size varies. After the dominance pass too, so a ghost is gone before
+    # the election runs and cannot be elected over the row it duplicates.
+    #
+    # `set_committed_value` (gotcha #4) puts the unioned sources on the hydrated
+    # row without marking it dirty, so no later flush can persist a serve-time
+    # blend into `events`. The whole stage is wrapped (gotcha #42 applied to a
+    # stage): the fold improves the page, it is never a precondition for having
+    # one — if it raises, the unfolded page is served, which is today's bug.
+    _twin_duplicates_dropped = 0
+    if len(events) > 1:
+        try:
+            _fold = fold_twin_events(events)
+            if _fold.dropped_ids:
+                for _survivor_id, _merged in _fold.merged_sources.items():
+                    _survivor = next(e for e in _fold.events if e.id == _survivor_id)
+                    set_committed_value(_survivor, "win_probability_sources", _merged)
+                _twin_duplicates_dropped = _fold.folded_count
+                events = _fold.events
+                # The query string is deliberately NOT in this line. CodeQL
+                # grades changed code, and interpolating `q` here raised a
+                # `py/log-injection` alert (medium, "this log entry depends on
+                # a user-provided value") that the older sibling lines predate
+                # rather than escape. Nothing is lost: the dropped ids ARE the
+                # diagnostic payload, and they identify the rows far better
+                # than the term that reached them.
+                logger.info(
+                    "search twin fold: %d duplicate event row(s) collapsed, "
+                    "%d row(s) gained a venue (dropped=%s)",
+                    _twin_duplicates_dropped, len(_fold.merged_sources),
+                    _fold.dropped_ids[:20],
+                )
+        except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+            logger.exception("search twin fold failed; serving the unfolded page")
+    _mark("event_twin_fold")
+
     # Get latest aggregated odds for each event
     event_ids = [e.id for e in events]
     aggregated_odds_map = {}
@@ -5220,9 +5292,42 @@ async def search_events(
     # for every candidate row. It is therefore an UNDER-count of the collapse on
     # later pages, never an over-count, and it is floored at what is rendered so
     # the number can never claim fewer games than the user can see.
-    if _fixture_duplicates_dropped:
-        total_count = max(len(formatted_results), total_count - _fixture_duplicates_dropped)
-    total_pages = (total_count + per_page - 1) // per_page
+    #
+    # #5513 folds a second population out of the same page (the twin rows the
+    # dominance pass above deliberately declines), and it is the same kind of
+    # adjustment for the same reason, so the two drop counts are summed rather
+    # than given competing rules. Every property the paragraph above claims is
+    # preserved by the sum: still an adjustment on the page we looked at, still
+    # an under-count on later pages, still floored at what is rendered.
+    #
+    # 🔴 AND THE PAGE COUNT IS NOT THE SAME QUESTION. `total_results` is a
+    # sentence about the rows ("· 16 games"); `total_pages` is a claim about
+    # what the NEXT button can still reach, and the two live in different
+    # spaces. `offset = (page - 1) * per_page` indexes the UNFOLDED result set
+    # — folding after the limit is what keeps it there (see the fold stage
+    # above) — so every page boundary is a raw-row boundary, and a page count
+    # derived from the adjusted number can retire a page that still holds rows.
+    #
+    # Measured by CERT-2694 on the first presentation of #5513: 26 raw matches,
+    # `per_page` 25, ONE twin pair on page one. The reader sees 24 rows,
+    # `total_results` reads 25, `total_pages` collapses to 1, `has_next` goes
+    # false — and the distinct 26th row at raw offset 25 becomes unreachable,
+    # because `search/page.tsx` hides the pager entirely when `total_pages`
+    # is 1. A collapse that was supposed to remove a DUPLICATE removed a GAME.
+    # #2623 shipped this arithmetic and #5513 fed a second population into it;
+    # the fix repairs both at once, and is the reason neither drop count may
+    # reach `total_pages`.
+    #
+    # An empty tail page cannot be the price of this. Both stages elect — a
+    # dominance pass keeps the dominant row, a twin fold keeps the survivor —
+    # so a group never collapses to nothing and a raw page holding N ≥ 1 rows
+    # always serves at least one. Raw reachability and non-empty pages are
+    # therefore both true, not traded off.
+    _raw_total_count = total_count
+    _page_duplicates_dropped = _fixture_duplicates_dropped + _twin_duplicates_dropped
+    if _page_duplicates_dropped:
+        total_count = max(len(formatted_results), total_count - _page_duplicates_dropped)
+    total_pages = (_raw_total_count + per_page - 1) // per_page
 
     # Also search futures markets by name or outcome name.
     # #993 index-usage: recall is trigram-ILIKE only (name + outcome). The old
