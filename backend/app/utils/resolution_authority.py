@@ -273,13 +273,65 @@ CALIBRATION_TRUTH_INELIGIBLE_SOURCES: frozenset[str] = (
 )
 
 
-def is_calibration_truth_eligible(source: str | None) -> bool:
+# ---------------------------------------------------------------------------
+# D112 (Fable-5, 2026-09-10) — truth-eligibility is source × MARKET SHAPE.
+#
+# The set above answers "may this SOURCE grade a forecast?" for every shape at
+# once, and for one shape it answers wrongly. A LONE-CLAIM market — exactly one
+# outcome, a single Yes/No question — has no other member whose price could be
+# grading it, so "the close price says No" is not self-grading leakage: it is the
+# venue's own answer to the only question asked. precompute_calibration's rung-1
+# doctrine already says this in the other direction ("At ONE outcome 'nobody won'
+# is the ordinary result of a claim that resolved No"), which is why the
+# no-winner rung carries a deliberate ``>= 2`` floor. NOBODY WON IS NOT
+# CANCELLED.
+#
+# THE PAIR IS ADMITTED TOGETHER OR NOT AT ALL, and the reason is measured, not
+# aesthetic. ``all_losers`` can only ever stamp a LOSS; ``clean_resolution`` is
+# the channel that can stamp the matching WIN. Admitting the loser-only channel
+# by itself does not widen the population, it BIASES it:
+#
+#     all_losers alone ............  617 / 2,097 = 29.4%  against a ~50% forecast
+#     both channels together ......  1,566 / 3,046 = 51.4%  against a ~50% forecast
+#
+# The 29.4% is not a badly-calibrated market, it is a censored sample — every row
+# admitted was pre-selected to be a loss. `TestLoneClaimSymmetryGate` fails any
+# future edit that admits one without the other, in either direction.
+#
+# NO LEAK INTO MULTI-OUTCOME. At >= 2 outcomes a sibling's price does grade the
+# row, C20/C21 self-grading leakage is real again, and the rung-1 "all-loser
+# market is UNKNOWN truth" census applies. Shape is therefore REQUIRED, and an
+# unknown/absent shape fails closed exactly as an unknown source does.
+LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES: frozenset[str] = frozenset({
+    "all_losers",
+    "clean_resolution",
+})
+
+# The lone-claim shape: a market with exactly one captured outcome.
+LONE_CLAIM_N_OUTCOMES: int = 1
+
+
+def is_calibration_truth_eligible(
+    source: str | None, *, n_outcomes: int | None = None
+) -> bool:
     """True iff `source` may grade a published calibration forecast.
 
     Fail-closed: None/empty and any unclassified source return False (an unknown
     winner-writer can never leak into the published curve). Orthogonal to
-    authority_tier — a tier-3 price-derived source (settlement_sync) is False."""
-    return source in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+    authority_tier — a tier-3 price-derived source (settlement_sync) is False.
+
+    ``n_outcomes`` is the market's captured outcome count (D112). It is OPTIONAL
+    and defaults to None so every existing shape-blind caller keeps its exact
+    previous answer; supply it to admit the lone-claim pair
+    (:data:`LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES`). Any value other than
+    :data:`LONE_CLAIM_N_OUTCOMES` — including None — leaves the answer unchanged,
+    so the shape widens the population and can never narrow it."""
+    if source in CALIBRATION_TRUTH_ELIGIBLE_SOURCES:
+        return True
+    return (
+        n_outcomes == LONE_CLAIM_N_OUTCOMES
+        and source in LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES
+    )
 
 
 def calibration_truth_class(source: str | None) -> str:
@@ -314,6 +366,47 @@ CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL: str = _sql_in_list(
     CALIBRATION_TRUTH_INELIGIBLE_SOURCES
 )
 PRICE_DERIVED_SOURCES_SQL: str = _sql_in_list(PRICE_DERIVED_SOURCES)
+
+# D112. SQL fragment for the lone-claim pair. On its own it is NOT a predicate a
+# call site may use — the shape half is what keeps it out of multi-outcome
+# markets, so use :func:`calibration_truth_eligible_sql` and let it write both
+# halves together. (The drift-scan test forbids a bare interpolation of this
+# name into a WHERE clause for exactly that reason.)
+LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL: str = _sql_in_list(
+    LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES
+)
+
+
+def calibration_truth_eligible_sql(
+    *,
+    source_col: str = "fo.resolution_source",
+    n_outcomes_col: str | None = None,
+) -> str:
+    """Render the full calibration-truth eligibility predicate (D112).
+
+    The SQL mirror of :func:`is_calibration_truth_eligible`, and the ONLY
+    sanctioned way to write the lone-claim half — the source list and the shape
+    test are emitted as one parenthesised unit, so a call site cannot admit the
+    pair while forgetting the ``= 1`` that confines it.
+
+    ``n_outcomes_col`` is the SQL expression holding the market's captured
+    outcome count (e.g. ``mrs.n_outcomes``). Omit it and the rendered predicate
+    is byte-for-byte the shape-blind allowlist the call sites carried before
+    D112, so a site that has no shape join in scope keeps its exact previous
+    population rather than silently widening.
+
+    Returns a self-contained boolean expression, already parenthesised — safe to
+    drop straight after an ``AND``.
+    """
+    allowlist = f"{source_col} IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}"
+    if n_outcomes_col is None:
+        return allowlist
+    return (
+        "("
+        + allowlist
+        + f" OR ({n_outcomes_col} = {LONE_CLAIM_N_OUTCOMES}"
+        + f" AND {source_col} IN {LONE_CLAIM_TRUTH_ELIGIBLE_SOURCES_SQL}))"
+    )
 
 # SQL fragment for the AUTHORITATIVE (tier-3) set. #845 batch 2: the phases that
 # write api_settlement previously guarded only `!= 'api_settlement'`, so they
