@@ -58,10 +58,26 @@ final class DiscoverViewModelLoadTests: XCTestCase {
         private var opened = false
         private let first: FeedResponse
         private let second: FeedResponse
+        /// Fulfilled the moment the FIRST call parks on the gate, so the test can
+        /// start the second load only once the first is genuinely in-flight.
+        ///
+        /// #5229: the gate is keyed on arrival ORDER (`n == 1`), so whichever call
+        /// reaches this method first is the one that blocks. The test used to get A
+        /// there with a single `await Task.yield()`, which does not guarantee an
+        /// `async let` child has been scheduled, entered `load()` and reached its
+        /// network await. Lose that race and the SECOND call takes the gate, its
+        /// `await` never returns, `openGate()` is therefore never reached, and
+        /// nothing can resume the continuation: a permanent deadlock with no XCTest
+        /// timeout on it. That is the silent hang -- `started` printed, log frozen,
+        /// no failure, no crash -- that cost three sessions ~15 minutes each and
+        /// then invited them to paste a partial count into a PR body (#5591).
+        /// Same shape, same fix, as DiscoverViewModelRebindTests already carried.
+        let firstCallArrived: XCTestExpectation
 
-        init(first: FeedResponse, second: FeedResponse) {
+        init(first: FeedResponse, second: FeedResponse, firstCallArrived: XCTestExpectation) {
             self.first = first
             self.second = second
+            self.firstCallArrived = firstCallArrived
         }
 
         func openGate() {
@@ -78,9 +94,13 @@ final class DiscoverViewModelLoadTests: XCTestCase {
             let n = lock.withLock { () -> Int in callCount += 1; return callCount }
             if n == 1 {
                 await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                    lock.withLock {
-                        if opened { cont.resume() } else { gate = cont }
+                    // Signal OUTSIDE the lock: fulfilling can run waiters synchronously.
+                    let shouldSignal: Bool = lock.withLock {
+                        if opened { cont.resume(); return false }
+                        gate = cont
+                        return true
                     }
+                    if shouldSignal { firstCallArrived.fulfill() }
                 }
                 return first
             }
@@ -380,11 +400,17 @@ final class DiscoverViewModelLoadTests: XCTestCase {
         // feed — a stale in-flight response cannot clobber a newer session.
         let aContent = try futuresResponse(ids: Array(1...12), offset: 0, hasMore: true, limit: 50)
         let bContent = try futuresResponse(ids: Array(100...112), offset: 0, hasMore: true, limit: 50)
-        let fake = GatedFakeClient(first: aContent, second: bContent)
+        let arrived = expectation(description: "older load A reached the gate")
+        let fake = GatedFakeClient(first: aContent, second: bContent, firstCallArrived: arrived)
         let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
 
         async let a: Void = vm.load()   // call 1 — blocks on the gate
-        await Task.yield()              // let A reach its network await
+        // #5229: wait for A to be PROVABLY parked on the gate, rather than yielding
+        // once and hoping. A single yield does not guarantee the `async let` child
+        // has reached its network await; when it has not, call 2 below takes the
+        // gate instead and the test deadlocks forever. The 5s bound means a future
+        // regression FAILS in five seconds instead of hanging a lane's session.
+        await fulfillment(of: [arrived], timeout: 5)
         await vm.load()                 // call 2 — returns B, publishes, generation advances
 
         XCTAssertEqual(Set(vm.items.compactMap { $0.futures?.id }), Set(100...112), "newer load B published")
