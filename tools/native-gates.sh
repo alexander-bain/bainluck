@@ -174,6 +174,66 @@ notice10_select () {
   fi
 }
 
+# ── recompile evidence, per log (#5635) ──────────────────────────────────────
+# PURE: prints the number of lines in LOG that are evidence FILE was compiled.
+# Same reason notice10_select is pure — `--selftest` drives THIS function, not a
+# copy of it.
+#
+# Why a caller ever passes a clause: a `BainLuckTests` source cannot appear in
+# the macOS app build at all (that scheme has no test target), so the only log
+# that can prove it is the TEST log — and there the honest evidence is the
+# basename on a line that also names the target it was compiled into:
+#
+#   SwiftCompile normal arm64 Compiling\ Foo.swift /…/BainLuckTests/Foo.swift \
+#     (in target 'BainLuckTests' from project 'Bain Luck')
+#
+# Requiring the clause stops a bare mention — a path quoted in a diagnostic, a
+# linker map, the xcodebuild command line itself — from reading as a compile.
+#
+# -F, not a bare pattern: a basename is full of dots, and `Foo.swift` as a
+# regex also matches `FooXswift`. The old proof used the unanchored form.
+recompile_refs () {   # <basename> <log> [<must-also-be-on-the-same-line>]
+  [ -f "$2" ] || { echo 0; return; }
+  if [ -n "${3:-}" ]; then
+    /usr/bin/grep -F -- "$1" "$2" 2>/dev/null | /usr/bin/grep -c -F -- "$3"
+  else
+    /usr/bin/grep -c -F -- "$1" "$2" 2>/dev/null
+  fi
+}
+
+# Is this changed path a test source? Decided on the PATH, not the filename: a
+# file called FooTests.swift can live in the app target, and a helper with no
+# "Tests" in its name can live in BainLuckTests/.
+is_test_source () { case "$1" in */BainLuckTests/*) return 0 ;; *) return 1 ;; esac; }
+
+# Prints one verdict line per file and sets PROOF_UNSEEN to how many were not
+# evidenced. Callers print their own follow-up, because "not in the macOS
+# target" is a shrug and "not compiled by the test target" is a gate failure.
+prove_compiled () {   # <newline-separated files> <log> <clause-or-empty>
+  PROOF_UNSEEN=0
+  _pc_clause="${3:-}"
+  while IFS= read -r _pc_f; do
+    [ -n "$_pc_f" ] || continue
+    _pc_b="$(basename "$_pc_f")"
+    _pc_n=$(recompile_refs "$_pc_b" "$2" "$_pc_clause")
+    if [ "$_pc_n" -gt 0 ]; then
+      echo "  compiled ($_pc_n log refs)  $_pc_b"
+    else
+      PROOF_UNSEEN=$((PROOF_UNSEEN + 1))
+      echo "  NOT SEEN      $_pc_b"
+    fi
+  done <<< "$1"
+}
+
+# The whole of #5635 in one function: test sources are proved against the TEST
+# log, requiring the target clause. It exists as a named function so --selftest
+# can drive the REAL call, not a copy of its arguments — the bug being fixed was
+# a call site reading the wrong log, and a proof that only exercises the helper
+# cannot see that class of mistake at all.
+prove_test_sources () {   # <newline-separated files> <testlog>
+  prove_compiled "$1" "$2" "in target 'BainLuckTests'"
+}
+
 # ── --selftest: prove the rule above, on log shapes, with no Xcode ───────────
 # A gate that lied is being repaired; the repair owes proof that it no longer
 # does. These fixtures go through notice10_select() itself, not a copy of it.
@@ -255,6 +315,112 @@ if [ -n "$SELFTEST" ]; then
   notice10_select "$ST_DIR/nomarker.txt" 0
   st_check "exit 0, no '** TEST SUCCEEDED **'" SUITE_FAILED -
 
+  # ── #5635: the recompile proof reads the log that COULD hold the file ──────
+  # Fixture lines are copied from a real run ($TMPDIR/native-gates-76649), not
+  # imagined — #5591's lesson was that a synthetic log gets the detail wrong.
+  say "--selftest — #5635 recompile evidence"
+
+  rc_check () { # name actual expected
+    if [ "$2" = "$3" ]; then echo "  ok    $1 -> $2"
+    else echo "  FAIL  $1 -> got $2, wanted $3"; ST_FAIL=1; fi
+  }
+
+  { echo "SwiftCompile normal arm64 Compiling\\ AppView.swift /x/ios/Bain\\ Luck/Views/AppView.swift (in target 'Bain Luck' from project 'Bain Luck')"
+    echo "SwiftDriver \"Bain Luck\" normal arm64 com.apple.xcode.tools.swift.compiler (in target 'Bain Luck' from project 'Bain Luck')"
+  } > "$ST_DIR/mac.txt"
+
+  { echo "SwiftCompile normal arm64 Compiling\\ DiscoverViewModelLoadTests.swift /x/BainLuckTests/DiscoverViewModelLoadTests.swift (in target 'BainLuckTests' from project 'Bain Luck')"
+    echo "SwiftCompile normal arm64 /x/BainLuckTests/DiscoverViewModelLoadTests.swift (in target 'BainLuckTests' from project 'Bain Luck')"
+  } > "$ST_DIR/test.txt"
+
+  # THE BUG: a test file proved against the macOS log reads 0 — that is the
+  # false alarm #5635 fixes, and it must stay 0 so the split is load-bearing.
+  rc_check "test file vs the macOS log (the old, wrong log)" \
+    "$(recompile_refs DiscoverViewModelLoadTests.swift "$ST_DIR/mac.txt")" 0
+  rc_check "test file vs the TEST log, with the target clause" \
+    "$(recompile_refs DiscoverViewModelLoadTests.swift "$ST_DIR/test.txt" "in target 'BainLuckTests'")" 2
+  rc_check "app file vs the macOS log" \
+    "$(recompile_refs AppView.swift "$ST_DIR/mac.txt")" 1
+
+  # The clause is not decoration: a file merely NAMED in the log (a diagnostic,
+  # the invocation) must not read as compiled.
+  { echo "note: /x/BainLuckTests/GhostTests.swift is newer than its output"
+    echo "error: /x/BainLuckTests/GhostTests.swift:12:5: cannot find 'foo' in scope"
+  } > "$ST_DIR/mentioned.txt"
+  rc_check "mentioned-but-not-compiled, clause required" \
+    "$(recompile_refs GhostTests.swift "$ST_DIR/mentioned.txt" "in target 'BainLuckTests'")" 0
+  rc_check "...and WITHOUT the clause it would have read as compiled" \
+    "$(recompile_refs GhostTests.swift "$ST_DIR/mentioned.txt")" 2
+
+  # -F, not a regex: the dot in a basename must not act as a wildcard. Asserted
+  # on BOTH branches — the clause branch and the bare branch each carry their
+  # own -F, and a case that exercises only one leaves the other free to regress.
+  echo "SwiftCompile normal arm64 /x/BainLuckTests/FooXswift.swift (in target 'BainLuckTests' from project 'Bain Luck')" > "$ST_DIR/dot.txt"
+  rc_check "basename is literal, not a regex (clause branch)" \
+    "$(recompile_refs Foo.swift "$ST_DIR/dot.txt" "in target 'BainLuckTests'")" 0
+  rc_check "basename is literal, not a regex (bare branch)" \
+    "$(recompile_refs Foo.swift "$ST_DIR/dot.txt")" 0
+
+  # A missing log is 0, never a crash — section 3a can be reached with no log
+  # if the test build died before writing one.
+  rc_check "absent log" "$(recompile_refs Any.swift "$ST_DIR/nope.txt")" 0
+
+  # Routing: decided on the PATH, so a test-named file in the app target still
+  # gets proved against the macOS log.
+  is_test_source "ios/Bain Luck/BainLuckTests/DiscoverViewModelLoadTests.swift" \
+    && rc_check "routing: BainLuckTests/ path -> test log" yes yes \
+    || rc_check "routing: BainLuckTests/ path -> test log" no yes
+  is_test_source "ios/Bain Luck/Bain Luck/Views/FooTests.swift" \
+    && rc_check "routing: app file merely NAMED *Tests -> macOS log" no yes \
+    || rc_check "routing: app file merely NAMED *Tests -> macOS log" yes yes
+
+  # ── the bug itself, at the CALL SITE ────────────────────────────────────────
+  # #5635 was not a bad helper, it was a caller reading a log that could not
+  # hold the answer. So drive prove_test_sources() — the real call — and pin
+  # BOTH directions: the macOS log can never satisfy it, the test log does.
+  # Without the second case the first passes for a function that never matches
+  # anything; without the first, the original bug reads green.
+  ST_FILES="ios/Bain Luck/BainLuckTests/DiscoverViewModelLoadTests.swift"
+
+  prove_test_sources "$ST_FILES" "$ST_DIR/mac.txt" > /dev/null
+  rc_check "call site: test sources vs the macOS log are UNSEEN (the #5635 bug)" \
+    "$PROOF_UNSEEN" 1
+
+  prove_test_sources "$ST_FILES" "$ST_DIR/test.txt" > /dev/null
+  rc_check "call site: test sources vs the TEST log are proved" \
+    "$PROOF_UNSEEN" 0
+
+  # A test file the run only MENTIONED must still count as unseen through the
+  # real call, not just through the helper — this is what makes dropping the
+  # clause at the call site a failing case rather than a silent widening.
+  prove_test_sources "ios/Bain Luck/BainLuckTests/GhostTests.swift" "$ST_DIR/mentioned.txt" > /dev/null
+  rc_check "call site: mentioned-but-not-compiled stays unseen" \
+    "$PROOF_UNSEEN" 1
+
+  # Empty input is 0 unseen, not one phantom for the empty line. The COUNT alone
+  # cannot see this: `grep -F ""` matches every line, so a phantom empty
+  # filename reads as "compiled" and keeps PROOF_UNSEEN at 0 while printing a
+  # junk verdict line. So assert the OUTPUT too.
+  # Redirected to a FILE, not captured with $( ): command substitution runs in a
+  # subshell, so PROOF_UNSEEN set inside it never reaches here and the check
+  # silently reads the PREVIOUS case's value. That is how this very case first
+  # read 1 — a green-looking assertion about a call that had not happened.
+  prove_test_sources "" "$ST_DIR/test.txt" > "$ST_DIR/empty-proof.out"
+  rc_check "call site: no changed test files -> nothing unproved" "$PROOF_UNSEEN" 0
+  rc_check "call site: no changed test files -> and no verdict lines printed" \
+    "$(/usr/bin/grep -c . "$ST_DIR/empty-proof.out")" 0
+
+  # #5635 WAS a call site reading a log that could not hold the answer, and
+  # --selftest cannot execute section 3a — that needs a real build. So this one
+  # line is pinned by reading this script's own source. It is a weaker guard
+  # than the behavioural cases above (it asserts text, not conduct); it is here
+  # because the alternative for this specific regression is no guard at all.
+  if /usr/bin/grep -q 'prove_test_sources "\$CHANGED_TESTS" "\$TESTLOG"' "${BASH_SOURCE[0]}"; then
+    rc_check "section 3a hands prove_test_sources the TEST log" yes yes
+  else
+    rc_check "section 3a hands prove_test_sources the TEST log" no yes
+  fi
+
   rm -rf "$ST_DIR"
   say "done (--selftest) — $([ $ST_FAIL -eq 0 ] && echo 'all cases passed' || echo 'FAILURES ABOVE'); nothing was built"
   exit $ST_FAIL
@@ -306,6 +472,9 @@ fi
 
 mkdir -p "$LOGDIR"
 FAILED=0
+# Initialised here, not in section 3a: under `set -u` the summary reads it even
+# on the paths where that section never runs (--build-only, no changed tests).
+TESTPROOF_UNSEEN=0
 
 # ── 0b. CHANGED SWIFT FILES — computed ONCE, and never silently empty ────────
 # Returns via CHANGED / CHANGED_ERR. CHANGED_ERR non-empty means "could not
@@ -329,6 +498,29 @@ else
                git -C "$GATE_ROOT" diff --name-only -- 'ios/*.swift';
                git -C "$GATE_ROOT" ls-files --others --exclude-standard -- 'ios/*.swift'; } \
              | sed '/^$/d' | sort -u )
+fi
+
+# #5635: the proof is split by which log COULD contain the file. Before this,
+# every changed file was grepped for in the macOS build log, so every
+# BainLuckTests source read "NOT SEEN IN THE BUILD LOG" — a permanent false
+# alarm on every test-only iOS ship, on the one signal notice 10's iOS clause
+# leans on (CI compiles no Swift, #4302). A warning that always fires is a
+# warning that gets skimmed, which is how #5591's fabricated pass line survived.
+CHANGED_APP=""
+CHANGED_TESTS=""
+if [ -n "$CHANGED" ]; then
+  while IFS= read -r _cf; do
+    [ -n "$_cf" ] || continue
+    if is_test_source "$_cf"; then
+      CHANGED_TESTS="${CHANGED_TESTS}${_cf}
+"
+    else
+      CHANGED_APP="${CHANGED_APP}${_cf}
+"
+    fi
+  done <<< "$CHANGED"
+  CHANGED_APP="${CHANGED_APP%$'\n'}"
+  CHANGED_TESTS="${CHANGED_TESTS%$'\n'}"
 fi
 
 if [ -n "$EXPLAIN" ]; then
@@ -406,21 +598,25 @@ if [ $MAC_EXIT -eq 0 ]; then
     echo "  no changed Swift files vs $BASE — nothing to prove"
     echo "  (that is a real comparison against $GATE_SHA, not a failure to make one)"
   else
-    while IFS= read -r f; do
-      b="$(basename "$f")"
-      n=$(/usr/bin/grep -c -- "$b" "$MACLOG")
-      if [ "$n" -gt 0 ]; then
-        echo "  compiled ($n log refs)  $b"
-      else
-        # Not automatically a failure: a file can be genuinely untouched by the
-        # macOS target (a watch-only or widget-only source). But it is ALWAYS
-        # worth a human look, because it is also exactly what a file that is
-        # outside the target looks like.
-        echo "  NOT SEEN IN THE BUILD LOG      $b"
-        echo "      → either it is not in the macOS target, or the target did not"
-        echo "        rebuild. Touch it and re-run before believing the green."
-      fi
-    done <<< "$CHANGED"
+    if [ -z "$CHANGED_APP" ]; then
+      echo "  no changed APP sources vs $BASE — this build had nothing of yours to compile"
+    fi
+    prove_compiled "$CHANGED_APP" "$MACLOG" ""
+    if [ "$PROOF_UNSEEN" -gt 0 ]; then
+      # Not automatically a failure: a file can be genuinely untouched by the
+      # macOS target (a watch-only or widget-only source). But it is ALWAYS
+      # worth a human look, because it is also exactly what a file that is
+      # outside the target looks like.
+      echo "      → either it is not in the macOS target, or the target did not"
+      echo "        rebuild. Touch it and re-run before believing the green."
+    fi
+    # #5635: NOT grepped for here. The macOS scheme has no test target, so this
+    # log is the one place they provably cannot be. Proved in section 3 instead,
+    # against the log that can actually contain them.
+    if [ -n "$CHANGED_TESTS" ]; then
+      echo "  deferred to the TEST build (this log cannot contain them):"
+      printf '%s\n' "$CHANGED_TESTS" | sed 's|.*/|      |'
+    fi
   fi
 fi
 
@@ -449,6 +645,32 @@ xcodebuild test \
 TEST_EXIT=$?
 echo "EXIT CODE: $TEST_EXIT   log: $TESTLOG"
 
+# ── 3a. RECOMPILE PROOF, TEST SOURCES (#5635) ────────────────────────────────
+# The other half of section 2. These files could never appear in the macOS log,
+# so until now the gate called every one of them "NOT SEEN IN THE BUILD LOG"
+# even as this build compiled them — measured on #5229's own gate run:
+# DiscoverViewModelLoadTests.swift had 0 refs in macos-build.txt and 5 here.
+#
+# The clause matters as much as the log. A changed test file's path appears in
+# the xcodebuild invocation and in any diagnostic that cites it, so a bare
+# basename match would pass for a file that failed to compile. Requiring
+# "in target 'BainLuckTests'" on the same line means the build system said it
+# built it.
+if [ -n "$CHANGED_TESTS" ] && [ -z "$CHANGED_ERR" ]; then
+  say "recompile proof — were your changed TEST files compiled by that run?"
+  prove_test_sources "$CHANGED_TESTS" "$TESTLOG"
+  TESTPROOF_UNSEEN=$PROOF_UNSEEN
+  if [ "$PROOF_UNSEEN" -gt 0 ]; then
+    # Unlike the app-target case this has no innocent reading: a changed file
+    # under BainLuckTests/ that the test target did not compile is either
+    # outside the target or was never reached, and either way the suite total
+    # below does not cover the lines you changed.
+    FAILED=1
+    echo "      → under BainLuckTests/, but this run did not build it."
+    echo "        The suite count below does NOT cover your change (#5635)."
+  fi
+fi
+
 # THE LINE STANDING NOTICE 10 WANTS IN THE PR BODY, printed verbatim — but ONLY
 # from a run that reached the end.
 #
@@ -468,7 +690,22 @@ echo "EXIT CODE: $TEST_EXIT   log: $TESTLOG"
 # evidence that explicitly must not be pasted.
 notice10_select "$TESTLOG" "$TEST_EXIT"
 
-if [ "$VERDICT" = PASS_LINE ]; then
+# #5635, same principle as #5591: a suite total only vouches for the lines the
+# run actually compiled. If a changed test file was NOT built, the count is
+# real but it does not cover the change, so it must not be offered as the
+# notice-10 line — otherwise this fix would reintroduce exactly the pairing
+# #5591 removed, a green number printed beside a red proof.
+if [ "$TESTPROOF_UNSEEN" -gt 0 ] && [ "$VERDICT" = PASS_LINE ]; then
+  VERDICT=UNCOVERED
+  LINE=""
+fi
+
+if [ "$VERDICT" = UNCOVERED ]; then
+  echo "  SUITE PASSED BUT DOES NOT COVER YOUR CHANGE — not a notice-10 line, do not paste it (#5635)."
+  echo "    suite total : $ALL_TESTS_LINE"
+  echo "    $TESTPROOF_UNSEEN changed test file(s) were not compiled by this run (above)."
+  echo "    Touch them and re-run, or check they are inside the BainLuckTests target."
+elif [ "$VERDICT" = PASS_LINE ]; then
   echo "  $LINE"
   echo "  ^ paste this line into the PR body — notice 10's iOS clause requires it"
   echo "    it is the count for $GATE_SHA ($GATE_BRANCH) in $GATE_ROOT"
@@ -506,9 +743,10 @@ say "SUMMARY"
 echo "  gated tree  : $GATE_ROOT"
 echo "  gated sha   : $GATE_SHA  ($GATE_BRANCH)"
 echo "  macOS build : $([ $MAC_EXIT -eq 0 ] && echo PASS || echo "FAIL (exit $MAC_EXIT)")"
-echo "  recompile   : $([ -n "$CHANGED_ERR" ] && echo "COULD NOT TELL — proof did not run" || echo "checked $(printf '%s' "$CHANGED" | /usr/bin/grep -c . ) changed Swift file(s)")"
-# ${LINE} is empty unless the run finished AND succeeded (#5591), so the summary
-# can no longer pair the word FAIL with a green-looking count from a dead run.
-echo "  BainLuckTests: $([ $TEST_EXIT -eq 0 ] && echo PASS || echo "FAIL (exit $TEST_EXIT)")   ${LINE:-no notice-10 line — see above}"
+echo "  recompile   : $([ -n "$CHANGED_ERR" ] && echo "COULD NOT TELL — proof did not run" || echo "checked $(printf '%s' "$CHANGED" | /usr/bin/grep -c . ) changed Swift file(s)$([ "$TESTPROOF_UNSEEN" -gt 0 ] && echo ", $TESTPROOF_UNSEEN test file(s) NOT COMPILED")")"
+# ${LINE} is empty unless the run finished AND succeeded (#5591) AND every
+# changed test file was compiled (#5635), so the summary can no longer pair a
+# green-looking count with a dead run or with a run that skipped your change.
+echo "  BainLuckTests: $([ $TEST_EXIT -eq 0 ] && [ "$TESTPROOF_UNSEEN" -eq 0 ] && echo PASS || echo "FAIL$([ $TEST_EXIT -ne 0 ] && echo " (exit $TEST_EXIT)" || echo " (change not covered)")")   ${LINE:-no notice-10 line — see above}"
 echo "  logs: $LOGDIR"
 exit $FAILED
