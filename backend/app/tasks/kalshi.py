@@ -6279,11 +6279,20 @@ async def _backfill_kalshi_price_history(
       resolved_zero — resolved markets with zero snapshots (calibration).
       open_sparse   — open/active feed-visible markets with no snapshots
                       in the last 7 days (chart quality for Discover).
+      pregame_gap   — #5612: markets we first saw AFTER first pitch, whose
+                      "opened at" is therefore blank or itself an in-play
+                      price. Delegated to
+                      :func:`_backfill_kalshi_pregame_openings`, which asks a
+                      different question of the same API and is kept separate
+                      so the two calibration modes above are untouched.
 
     Uses the Kalshi batch candlesticks API (GET /markets/candlesticks)
     to fetch hourly price history.  The old per-market endpoint
     (GET /markets/{ticker}/candlesticks) was deprecated and returns 404.
     """
+    if mode == "pregame_gap":
+        return await _backfill_kalshi_pregame_openings(limit=limit)
+
     import asyncio
     from app.models.models import FuturesOddsSnapshot
 
@@ -6451,6 +6460,380 @@ async def _backfill_kalshi_price_history(
 
     except Exception as e:
         logger.error("Kalshi price history backfill error: %s", e)
+        stats["errors"].append(f"task_error: {str(e)[:200]}")
+
+    return stats
+
+
+#: #5612: the provenance this rail stamps on every opening it writes. Fits
+#: ``futures_outcomes.opening_source`` (String(30)). It exists because the
+#: column could not answer "who wrote this?" when the ship was scoped:
+#: production carried 32,130 Polymarket and 13,712 Kalshi openings in one
+#: 7-day window and EVERY one of them had ``opening_source IS NULL``, so the
+#: in-play openings could not be attributed to a writer. An unattributable
+#: number is exactly what #5509 was about not printing.
+KALSHI_PREGAME_OPENING_SOURCE = "kalshi_candles_pregame"
+
+#: How far back of first pitch we are willing to call a price "the opening".
+#: Hourly candles (``period_interval=60``) are what this endpoint is cheap at,
+#: so the number we write is at most this stale relative to first pitch — and
+#: ``opening_captured_at`` records the candle's OWN timestamp, so a reader is
+#: never told the price is fresher than it is.
+PREGAME_LOOKBACK_DAYS = 30
+
+
+async def _backfill_kalshi_pregame_openings(limit: int = 500):
+    """#5612 — give a late-listed Kalshi prop a genuinely pregame "opened at".
+
+    ## the reader's defect
+
+    A prop whose market we first saw after first pitch shows either a blank
+    where "opened at" belongs, or an "opened at" that is itself an in-play
+    price from deep in the game. #5509 stopped the page *fabricating* a
+    pregame number from a late pin, and falls back to
+    ``futures_outcomes.opening_probability`` — but for these markets that
+    column is empty or is itself in-play, because the live poller only ever
+    sees a market once it is linked and inside its window. No choice among
+    the columns we hold can produce a price we never captured.
+
+    ## why this is not the existing rail with a wider WHERE
+
+    ``_backfill_kalshi_price_history`` already fetches candles and already
+    writes an opening — but it writes ``batch_values[0]``, **the earliest
+    candle in a 90-day window**, guarded on ``opening_probability IS NULL``.
+    For a market first listed mid-game the earliest candle IS mid-game, so
+    that rule cannot produce a pregame number for this population; it is a
+    plausible source of the in-play openings the issue measured. This rail
+    asks the opposite question: not "what is the oldest price you have?" but
+    **"what was the price at first pitch?"**
+
+    So the window is closed AT first pitch (``end_ts=commence``) rather than
+    filtered afterwards. Every candle the venue returns is then pregame by
+    construction, and the LAST one is the pregame closing line — the number a
+    reader means by "opened at".
+
+    ## the honesty screen is inherited, not restated
+
+    Prices come back through :func:`~app.utils.kalshi_candle_price.candle_yes_price`
+    (inside ``get_market_candlesticks``), which already refuses the 0.00/1.00
+    shell an untraded book leaves and returns ``None`` instead. That matters
+    here: the go/no-go sample for this ship found Kalshi legs quoted but never
+    traded pregame, several of them on exactly that shell, whose naive
+    midpoint is a fabricated 0.50. This rail therefore adds **no** second
+    price policy — ``kalshi_candle_price`` warns in its own docstring that a
+    price policy existing twice drifts, and a third variant here would be that
+    drift.
+
+    ## what is written, and what is refused
+
+        a pregame candle exists  -> opening_probability := its price,
+                                    opening_captured_at := its OWN timestamp,
+                                    opening_source := the provenance constant
+        no pregame candle        -> nothing is written, counted as
+                                    `unrecoverable`
+
+    The refusal is the point, and it is the sibling rail's rule
+    (``repair_kalshi_empty_book_openings``): a market the venue itself first
+    listed mid-game has no pregame price for anyone, and a blank is honest
+    where a fabricated number is not. Writing 0.50 there would trade a blank
+    for a lie — the exact trade #5509 exists to refuse.
+
+    ## the overwrite clause, and its provenance guard
+
+    Unlike the rails above this one may overwrite a non-null opening, because
+    half this population's defect IS a non-null number. It is bounded by the
+    same provenance principle the empty-book repair used: the UPDATE re-states
+    ``opening_captured_at > commence_time`` in its own WHERE, so the only
+    number this rail can overwrite is one the database still agrees is
+    in-play. A genuinely pregame opening is never touched, and a row that
+    moved under us between SELECT and UPDATE (a postponement re-stamping
+    ``commence_time``) fails the clause and is left alone.
+
+    Bounded at BOTH ends (gotcha #41): oldest-first so the expiring edge is
+    reached before it crosses Kalshi's candlestick cliff, INSIDE a floor at
+    the measured retention bound so the run does not spend itself on markets
+    whose data is provably gone.
+
+    ## 🔴 THE HEAD MUST NOT STARVE THE TAIL (CERT-2746)
+
+    The first version of this rail paired that oldest-first sort with a plain
+    ``LIMIT`` and no cursor. An honest refusal writes NOTHING — that is the
+    whole point of the withdrawal rule above — so a row the venue has no
+    pregame price for **stays eligible forever**. The next pass therefore
+    selects the same head rows, spends the same calls, refuses them again, and
+    **never reaches the recoverable tail**. The grader reproduced it exactly:
+    200 unrecoverable head rows plus a recoverable 201st, two passes, 400 calls
+    all spent on the head and the tail never called once.
+
+    That is gotcha #34 and this repo's "repairing early starves late" lesson in
+    a new place, and it is not survivable by waiting — the starvation is
+    permanent and total, not a slow drain.
+
+    The fix is a durable keyset rotation over the sort key. The cursor is
+    ``(commence_time, outcome_id)`` — the ORDER BY, plus the id to break ties,
+    so it is a true keyset and cannot skip or repeat a row within a cycle. Each
+    pass resumes strictly after the last row it processed and wraps to the top
+    when it runs out, so every candidate is reached within one cycle regardless
+    of how many unrecoverable rows sit at the head.
+
+    **Transport failures stay retryable, and that is why a terminal marker was
+    NOT used instead.** Marking a row "no price here" would drain faster, but it
+    cannot distinguish "the venue answered and had nothing" from "the request
+    failed" without inventing a second state, and it has nowhere honest to
+    write for the sub-population whose ``opening_probability`` is already a
+    non-null in-play number (its ``opening_source`` belongs to the writer that
+    set it — overwriting that with our marker would be a provenance lie, the
+    very thing this ship added provenance to stop). A rotation needs neither:
+    a row that failed on transport simply comes round again next cycle.
+
+    The cursor is advisory. A Redis miss, a decode failure or a malformed value
+    starts from the top — the same None-safe rule as the sibling drain — which
+    costs one cycle's ordering and can never wedge the rail.
+    """
+    import asyncio
+
+    from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+    from app.services.kalshi_api import KalshiAPIService
+
+    stats = {
+        "mode": "pregame_gap",
+        "outcomes_processed": 0,
+        "openings_written": 0,
+        "openings_overwritten": 0,
+        "unrecoverable": 0,
+        "api_empty": 0,
+        "wrapped": False,
+        "errors": [],
+    }
+
+    # CERT-2746: the rotation cursor. Advisory and None-safe at every step — a
+    # missing client, a missing key, a bad decode or a malformed pair all fall
+    # through to "start from the top", which costs one cycle's ordering and can
+    # never wedge the rail.
+    cursor_key = "kalshi:pregame_openings:keyset_cursor"
+    cursor_ct = cursor_id = None
+    rc = None
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        raw = rc.get(cursor_key)
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        if raw:
+            ct_s, _, id_s = str(raw).partition("|")
+            cursor_ct = datetime.fromisoformat(ct_s)
+            cursor_id = int(id_s)
+    except Exception:
+        rc = rc if rc is not None else None
+        cursor_ct = cursor_id = None
+
+    try:
+        async with get_task_session() as session:
+            # The candidate set, written once and run twice: after the cursor,
+            # then — only if that is exhausted — from the top. The two passes
+            # are the wrap, and `:after` is what distinguishes them, so the
+            # predicate can never drift between them.
+            candidate_sql = """
+                    SELECT fo.id AS outcome_id,
+                           fo.external_id AS ticker,
+                           e.commence_time AS commence_time,
+                           fo.opening_probability AS existing_opening,
+                           fo.opening_captured_at AS existing_opening_at
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fo.market_id = fm.id
+                    JOIN events e ON fm.event_id = e.id
+                    WHERE fm.source = 'kalshi'
+                      AND e.commence_time IS NOT NULL
+                      -- The gap is only knowable once first pitch has passed:
+                      -- before it, an absent opening is simply a market we have
+                      -- not polled yet, not a market we missed.
+                      AND e.commence_time < NOW()
+                      AND (
+                          fo.opening_probability IS NULL
+                          OR fo.opening_captured_at IS NULL
+                          OR fo.opening_captured_at > e.commence_time
+                      )
+                      -- CERT-2746, the rotation: resume strictly AFTER the last
+                      -- row the previous pass processed. Keyset on the full sort
+                      -- key (commence_time, id) so ties cannot skip or repeat.
+                      -- `:after = false` is the wrap pass over the whole set.
+                      AND (
+                          NOT :after
+                          OR (e.commence_time, fo.id) > (:cursor_ct, :cursor_id)
+                      )
+                      -- gotcha #41, the floor half: inside the measured
+                      -- retention bound, or the oldest-first sort below spends
+                      -- the whole run on markets Kalshi has already purged.
+                      AND e.commence_time
+                          >= now() - make_interval(days => :purge_days)
+                    -- gotcha #41, the sort half: oldest STILL-RECOVERABLE
+                    -- first, so the at-risk edge is harvested before it expires.
+                    -- `fo.id` joins it as the keyset tiebreak above.
+                    ORDER BY e.commence_time ASC, fo.id ASC
+                    LIMIT :limit
+            """
+
+            async def _candidates(after: bool):
+                res = await session.execute(
+                    text(candidate_sql),
+                    {
+                        "limit": limit,
+                        "purge_days": PROVABLY_PURGED_AGE_DAYS,
+                        "after": after,
+                        # Bound even on the wrap pass: a NULL bind on an unused
+                        # branch still has to type-check on the server.
+                        "cursor_ct": cursor_ct or datetime(1970, 1, 1, tzinfo=timezone.utc),
+                        "cursor_id": cursor_id or 0,
+                    },
+                )
+                return res.fetchall()
+
+            have_cursor = cursor_ct is not None and cursor_id is not None
+            rows = await _candidates(after=have_cursor)
+            if not rows and have_cursor:
+                # The cycle is finished. Wrap to the top rather than idling
+                # forever on an exhausted tail — without this the cursor is a
+                # one-way door of its own.
+                stats["wrapped"] = True
+                cursor_ct = cursor_id = None
+                rows = await _candidates(after=False)
+
+            if not rows:
+                return {**stats, "status": "nothing_to_backfill"}
+
+            logger.info(
+                "Kalshi pregame-opening backfill: %d outcomes in scope", len(rows)
+            )
+
+            service = KalshiAPIService()
+            try:
+                for row in rows:
+                    commence = row.commence_time
+                    if commence.tzinfo is None:
+                        commence = commence.replace(tzinfo=timezone.utc)
+                    end_ts = int(commence.timestamp())
+                    start_ts = end_ts - PREGAME_LOOKBACK_DAYS * 86400
+
+                    try:
+                        candles = await service.get_market_candlesticks(
+                            ticker=row.ticker,
+                            period_interval=60,
+                            start_ts=start_ts,
+                            end_ts=end_ts,
+                        )
+                    except Exception as e:
+                        stats["errors"].append(f"{row.ticker}: {str(e)[:80]}")
+                        continue
+
+                    stats["outcomes_processed"] += 1
+
+                    if not candles:
+                        # The venue holds no pregame price either. Honest blank.
+                        stats["api_empty"] += 1
+                        stats["unrecoverable"] += 1
+                        continue
+
+                    # The window already ends at first pitch, so every candle
+                    # here is pregame. Defend the boundary anyway rather than
+                    # trust the endpoint's inclusivity: the whole ship is the
+                    # claim that this timestamp precedes commence.
+                    pregame = [
+                        c
+                        for c in candles
+                        if c.get("t") is not None
+                        and c.get("yes_price") is not None
+                        and int(c["t"]) <= end_ts
+                    ]
+                    if not pregame:
+                        stats["unrecoverable"] += 1
+                        continue
+
+                    last = max(pregame, key=lambda c: int(c["t"]))
+                    price = float(last["yes_price"])
+                    if not (0.0 < price < 1.0):
+                        # candle_yes_price already refuses the 0.00/1.00 shell;
+                        # this is the belt on that brace, not a second policy.
+                        stats["unrecoverable"] += 1
+                        continue
+
+                    captured = datetime.fromtimestamp(
+                        int(last["t"]), tz=timezone.utc
+                    )
+
+                    upd = await session.execute(
+                        text("""
+                            UPDATE futures_outcomes fo
+                            SET opening_probability = :prob,
+                                opening_captured_at = :ts,
+                                opening_source = :src
+                            FROM futures_markets fm, events e
+                            WHERE fo.id = :id
+                              AND fo.market_id = fm.id
+                              AND fm.event_id = e.id
+                              -- PROVENANCE: re-stated here, not inherited from
+                              -- the SELECT. The only opening this rail may
+                              -- overwrite is one the row itself still says is
+                              -- in-play (or absent). A postponement that moved
+                              -- commence_time under us fails this and is left.
+                              AND (
+                                  fo.opening_probability IS NULL
+                                  OR fo.opening_captured_at IS NULL
+                                  OR fo.opening_captured_at > e.commence_time
+                              )
+                        """),
+                        {
+                            "prob": round(price, 6),
+                            "ts": captured,
+                            "src": KALSHI_PREGAME_OPENING_SOURCE,
+                            "id": row.outcome_id,
+                        },
+                    )
+                    if upd.rowcount:
+                        stats["openings_written"] += 1
+                        if row.existing_opening is not None:
+                            stats["openings_overwritten"] += 1
+
+                    if stats["outcomes_processed"] % 50 == 0:
+                        await session.commit()
+                        logger.info(
+                            "Kalshi pregame openings: %d/%d processed, "
+                            "%d written (%d overwritten), %d unrecoverable",
+                            stats["outcomes_processed"],
+                            len(rows),
+                            stats["openings_written"],
+                            stats["openings_overwritten"],
+                            stats["unrecoverable"],
+                        )
+                    await asyncio.sleep(0.05)
+
+                await session.commit()
+            finally:
+                await service.close()
+
+            # CERT-2746: advance the cursor past EVERY row this pass examined,
+            # including the ones it honestly refused. Advancing only on a
+            # successful write is the starvation bug wearing a cursor: the
+            # unrecoverable head would still be re-selected forever.
+            #
+            # `rows` is ordered by the keyset, so the last element is the
+            # high-water mark. Written after the commit, and a failure to write
+            # it is survivable — the next pass simply repeats this window.
+            if rc is not None and rows:
+                last = rows[-1]
+                last_ct = last.commence_time
+                if last_ct.tzinfo is None:
+                    last_ct = last_ct.replace(tzinfo=timezone.utc)
+                try:
+                    rc.set(cursor_key, f"{last_ct.isoformat()}|{last.outcome_id}")
+                except Exception:
+                    logger.warning(
+                        "pregame-opening cursor not persisted; next pass repeats "
+                        "this window"
+                    )
+
+    except Exception as e:
+        logger.error("Kalshi pregame-opening backfill error: %s", e)
         stats["errors"].append(f"task_error: {str(e)[:200]}")
 
     return stats

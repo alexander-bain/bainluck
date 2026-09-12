@@ -1543,7 +1543,45 @@ def free_background_slots(
 #: background beat this week writes the IDENTICAL `BACKGROUND_BEAT_COUNT = 121`
 #: and `git merge` sees no conflict while the composed tree is 122. Re-run the
 #: census on the composed tree before merging this.
-BACKGROUND_BEAT_COUNT = 121
+#:
+#: 🔴 RE-DERIVED at live/176 (2026-09-12, #5612): 121 → **122**, explicit
+#: **78 → 79**, fall-through UNMOVED at 43. RUN over the assembled schedule on
+#: this tree, not incremented — the census printed
+#: `explicit 79 implicit 43 total 122`. The fall-through half is unmoved in the
+#: benign direction: the new beat names `background` explicitly rather than
+#: defaulting into it.
+#:
+#: The beat is `backfill-kalshi-pregame-openings`, `crontab(minute=20,
+#: hour="2,8,14,20")` on `background`, EXPLICITLY routed. It is the third mode
+#: of `backfill_kalshi_history` and it exists because a prop we first saw
+#: mid-game has no pregame price in any column we hold, so the event page's
+#: "opened at" renders blank or quotes an in-play number. It asks Kalshi for
+#: the candle window ENDING at first pitch and writes that window's last
+#: candle.
+#:
+#: ITS COST, declared here because this is where costs are declared: one
+#: candlesticks call per OUTCOME — the batch endpoint does not apply, because
+#: the pregame window is per-event and these outcomes span many events — at
+#: `limit=200` per pass with a deliberate `asyncio.sleep(0.05)` between calls.
+#: That is a floor of ~10 s of sleep plus ~200 round trips, so **~60–90 s of
+#: wall against a 21,600 s period** — well under 1 % of one of the two
+#: `--concurrency=2` slots, and it is not a resident. It holds no slot between
+#: passes. It issues no Odds API quota (Kalshi is a separate, unmetered budget).
+#: A pass that cannot finish is superseded exactly by the next one: the
+#: candidate query is re-run each pass and is sorted oldest-first inside the
+#: retention floor, so partial progress is banked and the expiring edge is
+#: reached before it crosses Kalshi's candlestick cliff rather than after.
+#:
+#: The `:20` is by the minute census RUN over the assembled schedule, not
+#: chosen: `minute=20` at hours `2,8,14,20` carried zero background crontab
+#: beats, and it is clear of the `:15`/`:10` entries already at those hours and
+#: outside the `:28`–`:47` accuracy-page rebuild window.
+#:
+#: ⚠️ THE MERGE HAZARD APPLIES TO THIS LINE TOO. Any other lane adding a
+#: background beat this week writes the IDENTICAL `BACKGROUND_BEAT_COUNT = 122`
+#: and `git merge` sees no conflict while the composed tree is 123. Re-run the
+#: census on the composed tree before merging this.
+BACKGROUND_BEAT_COUNT = 122
 #: 🔴 RE-DERIVED at authority/083 (2026-09-09, #2907): 122 → **120**, explicit
 #: UNMOVED at 77, fall-through **45 → 43**. And this is the FIRST entry in this
 #: whole block that moves the number DOWN — every other re-derivation here adds a

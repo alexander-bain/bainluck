@@ -2985,12 +2985,26 @@ async def trigger_backfill_polymarket_history_sync(
 async def trigger_backfill_kalshi_history(
     request: Request, secret: str = Query(None),
     limit: int = Query(500, description="Max outcomes to process"),
+    mode: str = Query(
+        "resolved_zero",
+        description=(
+            "resolved_zero | open_sparse | pregame_gap (#5612: give a "
+            "late-listed prop a genuinely pregame 'opened at')"
+        ),
+    ),
 ):
-    """Trigger Kalshi price history backfill for outcomes with sparse data."""
+    """Trigger Kalshi price history backfill for outcomes with sparse data.
+
+    #5612: ``mode`` is forwarded. It was previously dropped on the floor here —
+    the task has taken a ``mode`` since ``open_sparse`` shipped, and its
+    Polymarket twin directly above already forwards one, so this endpoint could
+    only ever run the default. A mode nothing can invoke is a mode that does
+    not exist.
+    """
     _check_admin_secret(secret, request=request)
     from app.tasks import backfill_kalshi_history as task
-    result = task.delay(limit=limit)
-    return {"status": "queued", "task_id": result.id, "limit": limit}
+    result = task.delay(limit=limit, mode=mode)
+    return {"status": "queued", "task_id": result.id, "limit": limit, "mode": mode}
 
 
 @router.get("/debug-kalshi-settled")

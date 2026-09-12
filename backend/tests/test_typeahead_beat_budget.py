@@ -729,6 +729,14 @@ def test_rebuild_typeahead_index_is_on_heavy_and_cannot_starve_the_warmer():
 def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     """60 beats NAME `background`. The queue carries 105.
 
+    🔴 **RE-DERIVED at live/176 (2026-09-12, #5612): 121 → 122, explicit 78 → 79,
+    fall-through UNMOVED at 43.** One beat, `backfill-kalshi-pregame-openings`
+    (`crontab(minute=20, hour="2,8,14,20")`), naming `background` explicitly —
+    the benign direction this docstring reserves. RE-DERIVED by RUNNING the
+    census below over the assembled schedule, which printed
+    `explicit 79 implicit 43 total 122`, never by adding one to 121 (#1910).
+    The cost declaration is on `BACKGROUND_BEAT_COUNT`.
+
     🔴 **RE-DERIVED at authority/083 (2026-09-09, #2907): 122 → 120, explicit
     UNMOVED at 77, fall-through 45 → 43.** The first re-derivation in this
     docstring that SUBTRACTS. Two retired beats — `sync-statpal-rosters-daily`
@@ -1007,9 +1015,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 78, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 79, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 43, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 121
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 122
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

@@ -29,6 +29,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.tasks.kalshi import (
     _backfill_candlestick_snapshots,
+    _backfill_kalshi_pregame_openings,
     _backfill_kalshi_price_history,
     _backfill_trade_history,
 )
@@ -41,17 +42,59 @@ BOUNDED_RAILS = (
     _backfill_trade_history,            # bounded by CAL-P008
     _backfill_candlestick_snapshots,    # bounded here
     _backfill_kalshi_price_history,     # bounded here
+    # #5612: a fourth rail spending the same API budget on the same expiring
+    # population — the pregame-opening backfill. It is listed here rather than
+    # only in its own suite so that "every Kalshi recovery rail is bounded"
+    # stays a statement about the SET, which is the only form of it that can
+    # notice the next rail somebody adds.
+    _backfill_kalshi_pregame_openings,
+)
+
+#: The subset whose dating column is NULLABLE, and which therefore owe the
+#: fail-open escape below.
+#:
+#: The three original rails date a candidate by ``fm.resolution_date``, which is
+#: NULL for anything not yet settled — so a missing date means "we do not know
+#: when this dies", and writing the row off would abandon a recoverable market.
+#:
+#: ``_backfill_kalshi_pregame_openings`` (#5612) is dated by ``e.commence_time``
+#: instead, and requires it. That is not a missing escape, it is the question:
+#: the rail asks the venue for the window ENDING at first pitch, so a row with
+#: no first pitch has no window to ask for and no pregame price to recover.
+#: Failing open there would not try harder, it would crash on the ``end_ts`` it
+#: cannot compute. Its own suite pins that requirement positively
+#: (``test_the_gap_is_only_claimed_after_first_pitch``); it is excluded here
+#: because the clause does not transfer, not because it is unbounded — it takes
+#: the same floor and the same shared constant as the other three.
+NULLABLY_DATED_RAILS = (
+    _backfill_trade_history,
+    _backfill_candlestick_snapshots,
+    _backfill_kalshi_price_history,
+)
+
+
+#: A candidate SELECT, however it is spelled. Two forms, because a rail that
+#: runs its query TWICE (the #5612 rotation runs it once after the cursor and
+#: once on the wrap) must bind it to a name — inlining it at both call sites
+#: would put two copies of the retention floor in one function, which is the
+#: drift this suite exists to prevent. Matching only the inline form would make
+#: the floor invisible on exactly the rails that need it most.
+_SQL_FORMS = (
+    r'text\("""\s*(SELECT.*?)"""\)',       # inline:  text("""SELECT ...""")
+    r'=\s*"""\s*(SELECT.*?)"""',           # named:   candidate_sql = """SELECT ..."""
 )
 
 
 def _bounded_sql(fn) -> list[str]:
     """Every SELECT in `fn` that carries the purge bound."""
     src = inspect.getsource(fn)
-    return [
-        m.group(1).replace("%%", "%")
-        for m in re.finditer(r'text\("""\s*(SELECT.*?)"""\)', src, re.S)
-        if "purge_days" in m.group(1)
-    ]
+    found = []
+    for pattern in _SQL_FORMS:
+        for m in re.finditer(pattern, src, re.S):
+            sql = m.group(1).replace("%%", "%")
+            if "purge_days" in sql and sql not in found:
+                found.append(sql)
+    return found
 
 
 class TestEveryRecoveryRailIsBounded:
@@ -80,7 +123,7 @@ class TestEveryRecoveryRailIsBounded:
             assert "purge_days" in stmt._bindparams
             stmt.compile(dialect=postgresql.dialect(paramstyle="numeric"))
 
-    @pytest.mark.parametrize("fn", BOUNDED_RAILS, ids=lambda f: f.__name__)
+    @pytest.mark.parametrize("fn", NULLABLY_DATED_RAILS, ids=lambda f: f.__name__)
     def test_null_settlement_dates_stay_candidates(self, fn):
         """Fail-open. A row we cannot date must be tried, never written off."""
         for sql in _bounded_sql(fn):

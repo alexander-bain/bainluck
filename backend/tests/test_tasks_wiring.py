@@ -296,6 +296,10 @@ class TestBeatScheduleCompleteness:
         "kalshi-cliff-drain",
         "backfill-polymarket-open-sparse",
         "backfill-kalshi-open-sparse",
+        # #5612: the pregame-opening mode of the same task — gives a prop we
+        # first saw mid-game a genuinely pregame "opened at" instead of a blank
+        # or an in-play price.
+        "backfill-kalshi-pregame-openings",
         "backfill-box-scores",
         "backfill-espn-ids",
         "backfill-historical-links",
