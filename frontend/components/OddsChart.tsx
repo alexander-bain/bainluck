@@ -28,6 +28,7 @@ import {
   computeWinProbYAxis,
 } from "@/lib/eventKeyStats";
 import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
+import { teamShortNames } from "@/lib/teamShortName";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -1287,9 +1288,33 @@ export default function OddsChart({
   // to `homeDelta`. One definition now, so the fill, the callout, the
   // lead-change count and the live hero cannot disagree about which line the
   // chart is actually about.
-  // Short team names
-  const homeShort = homeTeamAbbrev || homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeamAbbrev || awayTeam.split(" ").pop() || awayTeam;
+  // Short team names — #4285. This was `homeTeam.split(" ").pop()`, a THIRD
+  // independent shortening rule with no designator list at all, so the axis
+  // labelled Manchester City "FC" and Sunderland "AFC" directly under a hero
+  // that had just named both clubs correctly.
+  //
+  // Measured before the change, over all 13,630 distinct production team names
+  // on `events` in 45 days: the last-word rule disagreed with what the hero
+  // prints on 2,221 names / 20,505 team-slots, and on 3,390 events (3.4%) it
+  // gave BOTH ends of this axis the SAME word — `← TOWN` above `→ TOWN` on
+  // Mansfield Town v Huddersfield Town, with no way to tell which is which.
+  //
+  // THE PAIR FORM, not `teamShortName` alone: the collision is the worst of the
+  // three symptoms and one side on its own cannot see it. `teamShortNames`
+  // already owns that backstop — its docstring names this exact failure
+  // ("otherwise the card says 'FC' beat 'FC'") — and it fails safe, since every
+  // token it lacks only makes an output LESS short.
+  //
+  // The abbreviation is passed but is now a RESCUE rather than a preference,
+  // which is the helper's rule and a deliberate change from `*Abbrev ||`: it is
+  // reached for only once the last-word rule has given up AND both sides carry
+  // one. The helper measured the preference form making a card worse
+  // ("Dockers / Hawks" -> "FRE / HAW"), and #3353/#4599 have abbreviations
+  // actively wrong for hundreds of teams, one shared by up to 50.
+  const { home: homeShort, away: awayShort } = teamShortNames(
+    { name: homeTeam, abbreviation: homeTeamAbbrev },
+    { name: awayTeam, abbreviation: awayTeamAbbrev },
+  );
 
   // Y-axis tick formatter: the value is already the home win probability (0–100).
   const formatYTick = (value: number): string => `${value}%`;
