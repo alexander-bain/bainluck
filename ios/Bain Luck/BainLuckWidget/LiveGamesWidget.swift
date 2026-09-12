@@ -30,7 +30,7 @@ struct SmallLiveGameView: View {
                     score: game.awayScore,
                     prob: game.awayProb,
                     color: game.awayColor,
-                    isLeading: game.awayProb > game.homeProb
+                    isLeading: game.awayIsLeading
                 )
 
                 // Home team row
@@ -39,13 +39,18 @@ struct SmallLiveGameView: View {
                     score: game.homeScore,
                     prob: game.homeProb,
                     color: game.homeColor,
-                    isLeading: game.homeProb > game.awayProb
+                    isLeading: game.homeIsLeading
                 )
 
                 Spacer(minLength: 2)
 
                 // Probability bar
-                probabilityBar(homeProb: game.homeProb, homeColor: game.homeColor, awayColor: game.awayColor)
+                probabilityBar(
+                    homeProb: game.homeProb,
+                    homeColor: game.homeColor,
+                    awayColor: game.awayColor,
+                    awayIsWithheld: game.awayProb == nil
+                )
             }
             .padding(12)
             .widgetURL(URL(string: "bainluck://events/\(game.id)"))
@@ -54,7 +59,10 @@ struct SmallLiveGameView: View {
         }
     }
 
-    private func teamRow(abbrev: String, score: Int?, prob: Int, color: String?, isLeading: Bool) -> some View {
+    /// `prob` is optional for #5363: a draw-priced sport has no away price, so
+    /// that row keeps its crest, abbreviation and score and drops only the
+    /// percentage.
+    private func teamRow(abbrev: String, score: Int?, prob: Int?, color: String?, isLeading: Bool) -> some View {
         HStack(spacing: 6) {
             // Team color indicator
             RoundedRectangle(cornerRadius: 2)
@@ -72,18 +80,23 @@ struct SmallLiveGameView: View {
                     .font(.system(size: 16, weight: .heavy, design: .rounded).monospacedDigit())
             }
 
-            Text("\(prob)%")
+            Text(prob.map { "\($0)%" } ?? "")
                 .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 32, alignment: .trailing)
         }
     }
 
-    private func probabilityBar(homeProb: Int, homeColor: String?, awayColor: String?) -> some View {
+    /// #5363 — the remainder segment survives a withheld away side (it is a true
+    /// quantity, "not the home team") but loses the away team's colour, which is
+    /// the rule the event page set in #5271.
+    private func probabilityBar(homeProb: Int, homeColor: String?, awayColor: String?, awayIsWithheld: Bool) -> some View {
         GeometryReader { geo in
             HStack(spacing: 1) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color(hex: awayColor ?? "#666666").opacity(0.7))
+                    .fill(awayIsWithheld
+                          ? Color.secondary.opacity(0.25)
+                          : Color(hex: awayColor ?? "#666666").opacity(0.7))
                     .frame(width: geo.size.width * CGFloat(100 - homeProb) / 100.0)
                 RoundedRectangle(cornerRadius: 2)
                     .fill(Color(hex: homeColor ?? "#0A84FF").opacity(0.7))
@@ -210,7 +223,11 @@ struct MediumLiveGamesView: View {
 
                     Spacer()
 
-                    Text("\(game.awayProb)-\(game.homeProb)")
+                    // #5363 — names the survivor rather than holding an empty
+                    // slot: at 9pt in a compact accessory there is no room for
+                    // an absence a reader could interpret.
+                    Text(game.awayProb.map { "\($0)-\(game.homeProb)" }
+                         ?? "\(game.homeAbbrev) \(game.homeProb)")
                         .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -365,8 +382,9 @@ struct LargeDashboardView: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(game.awayAbbrev)
-                            .font(.system(size: 13, weight: game.awayProb > game.homeProb ? .bold : .medium))
-                        Text("\(game.awayProb)%")
+                            .font(.system(size: 13, weight: game.awayIsLeading ? .bold : .medium))
+                        // #5363 — withheld on a draw-priced sport.
+                        Text(game.awayProb.map { "\($0)%" } ?? "")
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -390,7 +408,7 @@ struct LargeDashboardView: View {
                 HStack(spacing: 6) {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(game.homeAbbrev)
-                            .font(.system(size: 13, weight: game.homeProb > game.awayProb ? .bold : .medium))
+                            .font(.system(size: 13, weight: game.homeIsLeading ? .bold : .medium))
                         Text("\(game.homeProb)%")
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)

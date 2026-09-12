@@ -102,8 +102,16 @@ d("#4094 — the settled card's footer is not drawn when it is empty", () => {
     expect(start).toBeGreaterThan(-1);
     const helper = source.slice(start, source.indexOf("\n    }", start));
     expect(helper).toMatch(/if let reason, !reason\.isEmpty \{ return true \}/);
+    // #5363 — the row this mirrors grew a second branch: on a draw-priced
+    // sport `footerRow` draws a NAMED single-sided caption ("Opened Boca 68%"),
+    // so HOME alone is content there and the gate has to agree. Both arms are
+    // pinned, in both directions: drop the guard and a dead card draws a
+    // footer, drop the rule and a live soccer card hides one it draws.
     expect(helper).toMatch(
-      /return isLive && awayOpening != nil && homeOpening != nil/
+      /guard isLive, homeOpening != nil else \{ return false \}/
+    );
+    expect(helper).toMatch(
+      /return awayOpening != nil \|\| DrawPricedWinner\.sportPricesADraw\(sport\)/
     );
   });
 

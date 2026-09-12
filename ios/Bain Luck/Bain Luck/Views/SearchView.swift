@@ -975,19 +975,40 @@ struct SearchView: View {
                       // was present, discarding a blend the server had already
                       // computed. The preference order and the served-percent
                       // rule both live in the helper, not here.
+                      //
+                      // #5363 — and on a draw-priced sport the first-named side
+                      // is exactly the side we have no price for, so the helper
+                      // hands back HOME instead and this row names it. A bare
+                      // number worked here only because it was positional; the
+                      // moment it stops describing the side read first, the
+                      // position is a lie and the name has to be printed.
                       let firstNamed = firstNamedSideNumber(
                           oddsAway: event.currentOdds?.awayProbability,
                           oddsHome: event.currentOdds?.homeProbability,
                           servedAway: event.currentOdds?.awayRenderedPercent,
                           servedHome: event.currentOdds?.homeRenderedPercent,
                           heroAway: event.heroProbabilityAway,
-                          heroHome: event.heroProbability
+                          heroHome: event.heroProbability,
+                          sport: event.sport
                       ) {
-                Text(formatProbability(firstNamed.probability, renderedPercent: firstNamed.percent))
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .monospacedDigit()
-                    .foregroundStyle(.blue)
+                HStack(spacing: 4) {
+                    if firstNamed.isHome {
+                        // #3430 — the PAIR decides the short name: "Tigers" is
+                        // not a name when both sides shorten to it.
+                        Text(TeamShortName.shortPair(
+                            away: event.awayTeam, home: event.homeTeam
+                        ).home)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(formatProbability(firstNamed.probability, renderedPercent: firstNamed.percent))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .monospacedDigit()
+                        .foregroundStyle(.blue)
+                }
             }
 
             if let ei = event.ei ?? event.pulse {

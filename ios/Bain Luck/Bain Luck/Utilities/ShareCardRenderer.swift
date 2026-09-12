@@ -220,7 +220,19 @@ struct ShareableEventCardView: View {
         TeamShortName.abbreviationPair(away: awayTeam, home: homeTeam)
     }
     let homeProbability: Double
-    let awayProbability: Double
+    /// #5363 — OPTIONAL, and nil means *withheld*, not *absent*.
+    ///
+    /// On a draw-priced sport (soccer) the away figure is `1 − P(home)`, which is
+    /// *away win **or** draw*, so this card — the one artefact of ours that
+    /// travels to people who never opened the app and cannot check it against
+    /// anything — printed a number under the away crest that no market quoted.
+    /// The crest, the team name and the score stay; only the probability goes.
+    let awayProbability: Double?
+    /// What the BAR's first segment measures when there is no away probability
+    /// to print: the remainder, which is a true quantity ("not the home team")
+    /// even where it cannot be attributed to the away side. #5271 settled this
+    /// on the event page — the segment survives, the away team's colour does not.
+    private var awayBarShare: Double { awayProbability ?? (1 - homeProbability) }
     let sportName: String
     let homeColor: Color
     let awayColor: Color
@@ -322,9 +334,15 @@ struct ShareableEventCardView: View {
                             .multilineTextAlignment(.center)
                             .lineLimit(3)
                             .foregroundStyle(Color(red: 0.10, green: 0.10, blue: 0.12))
-                        Text(formatProbability(awayProbability))
-                            .font(.system(size: 32, weight: .black).monospacedDigit())
-                            .foregroundStyle(awayColor)
+                        // #5363 — withheld on a draw-priced sport. The slot is
+                        // left empty rather than dashed: this image has no
+                        // legend and travels without us, so a mark a stranger
+                        // cannot interpret is worse than white space.
+                        if let awayProbability {
+                            Text(formatProbability(awayProbability))
+                                .font(.system(size: 32, weight: .black).monospacedDigit())
+                                .foregroundStyle(awayColor)
+                        }
                         if let score = awayScore {
                             Text("\(score)")
                                 .font(.system(size: 14, weight: .heavy).monospacedDigit())
@@ -377,8 +395,10 @@ struct ShareableEventCardView: View {
                 GeometryReader { geo in
                     HStack(spacing: 0) {
                         Rectangle()
-                            .fill(awayColor)
-                            .frame(width: max(3, geo.size.width * awayProbability))
+                            .fill(awayProbability == nil
+                                  ? Color.secondary.opacity(0.25)
+                                  : awayColor)
+                            .frame(width: max(3, geo.size.width * awayBarShare))
                         Rectangle()
                             .fill(homeColor)
                             .frame(width: max(3, geo.size.width * homeProbability))
@@ -445,7 +465,10 @@ enum ShareCardRenderer {
         homeTeam: String,
         awayTeam: String,
         homeProbability: Double,
-        awayProbability: Double,
+        /// #5363 — nil withholds the away number. No default, for the reason
+        /// `commenceTime` has none: a caller that forgets it would silently
+        /// restore the old reading on the one surface whose output leaves the app.
+        awayProbability: Double?,
         sportName: String,
         homeColor: Color,
         awayColor: Color,

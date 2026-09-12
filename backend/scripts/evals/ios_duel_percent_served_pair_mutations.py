@@ -153,7 +153,7 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
         "the Discover card coalesces per side again — UX-P114's own regression",
         DISCOVER_CARD,
         """                    let duel = duelPercents(
-                        away: awayProbability,
+                        away: printable.away ?? (1 - homeProbability),
                         home: homeProbability,
                         servedAway: event.currentOdds?.awayRenderedPercent,
                         servedHome: event.currentOdds?.homeRenderedPercent
@@ -161,7 +161,7 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
                     let awayPct = duel[0]
                     let homePct = duel[1]""",
         """                    let duel = renderedDuelPercents(
-                        away: awayProbability, home: homeProbability
+                        away: printable.away ?? (1 - homeProbability), home: homeProbability
                     )
                     let awayPct = event.currentOdds?.awayRenderedPercent ?? duel[0]
                     let homePct = event.currentOdds?.homeRenderedPercent ?? duel[1]""",
@@ -180,7 +180,7 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
         "the related-markets row coalesces per side again",
         RELATED_ROW,
         """                let duel = duelPercents(
-                    away: awayProbability,
+                    away: printable.away ?? (1 - homeProbability),
                     home: homeProbability,
                     servedAway: odds.awayRenderedPercent,
                     servedHome: odds.homeRenderedPercent
@@ -188,7 +188,7 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
                 let awayPct = duel[0]
                 let homePct = duel[1]""",
         """                let duel = renderedDuelPercents(
-                    away: awayProbability, home: homeProbability
+                    away: printable.away ?? (1 - homeProbability), home: homeProbability
                 )
                 let awayPct = odds.awayRenderedPercent ?? duel[0]
                 let homePct = odds.homeRenderedPercent ?? duel[1]""",
@@ -215,9 +215,9 @@ MUTANTS: list[tuple[str, str, Path, str, str]] = [
         "the widget coalesces per side again — served home beside a derived away",
         WIDGET,
         """                homeProb: bothServed ? servedHomePct! : derivedHomePct,
-                awayProb: bothServed ? servedAwayPct! : derivedAwayPct,""",
+                awayProb: awayIsWithheld ? nil : (bothServed ? servedAwayPct! : derivedAwayPct),""",
         """                homeProb: servedHomePct ?? derivedHomePct,
-                awayProb: servedAwayPct ?? derivedAwayPct,""",
+                awayProb: awayIsWithheld ? nil : (servedAwayPct ?? derivedAwayPct),""",
     ),
     (
         "M9",

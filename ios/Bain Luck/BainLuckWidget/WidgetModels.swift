@@ -95,11 +95,30 @@ struct WidgetGame: Identifiable {
     let homeScore: Int?
     let awayScore: Int?
     let homeProb: Int
-    let awayProb: Int
+    /// #5363 — nil where the sport prices a draw, so `1 − P(home)` is *away win
+    /// or draw* and there is no away price to print. Withheld, not absent.
+    let awayProb: Int?
     let period: String
     let sport: String
     let homeColor: String?
     let awayColor: String?
+
+    /// #5363 — who is ahead, where that is answerable AT ALL.
+    ///
+    /// Both are false when the away price is withheld, and that is the honest
+    /// answer rather than a convenience: with one side priced we cannot say who
+    /// leads. A home side on 40% may still be behind an away side on 45% with
+    /// the draw taking 15, so bolding home — the shape `homeProb > awayProb`
+    /// would fall into once the complement is gone — would state a comparison
+    /// no number on the widget supports.
+    var awayIsLeading: Bool {
+        guard let awayProb else { return false }
+        return awayProb > homeProb
+    }
+    var homeIsLeading: Bool {
+        guard let awayProb else { return false }
+        return homeProb > awayProb
+    }
 }
 
 struct WidgetDiscoverItem: Identifiable {

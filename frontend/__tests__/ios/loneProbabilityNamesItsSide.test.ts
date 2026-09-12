@@ -103,7 +103,14 @@ describe("the sentence that leaves the app", () => {
     const slice = fn();
     expect(slice).toContain("eventShareMessage(");
     expect(slice).toContain("duelPercents(");
-    expect(slice).toContain("awayPercent: duel[0]");
+    // #5363 — the away half is still the card's own `duel[0]` and is still
+    // never re-rounded here; it is now WITHHELD on a draw-priced sport, so it
+    // reaches the call through a local the rule gates. Both halves pinned: the
+    // gate itself, and that what survives it is `duel[0]` and nothing else.
+    expect(slice).toMatch(
+      /let awayPercent = DrawPricedWinner\.sportPricesADraw\(event\.sport\) \? nil : duel\[0\]/
+    );
+    expect(slice).toContain("awayPercent: awayPercent");
     expect(slice).toContain("homePercent: duel[1]");
   });
 

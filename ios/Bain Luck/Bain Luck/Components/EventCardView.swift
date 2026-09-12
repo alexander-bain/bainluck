@@ -321,12 +321,21 @@ struct EventCardView: View {
             reason: String?,
             isLive: Bool,
             awayOpening: Double?,
-            homeOpening: Double?
+            homeOpening: Double?,
+            sport: String?
         ) -> Bool {
             if let reason, !reason.isEmpty { return true }
-            // Mirrors `footerRow`'s "Opened X/Y" branch: live, and BOTH sides
-            // priced. One side alone renders nothing, so it is not content.
-            return isLive && awayOpening != nil && homeOpening != nil
+            // #5363 — a draw-priced sport draws the named single-sided caption
+            // ("Opened Boca 68%"), so HOME alone is content there. Taking the
+            // sport rather than a pre-computed Bool keeps this function's
+            // agreement with `footerRow` decidable from the same inputs the
+            // view has; the guard test pins both arms in both directions.
+            guard isLive, homeOpening != nil else { return false }
+            // Mirrors `footerRow`'s two branches: the "Opened X/Y" pair needs
+            // BOTH sides priced, and the named single-sided caption needs the
+            // rule to fire. Home alone on a two-way sport still renders
+            // nothing, so it is still not content.
+            return awayOpening != nil || DrawPricedWinner.sportPricesADraw(sport)
         }
     }
 
@@ -336,7 +345,8 @@ struct EventCardView: View {
             reason: reason,
             isLive: isLive,
             awayOpening: event.openingOdds?.awayProbability,
-            homeOpening: event.openingOdds?.homeProbability
+            homeOpening: event.openingOdds?.homeProbability,
+            sport: event.sport
         ) {
             footerRow
         }
@@ -358,12 +368,31 @@ struct EventCardView: View {
             // the only site on the card that HAD the rule. It now reads the shared
             // `openingPercents`, so the claim is true and there is one derivation
             // per odds source rather than a third copy.
-            if isLive, let opening = event.openingOdds,
-               let awayOpen = opening.awayProbability,
-               let homeOpen = opening.homeProbability {
-                Text("Opened \(formatProbability(awayOpen, renderedPercent: openingPercents[0]))/\(formatProbability(homeOpen, renderedPercent: openingPercents[1]))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+            //
+            // #5363 — `opening_odds` is a complement pair too
+            // (`opening_away_probability or round(1 - home, 4)`), so on a
+            // draw-priced sport this caption told the same lie the strip did.
+            // The withheld arm is the event page's, word for word: a caption
+            // that has lost one of its pair has lost the positional attribution
+            // that let the other go unnamed, so it NAMES the side (#3430 —
+            // via the pair, because "Tigers" is not a name when both shorten
+            // to it).
+            if isLive, let opened = DrawPricedWinner.printablePair(
+                away: event.openingOdds?.awayProbability,
+                home: event.openingOdds?.homeProbability,
+                sport: event.sport) {
+                if let awayOpen = opened.away {
+                    Text("Opened \(formatProbability(awayOpen, renderedPercent: openingPercents[0]))/\(formatProbability(opened.home, renderedPercent: openingPercents[1]))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    let named = TeamShortName.shortPair(
+                        away: event.awayTeam, home: event.homeTeam
+                    )
+                    Text("Opened \(named.home) \(formatProbability(opened.home))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
     }
@@ -440,10 +469,32 @@ struct EventCardView: View {
         )
     }
 
+    /// #5363 — whether this card may print an AWAY probability at all.
+    ///
+    /// `sportPricesADraw` and not `printablePair`, deliberately, and this is the
+    /// one place in the family where the difference bites. `printablePair`
+    /// answers for a two-SLOT surface and returns `nil` for the whole pair when
+    /// a two-way sport holds no away price — correct for the event page's hero,
+    /// which draws one duel. This card draws each side in its OWN row and has
+    /// always printed the home number alone when the away price was missing, so
+    /// routing these two rows through the pair rule would newly blank a home
+    /// number on two-way sports: a regression wearing the fix's name.
+    ///
+    /// The rows are already named — logo, then team, then the number — so the
+    /// withheld side simply renders nothing, and nothing has to be renamed. The
+    /// collapse-to-one-number surfaces are the ones that name their survivor.
+    private var awayIsWithheld: Bool {
+        DrawPricedWinner.sportPricesADraw(event.sport)
+    }
+
     @ViewBuilder
     private func probabilityWithMovement(for side: TeamSide) -> some View {
-        let prob: Double? = side == .home ? event.currentOdds?.homeProbability : event.currentOdds?.awayProbability
-        let openProb: Double? = side == .home ? event.openingOdds?.homeProbability : event.openingOdds?.awayProbability
+        let prob: Double? = side == .home
+            ? event.currentOdds?.homeProbability
+            : (awayIsWithheld ? nil : event.currentOdds?.awayProbability)
+        let openProb: Double? = side == .home
+            ? event.openingOdds?.homeProbability
+            : (awayIsWithheld ? nil : event.openingOdds?.awayProbability)
         let color = side == .home ? homeColor : awayColor
 
         if let prob {
@@ -468,7 +519,10 @@ struct EventCardView: View {
     @ViewBuilder
     private func preGameOddsLabel(for side: TeamSide) -> some View {
         let opening = event.openingOdds
-        let prob: Double? = side == .home ? opening?.homeProbability : opening?.awayProbability
+        // #5363 — the settled row's pre-game number is the same complement.
+        let prob: Double? = side == .home
+            ? opening?.homeProbability
+            : (awayIsWithheld ? nil : opening?.awayProbability)
         if let prob {
             let wasUnderdog = prob < 0.4
             let wasHeavyFavorite = prob > 0.7
@@ -498,7 +552,15 @@ struct EventCardView: View {
                 ProbabilityBar(
                     awayProb: awayProb,
                     homeProb: homeProb,
-                    awayColor: awayColor.opacity(0.5),
+                    // #5363 — the bar KEEPS its remainder, because the two
+                    // segments are a partition and "not the home team" is a
+                    // true quantity. What it is not is the away team, so it
+                    // loses that team's colour along with its number and reads
+                    // as the neutral rest of the whole. The event page settled
+                    // this in #5271; the card family follows it exactly.
+                    awayColor: awayIsWithheld
+                        ? Color.secondary.opacity(0.25)
+                        : awayColor.opacity(0.5),
                     homeColor: homeColor.opacity(0.5),
                     height: 5
                 )
@@ -515,7 +577,9 @@ struct EventCardView: View {
             ProbabilityBar(
                 awayProb: away,
                 homeProb: home,
-                awayColor: awayColor,
+                // #5363 — see the settled bar above: the remainder survives, the
+                // away team's colour does not.
+                awayColor: awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor,
                 homeColor: homeColor,
                 height: isLive ? 10 : 8,
                 animated: isLive,

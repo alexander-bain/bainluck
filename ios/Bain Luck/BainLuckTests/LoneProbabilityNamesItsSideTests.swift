@@ -42,6 +42,15 @@ final class LoneProbabilityNamesItsSideTests: XCTestCase {
         let expected: Int
     }
 
+    /// The sport these rows actually are, stated rather than defaulted (#5363).
+    ///
+    /// Every specimen below is a US Open singles match, and tennis does not price
+    /// a draw — which is the whole reason they still read away-first. Passing the
+    /// real key rather than `nil` means these assertions exercise the SPORT GATE
+    /// on its two-way arm instead of the undeclared fallback, so transposing the
+    /// `winnerMarketPricesADraw` flag onto tennis in `SportVocab` fails here.
+    private let usOpen = "tennis_atp_us_open"
+
     private let specimens: [Row] = [
         Row(away: "Elena Rybakina", home: "Qinwen Zheng",
             awayProbability: 0.72, homeProbability: 0.28, expected: 72),
@@ -76,7 +85,12 @@ final class LoneProbabilityNamesItsSideTests: XCTestCase {
                 away: row.awayProbability,
                 home: row.homeProbability,
                 servedAway: nil,
-                servedHome: nil
+                servedHome: nil,
+                sport: usOpen
+            )
+            XCTAssertFalse(
+                reading?.isHome ?? true,
+                "\(row.away) vs \(row.home): tennis prices no draw, so the row still names the away side"
             )
             XCTAssertEqual(
                 reading?.percent, row.expected,
@@ -95,7 +109,8 @@ final class LoneProbabilityNamesItsSideTests: XCTestCase {
                 away: row.awayProbability,
                 home: row.homeProbability,
                 servedAway: nil,
-                servedHome: nil
+                servedHome: nil,
+                sport: usOpen
             )?.percent
             let oldReading = Int((row.homeProbability * 100).rounded())
             XCTAssertNotEqual(
@@ -129,12 +144,12 @@ final class LoneProbabilityNamesItsSideTests: XCTestCase {
     func testTheServedPairIsUsedWholeOrNotAtAll() {
         // Both served: they are the answer, and no local rounding runs.
         XCTAssertEqual(
-            firstNamedSideNumber(away: 0.505, home: 0.495, servedAway: 50, servedHome: 50)?.percent,
+            firstNamedSideNumber(away: 0.505, home: 0.495, servedAway: 50, servedHome: 50, sport: usOpen)?.percent,
             50
         )
         // Half a served pair is not a served pair (#2279) — it falls back WHOLE.
         XCTAssertEqual(
-            firstNamedSideNumber(away: 0.505, home: 0.495, servedAway: 50, servedHome: nil)?.percent,
+            firstNamedSideNumber(away: 0.505, home: 0.495, servedAway: 50, servedHome: nil, sport: usOpen)?.percent,
             renderedDuelPercents(away: 0.505, home: 0.495)[0]
         )
     }
@@ -142,13 +157,62 @@ final class LoneProbabilityNamesItsSideTests: XCTestCase {
     // MARK: - No row that had a number loses one
 
     func testAHomeOnlyPayloadStillDrawsTheFirstNamedSide() {
-        let reading = firstNamedSideNumber(away: nil, home: 0.28, servedAway: nil, servedHome: nil)
+        let reading = firstNamedSideNumber(away: nil, home: 0.28, servedAway: nil, servedHome: nil, sport: usOpen)
         XCTAssertEqual(reading?.percent, 72, "the row drew a number before this fix and must still draw one")
         XCTAssertEqual(reading?.probability ?? 0, 0.72, accuracy: 0.0001)
     }
 
     func testNoOddsAtAllDrawsNothing() {
-        XCTAssertNil(firstNamedSideNumber(away: nil, home: nil, servedAway: nil, servedHome: nil))
+        XCTAssertNil(firstNamedSideNumber(away: nil, home: nil, servedAway: nil, servedHome: nil, sport: usOpen))
+    }
+
+    // MARK: - #5363, the sport that has no away price to name
+
+    /// The same rows, transposed onto a draw-priced sport: the number moves to
+    /// HOME and the caller is told to name it.
+    ///
+    /// Written against the tennis specimens deliberately — the numbers are the
+    /// ones the two-way assertions above use, so anything that differs here is
+    /// the sport gate and nothing else.
+    func testADrawPricedRowHandsBackTheHomeSide() {
+        for row in specimens {
+            let reading = firstNamedSideNumber(
+                away: row.awayProbability,
+                home: row.homeProbability,
+                servedAway: nil,
+                servedHome: nil,
+                sport: "soccer_epl"
+            )
+            XCTAssertEqual(reading?.isHome, true,
+                           "\(row.away) vs \(row.home): a draw-priced row names home")
+            XCTAssertEqual(reading?.probability, row.homeProbability)
+            XCTAssertEqual(reading?.percent, Int((row.homeProbability * 100).rounded()))
+        }
+    }
+
+    /// The served pair describes a complement, so it may not decide the withheld
+    /// side's survivor either: `servedHome` is `100 − servedAway`, which is a
+    /// number about the very reading this arm refuses. It rounds the home
+    /// probability itself and ignores both served fields.
+    func testADrawPricedRowIgnoresTheServedComplementPair() {
+        let reading = firstNamedSideNumber(
+            away: 0.505, home: 0.495,
+            servedAway: 50, servedHome: 50,
+            sport: "soccer_epl"
+        )
+        XCTAssertEqual(reading?.isHome, true)
+        XCTAssertEqual(reading?.percent, 50)
+        XCTAssertEqual(reading?.probability, 0.495)
+    }
+
+    /// A draw-priced row with no HOME price has nothing left to print — the away
+    /// figure cannot stand in for it, which is the whole rule.
+    func testADrawPricedRowWithNoHomePriceDrawsNothing() {
+        XCTAssertNil(firstNamedSideNumber(
+            away: 0.72, home: nil,
+            servedAway: nil, servedHome: nil,
+            sport: "soccer_epl"
+        ))
     }
 
     // MARK: - The sentence that leaves the app

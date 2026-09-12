@@ -94,9 +94,20 @@ struct MenuBarView: View {
 
                 Spacer()
 
-                Text("\(game.awayProb)–\(game.homeProb)")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                // #5363 — a draw-priced sport has no away number to print, and
+                // "—–68" in a 10pt monospaced pair is not a legible absence, so
+                // this row NAMES its survivor instead of holding the slot. The
+                // abbreviation is already on the row, so the name costs nothing
+                // a reader has not already read.
+                if let awayProb = game.awayProb {
+                    Text("\(awayProb)–\(game.homeProb)")
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(game.homeAbbrev) \(game.homeProb)")
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -125,6 +136,16 @@ struct MenuBarView: View {
                 let odds = event.currentOdds
                 let fromCurrentOdds = odds?.homeProbability != nil
                 guard let homeProbability = odds?.homeProbability ?? event.openingOdds?.homeProbability else { return nil }
+                // #5363 — this was the family's most literal copy of the defect:
+                // the away number was not even served here, it was DERIVED as
+                // `1 − home` one line down. On soccer that is *away win or
+                // draw*. The rule decides whether it may be printed; the row
+                // above draws the withheld case by naming the home side.
+                let printable = DrawPricedWinner.printablePair(
+                    away: 1.0 - homeProbability,
+                    home: homeProbability,
+                    sport: event.sport
+                )
                 let awayProbability = 1.0 - homeProbability
                 // UX-P114 — the menu bar prints both sides, and derives away from
                 // home right above, so it had the same 101. Prefer the server's
@@ -146,6 +167,8 @@ struct MenuBarView: View {
                     servedHome: fromCurrentOdds ? odds?.homeRenderedPercent : nil
                 )
                 guard let awayPct = duel[0], let homePct = duel[1] else { return nil }
+                // Withheld, not missing: the row still renders, on its home number.
+                let printableAwayPct: Int? = printable?.away == nil ? nil : awayPct
                 // #3430 — both competitors of one matchup on one menu row, in
                 // the least room any surface gives them.
                 let menuSides = TeamShortName.shortPair(
@@ -160,7 +183,7 @@ struct MenuBarView: View {
                     homeScore: event.homeScore,
                     awayScore: event.awayScore,
                     homeProb: homePct,
-                    awayProb: awayPct,
+                    awayProb: printableAwayPct,
                     // #4880 — see `PeriodLabel.liveStatusText`.
                     period: PeriodLabel.liveStatusText(
                         period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "",
@@ -179,7 +202,8 @@ private struct MenuBarGame: Identifiable {
     let homeScore: Int?
     let awayScore: Int?
     let homeProb: Int
-    let awayProb: Int
+    /// #5363 — nil where the sport prices a draw and the complement is withheld.
+    let awayProb: Int?
     let period: String?
     let sport: String
 }

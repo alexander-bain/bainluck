@@ -17,6 +17,14 @@ import XCTest
 /// carry neither and must keep drawing nothing (#4794).
 final class SearchHeroPercentTests: XCTestCase {
 
+    /// #5363 — the preference-order and served-percent assertions below are about
+    /// WHICH SOURCE answers, not about which side, so they are pinned to a
+    /// two-way sport where the away side survives and the old expectations still
+    /// hold exactly. Stated rather than left to `nil`: an undeclared sport takes
+    /// the same branch today, so a `nil` here would silently stop testing the
+    /// gate the day someone widens the default.
+    private let twoWay = "americanfootball_nfl"
+
     // MARK: - The decode half
 
     /// `GET /api/events/search?q=real madrid` on production 2026-09-10, the
@@ -118,9 +126,27 @@ final class SearchHeroPercentTests: XCTestCase {
         XCTAssertNil(event.currentOdds)
     }
 
-    /// End to end on the real payload: the row that drew nothing draws the
-    /// FIRST-NAMED side, Real Madrid, at 63% (`0.625` → `Int((62.5).rounded())`).
-    func testTheProductionRowThatDrewNothingNowDrawsSixtyThree() throws {
+    /// End to end on the real payload — and #5363 CHANGED THE ANSWER, which is
+    /// why this test no longer has the name it was written under
+    /// (`…NowDrawsSixtyThree`). The rename is the point: the number moved, so
+    /// the assertion that describes it had to move with it rather than be
+    /// quietly relaxed.
+    ///
+    /// **The specimen is `soccer_spain_la_liga`, and nobody noticed.** Its
+    /// `hero_probability_away` is `0.625`, which is exactly `1 − 0.375`: the
+    /// server derives it from `away_probability`, and `away_probability` is the
+    /// complement (`Models/SearchModels.swift` says so on the field). In a sport
+    /// that prices a draw, "Atletico do not win" is *Real Madrid win **or**
+    /// draw* — so this row printed **Real Madrid 63%** for a side whose own win
+    /// price is nearer 38 once a La Liga draw (20–30%) is taken back out.
+    ///
+    /// #4967 gave this row a number. It was the wrong side's number, and it took
+    /// #5271's rule reaching the card family to see it.
+    ///
+    /// The row now reads the price we actually hold — Atletico's 0.375, plainly
+    /// rounded to 38 — and reports `isHome` so the view NAMES it instead of
+    /// letting the away-first title claim it.
+    func testTheSoccerRowNamesTheSideWeActuallyHoldAPriceFor() throws {
         let event = try decodeRealMadridRow()
         let number = firstNamedSideNumber(
             oddsAway: event.currentOdds?.awayProbability,
@@ -128,10 +154,32 @@ final class SearchHeroPercentTests: XCTestCase {
             servedAway: event.currentOdds?.awayRenderedPercent,
             servedHome: event.currentOdds?.homeRenderedPercent,
             heroAway: event.heroProbabilityAway,
-            heroHome: event.heroProbability
+            heroHome: event.heroProbability,
+            sport: event.sport
         )
-        XCTAssertEqual(number?.percent, 63)
-        XCTAssertEqual(number?.probability, 0.625)
+        XCTAssertEqual(number?.isHome, true, "a draw-priced row names the home side")
+        XCTAssertEqual(number?.probability, 0.375)
+        XCTAssertEqual(number?.percent, 38)
+    }
+
+    /// The control, and it is the one that would have caught this in the first
+    /// place: the OLD reading is still computable and must no longer be what the
+    /// row draws. If the fixture is ever re-captured from a two-way sport this
+    /// fails, which is the warning that the specimen has stopped being one.
+    func testTheOldComplementReadingIsNoLongerDrawn() throws {
+        let event = try decodeRealMadridRow()
+        XCTAssertEqual(event.sport, "soccer_spain_la_liga",
+                       "the specimen must stay a draw-priced sport or it proves nothing")
+        XCTAssertEqual(event.heroProbabilityAway, 0.625)
+        let number = firstNamedSideNumber(
+            oddsAway: nil, oddsHome: nil,
+            servedAway: nil, servedHome: nil,
+            heroAway: event.heroProbabilityAway,
+            heroHome: event.heroProbability,
+            sport: event.sport
+        )
+        XCTAssertNotEqual(number?.percent, 63,
+                          "63 is 1 − P(Atletico), i.e. Real Madrid win OR draw")
     }
 
     // MARK: - The preference order
@@ -142,7 +190,8 @@ final class SearchHeroPercentTests: XCTestCase {
         let number = firstNamedSideNumber(
             oddsAway: 0.20, oddsHome: 0.80,
             servedAway: nil, servedHome: nil,
-            heroAway: 0.625, heroHome: 0.375
+            heroAway: 0.625, heroHome: 0.375,
+            sport: twoWay
         )
         XCTAssertEqual(number?.percent, 20)
     }
@@ -152,7 +201,8 @@ final class SearchHeroPercentTests: XCTestCase {
         let number = firstNamedSideNumber(
             oddsAway: nil, oddsHome: nil,
             servedAway: nil, servedHome: nil,
-            heroAway: 0.625, heroHome: 0.375
+            heroAway: 0.625, heroHome: 0.375,
+            sport: twoWay
         )
         XCTAssertEqual(number?.percent, 63)
     }
@@ -163,7 +213,8 @@ final class SearchHeroPercentTests: XCTestCase {
         XCTAssertNil(firstNamedSideNumber(
             oddsAway: nil, oddsHome: nil,
             servedAway: nil, servedHome: nil,
-            heroAway: nil, heroHome: nil
+            heroAway: nil, heroHome: nil,
+            sport: twoWay
         ))
     }
 
@@ -173,7 +224,8 @@ final class SearchHeroPercentTests: XCTestCase {
         let number = firstNamedSideNumber(
             oddsAway: nil, oddsHome: nil,
             servedAway: nil, servedHome: nil,
-            heroAway: nil, heroHome: 0.375
+            heroAway: nil, heroHome: 0.375,
+            sport: twoWay
         )
         XCTAssertEqual(number?.percent, 63)
     }
@@ -193,7 +245,8 @@ final class SearchHeroPercentTests: XCTestCase {
         let number = firstNamedSideNumber(
             oddsAway: nil, oddsHome: nil,
             servedAway: 99, servedHome: 1,
-            heroAway: 0.625, heroHome: 0.375
+            heroAway: 0.625, heroHome: 0.375,
+            sport: twoWay
         )
         XCTAssertEqual(number?.percent, 63)
         XCTAssertNotEqual(number?.percent, 99)
