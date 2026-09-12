@@ -160,8 +160,64 @@ _DERIVATIVE_OUTCOME_RE = re.compile(
 # " - " test) — and a venue that moves one to the front must not thereby
 # publish a map winner as the match winner. Its failure mode is today's
 # behaviour, so an over-broad token costs a missed match, never a wrong price.
+#
+# ONE LIST, TWO READERS (#5698). The words are a tuple rather than a literal
+# alternation because `_SEGMENT_SCOPED_WINNER_RE` below is built from the same
+# tuple: a segment word learned for the prefix test is learned for the winner
+# test in the same edit, which is the `_PREFIX_DISQUALIFIERS` principle applied
+# one level down.
+_SEGMENT_SCOPE_WORDS = (
+    "map",
+    "period",
+    "quarter",
+    "half",
+    "frame",
+    "leg",
+    "set",
+    "game",
+    "round",
+    "inning",
+    "innings",
+)
+_SCOPE_ALT = "|".join(_SEGMENT_SCOPE_WORDS)
+
 _DERIVATIVE_SCOPE_RE = re.compile(
-    r"\b(?:map|period|quarter|half|frame|leg|set|game|round|inning|innings)\b",
+    rf"\b(?:{_SCOPE_ALT})\b",
+    re.IGNORECASE,
+)
+
+# An ORDINAL pinned to a segment word — "Set 1", "1st Half", "2nd Quarter",
+# "Map 1", "Period 2". This is what says a "Winner" is the winner of a PART of
+# the match rather than of the match (#5698).
+#
+# WHY ADJACENCY, AND NOT `_DERIVATIVE_SCOPE_RE` ITSELF. The bare scope word is
+# the right test against a leading PREFIX, where its failure mode is today's
+# behaviour. Against a whole title it is not: `\bgame\b` would refuse "Game
+# Winner", `\bround\b` would refuse "Round of 16 Winner: A vs B" and `\bleg\b`
+# would refuse "Leg 1 Winner" — a two-legged tie's first leg is a whole match.
+# Requiring the ordinal to sit immediately beside the scope word keeps every
+# real segment book (all 1,397 measured below) and leaves "Round of 16" alone,
+# because "of" stands between the word and its number.
+#
+# "GAME" IS SUBTRACTED, AND ONLY HERE. A numbered game is a whole match in
+# every series sport — "Game 3 Winner: Dodgers vs Padres" is the match — while
+# the unnumbered phrase "Game Winner" is already the canonical match wording in
+# `_MONEYLINE_WORD_RE`. So the ordinal form has no segment reading left to
+# catch and one common October reading to lose. It stays in the PREFIX test
+# above, where its failure mode is today's behaviour. The known residual the
+# other direction is `leg`: a two-legged tie's "Leg 1" is a whole match, and if
+# a venue ever titles one "Leg 1 Winner" this refuses it — costing that match a
+# speaker, never a wrong price, which is the trade this module already makes.
+_WINNER_SCOPE_WORDS = tuple(w for w in _SEGMENT_SCOPE_WORDS if w != "game")
+_WINNER_SCOPE_ALT = "|".join(_WINNER_SCOPE_WORDS)
+
+_SEGMENT_ORDINAL = (
+    r"(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|"
+    r"sixth|seventh|eighth|ninth|tenth)"
+)
+_SEGMENT_SCOPED_WINNER_RE = re.compile(
+    rf"\b(?:(?:{_WINNER_SCOPE_ALT})\s+{_SEGMENT_ORDINAL}"
+    rf"|{_SEGMENT_ORDINAL}\s+(?:{_WINNER_SCOPE_ALT}))\b",
     re.IGNORECASE,
 )
 
@@ -354,8 +410,27 @@ def is_game_winner_market(
          "winner" ticker) — for ALL leagues, not just the few hard-coded ones.
     """
     name = name or ""
-    if _MONEYLINE_WORD_RE.search(name) or _WINNER_WORD_RE.search(name):
+    # Explicit MATCH-level wording wins outright and is never scope-tested:
+    # "Game Winner" and "Match Winner" name the whole contest, and "game" is
+    # itself a segment word, so testing this branch would refuse the very
+    # phrase it exists to recognize.
+    if _MONEYLINE_WORD_RE.search(name):
         return True
+    # A BARE "Winner" MUST SAY WHAT IT IS THE WINNER OF (#5698). The word alone
+    # carried no contest, so "… : Set 1 Winner", "… : 1st Half Winner" and
+    # "… - Map 1 Winner" all returned True and were admitted to the blend as
+    # speakers for the MATCH — a live set-1 price published as the match
+    # winner. Nothing else in the module refused them: their outcomes are the
+    # two competitors' bare names, so `outcomes_refute_game_winner` (#5273)
+    # reads no derivative label, and the bare-matchup branch below already
+    # refuses them for their qualifier, so this branch was the sole admitter.
+    #
+    # THE REFUSAL IS TERMINAL, and that is load-bearing: `KXATPSETWINNER-…`
+    # contains "winner", so falling through would let the ticker branch below
+    # re-admit every Kalshi set market and make this fix inert where it looks
+    # most needed.
+    if _WINNER_WORD_RE.search(name):
+        return not _SEGMENT_SCOPED_WINNER_RE.search(name)
     if is_bare_matchup(name):
         return True
     if external_id:
