@@ -716,31 +716,56 @@ class TestEveryDevigContributorIsGatedAndRecorded:
         one of a 900-row Kalshi sample read on 2026-09-12 — that disagreement
         is gone, and a test riding it is inert.
 
-        The disagreement that remains runs the other way, and it is worse: 97 of
-        those 900 rows are period books whose titles carry the word "Winner" —
-        `Alabama vs Kentucky: 1st Half Winner` (`KXNCAAF1H-…`), every quarter,
-        every `Set N Winner`. The CLASS recognizer calls each of them the match
-        winner, because `_WINNER_WORD_RE` reads the word and no branch asks
-        which contest it names; the Kalshi TICKER rule is the only thing
-        refusing them. So a single source-agnostic call would now ADMIT a half
-        winner as the game winner — the #5031/#5273/#5432 class exactly. The
-        dispatch is what stands between the two, in both eras.
+        AND THEN IT FLIPPED A SECOND TIME, BY THE SAME MECHANISM (#5698). The
+        specimen above was replaced by the period books this docstring went on
+        to describe — `Alabama vs Kentucky: 1st Half Winner` (`KXNCAAF1H-…`),
+        every quarter, every `Set N Winner` — which the CLASS recognizer called
+        the match winner on the word "Winner" while the TICKER refused them.
+        #5698 taught the recognizer to ask what a winner is the winner OF, so
+        those two gates now agree as well, and a test riding THAT disagreement
+        is inert in its turn. (That fix is the reason this file's own
+        `_WINNER_WORD_RE` era is over; on Polymarket, where no ticker rule
+        exists, 439 such rows were admitted by nothing else at all.)
 
-        (On Polymarket, where there is no ticker rule, nothing refuses them:
-        439 such rows measured the same day. Filed as #5698.)
+        THE DISAGREEMENT THAT IS LIVE TODAY is the cup ADVANCEMENT book, and it
+        runs the dangerous way. `Bournemouth vs Lincoln` (`KXEFLCUPADVANCE-…`)
+        is a bare matchup by title, so the class recognizer calls it the match
+        winner; it is not one — it pays on who ADVANCES, through extra time and
+        penalties, which is a different question from who wins in 90 minutes.
+        The ticker rule is the only thing that knows. Measured 2026-09-12 over
+        every Kalshi market linked to an event commencing within ±7 days: 10
+        ticker series and 35 rows disagree this way, every one of them an
+        `*ADVANCE` book (EFL/Scottish/Coppa Italia/Libertadores/Sudamericana
+        cups, USL, UECL) plus the cricket `KXODIMATCH`/`KXTESTMATCH` pair. A
+        single source-agnostic call would admit all 35 as game winners.
+
+        So the dispatch is what stands between the two, in all three eras — and
+        the specimen keeps moving because each fix retires the previous one.
         """
         from app.utils.live_blend import (
             admissible_as_blend_speaker,
             is_game_winner_market,
         )
 
+        advance = _Market(
+            3, "Bournemouth vs Lincoln",
+            source="kalshi", external_id="KXEFLCUPADVANCE-26SEP08BOULIC",
+        )
+        assert is_game_winner_market(advance) is False, (
+            "the ticker rule is what refuses an advancement book"
+        )
+        assert admissible_as_blend_speaker(advance, is_primary=False) is True, (
+            "the class recognizer admits it — it is a bare matchup by title, "
+            "and only the ticker knows it pays on advancement"
+        )
+
+        # ...and the era this test used to ride is pinned as closed, so the
+        # two gates agreeing on a period book cannot silently come undone.
         half = _Market(
-            3, "Alabama vs Kentucky: 1st Half Winner",
+            4, "Alabama vs Kentucky: 1st Half Winner",
             source="kalshi", external_id="KXNCAAF1H-26SEP12ALAUK",
         )
-        assert is_game_winner_market(half) is False, (
-            "the ticker rule is what refuses a period book"
-        )
-        assert admissible_as_blend_speaker(half, is_primary=False) is True, (
-            "the class recognizer admits it on the word 'Winner' alone (#5698)"
+        assert is_game_winner_market(half) is False
+        assert admissible_as_blend_speaker(half, is_primary=False) is False, (
+            "#5698: the class recognizer now refuses a period book by name too"
         )
