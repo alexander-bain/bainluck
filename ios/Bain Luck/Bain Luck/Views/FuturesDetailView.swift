@@ -37,6 +37,24 @@ struct FuturesDetailView: View {
         return "\(market.name) on Bain Luck"
     }
 
+    /// Both share buttons on this page — toolbar and hero — record the same
+    /// `futures_detail` source on purpose: they share the same market and the
+    /// same page, and splitting them would ask a reader of the table to care
+    /// about a placement decision rather than a surface. #5525.
+    private func recordShareOpened() {
+        ShareInstrumentation.recordShareOpened(
+            itemType: "futures",
+            itemId: String(marketId),
+            itemName: viewModel.market?.name,
+            // `llmSportCategory` alone, lower-cased, because that is exactly what
+            // `DiscoverCategory.of` sends for this same market from a feed card.
+            // Falling back to `market.category` here would put a share of one
+            // market in two buckets depending on which button was pressed.
+            category: viewModel.market?.llmSportCategory?.lowercased(),
+            surface: .futuresDetail
+        )
+    }
+
     var body: some View {
         Group {
             if viewModel.loading {
@@ -111,6 +129,7 @@ struct FuturesDetailView: View {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 14))
                     }
+                    .recordsShareOpened { recordShareOpened() }
                     PinButton(type: "future", id: marketId)
                 }
             }
@@ -225,6 +244,7 @@ struct FuturesDetailView: View {
                         .padding(.vertical, 6)
                         .background(.white.opacity(0.20), in: Capsule())
                 }
+                .recordsShareOpened { recordShareOpened() }
                 .padding(.top, 2)
             }
             .padding(14)
