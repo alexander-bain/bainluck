@@ -53,6 +53,42 @@ curve."* So not one of these 574,832 legs reaches ``/api/calibration``.
 The ship is therefore entirely the reader's screen, and it is claimed as
 nothing more.
 
+## AMENDED 2026-09-12 (CAL-P1123): THE SPECIMEN SCREEN WAS FIXED BY SOMEONE ELSE
+
+This rail's token (CERT-2528) died on a rebase and sat two days. In that window
+ux/1180 shipped the RENDER half of #4788 (PR #4824, CERT-2521, live 2026-09-10
+19:06Z): ``OutcomeRow.tsx`` now refuses a verdict whenever ``resolution_source``
+is a served ``null``, whatever ``is_winner`` says. **So the specimen above — the
+futures DETAIL page — no longer prints ``Lost``, and this rail can no longer
+claim it.** Re-stating the ship honestly, measured tonight:
+
+* The population is undrained. In the ``fo.id >= 227000000`` slice ALONE,
+  1,850 legs across 635 resolved Polymarket markets are still
+  ``is_winner = false, resolution_source IS NULL`` (production, 2026-09-12
+  07:5xZ). The whole-table count from the filing does not re-run inside the
+  db-query statement timeout; treat 574,832 as the 2026-09-10 reading, not a
+  live one.
+* **The defect is live in a renderer the sweep did not reach.**
+  ``FuturesCard.tsx`` prints ``Lost`` (and collapses the bar to 0% width at 0.15
+  opacity) on ``isResolved && outcome.is_winner === false``, with no
+  ``resolution_source`` test — the exact spelling ``OutcomeRow``'s own docstring
+  names as the thing never to write. It is reachable on ``/my-stuff`` and
+  ``/preferences`` (pinned futures), both fed by ``/api/futures/{id}``, which
+  serves these rows verbatim: market 60684049 (*Which cities face tornado risk
+  on September 10?*) returns 25 outcomes, **25 of 25** ``is_winner=false,
+  resolution_source=null``. Filed for ux, who own that file (notice 41); this
+  rail does not touch it.
+* iOS is not affected: ``FuturesDetailView.swift`` badges only
+  ``isWinner == true``, so a defaulted ``false`` leg draws nothing.
+
+**That is the argument for landing this rail rather than chasing renderers.**
+The same defect turning up in a second component two days after the first was
+fixed BY NAME is the signal that naming renderers is the wrong shape: every
+future consumer of ``is_winner`` — a card, an export, a native view, a surface
+nobody has written yet — re-derives the lie from a column default unless the
+column stops telling it. Withdrawing the verdict at the source retires the
+defect for all of them at once, and leaves the honest grade to #1912.
+
 ## WHY WITHDRAWAL, AND NOT A SECOND VENUE-GRADING RAIL
 
 The cohort is not unowned. ``pm-never-graded`` (CAL-P065, #1912) selects it with
