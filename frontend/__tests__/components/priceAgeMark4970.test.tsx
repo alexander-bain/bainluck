@@ -381,6 +381,39 @@ describe("GUARD: PriceAgeMark on its own, with the clock passed in", () => {
   });
 });
 
+describe("GUARD: only a LIVE event's card can go quiet", () => {
+  /* Mutant: `!settled && !isPregameStatus(eventStatus)` -> `!settled`.
+     MEASURED, and it is why this block exists: on the 2026-09-12 slate the
+     non-settled `other` rows were mostly SCHEDULED games whose prices are a day
+     old because nobody is trading them yet (41 rows on one fixture at 1,570
+     minutes). With `!settled` every one of those cards carries a permanent
+     mark — the same noise this ship removed at row level, one level up.
+     The mark is a claim about a CONTRADICTION: a hero re-reading every 29
+     seconds above prices forty minutes old. A pregame hero is not ticking. */
+  test.each(["scheduled", "pregame", "", "some_provider_word_we_do_not_know"])(
+    "a pregame or unknown status draws nothing, however old the price — %s",
+    (status) => {
+      const html = render(ago(26 * HOUR), status);
+      expect(marks(html)).toBe(0);
+      // The card itself still renders, so this is not an empty-fixture pass.
+      expect(visible(html)).toContain("47%");
+    },
+  );
+
+  /* The other direction, gotcha #43. A suspended or delayed game IS live by the
+     codebase's own triple, and should be: an eleven-hour-old price under a rain
+     delay is exactly the thing a reader wants told. A mutant narrowing `live`
+     to the literal "live" would silence those. */
+  test.each(["live", "in_progress", "halftime", "suspended", "delayed"])(
+    "a live, halted or delayed game still speaks — %s",
+    (status) => {
+      const html = render(ago(26 * HOUR), status);
+      expect(cardMarks(html)).toBe(1);
+      expect(visible(html)).toContain("yesterday");
+    },
+  );
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTROL — green against both. What must not move.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -424,6 +457,8 @@ describe("CONTROL: nothing else on the card changes", () => {
  *   M8   let a MIXED card speak for all its rows              KILLED (1)  ****
  *   M9   `isLivePriced` ignores `settled`                     KILLED (5)
  *   M10  card speaks when no live row is stale                KILLED (1)
+ *   M11  `live` := `!settled` (drop the pregame exclusion)    KILLED (4)  *****
+ *   M12  `live` := the literal word "live"                    KILLED (4)
  *
  * (M2, "render the mark above `OutcomeBar`'s frozen return", was run against
  * the first per-row design and killed by 5; the design then moved the mark to
@@ -445,6 +480,12 @@ describe("CONTROL: nothing else on the card changes", () => {
  *   ***  M6 survived because the original pair fell on different DATES, where
  *        lexicographic and chronological order agree — both implementations
  *        returned the same row. The pair now differs only by UTC offset.
+ *   ***** M11 is not a hypothetical: `!settled` is what this component shipped
+ *        with for the first hour of the build, and the guard block that names
+ *        it went red on the real code — the card fell silent for a pregame
+ *        game and every ROW then drew its own mark instead, because the row
+ *        fallback was gated on the card and not on the event. That hole was
+ *        found by writing the guard, not by reading the diff.
  *   **** M8 survived because the test counted marks and a count cannot tell a
  *        card-level mark from a row-level one: with the agreement test removed
  *        the mark MOVES from the row to the header and the count stays 1.

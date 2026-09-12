@@ -16,6 +16,7 @@ import {
   SETTLED_SECTION_NOTE_NO_QUOTES,
   SETTLED_QUOTE_PREFIX,
 } from "@/lib/settledQuote";
+import { isPregameStatus } from "@/lib/propDivergence";
 import { renderedPercent } from "@/lib/renderedPercent";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import { oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
@@ -153,7 +154,16 @@ function OutcomeBar({
   );
 }
 
-function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean }) {
+function PropMiniCard({
+  item,
+  settled,
+  live,
+}: {
+  item: MarketCard;
+  settled: boolean;
+  /** #4970: only a LIVE event's card can go quiet. See `SpecialEventMarkets`. */
+  live: boolean;
+}) {
   const maxSourceCount = Math.max(...item.outcomes.map((o) => o.sourceCount ?? 1));
   const sourceCount =
     maxSourceCount > 1 ? maxSourceCount : new Set(item.outcomes.map((o) => o.source)).size;
@@ -185,7 +195,7 @@ function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean })
      or answered row has no live price for an age to be about — including it
      would make a card of eight settled set-winners plus one live row read as
      "mixed" and silently move the mark to the wrong place. */
-  const livePriced = item.outcomes.filter((o) => isLivePriced(o, settled));
+  const livePriced = live ? item.outcomes.filter((o) => isLivePriced(o, settled)) : [];
   const staleLive = livePriced.filter((o) => sourceIsStale(o.observedAt));
   const cardSpeaksForAll = livePriced.length > 0 && staleLive.length === livePriced.length;
   const cardStamp = cardSpeaksForAll
@@ -215,7 +225,7 @@ function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean })
             outcome={o}
             rank={i}
             settled={settled}
-            showAge={!cardSpeaksForAll}
+            showAge={live && !cardSpeaksForAll}
           />
         ))}
       </div>
@@ -231,7 +241,7 @@ function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean })
                 outcome={o}
                 rank={1}
                 settled={settled}
-                showAge={!cardSpeaksForAll}
+                showAge={live && !cardSpeaksForAll}
               />
             ))}
           </div>
@@ -283,6 +293,23 @@ export default function SpecialEventMarkets({
   // page, `MarketMapSection` and `propDivergence` were already carrying three
   // spellings of "settled" between them, and this is the widest owned one.
   const settled = isSettledStatus(eventStatus);
+
+  /* #4970: IS THE EVENT LIVE — not merely "not finished".
+     `!settled` is the wrong test and the measurement says so. On the slate of
+     2026-09-12 the non-settled `other` rows were mostly SCHEDULED games, whose
+     prices are legitimately a day old because nobody is trading them yet; every
+     one of those cards would have carried a permanent age mark, which is the
+     same noise this ship removed at row level arriving one level up.
+     The news is a CONTRADICTION: the hero above these cards re-reads every 29
+     seconds while the prices in them are forty minutes old. A pregame page's
+     hero is not ticking, so there is nothing for a stale price to contradict.
+     Expressed with the codebase's own triple — settled / live / pregame
+     (`isPregameStatus`'s header) — rather than a fourth status vocabulary; a
+     suspended or delayed game counts as live there, and should, because an
+     eleven-hour-old price under a rain delay is exactly what a reader wants
+     told. An UNKNOWN status lands on pregame and draws nothing, which is the
+     safe end for the same reason it is there. */
+  const live = !settled && !isPregameStatus(eventStatus);
 
   if (section.categories.length === 0) return null;
 
@@ -394,7 +421,7 @@ export default function SpecialEventMarkets({
               )}
               <div className="space-y-3">
                 {shownCards.map((item) => (
-                  <PropMiniCard key={item.name} item={item} settled={settled} />
+                  <PropMiniCard key={item.name} item={item} settled={settled} live={live} />
                 ))}
                 {restCards.length > 0 && (
                   <details>
@@ -403,7 +430,7 @@ export default function SpecialEventMarkets({
                     </summary>
                     <div className="space-y-3 pt-3">
                       {restCards.map((item) => (
-                        <PropMiniCard key={item.name} item={item} settled={settled} />
+                        <PropMiniCard key={item.name} item={item} settled={settled} live={live} />
                       ))}
                     </div>
                   </details>
