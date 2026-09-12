@@ -176,7 +176,20 @@ SEASON_CALENDARS: dict[str, tuple[int, int]] = {
     "mma_mixed_martial_arts": (1, 12),  # Year-round, no season effect
 }
 
-# Sport-specific total periods for game progress calculation
+# Sport-specific total periods for game progress calculation.
+#
+# #2757 — MEMBERSHIP IS LOAD-BEARING, NOT JUST THE VALUE. A key that is ABSENT
+# here used to fall to the `4` default and then be compared against a real
+# period number, so every nine-inning league we had not named asserted overtime
+# from the 5th inning on. Measured on production 2026-09-12 over all 394 distinct
+# non-`Final` `(sport_key, period)` pairs: 279 of the 282 rows the predicate
+# called beyond-regulation were this — `baseball_mlb_preseason` (188) and
+# `baseball_ncaa` (91), `Top 5th`/`Bottom 5th` against a guessed 4. Only 3 rows
+# (real `baseball_mlb` extra innings) were genuine.
+#
+# The two names below close the measured hole; `_beyond_regulation_is_knowable`
+# closes the mechanism, so the NEXT league we ingest is safe before anyone
+# remembers to add it here.
 SPORT_TOTAL_PERIODS: dict[str, int] = {
     "basketball_nba": 4,
     "basketball_ncaab": 2,
@@ -186,6 +199,8 @@ SPORT_TOTAL_PERIODS: dict[str, int] = {
     "americanfootball_ncaaf": 4,
     "icehockey_nhl": 3,
     "baseball_mlb": 9,
+    "baseball_mlb_preseason": 9,
+    "baseball_ncaa": 9,
     "soccer_epl": 2,
     "soccer_spain_la_liga": 2,
     "soccer_uefa_champs_league": 2,
@@ -264,6 +279,41 @@ def _is_minute_clock_sport(sport_key: Optional[str]) -> bool:
     return (sport_key or "").startswith("soccer_")
 
 
+#: The period count assumed for a sport `SPORT_TOTAL_PERIODS` does not name.
+#: Good enough to estimate progress, never good enough to assert that a game is
+#: past regulation — see the `mapped_total is None` arm of `parse_game_progress`.
+_GUESSED_TOTAL_PERIODS = 4
+
+
+#: What each sport calls the phase after regulation. Keyed by sport-key PREFIX,
+#: like `_is_minute_clock_sport` and for the same reason: a league we add next
+#: month is covered the day it arrives rather than silently inheriting a noun
+#: from a different sport. Anything absent says "Overtime", which is correct for
+#: football, basketball and hockey — the sports that coined the word.
+_OVERTIME_NOUN_BY_SPORT_PREFIX: dict[str, str] = {
+    "baseball_": "Extra innings",
+    "soccer_": "Extra time",
+}
+
+#: The label every sport that does not name itself above wears.
+DEFAULT_OVERTIME_NOUN = "Overtime"
+
+
+def overtime_noun(sport_key: Optional[str]) -> str:
+    """What to CALL the phase after regulation, for this sport.
+
+    #2757. Baseball has extra innings and soccer has extra time; neither has
+    overtime, and a live MLB card in the 12th read "Overtime" because one
+    hardcoded string served every sport at both label sites. The detection was
+    never wrong — only the noun.
+    """
+    key = sport_key or ""
+    for prefix, noun in _OVERTIME_NOUN_BY_SPORT_PREFIX.items():
+        if key.startswith(prefix):
+            return noun
+    return DEFAULT_OVERTIME_NOUN
+
+
 def parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> tuple[float, bool]:
     """Parse game progress from ESPN period string.
 
@@ -339,10 +389,27 @@ def parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> 
         # Only an explicitly-marked period may be read as beyond regulation.
         explicit = num_match is not bare_match
         period_num = int(num_match.group(1))
-        total = SPORT_TOTAL_PERIODS.get(sport_key or "", 4)
+        # Read as `.get(key)`, not `.get(key, 4)`, so that "we GUESSED this
+        # denominator" survives as a fact the branch below can see. The default
+        # being invisible is the whole of #2757: a nine-inning league absent from
+        # the map was silently handed "4 periods", and the 5th inning then
+        # cleared `period_num > total` on a number nobody had ever asserted.
+        mapped_total = SPORT_TOTAL_PERIODS.get(sport_key or "")
+        total = _GUESSED_TOTAL_PERIODS if mapped_total is None else mapped_total
         if period_num > total:
-            if explicit:
+            if explicit and mapped_total is not None:
                 return 1.0, True  # Beyond regulation = overtime
+            if explicit:
+                # The period token is real, but the DENOMINATOR was invented, so
+                # exceeding it is evidence the guess is too small — not evidence
+                # the game is past regulation. Both claims are withdrawn, not
+                # just the overtime one: answering 1.0 here would report a
+                # 5th-inning game as 100% elapsed and hand it the full
+                # late-game bonus, which is #3208's invisible half rebuilt on a
+                # guessed total. "Mid-game, don't know" is the honest answer and
+                # is exactly what the bare-number arm below says about its own
+                # weak evidence. Mapping the sport is what earns a real reading.
+                return 0.5, False
             # An unlabelled number larger than the sport has periods is far more
             # likely a clock than a 31st period. Say "mid-game, don't know" —
             # the old code said "overtime", which is a strong claim built on the
@@ -410,6 +477,14 @@ class EventFlags:
     # #5047 — how much doubt the market has left in an upset the scoreboard has
     # already earned. Tri-state for the same reason: None is "cannot say".
     upset_is_no_longer_in_doubt: Optional[bool] = None
+    # #2757 — the sport, carried so that labels can be named in its own words.
+    # `get_highlight_label(result)` takes no sport argument and is called from
+    # three sites in two route modules, so the alternative was changing that
+    # signature everywhere; the noun is a property of the event being described,
+    # which is what this dataclass is for. Written once by `compute_highlight`.
+    # None means "not computed through `compute_highlight`" — every noun falls
+    # back to "Overtime", which is what the string was before this flag existed.
+    sport_key: Optional[str] = None
 
 
 def underdog_leads(
@@ -818,6 +893,10 @@ def compute_highlight(
     result = HighlightResult()
     flags = result.flags
 
+    # #2757 — carried so `get_highlight_label` can name overtime in this sport's
+    # own words. Set unconditionally, before any early return can skip it.
+    flags.sport_key = sport_key
+
     # #4580 — read the scoreboard ONCE, here, so the capsule and the footer
     # badge describe the same card.
     flags.underdog_is_leading = underdog_leads(opening_home_prob, home_score, away_score)
@@ -1069,7 +1148,10 @@ def compute_highlight(
     # Priority order for what to show users
     priority_order = [
         ("upset", "Recent upset"),
-        ("overtime", "Overtime"),
+        # #2757 — the reason CODE stays "overtime" (a machine key, matched by
+        # `result.reasons` and by `routes/feed.py`); only the DISPLAY string is
+        # named in the sport's own words. Notice 33's distinction exactly.
+        ("overtime", overtime_noun(sport_key)),
         ("favorite_switched", "Possible upset"),
         # T10-1 (#5439) — the same two withdrawals as `get_highlight_label`.
         # `primary_reason` is SERVED (`routes/feed.py` -> `"primary_reason"`, and
@@ -1109,7 +1191,10 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
     if flags.is_upset:
         return "Recent upset"
     if flags.is_live and "overtime" in result.reasons:
-        return "Overtime"
+        # #2757. `flags.sport_key` is None for a hand-built result, which falls
+        # back to "Overtime" — the string this site returned unconditionally
+        # before the flag existed, so no fixture changes meaning.
+        return overtime_noun(flags.sport_key)
     # #4580 — "Upset brewing" names the SCOREBOARD, so the scoreboard has to
     # agree. `favorite_switched` is derived purely from price (see
     # `compute_highlight`), and on 2026-09-09 it put "Upset brewing" on the NFL
