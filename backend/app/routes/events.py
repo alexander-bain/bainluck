@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Integer, String, literal_column, text, true
+from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.orm.attributes import set_committed_value
@@ -92,6 +93,8 @@ from app.utils.search_headline_contender import (
     reserve_headline_slot,
 )
 from app.utils.search_intent import (
+    INTENT_SEASON_YEAR,
+    INTENT_TODAY,
     parse_intent,
     promote_answering_rows,
 )
@@ -814,6 +817,59 @@ def _phrase_alias_alternatives(terms: list[str]) -> list[list[str]]:
                     alternatives.append(candidate)
             break  # one span per alias is enough; a repeated alias adds nothing
     return alternatives
+
+
+#: The calendar a game's "day" is read in. `market_identity.eastern_game_date`
+#: is the Python half of this and `search_intent` bands the typeahead rows
+#: against it; this is the same rule expressed in SQL so the results page and
+#: the dropdown cannot disagree about which day a game is on.
+_EASTERN_TZ_NAME = "America/New_York"
+
+
+def _intent_day_order_key(intent, now: datetime):
+    """A sort key that puts the day the reader named FIRST, or ``None``.
+
+    ``None`` means "this reader named no day", and the caller then appends
+    nothing at all — so for the overwhelmingly common query the compiled SQL is
+    byte-identical to what it was before #5688. That is deliberate: a key that
+    was a constant for generic queries would still be a key, and every plan in
+    the system would have to be re-read to prove it changed nothing.
+
+    Two kinds name a day, and they are the two the production measurement
+    caught emptying the page:
+
+    * ``today`` — the game on the reader's own date. NOT `now` in UTC: a 7pm ET
+      game on the 12th is the 13th in UTC, so a UTC comparison would rank the
+      evening slate — most of an American sports day — as "not today".
+    * ``season_year`` — any game in the season the reader named.
+
+    A BAND, NOT A FILTER, and for the reason `search_intent.intent_answer_rank`
+    already records: excluding the rows that miss the qualifier would empty the
+    page whenever nothing matches, and not-an-empty-page is the entire ship.
+    `lazio today` with no Lazio game today still leads with a Lazio game; it
+    just puts an actual same-day game above it when one exists.
+    """
+    if intent is None:
+        return None
+
+    eastern_day = cast(
+        func.timezone(_EASTERN_TZ_NAME, Event.commence_time), Date
+    )
+
+    if intent.kind == INTENT_TODAY:
+        # The reader's day is resolved from the SAME instant the route stamps
+        # its rows with, rather than from a second `now()` evaluated in the
+        # database — two clocks one statement apart can straddle midnight, and
+        # a test that pins one of them would not pin the other (gotcha #44).
+        target = now.astimezone(ZoneInfo(_EASTERN_TZ_NAME)).date()
+        return case((eastern_day == target, 0), else_=1)
+
+    if intent.kind == INTENT_SEASON_YEAR and intent.season is not None:
+        return case(
+            (func.extract("year", eastern_day) == intent.season, 0), else_=1
+        )
+
+    return None
 
 
 def _strip_search_scaffolding(terms: list[str]) -> list[str]:
@@ -4624,8 +4680,51 @@ async def search_events(
 
     await _apply_search_statement_timeout(db, _deadline)
 
-    search_pattern = f"%{q}%"
-    terms = _strip_search_scaffolding(q.strip().split())  # #993 Slice C
+    # T2-3 (#5060) reached `/typeahead` and stopped there; #5688 is the same
+    # defect on the page a reader actually lands on. The rule is the one that
+    # route's own comment states and is repeated here verbatim because it is the
+    # whole of the fix: **`_q_identity` identifies, `q` echoes.** A site that
+    # decides WHICH rows exist or WHICH entity the reader means takes the
+    # subject; a site that logs, caches, or echoes the query back takes what the
+    # reader actually typed.
+    #
+    # WHY EVERY IDENTITY SITE AND NOT THE OBVIOUS ONE. The multi-word arms here
+    # are ANDs over every term, so `lazio today` requires rows matching BOTH
+    # "lazio" and "today". MEASURED on production 2026-09-12, the same minute:
+    #
+    #     q=lazio           results 7   teams 1   futures 10
+    #     q=lazio today     results 0   teams 0   futures 0
+    #     q=red sox         results 23  teams 2   futures 10
+    #     q=red sox today   results 0   teams 0   futures 0
+    #     q=lazio 2026      results 0   teams 0   futures 1
+    #
+    # EVERY arm empties, not just the events one — which is why substituting at
+    # the pattern alone would leave the teams, futures, concept and match-class
+    # arms dark and call the ship paid. That partial substitution is the
+    # two-rules trap `/typeahead` names; the guard for this fix drives the ROUTE
+    # and asserts each arm, because a unit test on `parse_intent` passes today
+    # and the page is still empty.
+    #
+    # THIS IS HALF THE FIX. Identity substitution stops the page emptying; it
+    # leaves the qualifier decorative, which is CERT-2735's defect wearing the
+    # other arm's clothes. The half that makes the named day LEAD is the
+    # `order_by` key built by `_intent_day_order_key` — see the comment at the
+    # `query.order_by(...)` call below for why it is in the SQL and not a
+    # partition over the page. `_intent` is resolved once, here, and used by
+    # both halves.
+    _intent = parse_intent(q)
+    _q_identity = _intent.subject if _intent else q
+
+    # `search_pattern = f"%{q}%"` STOOD HERE AND WAS DEAD — assigned on this line
+    # and read nowhere in the backend (one occurrence in the tree). It is deleted
+    # rather than migrated, and the deletion is a finding of #5688's own mutation
+    # sweep: reverting it to the raw `q` was the ONE mutant the new guard did not
+    # kill, because nothing downstream could observe it. Left in place it is a
+    # trap — the next reader taking inventory of this route's identity sites
+    # counts it as one, and "fixes" it believing they changed what a reader sees.
+    # It almost certainly died in the trigram/FTS rework that replaced the
+    # whole-query ILIKE with the per-term arms below.
+    terms = _strip_search_scaffolding(_q_identity.strip().split())  # #993 Slice C
     expanded = _apply_search_synonyms(expand_search_terms(terms))  # #993 Slice C
 
     # Collect sport alias keys from any term (not just full query), and remember
@@ -4870,12 +4969,41 @@ async def search_events(
         (Event.event_tags.op("@>")(_lc("'[\"stakes:playoff_race\"]'::jsonb")), 5),
         else_=9
     )
-    search_rank = _search_rank(_event_search_vector(), q)
+    # On the SUBJECT (#5688): `websearch_to_tsquery` ANDs its lexemes, so the raw
+    # query ranks every row that does not contain "today" at 0 and flattens the
+    # relevance ordering of the very pool the reader asked about.
+    search_rank = _search_rank(_event_search_vector(), _q_identity)
 
-    # For scheduled: order by commence_time ASC (soonest first)
-    # For completed: order by commence_time DESC (most recent first)
-    # We handle this by using different sort keys based on status
+    # #5688, second half: a time qualifier LEADS, and it has to do it HERE.
+    #
+    # Identity substitution alone stops the page emptying, and leaves the
+    # qualifier decorative: on 2026-09-12 `lazio today` would then serve the
+    # Sep 19 fixture above the Sep 12 game being played that day, because
+    # `status_order` ranks `scheduled` above `completed` and today's game had
+    # already finished. That is the CERT-2735 defect — the reader's qualifier
+    # read as a topic and not as a constraint — reproduced on the other arm.
+    #
+    # IN THE SQL, NOT IN PYTHON, and that is the whole reason this is an
+    # `order_by` key rather than a partition over `formatted_results`. The
+    # events arm is PAGINATED: this file's own concept-ranking comment records
+    # that re-ordering one page after the fact is "correct within the page and
+    # incoherent across pages", and it would also be unable to lift a same-day
+    # game that the offset had already pushed onto page 2. A sort key applies to
+    # the whole ordered set, before the window is taken.
+    #
+    # ABOVE `status_order`, deliberately. A same-day game that has FINISHED is
+    # still the answer to "today" — that is the specimen above — so a key placed
+    # below the status tier could never move it. Nothing else is reordered: the
+    # key is a constant 1 for every row whenever the reader named no day, and
+    # the compiled SQL is then byte-identical to before this change.
+    #
+    # Eastern, because `eastern_game_date` is the calendar the rest of this
+    # system means by a game's "day" (`market_identity`), and the intent module
+    # bands the typeahead rows against exactly that. Two surfaces disagreeing
+    # about which day a game is on is the drift this file keeps naming.
+    _day_boost = _intent_day_order_key(_intent, now)
     query = query.order_by(
+        *( (_day_boost,) if _day_boost is not None else () ),
         status_order,
         tag_boost,
         search_rank.desc(),
@@ -5021,13 +5149,20 @@ async def search_events(
             await db.execute(
                 text("SET LOCAL pg_trgm.similarity_threshold = 0.25")
             )
+            # On the SUBJECT (#5688): this is the "did you mean" arm, and trigram
+            # similarity is computed over the WHOLE string. The scaffold word is
+            # pure noise in that distance — `similarity('Lazio', 'lazio today')`
+            # is far below the same pair without it, so the fallback that exists
+            # to rescue a near-miss was itself defeated by the reader's question.
             best_team = await db.execute(
-                select(Team.name, func.similarity(Team.name, q).label("sim"))
-                .where(
-                    Team.name.op("%")(q),
-                    func.similarity(Team.name, q) > 0.25,
+                select(
+                    Team.name, func.similarity(Team.name, _q_identity).label("sim")
                 )
-                .order_by(func.similarity(Team.name, q).desc())
+                .where(
+                    Team.name.op("%")(_q_identity),
+                    func.similarity(Team.name, _q_identity) > 0.25,
+                )
+                .order_by(func.similarity(Team.name, _q_identity).desc())
                 .limit(1)
             )
             best = best_team.first()
@@ -5739,7 +5874,10 @@ async def search_events(
     # `_last_token_prefix_tsquery` returns None when there is no usable last
     # token (`re`), in which case NOTHING is appended and the compiled SQL is
     # byte-identical to before this change.
-    _futures_prefix_tsquery = _last_token_prefix_tsquery(q)
+    # On the SUBJECT (#5688): the LAST token of `lazio today` is the scaffold
+    # word, so the raw query aims this prefix arm at "today:*" — it orders the
+    # futures page by a word the reader asked ABOUT nothing with.
+    _futures_prefix_tsquery = _last_token_prefix_tsquery(_q_identity)
     _futures_prefix_order_keys = (
         []
         if _futures_prefix_tsquery is None
@@ -6271,7 +6409,7 @@ async def search_events(
             # "…Series" nominee matching "world series") wrongly ranks "The Emmys"
             # above the correct futures. A query that DOES name the ceremony is also
             # covered by the query-gated prepend below (dedup-safe).
-            if not _query_names_concept(q, _aw):
+            if not _query_names_concept(_q_identity, _aw):
                 continue
             if _aw["key"] in _seen_concept_keys:
                 continue
@@ -6410,7 +6548,7 @@ async def search_events(
     # reads are now taken (v3806, v3807), so #1846 is fixed and the two surfaces
     # share `_query_names_concept_row` — one rule, one implementation, two shapes.
     for _c in event_concepts:
-        _c["_derived"] = not _query_names_concept(q, _c)
+        _c["_derived"] = not _query_names_concept(_q_identity, _c)
 
     # #1063: prepend the golf-major concept when the QUERY names a major (by phrase
     # or current host-venue). Prepended so the major outranks a cross-sport "open"
@@ -6425,7 +6563,13 @@ async def search_events(
     # no market-derived path mints a golf key, so its query-derived concept hit
     # no collision. "The exemption worked exactly where it happened not to be
     # tested" is not a property to rely on twice.
-    _golf_major_concept = _detect_query_golf_major_concept(q)
+    # The three query-derived concept detectors run on the SUBJECT (#5688). Each
+    # is phrase- and word-boundary-anchored, so a trailing scaffold word does not
+    # stop them firing today — but each is also the single reason its concept
+    # reaches the page at all, and `masters today` is exactly the query a reader
+    # types during a tournament. One rule for identity, not "the arms that
+    # happened to survive the raw string keep it".
+    _golf_major_concept = _detect_query_golf_major_concept(_q_identity)
     if _golf_major_concept:
         event_concepts = _upsert_search_query_derived_concept(
             event_concepts, _seen_concept_keys, _golf_major_concept,
@@ -6435,7 +6579,7 @@ async def search_events(
     # "world cup final" / "fifa"). Prepended so it outranks the placeholder-riddled
     # Polymarket "World Cup Winner" market and any cross-sport noise — a fan
     # searching "world cup" must land on the concept FIRST (Lisa's acceptance test).
-    _wc_concept = _detect_query_world_cup_concept(q)
+    _wc_concept = _detect_query_world_cup_concept(_q_identity)
     if _wc_concept:
         event_concepts = _upsert_search_query_derived_concept(
             event_concepts, _seen_concept_keys, _wc_concept,
@@ -6449,7 +6593,7 @@ async def search_events(
     # This is the exact collision that produced #1839 on typeahead: a
     # "Grammy Winner: Best New Artist" market derives `event:awards:grammys`,
     # byte-identical to what `_detect_query_awards_concept("grammys")` returns.
-    _awards_concept = _detect_query_awards_concept(q)
+    _awards_concept = _detect_query_awards_concept(_q_identity)
     if _awards_concept:
         event_concepts = _upsert_search_query_derived_concept(
             event_concepts, _seen_concept_keys, _awards_concept,
@@ -6466,7 +6610,11 @@ async def search_events(
     # now recalls scores 0.0 against the whole-lexeme tsquery, so ranking it with
     # the old expression would recall the Yankees for `yank` and then sort them
     # by name. Identical expression when the query has no usable prefix token.
-    team_rank = _team_search_rank(q).label("team_rank")
+    # The teams arm, on the SUBJECT (#5688). This is the arm the measurement
+    # above shows going 1 -> 0 and 2 -> 0: the filter is an AND over the terms
+    # and no team owns a name containing "today", so the reader's own team
+    # vanished from the page they went to find it on.
+    team_rank = _team_search_rank(_q_identity).label("team_rank")
     team_search_q = (
         # `alternate_names` is SELECTed for the scorer, not for the payload — the
         # same correction typeahead needed (spec §3). The recall arms had always
@@ -6478,7 +6626,7 @@ async def search_events(
                Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
                Team.alternate_names, team_rank)
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
-        .where(_build_team_search_filter(q))
+        .where(_build_team_search_filter(_q_identity))
         .order_by(team_rank.desc(), Team.name)
         .limit(25)
     )
@@ -6587,11 +6735,19 @@ async def search_events(
     # MC5 and still ships. Recall belongs to the SQL that built the candidate set.
     from app.utils.search_match_class import rank as _search_rank_candidates
 
+    # On the SUBJECT (#5688), and this is the site where the substitution matters
+    # MOST rather than least. `rank()` does not merely order — it DROPS rows it
+    # cannot rank, so a scaffold word in the string it scores against removes
+    # answers from the page instead of demoting them. It is also the site
+    # `/typeahead`'s comment means by "the more precisely the reader asked, the
+    # fewer answers existed": `lazio` lands the club at MC0 on an owned alias,
+    # `lazio today` lands it at MC3 on partial tokens, because no club owns a
+    # name containing "today".
     event_concepts = _search_rank_candidates(
-        q, [(_search_concept_evidence(c), c) for c in event_concepts]
+        _q_identity, [(_search_concept_evidence(c), c) for c in event_concepts]
     )[:5]
     matched_teams = _search_rank_candidates(
-        q, [(_search_team_evidence(t), t) for t in matched_teams]
+        _q_identity, [(_search_team_evidence(t), t) for t in matched_teams]
     )[:5]
     # Private ranking evidence never reaches the wire. Typeahead learned this by
     # nearly shipping 40 outcome strings per keystroke; here it is two keys, and
