@@ -272,6 +272,48 @@ async def test_a_mapped_ticker_is_refused_and_costs_no_venue_call(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_mapped_ticker_row_is_left_to_the_rail_that_owns_it_5621():
+    """The `KXNFLFFPTS` rows belong to `repair_5621_phantom_ffpts_events.py`.
+
+    Two rails writing the same column over the same rows is a worse defect than
+    either one they repair, and nothing above this test would notice: both write
+    `llm_sport_category='football'`, so the damage is silent and the second
+    writer's undo restores a value the first writer had already changed.
+
+    The partition is gate 2, and it holds ONLY while `kxnflffpts` is in the
+    ticker map — #5624 put it there, AFTER this branch was cut, which is exactly
+    how close this came to being missed. So both halves are asserted here:
+
+    * the map still maps it, so gate 2 really does fire for 5621's population;
+    * the real resolver — not a stub — short-circuits before the venue call.
+
+    The exploding service is the anti-vacuity instrument. `not_asked` has to
+    come from the short-circuit; a resolver that reached the network and
+    happened to get nothing back would pass a weaker assertion.
+    """
+    from app.tasks.kalshi import _resolve_series_tag_result
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    owned_by_5621 = "KXNFLFFPTS-26SEP13BALIND"
+
+    assert get_sport_key_from_ticker(owned_by_5621) == "americanfootball_nfl", (
+        "#5624 maps kxnflffpts; without it gate 2 stops firing and THIS rail "
+        "starts writing the rows repair_5621_phantom_ffpts_events.py owns"
+    )
+
+    class _ExplodingService:
+        async def get_series_metadata(self, series):
+            raise AssertionError(
+                "the venue must not be asked about a row another rail owns"
+            )
+
+    result = await _resolve_series_tag_result(_ExplodingService(), owned_by_5621)
+
+    assert result.not_asked is True
+    assert result.called is False
+
+
+@pytest.mark.asyncio
 async def test_the_venue_budget_meters_calls_made_not_series_seen(monkeypatch):
     """A free answer must not spend the budget.
 
