@@ -965,6 +965,42 @@ deleted, whatever lived behind it MOVED, and both ends need a guard — the
 positive where it landed, and the negative where it left. A moved feature
 otherwise loses exactly one of those halves and nobody notices which.
 
+### 33. A directive that names both a goal and a mechanism has smuggled in a design decision.
+
+The mechanism is an **inherited claim like any other**, and it is not privileged by
+having been written by the orchestrator, by a predecessor session, or by the issue
+itself. Price it before implementing it. If it is wrong, **the finding *is* the
+deliverable** — and it belongs on the issue and in the orchestrator's inbox, not only
+in a restock, because the issue is where the next builder will look.
+
+The tell is that the goal and the mechanism can be true and false independently. A
+lane that implements the mechanism has delivered the *sentence*; a lane that prices it
+first has delivered the *ship*. So the question is never "can I build what I was told" —
+it is **"does this mechanism buy the goal, and at what price"**.
+
+- **Ask it before you build, not after.** A measurement taken to *tune* a design will
+  sometimes tell you the design is the wrong shape, and it can only do that while the
+  design is still cheap to move.
+- **When the answer moves the design, say so where the old claim lives.** A correction
+  filed only in a handoff corrects one reader; the stale mechanism goes on recruiting
+  every other one.
+- **Rejections can stand while the conclusion drawn from them falls.** This is the
+  common shape, and it is easy to miss: the predecessor's reasons were right and its
+  conclusion was still wrong.
+
+*Charter case (notice 48, #5470).* The notice named the goal — the background app stops
+running week-old code — and, in a parenthetical, the mechanism: *"the heavy app deploys
+with every main-site release."* The goal was right. The mechanism was the one thing that
+could not be done: a heavy release cycles `worker-heavy.1`, and a dyno cycle kills what
+it is mid-way through — the exact failure that moving the worker to its own app had just
+ended. Measured, 31 backend deploys in 24 h, so per-release would have handed that
+failure back 31 times a day. The parenthetical was amended; the ship was a three-hourly
+converging sync instead.
+
+*And the corollary for the successor session:* a handoff that flags one unknown and
+tells you to confirm it before building is doing the right thing — but confirm it
+expecting the answer to **replace** the design, not merely to refine it.
+
 # MECHANICAL SPECS — enforced by the Integrator, not judged by it
 
 Everything above this line is a **clause**: a sentence a reader applies with judgement.
