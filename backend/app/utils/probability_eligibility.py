@@ -220,6 +220,7 @@ def verified_record(
     market_id: Optional[int] = None,
     source_market_id: Optional[str] = None,
     scope: str = SCOPE_FULL_EVENT_WINNER,
+    semantic_type: Optional[str] = None,
     contributors: Optional[Sequence[MarketRef]] = None,
 ) -> EligibilityRecord:
     """The record a gate mints when it has ADMITTED a reading.
@@ -237,6 +238,14 @@ def verified_record(
     dropped, since `contributing_market_ids` reads that case off ``market_id``.
     A caller that devigs and passes nothing here mints a record that claims a
     composite was produced by one market, which is the defect, not a shortcut.
+
+    ``semantic_type`` is CU-1 clause (2) (#5273): what KIND of question the
+    speaking market asks, read off its stored understanding by
+    `content_understanding.semantic_type_for_market`. It is passed in as a plain
+    string rather than derived here so this module keeps importing nothing that
+    the request path does not already hold, and it defaults to ``None`` — the
+    value every caller mints today — so a caller that does not supply it writes
+    exactly the record it writes now and `to_entry` drops the key.
     """
     refs = tuple(contributors or ())
     return EligibilityRecord(
@@ -245,6 +254,7 @@ def verified_record(
         rule=rule,
         market_id=market_id,
         source_market_id=source_market_id,
+        semantic_type=semantic_type,
         contributors=refs if len(refs) > 1 else None,
     )
 

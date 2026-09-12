@@ -36,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
+from app.utils.content_understanding import semantic_type_for_market
 from app.utils.game_market_class import (
     classify_game_market_class,
     outcomes_refute_game_winner,
@@ -609,6 +610,19 @@ def compute_source_home_probability(
             rule=BLEND_ADMISSION_RULE,
             market_id=getattr(speaker.market, "id", None),
             source_market_id=getattr(speaker.market, "external_id", None),
+            # CU-1 clause (2) (#5273): name the KIND of question the speaker
+            # asks, off the understanding the poller stamped on its row. Read
+            # from the SPEAKER for the same reason `market_id` is — the loop
+            # falls through the group, so the speaker and the primary are not
+            # always the same row, and typing the primary here would describe a
+            # market that did not produce the number.
+            #
+            # `None` whenever the row carries no readable understanding, which
+            # is every row until the poller has re-served it. That is the
+            # additive path on purpose: the key is simply absent, `to_entry`
+            # drops it, and nothing about admission changes — this records what
+            # spoke, it does not decide what may.
+            semantic_type=semantic_type_for_market(speaker.market),
             contributors=[_market_ref(m) for m in contributors],
         ),
     )

@@ -23,6 +23,10 @@ from app.utils.winner_field_coherence import (
     count_near_certain,
     field_is_incoherent,
 )
+from app.utils.content_understanding import (  # CU-1 clause (2), #5273
+    CONTENT_UNDERSTANDING_KEY,
+    build_content_understanding,
+)
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.pair_opening_coherence import (
@@ -311,6 +315,7 @@ def sub_market_metadata(
     event_id,
     matchup_title: Optional[str],
     clob_token_ids: Optional[list] = None,
+    content_understanding: Optional[dict] = None,
 ) -> Optional[dict]:
     """``market_metadata`` for a decomposed Polymarket sub-market, at mint time.
 
@@ -369,6 +374,21 @@ def sub_market_metadata(
         # a float64 can hold, and a token id that has been through a JSON number
         # is a token id that no longer subscribes to anything.
         meta["clob_token_ids"] = [str(t) for t in clob_token_ids if str(t)]
+    if content_understanding:
+        # ── CU-1 clause (2), #5273 ───────────────────────────────────────────
+        #
+        # What KIND of question this market asks, and whether Gamma's own
+        # `sportsMarketType` corroborates it. Clause (4) taught the DTO to
+        # retain that label; it was persisted NOWHERE, so the one place both
+        # signals are in hand at once is right here, in the ingest loop that
+        # already holds the parsed market.
+        #
+        # Stamped through the same merge the caller uses for every other key,
+        # which is the whole reason no backfill is needed: Polymarket re-serves
+        # open events continuously, so live rows ACQUIRE the understanding on
+        # the next poll and a re-ingest refreshes one that has gone stale
+        # because the venue relabelled the market.
+        meta[CONTENT_UNDERSTANDING_KEY] = content_understanding
     return meta or None
 
 
@@ -1217,6 +1237,20 @@ async def _process_event_batch(
                             # on all 687 live/upcoming rows measured 2026-08-30,
                             # which is why the Polymarket fast lane never ran.
                             clob_token_ids=getattr(market, "clob_token_ids", None),
+                            # CU-1 clause (2) (#5273): our reading of the
+                            # question, plus Gamma's own label for it, which
+                            # clause (4) parsed onto the DTO and nothing stored.
+                            # `sub_name` is the exact string the row is named
+                            # with, so the stored type describes the row a
+                            # reader sees rather than a title we discarded.
+                            content_understanding=build_content_understanding(
+                                name=sub_name,
+                                external_id=market.condition_id,
+                                sport=llm_sport_category,
+                                sports_market_type=getattr(
+                                    market, "sports_market_type", None
+                                ),
+                            ),
                         )
                         # ── ITS OWN 24h VOLUME (UX-P157, #2256).
                         #
