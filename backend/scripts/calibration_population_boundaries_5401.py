@@ -117,9 +117,7 @@ def _bounds(key: str, scope: str, target: int, floor: int) -> list[int]:
     # it would silently TRUNCATE the sweep's key space, which is the same class
     # of defect as the stale --max-id this file exists to retire.
     if len(rows) >= 1000:
-        raise RuntimeError(
-            f"{key}: hit the 1,000-row cap -- raise --target-outcomes"
-        )
+        raise RuntimeError(f"{key}: hit the 1,000-row cap -- raise --target-outcomes")
     vals = sorted({int(r[0]) for r in rows})
     if not vals:
         raise RuntimeError(f"{key}: no boundaries returned")
@@ -137,8 +135,7 @@ def main() -> int:
     args = ap.parse_args()
 
     ev = _cap_width(
-        _bounds("fm.event_id", "fm.event_id IS NOT NULL",
-                args.target_outcomes, 0),
+        _bounds("fm.event_id", "fm.event_id IS NOT NULL", args.target_outcomes, 0),
         args.max_key_width,
     )
     nu = _cap_width(
@@ -149,13 +146,9 @@ def main() -> int:
     for name, v in (("event_id", ev), ("null_event_id", nu)):
         if v != sorted(v) or len(set(v)) != len(v):
             raise RuntimeError(f"{name}: bounds not strictly increasing")
-        widest = max(
-            (h - l for l, h in zip(v, v[1:]) if h != OPEN_TOP), default=0
-        )
+        widest = max((hi - lo for lo, hi in zip(v, v[1:]) if hi != OPEN_TOP), default=0)
         if widest > args.max_key_width:
-            raise RuntimeError(
-                f"{name}: a {widest:,}-wide span survived the cap"
-            )
+            raise RuntimeError(f"{name}: a {widest:,}-wide span survived the cap")
 
     out = {
         "_method": (
@@ -174,8 +167,10 @@ def main() -> int:
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(out, indent=1) + "\n")
-    print(f"event chunks: {len(ev) - 1}   event-less chunks: {len(nu) - 1}   "
-          f"total: {len(ev) + len(nu) - 2}")
+    print(
+        f"event chunks: {len(ev) - 1}   event-less chunks: {len(nu) - 1}   "
+        f"total: {len(ev) + len(nu) - 2}"
+    )
     print(f"wrote {args.out}")
     return 0
 

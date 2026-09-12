@@ -78,14 +78,18 @@ def main() -> int:
     drift = b_n - PUBLISHED_KALSHI
     print(f"baseline Kalshi (master semantics, measured) : {b_n:,}")
     print(f"live q269 payload by_source kalshi n         : {PUBLISHED_KALSHI:,}")
-    print(f"difference                                   : {drift:+,} "
-          f"({100.0 * drift / PUBLISHED_KALSHI:+.2f}%)")
-    print("  The baseline arm reconstructs master's population from the branch "
-          "by\n  neutralising one flag, chunked event-atomically over the full "
-          "id range.\n  A large gap here means the RIG is wrong (a truncated "
-          "key space, a split\n  event group, a per-source coupling) and the "
-          "repaired arm means nothing.\n  A small one is live-table growth "
-          "since the bank was built.")
+    print(
+        f"difference                                   : {drift:+,} "
+        f"({100.0 * drift / PUBLISHED_KALSHI:+.2f}%)"
+    )
+    print(
+        "  The baseline arm reconstructs master's population from the branch "
+        "by\n  neutralising one flag, chunked event-atomically over the full "
+        "id range.\n  A large gap here means the RIG is wrong (a truncated "
+        "key space, a split\n  event group, a per-source coupling) and the "
+        "repaired arm means nothing.\n  A small one is live-table growth "
+        "since the bank was built."
+    )
 
     drop = b_n - r_n
     pct_of_all = 100.0 * drop / PUBLISHED_TOTAL
@@ -95,14 +99,18 @@ def main() -> int:
     print(f"repaired Kalshi (writer bar applied)         : {r_n:,}")
     print(f"rows the writer bar removes                  : {drop:,}")
     print(f"  as a share of Kalshi                       : {pct_of_kalshi:.2f}%")
-    print(f"  as a share of the PUBLISHED POPULATION     : {pct_of_all:.2f}%"
-          "   <- expected_drop_pct")
+    print(
+        f"  as a share of the PUBLISHED POPULATION     : {pct_of_all:.2f}%"
+        "   <- expected_drop_pct"
+    )
 
     print("\n== PER-CELL EFFECT (published rows, winners / implied) ==")
     bc = {r["category"]: r for r in base["by_category"]}
     rc = {r["category"]: r for r in rep["by_category"]}
-    print(f"{'category':>18} {'n before':>9} {'n after':>8} {'cut%':>6} "
-          f"{'before':>7} {'after':>7} {'move':>7}")
+    print(
+        f"{'category':>18} {'n before':>9} {'n after':>8} {'cut%':>6} "
+        f"{'before':>7} {'after':>7} {'move':>7}"
+    )
     damaged = []
     for cat in sorted(bc, key=lambda c: -bc[c]["n"]):
         b, r = bc[cat], rc.get(cat, {"n": 0, "won": 0, "implied": 0.0})
@@ -116,21 +124,27 @@ def main() -> int:
             damaged.append(cat)
         a_txt = f"{after:7.3f}" if after is not None else "      -"
         m_txt = f"{after - before:+7.3f}" if after is not None else "      -"
-        print(f"{cat:>18} {b['n']:>9,} {r['n']:>8,} {cut:>5.1f}% "
-              f"{before:>7.3f} {a_txt} {m_txt}{flag}")
+        print(
+            f"{cat:>18} {b['n']:>9,} {r['n']:>8,} {cut:>5.1f}% "
+            f"{before:>7.3f} {a_txt} {m_txt}{flag}"
+        )
 
     print("\n== WHAT TO WRITE INTO precompute_calibration.py ==")
-    print(f'  CALIBRATION_POPULATION_VERSION = "q270"')
-    print(f'  CALIBRATION_POPULATION_DECLARATION = dict(')
-    print(f'      from_version="q269",')
-    print(f'      expected_drop_pct={pct_of_all:.2f},')
-    print(f'      tolerance_pct=<CHOOSE; hard max {MAX_TOLERANCE_PCT}>,')
-    print(f'  )')
+    print('  CALIBRATION_POPULATION_VERSION = "q270"')
+    print("  CALIBRATION_POPULATION_DECLARATION = dict(")
+    print('      from_version="q269",')
+    print(f"      expected_drop_pct={pct_of_all:.2f},")
+    print(f"      tolerance_pct=<CHOOSE; hard max {MAX_TOLERANCE_PCT}>,")
+    print("  )")
     if damaged:
-        print(f"\n  WARNING: {len(damaged)} cell(s) move AWAY from 1.0: "
-              f"{', '.join(damaged)}")
-        print("  A source-wide predicate has to be judged on the cells it was "
-              "not written\n  for. Read these before declaring.")
+        print(
+            f"\n  WARNING: {len(damaged)} cell(s) move AWAY from 1.0: "
+            f"{', '.join(damaged)}"
+        )
+        print(
+            "  A source-wide predicate has to be judged on the cells it was "
+            "not written\n  for. Read these before declaring."
+        )
     return 0
 
 

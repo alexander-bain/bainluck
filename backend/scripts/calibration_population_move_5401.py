@@ -113,16 +113,14 @@ def chunk_sql(arm: str, predicate: str) -> str:
                 f"by substitution any more; re-derive it from origin/master"
             )
         pop = pop.replace(_FLAG_SQL, _FLAG_INERT)
-    return _strip_sql_comments(
-        "WITH " + pop + """
+    return _strip_sql_comments("WITH " + pop + """
 SELECT category,
        COUNT(*) AS n,
        COUNT(*) FILTER (WHERE is_winner) AS won,
        ROUND(SUM(adj_opening_probability)::numeric, 3) AS implied
 FROM deduped
 GROUP BY 1
-""".strip()
-    )
+""".strip())
 
 
 def _predicates(boundaries: dict) -> list[tuple[str, str]]:
@@ -133,18 +131,22 @@ def _predicates(boundaries: dict) -> list[tuple[str, str]]:
         lo, hi = ev[i], ev[i + 1]
         # Half-open on the VALUE: (lo, hi]. Every row of an event shares one
         # event_id, so an event can never straddle two of these.
-        out.append((
-            f"ev({lo},{hi}]",
-            f"fm.event_id IS NOT NULL AND fm.event_id > {lo} "
-            f"AND fm.event_id <= {hi}",
-        ))
+        out.append(
+            (
+                f"ev({lo},{hi}]",
+                f"fm.event_id IS NOT NULL AND fm.event_id > {lo} "
+                f"AND fm.event_id <= {hi}",
+            )
+        )
     ids = boundaries["null_event_id_bounds"]
     for i in range(len(ids) - 1):
         lo, hi = ids[i], ids[i + 1]
-        out.append((
-            f"noev({lo},{hi}]",
-            f"fm.event_id IS NULL AND fm.id > {lo} AND fm.id <= {hi}",
-        ))
+        out.append(
+            (
+                f"noev({lo},{hi}]",
+                f"fm.event_id IS NULL AND fm.id > {lo} AND fm.id <= {hi}",
+            )
+        )
     return out
 
 
@@ -192,8 +194,7 @@ def main() -> int:
                 print(f"  {label} IRREDUCIBLE {exc}", flush=True)
                 irreducible.append(label)
                 continue
-            print(f"  {label} split -> {halves[0][0]} {halves[1][0]}",
-                  flush=True)
+            print(f"  {label} split -> {halves[0][0]} {halves[1][0]}", flush=True)
             stack.append(halves[1])
             stack.append(halves[0])
             total += 1
@@ -209,13 +210,18 @@ def main() -> int:
             cell[2] += float(implied or 0.0)
         done += 1
         if done % 5 == 0:
-            print(f"  {done}/{total} chunks, "
-                  f"n={int(sum(v[0] for v in acc.values())):,}, "
-                  f"{time.monotonic() - started:.0f}s", flush=True)
+            print(
+                f"  {done}/{total} chunks, "
+                f"n={int(sum(v[0] for v in acc.values())):,}, "
+                f"{time.monotonic() - started:.0f}s",
+                flush=True,
+            )
 
     rows_out = sorted(
-        ({"category": k, "n": int(v[0]), "won": int(v[1]),
-          "implied": round(v[2], 2)} for k, v in acc.items()),
+        (
+            {"category": k, "n": int(v[0]), "won": int(v[1]), "implied": round(v[2], 2)}
+            for k, v in acc.items()
+        ),
         key=lambda r: -r["n"],
     )
     out = {
@@ -230,10 +236,12 @@ def main() -> int:
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(out, indent=2) + "\n")
 
-    print(f"\narm={args.arm}  kalshi published outcomes = "
-          f"{out['kalshi_published_outcomes']:,}  "
-          f"({done} chunks, {out['elapsed_s']}s, "
-          f"irreducible={len(irreducible)})")
+    print(
+        f"\narm={args.arm}  kalshi published outcomes = "
+        f"{out['kalshi_published_outcomes']:,}  "
+        f"({done} chunks, {out['elapsed_s']}s, "
+        f"irreducible={len(irreducible)})"
+    )
     print(f"wrote {args.out}")
     return 0
 
