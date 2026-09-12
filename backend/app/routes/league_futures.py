@@ -807,6 +807,78 @@ def _folded_upcoming(events: list) -> list:
         return events
 
 
+def _folded_past_rails(results: list, unreported: list, upcoming: list):
+    """One fixture, one card — ACROSS the two past rails, not within each. #5746.
+
+    `_folded_upcoming` above gave the upcoming rail the id-free braces to go
+    with `not_a_proven_duplicate`'s id-keyed belt. The two past rails got
+    neither brace, and they are the pair that actually needed them, because of
+    how a twin is SPLIT rather than how it is keyed:
+
+        15309733  St. Louis Cardinals 7-3 Chicago White Sox  completed  espn
+        15304908  St.Louis Cardinals      Chicago White Sox  suspended  statpal
+
+    One contest — both rows carry StatPal fixture `364953` — with one kickoff,
+    `2026-09-12 00:15:00+00:00`, measured on production 20:5xZ 2026-09-12 on
+    `GET /api/leagues/baseball_mlb`. The Final rode the results rail and the
+    result-less StatPal pre-load rode the unreported rail, so a reader saw the
+    game finished AND waiting for its score on one page.
+
+    🔴 THE SPLIT IS STRUCTURAL, SO FOLDING EACH RAIL SEPARATELY FIXES NOTHING.
+    `twin_fold_key` requires the same `commence_time` to the minute, so twins
+    always share a kickoff and can never be separated by a rail's TIME bound.
+    What separates these two rails is `settled_rail_condition` versus
+    `unreported_rail_condition` — presence of a result — and having no result
+    is the ghost's defining property. So the ghost is not merely likely to land
+    on the other rail from its survivor; for a past MLB twin it is guaranteed.
+    A per-rail fold sees one member of every such pair and folds nothing. Hence
+    one call over the union.
+
+    🔴 THE UPCOMING RAIL IS CONTEXT AND IS NEVER DROPPED FROM. It is passed in
+    so that a ghost down here whose survivor is up there still goes, but its own
+    membership is returned untouched: by this point it has been through the
+    competition share and the cap, and its headroom (`UPCOMING_TWIN_FOLD_HEADROOM`)
+    was spent on `_folded_upcoming`. Dropping a row from it here would spend a
+    card slot with nothing left to backfill it — the exact defect the headroom
+    exists to prevent. A stuck-`live` row twinned with its own Final therefore
+    still doubles; that arm is #5532, and it is a different fix (the row is
+    wrong, not the rail).
+
+    Gotcha #42, as on the rail above: the fold improves the page and is never a
+    precondition for having one. If it raises, both rails are served unfolded.
+    """
+    try:
+        fold = fold_twin_events([*upcoming, *results, *unreported])
+        if not fold.dropped_ids:
+            return results, unreported
+        survivors = {id(e) for e in fold.events}
+        for survivor_id, merged in fold.merged_sources.items():
+            survivor = next((e for e in fold.events if e.id == survivor_id), None)
+            if survivor is not None:
+                set_committed_value(survivor, "win_probability_sources", merged)
+        kept_r = [e for e in results if id(e) in survivors]
+        kept_u = [e for e in unreported if id(e) in survivors]
+        # `sport_key` is NOT interpolated, for the reason written twice above:
+        # it is a path parameter and CodeQL grades it `py/log-injection` at
+        # medium severity, which notice 32 refuses. The dropped ids name the
+        # league more precisely than its key would.
+        logger.info(
+            "league page past-rail twin fold: results %d->%d, unreported %d->%d "
+            "(dropped=%s)",
+            len(results),
+            len(kept_r),
+            len(unreported),
+            len(kept_u),
+            fold.dropped_ids[:20],
+        )
+        return kept_r, kept_u
+    except Exception:
+        logger.exception(
+            "league page: past-rail twin fold failed; serving both rails unfolded"
+        )
+        return results, unreported
+
+
 def recent_results_query(
     sport_key: str, now: datetime, *, also_sport_keys: Sequence[str] = ()
 ):
@@ -2399,6 +2471,15 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _r_events = list(_r.scalars().all())
         _u = await asyncio.wait_for(db.execute(_unreported_q), timeout=10)
         _u_events = list(_u.scalars().all())
+        # ── #5746: a finished game may not also be waiting for its score ──
+        #
+        # Folded ACROSS the two past rails in one call, with the upcoming rail
+        # as read-only context. Placed here because it needs all three lists and
+        # must run before `more_results`/`more_unreported` and the caps below
+        # count rows — a duplicate must not be counted as availability the
+        # reader never gets, which is `_folded_upcoming`'s ordering argument
+        # applied to the rails that did not have it.
+        _r_events, _u_events = _folded_past_rails(_r_events, _u_events, _g_events)
 
         # UX-P074 (#1860): colours and logos for the SHARED event card, fetched
         # ONCE for both rails. `_build_team_lookup` is the same in-memory-cached
