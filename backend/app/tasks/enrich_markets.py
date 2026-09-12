@@ -576,13 +576,24 @@ def _needs_regeneration(
     - Leader probability moved >= 15pp from generation-time snapshot
     """
     from app.utils.hook_staleness import (
+        CURRENT_HOOK_POLICY_VERSION,
         HOOK_PROB_METADATA_KEY,
         STALE_PROBABILITY_DELTA,
+        hook_policy_version,
     )
 
     if not market.hook_description:
         return True
     if not market.hook_generated_at:
+        return True
+    # #5461: a hook written under a retired policy is suppressed at serve, so
+    # leaving it out of regen would leave the card wordless until something
+    # ELSE made it eligible — and the `age_hours < 24` early return below would
+    # actively hold a freshly-retired hook out of the queue for a day. Markets
+    # that hold citable evidence get their replacement on the next pass; the
+    # rest are refused by the evidence gate and stay suppressed, which is the
+    # intended outcome, not a failure of this branch.
+    if hook_policy_version(market.market_metadata) < CURRENT_HOOK_POLICY_VERSION:
         return True
     age_hours = (now - market.hook_generated_at).total_seconds() / 3600
     if market.hook_leader_at_generation and market.hook_leader_at_generation != current_leader_name:
@@ -829,7 +840,11 @@ async def enrich_market_hooks(limit: int = 50):
                 # Store generation-time probability in market_metadata
                 # so serve-time staleness check can detect big probability
                 # swings without a schema migration.
-                from app.utils.hook_staleness import HOOK_PROB_METADATA_KEY
+                from app.utils.hook_staleness import (
+                    CURRENT_HOOK_POLICY_VERSION,
+                    HOOK_POLICY_METADATA_KEY,
+                    HOOK_PROB_METADATA_KEY,
+                )
 
                 # #219E Item 3 (BAINLUCK-SZ): a jsonb-concat gotcha left ~369
                 # rows with ARRAY metadata ([null, {"shape": {...}}]) instead of
@@ -852,6 +867,14 @@ async def enrich_market_hooks(limit: int = 50):
                     next_metadata[HOOK_PROB_METADATA_KEY] = round(leader_prob, 4)
                 elif HOOK_PROB_METADATA_KEY in next_metadata:
                     del next_metadata[HOOK_PROB_METADATA_KEY]
+                # #5461: stamp the policy this sentence was written under, in
+                # the same write as the sentence itself. Serve-time suppression
+                # reads it and retires anything older (`is_hook_stale` check 0).
+                # Unconditional — a hook that reaches this line was produced by
+                # the current evidence-gated path by construction, and the
+                # alternative (stamping only sometimes) would leave a fresh
+                # current-policy hook indistinguishable from a retired one.
+                next_metadata[HOOK_POLICY_METADATA_KEY] = CURRENT_HOOK_POLICY_VERSION
 
                 await session.execute(
                     update(FuturesMarket)

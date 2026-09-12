@@ -263,14 +263,26 @@ class TestThePromptStillSaysWhatItMustSay:
 
 
 class TestOldPromptCopyCannotOutliveTheServeGate:
-    """The stale-copy half of T11-1's acceptance, argued from the two constants.
+    """The stale-copy half of T11-1's acceptance.
 
-    No backfill ships with this change and none is needed, but that is a claim about
-    convergence and it rests on a gap between two numbers that live in different modules:
-    a hook is regenerated once it is older than the REGEN TTL, and it is suppressed at
-    serve time once it is older than the SERVE gate. As long as the serve gate is finite,
-    every hook a reader can still see after that many days was written by the new prompt —
-    with no backfill, no spend, and no data repair.
+    🔴 THE ARGUMENT THIS CLASS ORIGINALLY MADE HAS BEEN SUPERSEDED, AND THE WAY IT
+    FAILED IS THE POINT. It reasoned that no backfill was needed because old-prompt
+    copy AGES OUT: the serve gate is finite, so after `STALE_HOOK_MAX_AGE_DAYS`
+    every hook a reader can still see was written by the new prompt. True, and far
+    too slow — CERT-2697 blocked the ship on exactly that gap. All 1,076 hooks
+    being served had been written by the retired prompt, so "converges in seven
+    days" meant a week of invented sentences on cards, and for markets holding no
+    citable evidence the new gate also blocks the re-enrichment that would have
+    replaced them, so the countdown was the only exit.
+
+    The repair is a POLICY VERSION stamped into `market_metadata` and checked
+    before the age gate (`hook_staleness`, check 0): retired copy is suppressed on
+    its first serve after deploy, not its last. Convergence is now immediate and
+    does not depend on either constant.
+
+    What remains true, and is what these tests still guard, is that the two
+    constants must stay ordered relative to each other — the age gate still governs
+    current-policy hooks, and the regen TTL still has to sit under it.
 
     Measured on production 2026-09-12 while building this: of 576 open liquid markets
     carrying a hook, 377 were 32-127 days old. Those are already suppressed at serve time
@@ -290,23 +302,57 @@ class TestOldPromptCopyCannotOutliveTheServeGate:
     def test_a_hook_older_than_the_serve_gate_is_suppressed(self):
         from datetime import datetime, timedelta, timezone
 
-        from app.utils.hook_staleness import STALE_HOOK_MAX_AGE_DAYS, is_hook_stale
+        from app.utils.hook_staleness import (
+            CURRENT_HOOK_POLICY_VERSION,
+            HOOK_POLICY_METADATA_KEY,
+            STALE_HOOK_MAX_AGE_DAYS,
+            is_hook_stale,
+        )
 
         now = datetime(2026, 9, 12, tzinfo=timezone.utc)
         old = now - timedelta(days=STALE_HOOK_MAX_AGE_DAYS + 1)
         fresh = now - timedelta(days=STALE_HOOK_MAX_AGE_DAYS - 1)
+        # Stamped with the CURRENT policy so this isolates the AGE dimension. An
+        # unstamped fixture is now suppressed by check 0 whatever its age, which
+        # would make both assertions below pass for the wrong reason — the exact
+        # "true for an uninteresting reason" this test was written to avoid, just
+        # relocated. The retired-policy case has its own class in
+        # `test_hook_staleness.py`.
         common = dict(
             hook_description="written by the retired prompt",
             hook_leader_at_generation="Somebody",
             current_leader_name="Somebody",
             current_leader_probability=None,
-            market_metadata={},
+            market_metadata={HOOK_POLICY_METADATA_KEY: CURRENT_HOOK_POLICY_VERSION},
             now=now,
         )
         assert is_hook_stale(hook_generated_at=old, **common) is True
-        # Both sides: the gate must not suppress everything, or the convergence argument
-        # is true for an uninteresting reason.
+        # Both sides: the gate must not suppress everything, or the age gate would
+        # be doing nothing distinguishable from the policy gate above it.
         assert is_hook_stale(hook_generated_at=fresh, **common) is False
+
+    def test_retired_copy_no_longer_waits_for_the_age_gate_at_all(self):
+        """What replaced the convergence argument, asserted rather than described.
+
+        The same hook, one day old — well inside the serve gate — is suppressed
+        because of the policy it was written under, not its age. This is the
+        acceptance CERT-2697 asked for, stated where the superseded argument used
+        to live so the next reader of this class cannot miss it.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from app.utils.hook_staleness import is_hook_stale
+
+        now = datetime(2026, 9, 12, tzinfo=timezone.utc)
+        assert is_hook_stale(
+            hook_description="written by the retired prompt",
+            hook_generated_at=now - timedelta(days=1),
+            hook_leader_at_generation="Somebody",
+            current_leader_name="Somebody",
+            current_leader_probability=None,
+            market_metadata={},
+            now=now,
+        ) is True
 
     def test_the_regeneration_ttl_stays_below_the_serve_gate(self):
         """Two constants, one capability — assert the GAP, not each number alone.
