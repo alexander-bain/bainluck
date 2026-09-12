@@ -1,0 +1,274 @@
+{
+  "arm": "repaired",
+  "source": "kalshi",
+  "kalshi_published_outcomes": 305484,
+  "chunks": 1033,
+  "irreducible": [],
+  "elapsed_s": 4032.1,
+  "by_category": [
+    {
+      "category": "baseball",
+      "n": 121351,
+      "won": 45589,
+      "implied": 44831.73
+    },
+    {
+      "category": "basketball",
+      "n": 60390,
+      "won": 25439,
+      "implied": 24723.63
+    },
+    {
+      "category": "soccer",
+      "n": 26855,
+      "won": 10414,
+      "implied": 9325.62
+    },
+    {
+      "category": "golf",
+      "n": 15287,
+      "won": 3222,
+      "implied": 3396.07
+    },
+    {
+      "category": "hockey",
+      "n": 12995,
+      "won": 4334,
+      "implied": 3969.22
+    },
+    {
+      "category": "weather",
+      "n": 12545,
+      "won": 2860,
+      "implied": 2799.2
+    },
+    {
+      "category": "tennis",
+      "n": 12176,
+      "won": 6293,
+      "implied": 6121.0
+    },
+    {
+      "category": "football",
+      "n": 11824,
+      "won": 4389,
+      "implied": 4321.74
+    },
+    {
+      "category": "esports",
+      "n": 11198,
+      "won": 5754,
+      "implied": 5607.73
+    },
+    {
+      "category": "politics",
+      "n": 7742,
+      "won": 2738,
+      "implied": 2830.71
+    },
+    {
+      "category": "motorsports",
+      "n": 2690,
+      "won": 669,
+      "implied": 755.8
+    },
+    {
+      "category": "mma",
+      "n": 2085,
+      "won": 627,
+      "implied": 580.8
+    },
+    {
+      "category": "entertainment",
+      "n": 1550,
+      "won": 509,
+      "implied": 474.45
+    },
+    {
+      "category": "tech",
+      "n": 1501,
+      "won": 887,
+      "implied": 779.91
+    },
+    {
+      "category": "other",
+      "n": 1436,
+      "won": 582,
+      "implied": 551.54
+    },
+    {
+      "category": "economics",
+      "n": 1210,
+      "won": 181,
+      "implied": 191.32
+    },
+    {
+      "category": "commodities",
+      "n": 580,
+      "won": 307,
+      "implied": 304.52
+    },
+    {
+      "category": "chess",
+      "n": 520,
+      "won": 96,
+      "implied": 94.94
+    },
+    {
+      "category": "geopolitics",
+      "n": 405,
+      "won": 167,
+      "implied": 152.29
+    },
+    {
+      "category": "lacrosse",
+      "n": 240,
+      "won": 139,
+      "implied": 135.07
+    },
+    {
+      "category": "boxing",
+      "n": 212,
+      "won": 138,
+      "implied": 134.23
+    },
+    {
+      "category": "rugby",
+      "n": 202,
+      "won": 59,
+      "implied": 56.43
+    },
+    {
+      "category": "cricket",
+      "n": 108,
+      "won": 47,
+      "implied": 43.22
+    },
+    {
+      "category": "aussierules",
+      "n": 95,
+      "won": 55,
+      "implied": 53.11
+    },
+    {
+      "category": "health",
+      "n": 59,
+      "won": 28,
+      "implied": 30.85
+    },
+    {
+      "category": "culture",
+      "n": 41,
+      "won": 29,
+      "implied": 25.78
+    },
+    {
+      "category": "ai_safety",
+      "n": 33,
+      "won": 15,
+      "implied": 16.96
+    },
+    {
+      "category": "cycling",
+      "n": 25,
+      "won": 6,
+      "implied": 7.52
+    },
+    {
+      "category": "legal",
+      "n": 20,
+      "won": 10,
+      "implied": 9.64
+    },
+    {
+      "category": "sailing",
+      "n": 16,
+      "won": 2,
+      "implied": 2.06
+    },
+    {
+      "category": "energy",
+      "n": 16,
+      "won": 7,
+      "implied": 6.35
+    },
+    {
+      "category": "surfing",
+      "n": 16,
+      "won": 1,
+      "implied": 2.76
+    },
+    {
+      "category": "climbing",
+      "n": 10,
+      "won": 1,
+      "implied": 1.0
+    },
+    {
+      "category": "softball",
+      "n": 10,
+      "won": 3,
+      "implied": 3.69
+    },
+    {
+      "category": "crypto",
+      "n": 8,
+      "won": 4,
+      "implied": 4.04
+    },
+    {
+      "category": "auto_industry",
+      "n": 7,
+      "won": 3,
+      "implied": 3.04
+    },
+    {
+      "category": "squash",
+      "n": 7,
+      "won": 1,
+      "implied": 0.93
+    },
+    {
+      "category": "poker",
+      "n": 5,
+      "won": 4,
+      "implied": 3.37
+    },
+    {
+      "category": "wrestling",
+      "n": 4,
+      "won": 2,
+      "implied": 3.24
+    },
+    {
+      "category": "darts",
+      "n": 3,
+      "won": 1,
+      "implied": 1.19
+    },
+    {
+      "category": "pickleball",
+      "n": 3,
+      "won": 0,
+      "implied": 0.37
+    },
+    {
+      "category": "olympics",
+      "n": 2,
+      "won": 1,
+      "implied": 0.9
+    },
+    {
+      "category": "track_and_field",
+      "n": 1,
+      "won": 1,
+      "implied": 0.68
+    },
+    {
+      "category": "figure_skating",
+      "n": 1,
+      "won": 1,
+      "implied": 0.99
+    }
+  ]
+}

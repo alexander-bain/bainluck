@@ -122,6 +122,12 @@ BRIDGE_RUNGS: tuple[tuple[str, str], ...] = (
         "in the near-0.50 band.",
     ),
     (
+        "opening_below_writer_bar",
+        "The opening price is one our own Kalshi writer would have refused to "
+        "record: no snapshot of this outcome ever showed a real bid with a "
+        "bid-ask spread under 0.50, so the price was never discovered.",
+    ),
+    (
         "structural_artifact",
         "A measured pricing artifact rather than a genuine probability: esports "
         "match bundles, golf one-sided-ask placeholders, Kalshi player-prop "

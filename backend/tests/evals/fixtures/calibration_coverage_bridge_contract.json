@@ -21,6 +21,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -53,6 +54,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -82,6 +84,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 250000
@@ -111,6 +114,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 30000,
           "representative_not_selected": 11075
@@ -140,6 +144,37 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 120000,
+          "opening_below_writer_bar": 0,
+          "structural_artifact": 18740,
+          "field_incomplete": 2216,
+          "representative_not_selected": 11075
+        },
+        "sportsbook_curve_legs": 40075,
+        "published_curve_observations": 652407,
+        "published_outcomes_crosscheck": 612332,
+        "population_version": "q267",
+        "generation": 100,
+        "with_terminal_calibration_price": 1284551,
+        "expect_status": "complete"
+      },
+      "declares": {
+        "published_as_complete": true
+      },
+      "expected_refusals": []
+    },
+    {
+      "id": "opening-below-writer-bar-rung",
+      "why": "#5401: an opening the Kalshi writer's own bar would have refused to record is a covered price that is not a forecast. Its own rung rather than a fourth clause on phantom_liquidity, because it removes an order of magnitude more rows than that bucket holds and folding it in would restate an established count as a regression. Carries a real count here: every other case leaves it at zero, and a rung only ever measured as zero is one whose arithmetic nobody has checked.",
+      "measured": {
+        "rungs": {
+          "plotted_on_curve": 612332,
+          "market_result_unavailable": 0,
+          "truth_source_missing": 165863,
+          "truth_ineligible_source": 513288,
+          "question_ungraded": 41207,
+          "malformed_or_unknown_truth": 62114,
+          "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 47250,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -169,6 +204,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 90000,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -198,6 +234,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -228,6 +265,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -256,6 +294,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 0,
           "field_incomplete": 0,
           "representative_not_selected": 11075
@@ -284,6 +323,7 @@
           "truth_ineligible_source": 513288,
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -315,6 +355,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -343,6 +384,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -371,6 +413,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -401,6 +444,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -431,6 +475,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -461,6 +506,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -516,6 +562,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -546,6 +593,7 @@
           "question_ungraded": 41207,
           "malformed_or_unknown_truth": 62114,
           "phantom_liquidity": 39901,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 18740,
           "field_incomplete": 2216,
           "representative_not_selected": 11075
@@ -576,6 +624,7 @@
           "question_ungraded": 0,
           "malformed_or_unknown_truth": 0,
           "phantom_liquidity": 0,
+          "opening_below_writer_bar": 0,
           "structural_artifact": 0,
           "field_incomplete": 0,
           "representative_not_selected": 0

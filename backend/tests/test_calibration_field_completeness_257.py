@@ -182,7 +182,11 @@ def _futures_row(**kw):
     base = dict(
         bucket_idx=6, source="kalshi", category="politics", price_moved=True,
         n=5, winners=1, avg_prob=0.2, sum_prob=1.0, sum_sq_err=0.5,
-        kalshi_included=120, kalshi_excluded=8, poly_placeholder_excluded=3,
+        kalshi_included=120, kalshi_excluded=8,
+        # #5401 writer-bar disclosure counts, read off row 0 like their
+        # neighbours. Below-bar nests inside illiquid, so excluded >= 8.
+        writer_bar_included=112, writer_bar_excluded=16,
+        poly_placeholder_excluded=3,
         poly_included=40, poly_never_traded_total=6, poly_never_traded_in_curve=2,
         both_false_excluded=4, both_winner_excluded=1, golf_placeholder_excluded=7,
         mex_normalized_outcomes=15, mex_candidate_markets=9,

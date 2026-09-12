@@ -2,6 +2,7 @@
   "covered_by_value": [
     "CALIBRATION_POPULATION_VERSION",
     "COVERAGE_CENSUS_ENABLED",
+    "KALSHI_WRITER_BAR_MET",
     "MEX_NORMALIZE_THRESHOLD",
     "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
     "PLAYER_PROPS_FORCED_DRIFT_MIN",
@@ -20,7 +21,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 66,
+  "input_count": 68,
   "inputs": [
     {
       "covered_by_value": false,
@@ -328,6 +329,28 @@
       "impact": "behavior_or_evidence",
       "name": "KALSHI_PROP_THRESHOLD_RULE_TEXT",
       "origin": "app.tasks.precompute_calibration:KALSHI_PROP_THRESHOLD_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "KALSHI_WRITER_BAR_MET",
+      "origin": "app.tasks.precompute_calibration:KALSHI_WRITER_BAR_MET",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "KALSHI_WRITER_BAR_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:KALSHI_WRITER_BAR_RULE_TEXT",
       "sql_interpolated": false,
       "used_in": [
         "compute_calibration_payload"
@@ -736,7 +759,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "6d3548c2ffd1eba9",
+      "definition_sha16": "1d4a70e368c2a0f1",
       "impact": "sql_shaping",
       "name": "_COVERAGE_RUNG_KEYS",
       "origin": "app.utils.calibration_coverage_bridge:RUNG_KEYS",
@@ -773,7 +796,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "a3c0f558a02c500f",
+      "definition_sha16": "402adc095fe06c0d",
       "impact": "behavior_or_evidence",
       "name": "_build_coverage_census",
       "origin": "app.utils.calibration_coverage_bridge:build_coverage_census",
@@ -785,8 +808,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "73ac7623af18c68796ed533728d7d94534ca7bcabf14e54ee76dbe6eb64c7e77",
-  "uncovered_behavior_or_evidence": 32,
-  "uncovered_count": 54,
+  "source_sha256": "4a0ffb4e9e7b98ed63de20a4e2d62ac7a34a7d54df652c895f6bb97c1588c70f",
+  "uncovered_behavior_or_evidence": 33,
+  "uncovered_count": 55,
   "uncovered_sql_shaping": 22
 }

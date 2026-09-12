@@ -1,0 +1,101 @@
+== CONTROL ==
+baseline Kalshi (master semantics, measured) : 399,618
+live q269 payload by_source kalshi n         : 396,160
+difference                                   : +3,458 (+0.87%)
+  The baseline arm reconstructs master's population from the branch by
+  neutralising one flag, chunked event-atomically over the full id range.
+  A large gap here means the RIG is wrong (a truncated key space, a split
+  event group, a per-source coupling) and the repaired arm means nothing.
+  A small one is live-table growth since the bank was built.
+
+== THE MOVE ==
+repaired Kalshi (writer bar applied)         : 305,484
+rows the writer bar removes                  : 94,134
+  as a share of Kalshi                       : 23.56%
+  as a share of the PUBLISHED POPULATION     : 12.04%   <- expected_drop_pct
+
+== PER-CELL EFFECT (published rows, winners / implied) ==
+          category  n before  n after   cut%  before   after    move
+          baseball   172,492  121,351  29.6%   0.920   1.017  +0.097
+        basketball    67,607   60,390  10.7%   1.017   1.029  +0.012
+            soccer    29,470   26,855   8.9%   1.087   1.117  +0.030  <- moves AWAY from 1.0
+              golf    22,206   15,287  31.2%   0.752   0.949  +0.197
+            hockey    17,804   12,995  27.0%   1.014   1.092  +0.078  <- moves AWAY from 1.0
+           weather    16,368   12,545  23.4%   0.999   1.022  +0.023  <- moves AWAY from 1.0
+           esports    15,405   11,198  27.3%   1.003   1.026  +0.023  <- moves AWAY from 1.0
+            tennis    14,717   12,176  17.3%   1.023   1.028  +0.005
+          football    14,466   11,824  18.3%   1.010   1.016  +0.006
+          politics     8,304    7,742   6.8%   0.964   0.967  +0.004
+       motorsports     5,500    2,690  51.1%   0.830   0.885  +0.055
+     entertainment     3,866    1,550  59.9%   0.830   1.073  +0.242
+               mma     2,455    2,085  15.1%   1.055   1.080  +0.024  <- moves AWAY from 1.0
+         economics     2,121    1,210  43.0%   0.874   0.946  +0.072
+              tech     1,574    1,501   4.6%   1.129   1.137  +0.009
+             other     1,409    1,436  -1.9%   1.049   1.055  +0.006
+             chess       709      520  26.7%   0.828   1.011  +0.183
+       commodities       696      580  16.7%   1.009   1.008  -0.001
+       geopolitics       586      405  30.9%   1.075   1.097  +0.021  <- moves AWAY from 1.0
+            energy       415       16  96.1%   1.019   1.102  +0.084  <- moves AWAY from 1.0
+          lacrosse       300      240  20.0%   1.009   1.029  +0.020
+             rugby       246      202  17.9%   1.022   1.046  +0.023  <- moves AWAY from 1.0
+            boxing       231      212   8.2%   1.007   1.028  +0.021  <- moves AWAY from 1.0
+           cricket       162      108  33.3%   1.000   1.087  +0.087  <- moves AWAY from 1.0
+       aussierules       100       95   5.0%   1.042   1.036  -0.007
+            health        59       59   0.0%   0.908   0.908  +0.000
+           culture        44       41   6.8%   1.091   1.125  +0.033  <- moves AWAY from 1.0
+           cycling        41       25  39.0%   0.822   0.798  -0.024  <- moves AWAY from 1.0
+          olympics        36        2  94.4%   0.647   1.111  +0.464
+         ai_safety        33       33   0.0%   0.884   0.884  +0.000
+            squash        31        7  77.4%   0.952   1.075  +0.123  <- moves AWAY from 1.0
+           sailing        30       16  46.7%   0.838   0.971  +0.133
+              sumo        29        0 100.0%   1.000       -       -
+             legal        20       20   0.0%   1.037   1.037  +0.000
+            crypto        19        8  57.9%   0.829   0.990  +0.161
+           surfing        16       16   0.0%   0.362   0.362  +0.000
+          softball        11       10   9.1%   0.811   0.813  +0.002
+          climbing        10       10   0.0%   1.000   1.000  +0.000
+         wrestling         8        4  50.0%   0.847   0.617  -0.230  <- moves AWAY from 1.0
+     auto_industry         7        7   0.0%   0.987   0.987  +0.000
+             poker         6        5  16.7%   1.295   1.187  -0.108
+             darts         3        3   0.0%   0.840   0.840  +0.000
+        pickleball         3        3   0.0%   0.000   0.000  +0.000
+         athletics         1        0 100.0%   0.000       -       -
+   track_and_field         1        1   0.0%   1.471   1.471  +0.000
+    figure_skating         1        1   0.0%   1.010   1.010  +0.000
+
+== WHAT TO WRITE INTO precompute_calibration.py ==
+  CALIBRATION_POPULATION_VERSION = "q270"
+  CALIBRATION_POPULATION_DECLARATION = dict(
+      from_version="q269",
+      expected_drop_pct=12.04,
+      tolerance_pct=<CHOOSE; hard max 5.0>,
+  )
+
+  WARNING: 14 cell(s) move AWAY from 1.0: soccer, hockey, weather, esports, mma, geopolitics, energy, rugby, boxing, cricket, culture, cycling, squash, wrestling
+  A source-wide predicate has to be judged on the cells it was not written
+  for. Read these before declaring.
+
+== IS THE RULE AN IMPROVEMENT? (displayed cells only, n >= min_category_outcomes = 1000) ==
+weighted mean |ratio-1|   BEFORE 0.0666 (395,764 rows)  AFTER 0.0370 (302,835 rows)  -> improves +0.0297
+unweighted mean |ratio-1| BEFORE 0.0761              AFTER 0.0590              -> improves +0.0172
+
+          cell  n before  n after  |d|before  |d|after  verdict
+      baseball   172,492  121,351      0.080     0.017   better
+    basketball    67,607   60,390      0.017     0.029    worse
+        soccer    29,470   26,855      0.087     0.117    worse
+          golf    22,206   15,287      0.248     0.051   better
+        hockey    17,804   12,995      0.014     0.092    worse
+       weather    16,368   12,545      0.001     0.022    worse
+       esports    15,405   11,198      0.003     0.026    worse
+        tennis    14,717   12,176      0.023     0.028    worse
+      football    14,466   11,824      0.010     0.016    worse
+      politics     8,304    7,742      0.036     0.033   better
+   motorsports     5,500    2,690      0.170     0.115   better
+ entertainment     3,866    1,550      0.170     0.073   better
+           mma     2,455    2,085      0.055     0.080    worse
+     economics     2,121    1,210      0.126     0.054   better
+          tech     1,574    1,501      0.129     0.137    worse
+         other     1,409    1,436      0.049     0.055    worse
+
+cells improved: 6   cells worsened: 10
+displayed cells falling below the 1000-row display floor: NONE
