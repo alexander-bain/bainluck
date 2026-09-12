@@ -344,9 +344,25 @@ async def test_a_non_awaitable_service_attribute_degrades_too():
 
 
 @pytest.mark.asyncio
-async def test_a_sick_series_is_only_looked_up_once_per_beat():
-    """The degraded result is cached too, so a bad series costs one line, not
-    one per event in it."""
+async def test_a_sick_series_is_only_looked_up_once_per_beat(monkeypatch):
+    """A bad series costs one call per beat, not one per event in it.
+
+    🔴 THIS TEST USED TO PIN THE DEFECT CERT-2737 BLOCKED. Its concern is real
+    and unchanged — without suppression a sick series costs a 3-attempt call for
+    every event in the series — but the first implementation bought it with a
+    PERMANENT cache entry, so one timeout froze the series into name-guessed
+    classification until the dyno restarted.
+
+    What the suppression may do is skip the call. What it may never do is report
+    an answer: every one of these reads comes back UNRESOLVED, so nothing
+    downstream can write a sport on the strength of it, and
+    `test_a_suppressed_failure_expires_and_is_retried` pins that it recovers by
+    itself.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(kalshi_module, "_SERIES_TAG_CACHE", {})
+    monkeypatch.setattr(kalshi_module, "_SERIES_TAG_FAILURE_UNTIL", {})
 
     class _CountingRaiser:
         def __init__(self):
@@ -358,8 +374,65 @@ async def test_a_sick_series_is_only_looked_up_once_per_beat():
 
     service = _CountingRaiser()
     for _ in range(3):
-        assert await _resolve_series_tag(service, "KXEFLL1GAME-25SEP12X") is None
+        result = await kalshi_module._resolve_series_tag_result(
+            service, "KXEFLL1GAME-25SEP12X"
+        )
+        assert result.resolved is False, (
+            "a suppressed retry must still read as UNRESOLVED — suppressing the "
+            "call and answering the question are different things"
+        )
+        assert result.tag is None
     assert service.calls == 1
+    assert kalshi_module._SERIES_TAG_CACHE == {}, (
+        "the failure must never reach the answer cache"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_suppressed_failure_expires_and_is_retried(monkeypatch):
+    """The suppression is PERISHABLE, and recovery needs no restart.
+
+    The control for the test above: a fix that simply stopped caching would pass
+    the recovery half and fail the amplification half, and the permanent cache
+    that CERT-2737 blocked passes the amplification half and fails this one.
+    Only a perishable record passes both.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(kalshi_module, "_SERIES_TAG_CACHE", {})
+    monkeypatch.setattr(kalshi_module, "_SERIES_TAG_FAILURE_UNTIL", {})
+
+    # Controlled from the first call: the deadline is `now + TTL`, so patching
+    # the clock only before the retry compares against a real baseline.
+    clock = [1000.0]
+    monkeypatch.setattr(kalshi_module, "_series_tag_clock", lambda: clock[0])
+
+    class _SickThenWell:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_series_metadata(self, series_ticker):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            return {"tags": ["Soccer"]}
+
+    service = _SickThenWell()
+    ticker = "KXEFLL1GAME-25SEP12X"
+
+    assert (
+        await kalshi_module._resolve_series_tag_result(service, ticker)
+    ).resolved is False
+    assert service.calls == 1
+
+    # Travel past the TTL rather than sleeping through it: a test that waits out
+    # a real 600s wall clock is a test nobody runs.
+    clock[0] += kalshi_module._SERIES_TAG_FAILURE_TTL_SECONDS + 1.0
+
+    recovered = await kalshi_module._resolve_series_tag_result(service, ticker)
+    assert service.calls == 2, "the series must be asked again once the TTL lapses"
+    assert recovered.resolved is True
+    assert recovered.tag == "Soccer"
 
 
 @pytest.mark.asyncio
