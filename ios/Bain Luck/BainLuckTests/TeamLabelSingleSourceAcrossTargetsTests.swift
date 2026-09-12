@@ -49,12 +49,19 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
     /// an entry stops matching, so whoever fixes the watch half is told to delete
     /// its line rather than leaving a guard that silently protects nothing.
     ///
-    /// The watchOS platform SDK is not installed on the build machines
-    /// (`xcodebuild -scheme "BainLuckWatch Watch App"` → *"watchOS 26.5 is not
-    /// installed"*), and the iOS scheme does not build these targets, so a change
-    /// to them would be Swift that NOTHING compiles — CI compiles no Swift at all
-    /// (#4302) and the local gate does not reach them either. Fixing them blind
-    /// is a worse bug than the one being fixed. Tracked on #5709.
+    /// The watchOS platform SDK is not installed on the build machines:
+    /// `xcodebuild -scheme "BainLuckWatch Watch App"` fails with *"watchOS 26.5
+    /// is not installed"*, so the watch PRODUCT cannot be built or run here, and
+    /// `TeamShortName` is not a member of the watch targets the way it now is of
+    /// `BainLuckWidget`.
+    ///
+    /// These sources are NOT invisible, though, and the distinction cost a wrong
+    /// claim before it was measured: they compile as members of **`BainLuckTests`**
+    /// (`SwiftCompile … WatchFeedModels.swift (in target 'BainLuckTests')`), which
+    /// is exactly how the M5 mutant below was caught type-checking. So a watch fix
+    /// would be type-checked, but could not be exercised on a watch by anyone
+    /// here, and would need membership added to targets no gate can build.
+    /// That is the reason for the deferral — not invisibility. Tracked on #5709.
     private let knownOutstanding = [
         "BainLuckWatch Watch App/WatchFeedModels.swift",
         "BainLuckWatch Watch App/WatchLiveView.swift",
@@ -178,6 +185,53 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
             block.contains("Utilities/TeamShortName.swift"),
             "TeamShortName is no longer a member of BainLuckWidget, so the widget cannot call it — #5709"
         )
+    }
+
+    // MARK: - What the widget will actually draw
+
+    /// The eight production specimens, through the exact call the widget makes.
+    ///
+    /// A widget cannot be photographed by `tools/native-shoot.sh` — the rig
+    /// drives the app, and there is no production URL for a home screen — so
+    /// this is the rendered-output check that stands in for the LOOK: the string
+    /// on the left is what `Text(game.awayAbbrev)` printed before, the string on
+    /// the right is what it prints now. Every one of these was observed on
+    /// `/api/feed?limit=100` on 2026-09-12 with no served abbreviation.
+    func testTheEightMeasuredSpecimensStopNamingTheClubType() {
+        let cases: [(name: String, opponent: String, wasDrawn: String, nowDrawn: String)] = [
+            ("Girona FC",           "Real Madrid",      "FC", "GIR"),
+            ("Grazer AK",           "Rheindorf Altach", "AK", "GRA"),
+            ("Chesterfield FC",     "Barnet",           "FC", "CHE"),
+            ("Stockport County FC", "Wigan Athletic",   "FC", "STO"),
+            ("Cádiz CF",            "Almeria",          "CF", "CÁD"),
+            ("Andorra CF",          "Real Sociedad B",  "CF", "AND"),
+            ("Real Sociedad B",     "Andorra CF",       "B",  "REA"),
+            ("Västerås SK",         "Örgryte IS",       "SK", "VÄS"),
+        ]
+        for c in cases {
+            let drawn = TeamShortName.abbreviationPair(away: c.name, home: c.opponent).away
+            XCTAssertEqual(drawn, c.nowDrawn, "\(c.name) draws the wrong label on the widget")
+            XCTAssertNotEqual(drawn, c.wasDrawn, "\(c.name) is still drawn as \(c.wasDrawn) — #5709")
+            // The point of the ship, stated independently of the expected value:
+            // no reader is handed one or two glyphs for a club again.
+            XCTAssertGreaterThanOrEqual(
+                drawn.count, 3,
+                "\(c.name) still renders \(drawn.count) glyph(s) on a home screen"
+            )
+        }
+    }
+
+    /// A served abbreviation still wins. The ship must not start overriding the
+    /// server on the 83 of 186 measured slots that carry one.
+    func testAServedAbbreviationIsStillPreferred() {
+        let pair = TeamShortName.abbreviationPair(
+            away: "Girona FC",
+            home: "Real Madrid",
+            awayServed: "GIR",
+            homeServed: "RMA"
+        )
+        XCTAssertEqual(pair.away, "GIR")
+        XCTAssertEqual(pair.home, "RMA")
     }
 
     // MARK: - The allowlist must expire
