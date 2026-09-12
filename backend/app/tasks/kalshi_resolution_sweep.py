@@ -254,6 +254,23 @@ def default_session_maker():
 class _Leg:
     close_time: Optional[datetime]
     expiration_time: Optional[datetime]
+    # #2644 (CAL-P1127). This sweep is the SECOND writer of `resolution_date` —
+    # the poller is the first — and both derive it through
+    # `derive_resolution_window`. Teaching only the poller would leave the two
+    # writers applying different rules to the same column.
+    #
+    # Stated precisely, because the failure is narrower than "it would revert
+    # the fix": the row selector (`resolution_date IS NULL OR resolution_date >=
+    # expiration_time`) stops selecting a row once #2644 has pulled its date
+    # below the backstop, so a corrected row is not re-stamped. What an untaught
+    # sweep WOULD do is stamp the pad on the rows it does still reach — a row
+    # with a NULL `resolution_date`, or one the poller has not re-polled since
+    # this shipped — leaving them on 2029 until the poller happens to touch
+    # them. The write is unconditional (`moved_earlier` is a counter, not a
+    # guard), so that is a real write of a known-wrong date, not a no-op.
+    #
+    # Defaulted so no other construction site has to change.
+    expected_expiration_time: Optional[datetime] = None
 
 
 def _parse(value: Optional[str]) -> Optional[datetime]:
@@ -712,7 +729,11 @@ async def run_backfill(
 
         window = derive_resolution_window(
             [
-                _Leg(_parse(m.get("close_time")), _parse(m.get("expiration_time")))
+                _Leg(
+                    _parse(m.get("close_time")),
+                    _parse(m.get("expiration_time")),
+                    _parse(m.get("expected_expiration_time")),
+                )
                 for m in markets
             ]
         )
