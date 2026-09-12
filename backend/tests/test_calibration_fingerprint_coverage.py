@@ -205,8 +205,27 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         it — the same discipline CAL-P168's six followed. ``covered_by_value``
         therefore moves 11 -> 12 while ``uncovered_count`` **stands still at 54**,
         which is the whole claim: the unguarded surface did not grow.
+
+        #5401 (CAL-P1119, 2026-09-11) takes this to **67** in exactly that same
+        shape, and deliberately so — the precedent above was read as an
+        instruction, not a description. ONE input, ``KALSHI_WRITER_BAR_MET``, the
+        SQL predicate that stops the curve publishing an opening the Kalshi
+        writer itself would have refused to record. It is interpolated into
+        ``_calibration_population_ctes`` (so the builder's source hash sees the
+        f-string template, never this value) and it decides WHICH ROWS THE CURVE
+        PUBLISHES, so it arrives **COVERED**: ``covered_by_value`` moves 12 -> 13
+        and ``uncovered_count`` **stands still at 54** again.
+
+        Covering it was the live choice rather than the automatic one. Its two
+        nearest siblings, ``KALSHI_LIQUIDITY_EXISTS`` and
+        ``POLY_PLACEHOLDER_EXCLUDE``, are both UNCOVERED, so copying the local
+        pattern would have pushed ``uncovered_sql_shaping`` to 23. The tiebreak
+        is that this predicate's spread literal is transcribed from another
+        file — ``app/tasks/kalshi.py``'s own writer bar — and therefore has a
+        named reason to move that its static siblings do not. The siblings' gap
+        is filed (#5430), not widened.
         """
-        assert artifact["input_count"] == 66
+        assert artifact["input_count"] == 67
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -215,7 +234,11 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # here because it is cross-module (see the two tests below).
         # CAL-P1002F: 11 -> 12. D66's `SUM_ARM_ONLY_EXCLUDED_CELLS`, closed on
         # the deploy that created it. `uncovered_count` does not move.
-        assert len(artifact["covered_by_value"]) == 12
+        # CAL-P1119 (#5401): 12 -> 13. `KALSHI_WRITER_BAR_MET`, likewise closed
+        # on the deploy that creates it. `uncovered_count` again does not move,
+        # which is the claim the docstring above makes: the unguarded surface
+        # did not grow.
+        assert len(artifact["covered_by_value"]) == 13
         assert artifact["uncovered_count"] == 54
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]

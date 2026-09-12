@@ -122,6 +122,13 @@ def _futures_row(**overrides):
         "cb_question_ungraded": 3,
         "cb_malformed_or_unknown_truth": 6,
         "cb_phantom_liquidity": 8,
+        # #5401. A checked zero, not an omission: this synthetic bucket has no
+        # row below the Kalshi writer's own opening bar, and the partition has
+        # to stay exact. The rung is given a real count by the
+        # `opening-below-writer-bar-rung` case in
+        # `tests/evals/fixtures/calibration_coverage_bridge_contract.json`,
+        # which is the fixture whose job that is.
+        "cb_opening_below_writer_bar": 0,
         "cb_structural_artifact": 4,
         "cb_field_incomplete": 2,
         "cb_representative_not_selected": 5,

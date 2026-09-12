@@ -999,6 +999,89 @@ def kalshi_liquidity_exists_sql(
 
 KALSHI_LIQUIDITY_EXISTS = kalshi_liquidity_exists_sql()
 
+# ---------------------------------------------------------------------------
+# #5401 / CAL-P1119: THE CURVE MAY NOT PUBLISH AN OPENING THE WRITER ITSELF
+# WOULD HAVE REFUSED TO RECORD.
+#
+# ``KALSHI_LIQUIDITY_EXISTS`` above admits a leg that ever showed ``yes_bid > 0``
+# OR ``last_price > 0``. The Kalshi poller will only WRITE an opening when
+# ``yes_bid > 0 AND yes_ask IS NOT NULL AND (yes_ask - yes_bid) < 0.50``
+# (``app/tasks/kalshi.py``, ``has_real_trading``) — a strictly stronger bar,
+# because a lone bid on a market nobody will sell into is not a discovered
+# price. The two bars have never agreed, so the curve has been publishing
+# openings that today's writer would have declined to store.
+#
+# Those legs cannot have come from the current poller path (its own guard
+# implies at least one qualifying snapshot), so they are historical rows or
+# another writer's. That is WHY this is a read-side exclusion and not a writer
+# fix: the writer is already correct, and the rows are already written.
+#
+# MEASURED (CAL-P1119, published rows, `scripts/calibration_fold_opening_source.py
+# --split writer_bar`), winners / implied winners where 1.0 is perfect and the
+# board control is 0.982:
+#
+#   kalshi/golf           0.762 -> 0.954, removing 26.5% of the cell
+#   kalshi/entertainment  0.828 -> 1.089, removing 50.3% of the cell
+#
+# Golf lands next to the control. Entertainment's error halves (0.172 -> 0.089)
+# and FLIPS SIGN: the cell was 0.828 by two errors cancelling, and removing the
+# over-priced below-bar cohort unmasks a genuine under-pricing in the remainder
+# (+2.8 sigma). That residual is a SECOND defect, tracked as #5431 — it is not
+# an argument against this rule, and this rule does not claim to fix it.
+#
+# WHY THIS CUT AND NOT THE PROVENANCE ONE. Splitting the same cells by
+# ``futures_outcomes.opening_source`` finds the same cohort and captures more of
+# the miss, but it removes 58.4% of golf and overshoots to 1.038 — and it keys
+# the curve on a WRITE-PATH BOOKKEEPING artifact (an untagged leg is one whose
+# INSERT arm never named the column, fixed in this same issue) rather than on a
+# property of the row. Two readings of that tag were refuted by measurement
+# before this one was written; see `artifacts/cal-p1119/README.md`.
+#
+# Read-side only (gotcha #21) — never mutates ``is_winner`` or
+# ``calibration_probability``.
+# ---------------------------------------------------------------------------
+#: The spread the Kalshi writer will accept, transcribed from
+#: ``app/tasks/kalshi.py``'s ``has_real_trading``. It is a literal there and a
+#: literal here on purpose — importing the task into the producer would drag a
+#: Celery module into the calibration chain — so
+#: ``tests/test_writer_bar_is_the_writers_own_5401.py`` reads the writer's source
+#: and fails if the two ever drift. A poller that widens its bar must widen this
+#: one in the same commit, or the curve starts refusing rows the writer accepts.
+KALSHI_WRITER_MAX_SPREAD = 0.50
+
+
+def kalshi_writer_bar_met_sql(
+    source: str = "vm.source", outcome_id: str = "fo.id"
+) -> str:
+    """Source-aware "the writer would have stored this opening" predicate.
+
+    TRUE unless ``source`` is Kalshi AND no snapshot ever met the poller's own
+    opening-write condition for ``outcome_id``. Non-Kalshi sources are always
+    TRUE (the bar is transcribed from the Kalshi writer and means nothing
+    elsewhere), so this composes with the other per-source rungs the same way
+    :func:`kalshi_liquidity_exists_sql` does.
+    """
+    return (
+        f"({source} <> 'kalshi' OR EXISTS (\n"
+        f"        SELECT 1 FROM futures_odds_snapshots fos\n"
+        f"        WHERE fos.outcome_id = {outcome_id}\n"
+        f"          AND fos.yes_bid > 0\n"
+        f"          AND fos.yes_ask IS NOT NULL\n"
+        f"          AND (fos.yes_ask - fos.yes_bid) "
+        f"< {KALSHI_WRITER_MAX_SPREAD}))"
+    )
+
+
+KALSHI_WRITER_BAR_MET = kalshi_writer_bar_met_sql()
+
+KALSHI_WRITER_BAR_RULE_TEXT = (
+    "Excludes Kalshi outcomes whose opening price no snapshot ever justified: "
+    "the poller records an opening only when a real bid exists and the bid-ask "
+    "spread is under 0.50, and these rows meet neither in any snapshot. The "
+    "curve does not publish an opening its own writer would have refused. "
+    "Applied to Kalshi only; never mutates resolutions."
+)
+
 KALSHI_LIQUIDITY_RULE_TEXT = (
     "Excludes outcomes that never showed a real bid (yes_bid > 0) or trade "
     "(last_price > 0) in any snapshot — pure one-sided, never-traded placeholder "
@@ -2786,6 +2869,28 @@ def outcome_is_calibration_liquid(
     return (ever_yes_bid or 0) > 0 or (ever_last_price or 0) > 0
 
 
+def snapshot_meets_kalshi_writer_bar(
+    yes_bid: float | None, yes_ask: float | None
+) -> bool:
+    """True if ONE snapshot would have let the Kalshi writer store an opening.
+
+    The canonical, unit-testable twin of :data:`KALSHI_WRITER_BAR_MET` (#5401),
+    transcribed from ``app/tasks/kalshi.py``'s ``has_real_trading``. The SQL asks
+    whether ANY of an outcome's snapshots satisfies this; this asks it of one.
+
+    Deliberately NOT ``or 0``-coalescing like its sibling above: a missing
+    ``yes_ask`` is not a zero ask. Treating it as one would make a bookless row
+    look like the tightest possible spread and admit exactly the cohort this
+    rule exists to remove — the sibling can coalesce safely because it only ever
+    compares ``> 0``, and this one subtracts.
+    """
+    if yes_bid is None or yes_ask is None:
+        return False
+    if yes_bid <= 0:
+        return False
+    return (yes_ask - yes_bid) < KALSHI_WRITER_MAX_SPREAD
+
+
 def binary_is_malformed(n_outcomes: int, n_winners: int) -> bool:
     """True if a 2-outcome mutually-exclusive market is malformed (L2-79 Item 1).
 
@@ -3805,6 +3910,10 @@ def _calibration_population_ctes(
                     -- #940 phase-1: never-bid/never-traded Kalshi placeholders are
                     -- excluded from the published set (read-side only, gotcha #21).
                     {KALSHI_LIQUIDITY_EXISTS} AS is_liquid,
+                    -- #5401: the curve does not publish an opening the Kalshi
+                    -- writer itself would have refused to record. Strictly
+                    -- stronger than is_liquid above; read-side only.
+                    (NOT {KALSHI_WRITER_BAR_MET}) AS is_below_writer_bar,
                     {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
                     -- Queue #220/221 Item 3: all-bands poly never-traded flag (for
                     -- the exclusion-symmetry census; does NOT gate the curve).
@@ -4013,6 +4122,7 @@ def _calibration_population_ctes(
                     MAX(mfc.terminal_eligible_n) AS eligible_n,
                     COUNT(*) FILTER (
                         WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
+                          AND NOT ro.is_below_writer_bar
                           AND NOT ro.is_malformed_binary
                           AND NOT ro.is_esports_bundle
                           -- CAL-P168: K' is a published per-outcome exclusion
@@ -4034,6 +4144,7 @@ def _calibration_population_ctes(
                     COUNT(*) FILTER (
                         WHERE ro.is_winner
                           AND ro.is_liquid AND NOT ro.is_poly_placeholder
+                          AND NOT ro.is_below_writer_bar
                           AND NOT ro.is_malformed_binary
                           AND NOT ro.is_esports_bundle
                           AND NOT ro.is_player_props_placeholder
@@ -4146,6 +4257,10 @@ def _calibration_population_ctes(
                   AND mp.source = ro.source
                   AND mp.mode_price = ro.adj_opening_probability
                 WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
+                    -- #5401: an opening the writer would have refused is not a
+                    -- forecast. Read-side only (gotcha #21) — the row is
+                    -- dropped, never re-graded; `is_winner` is truth and stays.
+                    AND NOT ro.is_below_writer_bar
                     AND NOT ro.is_malformed_binary
                     AND NOT ro.is_esports_bundle
                     -- CAL-P168 (#1978) RANK 1: K' leaves the published curve.
@@ -4318,6 +4433,16 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
     (
         "phantom_liquidity",
         "NOT COALESCE(n.is_liquid, false) OR COALESCE(n.is_poly_placeholder, false)",
+    ),
+    # #5401. Its own rung rather than a fourth clause on phantom_liquidity
+    # above: both rungs are "we never really discovered this price", but this
+    # one removes an order of magnitude more rows than that bucket currently
+    # holds, and folding it in would silently restate an established count as a
+    # regression. COALESCE(..., false) like its neighbours — a NULL flag means
+    # the row never reached `normalized`, which an earlier rung already owns.
+    (
+        "opening_below_writer_bar",
+        "COALESCE(n.is_below_writer_bar, false)",
     ),
     (
         "structural_artifact",
@@ -7216,6 +7341,26 @@ def _main_input_fingerprint() -> str:
         f"player_props_name_pattern={PLAYER_PROPS_NAME_PATTERN}",
         f"player_props_band={PLAYER_PROPS_MIDPOINT_BAND_LO},{PLAYER_PROPS_MIDPOINT_BAND_HI}",
         f"player_props_forced_drift={PLAYER_PROPS_FORCED_DRIFT_MIN}",
+        # #5401 (CAL-P1119) — the EIGHTH instance of the hole this docstring
+        # keeps describing, closed on the deploy that opens it, per the standing
+        # discipline: an interpolated value that decides WHICH ROWS THE CURVE
+        # PUBLISHES is hashed by value and by name.
+        #
+        # `KALSHI_WRITER_BAR_MET` is a SQL string interpolated into
+        # `_calibration_population_ctes`, so hashing that function's source
+        # covers the f-string TEMPLATE and never this value. Its spread literal
+        # (`KALSHI_WRITER_MAX_SPREAD`) is transcribed from the Kalshi writer and
+        # is expected to move if the writer's own bar ever moves — so this is
+        # not a hypothetical: the value has a named reason to change, and a
+        # cursor banked under one bar must not stay resumable by code carrying
+        # another.
+        #
+        # Its two nearest siblings — `KALSHI_LIQUIDITY_EXISTS` and
+        # `POLY_PLACEHOLDER_EXCLUDE` — are NOT on this list, and that is a real
+        # gap rather than a precedent to copy. They are static text that has not
+        # moved in months; this one is pinned to another file's constant. The
+        # gap is filed rather than widened here (#5430).
+        f"kalshi_writer_bar={KALSHI_WRITER_BAR_MET}",
         source,
     )
 

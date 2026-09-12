@@ -56,11 +56,33 @@ import pytest
 import app.tasks.precompute_calibration as pc
 from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 
-#: The live value at 2026-09-11T06:15Z, read from the phase ledger's
-#: ``input_fingerprint``. Not a golden string invented here: it is what production
-#: was serving while this change was written, so a mismatch means the deploy
-#: re-keys the bank.
-LIVE_INPUT_FINGERPRINT = "cf03093406ab564ae496b3d2ae8cc86e"
+#: The value this tree's population chain hashes to.
+#:
+#: It began as the live production value at 2026-09-11T06:15Z, read from the
+#: phase ledger's ``input_fingerprint`` — not a golden string invented here — so
+#: that #5085 could prove it did NOT re-key the bank.
+#:
+#: RE-ANCHORED by #5401 (CAL-P1119), which does re-key it, on purpose:
+#: ``cf030934…`` -> ``634f4e35…``. The writer-bar exclusion edits
+#: ``_calibration_population_ctes``, one of the four functions
+#: ``_main_input_fingerprint`` hashes, and it MUST — the fingerprint's whole job
+#: is to notice when the set of qualifying rows changes, and this ship changes
+#: it. Any predicate change lands here; that is the design, not a surprise.
+#:
+#: THE COST, stated rather than discovered on deploy: re-keying discards the
+#: 128-unit staged-futures bank, so the first build after this ships climbs from
+#: zero — measured at q269's bump as ~3.3 h of build, or ceil(128/13) = 10
+#: hourly beats unassisted. It is the same bill the q269 bump paid, and it is
+#: why this ship is batched with the q270 version bump rather than landing on
+#: its own: paying it twice for one methodology change would be waste.
+#:
+#: The guard still earns its place after the re-anchor. #5085's actual claim is
+#: that a change confined to ``calibration_main_build.py`` cannot re-key the
+#: cursor, and that is proved independently and structurally by
+#: ``test_the_new_helper_is_not_inside_the_hashed_source`` below. This constant
+#: is the tripwire for an UNINTENDED move: if you did not mean to change which
+#: rows qualify and this test is red, you have moved the population.
+LIVE_INPUT_FINGERPRINT = "634f4e35c9c5368355b560cf56b34730"
 
 
 class _Db:
