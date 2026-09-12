@@ -33,10 +33,12 @@ const ROOTS = [
  */
 const PERMITTED: Record<string, { count: number; because: string }> = {
   "app/events/[id]/page.tsx": {
-    count: 2,
+    count: 1,
     because:
-      "a signed MOVE in percentage points (#3051 owns its wording), and " +
-      "`fraction_elapsed`, which is a clock ratio and not a probability",
+      "`fraction_elapsed`, which is a clock ratio and not a probability. The " +
+      "signed hero MOVE that used to sit beside it is gone: #5719 routed it " +
+      "onto the difference of the two printed integers, which is #2951's rule " +
+      "and needs no rounding of its own",
   },
   "components/event/EventLeaderboard.tsx": {
     count: 1,
