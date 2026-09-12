@@ -70,7 +70,6 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
