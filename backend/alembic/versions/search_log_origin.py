@@ -42,7 +42,7 @@ deepening it. ``String(32)`` comfortably holds the longest planned value,
 
 THE UNDO LINE, which ships with it (D51):
 
-    alembic downgrade containers_phase1
+    alembic downgrade add_client_timing_events
 
 and what that runs is exactly ``ALTER TABLE search_query_logs DROP COLUMN
 top_result_kind`` then ``… DROP COLUMN origin``. Both columns are new and every
@@ -85,8 +85,20 @@ window on a 6.7k-row table and already scan it; an index here would be a cost
 with no measured reader.
 
 Revision ID: search_log_origin
-Revises: containers_phase1
+Revises: add_client_timing_events
 Create Date: 2026-09-10
+
+Re-pointed 2026-09-12 (lane1/267) from ``containers_phase1`` to
+``add_client_timing_events``. LAT-P232's ``add_client_timing_events`` landed on
+master while this branch sat unmerged, and it chains onto ``containers_phase1``
+too — so after the rebase both revisions claimed the same parent and the graph
+had TWO HEADS, which fails the Heroku release phase outright: nothing deploys.
+The rebase cannot fix this, because a migration's parent is data in this file,
+not a position in git history. Exactly the same re-point, for exactly the same
+reason, is recorded at the top of ``add_client_timing_events.py`` (latency/272,
+2026-09-08, from ``uq_event_espn_id``); this is that precedent applied one link
+along. Nothing about the two ``ADD COLUMN``s changes — only which revision they
+run after.
 """
 
 import sqlalchemy as sa
@@ -95,7 +107,7 @@ from alembic import op
 # revision identifiers, used by Alembic. `search_log_origin` is 17 characters,
 # inside the 32-character limit (gotcha #1).
 revision = "search_log_origin"
-down_revision = "containers_phase1"
+down_revision = "add_client_timing_events"
 branch_labels = None
 depends_on = None
 

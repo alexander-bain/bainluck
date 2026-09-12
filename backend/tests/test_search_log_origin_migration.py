@@ -50,6 +50,7 @@ generalised, not relaxed.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sqlite3
 from pathlib import Path
 
@@ -301,7 +302,7 @@ def test_the_model_and_the_migration_can_hold_the_same_value(migrated_db, name):
 
 
 def test_downgrade_drops_exactly_what_upgrade_added(migrated_db):
-    """The D51 undo line (`alembic downgrade containers_phase1`) must be exact.
+    """The D51 undo line (`alembic downgrade <parent>`) must be exact.
 
     An asymmetric pair here does not fail at test time or at upgrade time — it
     fails in the Heroku release phase during a rollback, which is the worst place
@@ -329,8 +330,80 @@ def test_downgrade_drops_exactly_what_upgrade_added(migrated_db):
 
 
 def test_the_revision_chain_and_id_are_shippable():
-    """Gotcha #1 (≤32 chars) and the chain this links into, in one place."""
+    """Gotcha #1 (≤32 chars) and the chain this links into, in one place.
+
+    THE PARENT USED TO BE PINNED TO A LITERAL (``== "containers_phase1"``) AND
+    THAT IS WHY THIS BRANCH ALMOST BROKE THE DEPLOY. LAT-P232's
+    ``add_client_timing_events`` landed on master while the branch sat unmerged
+    and chained onto ``containers_phase1`` as well, so after the rebase two
+    revisions claimed the same parent: a branchpoint, two heads, and a Heroku
+    release phase that fails outright. A literal-parent assertion cannot see
+    that — it passes on exactly the graph that does not deploy, and fails on
+    every harmless re-point. It asserts a POSITION; the deploy turns on a
+    PROPERTY.
+
+    So the property is asserted against the revision graph, which is where a
+    branchpoint lives:
+
+    1. **One head** — the condition that breaks the release phase.
+    2. **This revision is reachable from it** — so a "single head" that simply
+       orphaned this migration cannot read as success.
+
+    Both survive the next migration chaining on; neither survives a real
+    branchpoint. This is the third time the repo has learned this — see
+    ``test_uq_event_espn_id_migration.py::test_is_an_ancestor_of_the_single_head``
+    and the docstring on
+    ``test_containers_migration_real_postgres.py::test_head_is_single_after_this_migration``,
+    whose own conclusion was: state the property generally so the next migration
+    does not have to come back here. This is that, one link along.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
     mod = _load_migration()
     assert len(mod.revision) <= 32
     assert mod.revision == "search_log_origin"
-    assert mod.down_revision == "containers_phase1"
+    assert mod.down_revision, "this migration must chain onto something"
+
+    script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
+
+    heads = script.get_heads()
+    assert len(heads) == 1, (
+        f"expected a single head, got {len(heads)}: {heads}. Two heads fail the "
+        "Heroku release phase outright — nothing deploys. A migration added on a "
+        "branch must chain onto the CURRENT head, and rebasing does not do that "
+        "for you: the parent is data in the migration file, not a position in "
+        "git history."
+    )
+
+    reachable = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert mod.revision in reachable, (
+        f"{mod.revision} is not reachable from the single head {heads[0]!r} — it "
+        "is orphaned, so the release phase would never run it."
+    )
+
+
+def test_the_shipped_undo_line_names_the_real_parent():
+    """The D51 undo line in the migration's own docstring must BE runnable.
+
+    ``alembic downgrade <rev>`` is the one-command restore D51(b) requires, and
+    it is prose — so it is the half of a re-point that is silently forgotten.
+    A re-point that updates ``down_revision`` and leaves the docstring behind
+    ships an undo line that rolls back to a revision this migration no longer
+    sits above: it either errors or unwinds the wrong distance, and it does so
+    during a rollback, which is the worst moment to discover it and the one
+    nobody is watching.
+
+    Both halves moved by hand in the 2026-09-12 re-point. This is what makes
+    that a fact about the file rather than a thing someone remembered.
+    """
+    mod = _load_migration()
+    text = MIGRATION_PATH.read_text()
+
+    undo_lines = re.findall(r"alembic downgrade (\S+)", text)
+    assert undo_lines, "the migration must ship its D51 undo line in the docstring"
+    assert set(undo_lines) == {mod.down_revision}, (
+        f"the docstring's undo line(s) name {sorted(set(undo_lines))} but "
+        f"down_revision is {mod.down_revision!r} — the shipped restore command "
+        "would unwind to the wrong revision."
+    )
