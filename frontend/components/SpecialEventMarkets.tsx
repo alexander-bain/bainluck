@@ -12,11 +12,11 @@ import {
   type TennisSetsWon,
 } from "@/lib/otherMarketGroups";
 import {
+  isPregameStatus,
   isSettledStatus,
   SETTLED_SECTION_NOTE_NO_QUOTES,
   SETTLED_QUOTE_PREFIX,
 } from "@/lib/settledQuote";
-import { isPregameStatus } from "@/lib/propDivergence";
 import { renderedPercent } from "@/lib/renderedPercent";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import { oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";

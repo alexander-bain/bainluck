@@ -22,7 +22,7 @@ import { parsePlayerName } from "./playerPropsGrouping";
 import type { PlayerPropRow } from "./playerPropsGrouping";
 import type { PropGrade } from "./propGrade";
 import { readOverSideResolution } from "./propResolution";
-import { isSettledStatus } from "./settledQuote";
+import { isPregameStatus, isSettledStatus } from "./settledQuote";
 
 /**
  * The surprise threshold — MEASURED, not tuned.
@@ -702,34 +702,16 @@ export interface DivergenceInput {
  */
 export { isSettledStatus };
 
-const LIVE_STATUSES: ReadonlySet<string> = new Set([
-  "live",
-  "in_progress",
-  "inprogress",
-  "in progress",
-  "halftime",
-  "delayed",
-  "suspended",
-]);
-
 /**
- * The event has not started.
- *
- * NOT `!settled` — that would put a live game on THE SCRIPT and hand it a
- * ranking key of zero movement while the movement is the entire story. And NOT
- * an allowlist of `scheduled`, either: the status vocabulary on this payload is
- * provider-shaped and an unrecognised value must not silently become a pregame
- * page for a game already in the third inning.
- *
- * So it is a triple: settled → landed, live → moving, anything else → script.
- * An UNKNOWN status therefore lands on THE SCRIPT, which is the safe end — the
- * script states pregame marks, which are true at every point in the game; the
- * other two states make claims about a clock we would be guessing at.
+ * Re-exported for the same reason, and moved by the same guard one cycle later
+ * (#4970's card half). Leaving this half of the triple here meant the UX-P115
+ * fix above only held for `settled`: the very next surface to ask "has this
+ * game STARTED?" — `SpecialEventMarkets` again — was pulled back into the
+ * closure and failed the same census line. A three-valued lifecycle predicate
+ * split across two modules is one module too many; the whole triple now lives
+ * in `lib/settledQuote`.
  */
-export function isPregameStatus(status?: string | null): boolean {
-  const s = (status || "").toLowerCase();
-  return !isSettledStatus(s) && !LIVE_STATUSES.has(s);
-}
+export { isPregameStatus };
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
