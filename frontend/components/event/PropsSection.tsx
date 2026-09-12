@@ -306,7 +306,20 @@ function scriptPairPercents(
  * Ranking (`absMovement`) is left on the raw value on purpose: it decides ORDER,
  * not a printed number, so it cannot contradict anything on the reader's screen.
  */
-export type DivergencePair = { mark: number; current: number; move: number };
+/**
+ * #5408 widens this from three numbers to "the numbers this family HAS".
+ *
+ * `mark` and `move` are null TOGETHER or not at all — a family with no baseline
+ * on either leg has no opening level to print and no move to claim, which is
+ * already what `signedDelta` answers for such a row. They are two views of one
+ * absence, never independently null, and the markless branch below is the only
+ * thing that produces them.
+ */
+export type DivergencePair = {
+  mark: number | null;
+  current: number;
+  move: number | null;
+};
 
 const EMPTY_DIVERGENCE_PAIRS: ReadonlyMap<PropMark["key"], DivergencePair> = new Map();
 
@@ -319,6 +332,66 @@ function divergencePairPercents(
     // the golf/combat concept page, where two rows standing together are two
     // different questions and pairing them would invent a complement.
     if (group.name == null) continue;
+
+    // #5408 — the cohort #5240 and #5296 could not see.
+    //
+    // Both of them open by filtering for `pregame_mark != null`, because both
+    // were written about the three numbers a BADGE relates. A family with no
+    // baseline on either leg therefore never entered, each leg rounded on its
+    // own, and the defect survived in the one cohort that shows it most plainly:
+    // #5216 removed the `script pending` chip that used to sit between the label
+    // and the price, so a reader now sees the two bare percentages side by side.
+    // `/events/15309635` (Angels @ Nationals, 2026-09-11 22:50Z, 390px) printed
+    // `CADE CAVALLI: STRIKEOUTS O/U 6.5` as `Over 57% / Under 44%` — `0.565` and
+    // `0.435`, an exact complement on the wire, both legs on the `.5` boundary
+    // `Math.round` takes upward. 7 of that page's 22 named families are markless.
+    //
+    // A markless pair needs only TWO numbers, which is why it is a branch and not
+    // a loosened filter: there is no mark to print and no move to claim, so the
+    // #2951 consumer that forced #5240 to stop short has nothing to consume here.
+    // The pair is still decided once, by the family, in the same call.
+    //
+    // `every` and not `some`: a MIXED family — one leg with a baseline, one
+    // without — falls through to the marked branch below, where `marked.length`
+    // is 1 and it is skipped. That is deliberate. Pairing its two currents would
+    // re-round the printed level of the leg that HAS a mark while its badge kept
+    // deriving from the raw one, which is #2951's self-contradiction arriving by
+    // the back door. A mixed family keeps today's arithmetic exactly.
+    if (group.items.every((i) => i.pregame_mark == null)) {
+      const priced = group.items.filter((i) => i.current != null);
+      if (priced.length !== 2) continue;
+      // NO `isComplementPair` GATE HERE, and the asymmetry with the marked
+      // branch below is the point rather than an oversight.
+      //
+      // That branch needs one because it hands the family to
+      // `renderedDuelMovePoints`, which OWNS THE BADGE: on a non-complement pair
+      // the contract would re-derive a delta that the raw `signedDelta` does not
+      // agree with, which is #2951 reaching a population #5296 never measured.
+      // A markless family prints no badge, so the branch's only output is the two
+      // levels — and for a non-complement pair `renderedOutcomeRowPercents`
+      // already returns precisely the two independent roundings the rows print
+      // today. A gate here could therefore never change a printed number.
+      //
+      // MEASURED, not reasoned: removing this gate leaves the suite green, and so
+      // does removing it TOGETHER with the clause inside `renderedDuelPercents`
+      // that subsumes it — because `renderedCardPercents` self-gates as well. A
+      // line that survives its own compound mutation is not a defence, it is a
+      // false promise to the next reader that the contract does not self-gate.
+      const currentPct = renderedOutcomeRowPercents(priced.map((i) => i.current));
+      // Atomic, for the marked branch's reason: a family sets BOTH legs or
+      // neither, so a card cannot print one contract-rounded number beside one
+      // independently-rounded one.
+      if (currentPct.some((p) => p == null)) continue;
+      for (const index of [0, 1]) {
+        byKey.set(priced[index].key, {
+          mark: null,
+          current: currentPct[index] as number,
+          move: null,
+        });
+      }
+      continue;
+    }
+
     const marked = group.items.filter((i) => i.pregame_mark != null && i.current != null);
     if (marked.length !== 2) continue;
 
@@ -663,7 +736,12 @@ function PropFamilyBlock({
   // would otherwise show `↑ 1` from inside the drawer that says it did not move.
   const didNotMove = (item: PropMark) => {
     const pair = divergencePairs.get(item.key);
-    return pair ? pair.move === 0 : isUnchanged(item);
+    // #5408: `move === 0` and not `move == null`, spelled out because the type
+    // now admits null. A markless pair makes no claim about movement, so it is
+    // not evidence of "didn't move" and must stay in plain sight — which is also
+    // what `isUnchanged` answers for it (a null mark is never unchanged). Encode
+    // such a pair as `move: 0` and its live row would vanish into the drawer.
+    return pair?.move != null ? pair.move === 0 : isUnchanged(item);
   };
   const moved = collapsible ? listed.filter((i) => !didNotMove(i)) : listed;
   const unchanged = collapsible ? listed.filter(didNotMove) : [];
@@ -848,14 +926,24 @@ function DivergenceValue({
   // #5296: when this row is half of a complement pair the family has already
   // decided all three numbers together, and the row prints what it was handed.
   // Otherwise every line below is exactly what it was.
-  const delta = paired ? signedMovePoints(paired.move) : signedDelta(item.pregame_mark, item.current);
+  // #5408: `paired.move` is null exactly when the family had no baseline, and
+  // `signedDelta` on a null mark is null too — so the markless row falls through
+  // to the same "no badge" answer it already gave, and the marked row takes the
+  // #5296 branch unchanged.
+  const delta =
+    paired?.move != null
+      ? signedMovePoints(paired.move)
+      : signedDelta(item.pregame_mark, item.current);
   const up = delta?.startsWith("↑");
   const flat = delta === "±0";
   return (
     <div className="flex items-center gap-2 shrink-0">
       {item.pregame_mark != null ? (
         <span className="font-mono text-[11px] text-text-muted tabular-nums">
-          {paired ? `${paired.mark}%` : pct(item.pregame_mark)} →
+          {/* #5408: keyed on the paired MARK rather than on `paired`, so a
+              markless pair (whose `mark` is null by construction) can never
+              reach the template and print `null%`. */}
+          {paired?.mark != null ? `${paired.mark}%` : pct(item.pregame_mark)} →
         </span>
       ) : (
         // #5216: NOTHING, not `script pending`.
