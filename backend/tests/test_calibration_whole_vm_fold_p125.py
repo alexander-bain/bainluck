@@ -365,7 +365,7 @@ def test_span_sql_chunks_on_the_grouping_key_not_the_market_id(col):
                               chunk=f"AND ABS(HASHTEXT(fm.{col}::text)::bigint) % 4 = 1")
     assert f"HASHTEXT(fm.{col}::text)" in sql
     assert "fm.id %" not in sql
-    assert f"GROUP BY 1" in sql
+    assert "GROUP BY 1" in sql
 
 
 def test_span_sql_requires_members_on_both_sides():
@@ -850,3 +850,120 @@ def test_the_instrument_only_imports_the_frozen_producer():
     assert "from app.tasks.precompute_calibration import" in src
     for verb in ("open(", "write(", "UPDATE ", "DELETE ", "INSERT "):
         assert verb not in src.replace('with open(args.out, "w") as fh:', ""), verb
+
+
+# ==========================================================================
+# CAL-P1077 / CERT-2428 — a Stage A timeout is the CLOCK, not the class
+# ==========================================================================
+#
+# The repair CERT-2428 required — re-fold P1077's two cells on THIS rail —
+# could not run, because Stage A refused every residue class it was given. The
+# rail read that refusal as "the class is too big" and refined one class 8,192x
+# (64 -> 524,288, two reads a level, every one timing out) on its way to the
+# depth-12 "irreducible" error.
+#
+# It was never about the class. The residue filter is on the OUTER select and
+# the population chain underneath runs in full whatever ``n`` is, so a narrower
+# class costs the same — measured on ``polymarket/hockey``, k=0: 0 mod 4 and
+# 0 mod 64 both TIMED OUT, while 0 mod 1024 returned in 7.6 s and 0 mod 65536
+# returned ZERO rows in 8.4 s. The chain sits at ~7 s against ``db-query``'s
+# 10 s statement timeout (not raisable — ``timeout_ms`` is ``explain``-only), so
+# write load decides it: the same 0 mod 64 then returned its 89 rows five times
+# running at 7.1 / 9.1 / 6.6 / 5.8 / 8.9 s.
+#
+# These two tests keep the distinction the fix rests on. Merging the arms back
+# together does not break a fold — it makes the rail unusable on a busy night
+# and blames the cell.
+
+def _fake_db(monkeypatch, script):
+    """Replace ``cce.db_query`` with a scripted sequence, and count the SQL it
+    is asked for so a test can prove the SAME class was re-asked rather than a
+    narrower one substituted."""
+    seen: list[str] = []
+    seq = list(script)
+
+    def fake(sql, limit=None, retries=3):
+        seen.append(sql)
+        step = seq.pop(0) if seq else {"row_count": 0, "rows": []}
+        if step == "timeout":
+            raise wvf.cce.QueryTimeout("statement_timeout")
+        return step
+
+    monkeypatch.setattr(wvf.cce, "db_query", fake)
+    monkeypatch.setattr(wvf.time, "sleep", lambda _s: None)
+    return seen
+
+
+def test_a_stage_a_timeout_re_asks_the_same_class_and_never_splits(monkeypatch):
+    """Two timeouts then a clean reply: the rows come back, and the rail asked
+    for the SAME residue class all three times."""
+    rows = [[1, "polymarket", "g:polymarket:99", True]]
+    seen = _fake_db(monkeypatch, [
+        "timeout", "timeout", {"row_count": 1, "rows": rows},
+    ])
+    got = wvf._read_hash_chunk("polymarket", "hockey", 64, 0)
+
+    assert [r.market_id for r in got] == [1]
+    assert len(seen) == 3, "the class was not re-asked"
+    assert len(set(seen)) == 1, (
+        "the rail substituted a different (narrower) class instead of "
+        "re-asking the same one — that is the split it must no longer do"
+    )
+    assert "% 64 = 0" in seen[0]
+
+
+def test_a_stage_a_class_that_never_lands_says_LOAD_not_width(monkeypatch):
+    """The give-up path must not read as 'this cell is too big'. A session that
+    believes that adds buckets, which measurably buys nothing."""
+    seen = _fake_db(monkeypatch, ["timeout"] * 64)
+    with pytest.raises(RuntimeError) as e:
+        wvf._read_hash_chunk("polymarket", "hockey", 64, 0)
+
+    assert len(seen) == wvf.STAGE_A_TIMEOUT_RETRIES, (
+        "the retry budget is not the one the constant advertises"
+    )
+    assert len(set(seen)) == 1, "it split on the way to giving up"
+    msg = str(e.value)
+    assert "LOAD, not width" in msg
+    assert "irreducible" not in msg
+
+
+def test_a_zero_retry_budget_names_the_knob_instead_of_UnboundLocalError(monkeypatch):
+    """CodeQL's `r` may be used before it is initialized, made executable.
+
+    A budget of 0 makes ``range(1, 1)`` empty, so the read loop never runs and
+    no reply is ever bound. The old shape then raised ``UnboundLocalError`` from
+    the truncation line — a traceback that points at the row cap while the fault
+    is a constant 40 lines up (Hot List gotcha #7). The rail must name the knob.
+    """
+    seen = _fake_db(monkeypatch, [{"row_count": 0, "rows": []}])
+    monkeypatch.setattr(wvf, "STAGE_A_TIMEOUT_RETRIES", 0)
+
+    with pytest.raises(RuntimeError) as e:
+        wvf._read_hash_chunk("polymarket", "hockey", 64, 0)
+
+    assert seen == [], "a zero budget still reached the database"
+    msg = str(e.value)
+    assert "STAGE_A_TIMEOUT_RETRIES" in msg, (
+        "the give-up message does not name the constant that is actually wrong"
+    )
+    assert "LOAD, not width" not in msg, (
+        "a never-asked class was reported as the load story — it never ran"
+    )
+
+
+def test_truncation_still_splits_because_that_one_really_is_the_class(monkeypatch):
+    """The other half of the distinction, and the reason the arms cannot be
+    merged in either direction. A reply AT the row cap is a statement about
+    width — those rows exist and did not fit — so it must still refine."""
+    at_cap = {"row_count": wvf.cce.ROW_CAP,
+              "rows": [[1, "polymarket", "m:1", False]] * wvf.cce.ROW_CAP}
+    small = {"row_count": 0, "rows": []}
+    seen = _fake_db(monkeypatch, [at_cap, small, small])
+    wvf._read_hash_chunk("polymarket", "hockey", 64, 0)
+
+    assert len(seen) == 3, "a truncated class did not refine into two"
+    assert "% 64 = 0" in seen[0]
+    assert "% 128 = 0" in seen[1] and "% 128 = 64" in seen[2], (
+        "the refinement is no longer the exact one (k, k+n) mod 2n"
+    )

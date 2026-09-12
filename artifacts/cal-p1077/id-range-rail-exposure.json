@@ -1,0 +1,110 @@
+{
+  "what": "CAL-P1077 / CERT-2428 \u2014 how exposed each cell is to the id-range rail's re-derivation defect. A virtual question whose markets all fall inside one of sweep()'s [lo + kW, lo + (k+1)W) slices cannot be re-derived by that rail; one that straddles a boundary can. This is the EXPOSURE, not the damage - and the two do not track each other, which is the finding.",
+  "method": "TWO bases, and the cheap one is validated against the exact one. EXACT: read off a frozen whole-vm Stage A roster, so the unit is the producer's own vm_id. PROXY: futures_markets.group_id via one db-query, over the RAW cell (no eligibility filter, no >=3 gate), so its straddling count is an UPPER BOUND on the exact one - measured as 137 >= 112 on economics and 466 >= 465 on hockey. Its percentage is NOT comparable to the exact one because the denominators differ (7,437 raw groups vs 1,181 gated virtual questions on economics); use the COUNT. The bound is one-directional and that is the point: PROXY 0 => EXACT 0, conclusively, because a group whose ids never cross a boundary cannot be split by one however it is grouped or gated - so a zero row is a finished answer, and a non-zero row is only a reason to fold on the whole-vm rail.",
+  "slice_width": 1000000,
+  "slice_origin_per_source": {
+    "kalshi": 171,
+    "polymarket": 112847
+  },
+  "cells": {
+    "polymarket/economics": {
+      "basis": "frozen whole-vm Stage A roster",
+      "markets": 18538,
+      "virtual_questions": 7067,
+      "grouped_virtual_questions": 1181,
+      "straddling_a_slice_boundary": 112,
+      "straddling_pct_of_grouped": 9.48,
+      "markets_in_straddling_questions": 1741
+    },
+    "polymarket/hockey": {
+      "basis": "frozen whole-vm Stage A roster",
+      "markets": 5498,
+      "virtual_questions": 2142,
+      "grouped_virtual_questions": 498,
+      "straddling_a_slice_boundary": 465,
+      "straddling_pct_of_grouped": 93.37,
+      "markets_in_straddling_questions": 3614
+    },
+    "kalshi/golf": {
+      "basis": "futures_markets.group_id via db-query (upper bound, no roster frozen)",
+      "markets": 3450,
+      "markets_without_a_group_id": 0,
+      "groups": 3450,
+      "straddling_a_slice_boundary": 0,
+      "straddling_pct_of_grouped": 0.0,
+      "markets_in_straddling_questions": 0,
+      "note": "ZERO. Every kalshi/golf group's markets fall inside a single slice, so the id-range rail cannot re-derive any golf question's identity and its arm table is not exposed to the CERT-2428 defect."
+    }
+  },
+  "validation": {
+    "polymarket/economics": {
+      "exact": 112,
+      "proxy": 137,
+      "bound_holds": true
+    },
+    "polymarket/hockey": {
+      "exact": 465,
+      "proxy": 466,
+      "bound_holds": true
+    }
+  },
+  "triage": {
+    "kalshi/golf": {
+      "basis": "futures_markets.group_id proxy (upper bound)",
+      "markets": 3450,
+      "markets_without_a_group_id": 0,
+      "groups": 3450,
+      "straddling_a_slice_boundary_upper_bound": 0,
+      "exposed": false
+    },
+    "kalshi/entertainment": {
+      "basis": "futures_markets.group_id proxy (upper bound)",
+      "markets": 5698,
+      "markets_without_a_group_id": 0,
+      "groups": 5698,
+      "straddling_a_slice_boundary_upper_bound": 0,
+      "exposed": false
+    },
+    "kalshi/tech": {
+      "basis": "futures_markets.group_id proxy (upper bound)",
+      "markets": 587,
+      "markets_without_a_group_id": 0,
+      "groups": 587,
+      "straddling_a_slice_boundary_upper_bound": 0,
+      "exposed": false
+    },
+    "polymarket/golf": {
+      "basis": "futures_markets.group_id proxy (upper bound)",
+      "markets": 3904,
+      "markets_without_a_group_id": 0,
+      "groups": 254,
+      "straddling_a_slice_boundary_upper_bound": 1,
+      "exposed": true
+    },
+    "polymarket/cricket": {
+      "basis": "futures_markets.group_id proxy (upper bound)",
+      "markets": 8251,
+      "markets_without_a_group_id": 0,
+      "groups": 6084,
+      "straddling_a_slice_boundary_upper_bound": 55,
+      "exposed": true
+    },
+    "polymarket/economics": {
+      "basis": "futures_markets.group_id proxy (upper bound)",
+      "markets": 19711,
+      "markets_without_a_group_id": 0,
+      "groups": 7437,
+      "straddling_a_slice_boundary_upper_bound": 137,
+      "exposed": true
+    },
+    "polymarket/hockey": {
+      "basis": "futures_markets.group_id proxy (upper bound)",
+      "markets": 5745,
+      "markets_without_a_group_id": 0,
+      "groups": 2346,
+      "straddling_a_slice_boundary_upper_bound": 466,
+      "exposed": true
+    }
+  },
+  "triage_reading": "kalshi/golf, kalshi/entertainment and kalshi/tech are at ZERO: the id-range rail cannot re-derive any question identity in those cells, so a fold already taken there needs no refold. polymarket/golf (<=1), cricket (<=55), economics (<=137) and hockey (<=466) are exposed and must be folded on the whole-vm rail - which economics and hockey now have been, both agreeing with the id-range rail anyway. Exposure bounds the risk; it does not predict the damage."
+}

@@ -1,0 +1,40 @@
+{
+  "what": "CAL-P1077 / CERT-2428 repair \u2014 the Stage A generation behind each whole-vm fold. The rosters themselves are ~1 MB each and exactly reproducible from the rail, so only their identity is banked.",
+  "rail": "whole_vm",
+  "cells": {
+    "polymarket/economics": {
+      "roster_buckets": 32,
+      "fold1": {
+        "captured_at": 1789007376.474758,
+        "rows": 18538,
+        "sha256_16": "dbad1e24e2edfad8"
+      },
+      "fold2": {
+        "captured_at": 1789008676.515174,
+        "rows": 18538,
+        "sha256_16": "dbad1e24e2edfad8"
+      },
+      "minutes_apart": 21.7,
+      "rows_entered_between_folds": 0,
+      "rows_left_between_folds": 0,
+      "identical": true
+    },
+    "polymarket/hockey": {
+      "roster_buckets": 16,
+      "fold1": {
+        "captured_at": 1789007579.1833541,
+        "rows": 5498,
+        "sha256_16": "579acc1dae05a8f3"
+      },
+      "fold2": {
+        "captured_at": 1789009196.2416599,
+        "rows": 5498,
+        "sha256_16": "579acc1dae05a8f3"
+      },
+      "minutes_apart": 27.0,
+      "rows_entered_between_folds": 0,
+      "rows_left_between_folds": 0,
+      "identical": true
+    }
+  }
+}

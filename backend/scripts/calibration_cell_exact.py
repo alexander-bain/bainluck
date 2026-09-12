@@ -1275,6 +1275,126 @@ CASE WHEN lower(btrim(d.outcome_name)) = 'over' THEN 'over'
 || '|' || COALESCE(d.market_type, 'null')
 """
 
+#: CAL-P1077 — the GRADING CHANNEL of a LONE CLAIM, for `polymarket/economics`
+#: (rank 5 live, excess 12,517).
+#:
+#: WHAT IT ASKS. This row is the only captured outcome of its market — a lone
+#: "Yes" on a daily "Up or Down" question. Which source graded it?
+#:
+#: WHY THE CELL NEEDS IT. D13 option A (`clean_vms`' ``graded_lone_claims >= 1``
+#: arm, line ~3684 of the producer) exists precisely so a lone claim publishes
+#: whether it won or lost, closing the "published iff it WON" bias. That arm
+#: does its job. What it cannot see is that the LOSING half of this family is
+#: graded by a source the truth-eligibility allowlist refuses — the bus measured
+#: ``all_losers`` 1,560 @0% and ``clean_resolution`` 1,265 @100% both INELIGIBLE,
+#: against ``api_settlement`` 927 @84.6% ELIGIBLE. So the bias D13 removed at the
+#: admission gate is re-introduced three CTEs later by the eligibility filter,
+#: and an "Up or Down" coin flip publishes as an 84.6%-winning forecast.
+#:
+#: ``mrs.n_outcomes`` is the producer's OWN lone-claim basis (the same column the
+#: D13 arm counts on), not a re-derivation — so ``a_``/``b_`` here mean exactly
+#: what "lone claim" means in the chain being folded.
+#:
+#: ``b_lone_other_source`` is the control that decides whether the rule is about
+#: LONENESS or about the CHANNEL: if the eligible lone claims graded by any other
+#: source are calibrated, the defect is the channel and the rule must name it.
+#: ``z_not_lone`` is the rest of the cell — doctrine 18 says a row-dropping fix
+#: is graded on exactly that arm, because it is what the reader is left with.
+LONECLAIM_JOIN = """
+LEFT JOIN market_result_shape mrs13 ON mrs13.market_id = d.market_id
+LEFT JOIN futures_outcomes fo13 ON fo13.id = d.outcome_id
+"""
+LONECLAIM_EXPR = """
+CASE WHEN mrs13.n_outcomes = 1
+          AND fo13.resolution_source = 'api_settlement'
+          THEN 'a_lone_api_settlement'
+     WHEN mrs13.n_outcomes = 1
+          THEN 'b_lone_' || COALESCE(fo13.resolution_source, 'null')
+     ELSE 'z_not_lone' END
+"""
+
+#: CAL-P1077 — the PUBLISHED price against the ELIGIBILITY price, for
+#: `polymarket/hockey` (rank 10 live, excess 6,117).
+#:
+#: WHAT IT ASKS. The admission gate reads ``opening_probability`` and demands
+#: ``> 0 AND < 1``. The published price is ``COALESCE(calibration_probability,
+#: opening_probability)``. Those are two different columns, so a leg admitted on
+#: a sane opening quote can publish at a certainty the gate would have refused.
+#: This dimension bands the price the READER is actually scored on.
+#:
+#: ``a_pub_certain`` is a published probability of 1.0 or 0.0 — not a forecast in
+#: any sense the page can defend, and the bus measured 21 unnamed "Player N" legs
+#: of "NHL Hart Memorial Trophy Winner" sitting at EXACTLY 1.0000 with all 21
+#: losing. ``b_pub_near_certain`` is the shoulder that says whether the defect is
+#: the exact value or the band. ``z_pub_ordinary`` is the control and the arm
+#: doctrine 18 grades a row-dropping fix on.
+PUBBAND_JOIN = "LEFT JOIN futures_outcomes fo14 ON fo14.id = d.outcome_id"
+PUBBAND_EXPR = """
+CASE WHEN COALESCE(fo14.calibration_probability, fo14.opening_probability) >= 1.0
+       OR COALESCE(fo14.calibration_probability, fo14.opening_probability) <= 0.0
+          THEN 'a_pub_certain'
+     WHEN COALESCE(fo14.calibration_probability, fo14.opening_probability) >= 0.99
+       OR COALESCE(fo14.calibration_probability, fo14.opening_probability) <= 0.01
+          THEN 'b_pub_near_certain'
+     ELSE 'z_pub_ordinary' END
+|| '|' || CASE WHEN fo14.calibration_probability IS NULL THEN 'from_opening'
+               ELSE 'from_calibration' END
+"""
+
+#: CAL-P1078 — the FLAT-FILL band crossed with the QUESTION FAMILY, for
+#: `kalshi/golf` (rank 1 live, excess 28,443).
+#:
+#: WHAT IT ASKS. ARTIFACT-M-20260909-SUBCOHORT-kalshi-golf-field names one
+#: mechanism: *flat near-1 fill on per-golfer legs of round-leader / cut /
+#: top-finish markets* — every golfer in "Hainan To Make the Cut" carrying
+#: 0.990, "Valero Round 2 Leader" legs at 0.97-0.98 in a 165-golfer field. On
+#: the truth-eligible SUPERSET that is 3,579 legs priced >= 0.93 winning 40.9%.
+#: The artifact's own confidence line says "medium on transfer to the published
+#: 21k subset", and this dimension is how that transfer is measured rather than
+#: assumed.
+#:
+#: WHY 0.93 AND NOT ``pubband``'s 0.99. ``pubband`` was built for
+#: `polymarket/hockey`, where the mechanism was legs at EXACTLY 1.0000, so its
+#: shoulder sits at 0.99. Golf's fill sits at 0.97-0.99, which ``pubband`` would
+#: fold into ``z_pub_ordinary`` alongside genuine 0.60 favourites — the arm
+#: under test would be diluted by the control. The cut named here is the
+#: artifact's own (>= 0.93), and ``b_shoulder_90_93`` says whether the defect is
+#: the cut or the band.
+#:
+#: WHY THE FAMILY CROSS IS NOT DECORATION. The published payload already answers
+#: the band question on its own grain: bucket 9 (0.90-1.00) of the published
+#: `kalshi/golf` cell holds 416 legs at mean 0.9693 winning 64.4%, and removing
+#: it moves the cell 4.34 -> 3.78. What the payload CANNOT say is which of those
+#: 416 are the named family, and an exclusion is only as big as its predicate.
+#: ``lead`` / ``topn`` / ``cut`` are the three the artifact names, read off the
+#: venue's own ticker vocabulary (`KXPGAR2LEAD`, `KXPGATOP10`, `KXPGAMAKECUT`
+#: and their LPGA/DP-World/LIV/Champions twins). ``tour`` is the outright-winner
+#: field market — the same shape, NOT named by the artifact, and therefore the
+#: negative control that says whether the fill is a property of the three
+#: families or of every large golf field. ``z_ordinary`` is the arm doctrine 18
+#: grades a row-dropping fix on.
+#:
+#: ``fm15`` / ``fo15`` are this dimension's own aliases; it deliberately does
+#: NOT borrow ``SERIES_JOIN``'s ``fm2`` the way ``golfround`` does, so that the
+#: p131 collision guard stays a real test rather than one with an exception.
+GOLFFILL_JOIN = """
+LEFT JOIN futures_markets fm15 ON fm15.id = d.market_id
+LEFT JOIN futures_outcomes fo15 ON fo15.id = d.outcome_id
+"""
+GOLFFILL_EXPR = """
+CASE WHEN COALESCE(fo15.calibration_probability, fo15.opening_probability) >= 0.93
+          THEN 'a_fill_ge93'
+     WHEN COALESCE(fo15.calibration_probability, fo15.opening_probability) >= 0.90
+          THEN 'b_shoulder_90_93'
+     ELSE 'z_ordinary' END
+|| '|' ||
+CASE WHEN SPLIT_PART(fm15.external_id, '-', 1) ~ 'LEAD$'      THEN 'lead'
+     WHEN SPLIT_PART(fm15.external_id, '-', 1) ~ 'TOP[0-9]+$' THEN 'topn'
+     WHEN SPLIT_PART(fm15.external_id, '-', 1) ~ 'MAKECUT$'   THEN 'cut'
+     WHEN SPLIT_PART(fm15.external_id, '-', 1) ~ 'TOUR$'      THEN 'tour'
+     ELSE 'other' END
+"""
+
 #: Dimensions whose expression depends on the chunk, and therefore cannot live
 #: in the static table below.
 PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim, "truth": truth_dim}
@@ -1305,6 +1425,9 @@ DIMENSIONS = {
     "price_moved": ("CASE WHEN d.price_moved THEN 'moved' ELSE 'unmoved' END", "", ""),
     "market_type": ("COALESCE(d.market_type, 'null')", "", ""),
     "ouside": (OUSIDE_EXPR, OUSIDE_JOIN, ""),
+    "loneclaim": (LONECLAIM_EXPR, LONECLAIM_JOIN, ""),
+    "pubband": (PUBBAND_EXPR, PUBBAND_JOIN, ""),
+    "golffill": (GOLFFILL_EXPR, GOLFFILL_JOIN, ""),
 }
 
 

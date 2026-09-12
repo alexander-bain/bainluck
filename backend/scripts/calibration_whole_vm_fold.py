@@ -415,26 +415,102 @@ def stage_a_sql(source: str, category: str, n: int, k: int) -> str:
         "WITH " + pop + STAGE_A_TAIL.format(n=n, k=k))
 
 
+#: CAL-P1077 (CERT-2428 repair), measured 2026-09-09 19:14-19:22 PT: how many
+#: times a Stage A residue class is RE-ASKED before the rail gives up on it.
+#:
+#: 🔴 A STATEMENT TIMEOUT HERE IS NOT "THE CLASS IS TOO BIG". The residue filter
+#: is ``ABS(HASHTEXT(vm_id)) % n = k`` on the OUTER select; the population chain
+#: underneath it is scoped to the CELL and runs in full whatever ``n`` is. So the
+#: class width is not what the cost is made of, and the measurement says so
+#: outright — on ``polymarket/hockey``, k=0:
+#:
+#:     0 mod 4       TIMEOUT   10.4s
+#:     0 mod 64      TIMEOUT   10.3s
+#:     0 mod 1024    OK   11 rows   7.6s
+#:     0 mod 65536   OK    0 rows   8.4s     <- ZERO rows, still 8.4s
+#:
+#: and then the SAME ``0 mod 64`` that had just timed out twice returned its 89
+#: rows five times running at 7.1 / 9.1 / 6.6 / 5.8 / 8.9 s. The chain sits at
+#: ~7 s against ``db-query``'s 10 s statement timeout — which is not raisable,
+#: ``timeout_ms`` is ``explain``-only — so ordinary write load decides it.
+#:
+#: Splitting cannot fix that, and the cost of believing it could is not
+#: theoretical: tonight's first attempt refined one class 8,192x (64 -> 524,288,
+#: two reads a level, every one of them timing out) and was heading for the
+#: depth-12 "irreducible" error on a cell whose classes each need ~7 s. The
+#: right answer to "too slow right now" is to ask again.
+#:
+#: TRUNCATION STILL SPLITS, and the two must not be merged back together: a
+#: reply at the row cap IS a statement about width — those rows exist and did not
+#: fit — while a timeout is a statement about the clock. One is the class, the
+#: other is the hour.
+#:
+#: SIXTEEN, and the number was measured rather than picked. Stage A writes its
+#: roster cache only when the WHOLE stage finishes, so one class exhausting its
+#: budget discards every class before it — a 45-minute read for nothing. On the
+#: first run under this fix ``polymarket/economics`` class 0 needed SIX attempts
+#: (five re-asks) to land, so a budget of eight is one bad minute from throwing
+#: the fold away. A re-ask costs ~15 s and only happens on a class that has
+#: already failed; a lost stage costs the session.
+STAGE_A_TIMEOUT_RETRIES = 16
+
+#: A short pause between re-asks. Long enough that a re-ask lands in a different
+#: moment of whatever is loading the database, short enough that eight of them
+#: cost less than one wasted split level did.
+STAGE_A_TIMEOUT_PAUSE_S = 3.0
+
+
 def _read_hash_chunk(source: str, category: str, n: int, k: int,
                      depth: int = 0, log=None) -> list[RosterRow]:
     """One residue class of the roster, or an exact refinement of it.
 
-    Truncation and statement-timeout are the same fact wearing two faces — the
-    residue class is too big — and only one of them is loud. Both split.
+    Truncation and statement-timeout are NOT the same fact (see
+    :data:`STAGE_A_TIMEOUT_RETRIES`). Truncation splits; a timeout re-asks the
+    same class and, if it never lands, says so instead of pretending a narrower
+    class would have been faster.
     """
-    try:
-        r = cce.db_query(stage_a_sql(source, category, n, k), limit=cce.ROW_CAP)
-        truncated = bool(r.get("truncated")) or r["row_count"] >= cce.ROW_CAP
-    except cce.QueryTimeout:
-        r, truncated = None, True
+    sql = stage_a_sql(source, category, n, k)
+    r = None
+    for attempt in range(1, STAGE_A_TIMEOUT_RETRIES + 1):
+        try:
+            r = cce.db_query(sql, limit=cce.ROW_CAP)
+            break
+        except cce.QueryTimeout as exc:
+            if attempt == STAGE_A_TIMEOUT_RETRIES:
+                raise RuntimeError(
+                    f"Stage A residue {k} mod {n} timed out on all "
+                    f"{STAGE_A_TIMEOUT_RETRIES} attempts. This is the 10 s "
+                    f"statement timeout against a ~7 s chain, so it is LOAD, "
+                    f"not width — a narrower class costs the same (a zero-row "
+                    f"class measured 8.4 s). Re-run when the writers are "
+                    f"quieter; do not chase it with more buckets. Cause: {exc}"
+                ) from exc
+            if log:
+                log(f"      re-asking {k} mod {n} — statement timeout at ~10 s "
+                    f"is load, not width ({attempt}/{STAGE_A_TIMEOUT_RETRIES})")
+            time.sleep(STAGE_A_TIMEOUT_PAUSE_S)
 
-    if r is not None and not truncated:
+    if r is None:
+        # Unreachable with a budget >= 1: the final attempt either breaks with a
+        # reply or raises above. It becomes reachable the moment someone sets the
+        # budget to 0, and then ``range(1, 1)`` is empty and the read never runs
+        # at all. Say which knob is wrong; the bare read below would raise
+        # UnboundLocalError from a line that has nothing to do with the cause.
+        raise RuntimeError(
+            f"Stage A residue {k} mod {n} was never asked: "
+            f"STAGE_A_TIMEOUT_RETRIES is {STAGE_A_TIMEOUT_RETRIES}, which "
+            f"skips the read loop entirely. It must be >= 1."
+        )
+
+    truncated = bool(r.get("truncated")) or r["row_count"] >= cce.ROW_CAP
+    if not truncated:
         return [RosterRow(int(m), str(s), str(v), bool(g)) for m, s, v, g in r["rows"]]
 
+    # TRUNCATION ONLY from here down — the timeout arm above never reaches it.
     # ``x % 2n in {k, k+n}`` iff ``x % n == k`` — an exact refinement, so a
     # ``vm_id`` lands in exactly one of the two halves and in neither's
-    # complement. Depth 12 is 4,096x the starting partition; a cell that still
-    # will not fit at that width is a finding, not a retry.
+    # complement. Depth 12 is 4,096x the starting partition; a class that still
+    # returns more rows than the cap at that width is a finding, not a retry.
     if depth > 12:
         raise RuntimeError(
             f"Stage A residue {k} mod {n} irreducible at depth {depth} — "
