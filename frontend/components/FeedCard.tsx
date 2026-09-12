@@ -223,9 +223,28 @@ function ReasonBadge({ text, truncate }: { text: string; truncate?: boolean }) {
     return <p className={`text-xs text-text-secondary ${truncate ? "truncate" : ""}`}>{text}</p>;
   }
 
+  // #3075 — `min-w-0` is what makes the `truncate` below reachable, and without it this
+  // badge pushed `Opened X/Y` on top of the thumbs.
+  //
+  // Measured on production `/sports` at 390px, one 290px footer group, the two branches
+  // side by side: the plain-text branch above shrank to 206.3px and clipped; this one held
+  // at 285.4px. A flex item's `min-width: auto` floors it at min-content, and only the
+  // plain branch escapes that floor — it has `overflow:hidden` (via `truncate`), which
+  // resolves the automatic minimum to 0. This branch's outer span has visible overflow, so
+  // the floor applied, the badge never yielded, and the `flex-shrink-0` `Opened 76/24`
+  // sibling was laid out at 318.5→393.3 while the thumb buttons begin at 323. The text was
+  // inside a real button's hit rectangle by 20px, so a tap aimed at the pre-game context
+  // fired a DOWNVOTE — a personalization signal, silently mistraining the feed for anyone
+  // who taps the number they were reading.
+  //
+  // 🔴 Gated on `truncate`, and not added unconditionally. `min-w-0` lets the badge shrink
+  // BELOW its content; that is only safe when the inner span is allowed to ellipsize. On a
+  // finished card the call site passes `truncate={false}` deliberately, and an unconditional
+  // `min-w-0` would shrink the box while the un-truncated text kept painting past it — the
+  // same defect, arrived at from the other side. Shrinkable exactly when abbreviatable.
   return (
-    <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${colorClass} ${bgClass}`}>
-      {icon && <span className="text-[10px]">{icon}</span>}
+    <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${colorClass} ${bgClass} ${truncate ? "min-w-0" : ""}`}>
+      {icon && <span className="text-[10px] flex-shrink-0">{icon}</span>}
       <span className={truncate ? "truncate" : ""}>{text}</span>
     </span>
   );
