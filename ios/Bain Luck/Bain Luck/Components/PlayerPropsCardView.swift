@@ -104,6 +104,9 @@ struct PlayerPropsCardView: View {
         /// #4959 — served by the endpoint on a finished event, absent otherwise.
         let actual: Double?
         let hit: Bool?
+        /// #4577 — where this market opened, on the same OVER axis as
+        /// ``probability``. nil on 47% of measured rungs; those draw no tick.
+        let pregameMark: Double?
     }
 
     private var allPlayerCards: [PlayerCard] {
@@ -144,7 +147,8 @@ struct PlayerPropsCardView: View {
                     probability: prop.overProbability ?? 0,
                     movement: prop.movement,
                     actual: prop.actual,
-                    hit: prop.hit
+                    hit: prop.hit,
+                    pregameMark: prop.pregameMark
                 )
                 statGroups[statType, default: []].append(rung)
             }
@@ -540,6 +544,12 @@ struct PlayerPropsCardView: View {
         )
     }
 
+    /// #4577 — the pregame tick's width. 2pt reads as a mark rather than a
+    /// second fill at the 8pt track height, and is the width the offset maths is
+    /// clamped against, so the view and ``PlayerPropsScript`` cannot disagree
+    /// about where the track ends.
+    static let pregameTickWidth: CGFloat = 2
+
     private func rungRow(_ rung: Rung, card: PlayerCard, statType: String) -> some View {
         let verdict = Self.rungVerdict(
             servedActual: rung.actual,
@@ -569,6 +579,26 @@ struct PlayerPropsCardView: View {
                                 ? (isHit ? card.color.opacity(0.5) : Color.secondary.opacity(0.15))
                                 : card.color.opacity(0.3))
                             .frame(width: max(4, geo.size.width * rung.probability))
+                    }
+                    // #4577 — THE SCRIPT's tick: where this market opened. Drawn
+                    // OVER the fill, because the interesting case is a market
+                    // that has moved up and would otherwise bury its own
+                    // baseline. See ``PlayerPropsScript`` for why there is no
+                    // caption and no fallback.
+                    .overlay(alignment: .leading) {
+                        if let fraction = PlayerPropsScript.tickFraction(
+                            pregameMark: rung.pregameMark,
+                            isFinished: isDone
+                        ) {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.45))
+                                .frame(width: Self.pregameTickWidth)
+                                .offset(x: PlayerPropsScript.tickOffset(
+                                    fraction: fraction,
+                                    trackWidth: geo.size.width,
+                                    tickWidth: Self.pregameTickWidth
+                                ))
+                        }
                     }
             }
             .frame(height: 8)
