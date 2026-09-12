@@ -309,20 +309,97 @@ def count_admissible_speakers(group: Sequence[MarketOutcomes]) -> int:
     group can never be retired by it (its primary is always admissible here,
     and its props are refused far upstream by `feeds_win_prob_blend`).
     """
+    return len(admissible_speakers(group))
+
+
+def admissible_speakers(group: Sequence[MarketOutcomes]) -> list[MarketOutcomes]:
+    """The entries in this group ALLOWED to speak for the source.
+
+    Factored out so `count_admissible_speakers` and
+    `admissible_speakers_are_all_settled` cannot drift into two opinions of
+    which rows are admissible: they are the same question asked twice, and a
+    second copy of an admission rule is the #1951 failure ("the second copy
+    does not throw when it disagrees, it just quietly answers differently").
+    The primary is selected here, once, because admissibility is per-source AND
+    per-role — `admissible_as_blend_speaker` exempts a Kalshi PRIMARY only.
+    """
     entries = list(group or [])
     if not entries:
-        return 0
+        return []
     primary = select_primary_market(entries)
     primary_id = primary.market.id if primary is not None else None
-    return sum(
-        1
+    return [
+        entry
         for entry in entries
         if admissible_as_blend_speaker(
             entry.market,
             is_primary=entry.market.id == primary_id,
             outcomes=entry.outcomes,
         )
-    )
+    ]
+
+
+def _is_settled_book(entry: MarketOutcomes) -> bool:
+    """Whether this market's book is SETTLED — every outcome at a terminal price.
+
+    The mechanism, not a proxy for it. All three resolution paths in
+    `find_moneyline_outcome` — the team-match loop, the full-matchup fallback
+    and the generic Yes/No last resort — skip any outcome that is not strictly
+    between 0 and 1. So a book whose every priced outcome sits AT a boundary
+    cannot produce a reading by any route, and never will again: a settled price
+    does not come back off 0.00/1.00. That is what makes this permanent rather
+    than transient, which is the whole distinction `count_admissible_speakers`
+    exists to protect (see its docstring).
+
+    Deliberately conservative in both of the ways it can abstain, because the
+    cost of a false positive is retiring a live source leg:
+
+      * an EMPTY outcome list is not settled — it is a book we have not fetched
+        yet, which is the transient case;
+      * an outcome with NO price is not settled — same reason. Every outcome
+        must be priced and terminal, so a half-written book abstains.
+
+    Mirrors `find_moneyline_outcome`'s own `prob <= 0 or prob >= 1` test rather
+    than re-deriving a threshold beside it.
+    """
+    outcomes = list(entry.outcomes or [])
+    if not outcomes:
+        return False
+    for outcome in outcomes:
+        raw = getattr(outcome, "current_probability", None)
+        if raw is None:
+            return False
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return False
+        if 0.0 < value < 1.0:
+            return False
+    return True
+
+
+def admissible_speakers_are_all_settled(group: Sequence[MarketOutcomes]) -> bool:
+    """Whether every market admitted to speak here is a SETTLED book (#5548).
+
+    The second way a source can fall permanently silent, and it is invisible to
+    `count_admissible_speakers`. A settled Polymarket container collapses to its
+    winning outcome alone — `[('San Diego Padres', 1.0)]` — which is a bare
+    matchup by title carrying no derivative vocabulary, so it stays ADMISSIBLE
+    while being unable to resolve a side. Retirement asks "can anything speak?"
+    and gets yes; the writer asks "did anything speak?" and gets no; the stored
+    pre-settlement price is then frozen on the page forever. Event 15309667
+    published 0.069 for the Giants hours after Polymarket settled the game to
+    the Padres.
+
+    Returns False when the group has NO admissible speaker, deliberately: that
+    is the zero-speaker case and `count_admissible_speakers` already owns it.
+    This predicate only ever speaks about a group that HAS speakers, so the two
+    retirement causes stay separable in the funnel.
+    """
+    admissible = admissible_speakers(group)
+    if not admissible:
+        return False
+    return all(_is_settled_book(entry) for entry in admissible)
 
 
 def _reading_for_entry(
