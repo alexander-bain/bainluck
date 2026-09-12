@@ -681,6 +681,38 @@ export default function EventPage({ params }: EventPageProps) {
   const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
   const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
 
+  // ── #5720 — A RECORD IS NOT A SCORE, AND ON A STARTED GAME WITH NO SCORE A
+  //    READER HAS NOTHING TO TELL THEM APART ────────────────────────────────
+  //
+  // The record draws in the score's own slot, directly under the team name, in
+  // the same small grey type, on every live page. While the score is there the
+  // two cannot be confused: a `text-4xl font-black` number sits below it. When
+  // the score is missing the record becomes the ONLY score-shaped number on the
+  // card — and `W-L` and a football score are the same shape.
+  //
+  // `/events/15304455`, East Carolina at Appalachian State, LIVE and 3h26m past
+  // its own kickoff, read `0-0` under the home crest, beside a hero of `1% –
+  // 99%` and a projected final of `18 – 27`. East Carolina carried no record at
+  // all, so the two slots read as a score line with one side missing.
+  //
+  // Not a one-page oddity: 109 of 149 live events carried no score when #5697
+  // was re-measured (73%), and every one of those whose team has a record drew
+  // this.
+  //
+  // 🔴 THE PAIR, NOT THE SIDE. The hero's score row is read as `17 – 10`; a lone
+  // number says nothing, so a page showing one side's SCORE and the other side's
+  // RECORD is the same defect one column over — and the per-side gate would
+  // leave exactly that. The two per-side score gates below are deliberately
+  // UNCHANGED: whether a half-reported score should print at all is a different
+  // question and is not this ship's to answer.
+  //
+  // A PRE-GAME RECORD STAYS. Before kickoff there is no score slot to be
+  // mistaken for, and the record is the framing the hero exists to give. This
+  // gate removes the record only where it has stopped being legible as one.
+  const heroScorePairPresent = bestHomeScore !== null && bestAwayScore !== null;
+  const heroUnderway = isLive || isFinished || hasStarted;
+  const recordReadsAsRecord = !heroUnderway || heroScorePairPresent;
+
   // #4571 — the age of the score PAIR the two lines above just resolved.
   //
   // `lastChartPoint` runs the same cascade internally and reports the clock of
@@ -1384,7 +1416,9 @@ export default function EventPage({ params }: EventPageProps) {
               >
                 {heroShortNames.home}
               </TeamNameLink>
-              {(event.standings_context?.home || event.home_team_data?.record) && (
+              {/* #5720 — `recordReadsAsRecord`, computed once beside the scores. */}
+              {recordReadsAsRecord &&
+                (event.standings_context?.home || event.home_team_data?.record) && (
                 <span className="text-[11px] text-text-muted">
                   {event.standings_context?.home || event.home_team_data?.record}
                 </span>
@@ -1409,7 +1443,10 @@ export default function EventPage({ params }: EventPageProps) {
                    and therefore assertable — on its own. */
                 <SettledOutcomeHero
                   outcome={settledOutcome}
-                  hasNumericScore={bestHomeScore !== null && bestAwayScore !== null}
+                  // #5720 — the same predicate the record gate reads, named once
+                  // rather than spelled twice: two copies of "does this hero have
+                  // a score pair" is two things to keep in step.
+                  hasNumericScore={heroScorePairPresent}
                   winnerPregameProb={settledWinnerPregameProb}
                 />
               ) : (
@@ -1613,7 +1650,9 @@ export default function EventPage({ params }: EventPageProps) {
               >
                 {heroShortNames.away}
               </TeamNameLink>
-              {(event.standings_context?.away || event.away_team_data?.record) && (
+              {/* #5720 — same gate as the home side; see `recordReadsAsRecord`. */}
+              {recordReadsAsRecord &&
+                (event.standings_context?.away || event.away_team_data?.record) && (
                 <span className="text-[11px] text-text-muted">
                   {event.standings_context?.away || event.away_team_data?.record}
                 </span>
