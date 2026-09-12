@@ -445,7 +445,18 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
                 record_task_attempt,
                 record_task_delivery,
                 record_task_delivery_bucket,
+                record_worker_code_alive,
             )
+
+            # #5470: what CODE this worker is running, stamped first and
+            # unconditionally. It is a fact about the PROCESS, not about the
+            # task, so it must sit above every filter below — a retry and an
+            # eager call are not beat fires, but neither makes this worker less
+            # alive or its slug less true, and inheriting a predicate written
+            # for the schedule question is how a census ends up measuring
+            # something other than its subject. Throttled and worker-gated
+            # inside the recorder.
+            record_worker_code_alive()
 
             name = getattr(sender, "name", None) or getattr(task, "name", None)
             request = getattr(sender, "request", None)

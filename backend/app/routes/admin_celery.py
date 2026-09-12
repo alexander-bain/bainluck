@@ -1409,6 +1409,72 @@ async def beat_instances(
     }
 
 
+@router.get("/celery/fleet-code")
+async def fleet_code(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Is every worker running the code this app is running? (#5470)
+
+    The app split (#5003) moved `worker-heavy` — 29 tasks, including the matcher
+    and every sentinel — onto `bainluck-heavy`, and nothing syncs that app to
+    master. `/health` answers for the WEB dyno, so a post-deploy receipt banked
+    off it says nothing whatever about the app that runs the task the receipt is
+    about. This endpoint is the missing half: each worker stamps the slug it is
+    running, and this compares them with the reader's own.
+
+    **`verdict` is five-valued and only `MATCHED` is a pass.** `DRIFTED` names
+    the stale slots. `UNKNOWN_VERSION` means a worker is alive but cannot say
+    what it is running — the state of `bainluck-heavy` until
+    `runtime-dyno-metadata` is enabled on it — and is NOT agreement. `NONE`
+    means nothing stamped at all. An unreadable Redis renders `INCONCLUSIVE`,
+    never `NONE` (gotcha #53).
+
+    Off-loop via `run_in_threadpool` for the reason its beat sibling is:
+    `get_redis_client()` is bounded at 5s (gotcha #39) and the single uvicorn
+    loop should not wear that under a refreshing dashboard tab (#1994).
+    """
+    _check_admin_secret(secret, request=request)
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.tasks.redis_state import (
+        WorkerCodeCensusUnavailable,
+        get_fleet_code_report,
+    )
+
+    try:
+        report = await run_in_threadpool(get_fleet_code_report)
+    except WorkerCodeCensusUnavailable:
+        # The detail goes to the log, never to the response body — a Redis error
+        # string carries the connection URL, and on Heroku the credentials
+        # embedded in `REDIS_URL` with it. CERT-2675 withheld a token for that
+        # exact shape on the sibling endpoint above.
+        logger.exception("worker code census unreadable — returning INCONCLUSIVE")
+        return {
+            "status": "unreadable",
+            "verdict": "INCONCLUSIVE",
+            "error": "the worker code census could not be read (see server logs)",
+            "reason": (
+                "the worker code census could not be read; this is NOT evidence "
+                "that the fleet is running current code"
+            ),
+        }
+
+    return {
+        "status": "ok",
+        **report,
+        "note": (
+            "MATCHED is the only healthy verdict. UNKNOWN_VERSION means a live "
+            "worker cannot name its own slug (`heroku labs:enable "
+            "runtime-dyno-metadata -a <app>`), and is not agreement. A worker "
+            f"slot that is scaled away keeps its marker for up to {report['ttl_s']}s; "
+            "a slot that merely restarts overwrites its own, so DRIFTED clears "
+            "on the first task the new process runs."
+        ),
+    }
+
+
 def _iso_or_none(epoch: float | None) -> str | None:
     if epoch is None:
         return None

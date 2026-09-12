@@ -1292,6 +1292,302 @@ def get_beat_instances() -> dict:
     }
 
 
+# =============================================================================
+# WORKER CODE CENSUS (#5470) — which code each app's WORKERS are running.
+# =============================================================================
+#
+# The beat census above answers "how many clocks, on which slug". This one
+# answers the question the app split created: the 29 tasks on the `heavy` queue
+# no longer run on the app that serves `/health`. `worker-heavy` moved to
+# `bainluck-heavy` (#5003) and NOTHING syncs that app to master — it was created
+# 2026-09-11 13:09 PT and was still executing that afternoon's code hours later,
+# including the matcher and every sentinel, while `/health` reported the web
+# dyno's current commit and every post-deploy receipt banked off it read GREEN.
+#
+# WHY NO EXISTING INSTRUMENT COULD SEE IT. Every counter in this module is keyed
+# by TASK NAME, and a task executing stale code emits, delivers and terminates
+# exactly like one executing fresh code. The reader and the subject are
+# different machines, so the only way to know what the subject is running is for
+# the subject to say so. That is all this census is: the worker writes down its
+# own slug, and a reader on the other app compares it with its own.
+WORKER_CODE_PREFIX = "bainluck:worker_code"
+
+#: ONE KEY PER DYNO SLOT, not per process — the opposite of `beat_identity`, and
+#: for the opposite reason. There, two processes in one place ARE the hazard, so
+#: the pid must separate them. Here the question is "what code is this slot
+#: running", so a restarted worker must OVERWRITE its predecessor's answer
+#: rather than sit beside it: a stale slug lingering next to a fresh one would
+#: report DRIFTED for a whole TTL after the deploy that fixed the drift, which
+#: is the one moment an operator is reading this. Celery's prefork children
+#: inherit the dyno name and write the same slug to the same key — idempotent,
+#: and intended.
+WORKER_CODE_REFRESH_S = 60
+
+#: The tightest thing a heavy worker runs is `match_prediction_markets`, every
+#: 15 minutes (337s p50); the rest of that queue is hourly or daily. So a live
+#: worker touches this path at least ~4x an hour, and the TTL has to clear that
+#: gap by enough that one lease decline or one long matcher run cannot expire a
+#: healthy worker into "unknown". An hour is four of those cadences.
+#:
+#: The cost of the other direction is bounded and stated rather than tuned away:
+#: a dyno slot that goes away entirely (a `ps:scale` to 0) keeps its marker for
+#: up to an hour, so "that app is gone" is only true after TTL_S. A slot that is
+#: merely RESTARTED does not have that residual — the new process overwrites the
+#: key on its first task, because the identity carries no pid.
+WORKER_CODE_TTL_S = 3600
+
+
+class WorkerCodeCensusUnavailable(RuntimeError):
+    """Redis could not be read for the worker code census.
+
+    Its own class for the reason `BeatCensusUnavailable` has one (gotcha #53).
+    Here the collapse would be even quieter: an unreachable Redis and a fleet
+    where no worker has ever stamped both produce an empty dict, and the second
+    is the state this census exists to report. Neither may be rendered as "no
+    drift" — see `fleet_code_verdict`, where the absence of an answer is
+    UNKNOWN_VERSION and never MATCHED.
+    """
+
+
+def _is_worker_process() -> bool:
+    """True only inside `celery ... worker`.
+
+    Symmetric with `_is_beat_process`, read off `sys.argv` for the same reason:
+    the dyno NAME is a Procfile convention a formation change can quietly break,
+    while the subcommand is what actually decides whether this process executes
+    tasks. An embedded beat (`worker -B`) is a worker here — it executes — where
+    it is a beat to the census above; the two questions are different and the
+    same process can be both.
+
+    The gate matters in both directions. Without it a `task_always_eager` run —
+    a test, or a local script pointed at a shared Redis — would stamp the
+    READER's own slug into a census whose whole subject is the machines the
+    reader cannot speak for, and the verdict would come back MATCHED because the
+    reader had compared its slug against itself.
+    """
+    import sys
+
+    argv = sys.argv or []
+    return "worker" in argv
+
+
+def worker_app_label() -> str:
+    """Which APP this worker is on, without depending on dyno metadata.
+
+    `HEROKU_APP_NAME` arrives with the `runtime-dyno-metadata` lab, which is
+    enabled on `bainluck` and NOT on `bainluck-heavy` — i.e. absent on exactly
+    the app this census was built to watch. With it absent on both sides the two
+    apps' workers would collide on `unnamed/worker-heavy.1`, one key would
+    overwrite the other, and the census would report a single agreeing fleet
+    while the two disagreed.
+
+    `HEAVY_APP` is set on the heavy app only and is what separates them today.
+    The test is the exact string `'1'`, mirroring the Procfile release line
+    (`backend/tests/test_heavy_app_release_guard.py`) deliberately: one app
+    identity rule in this repo, not two that can drift apart. A truthy test here
+    would read `HEAVY_APP=0` — someone spelling "off" — as the heavy app.
+    """
+    name = os.getenv("HEROKU_APP_NAME")
+    if name:
+        return name
+    return "heavy-unnamed" if os.getenv("HEAVY_APP") == "1" else "unnamed"
+
+
+def worker_code_identity() -> str:
+    """`<app>/<dyno>` — the slot, not the process. See `WORKER_CODE_REFRESH_S`."""
+    return f"{worker_app_label()}/{os.getenv('DYNO') or 'nodyno'}"
+
+
+_last_worker_code_stamp_s = 0.0
+
+
+def record_worker_code_alive(now_s=None):
+    """Stamp what code this worker is running. Best-effort, throttled, worker-only.
+
+    Called from the `task_prerun` hook that already records deliveries, which is
+    the one place that runs inside every worker process on a cadence. Throttled
+    to `WORKER_CODE_REFRESH_S` because that hook fires on every execution and
+    re-asserting a fact that changes at most a few times a day does not belong
+    in a hot path.
+
+    The throttle clock advances only on a write that succeeded, so a Redis blip
+    costs one stamp rather than suppressing the next `REFRESH_S` of them.
+    """
+    global _last_worker_code_stamp_s
+
+    if not _is_worker_process():
+        return
+    now = time.time() if now_s is None else now_s
+    if now - _last_worker_code_stamp_s < WORKER_CODE_REFRESH_S:
+        return
+    try:
+        r = get_redis_client()
+        payload = json.dumps({
+            "ts": int(now),
+            # `None` where the lab is off, never a guess and never the reader's
+            # own value: "we cannot tell what this worker is running" and "it is
+            # running what you are" are the two answers this census must never
+            # confuse.
+            "slug": (os.getenv("HEROKU_SLUG_COMMIT") or "")[:8] or None,
+        })
+        r.set(f"{WORKER_CODE_PREFIX}:{worker_code_identity()}", payload,
+              ex=WORKER_CODE_TTL_S)
+        _last_worker_code_stamp_s = now
+    except Exception:
+        # Best-effort by contract, like every recorder here: this sits in front
+        # of every task execution, so a Redis fault must cost a stamp and never
+        # a run.
+        pass
+
+
+def get_worker_code_census() -> dict:
+    """Which worker slots are alive, and what slug each says it is running.
+
+    Facts only — the judgement is `fleet_code_verdict`, which is pure and can
+    therefore be tested on states this fleet has not reached yet.
+
+    An unreadable Redis raises rather than returning an empty dict, so it can
+    never be rendered as "no workers" — see `WorkerCodeCensusUnavailable`.
+    """
+    try:
+        r = get_redis_client()
+        prefix = f"{WORKER_CODE_PREFIX}:"
+        detail = {}
+        for key in r.keys(f"{prefix}*"):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            identity = key_str[len(prefix):]
+            if not identity:
+                continue
+            raw = r.get(key_str)
+            try:
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
+                parsed = json.loads(raw) if raw else {}
+                # A marker in an unexpected shape is still a LIVE WORKER and
+                # must still be listed — only its slug is unknown. Dropping it
+                # would under-count the fleet at exactly the moment it is
+                # half-upgraded, which is during a deploy, which is when this
+                # census is read.
+                detail[identity] = parsed if isinstance(parsed, dict) else {}
+            except (TypeError, ValueError):
+                detail[identity] = {}
+    except Exception as exc:
+        raise WorkerCodeCensusUnavailable(str(exc)) from exc
+
+    return {
+        "workers": sorted(detail),
+        "count": len(detail),
+        "detail": detail,
+        "slugs": sorted({(d.get("slug") or "unknown") for d in detail.values()}),
+        "refresh_s": WORKER_CODE_REFRESH_S,
+        "ttl_s": WORKER_CODE_TTL_S,
+    }
+
+
+def fleet_code_verdict(reader_slug, detail) -> dict:
+    """Is every worker running the code the reader is running? Pure.
+
+    `verdict` is five-valued and only one of them is a pass:
+
+    * ``MATCHED``         — every worker names the reader's slug. The pass.
+    * ``DRIFTED``         — at least one worker is provably on other code. The
+      alarm, with the culprits named, because "which app" is the only useful
+      form of the answer.
+    * ``UNKNOWN_VERSION`` — workers are alive but at least one cannot say what
+      it is running (no `runtime-dyno-metadata` on its app), or the reader has
+      no slug of its own to compare against. **NOT a pass.** This is the state
+      of `bainluck-heavy` today, and reporting it as agreement would be the
+      original defect with an instrument bolted on.
+    * ``NONE``            — nothing has stamped. Either no worker is running at
+      all, or none has yet executed a task on a release carrying the recorder.
+      Both are worth an operator's attention and neither is "fine".
+
+    (``INCONCLUSIVE`` is the fifth and belongs to the caller: it is what an
+    unreadable Redis renders as, and it is raised, not returned, from here.)
+
+    THE BASELINE IS NAMED IN THE OUTPUT rather than assumed, because there are
+    two of them. Normally it is the reader's own slug — the web dyno of the main
+    app, asking "is the fleet running what I am". When the reader has no slug
+    (a laptop, CI, or an app whose lab is off) a single slug agreed by every
+    worker is still not evidence that it is the CURRENT one, so that reads
+    UNKNOWN_VERSION; but workers disagreeing with EACH OTHER is decidable
+    without any baseline at all, and that reads DRIFTED.
+    """
+    baseline = reader_slug or None
+    known = {}
+    unknown = []
+    for identity in sorted(detail):
+        slug = (detail.get(identity) or {}).get("slug") or None
+        if slug is None:
+            unknown.append(identity)
+        else:
+            known[identity] = slug
+
+    # A slug every worker agrees on is NOT promoted to the baseline when the
+    # reader has none: nothing in that agreement says it is the current code,
+    # and inventing a baseline is how "we could not check" becomes "we checked".
+    if baseline is not None:
+        drifted = [i for i, slug in known.items() if slug != baseline]
+        matched = [i for i, slug in known.items() if slug == baseline]
+    else:
+        # No reader slug. The only decidable defect left is the workers
+        # contradicting one another — they cannot all be right — and it is a
+        # real DRIFTED, not an unknown.
+        drifted = sorted(known) if len({*known.values()}) > 1 else []
+        matched = []
+
+    if not detail:
+        verdict, reason = "NONE", (
+            "no worker has stamped its code version: either no worker is "
+            "running, or none has executed a task on a release carrying the "
+            "recorder. This is not a pass."
+        )
+    elif drifted:
+        verdict, reason = "DRIFTED", (
+            "at least one worker is running code other than the reader's; the "
+            "fix a receipt was about to be banked for may not be running."
+            if baseline is not None else
+            "the workers disagree with each other about what code they are "
+            "running, so at least one of them is stale."
+        )
+    elif unknown or baseline is None:
+        verdict, reason = "UNKNOWN_VERSION", (
+            "a worker is alive but cannot say what code it is running "
+            "(`runtime-dyno-metadata` is not enabled on its app), or the "
+            "reader has no slug of its own. UNKNOWN IS NOT AGREEMENT."
+            if unknown else
+            "the process answering has no slug of its own to compare against, "
+            "so agreement cannot be established. UNKNOWN IS NOT AGREEMENT."
+        )
+    else:
+        verdict, reason = "MATCHED", (
+            "every worker names the reader's slug."
+        )
+
+    return {
+        "verdict": verdict,
+        "reason": reason,
+        "reader_slug": baseline,
+        "drifted": sorted(drifted),
+        "unknown": sorted(unknown),
+        "matched": sorted(matched),
+    }
+
+
+def get_fleet_code_report(reader_slug=None) -> dict:
+    """The census and the verdict on it, composed. Raises on an unreadable Redis.
+
+    `reader_slug` defaults to this process's own slug, which is what the admin
+    endpoint wants: the web dyno asking whether the fleet is running its code.
+    It is a parameter so the judgement can be exercised against a stated
+    baseline instead of an ambient one.
+    """
+    if reader_slug is None:
+        reader_slug = (os.getenv("HEROKU_SLUG_COMMIT") or "")[:8] or None
+    census = get_worker_code_census()
+    return {**census, **fleet_code_verdict(reader_slug, census["detail"])}
+
+
 def record_task_delivery_bucket(full_task_name: str):
     """The DELIVERY half of the matched pair — CERT-1966 repair.
 
