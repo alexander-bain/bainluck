@@ -531,6 +531,37 @@ class TestTheTwinFoldReachesTheTeamCard:
         # through on a comparison that can only ever agree with itself.
         assert card["win_probability"] == pytest.approx(0.555)
 
+    def test_the_recency_rule_this_card_inherits_is_the_in_play_one(self):
+        """🔴 #1999's rule, pinned from BOTH sides on the specimen's own values.
+
+        The literal above was `0.575` when this file was written and went red the
+        moment #1999 (CERT-2667) landed, because that ruling made recency decay
+        an IN-PLAY rule and this specimen is a `scheduled` game. It was re-pointed
+        to `0.555` — correctly — but a one-sided literal cannot tell *"#1999
+        applies here"* from *"#1999 was reverted"*: on a revert the fixture blends
+        to 0.575 again, the computed assertion beside it re-derives the new number
+        and stays green, and every scheduled team card silently moves two points.
+
+        So the pair is asserted: `scheduled` must be 0.555 AND `live` must still
+        be 0.575, which is the standard for a tuned constant — pin it from the
+        side you rejected as well as the side you chose.
+
+        This is not a second opinion of the blend. The card takes whatever
+        `compute_aggregate_probability` says; what is asserted here is that the
+        two answers DIFFER and which one a pre-game card is entitled to.
+        """
+        pre_game = compute_aggregate_probability(
+            FakeEvent(sources=TWIN_SOURCES, status="scheduled")
+        )
+        in_play = compute_aggregate_probability(
+            FakeEvent(sources=TWIN_SOURCES, status="live")
+        )
+        # The message is the point of this line — the two literals below already
+        # imply it, but neither of them says WHY to the next reader.
+        assert pre_game != in_play, "#1999 reverted: recency is decaying a pre-game blend again"
+        assert pre_game == pytest.approx(0.555)
+        assert in_play == pytest.approx(0.575)
+
     def test_the_recent_rail_is_folded_too_and_not_only_the_upcoming_one(self):
         """🔴 Both rails, or the repair is half-applied.
 
