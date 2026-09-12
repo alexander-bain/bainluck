@@ -73,14 +73,28 @@ NULLABLY_DATED_RAILS = (
 )
 
 
+#: A candidate SELECT, however it is spelled. Two forms, because a rail that
+#: runs its query TWICE (the #5612 rotation runs it once after the cursor and
+#: once on the wrap) must bind it to a name — inlining it at both call sites
+#: would put two copies of the retention floor in one function, which is the
+#: drift this suite exists to prevent. Matching only the inline form would make
+#: the floor invisible on exactly the rails that need it most.
+_SQL_FORMS = (
+    r'text\("""\s*(SELECT.*?)"""\)',       # inline:  text("""SELECT ...""")
+    r'=\s*"""\s*(SELECT.*?)"""',           # named:   candidate_sql = """SELECT ..."""
+)
+
+
 def _bounded_sql(fn) -> list[str]:
     """Every SELECT in `fn` that carries the purge bound."""
     src = inspect.getsource(fn)
-    return [
-        m.group(1).replace("%%", "%")
-        for m in re.finditer(r'text\("""\s*(SELECT.*?)"""\)', src, re.S)
-        if "purge_days" in m.group(1)
-    ]
+    found = []
+    for pattern in _SQL_FORMS:
+        for m in re.finditer(pattern, src, re.S):
+            sql = m.group(1).replace("%%", "%")
+            if "purge_days" in sql and sql not in found:
+                found.append(sql)
+    return found
 
 
 class TestEveryRecoveryRailIsBounded:

@@ -69,9 +69,9 @@ class _Row:
     """One row of the candidate SELECT."""
 
     def __init__(self, existing_opening=None, existing_opening_at=None,
-                 commence_time=COMMENCE):
-        self.outcome_id = OUTCOME_ID
-        self.ticker = TICKER
+                 commence_time=COMMENCE, outcome_id=OUTCOME_ID, ticker=TICKER):
+        self.outcome_id = outcome_id
+        self.ticker = ticker
         self.commence_time = commence_time
         self.existing_opening = existing_opening
         self.existing_opening_at = existing_opening_at
@@ -87,19 +87,35 @@ class _Result:
 
 
 class _FakeSession:
-    """Records every statement, answers the SELECT, counts the UPDATE."""
+    """Records every statement, answers the SELECT, counts the UPDATE.
+
+    The SELECT arm MODELS THE KEYSET rather than replaying a fixed list: it
+    sorts the corpus by `(commence_time, outcome_id)`, applies `:after` against
+    `(:cursor_ct, :cursor_id)`, and truncates at `:limit`. A fake that ignored
+    those binds would return the same head every pass no matter what the rail
+    did with its cursor, so the starvation test would pass against the very bug
+    it exists to catch.
+    """
 
     def __init__(self, rows, update_rowcount=1):
-        self._rows = rows
+        self._rows = list(rows)
         self._update_rowcount = update_rowcount
         self.executed: list[tuple[str, dict]] = []
 
+    def _select(self, p):
+        corpus = sorted(self._rows, key=lambda r: (r.commence_time, r.outcome_id))
+        if p.get("after"):
+            key = (p["cursor_ct"], p["cursor_id"])
+            corpus = [r for r in corpus if (r.commence_time, r.outcome_id) > key]
+        return corpus[: p.get("limit", len(corpus))]
+
     async def execute(self, stmt, params=None):
         sql = str(stmt)
-        self.executed.append((sql, params or {}))
-        if sql.lstrip().upper().startswith("SELECT") or "SELECT" in sql.split("\n")[1].upper():
-            return _Result(rows=self._rows)
-        return _Result(rowcount=self._update_rowcount)
+        p = params or {}
+        self.executed.append((sql, p))
+        if "UPDATE" in sql.upper():
+            return _Result(rowcount=self._update_rowcount)
+        return _Result(rows=self._select(p))
 
     @property
     def updates(self) -> list[tuple[str, dict]]:
@@ -110,6 +126,19 @@ class _FakeSession:
 
     async def rollback(self):
         return None
+
+
+class _FakeRedis:
+    """The rotation cursor's store. `None` for this is the Redis-miss path."""
+
+    def __init__(self):
+        self.store: dict[str, str] = {}
+
+    def get(self, k):
+        return self.store.get(k)
+
+    def set(self, k, v):
+        self.store[k] = v
 
 
 def _session_cm(session):
@@ -149,13 +178,18 @@ class _FakeService:
         return None
 
 
-async def _run(rows, candles, *, ignore_end_ts=False, update_rowcount=1):
-    session = _FakeSession(rows, update_rowcount=update_rowcount)
-    service = _FakeService(candles, ignore_end_ts=ignore_end_ts)
+async def _run(rows, candles, *, ignore_end_ts=False, update_rowcount=1,
+               limit=10, redis=None, session=None, service=None):
+    session = session or _FakeSession(rows, update_rowcount=update_rowcount)
+    service = service or _FakeService(candles, ignore_end_ts=ignore_end_ts)
+    # Always fake Redis: the real client attempts a bounded connection, which
+    # makes every test in this file pay a timeout it learns nothing from.
+    redis = redis if redis is not None else _FakeRedis()
     with patch.object(kalshi_tasks, "get_task_session", _session_cm(session)), \
+            patch("app.tasks.redis_state.get_redis_client", return_value=redis), \
             patch("app.services.kalshi_api.KalshiAPIService",
                   return_value=service):
-        stats = await _backfill_kalshi_pregame_openings(limit=10)
+        stats = await _backfill_kalshi_pregame_openings(limit=limit)
     return stats, session, service
 
 
@@ -364,6 +398,179 @@ class TestTheOverwriteIsBoundedByProvenance:
         stats, _, _ = await _run([_Row(existing_opening=None)], PREGAME_CANDLES)
         assert stats["openings_written"] == 1
         assert stats["openings_overwritten"] == 0
+
+
+class TestTheUnrecoverableHeadDoesNotStarveTheTail:
+    """CERT-2746. The BLOCK was right and this is its named repair.
+
+    An honest refusal writes NOTHING — that is the withdrawal rule working. So
+    without a cursor the refused rows stay eligible, the stable oldest-first
+    `LIMIT` re-selects the same head every pass, and the recoverable tail is
+    **never** reached. Not a slow drain: permanent, total starvation.
+    """
+
+    #: The grader's corpus: a head the venue has no pregame price for, and one
+    #: recoverable row behind it.
+    HEAD = 6
+    TAIL_TICKER = "KXMLB-RECOVERABLE-TAIL"
+
+    def _corpus(self):
+        rows = [
+            _Row(
+                commence_time=COMMENCE - timedelta(minutes=self.HEAD - i),
+                outcome_id=1000 + i,
+                ticker=f"KXMLB-UNRECOVERABLE-{i}",
+            )
+            for i in range(self.HEAD)
+        ]
+        rows.append(
+            _Row(
+                commence_time=COMMENCE,
+                outcome_id=9999,
+                ticker=self.TAIL_TICKER,
+            )
+        )
+        return rows
+
+    class _PerTickerService(_FakeService):
+        """Only the tail ticker has a pregame candle; the head has none."""
+
+        def __init__(self, tail_ticker):
+            super().__init__([])
+            self._tail = tail_ticker
+
+        async def get_market_candlesticks(self, ticker, period_interval=60,
+                                          start_ts=None, end_ts=None):
+            self.calls.append({"ticker": ticker, "start_ts": start_ts,
+                               "end_ts": end_ts})
+            if ticker != self._tail:
+                return []
+            return [{"t": end_ts - 600, "yes_price": 0.61}]
+
+    @pytest.mark.asyncio
+    async def test_unrecoverable_head_does_not_starve_recoverable_tail_5612(self):
+        """Two passes at the grader's limit; the tail must be called."""
+        rows = self._corpus()
+        redis = _FakeRedis()
+        service = self._PerTickerService(self.TAIL_TICKER)
+
+        # Pass 1 — the whole budget is spent on the unrecoverable head.
+        stats1, _, _ = await _run(
+            rows, None, limit=self.HEAD, redis=redis,
+            session=_FakeSession(rows), service=service,
+        )
+        assert stats1["unrecoverable"] == self.HEAD
+        assert self.TAIL_TICKER not in [c["ticker"] for c in service.calls], (
+            "the tail was reachable in pass 1; the corpus does not reproduce "
+            "the starvation shape"
+        )
+
+        # Pass 2 — the cursor must carry us PAST the refused head.
+        stats2, _, _ = await _run(
+            rows, None, limit=self.HEAD, redis=redis,
+            session=_FakeSession(rows), service=service,
+        )
+        called = [c["ticker"] for c in service.calls]
+        assert self.TAIL_TICKER in called, (
+            "the recoverable tail was never called across two passes — the "
+            "unrecoverable head is consuming every pass forever (CERT-2746)"
+        )
+        assert stats2["openings_written"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_cursor_advances_past_a_refusal_not_only_past_a_write(self):
+        """Advancing only on success is the same bug wearing a cursor."""
+        rows = self._corpus()
+        redis = _FakeRedis()
+        service = self._PerTickerService(self.TAIL_TICKER)
+        await _run(rows, None, limit=self.HEAD, redis=redis,
+                   session=_FakeSession(rows), service=service)
+        assert redis.store, "no cursor was persisted after a pass of pure refusals"
+        stored = next(iter(redis.store.values()))
+        # High-water mark is the LAST row examined, refusals included.
+        assert stored.endswith(f"|{1000 + self.HEAD - 1}")
+
+    @pytest.mark.asyncio
+    async def test_the_cycle_wraps_when_the_tail_is_exhausted(self):
+        """A cursor with no wrap is a one-way door of its own."""
+        rows = self._corpus()
+        redis = _FakeRedis()
+        # Park the cursor past every row.
+        redis.store["kalshi:pregame_openings:keyset_cursor"] = (
+            f"{(COMMENCE + timedelta(days=1)).isoformat()}|999999"
+        )
+        stats, session, _ = await _run(
+            rows, PREGAME_CANDLES, limit=self.HEAD, redis=redis,
+            session=_FakeSession(rows),
+        )
+        assert stats["wrapped"] is True
+        assert stats["outcomes_processed"] > 0, "wrapped but examined nothing"
+
+    @pytest.mark.asyncio
+    async def test_a_redis_miss_starts_from_the_top_rather_than_wedging(self):
+        """The cursor is advisory; losing it costs ordering, never the rail."""
+        rows = self._corpus()
+
+        class _DeadRedis:
+            def get(self, k):
+                raise RuntimeError("redis down")
+
+            def set(self, k, v):
+                raise RuntimeError("redis down")
+
+        stats, _, _ = await _run(
+            rows, PREGAME_CANDLES, limit=self.HEAD, redis=_DeadRedis(),
+            session=_FakeSession(rows),
+        )
+        assert stats["outcomes_processed"] == self.HEAD
+        assert not stats["errors"], f"a dead cursor wedged the rail: {stats['errors']}"
+
+    @pytest.mark.asyncio
+    async def test_the_candidate_sql_itself_applies_the_keyset(self):
+        """The behavioural tests above cannot see this, and that is the point.
+
+        `_FakeSession` models the keyset in PYTHON from the binds, so it filters
+        correctly even if the SQL ignores them entirely — replacing the
+        predicate with `OR TRUE` survives every other test in this class. A
+        fake cannot judge SQL semantics, so the query text is pinned directly.
+        """
+        _, session, _ = await _run([_Row()], PREGAME_CANDLES)
+        selects = [s for s, _ in session.executed if "UPDATE" not in s.upper()]
+        assert selects, "no candidate query was issued"
+        sql = selects[0]
+        assert "(e.commence_time, fo.id) > (:cursor_ct, :cursor_id)" in sql, (
+            "the candidate query does not apply the rotation cursor — it will "
+            "re-select the same unrecoverable head every pass (CERT-2746)"
+        )
+        assert "NOT :after" in sql, "no wrap branch in the candidate query"
+        # The keyset is only sound if the ORDER BY matches it exactly.
+        assert "ORDER BY e.commence_time ASC, fo.id ASC" in sql, (
+            "the sort key and the cursor key disagree — a keyset over a "
+            "different order than it sorts by can skip or repeat rows"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_transport_failure_is_not_treated_as_an_honest_refusal(self):
+        """The reason a terminal marker was rejected in favour of rotation.
+
+        A raise is "we do not know", not "the venue has nothing" — it must not
+        be counted as `unrecoverable`, and the row must remain a candidate.
+        """
+        class _Broken(_FakeService):
+            async def get_market_candlesticks(self, ticker, period_interval=60,
+                                              start_ts=None, end_ts=None):
+                self.calls.append({"ticker": ticker})
+                raise RuntimeError("connection reset")
+
+        stats, session, _ = await _run(
+            [_Row()], None, session=_FakeSession([_Row()]), service=_Broken([]),
+        )
+        assert stats["unrecoverable"] == 0, (
+            "a transport failure was recorded as the venue having no price"
+        )
+        assert stats["openings_written"] == 0
+        assert session.updates == []
+        assert stats["errors"]
 
 
 class TestTheCandidateScopeIsBoundedAtBothEnds:

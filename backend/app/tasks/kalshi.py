@@ -6295,6 +6295,42 @@ async def _backfill_kalshi_pregame_openings(limit: int = 500):
     reached before it crosses Kalshi's candlestick cliff, INSIDE a floor at
     the measured retention bound so the run does not spend itself on markets
     whose data is provably gone.
+
+    ## 🔴 THE HEAD MUST NOT STARVE THE TAIL (CERT-2746)
+
+    The first version of this rail paired that oldest-first sort with a plain
+    ``LIMIT`` and no cursor. An honest refusal writes NOTHING — that is the
+    whole point of the withdrawal rule above — so a row the venue has no
+    pregame price for **stays eligible forever**. The next pass therefore
+    selects the same head rows, spends the same calls, refuses them again, and
+    **never reaches the recoverable tail**. The grader reproduced it exactly:
+    200 unrecoverable head rows plus a recoverable 201st, two passes, 400 calls
+    all spent on the head and the tail never called once.
+
+    That is gotcha #34 and this repo's "repairing early starves late" lesson in
+    a new place, and it is not survivable by waiting — the starvation is
+    permanent and total, not a slow drain.
+
+    The fix is a durable keyset rotation over the sort key. The cursor is
+    ``(commence_time, outcome_id)`` — the ORDER BY, plus the id to break ties,
+    so it is a true keyset and cannot skip or repeat a row within a cycle. Each
+    pass resumes strictly after the last row it processed and wraps to the top
+    when it runs out, so every candidate is reached within one cycle regardless
+    of how many unrecoverable rows sit at the head.
+
+    **Transport failures stay retryable, and that is why a terminal marker was
+    NOT used instead.** Marking a row "no price here" would drain faster, but it
+    cannot distinguish "the venue answered and had nothing" from "the request
+    failed" without inventing a second state, and it has nowhere honest to
+    write for the sub-population whose ``opening_probability`` is already a
+    non-null in-play number (its ``opening_source`` belongs to the writer that
+    set it — overwriting that with our marker would be a provenance lie, the
+    very thing this ship added provenance to stop). A rotation needs neither:
+    a row that failed on transport simply comes round again next cycle.
+
+    The cursor is advisory. A Redis miss, a decode failure or a malformed value
+    starts from the top — the same None-safe rule as the sibling drain — which
+    costs one cycle's ordering and can never wedge the rail.
     """
     import asyncio
 
@@ -6308,13 +6344,39 @@ async def _backfill_kalshi_pregame_openings(limit: int = 500):
         "openings_overwritten": 0,
         "unrecoverable": 0,
         "api_empty": 0,
+        "wrapped": False,
         "errors": [],
     }
 
+    # CERT-2746: the rotation cursor. Advisory and None-safe at every step — a
+    # missing client, a missing key, a bad decode or a malformed pair all fall
+    # through to "start from the top", which costs one cycle's ordering and can
+    # never wedge the rail.
+    cursor_key = "kalshi:pregame_openings:keyset_cursor"
+    cursor_ct = cursor_id = None
+    rc = None
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        raw = rc.get(cursor_key)
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        if raw:
+            ct_s, _, id_s = str(raw).partition("|")
+            cursor_ct = datetime.fromisoformat(ct_s)
+            cursor_id = int(id_s)
+    except Exception:
+        rc = rc if rc is not None else None
+        cursor_ct = cursor_id = None
+
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
+            # The candidate set, written once and run twice: after the cursor,
+            # then — only if that is exhausted — from the top. The two passes
+            # are the wrap, and `:after` is what distinguishes them, so the
+            # predicate can never drift between them.
+            candidate_sql = """
                     SELECT fo.id AS outcome_id,
                            fo.external_id AS ticker,
                            e.commence_time AS commence_time,
@@ -6334,6 +6396,14 @@ async def _backfill_kalshi_pregame_openings(limit: int = 500):
                           OR fo.opening_captured_at IS NULL
                           OR fo.opening_captured_at > e.commence_time
                       )
+                      -- CERT-2746, the rotation: resume strictly AFTER the last
+                      -- row the previous pass processed. Keyset on the full sort
+                      -- key (commence_time, id) so ties cannot skip or repeat.
+                      -- `:after = false` is the wrap pass over the whole set.
+                      AND (
+                          NOT :after
+                          OR (e.commence_time, fo.id) > (:cursor_ct, :cursor_id)
+                      )
                       -- gotcha #41, the floor half: inside the measured
                       -- retention bound, or the oldest-first sort below spends
                       -- the whole run on markets Kalshi has already purged.
@@ -6341,12 +6411,35 @@ async def _backfill_kalshi_pregame_openings(limit: int = 500):
                           >= now() - make_interval(days => :purge_days)
                     -- gotcha #41, the sort half: oldest STILL-RECOVERABLE
                     -- first, so the at-risk edge is harvested before it expires.
-                    ORDER BY e.commence_time ASC
+                    -- `fo.id` joins it as the keyset tiebreak above.
+                    ORDER BY e.commence_time ASC, fo.id ASC
                     LIMIT :limit
-                """),
-                {"limit": limit, "purge_days": PROVABLY_PURGED_AGE_DAYS},
-            )
-            rows = result.fetchall()
+            """
+
+            async def _candidates(after: bool):
+                res = await session.execute(
+                    text(candidate_sql),
+                    {
+                        "limit": limit,
+                        "purge_days": PROVABLY_PURGED_AGE_DAYS,
+                        "after": after,
+                        # Bound even on the wrap pass: a NULL bind on an unused
+                        # branch still has to type-check on the server.
+                        "cursor_ct": cursor_ct or datetime(1970, 1, 1, tzinfo=timezone.utc),
+                        "cursor_id": cursor_id or 0,
+                    },
+                )
+                return res.fetchall()
+
+            have_cursor = cursor_ct is not None and cursor_id is not None
+            rows = await _candidates(after=have_cursor)
+            if not rows and have_cursor:
+                # The cycle is finished. Wrap to the top rather than idling
+                # forever on an exhausted tail — without this the cursor is a
+                # one-way door of its own.
+                stats["wrapped"] = True
+                cursor_ct = cursor_id = None
+                rows = await _candidates(after=False)
 
             if not rows:
                 return {**stats, "status": "nothing_to_backfill"}
@@ -6459,6 +6552,27 @@ async def _backfill_kalshi_pregame_openings(limit: int = 500):
                 await session.commit()
             finally:
                 await service.close()
+
+            # CERT-2746: advance the cursor past EVERY row this pass examined,
+            # including the ones it honestly refused. Advancing only on a
+            # successful write is the starvation bug wearing a cursor: the
+            # unrecoverable head would still be re-selected forever.
+            #
+            # `rows` is ordered by the keyset, so the last element is the
+            # high-water mark. Written after the commit, and a failure to write
+            # it is survivable — the next pass simply repeats this window.
+            if rc is not None and rows:
+                last = rows[-1]
+                last_ct = last.commence_time
+                if last_ct.tzinfo is None:
+                    last_ct = last_ct.replace(tzinfo=timezone.utc)
+                try:
+                    rc.set(cursor_key, f"{last_ct.isoformat()}|{last.outcome_id}")
+                except Exception:
+                    logger.warning(
+                        "pregame-opening cursor not persisted; next pass repeats "
+                        "this window"
+                    )
 
     except Exception as e:
         logger.error("Kalshi pregame-opening backfill error: %s", e)
