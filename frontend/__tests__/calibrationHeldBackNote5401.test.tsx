@@ -94,11 +94,17 @@ describe("the held-back line", () => {
       'data-held-back-cells="kalshi/golf,polymarket/golf,kalshi/entertainment"'
     );
     expect(html).toContain('data-held-back-outcomes="30419"');
-    // The diagnostic numbers are NOT in the visible copy.
-    const visible = html.replace(/<[^>]*>/g, "");
-    expect(visible).not.toContain("30419");
-    expect(visible).not.toContain("22191");
-    expect(visible).not.toContain("3 ");
+
+    // The diagnostic numbers are NOT in the sentence. Asserted by COUNTING
+    // occurrences rather than by stripping tags: a `replace(/<[^>]*>/g, "")`
+    // here reads to CodeQL as an incomplete HTML sanitizer (it flagged exactly
+    // that, high severity, on the first push of this file), and counting is the
+    // stronger claim anyway — "appears once, in the attribute" rather than
+    // "does not appear in whatever my regex decided the text was".
+    const occurrences = (needle: string) => html.split(needle).length - 1;
+    expect(occurrences("30419")).toBe(1); // the data attribute, and nowhere else
+    expect(occurrences("22191")).toBe(0); // a per-cell count reaches no surface
+    expect(occurrences("</strong> are held back")).toBe(1);
   });
 
   it("reads as a sentence for one group as well as three", () => {
