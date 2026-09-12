@@ -367,10 +367,12 @@ HOME_TEAM_ID = 18513  # Aryna Sabalenka
 AWAY_TEAM_ID = 18852  # Elena Rybakina
 S_WTA = 356530
 
-#: Measured on the twin row, verbatim. Blends to 0.555 — `betting` is absent, so
-#: the two market readings carry equal weight and the weighted median is the
-#: lower of them. The number is asserted against the blend rather than hardcoded
-#: wherever this pair is used, for the reason `TestTheCardIsTheHero` gives.
+#: Measured on the twin row, verbatim. Blends to 0.565 — `betting` is absent, so
+#: the two market readings carry equal weight, which is an exact weighted-median
+#: tie, and since #5425 a tie averages its straddling pair instead of resolving
+#: to the lower reading. The number is asserted against the blend rather than
+#: hardcoded wherever this pair is used, for the reason `TestTheCardIsTheHero`
+#: gives.
 TWIN_SOURCES = {
     "kalshi": {"value": 0.575, "updated_at": "2026-09-11T22:50:48.622500+00:00"},
     "polymarket": {"value": 0.555, "updated_at": "2026-09-11T14:15:44.450247+00:00"},
@@ -523,13 +525,16 @@ class TestTheTwinFoldReachesTheTeamCard:
 
         card = _card(_page(_standard_page(), "aryna-sabalenka")[0])
         assert card["win_probability"] == pytest.approx(round(expected, 3))
-        # 0.555, not the 0.575 recency weighting gave before #1999: this fixture
-        # is `scheduled`, and recency decay is now an in-play rule, so the two
-        # readings carry equal weight and the weighted median is the lower one.
+        # 0.565. The history of this one literal is why it is kept: 0.575 while
+        # recency weighting still applied pre-game; 0.555 after #1999 made the
+        # decay an in-play rule, leaving the two readings at equal weight where
+        # an exact weighted-median tie resolved to the LOWER of them; and now
+        # 0.565, their midpoint, after #5425 made a tie average its straddling
+        # pair.
         # Kept as a literal BESIDE the computed assertion so that a change to the
         # blend's weighting shows up here as a decision rather than sliding
         # through on a comparison that can only ever agree with itself.
-        assert card["win_probability"] == pytest.approx(0.555)
+        assert card["win_probability"] == pytest.approx(0.565)
 
     def test_the_recency_rule_this_card_inherits_is_the_in_play_one(self):
         """🔴 #1999's rule, pinned from BOTH sides on the specimen's own values.
@@ -542,9 +547,17 @@ class TestTheTwinFoldReachesTheTeamCard:
         to 0.575 again, the computed assertion beside it re-derives the new number
         and stays green, and every scheduled team card silently moves two points.
 
-        So the pair is asserted: `scheduled` must be 0.555 AND `live` must still
+        So the pair is asserted: `scheduled` must be 0.565 AND `live` must still
         be 0.575, which is the standard for a tuned constant — pin it from the
         side you rejected as well as the side you chose.
+
+        The pre-game side reads 0.565 rather than 0.555 since #5425. That ship
+        moved ONLY this side, and the reason is the same fact this test is about:
+        pre-game the decay is off, so the two readings tie exactly and the tie is
+        now averaged; in play polymarket is 8.5 hours behind kalshi, its weight
+        decays to the floor, there is no tie, and 0.575 is untouched. The gap the
+        test exists to prove therefore survives the change — it is 1 point wide
+        instead of 2.
 
         This is not a second opinion of the blend. The card takes whatever
         `compute_aggregate_probability` says; what is asserted here is that the
@@ -559,7 +572,7 @@ class TestTheTwinFoldReachesTheTeamCard:
         # The message is the point of this line — the two literals below already
         # imply it, but neither of them says WHY to the next reader.
         assert pre_game != in_play, "#1999 reverted: recency is decaying a pre-game blend again"
-        assert pre_game == pytest.approx(0.555)
+        assert pre_game == pytest.approx(0.565)
         assert in_play == pytest.approx(0.575)
 
     def test_the_recent_rail_is_folded_too_and_not_only_the_upcoming_one(self):

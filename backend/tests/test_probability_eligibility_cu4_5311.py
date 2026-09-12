@@ -410,8 +410,17 @@ class TestAPositiveRefusalIsHonoured:
 
     def test_the_leg_is_load_bearing_when_it_is_admitted(self):
         """Not vacuous: without this, the refusal test below could pass on an
-        entry that never moved the number in the first place."""
-        assert compute_aggregate_probability(_EventRow(dict(self.ADMITTED))) == 0.30
+        entry that never moved the number in the first place.
+
+        0.45 since #5425 — the midpoint of the pair. It was 0.30 while an exact
+        weighted-median tie resolved to the lower value. What this test needs is
+        unchanged and is now asserted structurally as well: an admitted
+        derivative must move the hero OFF Kalshi's own number, which is what
+        makes the refusal test below meaningful.
+        """
+        admitted = compute_aggregate_probability(_EventRow(dict(self.ADMITTED)))
+        assert admitted == 0.45
+        assert admitted != 0.60, "the admitted leg must drag the hero off Kalshi alone"
 
     def test_a_refused_reading_does_not_reach_the_hero(self):
         refused = dict(self.ADMITTED)

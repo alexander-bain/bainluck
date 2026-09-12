@@ -4,12 +4,12 @@ Fold A (#3810 acceptance 1) made the hero read the twin rows we decline to
 print. `_pin_blend_edge` did not move with it, and that is a two-number
 user-visible regression rather than a missing improvement:
 
-    canonical  polymarket 0.60          hero  = weighted median(0.60, 0.40) = 0.40
+    canonical  polymarket 0.60          hero  = weighted median(0.60, 0.40) = 0.50
     twin       kalshi     0.40          edge  = compute_aggregate_probability(raw
                                                 canonical) = 0.60
 
 Both are rendered at the same minute on the same screen — the big number says
-40% and the curve under it ends at 60%. That is exactly #3898's shape, rebuilt
+50% and the curve under it ends at 60%. That is exactly #3898's shape, rebuilt
 by the fix for its sibling, and it is why the repair is a parity guard across
 BOTH routes rather than another assertion inside `get_event`.
 
@@ -74,8 +74,14 @@ def _now():
 CANON_PROB = 0.60
 TWIN_PROB = 0.40
 #: What the two blend to, and therefore what BOTH surfaces must say. Named, not
-#: inlined, so the assertions read as "one number" instead of a repeated 0.4.
-BLENDED = 0.40
+#: inlined, so the assertions read as "one number" instead of a repeated 0.5.
+#:
+#: 0.50, not 0.40, since #5425. Two market sources at equal weight are an exact
+#: weighted-median tie, and the tie used to resolve to the LOWER value; it now
+#: averages the straddling pair. Nothing about the fold or the pin moved — this
+#: file asserts that the two surfaces agree on one number, and they do, at the
+#: midpoint instead of at polymarket's floor.
+BLENDED = 0.50
 
 #: 🔴 The SERIES tells a different story from the CURRENT readings, deliberately.
 #: Both curves end high while the live source dict says 0.60/0.40, so an UNPINNED
@@ -427,12 +433,13 @@ class TestTheCacheBoundary:
         self, both_routes
     ):
         """Seed, move both rows, re-call both endpoints without clearing."""
-        seeded, _, _ = both_routes()  # clears, then seeds hero = 0.40
+        seeded, _, _ = both_routes()  # clears, then seeds hero = 0.50
         assert seeded["hero_probability"] == pytest.approx(BLENDED)
 
         # Both venues move, hard and in the same direction, while the cache
-        # still holds the old hero. 0.20/0.10 blends to 0.10 — a quarter of
-        # what is being served, so nothing here can agree by coincidence.
+        # still holds the old hero. 0.20/0.10 blends to 0.15 (#5425: the
+        # midpoint, formerly 0.10) — under a third of what is being served, so
+        # nothing here can agree by coincidence.
         moved_detail, moved_history, _ = both_routes(
             canon=0.20, twin=0.10, clear=False
         )
@@ -456,13 +463,17 @@ class TestTheCacheBoundary:
         otherwise this repair would trade a 300-second disagreement for a
         permanent one.
         """
-        both_routes()  # seed at 0.40
+        both_routes()  # seed at 0.50
         both_routes.cache.clear()  # what the TTL does, one line earlier
 
         detail, history, _ = both_routes(canon=0.20, twin=0.10, clear=False)
 
-        assert detail["hero_probability"] == pytest.approx(0.10)
-        assert _edge(history) == pytest.approx(0.10)
+        # 0.15 = the midpoint of 0.20/0.10 (#5425); it was 0.10 while an exact
+        # tie resolved downwards. The point of the test is that BOTH surfaces
+        # left the seeded number together, not which number they left it for.
+        assert detail["hero_probability"] == pytest.approx(0.15)
+        assert _edge(history) == pytest.approx(0.15)
+        assert detail["hero_probability"] != pytest.approx(BLENDED)
 
     def test_the_pin_honours_a_served_number_it_is_handed(self, both_routes):
         """`served_blend` is used verbatim — the parameter, in isolation.
@@ -550,7 +561,7 @@ class TestAcrossTwoWorkers:
         now = _now()
 
         worker_a = self._worker_cache(monkeypatch)
-        both_routes.detail(both_routes.session(now))  # seeds A at 0.40
+        both_routes.detail(both_routes.session(now))  # seeds A at 0.50
         assert worker_a, "worker A cached nothing — the premise is broken"
 
         self._worker_cache(monkeypatch)  # worker B: a different, empty cache
@@ -560,7 +571,7 @@ class TestAcrossTwoWorkers:
 
         hero_from_a = worker_a[CANON_ID][2]["hero_probability"]
         assert hero_from_a == pytest.approx(BLENDED)
-        assert _edge(history) == pytest.approx(0.10), (
+        assert _edge(history) == pytest.approx(0.15), (
             "worker B computed the moved blend, as it should"
         )
         assert hero_from_a != pytest.approx(_edge(history))
