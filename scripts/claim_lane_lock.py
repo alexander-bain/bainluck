@@ -63,6 +63,7 @@ import contextlib
 import datetime
 import errno
 import fcntl
+import hashlib
 import os
 import re
 import subprocess
@@ -109,9 +110,114 @@ CLAIM_ECHO_TOLERANCE_S = 5
 
 ACQUIRED, REFUSED, MALFORMED, NOT_SERIALIZED, NO_IDENTITY = 0, 1, 2, 3, 4
 
+#: Where this primitive sits inside a checkout. Used to find the copy that
+#: belongs to a lock's own repository (#5029).
+PRIMITIVE_RELPATH = os.path.join("scripts", "claim_lane_lock.py")
+
+#: Set across the `exec` below, so a delegated run can never delegate again.
+DELEGATION_ENV = "BAINLUCK_LANE_LOCK_DELEGATED"
+
+#: Escape hatch — run THIS copy whatever the lock's repository holds. For tests
+#: and for deliberately exercising one specific copy. Never set it in a lane.
+NO_DELEGATE_ENV = "BAINLUCK_LANE_LOCK_NO_DELEGATE"
+
 
 class IdentityUnavailable(Exception):
     """Raised when no identity can be proven. Never resolved by guessing."""
+
+
+def _primitive_beside_lock(lock_path: str) -> Optional[str]:
+    """The copy of this script in the repository that OWNS ``lock_path``.
+
+    Walks up from the lock's directory looking for ``scripts/claim_lane_lock.py``.
+    Returns ``None`` when the lock lives outside any checkout — a lock in a
+    tmpdir, which is every test and is deliberately left alone.
+    """
+    d = os.path.dirname(os.path.abspath(lock_path))
+    while True:
+        cand = os.path.join(d, PRIMITIVE_RELPATH)
+        if os.path.isfile(cand):
+            return os.path.realpath(cand)
+        parent = os.path.dirname(d)
+        if parent == d:  # filesystem root
+            return None
+        d = parent
+
+
+def _digest(path: str) -> Optional[str]:
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _delegate_to_lock_owner(lock_path: str) -> None:
+    """Re-exec the copy of this script that belongs to the LOCK's repository.
+
+    #5029. The verdict must not depend on which tree the reader happens to be
+    standing in, and until now it did. `check`/`claim` are invoked as a RELATIVE
+    path (standing notice 30), so the code that answers is chosen by the caller's
+    cwd, while the lock being answered about is one shared file. Ten checkouts
+    sit at ten commits, so one lock could yield ten answers.
+
+    Measured 2026-09-11: `~/bainluck` — where all five lock files live — was the
+    only tree without #4104, and a lock carrying `claimed_epoch_s` read
+    ``FREE``/exit 0 from a lane worktree and ``🔴 MALFORMED-INVESTIGATE``/exit 2
+    from the shared tree. Same bytes, same instant, opposite instructions, both
+    lanes correctly obeying notice 30.
+
+    The anchor has to be something every caller computes identically, so it
+    cannot be the caller's cwd, its ``$PATH``, or "the newest copy" (two lanes
+    ahead of the shared tree by different commits would each pick their own and
+    diverge again). **The lock itself is the only caller-independent anchor**,
+    and the topology makes that a single copy fleet-wide: every lock lives under
+    one checkout.
+
+    This deliberately trades freshness for agreement. If the lock's tree is
+    behind, everyone now runs the behind copy — a merged fix to this file stays
+    inert until that tree catches up (#4878). That is the right side of the
+    trade: a *consistent* arbiter that is stale is one visible fact with one
+    remedy, while an inconsistent one silently hands two lanes contradictory
+    instructions about the same lock. So the delegation is announced on stderr
+    rather than done quietly — the staleness should be seen.
+
+    Fails toward doing nothing: no owning repository, an unreadable target, a
+    byte-identical target, or an ``exec`` that will not start all leave the
+    caller's own copy running, which is exactly today's behaviour.
+    """
+    if os.environ.get(DELEGATION_ENV) or os.environ.get(NO_DELEGATE_ENV):
+        return
+    target = _primitive_beside_lock(lock_path)
+    if target is None:
+        return
+    me = os.path.realpath(os.path.abspath(__file__))
+    if target == me:
+        return
+    mine, theirs = _digest(me), _digest(target)
+    if theirs is None or mine == theirs:
+        return
+
+    print(
+        f"DELEGATING to {target} (sha256 {theirs[:12]}) — the copy in the "
+        f"repository that owns {os.path.abspath(lock_path)}. This copy is "
+        f"{me} (sha256 {(mine or 'unreadable')[:12]}).\n"
+        "#5029: the arbiter for a lock is fixed by the LOCK, not by the tree you "
+        "are standing in, so two lanes cannot be told opposite things about it. "
+        "If the copy above is behind master, that is what every lane is now "
+        "running — catch that tree up (#4878).",
+        file=sys.stderr,
+    )
+    env = dict(os.environ)
+    env[DELEGATION_ENV] = "1"
+    try:
+        os.execve(sys.executable, [sys.executable, target, *sys.argv[1:]], env)
+    except OSError as exc:  # pragma: no cover - exec of a live interpreter
+        print(
+            f"DELEGATION FAILED ({exc}) — continuing with {me}. Two readers of "
+            "this lock may disagree; say so in your report.",
+            file=sys.stderr,
+        )
 
 
 def _ps_alive(pid: int) -> bool:
@@ -828,6 +934,11 @@ def main() -> int:
     w = sub.add_parser("whoami")
     w.add_argument("--identity", default=None)
     args = ap.parse_args()
+    # Before ANY read, test or write: hand off to the copy that belongs to this
+    # lock's repository, so the answer is the same for every caller (#5029).
+    # `whoami` is about the window, not a lock, and has no anchor to resolve.
+    if getattr(args, "lock", None) is not None:
+        _delegate_to_lock_owner(args.lock)
     return {
         "claim": cmd_claim,
         "release": cmd_release,

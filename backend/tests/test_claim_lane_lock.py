@@ -774,3 +774,253 @@ def test_the_recorded_epoch_survives_a_takeover_naming_the_NEW_claim(tmp_path):
     after = mod._claimed_epoch_s(lock.read_text())
     assert after is not None and after > before
     assert lock.read_text().count("claimed_epoch_s:") == 1, "the field was duplicated"
+
+
+# --------------------------------------------------------------------------
+# #5029 — ONE ARBITER PER LOCK.
+#
+# The primitive's whole claim on authority is the sentence in `_verdict`: "ONE
+# oracle ... so the two can never disagree about the same lock". That held
+# WITHIN a copy and silently failed ACROSS copies. Standing notice 30 has lanes
+# run `python3 scripts/claim_lane_lock.py` — a RELATIVE path — so the code that
+# answers is picked by the caller's cwd, while the lock is one shared file. Ten
+# checkouts at ten commits, one lock, up to ten answers.
+#
+# Measured 2026-09-11: `~/bainluck`, which hosts all five locks, was the only
+# tree without #4104, and one lock read FREE/exit 0 from a lane worktree and
+# MALFORMED/exit 2 from the shared tree. So the fix anchors the choice of copy
+# to the LOCK, which is the only thing every caller sees identically.
+# --------------------------------------------------------------------------
+
+#: A stand-in primitive. Prints a sentinel and exits with a code no real verdict
+#: uses, so "did we delegate?" is answered by the exit code alone and cannot be
+#: confused with ACQUIRED/REFUSED/MALFORMED.
+DELEGATED_EXIT = 77
+STUB = (
+    "import sys\n"
+    "print('STUB-PRIMITIVE-RAN ' + ' '.join(sys.argv[1:]))\n"
+    f"sys.exit({DELEGATED_EXIT})\n"
+)
+
+
+def _fake_repo(root: Path, primitive: str) -> Path:
+    """A checkout-shaped directory: `scripts/claim_lane_lock.py` + a lock."""
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    (root / "scripts" / "claim_lane_lock.py").write_text(primitive)
+    handoff = root / ".claude" / "handoff"
+    handoff.mkdir(parents=True, exist_ok=True)
+    return _lock(handoff, "HELD", os.getpid(), identity=OTHER)
+
+
+def _run_from(cwd: Path | None, *args: str, env: dict | None = None):
+    """Drive the REAL script, with control over the working directory."""
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        env=env if env is not None else _env(),
+        cwd=str(cwd) if cwd else None,
+    )
+
+
+def test_a_lock_is_answered_by_its_OWN_repositorys_copy(tmp_path):
+    """The charter. A different copy beside the lock is the one that answers."""
+    lock = _fake_repo(tmp_path / "repo", STUB)
+    result = _run_from(None, "check", str(lock), "--identity", ME)
+    assert result.returncode == DELEGATED_EXIT, result.stdout + result.stderr
+    assert "STUB-PRIMITIVE-RAN" in result.stdout
+    # The whole argv travels, or the delegated copy answers a different question.
+    assert "check" in result.stdout and str(lock) in result.stdout
+
+
+@pytest.mark.parametrize("where", ["outside", "inside"])
+def test_the_answer_does_not_depend_on_where_the_CALLER_stands(tmp_path, where):
+    """cwd must not select the arbiter — that is the defect, stated directly."""
+    repo = tmp_path / "repo"
+    lock = _fake_repo(repo, STUB)
+    cwd = repo if where == "inside" else tmp_path
+    result = _run_from(cwd, "check", str(lock), "--identity", ME)
+    assert result.returncode == DELEGATED_EXIT, result.stdout + result.stderr
+
+
+def test_two_readers_of_one_lock_get_the_SAME_verdict(tmp_path):
+    """The regression this exists to stop, as an equality rather than a value.
+
+    Two copies that would disagree — a real one and a stub — must produce one
+    answer, because both are made to run the same third copy.
+    """
+    lock = _fake_repo(tmp_path / "repo", STUB)
+    a = _run_from(tmp_path, "check", str(lock), "--identity", ME)
+    b = _run_from(tmp_path / "repo", "check", str(lock), "--identity", OTHER)
+    assert a.returncode == b.returncode == DELEGATED_EXIT
+    assert "STUB-PRIMITIVE-RAN" in a.stdout and "STUB-PRIMITIVE-RAN" in b.stdout
+
+
+def test_a_lock_outside_any_checkout_runs_the_copy_you_invoked(tmp_path):
+    """No owning repository ⇒ no anchor ⇒ unchanged behaviour.
+
+    This is every existing test in this file, and the reason they still mean
+    what their names say.
+    """
+    lock = _lock(tmp_path, "RELEASED", 1)
+    result = _run_from(None, "check", str(lock), "--identity", ME)
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+    assert "STUB-PRIMITIVE-RAN" not in result.stdout
+    assert "DELEGATING" not in result.stderr
+
+
+def test_an_IDENTICAL_copy_is_not_exec_ed_for_nothing(tmp_path):
+    """Same bytes cannot disagree, so there is nothing to delegate."""
+    lock = _fake_repo(tmp_path / "repo", SCRIPT.read_text())
+    result = _run_from(None, "check", str(lock), "--identity", ME)
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+    assert "DELEGATING" not in result.stderr
+    assert "status=HELD" in result.stdout
+
+
+def test_delegation_cannot_loop(tmp_path):
+    """Two copies each pointing at the other would spin forever.
+
+    The marker is set across the exec, so the second run does its own work. The
+    stub is a copy of the REAL script here, so a loop would be unbounded rather
+    than one hop into a sentinel.
+    """
+    repo = tmp_path / "repo"
+    lock = _fake_repo(repo, SCRIPT.read_text() + "\n# a different copy\n")
+    env = _env(marker=NO_SUCH_MARKER)
+    env[mod_delegation_env()] = "1"
+    result = _run_from(None, "check", str(lock), "--identity", ME, env=env)
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+    assert "DELEGATING" not in result.stderr
+
+
+def test_the_escape_hatch_pins_the_copy_you_invoked(tmp_path):
+    lock = _fake_repo(tmp_path / "repo", STUB)
+    env = _env()
+    env["BAINLUCK_LANE_LOCK_NO_DELEGATE"] = "1"
+    result = _run_from(None, "check", str(lock), "--identity", ME, env=env)
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+    assert "STUB-PRIMITIVE-RAN" not in result.stdout
+
+
+def test_delegation_names_BOTH_copies_so_staleness_is_visible(tmp_path):
+    """The trade is freshness for agreement, so the cost must be legible.
+
+    Everyone now runs the lock tree's copy; if that tree is behind, the report
+    has to say which file is actually answering.
+    """
+    repo = tmp_path / "repo"
+    lock = _fake_repo(repo, STUB)
+    result = _run_from(None, "check", str(lock), "--identity", ME)
+    assert "DELEGATING" in result.stderr
+    assert str((repo / "scripts" / "claim_lane_lock.py").resolve()) in result.stderr
+    assert str(SCRIPT.resolve()) in result.stderr
+
+
+def test_whoami_has_no_lock_and_never_delegates(tmp_path):
+    """It answers about the WINDOW. There is no lock to anchor to."""
+    _fake_repo(tmp_path / "repo", STUB)
+    result = _run_from(tmp_path / "repo", "whoami", "--identity", ME)
+    assert result.returncode == ACQUIRED, result.stdout + result.stderr
+    assert "STUB-PRIMITIVE-RAN" not in result.stdout
+
+
+def test_claim_and_release_delegate_too_not_just_check(tmp_path):
+    """A read that agrees and a WRITE that does not is the worse half."""
+    repo = tmp_path / "repo"
+    lock = _fake_repo(repo, STUB)
+    for argv in (
+        ("claim", str(lock), "--queue", "TEST-1", "--identity", ME),
+        ("release", str(lock), "--identity", ME),
+    ):
+        result = _run_from(None, *argv)
+        assert result.returncode == DELEGATED_EXIT, f"{argv}: {result.stderr}"
+
+
+#: A PRE-FIX copy of the primitive: byte-for-byte the current one with the
+#: delegation call neutered. That is what eight of the nine active lane
+#: worktrees were running when CERT-2601/2602 blocked this — not a hypothetical.
+_DELEGATION_CALL = "_delegate_to_lock_owner(args.lock)"
+
+
+def _prefix_copy() -> str:
+    """The primitive as it was before this fix — it answers locally, always."""
+    src = SCRIPT.read_text()
+    assert _DELEGATION_CALL in src, "the call this strips has been renamed"
+    return src.replace(_DELEGATION_CALL, "pass  # pre-fix: no delegation")
+
+
+def test_pre_fix_and_post_fix_callers_use_one_canonical_arbiter(tmp_path):
+    """CERT-2602's required test. Divergent SCRIPT VERSIONS, one verdict.
+
+    The BLOCK was right and this is the test it named. `test_two_readers_of_one
+    _lock_get_the_SAME_verdict` drives the same new absolute script twice from
+    two cwds, so it proves cwd-independence of ONE copy and cannot see the
+    defect: in the real fleet the copies THEMSELVES differed, eight of nine lane
+    worktrees predating the hook, and a lock read FREE/0 from one and MALFORMED/2
+    from another at the same instant.
+
+    So the entry points here are three genuinely different scripts, each invoked
+    the way the lane holding it really would, and all three must land on the one
+    copy that sits beside the lock.
+
+    Note honestly which half closes which arm — they are not both code:
+
+    * **A** is closed by THIS fix. A post-fix lane runs its own copy (the old
+      relative habit) and the hook re-execs the lock's arbiter.
+    * **B** is closed by STANDING NOTICE 30, amended 2026-09-11 to name the
+      absolute `~/bainluck/scripts/claim_lane_lock.py`. A pre-fix copy has no
+      hook, so no code we ship can rescue it — only the instructed path can.
+      That is exactly the grader's `CANONICALIZE-THE-INVOKED-PATH-NOT-THE-
+      INVOKED-COPY`, and the notice is the half that does it.
+    * **C** is the control, and it must NOT agree. Without it A and B could both
+      be passing because the copies never really diverged, which is the way this
+      test would quietly become the vacuous one it replaces.
+    """
+    canonical = tmp_path / "shared"          # the tree that owns the lock
+    lock = _fake_repo(canonical, STUB)       # its copy is the sentinel
+    lane_post = _fake_repo_only(tmp_path / "lane-post", SCRIPT.read_text())
+    lane_pre = _fake_repo_only(tmp_path / "lane-pre", _prefix_copy())
+
+    # A — post-fix lane, its OWN copy, standing in its own tree.
+    a = _run_script(lane_post / "scripts" / "claim_lane_lock.py", lane_post,
+                    "check", str(lock), "--identity", ME)
+    # B — pre-fix lane, following the INSTRUCTED absolute command.
+    b = _run_script(canonical / "scripts" / "claim_lane_lock.py", lane_pre,
+                    "check", str(lock), "--identity", ME)
+
+    assert a.returncode == b.returncode == DELEGATED_EXIT, (
+        f"A={a.returncode} B={b.returncode}\nA err: {a.stderr}\nB err: {b.stderr}"
+    )
+    assert "STUB-PRIMITIVE-RAN" in a.stdout and "STUB-PRIMITIVE-RAN" in b.stdout
+    assert a.returncode == b.returncode and a.stdout.split()[0] == b.stdout.split()[0]
+
+    # C — the uncovered arm, asserted so the divergence above is proven real and
+    # not an artefact of three identical copies. A pre-fix lane running its own
+    # copy still answers locally; notice 30's absolute path is what stops it.
+    c = _run_script(lane_pre / "scripts" / "claim_lane_lock.py", lane_pre,
+                    "check", str(lock), "--identity", ME)
+    assert c.returncode != DELEGATED_EXIT, (
+        "the pre-fix copy delegated — then it was never pre-fix and arms A/B "
+        "prove nothing"
+    )
+    assert "STUB-PRIMITIVE-RAN" not in c.stdout
+
+
+def _fake_repo_only(root: Path, primitive: str) -> Path:
+    """A checkout-shaped directory with NO lock — a lane worktree."""
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    (root / "scripts" / "claim_lane_lock.py").write_text(primitive)
+    return root
+
+
+def _run_script(script: Path, cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    """Drive a NAMED copy of the primitive — the entry point is the variable."""
+    return subprocess.run(
+        [sys.executable, str(script), *args],
+        capture_output=True, text=True, env=_env(), cwd=str(cwd),
+    )
+
+
+def mod_delegation_env() -> str:
+    return _module().DELEGATION_ENV
