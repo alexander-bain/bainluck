@@ -337,6 +337,15 @@ function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardP
     return {
       name: lb.name,
       winProb: lb.win_prob,
+      // 🔴 #5713 — DO NOT DROP THESE TWO LINES AGAIN. #5690's fix replaced them
+      // with the comment block below and shipped, so the live Amgen Irish Open
+      // card read "Leader +32.4 pts today" where it had read
+      // "Leader · -16 · H18 +32.4 pts today" — the leader lost its score and
+      // hole while `_buildChasers` kept both, so one card showed the chasers'
+      // positions and not the leader's. The guard arm named in this file's test
+      // asserts both survive.
+      score: lb.score,
+      hole: lb.thru && lb.thru !== "F" ? `H${lb.thru}` : (lb.thru === "F" ? "F" : undefined),
       // 🔴 #5690 — THE TWO ARMS OF THIS FUNCTION DISAGREE ABOUT UNITS, AND ONLY
       // ONE OF THEM USED TO SAY SO. `CardGolfer.movement` is consumed as a 0-1
       // probability DELTA: the render multiplies it by 100 (via
