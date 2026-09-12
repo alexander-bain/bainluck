@@ -144,6 +144,32 @@ struct DiscoverView: View {
     // the API did not send (`testShortPageIsNotInflated`).
     static let feedFloor = 28
 
+    // A dismissal younger than this is never backfilled by the floor (#5453).
+    //
+    // The floor above turns "delete the card" into "sink the card", and for a
+    // dismissal that has aged that is exactly right — an old swipe has earned
+    // its way back. But `backfillPriority` orders the backfill
+    // LEAST-RECENTLY-DISMISSED FIRST, so when the floor engages it returns the
+    // reader's OLDEST reject first. That is Alex's report verbatim: "I can
+    // quickly get into a loop of just swiping away the boring cards, and they
+    // quickly loop, so that I see the original one again."
+    //
+    // The card he swiped away seconds ago is his CURRENT intent, not a decayed
+    // preference, and re-showing it reads as the app ignoring him. So the
+    // backfill skips dismissals inside this window and the page is allowed to
+    // run short — the reader is then served by the server (`hideForSession`
+    // asks for another page) or by the honest end state, never by his own
+    // rejects.
+    //
+    // 30 minutes, not `dismissTTL` (14 days) and not a handful of seconds: it
+    // has to outlast a whole sitting, because the loop Alex hit is a single
+    // sitting, while still being short enough that tomorrow's session treats
+    // today's swipe as the decaying downrank #1221 designed. Both edges are
+    // pinned by tests — a shorter window lets the loop back in, a
+    // `dismissTTL`-length one turns the soft dismiss into the permanent
+    // blackhole #1221 removed.
+    static let backfillGraceWindow: TimeInterval = 30 * 60
+
     // The group-collapse escape hatch is a DIFFERENT floor and deliberately
     // stays where it was. `enforceGroupFloor` meets its floor by expanding
     // futures groups back into singles, so raising it to `feedFloor` would spray
@@ -518,12 +544,10 @@ struct DiscoverView: View {
         // backfill the least-recently-dismissed so a heavy dismiss history can't
         // collapse the feed to ~2 cards. Never backfills stale rot — staleBase
         // already excludes it.
-        let dismissBase = Self.applyFloor(
+        let dismissBase = Self.applyDismissFloor(
             to: staleBase,
-            keeping: { dismissedAt[itemId($0)] == nil },
-            // Least-recently-dismissed first: an old swipe has earned its way back
-            // before a fresh one has.
-            backfillPriority: { -(dismissedAt[itemId($0)] ?? 0) }
+            dismissedAt: dismissedAt,
+            now: Date().timeIntervalSince1970
         )
 
         // 3. Category cooldown (soft) — floored EXACTLY like the dismiss stage
@@ -543,7 +567,12 @@ struct DiscoverView: View {
         return Self.applyFloor(
             to: dismissBase,
             keeping: { !interactionProfile.suppresses(category: itemCategory($0)) },
-            backfillPriority: { interactionProfile.score(for: itemCategory($0)) }
+            backfillPriority: { interactionProfile.score(for: itemCategory($0)) },
+            // A cooled category is a decayed preference, not a fresh rejection:
+            // nothing is withheld from this stage's backfill (#5453). The cards
+            // the reader just swiped are already gone — the dismiss stage above
+            // withheld them, and this stage only ever sees what it passed on.
+            neverBackfill: { _ in false }
         )
     }
 
@@ -559,18 +588,88 @@ struct DiscoverView: View {
     ///   - keeping: the filter's own verdict — `true` keeps the item outright.
     ///   - backfillPriority: ordering over the REMOVED items when the floor has to
     ///     put some back. Higher comes back first.
+    ///   - neverBackfill: items the floor may NOT use to meet itself, however
+    ///     short the page runs (#5453). This is the one escape from #1221's
+    ///     "a filter never empties a healthy page": a card the reader rejected
+    ///     moments ago is not material the page may be rebuilt from, so the
+    ///     floor is allowed to come up short and the caller answers for it —
+    ///     by asking the server for more, or by rendering the end state.
+    ///
+    ///     NO DEFAULT, deliberately (#4044): a defaulted exclusion is a call
+    ///     site that silently keeps the old reading, and there are two of them.
+    ///     The cooldown stage passes `{ _ in false }` and means it — a cooled
+    ///     category is a decayed preference, never a fresh rejection.
     static func applyFloor(
         to base: [FeedItem],
         keeping isKept: (FeedItem) -> Bool,
-        backfillPriority: (FeedItem) -> Double
+        backfillPriority: (FeedItem) -> Double,
+        neverBackfill: (FeedItem) -> Bool
     ) -> [FeedItem] {
         let kept = base.filter(isKept)
         if kept.count >= feedFloor || kept.count == base.count { return kept }
         let backfill = base
-            .filter { !isKept($0) }
+            .filter { !isKept($0) && !neverBackfill($0) }
             .sorted { backfillPriority($0) > backfillPriority($1) }
             .prefix(feedFloor - kept.count)
         return kept + backfill
+    }
+
+    /// Is this dismissal from the reader's current sitting? (#5453)
+    ///
+    /// One definition, shared by the floor and by its tests, so a guard cannot
+    /// pass against a rule the app does not actually apply. A missing entry is
+    /// not a dismissal at all, and a clock that has gone backwards yields a
+    /// negative age, which is inside the window — the safe direction here, since
+    /// withholding a card from the BACKFILL only ever costs a duplicate the
+    /// reader already rejected.
+    static func isWithinBackfillGrace(dismissedAt: TimeInterval?, now: TimeInterval) -> Bool {
+        guard let dismissedAt else { return false }
+        return now - dismissedAt < backfillGraceWindow
+    }
+
+    /// The dismiss stage of the presentation pipeline, whole (#1221 + #5453).
+    ///
+    /// Extracted so the contract under test is the composition the app runs —
+    /// the keep rule, the least-recently-dismissed ordering AND the fresh-swipe
+    /// exclusion together. Testing the three separately is how a floor that
+    /// still recycles this sitting's rejects passes three green tests.
+    static func applyDismissFloor(
+        to base: [FeedItem],
+        dismissedAt: [String: TimeInterval],
+        now: TimeInterval
+    ) -> [FeedItem] {
+        applyFloor(
+            to: base,
+            keeping: { dismissedAt[feedItemId($0)] == nil },
+            // Least-recently-dismissed first: an old swipe has earned its way
+            // back before a fresh one has.
+            backfillPriority: { -(dismissedAt[feedItemId($0)] ?? 0) },
+            // …but a swipe from THIS sitting has not. Without this, the ordering
+            // directly above hands the reader his OLDEST reject first, which is
+            // the loop he reported: swipe enough cards and "the original one"
+            // comes back.
+            neverBackfill: {
+                isWithinBackfillGrace(dismissedAt: dismissedAt[feedItemId($0)], now: now)
+            }
+        )
+    }
+
+    /// How many cards are still standing after the two gates that can starve the
+    /// page — the stale gate and the reader's own dismissals (#5453).
+    ///
+    /// This is the number the floor is about to be measured against, computed
+    /// WITHOUT the backfill, so `hideForSession` can tell "the reader is running
+    /// out of material" from "the floor quietly refilled the page for him". It
+    /// deliberately re-derives from `vm.items` rather than reading the rendered
+    /// list: the rendered list is the thing that used to hide the shortfall.
+    static func undismissedEligibleCount(
+        in items: [FeedItem],
+        dismissedAt: [String: TimeInterval],
+        now: Date = Date()
+    ) -> Int {
+        eligibleItems(sanitizedFeedItems(items, now: now), now: now)
+            .filter { dismissedAt[feedItemId($0)] == nil }
+            .count
     }
 
     /// Memoized presentation (L2-202 / C42 P2). SwiftUI re-evaluates every
@@ -1464,6 +1563,26 @@ struct DiscoverView: View {
         dismissVersion &+= 1
         if visibleCount >= max(groupedItems.count - 8, 0) {
             visibleCount += 20
+            Task { await vm.loadMoreIfNeeded() }
+        }
+        // #5453: a dismissal that takes the page under the floor asks the SERVER
+        // for more, not the local buffer.
+        //
+        // Pagination was scroll-driven only (`idx == pageGrouped.count - 3` and
+        // friends), and swiping does not scroll — so the local list shrank under
+        // the reader with nothing ever fetching more, until the floor started
+        // recycling his rejects to meet itself. The condition above fires on
+        // where he has SCROLLED to; this one fires on how much undismissed
+        // material is LEFT, which is the quantity the floor actually reacts to.
+        //
+        // The server excludes everything he has swiped (`feed.py` hard-skips
+        // dismissed ids before the recycle check, and propagates by story key and
+        // group id for 14 days), so the next page is genuinely new material.
+        // `loadMoreIfNeeded` is a no-op when a load is already in flight or
+        // `hasMore` is false, and the `hasMore` test here keeps a swipe at the
+        // true end of the feed from firing a request that cannot return anything.
+        if vm.hasMore,
+           Self.undismissedEligibleCount(in: vm.items, dismissedAt: dismissedAt) < Self.feedFloor {
             Task { await vm.loadMoreIfNeeded() }
         }
         if showSwipeHint {
