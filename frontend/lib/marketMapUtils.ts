@@ -532,6 +532,23 @@ export const LADDER_INTERIOR_MIN = 0.15;
 export const LADDER_INTERIOR_MAX = 0.85;
 
 /**
+ * The interior test itself, over bare probabilities.
+ *
+ * #5488 gave this rule a second ladder to answer for — the half MARGIN map,
+ * whose rungs carry `probability` rather than `overProbability`. It is the same
+ * question about the same kind of ladder, so it is the same CALL and not the
+ * rule written twice: the two exported wrappers below and beside it are
+ * adapters over this one body, which is the only place the bounds are read.
+ *
+ * PURE: no I/O, no React.
+ */
+export function probabilitiesQuoteALine(probabilities: number[]): boolean {
+  return probabilities.some(
+    (p) => p >= LADDER_INTERIOR_MIN && p <= LADDER_INTERIOR_MAX
+  );
+}
+
+/**
  * Whether a totals ladder is quoting a line, rather than echoing a book that
  * has stopped. Fewer than two rungs is not this function's call — the
  * selectors above already refuse those — and an empty ladder answers false.
@@ -541,11 +558,7 @@ export const LADDER_INTERIOR_MAX = 0.85;
 export function ladderQuotesALine(
   rungs: Array<{ overProbability: number }>
 ): boolean {
-  return rungs.some(
-    (r) =>
-      r.overProbability >= LADDER_INTERIOR_MIN &&
-      r.overProbability <= LADDER_INTERIOR_MAX
-  );
+  return probabilitiesQuoteALine(rungs.map((r) => r.overProbability));
 }
 
 /** The halves a totals map is ever built for, in the order the section draws them. */
