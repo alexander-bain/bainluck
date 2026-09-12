@@ -206,7 +206,8 @@ def test_today_is_answered_by_the_game_not_by_a_market_that_says_today():
     Kills: dropping `_INTENT_ANSWER_TYPES` and letting `today` fall through to
     the name arm, where it promotes nothing and the team keeps the lead.
     """
-    page = compose("red sox tonight")
+    # "tonight" and "today" are the same scaffold; the fixture page is the
+    # Patriots one, so the ordering half is asserted there.
     assert parse_intent("red sox tonight").kind == INTENT_TODAY
     page = compose("patriots today")
     assert page[0] is GAME, [r["text"] for r in page]

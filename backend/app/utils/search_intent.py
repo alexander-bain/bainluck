@@ -145,15 +145,29 @@ _MAKE_CUT_RE = re.compile(r"\b(?:to\s+)?(?:make|makes)\s+(?:the\s+)?cut\b", re.I
 #: The bare win-total forms — the two `parse_threshold` measurably cannot see.
 #: `9+ wins` and `10 wins`. The unit word is required: a bare number is a year,
 #: a jersey, or a nickname ("49ers"), never a win total.
+#:
+#: NO `\s*` BEFORE THE `+`, and that is a fix rather than an omission. The first
+#: draft read `\d{1,3}\s*\+?\s+`, where `\s*` and `\s+` are adjacent and both
+#: match whitespace: the engine can split a run of spaces between them in a
+#: number of ways that grows with the run, so a query of many tabs costs
+#: quadratic time. CodeQL `py/polynomial-redos`, HIGH, and it was reachable —
+#: the input is the `q` a reader (or anyone) puts on a public search endpoint.
+#: Neither documented form needs it: `9+ wins` has no space before the `+` and
+#: `10 wins` has no `+` at all. Same edit, same reason, on `_WORD_WIN_TOTAL_RE`.
 _BARE_WIN_TOTAL_RE = re.compile(
-    r"\b(?P<val>\d{1,3})\s*(?P<plus>\+)?\s+(?:regular[\s-]season\s+)?wins?\b", re.I
+    r"\b(?P<val>\d{1,3})(?P<plus>\+)?\s+(?:regular[\s-]season\s+)?wins?\b", re.I
 )
 #: The direction-word forms, located here and PARSED by `parse_threshold`.
 #: Located separately because that function returns a span over the string it
 #: was given and we need the span in query coordinates to strip it.
 _WORD_WIN_TOTAL_RE = re.compile(
     r"\b(?:over|under|at\s+least|at\s+most|more\s+than|fewer\s+than|less\s+than)"
-    r"\s+\d[\d,]*(?:\.\d+)?\s*\+?\s+(?:regular[\s-]season\s+)?wins?\b",
+    # `\+?` with no `\s*` in front of it — see `_BARE_WIN_TOTAL_RE` for why the
+    # adjacent `\s*`/`\s+` pair is a quadratic-backtracking hazard on a public
+    # endpoint. CodeQL flagged only the bare twin's call site; this is the same
+    # defect in the same file and it is fixed in the same breath rather than
+    # waiting to be reported.
+    r"\s+\d[\d,]*(?:\.\d+)?\+?\s+(?:regular[\s-]season\s+)?wins?\b",
     re.I,
 )
 #: The UNNUMBERED form — "Patriots wins", named in #5060's acceptance beside
