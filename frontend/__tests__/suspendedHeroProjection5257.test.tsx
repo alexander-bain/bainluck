@@ -186,7 +186,16 @@ describe("#5257 the hero does not forecast a match nobody reported", () => {
     // The hero prints the short team name, not the full one.
     expect(html).toContain("Giants");
     expect(html).toContain("Wiz");
-    expect(html).toContain("Win Probability");
+    // #3612 CHANGED THE PROXY, NOT THE CLAIM. This line read
+    // `toContain("Win Probability")` — a stand-in for "the page kept rendering
+    // past the hero". This fixture serves no `history` key and no win-prob,
+    // bookmaker or aggregate series, so it is precisely the population #3612
+    // suppresses the Win Probability card for: a suspended match nothing has
+    // ever priced no longer carries a card promising that tracking will begin.
+    // That is this issue's own thesis one section down, not a regression of it.
+    // The proxy moves to the hero's suspended state, which this test is about
+    // and which #3612 must never remove.
+    expect(html).toContain("No result reported");
     expect(html.length).toBeGreaterThan(2000);
   });
 });

@@ -89,6 +89,7 @@ import {
   usePinnedEvents,
 } from "@/hooks";
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
+import { isPregameStatus } from "@/lib/settledQuote";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
@@ -532,6 +533,55 @@ export default function EventPage({ params }: EventPageProps) {
     () => pinChartEdgeToHero(servedHistory, event),
     [servedHistory, event],
   );
+
+  /* ── #3612: A GAME THAT HAS BEGUN DOES NOT PROMISE THAT TRACKING WILL BEGIN ──
+     No source has ever written a price for this event — no odds history, no
+     win-prob history of any kind — and the game is not in the future. Measured
+     by ux/1205 on production (last 30 days, `commence_time < NOW()`, zero
+     `odds_snapshots` AND zero `win_prob_snapshots`): `closed` 52,006 ·
+     `suspended` 10,083 · `voided` 452 · `completed` 112 · `live` 5. Every one
+     of them rendered "Tracking will begin when odds are available" — a PSG 6-1
+     win in the Champions League and a two-week-old Giants game among them.
+
+     Suppressed, not reworded. Notice 34 / D102: "If a number cannot be shown
+     honestly, leave the space empty; do not explain the emptiness in a
+     paragraph." The reader keeps the score, the Final chip and the Score
+     Differential chart — everything we actually know. Same discipline
+     `WinnerEvolutionChart.tsx` already applies ("Honest absence: no real path
+     yet → render nothing").
+
+     HAS BEGUN IS THE CLOCK *OR* THE STATUS, and it needs both halves. Status
+     alone leaves a `scheduled` row whose start time passed hours ago still
+     promising a chart "at game time" — the #3211 / #5158 shape. The clock alone
+     cannot see a settled event whose `commence_time` we hold wrong. An unknown
+     status with a future start stays pregame, which is the safe end: it keeps
+     the card and `OddsChart` speaks for it.
+
+     LOADING AND ERROR ARE NOT ABSENCE. Both must keep rendering the card or a
+     slow fetch would make the whole section blink out of the page and a failed
+     one would take its Retry button with it.
+
+     🔴 "NOTHING" MEANS EVERY SERIES THE CHART CAN DRAW, AND THE OLD CONDITION
+     DID NOT. The arm this replaces tested `history.length === 0 &&
+     !hasAnyWinProbData(...)` — sportsbook, espn and win_prob. But `OddsChart`
+     builds `chartData` from FIVE inputs: those three plus `bookmaker_history`
+     and `aggregate_line`, both of which this page passes it. So an event with
+     only a bookmaker series or only an aggregate line was ALREADY being told
+     "tracking will begin" over a chart that would have drawn — and suppressing
+     on the same test would have turned a wrong sentence into a missing chart,
+     which is worse. The predicate below asks the question the chart asks. */
+  const hasNoPriceHistoryAtAll =
+    !historyLoading &&
+    !historyError &&
+    !!historyData &&
+    (historyData.history?.length ?? 0) === 0 &&
+    !hasAnyWinProbData(historyData) &&
+    (historyData.aggregate_line?.length ?? 0) === 0 &&
+    !Object.values(historyData.bookmaker_history ?? {}).some(
+      (points) => Array.isArray(points) && points.length > 0,
+    );
+  const eventHasBegun = hasStarted || !isPregameStatus(event?.status);
+  const suppressWinProbabilityCard = hasNoPriceHistoryAtAll && eventHasBegun;
 
   // Game-level markets (totals spectrum, player props)
   const { data: gameMarkets } = useSWR(
@@ -1543,8 +1593,15 @@ export default function EventPage({ params }: EventPageProps) {
           and closes. `resetKey` is the fetched object, whose identity changes
           only on a refetch, so a section that failed on a bad payload retries
           when the next one lands instead of staying dead for the session. */}
+      {/* #3612: suppressed outright when nothing has ever priced this event and
+          it is not in the future — see `suppressWinProbabilityCard`. Wrapped
+          rather than re-indented, per the note above. */}
+      {!suppressWinProbabilityCard && (
       <SectionErrorBoundary label="The win probability chart" resetKey={historyData}>
-      <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
+      {/* #3612: the guard's handle. The heading text is not usable on its own —
+          the fullscreen modal below carries a second "Win Probability" h2 — and
+          a class selector would be a test about styling (ux/1192). */}
+      <div className="bg-surface-card rounded-card shadow-card overflow-hidden" data-testid="win-probability-card">
         {/* Chart Header — v2: title + freshness */}
         <div className="px-4 sm:px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1599,11 +1656,17 @@ export default function EventPage({ params }: EventPageProps) {
                 Retry
               </button>
             </div>
-          ) : historyData?.history?.length === 0 && !hasAnyWinProbData(historyData) ? (
-            <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
-              Tracking will begin when odds are available
-            </div>
           ) : (
+            /* #3612: THE PAGE NO LONGER KEEPS ITS OWN COPY OF THE EMPTY STATE.
+               The arm that stood here — an unconditional "Tracking will begin
+               when odds are available" — returned BEFORE `OddsChart` mounted,
+               so the chart's own status-aware empty state (cleaned under ruling
+               142: "Chart available at game time" for `scheduled`, "No history
+               data available" otherwise) was unreachable for exactly the
+               population that needed it. Two copies of one sentence, and the
+               page's copy was the one that could not tell a finished game from
+               an upcoming one. One definition now, and it lives in the
+               component that owns the chart. */
             <OddsChart
               history={historyData?.history ?? []}
               homeTeam={event.home_team}
@@ -1745,6 +1808,7 @@ export default function EventPage({ params }: EventPageProps) {
       </div>
 
       </SectionErrorBoundary>
+      )}
 
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
 
