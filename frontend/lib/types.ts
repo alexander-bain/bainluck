@@ -1321,6 +1321,22 @@ export interface FeedFuturesData {
   market_tier: number | null;
   status: string;
   resolution_date: string | null;
+  /**
+   * When this card's prices were last SEEN — `MAX(outcome.last_updated)`, served
+   * as an ISO stamp (#5752).
+   *
+   * 🔴 Not `resolution_date`, which is when the question gets answered. The two
+   * were confused on the US Open final page: the hero said Sabalenka 40% with a
+   * `20s` stamp and a card two screens down said 59% with no stamp at all, and a
+   * reader had no way to rank them. The card was not wrong, it was an HOUR OLD,
+   * and only one of the two said so.
+   *
+   * Absent and null are different facts, as with `card_sum_reason` above: absent
+   * is a payload from before this shipped, null is "the server looked and this
+   * market has no datable price". Both draw nothing — `PriceAgeMark` returns
+   * null for an undatable stamp rather than inventing "just now".
+   */
+  price_observed_at?: string | null;
   top_outcomes: FeedFuturesOutcome[];
   /**
    * Why this card's printed percents do not total 100, or null if they do (#2088).

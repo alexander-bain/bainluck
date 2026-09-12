@@ -167,6 +167,7 @@ export function ComparisonCard({
           contentType="futures"
           itemId={data.id}
           onShare={onShare}
+          priceObservedAt={data.price_observed_at}
         />
       </div>
     </article>

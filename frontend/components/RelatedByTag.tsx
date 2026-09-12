@@ -6,6 +6,7 @@ import type { FeedConceptData, FeedEventData, FeedFuturesData } from "@/lib/type
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import { eventPath } from "@/lib/eventKey";
+import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 
 /** The item types this section knows how to render.
  *
@@ -250,17 +251,35 @@ export default function RelatedByTag({
                   ))}
                 </ol>
               )}
-              {/* How much of the field is NOT on the card. The hub's list says
-                  this too; without it a four-row card over a 128-player draw
-                  reads as the whole answer. */}
-              {d.outcome_count > field.length && field.length > 0 && (
-                <span
-                  className="mt-1.5 text-[11px] text-text-muted"
-                  data-testid="related-card-more"
-                >
-                  +{d.outcome_count - field.length} more
+              {/* How much of the field is NOT on the card, and how old the
+                  numbers on it are (#5752) — one muted footer line, because two
+                  stacked ones would take a row off a card whose whole job is the
+                  field above them.
+
+                  The age is the reason this section was filed on. On the US Open
+                  women's final page the hero said Sabalenka 40% with a `20s`
+                  stamp and this rail said 59% two screens down with no stamp at
+                  all: one question, two answers, and nothing telling a reader
+                  which was current. The card was not wrong — its price was an
+                  hour old, set twenty minutes before the match started.
+
+                  `PriceAgeMark` draws nothing inside 30 minutes and nothing for
+                  an undatable stamp, so a rail beside a quiet market stays as
+                  plain as it is today. `justify-between` rather than a gap:
+                  when only one of the two is present it keeps its own side. */}
+              {(d.outcome_count > field.length && field.length > 0) ||
+              d.price_observed_at ? (
+                <span className="mt-1.5 flex items-baseline justify-between gap-2 text-[11px] text-text-muted">
+                  {d.outcome_count > field.length && field.length > 0 ? (
+                    <span data-testid="related-card-more">
+                      +{d.outcome_count - field.length} more
+                    </span>
+                  ) : (
+                    <span />
+                  )}
+                  <PriceAgeMark observedAt={d.price_observed_at} scope="card" />
                 </span>
-              )}
+              ) : null}
             </Link>
           );
         })}
