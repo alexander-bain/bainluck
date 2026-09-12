@@ -523,12 +523,43 @@ class TestTheTwinFoldReachesTheTeamCard:
 
         card = _card(_page(_standard_page(), "aryna-sabalenka")[0])
         assert card["win_probability"] == pytest.approx(round(expected, 3))
-        # 0.575, not the 0.555 a plain average of the two readings would give:
-        # the blend weights by recency and kalshi's stamp is eight hours fresher.
-        # Kept as a literal BESIDE the computed assertion so that a change to the
-        # blend's weighting shows up here as a decision rather than sliding
-        # through on a comparison that can only ever agree with itself.
-        assert card["win_probability"] == pytest.approx(0.575)
+        # The literal BESIDE the computed assertion, so a change to the blend's
+        # weighting shows up here as a decision rather than sliding through on a
+        # comparison that can only ever agree with itself.
+        #
+        # It has already earned its place once. It was written as 0.575 — the
+        # recency-weighted answer, kalshi's stamp being eight hours fresher than
+        # polymarket's — and #1999 (CERT-2667) landed on master between this
+        # branch's gate run and its merge offer, making **recency decay an
+        # in-play rule**. A scheduled game no longer decays, so the same two
+        # readings now blend to the plain weighted 0.555 and this line went red
+        # on current master. That is the guard working, not the guard breaking.
+        #
+        # So it is pinned from BOTH sides now rather than re-pointed at the new
+        # number, because a one-sided literal cannot tell "#1999 applies here"
+        # from "#1999 was reverted": `scheduled` must be 0.555 AND `live` must
+        # still be 0.575. Deleting either arm makes the pair vacuous.
+        assert card["win_probability"] == pytest.approx(0.555)
+
+    def test_the_recency_rule_this_card_inherits_is_the_in_play_one(self):
+        """🔴 #1999's rule, asserted from both sides on the specimen's own values.
+
+        The card above takes whatever `compute_aggregate_probability` says, so
+        this is not a second opinion of the blend — it is the statement that the
+        two answers are DIFFERENT and which one a pre-game card is entitled to.
+        Without it, a revert of #1999 moves every scheduled team card by two
+        points and the suite above re-derives the new number and stays green.
+        """
+        pre_game = compute_aggregate_probability(
+            FakeEvent(sources=TWIN_SOURCES, status="scheduled")
+        )
+        in_play = compute_aggregate_probability(
+            FakeEvent(sources=TWIN_SOURCES, status="live")
+        )
+        # Not equal, or the rule #1999 shipped is not in force at all.
+        assert pre_game != in_play, "#1999 reverted: recency is decaying a pre-game blend again"
+        assert pre_game == pytest.approx(0.555)
+        assert in_play == pytest.approx(0.575)
 
     def test_the_recent_rail_is_folded_too_and_not_only_the_upcoming_one(self):
         """🔴 Both rails, or the repair is half-applied.
