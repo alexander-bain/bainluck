@@ -85,6 +85,59 @@ whose entire field is eliminated is a different defect (its market status is
 wrong) that this repair must not paper over. It refuses **4,613 of 11,740
 candidates across 1,139 markets — 39%** — so the clause is not decoration.
 
+THE VENUE PRECONDITION, AND WHY THE REFUSAL ABOVE WAS NOT ENOUGH (#5515).
+Everything above this paragraph reasons from `resolution_source` on the
+assumption stated below in "WHAT IS NOT TOUCHED": *the grade is already right.*
+**On 2026-09-10 that assumption stopped holding.** #3617's producer began
+stamping `is_winner = false, resolution_source = 'api_settlement'` onto legs of
+markets Kalshi still lists as `active`, at 742 -> 1,381 -> 4,662 rows/day. This
+script did exactly what it was told, on rows that lied to it: the 2026-09-11
+21:00Z drain put **167 legs priced >= 50% on screen at 0%**, and a reader on
+`https://bainluck.com/futures/52755923` saw the FTSE 100 ladder's "At least
+£10,900" rung — stored 0.995, venue `active`, resolving Jan 2027 — render 0%.
+322 of those rows were venue-checked and restored; this precondition is what
+stops the next drain re-creating them at four times the scale.
+
+The sibling refusal cannot see this defect, and the FTSE market is the proof.
+Its eight legs are ALL `api_settlement`; three carry `is_winner = true` and are
+priced 0.99. Those three are not settled LOSERS, so `live_field_survives` is
+true, so the market CLEARS — the safety clause asks *"would zeroing blank this
+card?"*, which is a question about the market's siblings, and a grade fabricated
+onto one leg of an otherwise healthy card answers it "no harm done". A refusal
+keyed on the row's neighbours can never detect a lie told about the row.
+
+So the premise is now CHECKED rather than assumed, against the only authority
+that can settle it — the venue that issued the grade:
+
+  * `venue_verdict()` clears a leg only on POSITIVE agreement: Kalshi reports
+    that ticker `finalized`/`settled` **and** `result = 'no'`. That is the venue
+    saying, in its own words, this contract closed and this side lost.
+  * Everything else REFUSES, and the three reasons are counted separately
+    because they mean different things: `active` (the #3617 fabrication),
+    `result = 'yes'` (an INVERTED grade — worse than residue, and zeroing it
+    would bake in a wrong verdict), and absent/unreadable.
+  * A 404 and a transport error are both UNKNOWN and both refuse. They are
+    counted apart but not ACTED on apart, and that is deliberate: `market_exists`
+    splits them because its caller wants to retire rows on a genuine 404, while
+    here both are simply "no agreement", which is the safe side. Reading either
+    as licence to write is how a network wobble would zero a live ladder
+    (gotcha #36).
+
+THE BAND IS NOT A SUBSTITUTE, and it was measured before being rejected. A
+price-band or far-future-date heuristic looks like it would separate these
+populations and does not: of 619 venue-checked rows, **46 were genuinely
+`finalized`/`'no'` on markets resolving months out** — legitimate early
+settlements (an eliminated team, a withdrawn candidate). A band refuses those
+too, and a repair that cannot clear a correctly-settled row is not a safer
+repair, it is a broken one. Only the venue can tell the two apart.
+
+WHAT THE PRECONDITION COSTS, measured 2026-09-12 on production: the CLEAR side
+is 3,055 kalshi rows across **309 distinct event tickers** — one nested-markets
+read each, which is why this is affordable inside a script. Polymarket has no
+reader here, so its 84 CLEAR rows (2.2 probability points) are refused
+`no_venue_reader` and named in the report rather than cleared on trust. That is
+the fail-closed direction and it is stated out loud, never silent (gotcha #53).
+
 WHAT IS NOT TOUCHED, and each omission is a column with another owner:
 
   * `is_winner` / `resolution_source` — the grade is already right. This repair
@@ -167,6 +220,52 @@ RESIDUE_FLOOR = 0.0005
 #: are two different causes that both present as a small plan.
 SANITY_FLOOR = 5700
 
+#: The venue statuses that mean KALSHI HAS CLOSED THIS CONTRACT.
+#:
+#: `active` is the one that matters and it is not here: it is what the venue
+#: reported for every one of the 167 legs this script zeroed on 2026-09-11 (see
+#: the module docstring). `initialized` and `closed` are also absent — a market
+#: that has stopped trading but has not been graded has no result to agree with.
+VENUE_SETTLED_STATUSES = frozenset({"finalized", "settled"})
+
+#: The only venue result that AGREES with a stored `is_winner = false`.
+#:
+#: `'yes'` is not merely disagreement, it is an inverted grade: the venue says
+#: this side WON and the row says it lost. Zeroing its price would spend a
+#: reader-visible number making a wrong verdict look settled, so it refuses and
+#: is counted under its own reason. `''` is an ungraded market (gotcha: a
+#: `finalized` Kalshi market can carry an empty result), and `'void'` is a
+#: cancelled contract whose price is not this script's to retire.
+VENUE_LOSS_RESULT = "no"
+
+#: The three venue verdicts. Only the first may write.
+VENUE_AGREES = "agrees"
+VENUE_REFUTES = "refutes"
+VENUE_UNKNOWN = "unknown"
+
+#: Concurrent nested-markets reads.
+#:
+#: MEASURED DOWN FROM 8, which is not a tuning preference. At 8-wide Kalshi
+#: rate-limited 183 of 309 event tickers, and because the first cut of the
+#: reader refused on any non-200 those became "421 rows `event_unreadable`" in
+#: the report — a number that reads like a venue finding and was produced
+#: entirely by this script. Three of the first six re-read sequentially answered
+#: 200. 4-wide plus the 429 backoff in `read_event_book` is what makes the
+#: refusal counts mean what they say.
+VENUE_CONCURRENCY = 4
+
+#: Attempts per event before a read is abandoned. A 429 costs an attempt and a
+#: sleep; a 404 costs neither, because it is an answer.
+VENUE_READ_ATTEMPTS = 4
+
+#: Backoff base, multiplied by the attempt number.
+VENUE_BACKOFF_SECONDS = 2.0
+
+#: Sources this script can ask. A source absent from this set is refused
+#: `no_venue_reader` — never cleared on the strength of the stored grade alone,
+#: which is the entire premise #5515 refuted.
+VENUE_READABLE_SOURCES = frozenset({"kalshi"})
+
 SQL = {
     # LIKE copies columns and types but NOT the foreign keys — a backup that
     # cascaded with its source would be no backup at all.
@@ -201,6 +300,7 @@ SQL = {
         SELECT fo.id            AS outcome_id,
                fo.market_id     AS market_id,
                fo.name          AS outcome_name,
+               fo.external_id   AS outcome_ticker,
                fo.current_probability AS residue,
                EXISTS (
                    SELECT 1 FROM futures_outcomes live
@@ -216,6 +316,13 @@ SQL = {
            AND fo.current_probability > {RESIDUE_FLOOR}
          ORDER BY fo.market_id, fo.id
     """,
+    # The venue coordinates of each candidate market, fetched separately rather
+    # than joined into `scan`. The scan's shape is load-bearing and measured —
+    # its comment above records that the JOIN form times out — so the two extra
+    # columns come from an indexed by-id lookup over the ~2,300 candidate
+    # markets instead of risking that plan.
+    "market_meta": "SELECT id, source, external_id FROM futures_markets "
+                   "WHERE id = ANY(CAST(:ids AS int[]))",
     # THE FORWARD WRITE, and it is a compare-and-swap on every column of the
     # premise. If anything re-graded or re-priced the row between the plan and
     # the write — a poll that found the venue quoting again, a grader that
@@ -270,6 +377,181 @@ def classify(legs):
     """
     survives = all(bool(leg["live_field_survives"]) for leg in legs)
     return (legs, []) if survives else ([], legs)
+
+
+class VenueCall(NamedTuple):
+    """One leg's venue verdict and the reason, which is reported, not acted on.
+
+    Two fields because the DECISION is binary — only ``VENUE_AGREES`` may write
+    — while the DIAGNOSIS has five distinguishable shapes that mean very
+    different things about the health of the system. Collapsing them would hide
+    an inverted grade inside the same counter as a network blip, and it was
+    exactly that kind of collapse (a verdict and its wording in one string) that
+    made `explain_small_plan`'s discriminator decorative for two sessions.
+    """
+
+    verdict: str
+    reason: str
+
+
+def venue_verdict(leg, book) -> VenueCall:
+    """Does the venue itself agree this leg is a settled loser?
+
+    PURE, and takes the already-fetched book rather than doing the read, so the
+    rule can be exercised on every shape the venue can produce — including the
+    ones that are awkward to provoke over a network — without a fixture that
+    mocks HTTP.
+
+    ``book`` is the event's nested-markets index (``{ticker: market}``) or
+    ``None`` when the event could not be read at all. The default is REFUSE: the
+    only path to ``VENUE_AGREES`` is an explicit, positive statement from Kalshi
+    that this exact ticker is closed and lost.
+    """
+    if leg.get("source") not in VENUE_READABLE_SOURCES:
+        return VenueCall(VENUE_UNKNOWN, f"no_venue_reader:{leg.get('source')}")
+    if not leg.get("event_ticker"):
+        return VenueCall(VENUE_UNKNOWN, "no_event_ticker")
+    if book is None:
+        return VenueCall(VENUE_UNKNOWN, "event_unreadable")
+
+    ticker = leg.get("outcome_ticker")
+    market = book.get(ticker)
+    if market is None:
+        return VenueCall(VENUE_UNKNOWN, "leg_absent_from_book")
+
+    status = (market.get("status") or "").lower()
+    if status not in VENUE_SETTLED_STATUSES:
+        # The #3617 fabrication lands here: the venue is still trading it.
+        return VenueCall(VENUE_REFUTES, f"venue_status:{status or 'missing'}")
+
+    result = (market.get("result") or "").lower()
+    if result != VENUE_LOSS_RESULT:
+        return VenueCall(VENUE_REFUTES, f"venue_result:{result or 'empty'}")
+
+    return VenueCall(VENUE_AGREES, "")
+
+
+class VenueRead(NamedTuple):
+    """One event's book, or ``None`` plus WHY it could not be read.
+
+    The reason never changes the decision — every unreadable event refuses its
+    legs — but it decides whether an operator should re-run or investigate, and
+    those are opposite actions. Measured 2026-09-12: a first cut of this reader
+    treated any non-200 as unreadable at 8-wide concurrency and reported 421
+    rows `event_unreadable`, which read as "the venue does not list these". It
+    was Kalshi rate-limiting: three of the first six re-read sequentially
+    answered 200 and three answered 429. An absence produced by the rig, wearing
+    a finding's clothes.
+    """
+
+    book: dict | None
+    reason: str
+
+
+async def read_event_book(svc, event_ticker) -> VenueRead:
+    """Fetch one event's nested markets as ``{ticker: market}``, or say why not.
+
+    Retries 429 with a widening backoff, because a rate limit is the venue
+    saying "later", not "no" — refusing on the first one silently shrinks the
+    repair and, worse, reports the shortfall as though the venue had answered.
+    A 404, a persistent 429 and a transport error all end in ``book = None``,
+    which refuses every leg beneath them (module docstring, gotcha #36); they
+    are merely counted apart.
+
+    This does not call :meth:`KalshiAPIService.get_event`, which returns ``None``
+    for a 404 *and* ``None`` after three failed attempts, because a reader that
+    cannot distinguish "no event" from "no answer" cannot honestly report why it
+    refused. The transport is the service's client either way, so the API key,
+    timeouts and connection pool are the configured ones.
+    """
+    from app.utils.agent_origin import tagged
+
+    url = f"{svc.BASE_URL}/events/{event_ticker}"
+    for attempt in range(VENUE_READ_ATTEMPTS):
+        try:
+            # Notice 39: every outbound call from `scripts/` goes through the
+            # carrier. `is_our_host` decides at runtime, so tagging a
+            # third-party venue read costs nothing and keeps the static rule
+            # the simple one.
+            response = await svc.client.get(
+                url,
+                params={"with_nested_markets": "true"},
+                headers=tagged(url),
+            )
+            if response.status_code == 429:
+                await asyncio.sleep(VENUE_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            if response.status_code == 404:
+                return VenueRead(None, "http_404")
+            if response.status_code != 200:
+                return VenueRead(None, f"http_{response.status_code}")
+            markets = (response.json().get("event") or {}).get("markets") or []
+        except Exception:
+            if attempt + 1 < VENUE_READ_ATTEMPTS:
+                await asyncio.sleep(VENUE_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            return VenueRead(None, "transport_error")
+        else:
+            return VenueRead(
+                {m.get("ticker"): m for m in markets if m.get("ticker")}, ""
+            )
+    return VenueRead(None, "rate_limited")
+
+
+async def confirm_against_venue(legs, reader=None):
+    """Split planned legs into (confirmed, refused, reasons) by asking the venue.
+
+    Returns the legs the venue positively agrees are settled losers, the ones it
+    did not, and a count per reason so the operator sees WHY a plan shrank.
+    Called before the write loop and its result gates that loop — a version of
+    this that ran afterwards, or whose verdict the loop ignored, would leave the
+    script doing precisely what #5515 was filed for.
+    """
+    readable = [
+        leg for leg in legs if leg.get("source") in VENUE_READABLE_SOURCES
+    ]
+    tickers = sorted({
+        leg.get("event_ticker") for leg in readable if leg.get("event_ticker")
+    })
+
+    reads = {}
+    if tickers:
+        reads = await (reader or _read_books)(tickers)
+
+    confirmed, refused = [], []
+    reasons = collections.Counter()
+    for leg in legs:
+        read = reads.get(leg.get("event_ticker"))
+        call = venue_verdict(leg, read.book if read else None)
+        if call.verdict == VENUE_AGREES:
+            confirmed.append(leg)
+            continue
+        refused.append(leg)
+        reason = call.reason
+        # Refine the generic unreadable into the transport truth, so a
+        # rate-limited run cannot be mistaken for a venue that went dark.
+        if reason == "event_unreadable" and read is not None:
+            reason = f"event_unreadable:{read.reason}"
+        reasons[reason] += 1
+    return confirmed, refused, reasons
+
+
+async def _read_books(tickers) -> dict:
+    """Fetch every event ticker's book, bounded-concurrency, refusing on error."""
+    from app.services.kalshi_api import KalshiAPIService
+
+    svc = KalshiAPIService()
+    sem = asyncio.Semaphore(VENUE_CONCURRENCY)
+
+    async def one(ticker):
+        async with sem:
+            return ticker, await read_event_book(svc, ticker)
+
+    try:
+        pairs = await asyncio.gather(*(one(t) for t in tickers))
+    finally:
+        await svc.close()
+    return dict(pairs)
 
 
 def backup_is_exact(recon) -> bool:
@@ -377,6 +659,31 @@ async def reconcile_backup(session, outcome_ids) -> dict:
     return {"futures_outcomes": int(missing)}
 
 
+async def attach_venue_coordinates(session, legs) -> None:
+    """Stamp each leg with its market's `source` and venue event ticker.
+
+    A leg whose market is missing from the lookup keeps ``source = None``, which
+    `venue_verdict` refuses as `no_venue_reader:None` — the fail-closed
+    direction, so a gap in this step can never widen what gets written.
+    """
+    from sqlalchemy import text
+
+    market_ids = sorted({leg["market_id"] for leg in legs})
+    if not market_ids:
+        return
+    rows = (
+        await session.execute(text(SQL["market_meta"]), {"ids": market_ids})
+    ).fetchall()
+    meta = {
+        r._mapping["id"]: (r._mapping["source"], r._mapping["external_id"])
+        for r in rows
+    }
+    for leg in legs:
+        source, event_ticker = meta.get(leg["market_id"], (None, None))
+        leg["source"] = source
+        leg["event_ticker"] = event_ticker
+
+
 def plan(rows):
     """Group the candidate scan by market and classify each one."""
     by_market = collections.OrderedDict()
@@ -416,16 +723,38 @@ async def run(args) -> None:
               f"(no live priced field would survive)")
 
         manifest_rows = await manifest_count(s)
+        # The floor is asked about the PRE-venue plan, deliberately. It was
+        # calibrated on the sibling rule's cohort and exists to answer "did the
+        # cohort SQL stop matching?"; the venue precondition below is a
+        # deliberate narrowing, not a broken filter, and letting it drive the
+        # floor would make every correctly-refused drain look like a defect.
         small = explain_small_plan(len(clear), manifest_rows)
         if small.message:
             print(f"\n⚠️  plan is below the sanity floor of {SANITY_FLOOR}.")
             print(f"   {small.message}")
 
+        await attach_venue_coordinates(s, clear)
+        confirmed, unconfirmed, reasons = await confirm_against_venue(clear)
+        confirmed_residue = sum(float(leg["residue"] or 0) for leg in confirmed)
+
+        print(f"\nVENUE       : {len(confirmed)} of {len(clear)} CLEAR rows "
+              f"confirmed settled-and-lost by the venue "
+              f"({confirmed_residue:.1f} of {residue:.1f} points)")
+        for reason, n in reasons.most_common():
+            print(f"  refused   : {n:>6}  {reason}")
+        if clear and not confirmed:
+            # Loud, because a silent zero-yield run is indistinguishable from a
+            # successful one and reads as "nothing left to fix" (gotcha #53).
+            print("  ⚠️  ZERO YIELD — the venue confirmed none of the plan. "
+                  "That is a finding about the grades, not an idle run.")
+
         if not args.backup and not args.apply:
             print("\nplan only — pass --backup to stage an undo, then --apply.")
             return
 
-        outcome_ids = [leg["outcome_id"] for leg in clear]
+        # Only venue-confirmed rows are ever backed up or written. Everything
+        # downstream of here reads `confirmed`; `clear` is a reporting number.
+        outcome_ids = [leg["outcome_id"] for leg in confirmed]
         if not outcome_ids:
             print("\nnothing to do.")
             return
@@ -451,7 +780,7 @@ async def run(args) -> None:
         await s.execute(text(SQL["man_create"]))
         now = datetime.now(timezone.utc)
         applied = declined = 0
-        for leg in clear:
+        for leg in confirmed:
             r = await s.execute(text(SQL["clear"]), {"oid": leg["outcome_id"]})
             if r.rowcount:
                 applied += 1
