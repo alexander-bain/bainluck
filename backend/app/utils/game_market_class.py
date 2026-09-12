@@ -28,7 +28,7 @@ bare-matchup leak.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Iterable, Optional
 
 # A leading league tag like "MLB: ", "NBA:", "NCAAB - " that Kalshi/Polymarket
 # sometimes prepend to a matchup title. Stripped before bare-matchup detection.
@@ -115,6 +115,32 @@ _TEAM_PROP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# An OUTCOME label that can only belong to a derivative book — a handicap, a
+# total, a period, or a scoreline. Deliberately narrower than the market-name
+# patterns above: this one is asked of an outcome, where the alternative is a
+# bare competitor name, so it must fire on positive evidence only (see
+# `outcomes_refute_game_winner` for why a false positive costs more than a
+# false negative here).
+#
+# Every alternative is word-anchored for the "Winnipeg"/"Thunder" reason the
+# `_WINNER_WORD_RE` comment records: `\bunder\b` must not fire on Oklahoma City
+# Thunder, and it does not — the "under" inside it is preceded by a word
+# character, so there is no boundary.
+_DERIVATIVE_OUTCOME_RE = re.compile(
+    r"(?:"
+    r"\bo/u\b"                                    # "O/U 47.5"
+    r"|\bover\b|\bunder\b"                        # "Over" / "Under"
+    r"|\bspread\b|\bhandicap\b"                   # "Spread -13.5", "Set Handicap +/-1.5"
+    r"|\brun ?line\b|\bpuck ?line\b"
+    r"|\bnrfi\b|\byrfi\b"                         # "NRFI" alone, wearing the game's title
+    r"|\bset \d+\b"                               # "Set 1 Winner", "Set 1 O/U 8.5"
+    r"|\btotal (?:sets|games|points|runs|goals|corners)\b"
+    r"|\((?:\+|-)\d"                              # "Venezia FC (-1.5)"
+    r"|\b\d+ ?- ?\d+\b"                           # exact score "2 - 2"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def is_bare_matchup(name: str) -> bool:
     """True if ``name`` is ONLY a two-side matchup title (a game-winner market).
@@ -133,6 +159,54 @@ def is_bare_matchup(name: str) -> bool:
     if _WILL_BEAT_RE.match(stripped):
         return True
     return bool(_BARE_MATCHUP_RE.match(stripped))
+
+
+def outcomes_refute_game_winner(outcome_names: Optional[Iterable[Optional[str]]]) -> bool:
+    """True if this market's OWN outcomes say it is not the match winner.
+
+    THE NAME IS NOT ENOUGH, AND THE ROW ALREADY CARRIES THE REFUTATION (#5273).
+    Polymarket mints an event-level container whose title is the bare matchup —
+    "Cowboys vs. Giants", "Duquesne vs. Youngstown State" — and hangs the
+    derivative books off it as OUTCOMES: `Spread -16.5 | Duquesne`,
+    `Spread -20.5 | O/U 57.5 | Cal Poly`, `NRFI` alone. Every one of those
+    passes `is_bare_matchup` on its title, so `classify_game_market_class`
+    answers "moneyline" and the blend admits it; `find_moneyline_outcome` then
+    resolves the one competitor-shaped outcome by containment and publishes a
+    HANDICAP's price as the match winner. Measured on production 2026-09-12
+    over the (-6h, +48h) window: of 314 Polymarket markets the name gate
+    admits, 88 are refuted by their own outcomes, and the eligibility record
+    (#5311) names three of them as the live speaker — including US Open ATP
+    Tiafoe vs Shelton, whose Polymarket leg read 0.165 off a basket of
+    `Set 1 O/U 8.5` / `Set Handicap +/-1.5` outcomes against Kalshi's 0.01.
+
+    COUNTING OUTCOMES CANNOT DO THIS JOB, which is why the predicate reads the
+    vocabulary instead. The legitimate winner shapes are two outcomes
+    (`Yes | No`) and THREE (soccer's `Tijuana | Draw (…) | Querétaro`), while
+    the broken containers span one to twenty — `Duquesne | Spread -16.5` has
+    exactly two and `Spread -20.5 | O/U 57.5 | Cal Poly` exactly three. Any
+    arity test either keeps them or takes soccer's draw down with them.
+
+    ANY derivative outcome refutes, rather than a majority: a real match-winner
+    book never lists a handicap beside its competitors, so one is already the
+    whole signal, and requiring a majority would keep `Duquesne | Spread -16.5`.
+
+    Fail-open on absence. An empty or unloaded outcome list is NO EVIDENCE, not
+    evidence of innocence — and the asymmetry is deliberate, because the two
+    errors do not cost the same. A false positive retires a real winner and can
+    empty a card; a false negative leaves today's behaviour exactly as it is.
+    So the predicate only ever answers True on something it has actually read.
+    Measured against that bar on the same window: the 88 refusals re-point 25
+    events to a genuine winner in the same group, retire 57 wrong legs, and
+    blank **zero** cards — every affected event keeps a number from another
+    source.
+    """
+    if not outcome_names:
+        return False
+    return any(
+        _DERIVATIVE_OUTCOME_RE.search(name)
+        for name in outcome_names
+        if name
+    )
 
 
 def is_game_winner_market(

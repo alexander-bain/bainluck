@@ -266,7 +266,12 @@ class TestThePrimaryIsNoLongerExemptFromAdmission:
         assert alone[0].market.name.endswith("First Team to Score")
         assert admissible_as_blend_speaker(alone[0].market, is_primary=True) is False
 
-        def _exempt_primary(market, *, is_primary):
+        # `outcomes` is accepted and ignored (#5273): this stub reproduces the
+        # pre-#5031 rule, which was "the primary is exempt" and consulted
+        # nothing else. Dropping the parameter would make the double reject the
+        # call its subject now makes, which is a harness failure wearing the
+        # costume of a regression.
+        def _exempt_primary(market, *, is_primary, outcomes=None):
             return True if is_primary else False
 
         original = live_blend.admissible_as_blend_speaker
