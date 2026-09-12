@@ -6,6 +6,7 @@ scores/dicts — no database access, no side effects.
 """
 
 from datetime import datetime
+from typing import Any
 
 from app.utils.game_state import normalize_live_game_state
 from app.utils.graded_card import rendered_duel_percents
@@ -373,6 +374,7 @@ def format_event_data(
     inline_tags: list[str],
     ended_at: datetime | None,
     prematch_by_source: dict[str, tuple] | None = None,
+    hero: Any | None = None,
 ) -> dict:
     """Build the compact event data dict for the feed response.
 
@@ -433,6 +435,45 @@ def format_event_data(
         if prob_source:
             odds_data["source"] = prob_source
         data["current_odds"] = odds_data
+
+    # ── THE ONE NUMBER, ON THE CARD (#4971 / D136 rung 3) ───────────────────
+    #
+    # `current_odds` above is the MARKET number and nothing else. The number a
+    # reader is owed for "who wins this question" is the `resolve_hero` cascade
+    # — settled, then blend, then opening — and until now the card payload did
+    # not carry it, so every card-shaped surface re-derived the cascade itself
+    # and the three of them drifted apart:
+    #
+    #   `FeedCard`              finished -> `opening_odds`
+    #   Discover `EventCard`    finished -> `prematchReading(data)`
+    #   `RelatedByTag`          finished -> raw `current_odds`, no state at all
+    #
+    # MEASURED on production 2026-09-12 08:30Z, the 100 events that finished in
+    # the preceding 48h and carry sources: 95 serve a card probability, and on
+    # 11 of them the raw blend names the LOSER as the favourite. Kansas 21-38
+    # Missouri (14792834) served `current_odds.home_probability = 0.001` while
+    # `/api/events/14792834` served `hero_probability = 0.0, source=settled`;
+    # Athletics 6-5 Mariners (15309702) served 0.61 against a settled 1.0.
+    # Median card->page gap 6.1pt, max 76.1pt.
+    #
+    # So the cascade is RESOLVED ONCE, by the same function the event page
+    # calls, and served under the same four key names the event detail payload
+    # uses — a client that can read one can read the other. This is additive:
+    # `current_odds` is unchanged, so nothing that ranks, filters or scores on a
+    # probability can see it (ruling 021 — share the DECISION, not the
+    # ingredient).
+    #
+    # The caller resolves the hero rather than this function doing it, because
+    # the settled arm needs `completed_at` as a TRUST GATE (a finished row with
+    # no `completed_at` must not resolve) and this serializer is pure and does
+    # not take it. Passing the resolved reading also means the card and the page
+    # cannot call the cascade with different inputs.
+    if hero is not None:
+        data["hero_probability"] = hero.home_probability
+        data["hero_probability_away"] = hero.away_probability
+        data["hero_probability_source"] = hero.source
+        if hero.settled_result is not None:
+            data["hero_settled_result"] = hero.settled_result
 
     if opening_home_prob is not None:
         data["opening_odds"] = {

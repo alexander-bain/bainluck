@@ -93,6 +93,7 @@ from app.utils.aggregation import (
     compute_aggregate_probability as _compute_aggregate_probability,
 )
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
+from app.utils.hero_probability import resolve_hero
 from app.utils.probability_eligibility import is_refused
 from app.utils.feed_event_candidates import (
     EVENT_CANDIDATE_BUDGET,
@@ -8431,6 +8432,14 @@ async def _score_events(
                 inline_tags=inline_tags,
                 ended_at=ended_at,
                 prematch_by_source=prematch_by_event.get(event.id),
+                # #4971 / D136 rung 3 — the card carries the one number, resolved
+                # by the same cascade the event page calls. `event` and not a
+                # re-read: the twin fold above already merged `win_probability_sources`
+                # onto this row, so the blend arm sees the folded sources exactly
+                # as `current_home_prob` did, and the settled and opening arms are
+                # fold-invariant by construction (they read status/scores/openings,
+                # which the fold does not touch).
+                hero=resolve_hero(event),
             )
             event_data["temporal_badge"] = _compute_temporal_badge(
                 status=event.status,
