@@ -31,6 +31,7 @@ from app.services.anchor_channel import (
     resolve_market_born_duplicate,
 )
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
+from app.utils.feed_reasons import _points as format_movement_points
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.period_window_grade import grade_period_window
@@ -8945,9 +8946,20 @@ def _mover_chips(rows, *, limit: int = _SUGGESTION_MOVERS_LIMIT) -> list[dict]:
         if not query:
             continue
 
+        # 🔴 DEFECT 4 (#5608). `probability_change_24h` is a probability DELTA in
+        # 0-1 units — every writer stores it as `new - previous` — so `* 100` is
+        # percentage POINTS, and this line labelled them `%`. A candidate who went
+        # 37.8% -> 47.8% read as "Surging +10.0%", which a reader takes as a tenth
+        # more than they had (~4.8 points): under half the real move, in a unit the
+        # number was never in. Same defect as the Discover golf pill (#4066) and the
+        # eight futures sentence sites (#5619); this is the last surface of that
+        # family. `_points` is the house display formatter those two now share —
+        # it takes the ABSOLUTE magnitude, drops the trailing zero and says
+        # "1 point" singular, so the sign stays out here where the chip wants it.
         change = outcome.probability_change_24h
         direction = "Surging" if change > 0 else "Falling"
-        pct = f"{'+' if change > 0 else ''}{round(change * 100, 1)}%"
+        sign = "+" if change > 0 else ("-" if change < 0 else "")
+        pct = f"{sign}{format_movement_points(change)}"
         short_market = market_name
         if len(short_market) > 30:
             short_market = short_market[:27] + "..."
