@@ -605,9 +605,14 @@ def _needs_regeneration(
 
 async def enrich_market_hooks(limit: int = 50):
     """Generate Polymarket-style context blurbs for markets."""
-    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.models.models import Event, FuturesMarket, FuturesOutcome
     from app.services.llm import _get_client
-    from app.utils.hook_prompt import build_hook_prompt
+    from app.utils.hook_prompt import (
+        accept_hook_output,
+        build_hook_evidence,
+        build_hook_prompt,
+        should_generate_hook,
+    )
     from sqlalchemy import case, or_
 
     client = _get_client()
@@ -616,7 +621,19 @@ async def enrich_market_hooks(limit: int = 50):
         return {"skipped": True}
 
     now = datetime.now(timezone.utc)
-    stats = {"processed": 0, "generated": 0, "regenerated": 0, "skipped": 0, "errors": 0}
+    stats = {
+        "processed": 0,
+        "generated": 0,
+        "regenerated": 0,
+        "skipped": 0,
+        "errors": 0,
+        # T11-1 (#5461), CERT-2691's repair. Two fail-closed exits, counted apart from
+        # `skipped` (which means "this hook is still fresh") because they say something
+        # different and a reader of these stats should not have to guess: the first is us
+        # declining to ask, the second is the model declining to answer.
+        "skipped_no_evidence": 0,
+        "declined_no_hook": 0,
+    }
 
     async with get_task_session() as session:
         feed_categories = [
@@ -733,16 +750,58 @@ async def enrich_market_hooks(limit: int = 50):
                 elif vol >= 1_000:
                     volume_str = f"24h volume: ${vol/1_000:.0f}K"
 
-            # T11-1 (#5461): originally authored examples + abstract style criteria,
-            # identical for every market. The old block sampled three newsletter
-            # sentences per market, which both broke D138 and made the prompt
-            # irreproducible — no trace could say what a given hook was generated from.
+            # T11-1 (#5461), CERT-2691's required repair: the dated, sourced facts this
+            # hook is allowed to state. A linked fixture's schedule is read here — one
+            # extra row per candidate, only when the market is attached to an event —
+            # because a kickoff is the thing that actually happens, while the venue's
+            # resolution date is routinely a padded latest-possible settlement (#2644).
+            event_commence_time = event_home_team = event_away_team = None
+            if getattr(market, "event_id", None):
+                # `Event.home_team` / `.away_team` are RELATIONSHIPS, not columns — selecting
+                # them compiles to `teams.id = events.home_team_id AS anon_1` and hands back
+                # booleans that read as names right up until the evidence line says
+                # "True play False on Sep 13". The name columns are `*_team_name`.
+                event_row = (
+                    await session.execute(
+                        select(
+                            Event.commence_time,
+                            Event.home_team_name,
+                            Event.away_team_name,
+                        ).where(Event.id == market.event_id)
+                    )
+                ).first()
+                if event_row:
+                    event_commence_time, event_home_team, event_away_team = event_row
+
+            evidence = build_hook_evidence(
+                market_name=market.name,
+                resolution_date=market.resolution_date,
+                # The venue's name is deliberately NOT passed: the standing rules forbid
+                # naming a venue in the sentence, so it is never put in front of the model.
+                event_commence_time=event_commence_time,
+                event_home_team=event_home_team,
+                event_away_team=event_away_team,
+                now=now,
+            )
+
+            # FAIL CLOSED, exit 1 of 2. With no dated evidence there is nothing the model
+            # could say that we could stand behind, so it is not asked. An unspent call
+            # cannot invent a development; the card keeps its deterministic copy.
+            if not should_generate_hook(evidence):
+                stats["skipped_no_evidence"] += 1
+                continue
+
+            # Originally authored examples + abstract criteria, identical for every market.
+            # The retired block sampled three newsletter sentences per market, which broke
+            # D138 and made the prompt irreproducible — no trace could say what a given
+            # hook was generated from.
             prompt = build_hook_prompt(
                 market_name=market.name,
                 category=market.llm_sport_category or "general",
                 leaderboard_lines=leaderboard_lines,
                 resolve_str=resolve_str,
                 volume_str=volume_str,
+                evidence=evidence,
             )
 
             try:
@@ -752,7 +811,15 @@ async def enrich_market_hooks(limit: int = 50):
                     max_tokens=150,
                     temperature=0.7,
                 )
-                hook = response.choices[0].message.content.strip().strip('"').strip("'")
+                # FAIL CLOSED, exit 2 of 2: the model is allowed to answer "the evidence
+                # supports nothing worth saying", and that answer is honoured rather than
+                # written to a card.
+                hook = accept_hook_output(response.choices[0].message.content)
+                if hook is None:
+                    stats["declined_no_hook"] += 1
+                    stats["processed"] += 1
+                    processed += 1
+                    continue
                 if "%" in hook:
                     hook = re.sub(r"\d+(\.\d+)?%", "", hook).strip()
                     hook = re.sub(r"\s{2,}", " ", hook)
