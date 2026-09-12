@@ -161,6 +161,7 @@
 				Utilities/DrawPricedWinner.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,
+				Utilities/TeamShortName.swift,
 			);
 			target = A7C0000000000000000000F1 /* BainLuckWidget */;
 		};
