@@ -189,6 +189,11 @@ async def _measure_one_category(category: str) -> dict[str, int] | None:
                     mode=None,
                     tags=None,
                     event_pct=None,
+                    # T4-B2 / #5102. A warmer never pins: it exists to MINT the
+                    # current edition, and a pinned build would republish an
+                    # older order as the warm one. Passed explicitly for the
+                    # reason stated above `category`.
+                    edition=None,
                     debug=False,
                     debug_ground_truth=False,
                     debug_personalization=False,

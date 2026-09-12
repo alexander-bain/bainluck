@@ -218,22 +218,57 @@ def _cache_shape_params() -> set[str]:
     }
 
 
+#: The members of ``_cache_shape`` that are NOT build inputs, and so must never
+#: reach the base key. Both are windows onto a list that has already been built:
+#: ``offset`` picks a slice of it, ``edition`` (T4-B2 / #5102) picks an ORDER
+#: over it that some earlier build already minted. Keying a base on either would
+#: mint one build per page, or one per reader, which inverts what the base is for.
+#:
+#: This set is the ONLY sanctioned way to be in the response key and not the base
+#: key. Widening it is how the drift guard below gets quietly disabled, so a new
+#: member needs the same argument these two have — "it is not a build input" —
+#: and not merely "the guard went red".
+_NOT_BUILD_INPUTS = {"offset", "edition"}
+
+
 def test_the_base_key_covers_every_build_input_the_response_key_covers():
     """🔴 THE DRIFT GUARD. Add a build input to ``_cache_shape`` and forget it
     here and page 2 comes off a list built under different inputs. That is a
     WRONG page, served fast, with nothing measuring it."""
     shape = _cache_shape_params()
     keyed = set(inspect.signature(feed_page_base_cache_key).parameters)
-    assert shape - {"offset"} == keyed, (
-        "feed_page_base_cache_key must key on exactly _cache_shape minus offset; "
-        f"missing={shape - {'offset'} - keyed} extra={keyed - (shape - {'offset'})}"
+    expected = shape - _NOT_BUILD_INPUTS
+    assert expected == keyed, (
+        "feed_page_base_cache_key must key on exactly _cache_shape minus "
+        f"{sorted(_NOT_BUILD_INPUTS)}; "
+        f"missing={expected - keyed} extra={keyed - expected}"
     )
+
+
+def test_the_response_key_actually_carries_the_non_build_inputs():
+    """The other direction, and the reason the exemption above is safe.
+
+    ``offset`` and ``edition`` are exempt from the BASE key precisely because
+    the RESPONSE key carries them — that is what stops two different windows,
+    or two different pinned orders, sharing one cached entry. If a future edit
+    dropped one from the response key the exemption would silently become a
+    cache-collision bug, and this is the test that notices.
+    """
+    keyed = set(inspect.signature(feed_response_cache_key).parameters)
+    assert _NOT_BUILD_INPUTS <= keyed, f"missing from response key: {_NOT_BUILD_INPUTS - keyed}"
 
 
 def test_offset_is_not_a_parameter_at_all_not_merely_defaulted():
     """Structural, not conventional: a caller cannot pass an offset it does not
     accept, so no future edit can key a base per page by accident."""
     assert "offset" not in inspect.signature(feed_page_base_cache_key).parameters
+
+
+def test_edition_is_not_a_parameter_at_all_either():
+    """Same structural bar as ``offset``, for the same reason one layer over: a
+    base keyed per edition would build a fresh list for every pinned reader and
+    turn the page base from a load saver into a load multiplier."""
+    assert "edition" not in inspect.signature(feed_page_base_cache_key).parameters
 
 
 def test_no_principal_can_be_keyed_into_a_base():
@@ -385,9 +420,32 @@ def test_the_warmer_still_publishes_the_base():
 def test_the_base_shape_is_derived_from_the_cache_shape_by_exclusion():
     """Re-typing the field list is how the drift in
     ``test_the_base_key_covers_every_build_input...`` would be introduced. This
-    pins the mechanism, not just the outcome."""
+    pins the mechanism, not just the outcome.
+
+    Asserts the PROPERTY rather than one literal spelling of it — the first cut
+    pinned the exact substring ``if k != "offset"``, which went red the moment
+    #5102 added a second non-build input even though the derivation was still
+    by exclusion. A guard that fails on a correct change teaches the next reader
+    to edit the guard, which is how a real one gets disabled.
+    """
     src = inspect.getsource(get_feed)
-    assert 'k: v for k, v in _cache_shape.items() if k != "offset"' in src
+    start = src.index("_page_base_shape = {")
+    block = src[start : src.index("}", start)]
+    assert "_cache_shape.items()" in block, (
+        "the base shape must be DERIVED from _cache_shape, never re-typed"
+    )
+    # Every exempt name is named right here, and nothing else is.
+    for name in _NOT_BUILD_INPUTS:
+        assert f'"{name}"' in block, f"{name} must be excluded explicitly"
+    excluded = {
+        token.strip().strip('"').strip("'")
+        for token in block[block.index("_cache_shape.items()") :].split('"')
+        if token.strip().isidentifier()
+    }
+    assert excluded <= _NOT_BUILD_INPUTS, (
+        "only non-build inputs may be dropped from the base shape; "
+        f"unexpected exclusions: {excluded - _NOT_BUILD_INPUTS}"
+    )
 
 
 def test_the_base_is_stored_with_the_anonymous_ttl_not_the_builders():
