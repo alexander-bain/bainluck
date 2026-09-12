@@ -224,6 +224,11 @@ class TestFuturesMarketDetail:
             "resolution_date",
             "outcomes",
             "outcome_count",
+            # #5539: whether this field's openings were refused as incoherent, so
+            # a probe can tell a withheld opening from one that never existed.
+            # Always present — its absence would mean an old build, not a
+            # coherent field, which is why it belongs in this exhaustive set.
+            "openings_withheld",
             "bookmakers",
             "category_tags",
             "created_at",

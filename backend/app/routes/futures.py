@@ -4572,6 +4572,7 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
     leads with "Other 100%" while search shows "Cleveland Cavaliers 31%".
     """
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+    from app.utils.field_opening_coherence import field_openings_publishable
     from app.utils.outcome_display import (
         is_placeholder_outcome_name,
         normalize_display_probs,
@@ -4624,6 +4625,40 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         }
         for o in sorted_outcomes
     ]
+    # #5539: a one-winner field whose openings cannot be a distribution never
+    # had an opening, and this page is where the reader meets it. `/futures/
+    # 12337998` printed OPEN 99% against all 35 teams in the Women's 2027
+    # College Basketball Champion field and captioned it "South Carolina down
+    # 74.4 pts from opening" — the seeded midpoint of an untraded book, read by
+    # the page as a 74-point move. The rule and its measured false-positive
+    # bounds are in `app.utils.field_opening_coherence`; it is deliberately
+    # arithmetic about the FIELD, because the tempting value rule ("suppress the
+    # opening 18 legs share") was measured suppressing ~19,000 honest longshots.
+    #
+    # Withheld, not rescaled: rescaling would invent an opening, and
+    # `calibration_probability` coalesces to `opening_probability` (gotcha #144 /
+    # ruling 103), so an invented one becomes a forecast we are graded on. Both
+    # client consumers already read NULL as "no opening" and print nothing —
+    # `OutcomeRow` gates the column on `opening_probability !== null`, and
+    # `movementExplanation` falls back to the 24h change — so the key must be
+    # present and null, never omitted (`undefined !== null` is true).
+    if not field_openings_publishable(
+        [o["opening_probability"] for o in outcomes],
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+    ):
+        for o in outcomes:
+            o["opening_probability"] = None
+            # The American-odds twin of the same fabricated number. Leaving it
+            # would let any consumer reading the odds column reconstruct exactly
+            # the price this rule just refused.
+            o["opening_american_odds"] = None
+        # Machine-readable so a cert or probe can prove the rule fired and tell
+        # it apart from a market that simply never had an opening. Not a reader
+        # string: notice 34 keeps diagnostics off the page, in a key like this.
+        openings_withheld = True
+    else:
+        openings_withheld = False
+
     # #993: #23-normalize the displayed distribution + demote a generic
     # "Other/Field" from the headline (same rules as search).
     # #199: gate on mutual-exclusivity — golf make-cut/top-N (mutually_exclusive
@@ -4756,6 +4791,10 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "outcomes": outcomes,
         "outcome_count": len(outcomes),
+        # #5539: true when this field's openings were refused as incoherent, so a
+        # probe can tell a withheld opening from one that never existed. Always
+        # present so its absence means an old build, not a coherent field.
+        "openings_withheld": openings_withheld,
         "bookmakers": bookmakers or [],
         "category_tags": market.category_tags or [],
         "created_at": market.created_at.isoformat() if market.created_at else None,
