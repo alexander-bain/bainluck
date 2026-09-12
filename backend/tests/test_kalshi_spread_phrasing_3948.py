@@ -47,8 +47,11 @@ import pytest
 
 from app.routes.events import get_event_odds_history
 from app.utils.binary_spread import (
+    _CONTRADICTION_CONFIDENCE,
+    _threshold_order,
     binary_to_implied_spread,
     extract_spread_threshold,
+    ladder_recrosses,
     margin_rung_on_home_axis,
     parse_margin_rung,
     resolve_rung_side,
@@ -319,8 +322,17 @@ def test_sign_only_would_have_shipped_a_confident_wrong_number():
     """The rejected design, kept executable so the choice is not just prose.
 
     This is the measurement that overrode the issue's stated acceptance: it is
-    not merely noisier, it brackets [-1.5, +1.5] by accident and reports high
-    confidence on a spread that is off by a factor of six.
+    not merely noisier, it brackets [-1.5, +1.5] by accident and reports a
+    spread that is off by a factor of six.
+
+    🔴 The *confidence* half of that sentence stopped being true at #5413. An
+    interleaved pool prices above the crossover after pricing below it, which
+    `ladder_recrosses` now reads as a pool that names no single value, so the
+    score is `_CONTRADICTION_CONFIDENCE` rather than the 0.85 its accidental
+    bracket earns on width. Both numbers are asserted below: the width the
+    design would have been scored on is unchanged, and the wrong spread — the
+    reason sign-and-invert is the design — is unchanged too. #5413 stops this
+    arm outranking a clean one; it does not make it right.
     """
     home, away = "New York Giants", "Dallas Cowboys"
     sign_only = []
@@ -339,8 +351,18 @@ def test_sign_only_would_have_shipped_a_confident_wrong_number():
 
     bad = binary_to_implied_spread(sign_only)
     assert bad is not None
-    assert bad.spread == pytest.approx(0.5, abs=0.05)
-    assert bad.confidence > 0.8  # confident, and wrong
+    assert bad.spread == pytest.approx(0.5, abs=0.05)  # wrong, by a factor of six
+
+    # The accidental bracket is [-1.5, +1.5]; on width alone that is still the
+    # 0.85 this design was measured at, which is what made it *selected*.
+    bracket_width = bad.upper_threshold - bad.lower_threshold
+    assert bracket_width == pytest.approx(3.0)
+    assert 1.0 - (bracket_width / 20.0) > 0.8
+
+    # Since #5413 the interleaving is read off the pool itself, so the score no
+    # longer says "confident".
+    assert bad.confidence == _CONTRADICTION_CONFIDENCE
+    assert ladder_recrosses(sorted(sign_only, key=_threshold_order), 0.50)
 
 
 # ---------------------------------------------------------------------------
