@@ -153,24 +153,56 @@ class TestEveryCallSitePassesTheFirstBout:
         src = inspect.getsource(event_combat.list_card_concepts)
         assert "earliest = bouts[0].commence_time" in src
         assert 'earliest = kalshi["fights"][0]["commence"]' in src
-        assert "combat_status(latest, now, earliest)" in src
+        # #5603 put `card_status_span` between the bout list and the call: the pair
+        # is still (first, last) of this card's own bouts, minus the ones that have
+        # been called off. The Kalshi-only arm has no statuses to read, so it still
+        # hands over the raw `earliest`/`latest` pair.
+        assert "status_first, status_last = card_status_span(bouts)" in src
+        assert "status_first, status_last = earliest, latest" in src
+        assert "combat_status(status_last, now, status_first)" in src
 
     def test_the_adapter_passes_it_at_all_three_of_its_sites(self):
         from app.utils import event_combat
 
         src = inspect.getsource(event_combat.CombatEventAdapter)
-        assert "combat_status(authoritative_commence, now, first_commence)" in src
-        assert "combat_status(latest_commence, now, first_commence)" in src
-        # #1803's authority: child settledness reads the same call, first bout and all.
-        assert src.count("first_commence") >= 4
+        # Both adapter sites, plus #1803's authority: child settledness reads the
+        # same call, first bout and all.
+        assert src.count("combat_status(status_last, now, status_first)") == 3
+        assert src.count("card_status_span(bouts)") == 2
         # And it is the FIRST bout, not the last wearing the name. Passing the third
         # argument is not the fix if the value handed over is `bouts[-1]` — that is a
-        # mutant the two asserts above do not kill, so it is named here.
+        # mutant the asserts above do not kill, so the fallback arms are named here.
         assert (
             "first_commence = bouts[0].commence_time if bouts else fights[0].commence_time"
             in src
         )
         assert "first_commence = bouts[0].commence_time if bouts else None" in src
+        assert (
+            "status_first, status_last = first_commence, authoritative_commence" in src
+        )
+
+    def test_the_span_helper_returns_first_then_last(self):
+        """The order the call sites unpack it in.
+
+        Every site above spells `status_first, status_last = card_status_span(...)`
+        and then calls `combat_status(status_last, now, status_first)`. A helper
+        that returned `(last, first)` would satisfy every string assert in this
+        class and invert the live window — so the contract is asserted on values,
+        not on source text.
+        """
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        from app.utils.event_combat import card_status_span
+
+        def b(hour):
+            return SimpleNamespace(
+                commence_time=datetime(2026, 9, 12, hour, tzinfo=timezone.utc),
+                status="scheduled",
+            )
+
+        first, last = card_status_span([b(16), b(23)])
+        assert first < last
 
     def test_the_first_bout_is_read_off_an_ascending_sort(self):
         """`bouts[0]` is only the first bout because `_list_event_bouts` sorts each

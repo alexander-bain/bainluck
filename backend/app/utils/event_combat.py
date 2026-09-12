@@ -449,6 +449,60 @@ def combat_status(latest_commence, now, earliest_commence=None) -> str:
     return "upcoming"
 
 
+#: Bout statuses that mean the fight is NOT going to be fought. Deliberately a
+#: deny-list over an allow-list: `events.status` is an open vocabulary written by
+#: several providers, and an unknown value must count as a real bout (today's
+#: behaviour) rather than silently vanish from the card's window.
+_BOUT_CALLED_OFF = frozenset(
+    {"suspended", "postponed", "cancelled", "canceled", "abandoned"}
+)
+
+
+def card_status_span(bouts):
+    """The ``(first, last)`` commence pair that decides a card's LIVE window.
+
+    #5603. `combat_status` opens the pill at the card's first bout (#4505), and
+    the callers were handing it ``bouts[0]`` — the earliest row in the token,
+    whatever state it is in. The token is a DATE (`event_commence_token`), so
+    every bout sharing a calendar day shares a card, and on 2026-09-12 three
+    suspended bouts from other promotions (01:25Z, 02:30Z, 10:00Z) sat in front
+    of the UFC card proper (16:00Z → 23:45Z). `earliest` came out 01:25Z and
+    "Fight Night: Silva vs Delgado" served ``status=live`` with a ``start_date``
+    of 23:45Z — the pill lit **ten hours** before anything could happen, on a day
+    when production carried ZERO live combat bouts.
+
+    A card's window is the span of the fights that ACTUALLY HAPPEN, so a bout
+    that has been called off is not in it. Note what is deliberately still in it:
+    ``completed``/``closed`` bouts. Filtering down to "scheduled or live" is the
+    tempting spelling and it is wrong in the other direction — once the prelims
+    finish, the earliest surviving bout is in the future, and the card would drop
+    to ``upcoming`` while the main card is on air. A false negative bought with a
+    false positive is not a repair.
+
+    Scope: this fixes a span set by a bout that will not be fought. It does NOT
+    fix same-day cross-promotion grouping — a *completed* early bout from another
+    promotion still shares the token and still drags the window back. That is the
+    date-token key itself (#5602, lane1/D35) and is not touched here.
+
+    Returns ``(None, None)`` for no usable rows. When every bout is called off the
+    full span is kept rather than invented from nothing: that card is past its
+    main event anyway and `combat_status`'s trailing arm still settles it.
+    """
+    rows = [b for b in bouts if getattr(b, "commence_time", None) is not None]
+    if not rows:
+        return None, None
+    going_ahead = [
+        b
+        for b in rows
+        if (getattr(b, "status", None) or "").strip().lower() not in _BOUT_CALLED_OFF
+    ]
+    times = [b.commence_time for b in (going_ahead or rows)]
+    # min/max, not [0]/[-1]: the callers' sorts are total orders over the FULL
+    # list, and dropping rows out of the middle must not make the pair depend on
+    # which ones happened to be dropped.
+    return min(times), max(times)
+
+
 def bout_order_key(ev):
     """Total order over one card's bouts: `(commence_time, id)`.
 
@@ -733,8 +787,15 @@ async def list_card_concepts(
             continue
 
         # #4505: the live window opens at THIS card's first bout, never at a fixed
-        # lead on its last — see `combat_status`.
-        status = combat_status(latest, now, earliest)
+        # lead on its last — see `combat_status`. #5603: the pair that decides the
+        # STATUS skips bouts that have been called off (`card_status_span`); the
+        # pair that DESCRIBES the card — `start_date`, the sort key, `fight_count`,
+        # the rendered bout list — is untouched, so a suspended bout still shows.
+        if bouts:
+            status_first, status_last = card_status_span(bouts)
+        else:
+            status_first, status_last = earliest, latest
+        status = combat_status(status_last, now, status_first)
         if status not in statuses:
             continue
 
@@ -991,14 +1052,19 @@ class CombatEventAdapter:
         # have no scheduled first bout, so this is None there and `combat_status`
         # falls back to the main event — under-claiming, never early.
         first_commence = bouts[0].commence_time if bouts else fights[0].commence_time
+        # #5603: the STATUS pair skips bouts that have been called off, so the page
+        # behind the card agrees with the card about whether the night is on.
+        # `authoritative_commence` still carries `start_date` — display unchanged.
+        if bouts:
+            status_first, status_last = card_status_span(bouts)
+        else:
+            status_first, status_last = first_commence, authoritative_commence
 
         # #1803, second reachable instance — found by censusing the class rather
         # than trusting its golf-shaped scoping. The card's ASSIGNED status is
         # computed below for `event.status`; it is hoisted here because `_child`
         # needs it to floor its own settled inference. Same authority, one call.
-        card_settled = (
-            combat_status(authoritative_commence, now, first_commence) == "settled"
-        )
+        card_settled = combat_status(status_last, now, status_first) == "settled"
 
         def _fight_outcomes(m):
             outs = sorted(
@@ -1112,7 +1178,7 @@ class CombatEventAdapter:
                 "slug": card_slug(card_name or main_event.name, target),
                 "domain": cfg.domain,
                 "name": card_name or main_event.name,  # numbered/Fight-Night card
-                "status": combat_status(authoritative_commence, now, first_commence),
+                "status": combat_status(status_last, now, status_first),
                 "start_date": (
                     authoritative_commence.isoformat()
                     if authoritative_commence is not None
@@ -1175,8 +1241,13 @@ class CombatEventAdapter:
         main_bout = main_bout_of(bouts)
         latest_commence = main_bout.commence_time
         # #4505: this envelope's card is events-only, so its first bout is known —
-        # `bouts` is sorted ascending by `bout_order_key`.
+        # `bouts` is sorted ascending by `bout_order_key`. #5603: the pair handed to
+        # `combat_status` skips bouts that have been called off; `latest_commence`
+        # still names the main event for `start_date`.
         first_commence = bouts[0].commence_time if bouts else None
+        status_first, status_last = card_status_span(bouts)
+        if status_last is None:
+            status_first, status_last = first_commence, latest_commence
 
         def _child(ev):
             outs = _competitors(ev)
@@ -1202,7 +1273,7 @@ class CombatEventAdapter:
                 "slug": card_slug(card_name or headline, target),
                 "domain": cfg.domain,
                 "name": card_name or headline,
-                "status": combat_status(latest_commence, now, first_commence),
+                "status": combat_status(status_last, now, status_first),
                 "start_date": (
                     latest_commence.isoformat() if latest_commence is not None else None
                 ),

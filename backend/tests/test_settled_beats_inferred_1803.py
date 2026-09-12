@@ -90,14 +90,17 @@ class TestCombatStatusIsTheAuthorityFeeding_It:
 
         src = inspect.getsource(event_combat.CombatEventAdapter)
         # #4505 added the card's own first bout as a third argument to every
-        # `combat_status` call. The authority this test guards is unchanged — the
-        # child's settledness still comes from the SAME call that decides the
-        # banner — so the scan follows the call, it does not exempt it.
-        assert "card_settled = (" in src
-        assert (
-            'combat_status(authoritative_commence, now, first_commence) == "settled"'
-            in src
-        )
+        # `combat_status` call, and #5603 replaced the pair it is given with
+        # `card_status_span`'s (bouts that have been called off leave the window).
+        # The authority this test guards is unchanged through both — the child's
+        # settledness still comes from the SAME call that decides the banner — so
+        # the scan follows the call, it does not exempt it.
+        assert 'card_settled = combat_status(status_last, now, status_first) == "settled"' in src
+        # The child's settledness above, plus the banner `status` on each of the
+        # adapter's two envelopes: three calls, argument for argument. Spellings
+        # that drifted apart would be two opinions about when the card is over,
+        # which is the whole defect this file exists for.
+        assert src.count("combat_status(status_last, now, status_first)") == 3
         assert "fight_child_settled(lead_prob, card_settled)" in src
 
     def test_combat_status_still_classifies_the_specimen_as_settled(self):
