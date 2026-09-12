@@ -81,6 +81,7 @@ private let categoryLinks: [CategoryLink] = [
 
 struct LeaguesView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var path = NavigationPath()
 
     var body: some View {
@@ -125,7 +126,7 @@ struct LeaguesView: View {
     }
 
     private var featuredGrid: some View {
-        LazyVGrid(columns: adaptiveColumns(minimum: 230), spacing: 14) {
+        LazyVGrid(columns: adaptiveColumns(.featured), spacing: 14) {
             ForEach(featuredTournaments) { tournament in
                 BrowseFeatureCard(
                     title: tournament.title,
@@ -166,9 +167,12 @@ struct LeaguesView: View {
         }
     }
 
+    /// Hidden for v1, so it is outside #5655 — which was measured off rasters of
+    /// what the page actually draws. Its spec stays exactly as it was rather
+    /// than inheriting a size-class rule nobody can photograph yet.
     private var topicSection: some View {
         BrowseSection(title: "Prediction Markets") {
-            LazyVGrid(columns: adaptiveColumns(minimum: 190), spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 320), spacing: 12)], spacing: 12) {
                 ForEach(categoryLinks) { cat in
                     BrowseTopicCard(category: cat)
                 }
@@ -182,7 +186,7 @@ struct LeaguesView: View {
                 let leagues = allLeagues.filter { $0.group == group }
                 if !leagues.isEmpty {
                     BrowseSection(title: group) {
-                        LazyVGrid(columns: adaptiveColumns(minimum: 150), spacing: 10) {
+                        LazyVGrid(columns: adaptiveColumns(.league), spacing: 10) {
                             ForEach(leagues) { league in
                                 BrowseLeagueTile(
                                     league: league,
@@ -196,8 +200,22 @@ struct LeaguesView: View {
         }
     }
 
-    private func adaptiveColumns(minimum: CGFloat) -> [GridItem] {
-        [GridItem(.adaptive(minimum: minimum, maximum: 320), spacing: 12)]
+    /// True when the page has a big canvas — any full-screen iPad, a Mac window,
+    /// a Max-model phone in landscape. An iPad in a narrow split view is compact
+    /// and is sized like a phone, which is what it is.
+    private var isRegularWidth: Bool { horizontalSizeClass == .regular }
+
+    /// #5655: the minimum has to grow with the canvas or `.adaptive` spends the
+    /// extra width on more columns and draws each tile NARROWER than the phone
+    /// does. `BrowseGridMetrics` carries the numbers and the measurements.
+    private func adaptiveColumns(_ grid: BrowseGridMetrics.Grid) -> [GridItem] {
+        [GridItem(
+            .adaptive(
+                minimum: BrowseGridMetrics.minimumTileWidth(grid, regularWidth: isRegularWidth),
+                maximum: BrowseGridMetrics.maximumTileWidth
+            ),
+            spacing: BrowseGridMetrics.spacing
+        )]
     }
 
     private func leagueColor(_ league: LeagueInfo) -> Color {

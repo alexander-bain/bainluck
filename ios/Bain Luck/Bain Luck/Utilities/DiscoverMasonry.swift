@@ -137,6 +137,45 @@ enum DiscoverMasonry {
         return max(1, n)
     }
 
+    /// How wide each column resolves to at `availableWidth` — the companion to
+    /// `columnCount`, and the number `.adaptive` will not tell you.
+    ///
+    /// `.adaptive` picks the column COUNT from the minimum and then splits the
+    /// width evenly between them, clamped to `maximumCardWidth`. So extra width
+    /// buys more columns, never wider ones, and a grid whose rows hold fewer
+    /// items than the column count spends the surplus on empty cells — which is
+    /// #5655: the 13-inch iPad drew a Browse league tile at 155 pt while the
+    /// 6-inch iPhone drew the same tile at 173 pt.
+    ///
+    /// This is a MODEL of SwiftUI's layout, not a reading of it, so it is only
+    /// worth what it has been checked against. Calibrated against four tiles
+    /// measured off simulator rasters on 2026-09-12, all within 2 pt:
+    ///
+    /// | surface | device | predicted | measured |
+    /// |---|---|---|---|
+    /// | Browse featured | iPhone 17 (358 pt) | 320 | 319 |
+    /// | Browse league   | iPhone 17 (358 pt) | 173 | 172 |
+    /// | Browse featured | iPad Pro 13 (988 pt) | 238 | 236 |
+    /// | Browse league   | iPad Pro 13 (988 pt) | 155 | 153 |
+    ///
+    /// (`artifacts-native-020/n132-before-{iphone,ipad}-browse.png`.) A change
+    /// here that moves those four numbers is wrong until it is re-measured.
+    static func columnWidth(
+        availableWidth: CGFloat,
+        minimumCardWidth: CGFloat = DiscoverMasonry.minimumCardWidth,
+        maximumCardWidth: CGFloat = .infinity,
+        spacing: CGFloat = DiscoverMasonry.spacing
+    ) -> CGFloat {
+        guard availableWidth > 0 else { return 0 }
+        let n = CGFloat(columnCount(
+            availableWidth: availableWidth,
+            minimumCardWidth: minimumCardWidth,
+            spacing: spacing
+        ))
+        let share = (availableWidth - (n - 1) * spacing) / n
+        return min(share, maximumCardWidth)
+    }
+
     // MARK: The deal
 
     /// Deals `cardCount` card indices into `columnCount` columns, left to right,
