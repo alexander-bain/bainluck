@@ -413,3 +413,138 @@ class TestTheFieldTravelsFromTheVenuePayload:
 
         leg = _Leg(_ts("2029-02-13T23:30:00Z"), _ts("2029-02-13T23:30:00Z"))
         assert leg.expected_expiration_time is None
+
+
+class TestTheRuleStillHasAWriterOnTheAppThatRunsIt:
+    """CAL-P1134. Who CALLS the rule, and which Heroku app runs them.
+
+    Everything above proves the derivation is right. Neither this file nor any
+    other asserted the thing that decides whether the ship is LIVE: that some
+    task which carries the rule actually runs, on the app the reader's rows are
+    written by. Notice 48 is the whole reason — since the 2026-09-11 heavy split,
+    ``bainluck-heavy`` does not follow master, so a writer on the ``heavy`` queue
+    can sit months behind while every test here stays green.
+
+    THE WRITER MAP, measured 2026-09-12 17:5xZ by AST-scanning ``app/`` (below)
+    and reading ``HEAVY_TASKS`` / the beat literals::
+
+        call site                      entry task                       queue      app     fires #2644?
+        kalshi.py `_poll_kalshi_markets`
+                                       poll_kalshi_markets              heavy      heavy   code is STALE
+        kalshi.py `_create_settled_market`
+                                       backfill_settled_gap_creation    background main    no (see below)
+        kalshi_resolution_sweep.py `handle` (in `run_backfill`)
+                                       settle_kalshi_recent_finals      realtime   main    no (see below)
+                                       "                                background main    YES, 04:20Z daily
+
+    Two of those three main-app arms carry the rule but are BARRED FROM FIRING IT
+    STRUCTURALLY, which is why they are not a substitute for the sweep:
+    ``settle_kalshi_recent_finals``' cohort is recently-final game legs, whose
+    ``close_time`` is a genuine close, so the pad gate (``close == expiration``)
+    is false by construction; and ``backfill_settled_gap_creation`` inserts
+    ``status="resolved"`` rows for markets that already settled, whose close has
+    likewise collapsed to the settlement instant.
+
+    So ``sweep_kalshi_resolution_window`` is the ONLY arm that can move a
+    pad-shaped row on the main app. That is a single point of failure worth one
+    assertion: move it onto ``heavy`` and #2644 goes inert on production, silently,
+    with this file green.
+    """
+
+    #: Every call site of the rule in ``app/``, as ``(module, enclosing function)``.
+    #: A set, not a count, so a new writer names itself in the failure.
+    KNOWN_CALL_SITES = {
+        ("app/tasks/kalshi.py", "_poll_kalshi_markets"),
+        ("app/tasks/kalshi.py", "_create_settled_market"),
+        ("app/tasks/kalshi_resolution_sweep.py", "handle"),
+    }
+
+    @staticmethod
+    def _call_sites():
+        """AST-scan ``app/`` for CALLS of the rule — not mentions of its name.
+
+        Deliberately not a text grep: the imports, this docstring and the module's
+        own prose all spell the identifier, so a substring scan would stay true
+        after the last real call site was deleted (the vacuous-guard shape).
+        """
+        import ast
+        import pathlib
+
+        import app as _app
+
+        root = pathlib.Path(_app.__file__).resolve().parent
+        sites = set()
+        for path in sorted(root.rglob("*.py")):
+            try:
+                tree = ast.parse(path.read_text())
+            except (SyntaxError, UnicodeDecodeError):  # pragma: no cover
+                continue
+            rel = f"app/{path.relative_to(root).as_posix()}"
+            stack: list[str] = []
+
+            class _V(ast.NodeVisitor):
+                def visit_FunctionDef(self, node):
+                    stack.append(node.name)
+                    self.generic_visit(node)
+                    stack.pop()
+
+                visit_AsyncFunctionDef = visit_FunctionDef
+
+                def visit_Call(self, node):
+                    func = node.func
+                    name = (
+                        func.id
+                        if isinstance(func, ast.Name)
+                        else getattr(func, "attr", None)
+                    )
+                    if name == "derive_resolution_window":
+                        sites.add((rel, stack[-1] if stack else "<module>"))
+                    self.generic_visit(node)
+
+            _V().visit(tree)
+        return sites
+
+    def test_every_writer_of_the_rule_is_accounted_for(self):
+        """A new caller must state which app runs it, in the map above.
+
+        This is not tidiness. The reach of #2644 is not a property of the
+        derivation — it is a property of the set of tasks that call it and the
+        queues those run on. A fourth call site added without a thought about
+        routing is how the ship quietly becomes partial.
+        """
+        found = self._call_sites()
+        assert found == self.KNOWN_CALL_SITES, (
+            "the set of callers of `derive_resolution_window` changed.\n"
+            f"  added:   {sorted(found - self.KNOWN_CALL_SITES)}\n"
+            f"  removed: {sorted(self.KNOWN_CALL_SITES - found)}\n"
+            "Update KNOWN_CALL_SITES *and* the writer map in this class's "
+            "docstring, naming the entry task, its queue and its Heroku app. "
+            "A caller on the `heavy` queue does not ship until a "
+            "`bainluck-heavy` release carries it (notice 48)."
+        )
+
+    def test_the_only_arm_that_can_fire_the_rule_stays_off_the_heavy_queue(self):
+        """``sweep_kalshi_resolution_window`` must keep running on the main app.
+
+        Two assertions because there are two independent ways to move it, and
+        each is a real edit someone could make:
+
+        1. adding it to ``HEAVY_TASKS`` — the routing loop then rewrites its beat
+           entry's queue regardless of the literal, so the source would still
+           read ``background``;
+        2. hand-editing the beat literal to ``heavy``.
+        """
+        from app.tasks import HEAVY_TASKS, celery_app
+
+        assert "app.tasks.sweep_kalshi_resolution_window" not in HEAVY_TASKS, (
+            "the 04:20Z resolution sweep moved onto the `heavy` queue. It is the "
+            "only writer that can fire #2644's pad rule on the main app, and "
+            "`bainluck-heavy` does not follow master (notice 48) — this makes the "
+            "ship inert on production with every other test in this file green."
+        )
+
+        entry = celery_app.conf.beat_schedule["sweep-kalshi-resolution-window"]
+        assert entry["options"]["queue"] != "heavy", (
+            "the sweep's beat entry now pins the `heavy` queue. See above: this "
+            "takes #2644 off the app that serves the reader's rows."
+        )
