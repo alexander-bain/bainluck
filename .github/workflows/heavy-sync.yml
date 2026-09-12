@@ -174,8 +174,25 @@ jobs:
             exit 1
           fi
 
-          HEAVY_NOW="$(git ls-remote heroku-heavy refs/heads/master 2>/dev/null | cut -f1)"
-          echo "heavy live after push: ${HEAVY_NOW:-<unreadable>}"
+          # #5722 — ASK THE RELEASE RECORD, NOT THE GIT REF.
+          #
+          # This was `git ls-remote heroku-heavy` run immediately after the push,
+          # and on the first ever sync (run 34714692872, 19:37Z) it returned the
+          # PRE-PUSH sha and failed a job that had just succeeded: heavy really
+          # did go to v11 `10c0ee5c`, release command and all. A Heroku git
+          # endpoint is a push endpoint that triggers a build, and the ref it
+          # advertises advances asynchronously after the release.
+          #
+          # `verify` polls the Platform API release record — which is what notice
+          # 48 already means by "heavy carries the sha" — and distinguishes
+          # UNREADABLE (2) from MISMATCH (1), because the old line could not and
+          # so reported both as a false claim about heavy's commit.
+          set +e
+          python3 scripts/heavy_sync_decision.py verify \
+            --app bainluck-heavy --expect "$MAIN_LIVE"
+          READBACK=$?
+          set -e
+
           {
             echo "### Heavy app sync"
             echo ""
@@ -183,14 +200,18 @@ jobs:
             echo "|---|---|"
             echo "| pushed | \`${MAIN_LIVE}\` |"
             echo "| heavy was | \`${HEAVY_LIVE}\` (${BEHIND} commits behind) |"
-            echo "| heavy now | \`${HEAVY_NOW:-unreadable}\` |"
+            echo "| readback | \`$(case $READBACK in 0) echo CONFIRMED;; 1) echo MISMATCH;; 2) echo UNREADABLE;; *) echo "exit $READBACK";; esac)\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # The ref moving is not the ship. `worker-heavy` must come up on it —
-          # read `/api/admin/celery/fleet-code` (notice 48), which reports
-          # MATCHED only once the heavy worker names this slug itself.
-          if [ -n "$HEAVY_NOW" ] && [ "$HEAVY_NOW" != "$MAIN_LIVE" ]; then
-            echo "Heavy's ref is ${HEAVY_NOW}, not the ${MAIN_LIVE} just pushed."
-            exit 1
-          fi
-          echo "Heavy is on the main app's live commit."
+          # The release moving is still not the whole ship. `worker-heavy` must
+          # come up on it — read `/api/admin/celery/fleet-code` (notice 48),
+          # which reports MATCHED only once the heavy worker names this slug.
+          case "$READBACK" in
+            0) echo "Heavy's release is built from the main app's live commit." ;;
+            2) echo "::warning::the push succeeded but heavy's release could not be read"
+               echo "::warning::back. NOT failing: an unreadable answer is not a negative one,"
+               echo "::warning::and the next run re-reads both live refs and re-judges."
+               exit 0 ;;
+            *) echo "::error::heavy's release is not built from the commit just pushed."
+               exit 1 ;;
+          esac
