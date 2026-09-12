@@ -1,0 +1,31 @@
+# merge-gate-parked.txt — shas that are GRANTED, NOT on master, and deliberately
+# not being offered. Read by `tools/merge-gate.sh --orphans` (notice 31b).
+#
+# WHY THIS FILE EXISTS
+#
+# The orphan sweep asks one question — "a token was granted; why is this not on
+# master?" — and there is a legitimate answer that is neither "merged" nor
+# "somebody forgot": it is being held on purpose. Without somewhere to say so,
+# every held sha is reported as an orphan on every run, and a report that is
+# mostly known noise stops being read. That is the failure mode the sweep was
+# built to cure, arriving by the back door.
+#
+# A PARK IS NOT A DROP. Parked shas are counted and printed in their own section
+# on every run, with the reason below. Parking something removes it from the
+# ORPHANS list and from nowhere else.
+#
+# FORMAT — one per line, and the reason is the rest of the line:
+#
+#   <sha>  <reason, including who is holding it and since when>
+#
+# The sha may be short (>=7 hex) or full; it matches a candidate when it is a
+# prefix of that candidate's full sha. The reason is not optional: a line with a
+# sha and nothing after it is reported as a WARN by the sweep, because a park
+# nobody explained is how work goes quiet for eight sessions.
+#
+# WHEN A PARK ENDS, DELETE THE LINE. The sweep classifies merged shas before it
+# ever looks here, so a line whose sha has landed is invisible rather than wrong
+# — which is worse than being wrong. Prune on sight.
+
+f74de8a7  #5227 — HELD by Fable-5 on the tier-class ruling (which tier grades a backend/scripts change); asked in the fable inbox, eighth session as of 2026-09-11. Do not re-offer or re-gate until that ruling lands.
+4564d947  #5220 — HELD by Fable-5 on the same tier-class ruling as f74de8a7; same instruction.

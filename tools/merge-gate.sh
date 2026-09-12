@@ -64,6 +64,157 @@ LEDGER="${MERGE_GATE_LEDGER:-$HOME/bainluck/.claude/handoff/CODEX-CERT-LOG.md}"
 GREP=/usr/bin/grep
 
 # ─────────────────────────────────────────────────────────────────────────────
+# REACHING THE REMOTE — bounded, unprompted, and only when it buys something.
+#
+# ── THE HANG (measured 2026-09-11 6:30pm PT, latency/344) ────────────────────
+#
+# `git fetch origin master --quiet` at the top of this file stalled every lane
+# on the fleet tonight: two header lines, no verdict, and ten `git-remote-https`
+# processes wedged at 0% CPU. Two readings were on the table and they disagreed.
+# ux/1202 measured a SERVER-side stall — `ls-refs` completes, the fetch request
+# does not. lane1b/171 found that `GIT_TERMINAL_PROMPT=0 ... < /dev/null`
+# finished in under a minute and read it as a credential prompt inherited on an
+# interactive stdin.
+#
+# Measured here, same worktree, in this order:
+#
+#   git ls-remote origin master                              3 s, exit 0
+#   git fetch origin master --quiet                        >75 s, killed (124)
+#   GIT_TERMINAL_PROMPT=0 git fetch ... < /dev/null        >75 s, killed (124)
+#   git fetch --depth=1 origin master                       70 s, exit 0
+#   git fetch origin master   (ref now current)             24 s, exit 0
+#
+# It is NOT a prompt. `ls-remote` authenticates through the same osxkeychain
+# helper in three seconds, and closing stdin changes nothing — lane1b's own
+# variant hit the bound here. And it is not a hang either: line 4 shows the
+# fetch COMPLETING at 70 s. It is the SHALLOW clone. `~/bainluck/.git` is
+# shallow, every lane worktree shares that one object store, and each fetch
+# makes the server recompute a pack across the shallow boundary. That work is
+# server-side, which is precisely why the client sits at 0% CPU — and why
+# lane1b's run finished: less to negotiate, quieter machine, in under their
+# bound. The env vars they added were innocent bystanders. (Load average was
+# 954 while this was measured. That is the multiplier, not the cause.)
+#
+# ── THREE THINGS, AND THE FIRST ONE IS THE ONE THAT PAYS ─────────────────────
+#
+# 1. DON'T FETCH. `fetch origin master` when our `origin/master` already IS the
+#    remote's master downloads nothing and costs 24-75 s. `ls-remote` settles
+#    that in three, so most gate runs now skip the fetch outright. The test is
+#    exact in both directions: equal heads means the fetch has nothing to bring.
+# 2. BOUND IT. `timeout`/`gtimeout` as the outer bound when present, and git's
+#    own `http.lowSpeedLimit`/`lowSpeedTime` ALWAYS — so a box with neither
+#    utility still cannot wedge. A stall at 0% CPU is a throughput of zero,
+#    which is exactly what the low-speed abort is for.
+# 3. NEVER BLOCK ON A PROMPT ANYWAY. `GIT_TERMINAL_PROMPT=0` and stdin from
+#    /dev/null on every remote call. Not the cause here, but a credential cache
+#    does expire, and the failure that produces is unbounded, silent, and
+#    indistinguishable from the above. It costs nothing; keep it.
+#
+# And whichever of those happens, the state is PRINTED and the run reaches a
+# verdict — see `final_verdict_guard`. A gate that stops mid-header is gotcha
+# #124's "the gate never ran" wearing the clothes of a refusal, and a lane
+# cannot tell those apart from the outside.
+# ─────────────────────────────────────────────────────────────────────────────
+export GIT_TERMINAL_PROMPT=0
+
+FETCH_BOUND_S="${MERGE_GATE_FETCH_TIMEOUT_S:-180}"
+LSREMOTE_BOUND_S="${MERGE_GATE_LSREMOTE_TIMEOUT_S:-30}"
+
+# The outer bound is optional. Its ABSENCE is a supported state, not a failure:
+# a hand-rolled background-and-poll substitute would have to kill a process
+# GROUP to reach `git-remote-https`, which is the process that actually wedges,
+# and getting that wrong leaves the orphan it was written to prevent. The
+# low-speed abort below needs no external tool and reaches the same case.
+BOUND_CMD=""
+for _t in timeout gtimeout; do
+  if command -v "$_t" >/dev/null 2>&1; then BOUND_CMD="$_t"; break; fi
+done
+unset _t
+
+# remote_git <bound-seconds> <git-args...> — one bounded, unprompted remote call.
+# Returns the command's own status, or 124 when the bound fired.
+remote_git () {
+  local secs="$1"; shift
+  if [ -n "$BOUND_CMD" ]; then
+    "$BOUND_CMD" "$secs" \
+      git -c "http.lowSpeedLimit=1" -c "http.lowSpeedTime=$secs" \
+          -C "$REPO_PATH" "$@" </dev/null
+  else
+    git -c "http.lowSpeedLimit=1" -c "http.lowSpeedTime=$secs" \
+        -C "$REPO_PATH" "$@" </dev/null
+  fi
+}
+
+# fetch_master — bring origin/master up to date, or say out loud why not.
+# Sets FETCH_STATE to exactly one of: skipped | ok | timeout | failed, plus
+# FETCH_NOTE (prose) and FETCH_REMOTE_HEAD (empty when ls-remote did not answer).
+FETCH_STATE=""; FETCH_NOTE=""; FETCH_REMOTE_HEAD=""
+fetch_master () {
+  local local_head rc=0
+  FETCH_STATE=""; FETCH_NOTE=""; FETCH_REMOTE_HEAD=""
+
+  local_head="$(git -C "$REPO_PATH" rev-parse --verify --quiet origin/master 2>/dev/null || true)"
+  FETCH_REMOTE_HEAD="$(remote_git "$LSREMOTE_BOUND_S" ls-remote origin refs/heads/master 2>/dev/null \
+                        | awk 'NR==1{print $1}')"
+
+  if [ -n "$FETCH_REMOTE_HEAD" ] && [ "$FETCH_REMOTE_HEAD" = "$local_head" ]; then
+    FETCH_STATE=skipped
+    FETCH_NOTE="origin/master is already the remote's master ($FETCH_REMOTE_HEAD, by ls-remote) — a fetch would bring nothing"
+    return 0
+  fi
+
+  remote_git "$FETCH_BOUND_S" fetch origin master --quiet >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0)
+      FETCH_STATE=ok
+      FETCH_NOTE="origin/master now $(git -C "$REPO_PATH" rev-parse --verify --quiet origin/master 2>/dev/null)"
+      [ -z "$FETCH_REMOTE_HEAD" ] &&
+        FETCH_NOTE="$FETCH_NOTE (ls-remote did not answer inside ${LSREMOTE_BOUND_S}s, so freshness was not pre-checked)"
+      ;;
+    124|137|143)
+      FETCH_STATE=timeout
+      FETCH_NOTE="no answer inside ${FETCH_BOUND_S}s. This clone is shallow, so every fetch makes the server recompute across the boundary; 'git -C $REPO_PATH fetch --unshallow' once makes it instant. Override the bound with MERGE_GATE_FETCH_TIMEOUT_S."
+      ;;
+    *)
+      FETCH_STATE=failed
+      FETCH_NOTE="git exited $rc — network, auth or remote. Everything below is judged against the origin/master this clone already had."
+      ;;
+  esac
+  return 0
+}
+
+fetch_line () {
+  case "$FETCH_STATE" in
+    skipped) echo "  fetch=skipped   $FETCH_NOTE" ;;
+    ok)      echo "  fetch=ok        $FETCH_NOTE" ;;
+    timeout) echo "  fetch=TIMEOUT   $FETCH_NOTE" ;;
+    failed)  echo "  fetch=FAILED    $FETCH_NOTE" ;;
+    *)       echo "  fetch=(not attempted)" ;;
+  esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EVERY RUN REACHES A VERDICT. `verdict` is the only way to print one, and the
+# EXIT trap prints an explicit INCONCLUSIVE for any path that did not — a
+# `set -e`-less script has a dozen ways to stop early, and the one that bit the
+# fleet tonight printed two header lines and nothing else. From the outside that
+# is identical to a refusal, which is the whole of gotcha #124: an exit status
+# that is not 1 is a story about the harness, not a result, and a reader who
+# cannot see the status at all has even less to go on.
+# ─────────────────────────────────────────────────────────────────────────────
+VERDICT_PRINTED=0
+verdict () { VERDICT_PRINTED=1; echo "  VERDICT: $*"; }
+final_verdict_guard () {
+  local rc=$?
+  [ "$VERDICT_PRINTED" -eq 1 ] && return 0
+  echo
+  echo "  VERDICT: INCONCLUSIVE — the gate stopped at status $rc without reaching one."
+  echo "  This is NOT a refusal and NOT a pass. Re-run; read the fetch= line above and"
+  echo "  any stderr, and if it repeats say INCONCLUSIVE in your offer, never 'the gate said no'."
+}
+trap final_verdict_guard EXIT
+
+# ─────────────────────────────────────────────────────────────────────────────
 # supersedes_scan — classify one cert id against the ledger for notice 18.
 #
 # Sets SUP_VERDICT to exactly one of: clean | declared | review, and leaves the
@@ -127,6 +278,88 @@ CERT_ID=""
 resolve_cert_id () {
   local sha="$1" ledger="$2"
   CERT_ID="$($GREP "$sha" "$ledger" | $GREP 'TOKEN GRANTED' | $GREP -o 'CERT-[0-9]\+' | head -1)"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ancestry_of — "is this sha on master?", answered so that a SHALLOW clone
+# cannot turn the answer into a silent yes-you-may.
+#
+# Sets ANC_STATE to merged | not-merged | unknown, and ANC_HOW to local|remote.
+#
+# ── THE BUG THIS EXISTS FOR (measured 2026-09-11, latency/343) ───────────────
+#
+# `~/bainluck/.git` is a SHALLOW clone — `rev-parse --is-shallow-repository` is
+# true, `.git/shallow` lists twelve boundary commits dated 2026-09-10, and only
+# 348 commits are reachable from origin/master. Every lane worktree shares that
+# object store, so every lane has the same truncated view.
+#
+# `git merge-base --is-ancestor X origin/master` cannot see past the boundary.
+# For anything merged before it, the honest graph answer is "I don't know" and
+# git's answer is exit 1 — indistinguishable from "not merged". Notice 31 reads
+# exit 1 as GO. Measured on the shipped gate: `a1fe4212`, whose own subject is
+# "Merge live/041 … into master" and which notice 12 records as merged on 9/2,
+# printed `PASS notice 31 ancestry — not an ancestor of origin/master`. The gate
+# whose entire job is "do not offer or re-gate what has already landed" said go.
+#
+# That case then STOPped at the composition gate, but only by luck: a 9/2 merge
+# commit no longer applies cleanly. A pre-boundary sha that still composes gets
+# a clean GO.
+#
+# ── THE ASYMMETRY THAT MAKES THE FIX CHEAP ───────────────────────────────────
+#
+# A local YES is always true: `--is-ancestor` only says yes about commits it can
+# actually walk to. It is only a local NO that a shallow clone can fabricate. So
+# the remote is consulted on exactly one branch — local-no, clone-shallow — and
+# a full clone never reaches the network at all. Behaviour there is unchanged.
+#
+# The remote oracle is `compare/<sha>...master`, whose `status` is `ahead` when
+# master is ahead of the sha (i.e. the sha is an ancestor) or `identical` when
+# they are the same commit; `behind` and `diverged` both mean not merged.
+# Measured: a1fe4212 -> ahead; f74de8a7 and 4564d947 (real unmerged shas) ->
+# diverged.
+#
+# If the remote cannot be reached the state is `unknown`, never `not-merged`.
+# A gate that could not be evaluated is a STOP everywhere else in this file and
+# it is a STOP here: the whole point is that "I could not tell" must stop being
+# spelled the same way as "no".
+# ─────────────────────────────────────────────────────────────────────────────
+IS_SHALLOW=""
+ANC_STATE=""; ANC_HOW=""
+# `ANC_CACHE`, when set, is a TSV of `<full-sha>\t<compare-status>` that the
+# sweep fills in parallel before its loop. It short-circuits the REQUEST, never
+# the DECISION: a cached row is fed through the same `case` below as a live one,
+# so there is exactly one place where a compare status becomes a verdict. A
+# second mapping table in the sweep would be a second instrument, and two
+# instruments answering one question is how they come to disagree.
+ANC_CACHE=""
+ancestry_of () {
+  local full="$1" st=""
+
+  # A cache hit means the caller has ALREADY established, by the same relation,
+  # that this sha is not reachable from master locally — the sweep's screen is
+  # membership in `rev-list <master>`, which is what `--is-ancestor` computes.
+  # Re-running the local test here would ask the identical question a second
+  # time, once per sha, at a git process each; that was ~98 processes on a loaded
+  # machine and it is the whole reason the sweep did not finish.
+  if [ -n "$ANC_CACHE" ] && [ -r "$ANC_CACHE" ]; then
+    st="$($GREP -m1 "^$full	" "$ANC_CACHE" | cut -f2)"
+  fi
+
+  if [ -z "$st" ]; then
+    if git -C "$REPO_PATH" merge-base --is-ancestor "$full" "$MASTER" 2>/dev/null; then
+      ANC_STATE=merged; ANC_HOW=local; return
+    fi
+    if [ "$IS_SHALLOW" != "true" ]; then
+      ANC_STATE=not-merged; ANC_HOW=local; return
+    fi
+    st="$(gh api "repos/$REPO_SLUG/compare/${full}...master" --jq '.status' 2>/dev/null)"
+  fi
+
+  case "$st" in
+    ahead|identical) ANC_STATE=merged;     ANC_HOW=remote ;;
+    behind|diverged) ANC_STATE=not-merged; ANC_HOW=remote ;;
+    *)               ANC_STATE=unknown;    ANC_HOW=remote ;;
+  esac
 }
 
 SUP_VERDICT=""; SUP_ROWS=""; SUP_N=0; SUP_DECL=0
@@ -203,7 +436,9 @@ supersedes_scan () {
 
 if [ -z "$SHA_IN" ]; then
   echo "usage: tools/merge-gate.sh <sha> [<repo-path>]" >&2
+  echo "       tools/merge-gate.sh --orphans [--all] [<repo-path>]" >&2
   echo "       tools/merge-gate.sh --selftest" >&2
+  VERDICT_PRINTED=1   # a usage message is its own answer; no verdict is owed
   exit 2
 fi
 
@@ -216,6 +451,7 @@ fi
 # One command, no network, no fixtures.
 # ─────────────────────────────────────────────────────────────────────────────
 if [ "$SHA_IN" = "--selftest" ]; then
+  VERDICT_PRINTED=1   # the selftest's verdict is its own PASS/FAILED summary
   self="$SELF"
   if [ -z "$self" ] || [ ! -r "$self" ]; then
     # The selftest reads its own source, so it needs a file. Piped in, there
@@ -225,7 +461,22 @@ if [ "$SHA_IN" = "--selftest" ]; then
   fi
   fails=0
   check () {
-    if eval "$2" >/dev/null 2>&1; then
+    # The body runs with `pipefail` OFF, in a subshell. Almost every assertion
+    # below is "does this text appear?", and `grep -q` exits at its first match
+    # — which SIGPIPEs whatever is feeding it. With `pipefail` on (set at the top
+    # of this file, for good reasons that are not these) that 141 becomes the
+    # assertion's answer, so the check reports FAIL about a string that is
+    # plainly there.
+    #
+    # It is a race on the 64 KB pipe buffer, which makes it worse than a plain
+    # bug: `sed '$self' | grep -q 'window clamped to'` passed every run for a
+    # week and began failing the moment this file grew past the buffer, with no
+    # change to the thing it tests. A guard whose verdict depends on the SIZE OF
+    # ITS OWN SUBJECT is not a guard, and the direction it fails in is FAIL —
+    # so it would have been chased, not ignored. The next one might fail the
+    # other way. Turn it off here; the checks are not testing exit codes of
+    # producers.
+    if ( set +o pipefail; eval "$2" ) >/dev/null 2>&1; then
       echo "  ok    $1"
     else
       echo "  FAIL  $1"
@@ -404,12 +655,558 @@ FIXEOF
   check "piped into bash it still finds the repo, not /" \
     "! printf '%s' \"\$piped\" | /usr/bin/grep -q 'not a git repository: /$'"
 
+  # ── ancestry_of, behavioural. These call the SHIPPED function with a stubbed
+  # `gh` on PATH, so they measure the real mapping table rather than a copy of
+  # it. The sha is deliberately not a local ancestor, which is what pushes the
+  # function onto its remote branch.
+  #
+  # The third case is the one that matters. Before this function existed, "the
+  # clone cannot see that far" and "not merged" were the same exit code, and
+  # notice 31 read both as GO — that is how the shipped gate came to print
+  # `PASS ancestry` for a1fe4212, a commit whose own subject says it was merged
+  # into master on 9/2. If a broken/absent `gh` ever collapses back into
+  # `not-merged`, the fail-open is silently reopened and no other test sees it.
+  mkdir -p "$fx/bin"
+  _sv_shallow="$IS_SHALLOW"; _sv_master="${MASTER:-}"; _sv_repo="$REPO_PATH"
+  IS_SHALLOW=true
+  MASTER="$(git -C "$REPO_PATH" rev-parse HEAD 2>/dev/null || echo HEAD)"
+  _fake_sha=0123456789012345678901234567890123456789
+
+  printf '#!/bin/sh\necho ahead\n'    > "$fx/bin/gh"; chmod +x "$fx/bin/gh"
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: remote 'ahead' means the sha IS on master" \
+    "[ \"$ANC_STATE\" = merged ] && [ \"$ANC_HOW\" = remote ]"
+
+  printf '#!/bin/sh\necho identical\n' > "$fx/bin/gh"
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: remote 'identical' also means on master" "[ \"$ANC_STATE\" = merged ]"
+
+  printf '#!/bin/sh\necho diverged\n' > "$fx/bin/gh"
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: remote 'diverged' means genuinely not merged" "[ \"$ANC_STATE\" = not-merged ]"
+
+  printf '#!/bin/sh\nexit 1\n' > "$fx/bin/gh"
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: an UNREACHABLE remote is 'unknown', never 'not-merged' (the fail-open)" \
+    "[ \"$ANC_STATE\" = unknown ]"
+
+  IS_SHALLOW=false
+  PATH="$fx/bin:$PATH" ancestry_of "$_fake_sha"
+  check "ancestry_of: a FULL clone never consults the remote (behaviour unchanged there)" \
+    "[ \"$ANC_STATE\" = not-merged ] && [ \"$ANC_HOW\" = local ]"
+
+  IS_SHALLOW="$_sv_shallow"; MASTER="$_sv_master"; REPO_PATH="$_sv_repo"
+
+  check "the notice 31 gate routes through ancestry_of, not a bare --is-ancestor" \
+    "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'ancestry_of \"\$SHA\"'"
+
+  # ── --orphans, behavioural. THE EMPTINESS GUARD IS THE POINT: a sweep whose
+  # parser stops matching reports an empty orphan list, and empty reads as a
+  # clean board. It must exit 2 (rig failure), never 0.
+  cat > "$fx/noledger.md" <<'FIXEOF'
+| CERT-9001 -- SUBJECT | 2026-09-11 10:00Z | lane | BLOCK -- TOKEN WITHHELD | nothing granted here |
+FIXEOF
+  out="$(MERGE_GATE_LEDGER="$fx/noledger.md" bash "$self" --orphans 2>&1)"; rc=$?
+  check "--orphans: a ledger with zero granted rows is a RIG FAILURE (exit 2), not a clean board" \
+    "[ $rc -eq 2 ]"
+  check "--orphans: and it says so in words, not just in an exit code" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'RIG FAILURE'"
+
+  out="$(MERGE_GATE_LEDGER=/nonexistent/ledger.md bash "$self" --orphans 2>&1)"; rc=$?
+  check "--orphans: an unreadable ledger exits 2, never 0" "[ $rc -eq 2 ]"
+
+  # It must print its denominator every run. A coverage number whose population
+  # nobody stated is the failure that read 674 priced legs out of 2,652.
+  out="$(bash "$self" --orphans 2>&1)"
+  check "--orphans: prints its population (granted rows -> unique shas)" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'population:.*granted row'"
+
+  check "--orphans: --all cannot widen past a shallow clone's floor" \
+    "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'window clamped to'"
+
+  # The guard for the guard's own harness. `yes` never ends, so if `check` ever
+  # lets a producer's SIGPIPE decide the verdict again this fails immediately
+  # and says which mechanism broke — rather than one of the real checks failing
+  # about a string anyone can see in the file.
+  check "check(): a producer's SIGPIPE is not the assertion's answer" \
+    "yes 'window clamped to' | /usr/bin/grep -q 'window clamped to'"
+
+  # ── The fetch hang, and the silence it produced (#5428). Every check below is
+  # behavioural and offline: the remotes are real git repos on disk, or a path
+  # that does not exist, so none of this depends on GitHub being reachable or on
+  # this box being loaded the way it was the night the fleet wedged.
+  #
+  # `ls-remote`-then-skip is the one that pays, so it is tested for the SKIP and
+  # not merely for "it still works": a fetch that quietly happened anyway would
+  # pass a liveness check and cost the 24-75 s all over again.
+  mkdir -p "$fx/up" "$fx/bin"
+  (
+    cd "$fx/up" && git init -q -b master . &&
+    git config user.email t@t && git config user.name t &&
+    echo one > f && git add f && git commit -qm one
+  ) >/dev/null 2>&1
+  git clone -q "$fx/up" "$fx/work" >/dev/null 2>&1
+  _up_sha="$(git -C "$fx/work" rev-parse origin/master 2>/dev/null)"
+
+  out="$(bash "$self" "$_up_sha" "$fx/work" 2>&1)"; rc=$?
+  check "fetch: skipped outright when origin/master already IS the remote's master" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'fetch=skipped'"
+  check "fetch: the skip does not cost the gate its answer (sha on master -> STOP)" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'VERDICT: STOP (already merged)' && [ $rc -eq 1 ]"
+
+  # A remote that cannot be reached at all. Fast, deterministic, and the branch
+  # a lane actually hits when auth or the network is gone.
+  git -C "$fx/work" remote set-url origin "$fx/no-such-remote.git"
+  out="$(bash "$self" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef "$fx/work" 2>&1)"; rc=$?
+  check "fetch: an unreachable remote prints fetch=FAILED, it does not pass silently" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'fetch=FAILED'"
+  check "fetch: and an unresolvable sha after a failed fetch is INCONCLUSIVE, not a refusal" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'VERDICT: INCONCLUSIVE' && [ $rc -eq 2 ]"
+
+  # THE BUG ITSELF: two header lines and no verdict. Any early exit — this one
+  # is the cheapest to provoke — must still say what happened, because from the
+  # outside a missing verdict and a STOP are the same thing (gotcha #124).
+  out="$(bash "$self" "$_up_sha" "$fx/up/f" 2>&1)"; rc=$?
+  check "verdict guard: an early exit still reaches a VERDICT line" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'VERDICT:' && [ $rc -eq 2 ]"
+  check "verdict guard: and it says INCONCLUSIVE rather than borrowing STOP's word" \
+    "printf '%s' \"\$out\" | /usr/bin/grep -q 'VERDICT: INCONCLUSIVE' && ! printf '%s' \"\$out\" | /usr/bin/grep -q 'VERDICT: STOP'"
+
+  # The bound is a real bound, not a comment. An unroutable address hangs the
+  # connect, which is exactly the shape that wedged the fleet; with the bounds
+  # at two seconds the whole run must come back in well under the 75 s that a
+  # wedged fetch took. Skipped where no timeout(1) exists, because there the
+  # low-speed abort only arms once bytes move and a connect stall is the OS's.
+  if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+    git -C "$fx/work" remote set-url origin "https://10.255.255.1/x.git"
+    _t0=$(date +%s)
+    out="$(MERGE_GATE_LSREMOTE_TIMEOUT_S=2 MERGE_GATE_FETCH_TIMEOUT_S=2 \
+           bash "$self" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef "$fx/work" 2>&1)"
+    _el=$(( $(date +%s) - _t0 ))
+    check "fetch: an unroutable remote is BOUNDED (${_el}s, bounds 2s+2s) and never wedges" \
+      "[ $_el -lt 30 ]"
+    check "fetch: and the bounded run still prints a verdict" \
+      "printf '%s' \"\$out\" | /usr/bin/grep -q 'VERDICT:'"
+  fi
+
   echo
   if [ "$fails" -eq 0 ]; then
     echo "  selftest: PASS"
     exit 0
   fi
   echo "  selftest: $fails FAILED"
+  exit 1
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# --orphans — notice 31(b), mechanized: which GRANTED tokens never landed?
+#
+#   usage:  tools/merge-gate.sh --orphans [--all] [<repo-path>]
+#
+# Every other gate in this file answers "may I merge THIS sha?". That question
+# presupposes somebody is already merging, and the failure it cannot see is the
+# sha nobody is holding at all: a cert graded GREEN, a token granted, and no
+# offer ever written. Notice 31(b) exists because that is not hypothetical —
+# int310 found FOUR unoffered GREEN shas in one day, two of them only by
+# re-running a sweep after pushing, and the tray read empty the whole time. The
+# tray records what a lane remembered to say; the ledger records what graded.
+#
+# So this mode reads the LEDGER and git ANCESTRY, and never the inbox. An offer
+# file is exactly the artifact that goes missing, so a sweep that consulted it
+# would be blind in the one direction it exists to see (live/155 wrote a real
+# offer into the wrong directory and polled a lock for hours; the offer was
+# never the evidence — the ledger row was).
+#
+# ── THE PREDICATE IS THE GATE'S OWN ──────────────────────────────────────────
+#
+# "Merged" is `git merge-base --is-ancestor`, the identical call the notice-31
+# gate makes on a single sha, not a lookup in a commit list that happens to
+# agree with it today. Two instruments answering one question is how they come
+# to disagree; there is only one instrument here.
+#
+# ── WHAT IT REFUSES TO DO SILENTLY ───────────────────────────────────────────
+#
+# It prints its denominator on every run. A sweep whose population predicate is
+# wrong reports a clean board and reports it confidently — the same failure that
+# read 674 priced legs where there were 2,652, because the walker invented the
+# denominator instead of taking it from the data. So: the granted-row count, the
+# unique-sha count, and the count outside the window are all printed, and a
+# population of ZERO exits 2 as a rig failure rather than 0 as "nothing to do".
+#
+# Every sha it declines to report is declined OUT LOUD and counted — parked,
+# superseded, already merged, or unresolvable. A suppression you cannot see is
+# indistinguishable from a bug in the suppressor.
+#
+# ── THE WINDOW, AND WHY IT DEFAULTS SHORT ────────────────────────────────────
+#
+# The ledger goes back to 2026-09-01 and most of its early rows name shas whose
+# branches are long gone. Defaulting to the whole file buries this week's real
+# orphan under a hundred dead ones, so the default is 7 days and `--all` opens
+# it. The rows outside the window are COUNTED in the summary either way — a
+# truncated bound that does not say it truncated is how a sweep goes vacuous.
+# ─────────────────────────────────────────────────────────────────────────────
+if [ "$SHA_IN" = "--orphans" ]; then
+  ORPH_ALL=0
+  orph_repo=""
+  shift
+  for a in "$@"; do
+    case "$a" in
+      --all) ORPH_ALL=1 ;;
+      --*)   echo "  unknown flag for --orphans: $a" >&2; exit 2 ;;
+      *)     orph_repo="$a" ;;
+    esac
+  done
+  # `$2` is the repo path for the single-sha form, so REPO_PATH was set at the
+  # top of this file from an argument that here may be `--all`. Re-derive it.
+  REPO_PATH="${orph_repo:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
+  if ! git -C "$REPO_PATH" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "  not a git repository: $REPO_PATH" >&2
+    exit 2
+  fi
+  if [ ! -r "$LEDGER" ]; then
+    echo "  ledger unreadable at $LEDGER — a sweep that cannot read the ledger" >&2
+    echo "  has not found zero orphans, it has found nothing." >&2
+    exit 2
+  fi
+  fetch_master
+  MASTER="$(git -C "$REPO_PATH" rev-parse origin/master)"
+  IS_SHALLOW="$(git -C "$REPO_PATH" rev-parse --is-shallow-repository 2>/dev/null)"
+
+  # ── The shallow floor. `ancestry_of` repairs a single wrong answer by asking
+  # the remote, but a sweep cannot ask 700 times, so this mode instead refuses to
+  # GUESS about rows it cannot judge locally and says how many there were.
+  #
+  # In a shallow clone every pre-boundary merge reads as "not an ancestor", which
+  # in this mode means "orphan". Unclamped, the first run of this sweep would have
+  # reported some five hundred long-merged shas as unoffered GREEN tokens — a
+  # confident, entirely false emergency, and precisely the rig artifact this file
+  # keeps warning about. The floor is the newest boundary commit's date: at or
+  # after it the local graph is complete, before it the local answer is noise.
+  SHALLOW_FLOOR=""
+  if [ "$IS_SHALLOW" = "true" ]; then
+    gitdir="$(git -C "$REPO_PATH" rev-parse --git-common-dir 2>/dev/null)"
+    case "$gitdir" in /*) ;; *) gitdir="$REPO_PATH/$gitdir" ;; esac
+    if [ -r "$gitdir/shallow" ]; then
+      SHALLOW_FLOOR="$(while read -r b; do
+          git -C "$REPO_PATH" log -1 --format=%cd --date=format:%Y-%m-%d "$b" 2>/dev/null
+        done < "$gitdir/shallow" | sort | tail -1)"
+    fi
+  fi
+
+  # The window. BSD `date` first (the lanes are macOS), GNU second. If NEITHER
+  # parses, the window is abandoned and every row is scanned — widening, never
+  # narrowing, and it says so, because a sweep that silently shrank its own
+  # window would under-report exactly when its clock is broken.
+  ORPH_DAYS="${MERGE_GATE_ORPHAN_DAYS:-7}"
+  cutoff=""
+  if [ "$ORPH_ALL" -eq 0 ]; then
+    cutoff="$(date -u -v-"${ORPH_DAYS}"d +%Y-%m-%d 2>/dev/null)" ||
+      cutoff="$(date -u -d "${ORPH_DAYS} days ago" +%Y-%m-%d 2>/dev/null)" || cutoff=""
+    if [ -z "$cutoff" ]; then
+      echo "  note: neither date(1) dialect parsed a ${ORPH_DAYS}-day cutoff — scanning ALL rows"
+      ORPH_ALL=1
+    fi
+  fi
+
+  echo "merge-gate --orphans — granted tokens that never landed (notice 31b)"
+  echo "  ledger=$LEDGER"
+  echo "  repo=$REPO_PATH"
+  echo "  master=$MASTER"
+  fetch_line
+  if [ "$ORPH_ALL" -eq 1 ]; then
+    echo "  window=ALL rows"
+  else
+    echo "  window=rows dated >= $cutoff (${ORPH_DAYS}d; --all for the whole ledger)"
+  fi
+  # The floor overrides both, including --all: --all asks for more rows, it does
+  # not make the clone able to answer for them.
+  if [ -n "$SHALLOW_FLOOR" ]; then
+    echo "  CLONE IS SHALLOW — local ancestry is only valid at/after $SHALLOW_FLOOR (.git/shallow boundary)."
+    echo "  Rows older than that are counted as UNJUDGEABLE, never as orphans."
+    echo "  To sweep the whole ledger: git -C $REPO_PATH fetch --unshallow"
+    if [ "$ORPH_ALL" -eq 1 ] || [ -z "$cutoff" ] || [ "$cutoff" \< "$SHALLOW_FLOOR" ]; then
+      cutoff="$SHALLOW_FLOOR"; ORPH_ALL=0
+      echo "  window clamped to >= $SHALLOW_FLOOR"
+    fi
+  fi
+  echo
+
+  # ── Parse. One awk pass, no brace-interval regexes: macOS awk is not GNU awk
+  # and `{40}` is not portable there, so a hex run is recognised by charset and
+  # LENGTH, which is exactly what `{40}` was going to mean anyway.
+  #
+  # Columns are pipe-delimited (`| CERT-N -- SUBJ | date | lane | verdict | …`),
+  # so cert/date/lane come from their own column and cannot be captured out of
+  # the prose. The sha is scanned across the WHOLE row: it is written into the
+  # notes column about as often as anywhere else.
+  #
+  # A 40-hex token wins over a short one wherever both appear. 781 of the 975
+  # granted rows carry a full sha and 193 more carry only an 8-hex — dropping
+  # the short form would silently exclude a fifth of the ledger.
+  orph_rows="$(awk -F'|' '
+    function ishex(s,   i,c) {
+      if (length(s) < 7) return 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (index("0123456789abcdef", c) == 0) return 0
+      }
+      return 1
+    }
+    index($0, "TOKEN GRANTED") == 0 { next }
+    {
+      cert = ""; dt = ""; lane = ""; sha40 = ""; shashort = ""
+      if (match($2, /CERT-[0-9]+/)) cert = substr($2, RSTART, RLENGTH)
+      if (match($3, /2026-[0-9][0-9]-[0-9][0-9]/)) dt = substr($3, RSTART, RLENGTH)
+      lane = $4
+      gsub(/^[ \t]+|[ \t]+$/, "", lane)
+      # Fall back to a whole-row date scan for the 32 rows whose third column is
+      # not the canonical stamp.
+      if (dt == "" && match($0, /2026-[0-9][0-9]-[0-9][0-9]/)) dt = substr($0, RSTART, RLENGTH)
+      n = split($0, tok, /[^0-9A-Za-z-]+/)
+      for (i = 1; i <= n; i++) {
+        t = tok[i]
+        if (!ishex(t)) continue
+        if (length(t) == 40) { if (sha40 == "") sha40 = t }
+        else if (length(t) <= 12) { if (shashort == "") shashort = t }
+      }
+      s = (sha40 != "" ? sha40 : shashort)
+      if (cert == "") cert = "CERT-?"
+      if (dt == "") dt = "0000-00-00"
+      printf "%s\t%s\t%s\t%s\n", s, dt, cert, lane
+    }
+  ' "$LEDGER")"
+
+  granted_rows="$(/usr/bin/grep -c 'TOKEN GRANTED' "$LEDGER")"
+  rows_parsed="$(printf '%s' "$orph_rows" | /usr/bin/grep -c .)"
+  no_sha="$(printf '%s' "$orph_rows" | awk -F'\t' '$1 == "" {n++} END {print n+0}')"
+
+  # THE EMPTINESS GUARD. A reused scanner inherits its first caller's assumptions
+  # about shape, and the failure is silent: nothing matches, the report is empty,
+  # and empty reads as clean. Zero granted rows or zero parsed rows means the
+  # ledger's format moved under this parser — that is a rig failure, not a green
+  # board, and it exits 2 so nobody can mistake it for one.
+  if [ "${granted_rows:-0}" -eq 0 ] || [ "${rows_parsed:-0}" -eq 0 ]; then
+    echo "  RIG FAILURE: $granted_rows granted row(s), $rows_parsed parsed."
+    echo "  The ledger's row format has moved under this parser. This is NOT a clean board."
+    exit 2
+  fi
+
+  # Unique shas, earliest granted row wins (that is the moment it became
+  # offerable, and it is the row `resolve_cert_id` would pick).
+  uniq_shas="$(printf '%s\n' "$orph_rows" | awk -F'\t' '$1 != "" && !seen[$1]++')"
+  n_uniq="$(printf '%s' "$uniq_shas" | /usr/bin/grep -c .)"
+
+  # ── The park list. Read from origin/master, the same ref the script itself is
+  # fetched from, because the shared checkout drifts by hours (#5269) and a park
+  # that is stale in the working tree would hide a live orphan. `MERGE_GATE_PARKED`
+  # overrides for anyone editing it.
+  #
+  # If it cannot be read the sweep continues with an EMPTY park list, which makes
+  # held shas noisy. That is the correct direction to fail: a sweep that suppresses
+  # on evidence it could not load is worse than one that shows too much.
+  parked_src=""
+  parked_txt=""
+  if [ -n "${MERGE_GATE_PARKED:-}" ] && [ -r "${MERGE_GATE_PARKED}" ]; then
+    parked_txt="$(cat "${MERGE_GATE_PARKED}")"; parked_src="${MERGE_GATE_PARKED}"
+  elif parked_txt="$(git -C "$REPO_PATH" show origin/master:tools/merge-gate-parked.txt 2>/dev/null)"; then
+    parked_src="origin/master:tools/merge-gate-parked.txt"
+  else
+    parked_txt=""; parked_src="(none — no park list; held shas will be reported)"
+  fi
+  n_parked_entries="$(printf '%s\n' "$parked_txt" | /usr/bin/grep -cE '^[0-9a-f]{7,40}[[:space:]]' || true)"
+  echo "  parked=$parked_src (${n_parked_entries:-0} entr(y|ies))"
+  # A park with no stated reason is how a sha goes quiet forever. Name them.
+  bare_park="$(printf '%s\n' "$parked_txt" | awk '/^[0-9a-f]/ && NF < 2 {print "    " $1}')"
+  if [ -n "$bare_park" ]; then
+    echo "  WARN: park entries with no reason (a park without a reason is a disappearance):"
+    printf '%s\n' "$bare_park"
+  fi
+  echo
+
+  n_merged=0; n_unres=0; n_parked=0; n_super=0; n_window=0; n_out=0; n_orph=0
+  orph_out=""; unres_out=""; parked_out=""; super_out=""; review_out=""
+
+  # ── PROCESS COUNT IS THE WHOLE PERFORMANCE STORY ─────────────────────────────
+  #
+  # The obvious shape — resolve and ancestry-test each sha inside the loop — is
+  # two `git` invocations per row, about 1,400 of them. On an idle machine that
+  # is ~60 ms each and nobody notices. This is not an idle machine: the fleet is
+  # ten lane runners plus a bus, and at the moment this was written the load
+  # average was 920, every `git` here is wrapped by another `git`, and those same
+  # calls were taking seconds. The loop did not finish inside 300 s twice.
+  #
+  # So the per-row work is lifted out into three batched calls, and the only
+  # per-row git call left is on the handful of shas that look like orphans.
+  #
+  # `cat-file --batch-check` resolves every token in ONE process and preserves
+  # input order, so the answers paste straight back onto the rows.
+  orph_tmp="$(mktemp -d)"
+  trap 'rm -rf "$orph_tmp"' EXIT
+
+  printf '%s\n' "$uniq_shas" | awk -F'\t' -v cutoff="$cutoff" -v all="$ORPH_ALL" '
+    $1 == "" { next }
+    all == 0 && $2 < cutoff { print > "/dev/stderr"; next }
+    { print }
+  ' > "$orph_tmp/win.tsv" 2> "$orph_tmp/out.tsv"
+  n_window="$(/usr/bin/grep -c . < "$orph_tmp/win.tsv" || true)"
+  n_out="$(/usr/bin/grep -c . < "$orph_tmp/out.tsv" || true)"
+
+  awk -F'\t' '{print $1 "^{commit}"}' "$orph_tmp/win.tsv" |
+    git -C "$REPO_PATH" cat-file --batch-check 2>/dev/null > "$orph_tmp/resolved.txt"
+
+  # Paste resolutions back onto their rows. A `missing`/`ambiguous` answer is its
+  # own class: the object is not in this clone, which is usually a branch deleted
+  # after merge but can also be a sha never pushed here. It is never folded into
+  # "merged" — an absent object is not evidence of anything.
+  paste "$orph_tmp/resolved.txt" "$orph_tmp/win.tsv" |
+    awk -F'\t' '
+      {
+        split($1, r, " ")
+        if (r[2] == "commit") print r[1] "\t" $3 "\t" $4 "\t" $5 > "'"$orph_tmp"'/ok.tsv"
+        else                  print $2  "\t" $3 "\t" $4 "\t" $5 > "'"$orph_tmp"'/bad.tsv"
+      }'
+  touch "$orph_tmp/ok.tsv" "$orph_tmp/bad.tsv"
+
+  while IFS=$'\t' read -r tok dt cert lane; do
+    [ -n "$tok" ] || continue
+    n_unres=$((n_unres + 1))
+    unres_out="$unres_out
+    $tok  $dt  $cert  $lane"
+  done < "$orph_tmp/bad.tsv"
+
+  # Membership in `rev-list <master>` is not a second opinion about ancestry — it
+  # is the same relation: rev-list emits exactly the commits reachable from
+  # master, so a hit is an ancestor and cannot be a false positive. A MISS is the
+  # only answer that needs care, and every miss is re-checked below by
+  # `ancestry_of`, the gate's own predicate. The screen is therefore exact in
+  # both directions while costing two processes instead of seven hundred.
+  git -C "$REPO_PATH" rev-list "$MASTER" 2>/dev/null | sort -u > "$orph_tmp/rl.txt"
+  cut -f1 "$orph_tmp/ok.tsv" | sort -u > "$orph_tmp/cand.txt"
+  comm -12 "$orph_tmp/cand.txt" "$orph_tmp/rl.txt" > "$orph_tmp/merged.txt"
+  comm -23 "$orph_tmp/cand.txt" "$orph_tmp/rl.txt" > "$orph_tmp/miss.txt"
+  n_merged="$(/usr/bin/grep -c . < "$orph_tmp/merged.txt" || true)"
+  n_miss="$(/usr/bin/grep -c . < "$orph_tmp/miss.txt" || true)"
+
+  # ── In a shallow clone the misses are mostly NOT orphans. Measured on the real
+  # ledger the night this was written: 178 candidates in window, 78 found on
+  # master locally, 98 missed — and the first three sampled were all `ahead`,
+  # i.e. merged, invisible only because they sit at the 9/10 boundary. So the
+  # confirmations are the sweep's real cost and its real correctness, and they
+  # are worth doing properly rather than skipping.
+  #
+  # Serially that is ~98 round trips. They are independent, so they run eight at
+  # a time into a cache that `ancestry_of` reads; the verdict still comes out of
+  # the one `case` in that function. `xargs -P` and not a hand-rolled job pool
+  # because the failure mode of the latter is a lost answer, which here would be
+  # spelled "orphan".
+  if [ "$IS_SHALLOW" = "true" ] && [ "${n_miss:-0}" -gt 0 ]; then
+    echo "  ${n_miss} sha(s) not found on master locally — confirming against the remote"
+    echo "  (a shallow clone cannot see past $SHALLOW_FLOOR; 'git fetch --unshallow' makes this instant)"
+    ANC_CACHE="$orph_tmp/anc.tsv"
+    : > "$ANC_CACHE"
+    export REPO_SLUG
+    xargs -P 8 -I{} sh -c \
+      'printf "%s\t%s\n" "{}" "$(gh api "repos/$REPO_SLUG/compare/{}...master" --jq ".status" 2>/dev/null)"' \
+      < "$orph_tmp/miss.txt" >> "$ANC_CACHE" 2>/dev/null
+    echo "  confirmed $(/usr/bin/grep -c . < "$ANC_CACHE" || true)/${n_miss}"
+    echo
+  fi
+
+  while IFS= read -r full; do
+    [ -n "$full" ] || continue
+    row="$($GREP -m1 "^$full	" "$orph_tmp/ok.tsv")"
+    dt="$(printf '%s' "$row" | cut -f2)"
+    cert="$(printf '%s' "$row" | cut -f3)"
+    lane="$(printf '%s' "$row" | cut -f4)"
+
+    # The gate's own predicate, via the same helper the single-sha gate uses.
+    # Only reached for a sha the screen could not find on master, so this is a
+    # handful of calls, and in a shallow clone it is what stops a long-merged
+    # commit being reported as an unoffered token.
+    ancestry_of "$full"
+    if [ "$ANC_STATE" = merged ]; then
+      n_merged=$((n_merged + 1)); continue
+    fi
+
+    short="$(printf '%s' "$full" | cut -c1-8)"
+
+    if [ "$ANC_STATE" = unknown ]; then
+      n_unres=$((n_unres + 1))
+      unres_out="$unres_out
+    $short  $dt  $cert  $lane — ancestry UNDECIDABLE (shallow clone, remote unreachable)"
+      continue
+    fi
+
+    # Prefix match, computed rather than pattern-matched: a park entry matches
+    # when it IS a prefix of this candidate's full sha. Written as a regex on
+    # the short form instead, a 7-character park entry never matches an 8-character
+    # short sha — the entry sits in the file looking effective and suppresses
+    # nothing, which is the one way a park list can fail silently in the noisy
+    # direction and the one way nobody would notice.
+    why="$(printf '%s\n' "$parked_txt" | awk -v f="$full" '
+      /^[0-9a-f]/ {
+        s = $1
+        if (substr(f, 1, length(s)) == s) {
+          $1 = ""; sub(/^[ \t]+/, "")
+          print; exit
+        }
+      }')"
+    if [ -n "$why" ]; then
+      n_parked=$((n_parked + 1))
+      parked_out="$parked_out
+    $short  $dt  $cert  — $why"
+      continue
+    fi
+
+    # Notice 18: a superseded token is not an orphan to go and offer.
+    supersedes_scan "$cert" "$LEDGER"
+    if [ "$SUP_VERDICT" = declared ]; then
+      n_super=$((n_super + 1))
+      super_out="$super_out
+    $short  $dt  $cert  $lane — superseded; do NOT offer, the orchestrator rules (notice 17)"
+      continue
+    fi
+
+    n_orph=$((n_orph + 1))
+    flag=""
+    [ "$SUP_VERDICT" = review ] && flag="  [notice 18: REVIEW — read the row before offering]"
+    orph_out="$orph_out
+    $short  $dt  $cert  $lane$flag"
+  done < "$orph_tmp/miss.txt"
+
+  echo "  population: $granted_rows granted row(s) -> $n_uniq unique sha(s); $no_sha row(s) carried no sha"
+  if [ -n "$SHALLOW_FLOOR" ]; then
+    echo "  in window:  $n_window   outside/unjudgeable-in-a-shallow-clone: $n_out"
+  else
+    echo "  in window:  $n_window   outside: $n_out"
+  fi
+  echo "  merged: $n_merged   parked: $n_parked   superseded: $n_super   unresolvable here: $n_unres"
+  echo
+
+  if [ -n "$parked_out" ]; then
+    echo "  PARKED (counted, deliberately not offered):$parked_out"
+    echo
+  fi
+  if [ -n "$super_out" ]; then
+    echo "  SUPERSEDED:$super_out"
+    echo
+  fi
+  if [ -n "$unres_out" ]; then
+    echo "  NOT IN THIS CLONE (cannot judge — fetch the branch, or it was deleted after merge):$unres_out"
+    echo
+  fi
+
+  if [ "$n_orph" -eq 0 ]; then
+    verdict "no orphans in window — every granted token is on master, parked or superseded."
+    echo "  True at $(date -u +%H:%M:%S)Z and not one second longer."
+    exit 0
+  fi
+  echo "  ORPHANS — granted, not on master, nobody parked them:$orph_out"
+  echo
+  echo "  Each line is a candidate, not a verdict: run the full gate on it"
+  echo "  (tools/merge-gate.sh <sha>) before offering — ancestry is only the first gate."
+  verdict "$n_orph orphan(s) at $(date -u +%H:%M:%S)Z."
   exit 1
 fi
 
@@ -435,7 +1232,8 @@ if ! git -C "$REPO_PATH" rev-parse --git-dir >/dev/null 2>&1; then
   echo "  not a git repository: $REPO_PATH" >&2
   exit 2
 fi
-git -C "$REPO_PATH" fetch origin master --quiet 2>/dev/null
+fetch_master
+fetch_line
 
 # `git rev-parse` on an unresolvable ref ECHOES THE INPUT BACK on stdout and
 # exits 128, so a non-empty result proves nothing — checked here because the
@@ -445,7 +1243,16 @@ git -C "$REPO_PATH" fetch origin master --quiet 2>/dev/null
 SHA="$(git -C "$REPO_PATH" rev-parse --verify --quiet "${SHA_IN}^{commit}" 2>/dev/null)"
 rev_rc=$?
 if [ "$rev_rc" -ne 0 ] || ! printf '%s' "$SHA" | $GREP -Eq '^[0-9a-f]{40}$'; then
-  echo "  cannot resolve '$SHA_IN' to a commit in $REPO_PATH — fetch the branch first" >&2
+  echo "  cannot resolve '$SHA_IN' to a commit in $REPO_PATH" >&2
+  # "I don't have that commit" and "I couldn't go and look" are different
+  # answers and they must not be spelled the same way. When the fetch did not
+  # land, the sha may be perfectly real and simply not here yet.
+  case "$FETCH_STATE" in
+    timeout|failed)
+      verdict "INCONCLUSIVE — the fetch $FETCH_STATE (see above), so this clone may just not have the commit yet. Re-run; if it repeats, fetch the branch by name or 'git -C $REPO_PATH fetch --unshallow'." ;;
+    *)
+      verdict "INCONCLUSIVE — the remote was reached and this commit is still not in $REPO_PATH. Fetch the branch by name; a sha nobody pushed is not a sha this gate can judge." ;;
+  esac
   exit 2
 fi
 MASTER="$(git -C "$REPO_PATH" rev-parse origin/master)"
@@ -455,17 +1262,45 @@ echo "  master=$MASTER"
 echo "  subject=$SUBJECT"
 echo
 
+# A fetch that did not land does not stop the run — a local YES about ancestry
+# is still true, and `ancestry_of` already asks the remote on the one branch a
+# stale or shallow graph can fabricate. But `master=` above is then this clone's
+# opinion, and composition is tested against it, so the reader is told.
+case "$FETCH_STATE" in
+  timeout|failed)
+    if [ -n "$FETCH_REMOTE_HEAD" ] && [ "$FETCH_REMOTE_HEAD" != "$MASTER" ]; then
+      warn "remote freshness" "fetch $FETCH_STATE and origin/master here is BEHIND the remote ($FETCH_REMOTE_HEAD) — composition below is tested against the older master"
+    else
+      warn "remote freshness" "fetch $FETCH_STATE — origin/master here could not be confirmed current"
+    fi
+    ;;
+esac
+
 # ─────────────────────────────────────────────────────────────────────────────
 # notice 31 — ancestry BEFORE anything else. Already merged means no offer, no
 # re-gate, no merge; four lanes once re-ran gate tables for work already live.
 # ─────────────────────────────────────────────────────────────────────────────
-if git -C "$REPO_PATH" merge-base --is-ancestor "$SHA" "$MASTER"; then
-  stop "notice 31 ancestry" "ALREADY ON MASTER — nothing to merge, record it and move on"
-  echo
-  echo "  VERDICT: STOP (already merged)"
-  exit 1
+IS_SHALLOW="$(git -C "$REPO_PATH" rev-parse --is-shallow-repository 2>/dev/null)"
+ancestry_of "$SHA"
+case "$ANC_STATE" in
+  merged)
+    stop "notice 31 ancestry" "ALREADY ON MASTER — nothing to merge, record it and move on (by $ANC_HOW)"
+    echo
+    verdict "STOP (already merged)"
+    exit 1
+    ;;
+  unknown)
+    stop "notice 31 ancestry" "UNDECIDABLE — clone is shallow and the remote could not be reached; a local 'no' here is not an answer"
+    echo
+    verdict "STOP (ancestry undecidable — deepen the clone with 'git fetch --unshallow' or fix gh auth)"
+    exit 1
+    ;;
+esac
+if [ "$IS_SHALLOW" = "true" ]; then
+  pass "notice 31 ancestry" "not on master (confirmed against the remote; local clone is SHALLOW and cannot see past its boundary)"
+else
+  pass "notice 31 ancestry" "not an ancestor of origin/master"
 fi
-pass "notice 31 ancestry" "not an ancestor of origin/master"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # notice 13 — a banked GREEN row IS the token. A cert id in a merge subject is
@@ -661,8 +1496,8 @@ fi
 
 echo
 if [ "$stops" -eq 0 ]; then
-  echo "  VERDICT: GO — $warns warning(s). True at $(date -u +%H:%M:%S)Z and not one second longer."
+  verdict "GO — $warns warning(s). True at $(date -u +%H:%M:%S)Z and not one second longer."
   exit 0
 fi
-echo "  VERDICT: STOP — $stops gate(s) refused, $warns warning(s)."
+verdict "STOP — $stops gate(s) refused, $warns warning(s)."
 exit 1
