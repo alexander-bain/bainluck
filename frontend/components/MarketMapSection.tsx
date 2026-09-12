@@ -461,6 +461,39 @@ export default function MarketMapSection({
     const projTeamAbbr = projValue != null ? (projValue > 0 ? hAbbr : projValue < 0 ? aAbbr : "TIE") : null;
     const projLogo = projValue != null ? (projValue > 0 ? homeLogo : awayLogo) : undefined;
 
+    // #5045: AND A SECOND, LIVE VALUE — because `Pre-game` and `Projection`
+    // are two different tenses and a card cannot say both with one number.
+    //
+    // #5414 repointed `projValue` at the frozen opening line, which made the
+    // `Pre-game` tile honest and, on the `live` arm below, left `Projection`
+    // printing that same pre-game number under a forward-looking word. The lie
+    // changed sides rather than going away. Measured on production
+    // 2026-09-12 13:50Z, `/events/15297956` Genoa 0-1 Frosinone, live at 19' —
+    // payload and frame read in the SAME command, because every number here
+    // moves:
+    //
+    //   opening_odds.spread  -0.5  → both tiles printed `GEN by 0.5+`
+    //   current_odds.spread  +0.5  → the live market says `FRO by 0.5+`
+    //   current_odds.home_probability 0.2958, projected score 1.0 — 1.5
+    //
+    // So the card named Genoa as the projected winner on a screen whose own
+    // header read `FRO 66%` and whose own ACTUAL read `FRO by 1+`. The `1st
+    // half` margin map beside it got `FRO by 1.5+` right off its live ladder —
+    // the working control on the same screen, and the shape copied here.
+    //
+    // ⚠️ **`hasDerivedSpread` GATES THIS ONE AND NOT `projValue`**, and the
+    // asymmetry is #2441's, not a slip: the opening line is a quote a venue
+    // published, while this is the latest snapshot of the same column and is
+    // what that ruling governs (see the `homeSpread` note at the top of this
+    // block). Tennis therefore keeps its `Pre-game` tile and draws no live
+    // projection, which is the honest pair for a sport this page may not
+    // invent a spread for.
+    const liveProjValue = vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
+    const liveProjTeamAbbr =
+      liveProjValue != null ? (liveProjValue > 0 ? hAbbr : liveProjValue < 0 ? aAbbr : "TIE") : null;
+    const liveProjLogo =
+      liveProjValue != null ? (liveProjValue > 0 ? homeLogo : awayLogo) : undefined;
+
     // #2442: the SECOND margin formatter on this page, and the one the sweep
     // for `formatMarginLabel` missed — the render guard caught it printing
     // `LAL +4.5` on the projection mark after the ladder had already been
@@ -499,6 +532,10 @@ export default function MarketMapSection({
           displayValue: formatMargin(actualMargin, actualTeam),
         });
       }
+      // #5045: ONE GUARD PER TILE, because they now hold two different
+      // quantities and either can exist without the other. A live card with an
+      // opening line and no current spread shows PRE-GAME alone; one with a
+      // current spread and no opening line shows PROJECTION alone.
       if (projValue != null) {
         markers.push({
           key: "pre",
@@ -507,14 +544,20 @@ export default function MarketMapSection({
           label: "Pre-game",
           displayValue: formatMargin(projValue, projTeamAbbr || ""),
         });
+      }
+      // A tile with nothing true to say says nothing (notice 34): where the
+      // live spread is absent — or gated off by #2441 — the `Projection` tile
+      // is simply not drawn, rather than falling back to the pre-game number
+      // and restating it under the other tense, which is the defect.
+      if (liveProjValue != null) {
         markers.push({
           key: "proj",
-          value: projValue,
+          value: liveProjValue,
           type: "proj",
           label: "Projection",
-          displayValue: formatMargin(projValue, projTeamAbbr || ""),
-          logoUrl: projLogo,
-          logoFallback: projTeamAbbr || "",
+          displayValue: formatMargin(liveProjValue, liveProjTeamAbbr || ""),
+          logoUrl: liveProjLogo,
+          logoFallback: liveProjTeamAbbr || "",
         });
       }
     } else {
