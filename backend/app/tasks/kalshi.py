@@ -4534,6 +4534,8 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
             from dateutil.parser import parse as _dt_parse
             import time as _time
 
+            from app.utils.latest_observation import clamp_capture_stamp
+
             _start = _time.monotonic()
 
             for series in series_list:
@@ -4642,6 +4644,11 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                                 snap_t = None
                             if not snap_t:
                                 continue
+                            # #5511: clamped AFTER the skip so an absent
+                            # open_time still skips rather than becoming "now".
+                            snap_t = clamp_capture_stamp(
+                                snap_t, datetime.now(timezone.utc)
+                            )
 
                             await session.execute(
                                 text("""
@@ -5319,6 +5326,10 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             # page costs a handful of round-trips, not thousands.
                             from dateutil.parser import parse as dt_parse
 
+                            from app.utils.latest_observation import (
+                                clamp_capture_stamp,
+                            )
+
                             _remaining = limit - total_snapshots
                             snap_rows = []
                             opening_rows = []  # (id, price, ts)
@@ -5350,14 +5361,25 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                                     if price <= 0 or price >= 1:
                                         continue
 
+                                    # #5511: `close_time` is absent often enough
+                                    # that the `expiration_time` fallback above
+                                    # fires, and that field is the LATEST
+                                    # POSSIBLE expiry — a settled market can
+                                    # carry one days out. Three production rows
+                                    # were stamped 14.4h into the FUTURE this
+                                    # way, which wins the `observed_at` max and
+                                    # renders as maximally fresh. Clamp; never
+                                    # post-date an observation.
+                                    _now = datetime.now(timezone.utc)
                                     try:
-                                        captured = (
+                                        captured = clamp_capture_stamp(
                                             dt_parse(close_time_str)
                                             if close_time_str
-                                            else datetime.now(timezone.utc)
+                                            else None,
+                                            _now,
                                         )
                                     except Exception:
-                                        captured = datetime.now(timezone.utc)
+                                        captured = _now
 
                                     snap_rows.append(
                                         {
@@ -5434,6 +5456,10 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                         if prev_inserts:
                             from dateutil.parser import parse as _dt_parse
 
+                            from app.utils.latest_observation import (
+                                clamp_capture_stamp,
+                            )
+
                             # #969: batch the prev-price inserts into ONE
                             # unnest-joined INSERT...SELECT instead of one INSERT
                             # per ticker (the second sequential loop that, with
@@ -5447,6 +5473,10 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                                     snap_t = None
                                 if not snap_t:
                                     continue
+                                # #5511: clamped AFTER the skip, as above.
+                                snap_t = clamp_capture_stamp(
+                                    snap_t, datetime.now(timezone.utc)
+                                )
                                 _pv_tickers.append(ticker)
                                 _pv_probs.append(round(prev_p, 6))
                                 _pv_prices.append(round(prev_p, 4))

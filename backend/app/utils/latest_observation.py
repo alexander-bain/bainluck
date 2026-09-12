@@ -143,6 +143,42 @@ def blended_observed_at(stamps: Iterable[Optional[str]]) -> Optional[str]:
     return oldest[1] if oldest is not None else None
 
 
+def clamp_capture_stamp(parsed: Optional[datetime], now: datetime) -> datetime:
+    """The write-side companion to this module: a capture never post-dates ``now``.
+
+    A reconstruction path that stamps a snapshot from a VENUE-SUPPLIED time —
+    ``close_time``, ``expiration_time``, ``open_time`` — is stating when we
+    observed a price. Those fields are SCHEDULE, not observation: Kalshi's
+    ``expiration_time`` is the *latest possible* expiry (see
+    ``app/utils/kalshi_resolution_window.py``), so a settled market can carry one
+    days after it settled, and an open one carries a close in the future.
+
+    🔴 **A future ``captured_at`` is the one staleness error a reader cannot
+    detect.** Everything downstream reads this column as "when we saw it", and
+    :func:`latest_observed_at_subquery` is ``ORDER BY captured_at DESC LIMIT 1``
+    with no upper bound — so a post-dated row WINS its outcome's max and the
+    served ``observed_at`` becomes a negative age, which renders as maximally
+    fresh. Overstating staleness is conservative and self-correcting; claiming
+    freshness we do not have is the #5459 / ruling 142 class, and it is silent.
+
+    🔴 **The clamp is used rather than a reject because its false positives are
+    free.** A capture cannot occur in the future, so pulling a post-dated stamp
+    down to ``now`` can never turn a true statement false — the worst case is
+    that a genuine close-time reconstruction is recorded a few seconds late.
+    Dropping the row instead would lose a real price to defend a timestamp.
+
+    Naive input is read as UTC rather than compared, because ``dt_parse`` returns
+    a naive datetime for a stamp with no offset and comparing it to an aware
+    ``now`` raises ``TypeError`` — an ingest path must not abort over a missing
+    ``Z``. ``None`` means the venue gave us no time at all, and the honest stamp
+    for "we read it just now" is ``now``.
+    """
+    if parsed is None:
+        return now
+    aware = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    return aware if aware <= now else now
+
+
 def latest_observed_at_subquery():
     """Correlated scalar subquery: newest ``captured_at`` for ``FuturesOutcome.id``.
 
