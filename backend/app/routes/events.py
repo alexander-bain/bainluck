@@ -12424,7 +12424,72 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
     return result
 
 
-def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over):
+# #5509: how late a pin may be stamped and still count as pregame. The live
+# poller that writes it (`poll_live_prediction_markets`) fires every 120s, so a
+# market first seen on the tick that straddles first pitch carries a stamp up to
+# one cadence late through SCHEDULING alone. Past that the pin holds an in-play
+# price. Measured: only 198 of 10,091 pinned markets (2.0%) land in the 0–5 min
+# band at all, so the boundary decides almost nothing — 30 markets sit inside
+# one cadence, 168 between two and five minutes and are refused.
+_PREGAME_MARK_MAX_LATENESS_S = 120.0
+
+
+def _coerce_utc_datetime(value):
+    """A tz-aware UTC datetime from a datetime or an ISO string, else ``None``.
+
+    Naive inputs are read as UTC, which is how every datetime in this codebase
+    is stored and how the JSONB stamps are written.
+    """
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _pregame_mark_is_pregame(pm, commence_time) -> bool:
+    """#5509: did this pin capture a price from BEFORE the game started?
+
+    The pin's whole meaning is "the price at commence", but the live poller only
+    sees a market once the market is linked and the event is inside its window,
+    so a market first loaded after first pitch gets pinned at an IN-PLAY price.
+    Measured on production 2026-09-12 over 7 days: 10,091 pinned markets, of
+    which 3,915 (38.8%) pinned before commence and 5,978 (59.2%) more than five
+    minutes after — median +43 min (#5509's census). Those late pins render as
+    THE SCRIPT's "opened at" and drive THE DIVERGENCE's travel ordering, so a
+    0.995 pinned in the sixth inning both invents travel and inverts direction.
+
+    Judged from the pin's own ``captured_at`` against the event's CURRENT
+    ``commence_time`` (a delayed start moves the real first pitch; the pin's
+    embedded ``commence_time`` is only what was known when it was written, and
+    is the fallback when the event carries none).
+
+    Unjudgeable pins — no parseable ``captured_at``, no commence time from
+    either side — keep the pre-#5509 behaviour and are treated as pregame: both
+    populations are ZERO on production today (the writer stamps both fields
+    unconditionally), so refusing them would widen this change past the class
+    that was measured.
+    """
+    if not isinstance(pm, dict):
+        return False
+    captured_raw = pm.get("captured_at")
+    captured = _coerce_utc_datetime(captured_raw)
+    if captured is None:
+        return True  # cannot judge — see docstring
+    commence = _coerce_utc_datetime(commence_time)
+    if commence is None:
+        commence = _coerce_utc_datetime(pm.get("commence_time"))
+    if commence is None:
+        return True  # cannot judge — see docstring
+    return (captured - commence).total_seconds() <= _PREGAME_MARK_MAX_LATENESS_S
+
+
+def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over, commence_time):
     """#195: THE SCRIPT baseline for a prop outcome, as an OVER probability.
 
     Prefers the commence-time mark pinned by the live poller into
@@ -12435,11 +12500,18 @@ def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over):
     SCRIPT renders a real number before the pin has been captured, and to
     ``None`` when neither exists. gotcha #26: use ``__dict__.get`` so a market
     row loaded without ``market_metadata`` never triggers a lazy load.
+
+    #5509: the pin only wins when it is genuinely PREGAME
+    (``_pregame_mark_is_pregame``). A pin captured after first pitch holds an
+    in-play price; the opening line is a real pregame number and is what THE
+    SCRIPT falls back to — on 7 days of production, 86.1% of the legs under a
+    late pin carry one. ``commence_time`` is REQUIRED rather than defaulted so a
+    new call site cannot opt out of that gate by omission.
     """
     meta = market.__dict__.get("market_metadata")
     if isinstance(meta, dict):
         pm = meta.get("pregame_mark")
-        if isinstance(pm, dict):
+        if isinstance(pm, dict) and _pregame_mark_is_pregame(pm, commence_time):
             raw = (pm.get("outcomes") or {}).get(str(outcome.id))
             if raw is not None:
                 try:
@@ -13374,7 +13446,13 @@ async def _build_game_markets(
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": tt_opening_over,
-                        "pregame_mark": _resolve_pregame_mark(market, o, is_over, is_under, tt_opening_over),
+                        # #5509: the event's own commence_time decides whether
+                        # the pin is pregame — a pin stamped after first pitch
+                        # is an in-play price and loses to the opening line.
+                        "pregame_mark": _resolve_pregame_mark(
+                            market, o, is_over, is_under, tt_opening_over,
+                            event.commence_time,
+                        ),
                         # #4390: this leg's numbers above are on the OVER axis,
                         # i.e. its sibling's. THE SCRIPT renders the row under
                         # this leg's own name and needs to know that.
@@ -13443,7 +13521,12 @@ async def _build_game_markets(
                     "threshold": threshold,
                     "over_probability": round(over_prob, 4),
                     "opening_over_probability": opening_over,
-                    "pregame_mark": _resolve_pregame_mark(market, o, is_over, is_under, opening_over),
+                    # #5509: see the team_total branch — a pin stamped after
+                    # first pitch is in-play and falls through to the opening.
+                    "pregame_mark": _resolve_pregame_mark(
+                        market, o, is_over, is_under, opening_over,
+                        event.commence_time,
+                    ),
                     # #4390: see the team_total branch — the over-axis numbers
                     # belong to the sibling leg, and THE SCRIPT prints this one's
                     # name beside them.
