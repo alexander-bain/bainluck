@@ -162,8 +162,21 @@ describe("#5696 the event hero never paints a probability in a colour you cannot
  * measured on the COMPOSITED pixel: 1.5 rescues 60 of 1,445 coloured teams,
  * 3:1 would override 256). So a white club is already rescued there — the
  * defect does not reach that card. Raising it from "visible at all" to the text
- * floor would re-brand ~196 teams on Discover, which is a design change with a
+ * floor would re-brand teams on Discover, which is a design change with a
  * measured price and belongs to whoever owns that surface, not to a p1 bug fix.
+ *
+ * ⚠️ CORRECTED (#5726, discover/046, verified by ux/1221 rather than inherited).
+ * That price was first written here as "~196 teams". It is **~107 (7.4%)** at
+ * THIS card's opacity: the 196 came from replaying `probabilityBarPair` at 0.7,
+ * which is FeedCard's compositing, and `EventCard.tsx:32` passes
+ * `PROBABILITY_BAR_OPACITY = 1`. The trade declined above is 1.8x cheaper than
+ * the number that declined it — which does not reverse the decision (it is
+ * still a re-brand, still not a p1 bug fix's call) but must not be re-quoted at
+ * 196 by whoever picks #5726 up. The same review found the sharper half: the
+ * `RESCUE_LADDER` starts at `AWAY_DEFAULT #9CA3AF` / `HOME_DEFAULT #10B981`,
+ * both of which measure **2.54:1** — below the 3:1 floor the rescue is meant to
+ * reach. So "EventCard already has a floor" is true and does NOT mean the floor
+ * is the right one. That is #5726's subject, not this file's.
  */
 describe("#5696 no surface paints team-coloured TEXT without the floor", () => {
   /** Every file the census found a team-coloured text site in. */
