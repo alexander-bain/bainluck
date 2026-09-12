@@ -21,6 +21,7 @@ import pytest
 from app.utils.agent_origin import (
     ORIGIN_HEADER,
     ORIGIN_USER,
+    _host_of,
     curl_args,
     is_our_host,
     origin_headers,
@@ -409,6 +410,62 @@ def _name_is_a_request(name: str, call: ast.Call, tree: ast.AST, scopes: dict) -
     return False
 
 
+def _pinned_url(node) -> str | None:
+    """URL text from ``node`` that PROVABLY fixes the host, or ``None`` (#5722).
+
+    Two shapes pin a host and no others: a whole-string constant, and a constant
+    PREFIX long enough that no interpolation can extend the authority — one that
+    already contains the ``/``, ``?`` or ``#`` that ends it.
+
+    The terminator test is the whole of the safety here. ``f"https://{h}/x"``
+    pins nothing, and — the case that looks pinned and is not —
+    ``f"https://api.heroku.com{p}"`` pins nothing either, because ``p`` may be
+    ``".evil.test/x"``. Only ``f"https://api.heroku.com/{p}"`` is decided.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value  # the whole URL is known; nothing can extend it
+    prefix = None
+    if isinstance(node, ast.JoinedStr) and node.values:
+        head = node.values[0]
+        if isinstance(head, ast.Constant) and isinstance(head.value, str):
+            prefix = head.value
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
+            prefix = node.left.value
+    if prefix is None:
+        return None
+    authority = prefix.split("//", 1)[1] if "//" in prefix else prefix
+    if not any(c in authority for c in "/?#"):
+        return None  # the authority is still open — the host is not decided
+    return prefix
+
+
+def _is_provably_third_party(node) -> bool:
+    """True when routing this URL through the carrier would be a PROVABLE no-op.
+
+    `origin_headers` returns ``{}`` for any host that is not ours, so for such a
+    URL ``tagged(url, h)`` is exactly ``dict(h)``. The blanket rule above exists
+    because applying the carrier "costs nothing" — and that rationale assumes the
+    carrier can be IMPORTED. `scripts/heavy_sync_decision.py` is the first site
+    where it cannot: it runs on a bare runner before any `pip install`, and
+    `app.utils.__init__` eagerly imports half of `app.utils`. Requiring an import
+    there buys an empty dict at the price of a deploy-path script's only stated
+    invariant.
+
+    So the exemption is exactly as wide as the proof, and no wider: the host must
+    be PINNED by the source text (`_pinned_url`), must actually be a host, and
+    `is_our_host` — the same function the runtime uses, never a second answer —
+    must say it is not ours. A host built from a variable stays an offender,
+    because an unprovable claim and a false one must not read alike.
+    """
+    text = _pinned_url(node)
+    if text is None:
+        return False
+    if not _host_of(text):
+        return False  # a relative path pins no host; "" is not a third party
+    return not is_our_host(text)
+
+
 def _untagged_sites(path: pathlib.Path) -> list:
     """Every outbound call site in ``path`` that does not carry the tag.
 
@@ -420,6 +477,10 @@ def _untagged_sites(path: pathlib.Path) -> list:
       3. ``httpx``/``requests`` ``.get``/``.post``/...
       4. ``subprocess.run(["curl", ...])`` — rung 1 exports a shell FUNCTION,
          and a subprocess executes the BINARY, so the shadow can never reach it
+
+    Rails 1-3 exempt a PROVABLY third-party host (`_is_provably_third_party`).
+    Rail 4 does not: a URL's position in a curl argv is not fixed, so there is
+    nothing there to prove it against.
     """
     src = path.read_text()
     try:
@@ -450,9 +511,13 @@ def _untagged_sites(path: pathlib.Path) -> list:
             # A Request built inline is fine — it is a rail-1 site and is checked
             # below. A bare NAME is only fine once resolved: see
             # `_name_is_a_request` for the eleven sites the old assumption missed.
-            ok = _is_request_call(first) or (
-                isinstance(first, ast.Name)
-                and _name_is_a_request(first.id, node, tree, scopes)
+            ok = (
+                _is_request_call(first)
+                or (
+                    isinstance(first, ast.Name)
+                    and _name_is_a_request(first.id, node, tree, scopes)
+                )
+                or _is_provably_third_party(first)
             )
             if not ok:
                 bad.append(
@@ -472,6 +537,9 @@ def _untagged_sites(path: pathlib.Path) -> list:
         ):
             pass
         else:
+            continue
+
+        if node.args and _is_provably_third_party(node.args[0]):
             continue
 
         headers = next((k.value for k in node.keywords if k.arg == "headers"), None)
@@ -630,6 +698,216 @@ RAIL2_CASES = [
 def test_rail_two_resolves_the_name(tmp_path, why, source, expect_offender):
     sites = _sites_for(tmp_path, source)
     assert bool(sites) is expect_offender, f"{why}\n  got: {sites}"
+
+
+# ---------------------------------------------------------------------------
+# The provably-third-party exemption, and the three ways it could become a hole
+# ---------------------------------------------------------------------------
+#
+# `scripts/heavy_sync_decision.py` reads the Heroku Platform API to learn which
+# commit `bainluck-heavy` is actually running (#5722). It runs on a bare runner
+# before any `pip install`, so it cannot import the carrier — and for
+# `api.heroku.com` the carrier returns an empty dict anyway, so the import would
+# buy nothing. `_is_provably_third_party` is that exemption.
+#
+# An exemption is a hole unless its proof is exactly as wide as its claim, so
+# each case below kills one specific way of widening it:
+#
+#   * drop the `is_our_host` test         -> "our host, spelled out" goes green
+#   * drop the authority-terminator test  -> "the host is still open" goes green
+#   * drop the `_host_of` presence test   -> "a relative path" goes green
+#   * accept a Name/attribute as pinned   -> "a host from a variable" goes green
+#
+# Every one of those is a mutation that leaves the directory census at zero, so
+# the census cannot catch any of them. These can.
+
+_HEROKU = "https://api.heroku.com/apps/bainluck-heavy/releases"
+
+THIRD_PARTY_CASES = [
+    (
+        "a whole-literal third-party URL needs no carrier — it is a no-op there",
+        f'''
+        import urllib.request
+        def go(token):
+            req = urllib.request.Request("{_HEROKU}", headers={{"A": token}})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        False,
+    ),
+    (
+        "an f-string whose literal prefix CLOSES the authority is pinned",
+        '''
+        import urllib.request
+        def go(path, token):
+            req = urllib.request.Request(
+                f"https://api.heroku.com/{path}", headers={"A": token}
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        False,
+    ),
+    (
+        "the host is still OPEN — interpolation can extend it to anything",
+        '''
+        import urllib.request
+        def go(path, token):
+            req = urllib.request.Request(
+                f"https://api.heroku.com{path}", headers={"A": token}
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "our host spelled out in full is never exempt",
+        f'''
+        import urllib.request
+        def go(q):
+            req = urllib.request.Request("{_OURS}", headers={{"A": "b"}})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "a host read from a variable is unprovable, so it stays an offender",
+        '''
+        import urllib.request
+        def go(host, token):
+            req = urllib.request.Request(
+                f"https://{host}/apps/x", headers={"A": token}
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "a relative path pins no host at all — an empty host is not a third party",
+        '''
+        import urllib.request
+        def go(token):
+            req = urllib.request.Request("/apps/x", headers={"A": token})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "concatenation is pinned by the same terminator rule",
+        '''
+        import urllib.request
+        def go(path, token):
+            req = urllib.request.Request(
+                "https://api.heroku.com/" + path, headers={"A": token}
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        False,
+    ),
+    (
+        "concatenation onto an OPEN authority is not pinned",
+        '''
+        import urllib.request
+        def go(path, token):
+            req = urllib.request.Request(
+                "https://api.heroku.com" + path, headers={"A": token}
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "rail 2 exempts the same proof — a bare urlopen on a third-party literal",
+        f'''
+        from urllib.request import urlopen
+        def go():
+            with urlopen("{_HEROKU}", timeout=30) as r:
+                return r.read()
+        ''',
+        False,
+    ),
+    (
+        "rail 2 still reports a bare urlopen on OUR host",
+        f'''
+        from urllib.request import urlopen
+        def go():
+            with urlopen("{_OURS}", timeout=30) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+    (
+        "rail 3 exempts it too, and by the same predicate",
+        f'''
+        import requests
+        def go(token):
+            return requests.get("{_HEROKU}", headers={{"A": token}}).json()
+        ''',
+        False,
+    ),
+    (
+        "a subdomain of ours is ours — suffix matching, not substring",
+        '''
+        import urllib.request
+        def go(q):
+            req = urllib.request.Request(
+                "https://api.bainluck.com/api/events/typeahead?q=a",
+                headers={"A": "b"},
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        ''',
+        True,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "why,source,expect_offender",
+    [pytest.param(w, s, e, id=w[:52]) for w, s, e in THIRD_PARTY_CASES],
+)
+def test_the_third_party_exemption_is_exactly_as_wide_as_its_proof(
+    tmp_path, why, source, expect_offender
+):
+    sites = _sites_for(tmp_path, source)
+    assert bool(sites) is expect_offender, f"{why}\n  got: {sites}"
+
+
+def test_the_exemption_cases_cover_both_verdicts():
+    """Denominator guard for the table above.
+
+    A parametrized table is only a check if it contains both answers: a table of
+    all-True cases passes against an exemption that never fires, and a table of
+    all-False cases passes against one that always does.
+    """
+    verdicts = {e for _, _, e in THIRD_PARTY_CASES}
+    assert verdicts == {True, False}, verdicts
+
+
+def test_the_exemption_agrees_with_what_the_carrier_would_actually_do(monkeypatch):
+    """The static claim is only sound if the runtime really is a no-op.
+
+    The exemption's whole argument is "`tagged(url, h)` is `dict(h)` for a host
+    that is not ours". That is a statement about `origin_headers`, so assert it
+    against `origin_headers` — with an agent NAMED, which is the only condition
+    under which the carrier adds anything at all. If a later change ever makes
+    the carrier add a header to third-party traffic, this reddens and the
+    exemption must go, rather than quietly shipping an internal header to Heroku.
+    """
+    monkeypatch.setenv("BL_AGENT", "latency")
+    assert resolve_agent() == "latency"
+
+    existing = {"Accept": "application/vnd.heroku+json; version=3"}
+    assert tagged(_HEROKU, existing) == existing
+
+    # ...and the control: on our own host, with the same agent, it is NOT a no-op.
+    assert tagged(_OURS, existing) != existing
 
 
 def test_a_name_does_not_borrow_another_function_s_request(tmp_path):

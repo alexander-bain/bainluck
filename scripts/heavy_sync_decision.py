@@ -302,8 +302,14 @@ def heroku_release_commit(app: str, token: str) -> str | None:
     import urllib.request
 
     def _get(path: str, extra: dict | None = None):
+        # The trailing `/` in the literal is load-bearing, not a tidy-up target:
+        # `backend/tests/test_agent_origin_outbound_tag.py` proves statically that
+        # this call is third-party (so the origin carrier would be a no-op here,
+        # and this file can stay importless), and it can only prove that while the
+        # literal prefix CLOSES the authority. `f"...heroku.com{path}"` would leave
+        # the host open to whatever `path` holds, and is correctly reported.
         req = urllib.request.Request(
-            f"https://api.heroku.com{path}",
+            f"https://api.heroku.com/{path}",
             headers={
                 "Accept": "application/vnd.heroku+json; version=3",
                 "Authorization": f"Bearer {token}",
@@ -314,7 +320,7 @@ def heroku_release_commit(app: str, token: str) -> str | None:
             return json.load(resp)
 
     releases = _get(
-        f"/apps/{app}/releases", {"Range": "version ..; order=desc, max=1"}
+        f"apps/{app}/releases", {"Range": "version ..; order=desc, max=1"}
     )
     if not releases:
         return None
@@ -324,7 +330,7 @@ def heroku_release_commit(app: str, token: str) -> str | None:
         # A release with no slug is a config change, not a deploy — it cannot
         # tell us which commit is running, and saying "no" would be a lie.
         return None
-    return (_get(f"/apps/{app}/slugs/{slug_id}") or {}).get("commit")
+    return (_get(f"apps/{app}/slugs/{slug_id}") or {}).get("commit")
 
 
 def _bool_arg(value: str) -> bool | None:
