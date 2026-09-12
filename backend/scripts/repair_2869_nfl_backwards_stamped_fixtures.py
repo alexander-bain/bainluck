@@ -213,10 +213,16 @@ def judge(row, payload) -> Verdict:
 async def fetch_espn(espn_id: str) -> Optional[dict]:
     import httpx
 
+    from app.utils.agent_origin import tagged
+
     url = ESPN_SUMMARY.format(espn_id=espn_id)
+    # Notice 39: every outbound call from a script goes through the carrier,
+    # including this one. ESPN is third-party, so `is_our_host` resolves the
+    # tag to nothing at RUNTIME — the point is that the static rule stays "no
+    # bare outbound call", with no per-site judgement about who the host is.
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, headers=tagged(url))
             if resp.status_code != 200:
                 return None
             return resp.json()
