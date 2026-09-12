@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Path
 from sqlalchemy import select, and_, or_, exists, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.config.league_configs import get_league_for_sport_key
 from app.models import Event, FuturesMarket, Sport
@@ -54,6 +55,7 @@ from app.utils.event_concept_cache import (
     release_refresh_lock,
 )
 from app.utils.event_tennis import is_tennis_feeder_circuit
+from app.utils.event_twin_fold import fold_twin_events
 from app.utils.proven_duplicates import not_a_proven_duplicate
 from app.utils.rail_competition_share import equal_share_by_competition
 from app.utils.sport_keys import (
@@ -472,6 +474,27 @@ RESULTS_LOOKBACK_DAYS = 14
 UPCOMING_GAMES_LIMIT = 8
 RESULTS_LIMIT = 8
 
+#: How many extra upcoming rows to fetch so the twin fold can collapse without
+#: costing the reader a card (#5496, #4100's fourth surface).
+#:
+#: **Sized at the cap, and that is the only value that cannot under-fill for the
+#: shape twins actually take.** A twin is a PAIR — 114 of them on production
+#: 2026-09-12, every one two rows — so the worst case a paired defect can build
+#: out of `UPCOMING_GAMES_LIMIT + n` rows is `n` survivors short of the cap only
+#: when n < the cap. At `n = UPCOMING_GAMES_LIMIT` even an all-twin rail folds to
+#: a full page. Measured need today is 2; this is 4× that and still bounded.
+#:
+#: It is NOT a guarantee against an unbounded pile-up: three rows for one fixture
+#: would eat headroom faster than pairs do, and no finite over-fetch survives
+#: that. Under-filling by a card is the correct failure — it is strictly better
+#: than the duplicate it replaces, and the drain (#2693) is what ends the class.
+#:
+#: Deepening this rail is close to free: its ORDER BY leads with a CASE, so the
+#: planner has already collected and sorted every candidate row (the no-fence
+#: argument in `upcoming_games_query`), and a larger LIMIT only carries more of
+#: that finished sort back. The feeder scan alongside it is 200.
+UPCOMING_TWIN_FOLD_HEADROOM = UPCOMING_GAMES_LIMIT
+
 #: The NO RESULT REPORTED rail's cap (#3211). Its OWN constant, not a share of
 #: `RESULTS_LIMIT`: the rail exists precisely because one cap over two
 #: populations of very different size starved the smaller one out of existence,
@@ -644,6 +667,7 @@ def upcoming_games_query(
     *,
     also_sport_keys: Sequence[str] = (),
     scan_depth: int = 0,
+    fold_headroom: int = 0,
 ):
     """The UPCOMING GAMES rail, scoped to one league.
 
@@ -696,8 +720,91 @@ def upcoming_games_query(
         # ORDER BY leads with a CASE, so the planner has already collected and
         # sorted every candidate row (that is the no-fence argument above), and
         # a larger LIMIT only carries more of that finished sort back.
-        .limit(UPCOMING_GAMES_LIMIT + 1 + max(0, scan_depth))
+        #
+        # `fold_headroom` (#5496) is the twin fold's share of the same argument.
+        # The fold collapses rows AFTER the database has returned them, so a
+        # rail that fetched exactly its cap would spend a card slot on a row it
+        # then drops: the MLB page, measured 05:0xZ 2026-09-12, held Tigers–
+        # Rockies and Yankees–Mets twice each in its eight upcoming slots, so
+        # folding without headroom would have served SIX games where eight were
+        # available. Sized at the cap in `UPCOMING_TWIN_FOLD_HEADROOM`.
+        .limit(UPCOMING_GAMES_LIMIT + 1 + max(0, scan_depth) + max(0, fold_headroom))
     )
+
+
+def _folded_upcoming(events: list) -> list:
+    """One fixture, one card — the league-page half of #4100 (#5496).
+
+    WHY THIS RAIL NEEDED ITS OWN CALL, WITH A DUPLICATE FILTER ALREADY ON IT.
+    `not_a_proven_duplicate` (#2263) sits on this very query and cannot reach
+    these rows: it reads a `provenance:duplicate-of:` tag that only a prover
+    writes, and the prover needs a shared provider id. Measured on production
+    2026-09-12: of 114 MLB twin pairs, **zero share an anchor key** — the
+    StatPal-born row carries `statpal:baseball_mlb:<id>`, the ESPN-born row
+    carries `espn:`/`odds_api:`, and nothing records that the two are one game.
+    So the id-keyed filter is structurally blind to them while the id-free fold
+    is not. The two are belt and braces, not rivals; this adds the braces.
+
+    What a reader saw at 05:0xZ on `GET /api/leagues/baseball_mlb`: Detroit–
+    Colorado and NY Yankees–NY Mets each twice, **2 of the 8 upcoming slots**,
+    both on the next day's slate.
+
+    🔴 THE FOLD RUNS BEFORE THE CAP AND BEFORE THE COMPETITION SHARE, and both
+    orderings are deliberate. Before the cap, because this rail is a fixed slot
+    count with a `has_more` flag and NOT offset-paginated — the hazard that makes
+    `list_events` fold after its limit (page two re-serving page one's rows)
+    cannot arise here, and folding after the cap would silently spend a slot on
+    a row it then drops. Before the share, because `equal_share_by_competition`
+    apportions slots between competitions and must apportion real games: two
+    copies of one fixture would otherwise consume two of a competition's share.
+
+    `set_committed_value` delivers the unioned sources onto the hydrated row
+    WITHOUT marking it dirty, so no later flush can persist a serve-time blend
+    into `events` (gotcha #4's neighbourhood). A plain assignment would be a
+    write waiting for a commit.
+
+    Gotcha #42 applied to a whole stage: the fold improves the rail, it is never
+    a precondition for having one. If it raises, the unfolded rail is served —
+    today's bug — rather than no page at all.
+
+    It takes NO `sport_key`, deliberately. It had one, purely to name the league
+    in its log lines, and that interpolation was a medium-severity
+    `py/log-injection` on a path parameter. A helper that cannot see the tainted
+    value cannot leak it, which is a stronger guarantee than remembering not to.
+    """
+    try:
+        fold = fold_twin_events(events)
+        if fold.dropped_ids:
+            for survivor_id, merged in fold.merged_sources.items():
+                survivor = next(e for e in fold.events if e.id == survivor_id)
+                set_committed_value(survivor, "win_probability_sources", merged)
+            # 🔴 `sport_key` IS NOT LOGGED HERE EITHER, and the first push of
+            # this branch is why the rule is written twice. It is a path
+            # parameter, so CodeQL graded the interpolation
+            # `py/log-injection`, MEDIUM security severity — a notice-32 refuse
+            # — on a line four above an `except` whose comment already said not
+            # to do it. Guarding the failure branch and not the success branch
+            # is the whole mistake.
+            #
+            # Nothing is lost: `dropped_ids` are OUR event ids, they identify
+            # the league more precisely than its key would, and they are the
+            # thing a person reading this line actually needs.
+            logger.info(
+                "league page twin fold: collapsed %d duplicate event rows, "
+                "%d rows gained a venue (dropped=%s)",
+                fold.folded_count,
+                len(fold.merged_sources),
+                fold.dropped_ids[:20],
+            )
+        return fold.events
+    except Exception:
+        # The league is NOT interpolated into the message for the same reason
+        # the competition-share fallback above does not interpolate it:
+        # `sport_key` is a path parameter and a new log line carrying it is a
+        # `py/log-injection` finding CodeQL grades medium-severity, which
+        # notice 32 refuses. `logger.exception` prints the traceback.
+        logger.exception("league page: twin fold failed; serving the unfolded rail")
+        return events
 
 
 def recent_results_query(
@@ -2228,11 +2335,19 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             now,
             also_sport_keys=_also_keys,
             scan_depth=RAIL_COMPETITION_SCAN_DEPTH if _is_feeder else 0,
+            fold_headroom=UPCOMING_TWIN_FOLD_HEADROOM,
         )
         _results_q = recent_results_query(sport_key, now, also_sport_keys=_also_keys)
         _unreported_q = unreported_games_query(sport_key, now, also_sport_keys=_also_keys)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
+        # ── #5496: one fixture may not take two slots ──
+        #
+        # First, because everything below counts rows: `_more_games`, the
+        # competition share and the cap all have to be counting GAMES. Folding
+        # after any of them would let a duplicate be counted as availability the
+        # reader never gets.
+        _g_events = _folded_upcoming(_g_events)
         # ── #3872: one competition may not take the whole rail ──
         #
         # Measured on production 2026-09-08, mid-US-Open: twelve Challenger
