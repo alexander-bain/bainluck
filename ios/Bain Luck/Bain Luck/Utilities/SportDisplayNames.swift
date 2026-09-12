@@ -1,26 +1,45 @@
 import Foundation
 
+/// The league acronyms this app spells for itself, keyed by sport key. ONE
+/// copy: both public formatters below read it, and neither keeps its own.
+private let leagueAcronyms: [String: String] = [
+    "americanfootball_nfl": "NFL",
+    "americanfootball_ncaaf": "NCAAF",
+    "basketball_nba": "NBA",
+    "basketball_ncaab": "NCAAB",
+    "basketball_wncaab": "WNCAAB",
+    "basketball_wnba": "WNBA",
+    "icehockey_nhl": "NHL",
+    "baseball_mlb": "MLB",
+    "soccer_epl": "EPL",
+    "soccer_spain_la_liga": "La Liga",
+    "soccer_germany_bundesliga": "Bundesliga",
+    "soccer_italy_serie_a": "Serie A",
+    "soccer_france_ligue_one": "Ligue 1",
+    "soccer_usa_mls": "MLS",
+    "soccer_uefa_champs_league": "UCL",
+    "mma_mixed_martial_arts": "MMA",
+]
+
+/// A sport key as a league label: "baseball_mlb" → "MLB".
+///
+/// #5780 — the fallback used to be `key.components(separatedBy: "_").last?
+/// .uppercased()`, which keeps the LAST token of a key and shouts it. Every key
+/// outside the sixteen above therefore reached a reader as a fragment:
+/// `tennis_atp_us_open` → **"OPEN"**, `soccer_spain_segunda_division` →
+/// **"DIVISION"**, `icehockey_sweden_hockey_league` → **"LEAGUE"**. Search's
+/// own event rows are the proof — six Alcaraz matches on production, five of
+/// them labelled "OPEN" under a filter pill reading "ATP US Open"
+/// (`artifacts-native-020/n138-BEFORE-alcaraz.png`, 2026-09-12).
+///
+/// Unknown keys now go to `sportCategoryDisplayName`, the shared rule #5723
+/// made single-source, which answers with a sport rather than a fragment. The
+/// two functions cannot recurse: the league map is consulted directly by both,
+/// and the shared rule never calls back here.
 func sportDisplayName(for key: String?) -> String {
-    guard let key else { return "" }
-    let map: [String: String] = [
-        "americanfootball_nfl": "NFL",
-        "americanfootball_ncaaf": "NCAAF",
-        "basketball_nba": "NBA",
-        "basketball_ncaab": "NCAAB",
-        "basketball_wncaab": "WNCAAB",
-        "basketball_wnba": "WNBA",
-        "icehockey_nhl": "NHL",
-        "baseball_mlb": "MLB",
-        "soccer_epl": "EPL",
-        "soccer_spain_la_liga": "La Liga",
-        "soccer_germany_bundesliga": "Bundesliga",
-        "soccer_italy_serie_a": "Serie A",
-        "soccer_france_ligue_one": "Ligue 1",
-        "soccer_usa_mls": "MLS",
-        "soccer_uefa_champs_league": "UCL",
-        "mma_mixed_martial_arts": "MMA",
-    ]
-    return map[key] ?? key.components(separatedBy: "_").last?.uppercased() ?? key
+    guard let key, !key.isEmpty else { return "" }
+    if let name = leagueAcronyms[key] { return name }
+    return sportCategoryDisplayName(key)
 }
 
 /// Maps a raw sport-key OR llm_sport_category value to a human category label
@@ -43,16 +62,10 @@ func sportCategoryDisplayName(_ raw: String?) -> String {
     ]
     if let c = categoryMap[key] { return c }
 
-    // 2. Known league keys → acronym (NFL, NBA, MLB, ...).
-    let leagueKeys: Set<String> = [
-        "americanfootball_nfl", "americanfootball_ncaaf",
-        "basketball_nba", "basketball_ncaab", "basketball_wncaab",
-        "basketball_wnba", "icehockey_nhl", "baseball_mlb",
-        "soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga",
-        "soccer_italy_serie_a", "soccer_france_ligue_one", "soccer_usa_mls",
-        "soccer_uefa_champs_league", "mma_mixed_martial_arts",
-    ]
-    if leagueKeys.contains(key) { return sportDisplayName(for: key) }
+    // 2. Known league keys → acronym (NFL, NBA, MLB, ...). Read straight from
+    //    the one map (#5780): this used to call `sportDisplayName(for:)`, and a
+    //    second copy of the same sixteen keys decided whether it did.
+    if let acronym = leagueAcronyms[key] { return acronym }
 
     // 3. Sport family (handles "_other" and bare sport families).
     let family = key.contains("_") ? String(key.split(separator: "_").first ?? "") : key
@@ -79,6 +92,46 @@ func sportCategoryDisplayName(_ raw: String?) -> String {
     //    categorised open futures markets reach this arm (production db-query,
     //    2026-09-12); the largest are table_tennis (2,635) and other (1,467).
     return toTitleCaseAcronymSafe(key)
+}
+
+/// The label for a sport KEY on a row that names a TEAM rather than a market —
+/// search's Teams rows today.
+///
+/// #5780: that row shortened the key itself, `key.split("_").dropFirst()
+/// .joined(" ").uppercased()`, so a reader met the raw enum with the family
+/// filed off and the rest shouted: `baseball_milb` → "MILB" one line under a
+/// filter pill reading "MiLB", `icehockey_sweden_hockey_league` → "SWEDEN
+/// HOCKEY LEAGUE" where the server calls it "SHL", `mma_mixed_martial_arts`
+/// (1,233 teams, the largest group in the table) → "MIXED MARTIAL ARTS", and
+/// `tennis_atp_queens_club_champ` → "ATP QUEENS CLUB CHAMP", a truncation that
+/// only ever existed to fit a database column.
+///
+/// The server already answers this: every row of `sports` carries a display
+/// `name` ("MiLB", "SHL", "ATP Queen's Club Championships"), and the search
+/// payload hands the app the ones its results touch in the same `sports` facet
+/// the filter pills are built from. So the rule is: the served name when the
+/// page has it, otherwise the app's own shared rule — never a shortened key.
+///
+/// The fallback is `sportCategoryDisplayName`, deliberately, and not a fifth
+/// private formatter (#5723's whole finding was that this label had been
+/// written four times). It answers coarser than the facet does —
+/// `cricket_t20_blast` → "Cricket", not "T20 Blast" — and coarse is the right
+/// trade here: the facet is missing exactly when no result on the page is in
+/// that sport, which is when "which sport is this club?" is the reader's
+/// question and the tour name is not.
+func sportKeyDisplayName(_ key: String?, facets: [SportFacet]) -> String? {
+    guard let key, !key.isEmpty else { return nil }
+    if let served = facets.first(where: { $0.key == key })?.name,
+       !served.trimmingCharacters(in: .whitespaces).isEmpty {
+        // Through the house acronym repair on the way out: the server titles
+        // `tennis_atp` as "Tennis Atp", and the row used to print the key's
+        // last token, "ATP". Trading a correct acronym for a garbled one would
+        // be a regression the pill agreement hides. `properTitleCase` only
+        // REPAIRS words it recognises and leaves the rest alone, so "MiLB",
+        // "SHL" and "ATP Queen's Club Championships" pass through untouched.
+        return properTitleCase(served)
+    }
+    return sportCategoryDisplayName(key)
 }
 
 /// Maps a raw golf-tour key (as sent by the backend) to a presentable tour

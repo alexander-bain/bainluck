@@ -943,8 +943,11 @@ struct SearchView: View {
                     .lineLimit(1)
 
                 HStack(spacing: 6) {
-                    if let sport = event.sport {
-                        Text(sportDisplayName(for: sport))
+                    // #5780 — the server's own name for the sport when this page
+                    // has it, then the shared rule. Five of six Alcaraz rows read
+                    // "OPEN" before this, under a pill saying "ATP US Open".
+                    if let sport = sportKeyDisplayName(event.sport, facets: viewModel.sportFacets) {
+                        Text(sport)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -1042,8 +1045,8 @@ struct SearchView: View {
                     if let record = team.record {
                         Text(record).font(.caption2).foregroundStyle(.secondary)
                     }
-                    if let sport = team.sportKey {
-                        Text(sport.split(separator: "_").dropFirst().joined(separator: " ").uppercased())
+                    if let sport = sportKeyDisplayName(team.sportKey, facets: viewModel.sportFacets) {
+                        Text(sport)
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
