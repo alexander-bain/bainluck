@@ -248,6 +248,15 @@ struct EventDetailView: View {
                             Image(systemName: "square.and.arrow.up")
                                 .font(.system(size: 14))
                         }
+                        .recordsShareOpened {
+                            ShareInstrumentation.recordShareOpened(
+                                itemType: "event",
+                                itemId: String(eventId),
+                                itemName: vm.event.map { "\($0.awayTeam) vs \($0.homeTeam)" },
+                                category: DiscoverCategory.token(forSport: vm.event?.sport),
+                                surface: .eventDetail
+                            )
+                        }
                         PinButton(type: "event", id: eventId)
                     }
                 }

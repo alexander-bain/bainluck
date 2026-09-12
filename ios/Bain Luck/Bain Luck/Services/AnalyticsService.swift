@@ -151,12 +151,19 @@ enum AnalyticsService {
         ])
     }
 
+    /// `surface` defaults to Discover because that is where every caller but one
+    /// lives. It is an argument rather than a literal since #5525 put a share
+    /// button on the event and futures pages through this same event: those taps
+    /// are not Discover card actions, and reporting them as such would have made
+    /// the one number this event exists to carry — which surface a reader acted
+    /// on — unreadable in exactly the case it was added for.
     nonisolated static func trackDiscoverCardAction(
         action: String,
         itemId: String,
         itemType: String,
         category: String,
-        source: String
+        source: String,
+        surface: String = "discover"
     ) {
         log("feed_card_action", [
             "action": action,
@@ -164,7 +171,7 @@ enum AnalyticsService {
             "item_type": itemType,
             "category": category,
             "source": source,
-            "surface": "discover",
+            "surface": surface,
         ])
     }
 

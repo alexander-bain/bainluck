@@ -777,6 +777,8 @@ struct DiscoverView: View {
                             recordInteraction(for: item, action: .contextExpand, source: "context")
                         }, onContextCollapse: {
                             recordInteraction(for: item, action: .contextCollapse, source: "context")
+                        }, onShare: {
+                            recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue)
                         })
                     }
                     .contextMenu { discoverCardMenu(item) }
@@ -856,6 +858,8 @@ struct DiscoverView: View {
                             recordInteraction(for: item, action: .contextExpand, source: "context")
                         }, onContextCollapse: {
                             recordInteraction(for: item, action: .contextCollapse, source: "context")
+                        }, onShare: {
+                            recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue)
                         })
                     }
                     .contextMenu { discoverCardMenu(item) }

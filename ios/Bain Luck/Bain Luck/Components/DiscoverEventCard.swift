@@ -29,6 +29,9 @@ struct NativeEventDiscoverCard: View {
     var onOpen: (() -> Void)? = nil
     var onContextExpand: (() -> Void)? = nil
     var onContextCollapse: (() -> Void)? = nil
+    /// Fired when the reader taps the share icon — see the `ShareLink` below for
+    /// why this is a simultaneous gesture and not a button action. #5525.
+    var onShare: (() -> Void)? = nil
 
     /// This card's slate/blue defaults are where `ProbabilityBarPalette`'s came
     /// from — it was the one card that already used a *pair* rather than one
@@ -402,6 +405,7 @@ struct NativeEventDiscoverCard: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .recordsShareOpened { onShare?() }
                     .contextMenu {
                         Button(action: copyShareImage) {
                             Label("Copy Image", systemImage: "doc.on.doc")

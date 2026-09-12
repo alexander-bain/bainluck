@@ -85,10 +85,7 @@ enum DiscoverCategory {
         bundleChild: (FeedBundle) -> FeedItem? = { $0.items.first }
     ) -> String {
         if let event = item.event {
-            // Nil sport falls back to "other", not the old view's "sports" — which
-            // was not in `sportsCategories`, so it was a sports-looking token that
-            // routed the card to the non-sports partition anyway.
-            return event.sport?.split(separator: "_").first.map { $0.lowercased() } ?? "other"
+            return token(forSport: event.sport)
         }
         if let futures = item.futures {
             return futures.llmSportCategory?.lowercased() ?? "other"
@@ -141,6 +138,23 @@ enum DiscoverCategory {
             return storyKey(child, bundleChild: bundleChild)
         }
         return nil
+    }
+
+    /// The category token for a raw sport key: `baseball_mlb` → `baseball`.
+    ///
+    /// Nil, empty and unsplittable sports fall back to "other", not the old
+    /// view's "sports" — which was not in `sportsCategories`, so it was a
+    /// sports-looking token that routed the card to the non-sports partition
+    /// anyway.
+    ///
+    /// Named and lifted out of ``of(_:bundleChild:)`` by #5525, which needed the
+    /// same token from the event PAGE. Spelling the split a second time there
+    /// would have sent `baseball_mlb` where every feed row says `baseball`, and
+    /// a share from the page and a share from the card would have landed in two
+    /// buckets that no GROUP BY puts back together.
+    static func token(forSport sport: String?) -> String {
+        guard let first = sport?.split(separator: "_").first else { return "other" }
+        return first.lowercased()
     }
 
     /// Map a concept's raw domain onto the sport token the interleave understands.
