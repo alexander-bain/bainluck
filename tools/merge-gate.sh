@@ -173,7 +173,7 @@ fetch_master () {
       ;;
     124|137|143)
       FETCH_STATE=timeout
-      FETCH_NOTE="no answer inside ${FETCH_BOUND_S}s. This clone is shallow, so every fetch makes the server recompute across the boundary; 'git -C $REPO_PATH fetch --unshallow' once makes it instant. Override the bound with MERGE_GATE_FETCH_TIMEOUT_S."
+      FETCH_NOTE="no answer inside ${FETCH_BOUND_S}s. This clone is shallow, so every fetch makes the server recompute across the boundary. 'fetch --unshallow' is the eventual cure but is NOT a quick workaround — measured on this tree by int314 it sat 9 minutes at 0% CPU with .git flat at 2.4G and was killed, because it stalls on the very boundary recomputation it would remove; 'git -C $REPO_PATH fetch --depth=<n>' with a doubling n is the way through. Nothing below is blocked on it: ancestry falls back to the remote and composition reports inconclusive rather than guessing. Override the bound with MERGE_GATE_FETCH_TIMEOUT_S."
       ;;
     *)
       FETCH_STATE=failed
@@ -802,6 +802,36 @@ FIXEOF
     "oldp=\$PATH; PATH='$fx/bin':\$PATH; export SHIM_RC=1; \
      composition_scan '$fx/clean' main side; unset SHIM_RC; PATH=\$oldp; \
      [ \"\$COMP_VERDICT\" = conflict ]"
+
+  # ── The same empty base, one gate later (#5428). Composition reports it as
+  # `inconclusive`; release-required silently consumed it and printed a default
+  # as though it were a reading of the diff.
+  #
+  # BOTH PATTERNS BELOW BREAK THEIR OWN SPELLING with a character class, and
+  # that is not decoration. Written literally, each pattern is a string this
+  # file now contains IN THE CHECK ITSELF, so `grep` finds the check rather than
+  # the code and the assertion can never fail. Measured, not theorised: the
+  # first draft of the release-required check matched its own body and a mutant
+  # that renamed the echo away walked straight through it.
+  check "release-required announces a missing merge base instead of passing it off as a diff read" \
+    "/usr/bin/grep -q 'release-required BASI[S]' '$self'"
+  check "the missing-base note names the safe default rather than asserting the diff" \
+    "/usr/bin/grep -q 'SAFE DEFAUL[T], not a reading of this diff' '$self'"
+  # The two scans above prove the TEXT is there; neither notices if the branch
+  # printing it can no longer be reached. A mutant that changed the guard to
+  # `if false` left both of them green. So pin the guard to the line it guards:
+  # the announcement must sit directly under the emptiness test, which is the
+  # only condition under which it is true.
+  check "and the note is reachable — it sits directly under the empty-base test" \
+    "/usr/bin/grep -A1 'if \[ -z \"\\\$base\" \]; then' '$self' | /usr/bin/grep -q 'release-required BASI[S]'"
+  # `merge-base` writes to stderr when it has no base; unredirected that leaks a
+  # git error into a gate's output, where it reads as a failure of the gate.
+  check "the release-required merge-base read is quiet when there is no base" \
+    "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'merge-base \"\$MASTER\" \"\$SHA\" 2>/dev/null'"
+  check "the fetch note no longer sells --unshallow as the quick way out" \
+    "! /usr/bin/grep -q 'once makes it instan[t]' '$self'"
+  check "and it says instead what was measured — that --unshallow stalls too" \
+    "/usr/bin/grep -q 'NOT a quick workaroun[d]' '$self'"
 
   check "composition: only the conflict branch reaches stop, the other reaches inconc" \
     "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'conflict) stop \"composition\"' && \
@@ -1661,9 +1691,23 @@ esac
 # ─────────────────────────────────────────────────────────────────────────────
 rr_script="$REPO_PATH/.github/scripts/heroku-release-required.sh"
 if [ -x "$rr_script" ] || [ -r "$rr_script" ]; then
-  base="$(git -C "$REPO_PATH" merge-base "$MASTER" "$SHA")"
+  base="$(git -C "$REPO_PATH" merge-base "$MASTER" "$SHA" 2>/dev/null)"
   rr="$(cd "$REPO_PATH" && bash "$rr_script" "$base" "$SHA" 2>/dev/null | tail -1)"
   echo "  ----  release-required           $rr — computed here from the diff; the CI check-run of this name is push-gated, reads 'skipped' on EVERY PR sha, and is never a verdict"
+  # THE FOURTH PLACE A MISSING BASE REACHES. #5456 gave composition three
+  # verdicts because `merge-base` can come back empty; this line consumes the
+  # same empty string one gate later and says nothing about it.
+  #
+  # It is not a correctness hole — the release script FAILS TOWARD RELEASING and
+  # prints `true` with "no usable base commit — cannot prove frontend-only",
+  # which is the right default and is left alone. It is a HONESTY hole: read
+  # plainly, `release-required true` is a statement about the diff, and here it
+  # is a statement about the clone. The cost is a frontend-only sha batched into
+  # a server-side release for nothing, on the say-so of a gate that never looked
+  # at its files.
+  if [ -z "$base" ]; then
+    echo "  ----  release-required BASIS     NO MERGE BASE in this clone (the same empty base #5456's composition scan reports as inconclusive) — the script fails toward releasing, so '$rr' is its SAFE DEFAULT, not a reading of this diff. Deepen the clone or read it from CI before batching on it."
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
