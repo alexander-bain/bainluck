@@ -665,9 +665,31 @@ def game_may_still_be_running(last_snapshot, now) -> bool:
 # ── A FORMAT'S MAXIMUM PROTECTS A MATCH THAT IS REPORTING (#3946) ────────────
 #
 #: The wall-clock bound for a live row that NOTHING has ever reported on, by
-#: sport prefix. A sport absent from this map keeps its ``SPORT_MAX_DURATIONS``
-#: entry unchanged — this is a narrowing for two measured sports, never a
-#: global clamp.
+#: sport prefix, with a ``"default"`` floor for every sport that has no entry
+#: of its own.
+#:
+#: THIS IS A GLOBAL CLAMP — BUT ONLY FOR NEVER-OBSERVED ROWS (#5158). Until
+#: 2026-09-12 this comment read "a narrowing for two measured sports, never a
+#: global clamp", and :func:`wall_clock_bound_hours` returned the sport's full
+#: maximum for any sport absent from the map. That ban was written when the map
+#: held two measured sports, and it did not consider the case that turned out to
+#: matter: a sport we can NEVER measure *because* nothing observes it. cricket,
+#: esports and ``icehockey_other`` produced fewer than five completed rows
+#: carrying a score in 21 days — the same fact that puts them in this cohort —
+#: and where duration data existed it was contaminated by gotcha #22
+#: (``soccer_netherlands_eredivisie`` p99 51.45h). The measured bar the rest of
+#: this comment sets can never be met for exactly the sports that need it, so
+#: waiting for it meant those rows stayed broken forever. Alex's orchestrator
+#: ruled the default in on 2026-09-11 (live/149's question (a)).
+#:
+#: For a row nothing has ever observed, "how long can a match of this sport
+#: last" is the wrong question — the match may not be happening at all. 2.5h is
+#: a "nothing has spoken" timeout, not a duration estimate.
+#:
+#: The clamp can only ever NARROW (:func:`wall_clock_bound_hours` takes a
+#: ``min``) and only ever applies when :func:`event_has_never_been_observed` is
+#: True, so a match that anything at all is reporting on keeps its sport's full
+#: maximum exactly as before.
 #:
 #: WHY A SECOND NUMBER. ``SPORT_MAX_DURATIONS`` answers "how long can a match of
 #: this sport last", and its entries are sized by the LONGEST format the sport
@@ -693,14 +715,59 @@ def game_may_still_be_running(last_snapshot, now) -> bool:
 #:    completion was itself derived. Soccer has no ``SPORT_MAX_DURATIONS`` entry
 #:    at all today, so these rows ride the 4.0h default.
 #:
-#: Deliberately NOT listed: ``baseball`` (MLB's own p99 real duration is 4.22h
-#: against a 5.0 maximum — half an hour of headroom is not worth the risk),
-#: ``americanfootball`` and ``golf`` (a 4h college game and an 8h round are
-#: ordinary, and neither appears in the unobserved population).
+#:  * ``rugbyleague`` = 2.5 — MEASURED, production 2026-09-11, and the one entry
+#:    here that needed no ruling because it meets the bar above:
+#:    ``rugbyleague_nrl`` n=22, p50 2.00 / p95 2.21 / p99 2.26 / max 2.27, a tight
+#:    distribution with no gotcha-#22 contamination. It is numerically equal to
+#:    ``default`` today and so changes nothing on its own — it is here to PIN the
+#:    measured value, so that moving the policy default later cannot silently
+#:    move a bound somebody actually measured.
+#:  * ``default`` = 2.5 — NOT a measured duration. See the clamp note above.
+#:
+#: The sports deliberately held OUT of the default live in
+#: :data:`UNOBSERVED_DEFAULT_EXEMPT_PREFIXES`.
 UNOBSERVED_MAX_HOURS: dict[str, float] = {
     "tennis": 3.0,
     "soccer": 2.5,
+    "rugbyleague": 2.5,
+    "default": 2.5,
 }
+
+#: The key of :data:`UNOBSERVED_MAX_HOURS` that is a fallback rather than a sport
+#: prefix. Named rather than inlined because it must be excluded from prefix
+#: matching: ``"default"`` is not a sport, and a row whose sport key happened to
+#: start with those letters must not match it as one.
+UNOBSERVED_DEFAULT_KEY = "default"
+
+#: Sport prefixes that keep their FULL ``SPORT_MAX_DURATIONS`` maximum even when
+#: never observed — the default clamp does not reach them.
+#:
+#: These are the exclusions the pre-#5158 comment reasoned its way to, and they
+#: are preserved deliberately rather than swept away by the new default, because
+#: each was a measured decision and a blanket clamp would silently reverse all
+#: three. ``test_a_sport_with_no_entry_is_untouched_even_when_unobserved`` pins
+#: them.
+#:
+#:  * ``golf`` — an 8h round is ordinary. MEASURED 2026-09-12: **0** never-observed
+#:    live golf rows, so the exemption costs nothing today.
+#:  * ``americanfootball`` — a 4h college game is ordinary. MEASURED 2026-09-12:
+#:    **0** never-observed live rows.
+#:  * ``baseball_mlb`` — MLB's own p99 real duration is 4.22h against a 5.0
+#:    maximum, and half an hour of headroom is not worth the risk.
+#:
+#: 🔴 ``baseball_mlb``, NOT ``baseball``. MEASURED 2026-09-12, and it is the whole
+#: reason this constant is prefix-matched rather than a flat sport list: the
+#: never-observed live board held **7 baseball rows and none of them were MLB** —
+#: ``baseball_npb`` (5) and ``baseball_milb`` (2, the worst at 4.5h elapsed and
+#: entitled to 5.5h of a lit LIVE badge). The original exclusion was reasoned
+#: about MLB's duration alone, but NPB and MiLB ride the same ``baseball`` prefix
+#: at the same 5.0h maximum. Exempting the whole prefix would have left the single
+#: worst row in #5158's cohort unfixed while reading as if it were handled.
+UNOBSERVED_DEFAULT_EXEMPT_PREFIXES: tuple[str, ...] = (
+    "golf",
+    "americanfootball",
+    "baseball_mlb",
+)
 
 
 def event_has_never_been_observed(
@@ -768,22 +835,47 @@ def wall_clock_bound_hours(sport_key, sport_max_hours, never_observed: bool) -> 
     """How many hours past ``commence_time`` may this row keep claiming to be live?
 
     The sport's own maximum, except for a row nothing has ever observed, which
-    gets the shorter of that maximum and its :data:`UNOBSERVED_MAX_HOURS` entry.
+    gets the shorter of that maximum and its :data:`UNOBSERVED_MAX_HOURS` entry
+    — or, since #5158, the ``default`` entry if its sport has none of its own.
     ``min`` and not a straight substitution: the unobserved bound narrows a
     window, and a sport whose maximum is already shorter than its entry must not
     have it WIDENED by this function.
 
     Longest matching prefix wins, so a future ``tennis_atp_us_open`` entry would
     beat ``tennis`` rather than depending on dict insertion order the way
-    ``get_max_duration_for_sport`` does.
+    ``get_max_duration_for_sport`` does. That arbitration runs across the
+    exemptions too, which is what lets ``baseball_mlb`` keep its full 5.0h while
+    ``baseball_npb`` and ``baseball_milb`` — same prefix, same maximum, and the
+    rows actually stuck on the live board — fall to the default.
+
+    An exemption and an entry never tie: they would have to be the same string,
+    and a prefix in both places is a contradiction the table should not express.
+    Ties are resolved toward the exemption, the conservative direction, because
+    it is the one that cannot shorten a bound.
     """
     if not never_observed:
         return sport_max_hours
     key = sport_key or ""
-    matching = [p for p in UNOBSERVED_MAX_HOURS if key.startswith(p)]
-    if not matching:
+
+    entries = [
+        p
+        for p in UNOBSERVED_MAX_HOURS
+        if p != UNOBSERVED_DEFAULT_KEY and key.startswith(p)
+    ]
+    exemptions = [p for p in UNOBSERVED_DEFAULT_EXEMPT_PREFIXES if key.startswith(p)]
+
+    longest_entry = max(entries, key=len) if entries else None
+    longest_exemption = max(exemptions, key=len) if exemptions else None
+
+    if longest_exemption is not None and (
+        longest_entry is None or len(longest_exemption) >= len(longest_entry)
+    ):
         return sport_max_hours
-    return min(sport_max_hours, UNOBSERVED_MAX_HOURS[max(matching, key=len)])
+
+    bound = UNOBSERVED_MAX_HOURS[
+        longest_entry if longest_entry is not None else UNOBSERVED_DEFAULT_KEY
+    ]
+    return min(sport_max_hours, bound)
 
 
 def venue_live_write_is_a_resurrection(status, completed_at) -> bool:
