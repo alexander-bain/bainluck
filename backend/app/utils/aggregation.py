@@ -363,6 +363,65 @@ def wps_numeric_sql(source: str, column: str = "win_probability_sources") -> str
     )
 
 
+#: Statuses in which the game has NOT started. See `_relative_decay_applies`.
+_PREGAME_STATUSES = frozenset({"scheduled"})
+
+
+def _relative_decay_applies(status: Optional[str]) -> bool:
+    """Whether relative recency decay may touch this event's weights (#1999).
+
+    RELATIVE RECENCY IS AN IN-PLAY RULE, and #1829 never said so out loud
+    because its specimen was in-play: a sportsbook frozen at 87% while a game
+    it had stopped quoting went to 0-5 in the 9th. Every line of that reasoning
+    assumes the sources are all watching one fast-moving truth, so that a source
+    which has fallen behind the others has fallen behind the GAME.
+
+    Before first pitch nothing is moving, and the assumption inverts. A
+    sportsbook reprices a Saturday fixture a handful of times a day; Kalshi
+    ticks all night. The age disagreement between them is then the pure cadence
+    difference the decay's own docstring promises to ignore ("uniform age is not
+    staleness; it is the polling cadence") — only measured BETWEEN two pollers
+    instead of across one. Nothing has gone stale. The sportsbook's line from
+    four hours ago is still the sportsbook's opinion.
+
+    MEASURED, 2026-09-11 23:30Z, the shipped `compute_aggregate_probability`
+    over real `win_probability_sources` rows on the whole -6h/+48h board:
+
+        status       multi-source   decay moves the number   median    max
+        scheduled            362                      128    12.0pt   30.0pt
+        suspended             25                       14     7.8pt   43.0pt
+        completed             32                        3     1.0pt    3.8pt
+        live                  16                        1     0.5pt    0.5pt
+
+    So the decay does essentially nothing on the population it was built for and
+    12 points of damage on the one it was never reasoned about. `betting` — the
+    3.0 source, our heaviest — sits at its 0.1 floor on 224 of those 378 events
+    and is the source the decay removes from the hero in 96 of the 129 changes.
+
+    THE SPECIMEN IS ON A MARQUEE FIXTURE. Aston Villa v Nottingham Forest
+    (15297691, EPL, kickoff +14h): 18 sportsbooks say 63.4%, one Kalshi price
+    says 42.5%, betting's stamp is 3.5h older, so it decays 3.0 -> 0.3 and
+    production serves `hero_probability = 0.425` under `hero_probability_source
+    = "blend"`. The page captions it "11 sportsbooks" while its own chart line
+    sits at ~59% for three days — #240's hero-disagrees-with-chart contradiction
+    rebuilt out of the decay instead of out of the mean.
+
+    THE GATE IS PRE-GAME ONLY, WHICH IS NARROWER THAN ALL THREE CANDIDATES
+    #1999 LISTED, and the third row of that table is why. Gating on
+    ``status == 'live'`` — the issue's first candidate — would also stop
+    decaying `suspended`, and there the decay is currently RIGHT: those 14 rows
+    are finished games whose Kalshi leg has settled to 0.01/0.99, and undecaying
+    them would republish the last in-play sportsbook line over a settled market
+    (15308773: 0.01 -> 0.4401). Refusing the decay only where the game has not
+    started leaves live, suspended, completed and voided bit-for-bit unchanged,
+    so the blast radius is exactly the population whose premise fails.
+
+    An unknown or absent status keeps decaying — the monotone default, the same
+    one `effective_source_weights` gives an entry with no ``updated_at``.
+    """
+    return (status or "").lower() not in _PREGAME_STATUSES
+
+
 def _relative_staleness_multiplier(relative_age_seconds: float) -> float:
     """Weight multiplier for a reading that is `relative_age` older than the
     freshest reading on the same event.
@@ -730,8 +789,15 @@ def effective_source_weights(
     # Relative recency. The reference is the freshest stamp on the event,
     # never the wall clock: uniform age is cadence, not staleness, and a
     # clock-free rule cannot drift (gotcha #44).
+    #
+    # ...and it is an IN-PLAY rule (#1999). Before the game starts the sources
+    # are not watching one moving truth, so their age disagreement is the
+    # cadence difference between two pollers rather than one of them falling
+    # behind. `_relative_decay_applies` carries the measurement.
     decay_stamps = {k: t for k, t in stamps.items() if k not in _UNCAPPED_SOURCES}
-    if decay_stamps:
+    if decay_stamps and _relative_decay_applies(
+        event_status or getattr(event, "status", None)
+    ):
         freshest = max(decay_stamps.values())
         for i, src in enumerate(keys):
             stamp = decay_stamps.get(src)
