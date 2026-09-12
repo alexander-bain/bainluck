@@ -341,7 +341,7 @@ def test_the_served_production_chip_is_gone_and_the_section_is_not():
         ]
     )
     assert [c["query"] for c in chips] == ["Rayan Cherki"]
-    assert chips[0]["label"] == "Falling -94.0% — EPL Playmaker Award"
+    assert chips[0]["label"] == "Falling -94 points — EPL Playmaker Award"
 
 
 # ---------------------------------------------------------------------------

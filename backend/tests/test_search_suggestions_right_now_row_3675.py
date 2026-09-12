@@ -371,7 +371,7 @@ def test_a_mover_that_names_an_entity_still_becomes_a_chip():
     assert chips == [
         {
             "query": "Cormac Sharvin",
-            "label": "Falling -29.0% — Amgen Irish Open Winner",
+            "label": "Falling -29 points — Amgen Irish Open Winner",
             "market_id": 7,
         }
     ]
