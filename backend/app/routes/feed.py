@@ -3239,21 +3239,25 @@ async def get_feed(
     # edition" and is why this is derived where the principal is already known.
     _edition_request = (edition or "").strip() or None
     _edition_status = None
-    _edition_policy = edition_policy_fingerprint(
-        sport=sport,
-        limit=limit,
-        include_events=include_events,
-        include_futures=include_futures,
-        tags=tags,
-        event_pct=event_pct,
-        my_teams_only=my_teams_only,
-        mode=mode,
-        category=category,
-        principal=(
-            f"u:{feed_user.id}"
-            if feed_user
-            else (f"s:{feed_session_id}" if feed_session_id else None)
-        ),
+
+    def _edition_policy_for(principal):
+        return edition_policy_fingerprint(
+            sport=sport,
+            limit=limit,
+            include_events=include_events,
+            include_futures=include_futures,
+            tags=tags,
+            event_pct=event_pct,
+            my_teams_only=my_teams_only,
+            mode=mode,
+            category=category,
+            principal=principal,
+        )
+
+    _edition_policy = _edition_policy_for(
+        f"u:{feed_user.id}"
+        if feed_user
+        else (f"s:{feed_session_id}" if feed_session_id else None)
     )
 
     async def _read_edition_manifest():
@@ -3803,6 +3807,49 @@ async def get_feed(
         _previous_at = _record_feed_timing(
             _timings, _started_at, _previous_at, "personalization"
         )
+
+        # --- T4-B2 / #5102: an INERT session reads the ANONYMOUS edition ------
+        #
+        # CERT-2704's BLOCK, and it is the documented native path rather than an
+        # edge case. The native surface sends a persistent per-install session
+        # id, so `feed_session_id` is set — but its personalization context is
+        # usually EMPTY, and LAT-P089 (just below) therefore serves it the
+        # ANONYMOUS shared payload. That payload carries the anonymous build's
+        # edition token, whose manifest was minted under the ANONYMOUS policy.
+        #
+        # Fingerprinting this reader by its session id meant page two looked up
+        # a session-keyed manifest that had never existed, read `expired`, and
+        # served the unpinned order. Measured on the shipped helpers: anonymous
+        # policy `0c75c691ef78f06c`, session policy `0d4d2a908842c71a`,
+        # `session_manifest_exists=False`. The pin was dead for exactly the
+        # readers it was built for, and it failed SILENTLY — `expired` is a
+        # legitimate answer, so nothing anywhere would have gone red.
+        #
+        # The predicate is LAT-P089's own, not a new one: `ctx ==
+        # PersonalizationContext()` is structural equality and is already what
+        # licenses serving this reader the shared list. If the shared LIST may be
+        # served to them, the shared ORDER over that list may be too — they are
+        # the same cards, and an order carries strictly less than the payload it
+        # orders.
+        #
+        # 🔴 THE ISOLATION DIRECTION IS THE WHOLE RISK. A genuinely personalized
+        # reader must never resolve the anonymous manifest, or one reader's
+        # ranking is pinned onto another's session. That is why this narrows only
+        # under the equality test and why `my_teams_only` is refused outright,
+        # exactly as the page base refuses it: a followed-teams page must not be
+        # reachable from a shared list even when the context happens to be empty.
+        # NOT gated on `_edition_request`. The narrowing has to move the MINT as
+        # well as the lookup, or an inert session that builds page one itself
+        # stamps a session-keyed manifest and then cannot find it one request
+        # later — the same failure, arrived at from the other side. An inert
+        # session's build IS the anonymous build; that is LAT-P089's premise, and
+        # this just says so for the manifest too.
+        if (
+            (feed_user or feed_session_id)
+            and not my_teams_only
+            and ctx == PersonalizationContext()
+        ):
+            _edition_policy = _edition_policy_for(None)
 
         # --- LAT-P089 (Q407 Item 1): the inert principal must not pay a private
         # cold build ---------------------------------------------------------

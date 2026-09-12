@@ -406,7 +406,7 @@ def test_the_fingerprint_is_computed_after_the_server_side_defaulting():
 
     src = inspect.getsource(get_feed)
     defaulting = src.index('event_pct = 0.15')
-    fingerprint = src.index("_edition_policy = edition_policy_fingerprint(")
+    fingerprint = src.index("_edition_policy = _edition_policy_for(")
     assert defaulting < fingerprint, (
         "the Discover defaulting must run BEFORE the edition fingerprint"
     )
@@ -421,7 +421,7 @@ def test_the_fingerprint_is_computed_after_the_principal_is_resolved():
 
     src = inspect.getsource(get_feed)
     principal = src.index("feed_session_id = None if debug_global else session_id")
-    fingerprint = src.index("_edition_policy = edition_policy_fingerprint(")
+    fingerprint = src.index("_edition_policy = _edition_policy_for(")
     assert principal < fingerprint
 
 
@@ -441,9 +441,15 @@ def test_the_route_actually_passes_the_principal_into_the_fingerprint():
     from app.routes.feed import get_feed
 
     src = inspect.getsource(get_feed)
-    call = src[src.index("_edition_policy = edition_policy_fingerprint(") :]
+    # The helper that actually calls the fingerprint must forward a principal…
+    helper = src[src.index("def _edition_policy_for(principal):") :]
+    helper = helper[: helper.index("\n    _edition_policy = ")]
+    assert "principal=principal" in helper, (
+        "the route must bind the edition to a principal"
+    )
+    # …and the default binding must derive one from BOTH identity sources.
+    call = src[src.index("_edition_policy = _edition_policy_for(") :]
     call = call[: call.index("\n    )\n")]
-    assert "principal=" in call, "the route must bind the edition to a principal"
     assert "feed_user" in call and "feed_session_id" in call, (
         "both an authenticated user and a session must reach the fingerprint"
     )
@@ -473,3 +479,78 @@ def test_a_duplicate_identity_in_the_build_resolves_deterministically():
     )
     assert status == EDITION_STATUS_PINNED
     assert items[0] is first
+
+
+def test_an_inert_session_resolves_the_anonymous_edition_5102():
+    """🔴 CERT-2704's BLOCK, and it is the documented NATIVE path.
+
+    The native surface sends a persistent per-install session id, so
+    ``feed_session_id`` is set — but its personalization context is usually
+    EMPTY, and LAT-P089 therefore serves it the ANONYMOUS shared payload, which
+    carries the anonymous build's edition token and whose manifest was minted
+    under the ANONYMOUS policy.
+
+    Fingerprinting that reader by session id meant page two looked up a
+    session-keyed manifest that had never existed, read ``expired``, and served
+    the unpinned order. Measured on the shipped helpers: anonymous policy
+    ``0c75c691ef78f06c``, session policy ``0d4d2a908842c71a``. The pin was dead
+    for exactly the readers it was built for — and SILENTLY, because ``expired``
+    is a legitimate answer that nothing anywhere would have flagged.
+    """
+    from app.routes.feed import get_feed
+
+    src = inspect.getsource(get_feed)
+    block = src[src.index("# --- T4-B2 / #5102: an INERT session reads") :]
+    block = block[: block.index("_edition_policy = _edition_policy_for(None)")]
+    # 🔴 Read the CONDITION, not the prose above it. The first cut of this test
+    # scanned the whole block and matched the explanatory comment's own mention
+    # of `_edition_request` — a grep hitting its own check line, which is a
+    # guard that reports on its vocabulary instead of the code.
+    narrow = block[block.rindex("if (") :]
+    assert "ctx == PersonalizationContext()" in narrow, (
+        "the narrowing must use LAT-P089's own structural-equality predicate, "
+        "not a looser test of its own"
+    )
+    assert "not my_teams_only" in narrow, (
+        "a followed-teams page must not be reachable from a shared list, "
+        "exactly as the page base refuses it"
+    )
+    assert "_edition_request" not in narrow, (
+        "the narrowing must move the MINT as well as the lookup — gated on a "
+        "pin request, an inert session that builds page one would stamp a "
+        "session-keyed manifest it cannot find one request later"
+    )
+
+
+def test_a_personalized_reader_never_resolves_the_anonymous_edition_5102():
+    """The isolation direction, which is the entire risk of the fix above.
+
+    If a genuinely personalized reader could resolve the anonymous manifest,
+    one reader's ranking would be pinned onto another's session. Asserted where
+    it is decided — the two fingerprints differ, so a personalized reader
+    physically cannot address the anonymous manifest — and then that exactly one
+    site in the route may narrow.
+    """
+    assert edition_policy_fingerprint(limit=20) != edition_policy_fingerprint(
+        limit=20, principal="u:7"
+    )
+
+    from app.routes.feed import get_feed
+
+    src = inspect.getsource(get_feed)
+    assert src.count("_edition_policy_for(None)") == 1, (
+        "exactly one place may narrow an edition to the anonymous policy"
+    )
+
+
+def test_the_inert_narrowing_happens_after_the_context_is_loaded():
+    """Order again, and it cannot be otherwise: ``ctx`` does not exist until
+    ``_load_personalization_context`` has run, so a narrowing placed above it
+    would read a name that is not yet bound — or, worse, a stale one from an
+    earlier assignment if the code is later reshuffled."""
+    from app.routes.feed import get_feed
+
+    src = inspect.getsource(get_feed)
+    assert src.index("_load_personalization_context(") < src.index(
+        "_edition_policy = _edition_policy_for(None)"
+    )
