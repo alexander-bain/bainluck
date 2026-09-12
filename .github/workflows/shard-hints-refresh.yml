@@ -1,0 +1,339 @@
+name: Shard hints refresh
+
+# #3497 — stop the CI shard balance hints decaying until they take master red
+# for every lane at once.
+#
+# THE FAILURE THIS CLOSES. `backend/scripts/ci_shard_durations.json` holds the
+# measured per-file seconds the shard packer balances against. Every lane that
+# adds a test file makes it staler; the numerator only ever moved when a human
+# remembered to run `--record`. It went stale twice in five days and each time
+# reddened master on no branch's change — `deploy` is gated on `backend-tests`,
+# so production sat pinned while lanes merged (2026-09-06 ~25 min, 2026-09-11
+# ~50 min with three lanes independently building the same one-file repair).
+#
+# #5220 fixed the GUARD: it counts unmeasured files instead of a ratio against a
+# growing denominator, so a crossing now means "nobody refreshed" rather than
+# "the suite grew", and it warns at 150 long before it fails at 600. That bought
+# runway; it did not stop the decay. Measured over 19 hours on 2026-09-11/12,
+# `measured` did not move at all — 1,654 — while the suite grew 1,655 -> 1,722
+# files. This workflow is the half that moves the numerator.
+#
+# WHY `workflow_run` AND NOT `schedule:` — this is the load-bearing choice here,
+# and it is measured, not preferred:
+#
+#   * The input this job needs IS a CI run: `--record` rebuilds the hints from
+#     the `--durations=0` output the four `backend-tests` shards already print.
+#     `workflow_run` hands us the run id whose logs we want. A scheduled job
+#     would have to go looking for a run to read, and pick.
+#   * This repo's cron scheduler is not approximately on time. #5662 measured
+#     all 100 `event=schedule` runs across 2026-09-02..09-12: 0 of 98 fired
+#     within 5 minutes of their slot; delay min/median/max 19m / 239m / 359m,
+#     with `created_at == run_started_at`, so the lateness is the scheduler and
+#     not a runner queue. A refresh on a cron would therefore run ~4h after some
+#     unrelated master sha, against a suite that had moved again.
+#
+# COST. The expensive half — downloading ~4 job logs, installing the backend
+# requirements, and running pytest's collection census — happens only once the
+# warning threshold is crossed, which at the measured ~60 new test files a day
+# is roughly weekly. Every other run is a checkout plus one stdlib `--staleness`
+# read and exits in seconds. That ordering is asserted by
+# `backend/tests/test_shard_hints_refresh_3497.py`, not merely intended: a cheap
+# gate placed after the install is a cheap gate that costs six minutes.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  refresh:
+    name: Refresh shard duration hints from this run's own logs
+    runs-on: ubuntu-latest
+    # CI runs on `pull_request` too, and on every branch. Only a green push to
+    # master is a valid source: its logs describe the suite as master has it,
+    # and its sha is what the refreshed file will be based on.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'master')
+    # Two of these can be in flight at once (master pushes ~31x/day), and they
+    # would race on the same branch ref. Cancel the older: its logs are the
+    # staler description of the suite.
+    concurrency:
+      group: shard-hints-refresh
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      # `workflow_dispatch` has no triggering run; fall back to this workflow's
+      # own run id so the log fetch below fails loudly and namefully rather than
+      # composing a URL out of an empty string.
+      RUN_ID: ${{ github.event.workflow_run.id || github.run_id }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The refresh must be based on the sha whose logs it reads. Checking
+          # out a moved master would record measurements for one tree onto
+          # another — and the file is a census of test FILES, which is exactly
+          # what differs between the two.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      # ---------------------------------------------------------------- HOLD
+      - name: Is a refresh due at all?
+        id: staleness
+        # Stdlib only — `--staleness` exists so this question can be asked
+        # before `pip install -r requirements.txt`. Never piped (gotcha #54).
+        run: |
+          set -uo pipefail
+          python3 scripts/ci_shard.py --staleness > /tmp/staleness.json
+          RC=$?
+          cat /tmp/staleness.json
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::--staleness exited $RC, which is a story about the harness, not a verdict."
+            exit 1
+          fi
+          UNMEASURED="$(python3 -c 'import json;print(json.load(open("/tmp/staleness.json"))["unmeasured"])')"
+          DUE="$(python3 -c 'import json;print("1" if json.load(open("/tmp/staleness.json"))["needs_refresh"] else "")')"
+          echo "unmeasured=$UNMEASURED" >> "$GITHUB_OUTPUT"
+          echo "due=$DUE" >> "$GITHUB_OUTPUT"
+          if [ -z "$DUE" ]; then
+            echo "HOLD — $UNMEASURED unmeasured files is under the warning threshold. Nothing to do."
+          else
+            echo "REFRESH — $UNMEASURED unmeasured files is over the warning threshold."
+          fi
+
+      # ------------------------------------------------------------- REFRESH
+      - name: Fetch the four shard logs from the run that triggered this
+        if: steps.staleness.outputs.due
+        run: |
+          set -uo pipefail
+
+          # WHICH JOBS MUST BE PRESENT IS ASKED OF THE API, NOT ASSUMED TO BE 4.
+          # `--record` REPLACES the hint file with whatever the log contains, so
+          # a partial set of shard logs does not degrade the result, it DELETES
+          # the measurements for every file the missing shard owned — roughly a
+          # quarter of the suite, written as if it were a fresh measurement.
+          # That is strictly worse than not refreshing, and it would look like a
+          # successful refresh. So the shard count comes from the run itself and
+          # every one of them must have succeeded.
+          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("backend-tests")) | "\(.name)\t\(.conclusion)"' \
+            > /tmp/shardjobs.txt
+          EXPECTED="$(wc -l < /tmp/shardjobs.txt | tr -d ' ')"
+          cat /tmp/shardjobs.txt
+          if [ "$EXPECTED" -eq 0 ]; then
+            echo "::error::run $RUN_ID has no backend-tests jobs — it was probably a"
+            echo "::error::frontend-scoped run, whose shards are skipped. Nothing to record."
+            exit 1
+          fi
+          # Counted, not `grep -qv`. That idiom returns 0 when ANY line fails to
+          # match, which is the verdict wanted here — but it is also notice 44's
+          # documented trap (the lane shell's ugrep inverts it and the check fails
+          # OPEN), so the same sentence reads correctly in CI and wrongly anywhere
+          # a person pastes it. A count cannot be misread in either shell.
+          OK="$(grep -c 'success$' /tmp/shardjobs.txt || true)"
+          if [ "$OK" -ne "$EXPECTED" ]; then
+            echo "::error::only $OK of $EXPECTED backend-tests jobs succeeded; refusing to"
+            echo "::error::record a partial suite."
+            exit 1
+          fi
+
+          gh api "repos/$REPO/actions/runs/$RUN_ID/logs" > /tmp/logs.zip
+          mkdir -p /tmp/logs
+          # unzip's exit code is NOT the gate. It warns (and exits non-zero) over
+          # filenames in OTHER jobs' logs that the local filesystem dislikes —
+          # `frontend-build`'s step names contain an em-dash, which is enough on
+          # some hosts. What matters is whether the shard logs we need arrived,
+          # and that is asserted directly below.
+          unzip -q -o /tmp/logs.zip -d /tmp/logs; echo "unzip exit $?"
+
+          # The archive holds every shard log TWICE — a per-job directory and a
+          # flat top-level copy — and both match the obvious glob. That selection
+          # is `shard_log_files()` in ci_shard.py, not a `find` here, so it is
+          # reachable by a test (the reason `heavy_sync_decision.py` is a script
+          # and not a heredoc). It also enforces the shard count: recording from
+          # a partial set deletes a whole shard's measurements and looks like a
+          # successful refresh.
+          python3 scripts/ci_shard.py --shard-logs /tmp/logs --expect "$EXPECTED" > /tmp/loglist.txt
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            cat /tmp/loglist.txt
+            echo "::error::--shard-logs exited $RC; refusing to record."
+            exit 1
+          fi
+          echo "$(wc -l < /tmp/loglist.txt | tr -d ' ') step logs from $EXPECTED shard jobs"
+          # `-0`, not `xargs -a`: the step names inside these archives contain
+          # spaces, and `xargs -a` is a GNU extension that BSD/macOS xargs
+          # rejects outright — so the obvious form works on the runner and dies
+          # for anyone reproducing this by hand on a laptop.
+          tr '\n' '\0' < /tmp/loglist.txt | xargs -0 cat > /tmp/shards.log
+          echo "concatenated $(wc -l < /tmp/shards.log | tr -d ' ') log lines"
+
+      - name: Install dependencies
+        if: steps.staleness.outputs.due
+        run: pip install -r requirements.txt
+
+      - name: Record
+        if: steps.staleness.outputs.due
+        # `--require-census` because this write is unattended: without the
+        # pytest collection census, files whose tests all fall under pytest's
+        # 0.005s print threshold record at ~0s and get packed as free. A human
+        # sees that warning; a robot commits it.
+        run: |
+          set -uo pipefail
+          python3 scripts/ci_shard.py --record /tmp/shards.log --require-census
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::--record exited $RC; nothing will be committed."
+            exit 1
+          fi
+
+      - name: The refreshed file must be better than the one it replaces
+        if: steps.staleness.outputs.due
+        # An unattended write needs its own after-the-fact check. `--record`
+        # succeeding says it parsed something, not that the result is an
+        # improvement (gotcha #53: "it returned" is not "it worked").
+        run: |
+          set -uo pipefail
+          BEFORE="${{ steps.staleness.outputs.unmeasured }}"
+          python3 scripts/ci_shard.py --staleness > /tmp/staleness-after.json
+          cat /tmp/staleness-after.json
+          AFTER="$(python3 -c 'import json;print(json.load(open("/tmp/staleness-after.json"))["unmeasured"])')"
+          echo "unmeasured: $BEFORE -> $AFTER"
+          if [ "$AFTER" -ge "$BEFORE" ]; then
+            echo "::error::the refresh did not reduce the unmeasured count ($BEFORE -> $AFTER)."
+            echo "::error::Refusing to open a PR for a file that is no improvement."
+            exit 1
+          fi
+          python3 scripts/ci_shard.py --verify --of 4
+
+      - name: Open (or update) the refresh PR
+        if: steps.staleness.outputs.due
+        working-directory: .
+        run: |
+          set -uo pipefail
+          if git diff --quiet -- backend/scripts/ci_shard_durations.json; then
+            echo "Hints are already current on this sha — nothing to propose."
+            exit 0
+          fi
+
+          BRANCH="ci/shard-hints-refresh"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add backend/scripts/ci_shard_durations.json
+          # EVERY LINE BELOW STAYS INDENTED TO THE BLOCK SCALAR, HEREDOC BODIES
+          # AND `EOF` INCLUDED. YAML strips this block's common indentation
+          # before bash ever sees it, so an "obviously column-0" heredoc
+          # terminator actually ENDS THE YAML BLOCK — the whole file then fails
+          # to parse, and a workflow that does not parse is a workflow that
+          # never runs.
+          AFTER="$(python3 -c 'import json;print(json.load(open("/tmp/staleness-after.json"))["unmeasured"])')"
+          git commit -m "ci(#3497): refresh shard duration hints from run $RUN_ID" \
+                     -m "Automated by .github/workflows/shard-hints-refresh.yml. Data only: one
+          regenerated file of balance hints. The partition is total and disjoint
+          whatever the weights say — \`--verify\` proves that separately."
+
+          # Always force: this branch is a rolling proposal, not history. The
+          # previous head was a proposal against an older master and nobody has
+          # anything based on it.
+          git push --force origin "$BRANCH"
+
+          cat > /tmp/pr-body.md <<EOF
+          Automated refresh of \`backend/scripts/ci_shard_durations.json\` — **#3497**, the half #5220 left open.
+
+          | | |
+          |---|---|
+          | source run | [$RUN_ID](https://github.com/$REPO/actions/runs/$RUN_ID) |
+          | source sha | \`$SOURCE_SHA\` |
+          | unmeasured files | **${{ steps.staleness.outputs.unmeasured }} → $AFTER** |
+          | warn / fail thresholds | 150 / 600 |
+
+          One file, data only, no app code. Regenerated from the four \`backend-tests\` shard logs
+          of the run above, with \`--require-census\` so the weights include pytest's sub-0.005s tail.
+
+          ### Before merging — this PR has no CI run, and that is expected
+
+          A pull request opened with \`GITHUB_TOKEN\` does not schedule workflow runs; that is
+          GitHub's recursion guard, not a fault in this branch. Notice 28 still applies, so
+          **close and reopen this PR** (the same workaround \`ci.yml\`'s own trigger comment
+          documents) to get a real run on the exact sha before merging.
+          EOF
+
+          # THE BRANCH IS THE DELIVERABLE; THE PR IS A CONVENIENCE, AND IT MAY BE
+          # FORBIDDEN HERE.
+          #
+          # This repo reads `can_approve_pull_request_reviews: false`
+          # (`gh api repos/OWNER/REPO/actions/permissions/workflow`), which is the
+          # same switch as "Allow GitHub Actions to create and approve pull
+          # requests" — so `gh pr create` under GITHUB_TOKEN may be refused
+          # outright. Rather than bet on one reading of that setting, both paths
+          # work and the summary says which one happened. The expensive,
+          # forgettable half — download, census, record — is already done and
+          # pushed by the time we get here, so a refused PR costs a click, not a
+          # rerun.
+          #
+          # There is a silver lining to the manual path and it is not small: a PR
+          # opened by a PERSON gets a real `pull_request` CI run, where one opened
+          # by GITHUB_TOKEN gets none at all (GitHub's recursion guard) and so
+          # could never satisfy notice 28 without a close-and-reopen.
+          PR_STATE="not attempted"
+          if gh pr view "$BRANCH" --json number --jq .number > /tmp/prnum.txt 2>/dev/null; then
+            gh pr edit "$BRANCH" --body-file /tmp/pr-body.md \
+              && PR_STATE="updated #$(cat /tmp/prnum.txt)" \
+              || PR_STATE="branch pushed; could not update the open PR"
+          elif gh pr create --base master --head "$BRANCH" \
+                 --title "ci(#3497): refresh shard duration hints" \
+                 --body-file /tmp/pr-body.md > /tmp/prurl.txt 2>&1; then
+            PR_STATE="opened $(cat /tmp/prurl.txt)"
+          else
+            cat /tmp/prurl.txt
+            PR_STATE="branch pushed, PR NOT opened (Actions is likely not permitted to create PRs)"
+          fi
+          echo "$PR_STATE"
+
+          {
+            echo "### Shard hints refreshed — branch \`$BRANCH\` is pushed"
+            echo ""
+            echo "unmeasured **${{ steps.staleness.outputs.unmeasured }} → $AFTER**, from run \`$RUN_ID\` at \`$SOURCE_SHA\`."
+            echo ""
+            echo "PR: $PR_STATE"
+            echo ""
+            echo "If no PR was opened, one command finishes it — and a PR opened by a person"
+            echo "gets a real CI run, which one opened by \`GITHUB_TOKEN\` never does:"
+            echo ""
+            echo '```'
+            echo "gh pr create --base master --head $BRANCH \\"
+            echo "  --title 'ci(#3497): refresh shard duration hints' \\"
+            echo "  --body 'Automated refresh from run $RUN_ID. Data only: balance hints, no app code.'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Say what happened
+        if: always()
+        run: |
+          {
+            echo "### Shard hints refresh"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| source run | \`$RUN_ID\` |"
+            echo "| unmeasured before | \`${{ steps.staleness.outputs.unmeasured }}\` |"
+            echo "| refresh due | \`${{ steps.staleness.outputs.due && 'yes' || 'no — HOLD' }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
