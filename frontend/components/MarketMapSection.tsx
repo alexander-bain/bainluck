@@ -26,6 +26,7 @@ import {
   selectGameTotalRungs,
   selectHalfTotalRungs,
   ladderQuotesALine,
+  settledLadderQuotesALine,
   probabilitiesQuoteALine,
   TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
@@ -1063,6 +1064,21 @@ export default function MarketMapSection({
       const quotesALine = ladderQuotesALine(cleaned);
       if (!isDone && !quotesALine) continue;
 
+      // #5502: and after the whistle ONE interior rung is not a line either.
+      // Settlement does not land on every rung at once — Rennes 1-0 Marseille
+      // (`/events/15303008`) served a settled 2nd half of `0.5→0.99`,
+      // `1.5→0.20`, `2.5→0.01`: the ends graded right against a one-goal half,
+      // and the 0.20 is Over 1.5 resolved FALSE still wearing a live price. It
+      // is the only rung inside the band, so the test above passes, `ouLine`
+      // elects it, and the card printed `PRE-GAME 2`. A line that was really
+      // there passes THROUGH the middle and leaves more than one rung in the
+      // band. Settled cards only: a live ladder with one interior rung is
+      // quoting, and #5143's control keeps the tile on a finished game whose
+      // ladders did quote.
+      const quotesAPreGameLine = isDone
+        ? settledLadderQuotesALine(cleaned)
+        : quotesALine;
+
       const ouLine = cleaned.reduce((best, t) =>
         Math.abs(t.overProbability - 0.5) < Math.abs(best.overProbability - 0.5) ? t : best
       );
@@ -1109,7 +1125,7 @@ export default function MarketMapSection({
       // a tile labelled "Pre-game" is a claim about what was expected. The card
       // keeps its FINAL below, which is the half's real score and the whole
       // reason #5013 let a finished game keep the card at all.
-      if (quotesALine) {
+      if (quotesAPreGameLine) {
         halfTotalMarkers.push({
           key: "pre",
           value: ouLine.threshold,

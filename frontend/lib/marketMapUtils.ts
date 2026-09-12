@@ -542,10 +542,47 @@ export const LADDER_INTERIOR_MAX = 0.85;
  *
  * PURE: no I/O, no React.
  */
-export function probabilitiesQuoteALine(probabilities: number[]): boolean {
-  return probabilities.some(
+export function countInteriorRungs(probabilities: number[]): number {
+  return probabilities.filter(
     (p) => p >= LADDER_INTERIOR_MIN && p <= LADDER_INTERIOR_MAX
-  );
+  ).length;
+}
+
+export function probabilitiesQuoteALine(probabilities: number[]): boolean {
+  return countInteriorRungs(probabilities) >= 1;
+}
+
+/**
+ * How many interior rungs a ladder whose game has FINISHED needs before the
+ * card may call its closest-to-50% rung a Pre-game line. #5502.
+ *
+ * One is not enough once the whistle has gone. Settlement does not land on
+ * every rung at once: Rennes 1-0 Marseille (`/events/15303008`, Ligue 1,
+ * settled) served a 2nd half of `0.5→0.99`, `1.5→0.20`, `2.5→0.01` — the ends
+ * are graded correctly against a one-goal half, and the 0.20 is Over 1.5
+ * resolved FALSE still carrying a tradeable-looking price. That lone rung
+ * satisfies the interior test above, `ouLine` elects it as closest to a coin
+ * flip, and the card prints `PRE-GAME 2` for a line nobody ever quoted.
+ *
+ * A line that was really there passes THROUGH the middle, so it leaves more
+ * than one rung inside the band: Como 4-1 Leipzig's 1st half (`0.5→0.785`,
+ * `2.5→0.185`) and PSV 1-1 Shakhtar's (`0.5→0.785`, `2.5→0.195`) both do.
+ * Measured over every completed event of the previous three days
+ * (2026-09-12, 170 events, 76 rendering half cards): 72 have no interior rung
+ * and already print no tile, 2 have exactly one and are the defect, 2 have
+ * two or more and are genuine. The count splits that population exactly, and
+ * it is decidable from the ladder alone — no second tuned constant, unlike the
+ * monotone-with-neighbours rule that reaches the same two rows here.
+ *
+ * Scoped to settled cards on purpose. A LIVE ladder with one interior rung is
+ * quoting, and #5143's own control — "a finished game whose ladders DID quote
+ * keeps its Pre-game" — is why dropping the tile on `isDone` outright stays
+ * rejected.
+ */
+export const SETTLED_INTERIOR_RUNGS_REQUIRED = 2;
+
+export function probabilitiesQuoteASettledLine(probabilities: number[]): boolean {
+  return countInteriorRungs(probabilities) >= SETTLED_INTERIOR_RUNGS_REQUIRED;
 }
 
 /**
@@ -559,6 +596,19 @@ export function ladderQuotesALine(
   rungs: Array<{ overProbability: number }>
 ): boolean {
   return probabilitiesQuoteALine(rungs.map((r) => r.overProbability));
+}
+
+/**
+ * The same question asked of a totals ladder whose game is OVER, where one
+ * interior rung is a settlement leftover rather than a line. #5502; the
+ * reasoning is on `SETTLED_INTERIOR_RUNGS_REQUIRED` above.
+ *
+ * PURE: no I/O, no React.
+ */
+export function settledLadderQuotesALine(
+  rungs: Array<{ overProbability: number }>
+): boolean {
+  return probabilitiesQuoteASettledLine(rungs.map((r) => r.overProbability));
 }
 
 /** The halves a totals map is ever built for, in the order the section draws them. */
