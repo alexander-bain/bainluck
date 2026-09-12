@@ -206,10 +206,17 @@ class TestPoliticsPresidential:
                     name="Who will win the 2028 presidential election?",
                     external_id="kxpresident2028",
                     source="kalshi",
+                    # 50+42+26 = 118%: over the 105% normalisation trigger,
+                    # which is what this test is about, and inside what a real
+                    # single-winner field looks like. #5541 added a bound at
+                    # 150% — a "race" whose legs sum to 200% is a rack of
+                    # independent binaries, not a race, and no longer headlines.
+                    # 118.0% is the measured production maximum for a genuine
+                    # field ("Navajo Nation presidential election winner?").
                     outcomes=[
-                        _outcome("Trump", 0.80, outcome_id=1001, rank=1),
-                        _outcome("Harris", 0.70, outcome_id=1002, rank=2),
-                        _outcome("Newsom", 0.50, outcome_id=1003, rank=3),
+                        _outcome("Trump", 0.50, outcome_id=1001, rank=1),
+                        _outcome("Harris", 0.42, outcome_id=1002, rank=2),
+                        _outcome("Newsom", 0.26, outcome_id=1003, rank=3),
                     ],
                 ),
             ]),
