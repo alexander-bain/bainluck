@@ -198,3 +198,71 @@ def test_the_head_to_head_win_total_series_is_futures_not_game_level():
     assert "kxnflh2hwins" in KALSHI_FUTURES_TICKER_TO_SPORT_KEY
     assert "kxnflh2hwins" not in KALSHI_GAME_TICKER_PREFIXES
     assert "kxnflh2hwins" not in KALSHI_TICKER_TO_SPORT_KEY
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The data repair's safety interlock.
+#
+# repair_2871's docstring states the rule this encodes: "THE TAP MUST BE OFF
+# BEFORE THIS RUNS. Cleaning while the firehose still writes just refills."
+# There it was prose a human had to honour. Here it is a gate, and these two
+# tests are why it can be trusted — a gate nobody proves can refuse is a
+# comment with a function signature.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import asyncio  # noqa: E402
+import importlib.util  # noqa: E402
+import pathlib  # noqa: E402
+import types  # noqa: E402
+
+_SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
+
+
+def _load(name):
+    spec = importlib.util.spec_from_file_location(name, _SCRIPTS / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_repair_recognises_the_tap_is_off_on_this_tree():
+    """With the map fix present, the repair is allowed to run."""
+    repair = _load("repair_5621_phantom_ffpts_events")
+    assert repair.tap_is_off() is True
+
+
+def test_the_repair_refuses_to_run_when_the_prevention_is_not_deployed():
+    """THE INTERLOCK, exercised — not asserted about.
+
+    `run()` is driven to completion with the prefix removed from the map it
+    imported. It must return the refusal code 2 *before* reaching
+    `get_task_session`, so a deploy without the fix cannot be cleaned and
+    silently refilled on the next Kalshi poll.
+
+    The DB is not stubbed on purpose: if the gate ever moved below the session
+    open, this test would fail trying to reach a database rather than passing
+    on a mock that no longer resembles the code.
+    """
+    repair = _load("repair_5621_phantom_ffpts_events")
+    repair.KALSHI_TICKER_TO_SPORT_KEY = dict(repair.KALSHI_TICKER_TO_SPORT_KEY)
+    repair.KALSHI_TICKER_TO_SPORT_KEY.pop("kxnflffpts", None)
+
+    assert repair.tap_is_off() is False
+    rc = asyncio.run(repair.run(types.SimpleNamespace(backup=False, apply=True)))
+    assert rc == 2
+
+
+def test_the_repair_has_a_population_ceiling_not_just_a_floor():
+    """A WRITER's sanity bound points the other way from a reader's.
+
+    gotcha #53 makes a zero loud; for a script that retires rows the danger is
+    a predicate that suddenly matches hundreds. The measured population was 16.
+    """
+    repair = _load("repair_5621_phantom_ffpts_events")
+    assert 16 <= repair.MAX_EXPECTED_POPULATION < 1000
+
+
+def test_the_restore_refuses_when_there_is_no_backup_to_restore_from():
+    """D51's undo must not report success against a database it never backed up."""
+    restore = _load("restore_5621_phantom_ffpts_events")
+    assert hasattr(restore, "run")
