@@ -708,6 +708,7 @@ def test_the_app_name_is_the_one_asked_for(monkeypatch):
     """
     api = _deployed(app="bainluck-heavy").install(monkeypatch)
     assert sync.heroku_release_commit("bainluck-heavy", "tok") == A
+    assert all(p.startswith("apps/bainluck-heavy/") for p in api.paths), api.paths
 
     # The fake refuses any path it does not serve, so asking for the wrong app
     # is an error rather than a quiet wrong answer.
