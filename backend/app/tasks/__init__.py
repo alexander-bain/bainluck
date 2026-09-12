@@ -557,7 +557,15 @@ try:  # pragma: no cover - signal wiring needs a live publish, not a unit test
     @_before_task_publish.connect
     def _record_emission(sender=None, headers=None, body=None, **_kwargs):
         try:
-            from app.tasks.redis_state import record_task_emission
+            from app.tasks.redis_state import record_beat_alive, record_task_emission
+
+            # BEFORE the retry filter, and not subject to it. A retry is not a
+            # beat fire — which is why the counter below skips it — but this is
+            # a liveness stamp about the PROCESS, and a process is no less alive
+            # for having published a retry. `record_beat_alive` is a no-op in
+            # anything that is not a beat, so the only publisher it can describe
+            # is the scheduler.
+            record_beat_alive()
 
             if _published_retries(headers, body) > 0:
                 return

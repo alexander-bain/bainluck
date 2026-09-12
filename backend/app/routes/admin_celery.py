@@ -1,6 +1,7 @@
 """Admin endpoints for Celery worker health, inspection, and task metrics."""
 
 
+import logging
 import time
 from datetime import datetime, timezone
 
@@ -8,6 +9,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -1332,6 +1335,76 @@ async def heavy_move_falsifier(
             "INCONCLUSIVE means the falsifier is not armed — it is NOT a pass. "
             "pre_horizon means the beat has run but not enough since the move "
             "for its p50 to be about the move."
+        ),
+    }
+
+
+@router.get("/celery/beat-instances")
+async def beat_instances(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """How many celery beats are alive, and which apps they are on.
+
+    The single-instance proof for moving the `scheduler` dyno onto
+    `bainluck-heavy`. Beat has no distributed lock here (the default
+    `PersistentScheduler` keeps its state in a shelve file on the dyno's own
+    disk), so two beat dynos do not contend — they both tick, and every
+    scheduled task in the system runs twice. Unlike the worker move, where an
+    overlap was free because one queue feeds each message to exactly one
+    consumer, an overlap here is the failure. This endpoint is what makes that
+    state visible instead of inferred.
+
+    **`verdict` is three-valued and NONE is not the good one.** `SINGLE` is the
+    only healthy answer; `MULTIPLE` names the culprits; `NONE` means nothing is
+    scheduling anything, or no beat has yet run a release carrying the recorder.
+    An unreadable Redis renders `INCONCLUSIVE`, never `NONE` — an outage and an
+    empty fleet would otherwise produce the same JSON (gotcha #53), and here
+    that would turn the loudest possible alarm into a quiet one.
+
+    Off-loop via `run_in_threadpool` for the reason the falsifier above is:
+    `get_redis_client()` is bounded at 5s (gotcha #39) and the single uvicorn
+    loop should not wear that under a refreshing dashboard tab (#1994).
+    """
+    _check_admin_secret(secret, request=request)
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.tasks.redis_state import BeatCensusUnavailable, get_beat_instances
+
+    try:
+        census = await run_in_threadpool(get_beat_instances)
+    except BeatCensusUnavailable:
+        # The detail goes to the log, never to the response body. A Redis error
+        # string carries the connection URL — host, port, and on Heroku the
+        # credentials embedded in REDIS_URL — and this endpoint is reachable with
+        # nothing but the admin secret. CodeQL calls it "information exposure
+        # through an exception" and it is right; CERT-2675 withheld the token
+        # for it.
+        #
+        # The operator loses nothing: `verdict` is what this endpoint is for, and
+        # INCONCLUSIVE is unchanged. Whoever needs the cause reads the dyno log,
+        # where `exc_info` carries the whole traceback rather than 300 truncated
+        # characters.
+        logger.exception("beat census unreadable — returning INCONCLUSIVE")
+        return {
+            "status": "unreadable",
+            "verdict": "INCONCLUSIVE",
+            "error": "the beat census could not be read (see server logs)",
+            "reason": (
+                "the beat census could not be read; this is NOT evidence that "
+                "a single beat is running"
+            ),
+        }
+
+    return {
+        "status": "ok",
+        **census,
+        "note": (
+            "SINGLE is the only healthy verdict. MULTIPLE means every scheduled "
+            "task is being dispatched once per beat listed. A beat stopped "
+            f"during a handover keeps its marker for up to {census['ttl_s']}s, "
+            "so read MULTIPLE as stale only if it persists past that."
         ),
     }
 
