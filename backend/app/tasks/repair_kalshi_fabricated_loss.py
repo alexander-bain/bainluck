@@ -174,6 +174,7 @@ with it would be the same class of error one layer down.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -2381,7 +2382,7 @@ def parse_min_harm(min_harm: Any) -> float | None:
             f"?min_harm= must be a probability between 0 and 1 exclusive; "
             f"got {min_harm!r}.",
         ) from None
-    if value != value:  # NaN — every comparison against it is false in SQL
+    if math.isnan(value):  # every comparison against NaN is false, in SQL too
         raise BandRefused(
             "MIN_HARM_UNPARSEABLE",
             "?min_harm=nan compares false against every price, so it would "
