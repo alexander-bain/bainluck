@@ -192,6 +192,15 @@ from app.utils.feed_cache import (
     payload_contains_live_event,
     render_feed_page_from_base,
 )
+from app.utils.feed_editions import (
+    EDITION_LEASE_SECONDS,
+    EDITION_STATUS_PINNED,
+    FEED_EDITION_STATUS_FIELD,
+    apply_pinned_edition,
+    build_edition_manifest,
+    edition_manifest_cache_key,
+    edition_policy_fingerprint,
+)
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
     summarize_polymarket_email_ground_truth,
@@ -3044,6 +3053,20 @@ async def get_feed(
         None,
         description="Override event percentage floor (0.0-1.0). Discover uses 0.15.",
     ),
+    edition: Optional[str] = Query(
+        None,
+        max_length=64,
+        description=(
+            "T4-B2/#5102 browsing edition. Pass the `edition` token a previous "
+            "page returned and this page is served in THAT list's order, with "
+            "current prices — so a card does not move or vanish while you "
+            "scroll. The reply's `edition_status` says what happened: `pinned`, "
+            "`expired` (lease ran out), `superseded` (different build or a "
+            "sign-in), or `invalidated` (a pinned card left the feed). Only "
+            "`pinned` reorders; the rest serve the current list and the client "
+            "should restart from page one rather than merge two orders."
+        ),
+    ),
     debug: bool = Query(
         False, description="Include admin-only feed quality diagnostics"
     ),
@@ -3207,6 +3230,58 @@ async def get_feed(
 
     _cache_key = None
     _cache_shape = None
+
+    # --- T4-B2 / #5102: the browsing edition ---------------------------------
+    # Normalized ONCE, here, so every downstream test is `if _edition_request`
+    # and an empty `?edition=` can never be mistaken for a pin request. The
+    # policy fingerprint binds a pin to the build it was minted from AND to the
+    # principal — a sign-in changes it, which is the design's "auth change = new
+    # edition" and is why this is derived where the principal is already known.
+    _edition_request = (edition or "").strip() or None
+    _edition_status = None
+    _edition_policy = edition_policy_fingerprint(
+        sport=sport,
+        limit=limit,
+        include_events=include_events,
+        include_futures=include_futures,
+        tags=tags,
+        event_pct=event_pct,
+        my_teams_only=my_teams_only,
+        mode=mode,
+        category=category,
+        principal=(
+            f"u:{feed_user.id}"
+            if feed_user
+            else (f"s:{feed_session_id}" if feed_session_id else None)
+        ),
+    )
+
+    async def _read_edition_manifest():
+        """The requested edition's ordered membership, or ``None``.
+
+        Fails closed on absolutely everything — no Redis, a bounded-call
+        timeout, a malformed blob — because the failure mode of a pin is
+        "serve the current list and say `expired`", which is exactly today's
+        behaviour plus one honest field. A pin must never be able to turn a
+        feed read into an error (gotcha #39: the call is bounded).
+        """
+        if not _edition_request or _shared_redis is None:
+            return None
+        try:
+            raw = await _rc.bounded_redis_call(
+                lambda: _shared_redis.get(
+                    edition_manifest_cache_key(
+                        token=_edition_request, policy=_edition_policy
+                    )
+                )
+            )
+        except Exception:
+            return None
+        value = getattr(raw, "value", raw)
+        if not value:
+            return None
+        return _safe_cache_payload(value)
+
     # Session/user feeds change as impressions are recorded. Keep anonymous
     # no-session cache warmer, but make per-session Discover refreshes respond
     # quickly to "already seen" suppression.
@@ -3379,6 +3454,7 @@ async def get_feed(
             my_teams_only=my_teams_only,
             mode=mode,
             category=category,
+            edition=_edition_request,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.
@@ -3952,8 +4028,18 @@ async def get_feed(
             # key too; re-typing the list would mean the next new field keys the
             # pages but not the base, and page 2 would come off the wrong list —
             # a wrong answer that no latency measurement would notice.
+            # ``offset`` and ``edition`` are excluded for the SAME reason and it
+            # is not "they are unimportant": neither is a build input. An offset
+            # is a window onto the built list; an edition is an ORDER over it,
+            # minted from a build that already happened. Two readers pinned to
+            # two different editions of one build must still share one base —
+            # keying a base per edition would mint a fresh build per reader and
+            # turn a memory saver into a load multiplier.
+            # `test_feed_page_base_p141.py` pins both exclusions structurally.
             _page_base_shape = {
-                k: v for k, v in _cache_shape.items() if k != "offset"
+                k: v
+                for k, v in _cache_shape.items()
+                if k not in ("offset", "edition")
             }
             _page_base_key = feed_page_base_cache_key(**_page_base_shape)
             _base_raw, _base_status = (
@@ -3964,11 +4050,56 @@ async def get_feed(
             _base_body = (
                 _safe_cache_payload(_base_raw) if _base_raw is not None else None
             )
-            _base_page = (
-                render_feed_page_from_base(_base_body, limit=limit, offset=offset)
-                if _base_body is not None
-                else None
-            )
+            # T4-B2 / #5102. The base is the WHOLE current list, which is
+            # precisely what a pin needs: reorder it into the requested
+            # edition's order and slice that, so the reader keeps their place
+            # and every price on the card is the current one. Only a `pinned`
+            # verdict reorders — `expired` / `superseded` / `invalidated` all
+            # fall through to the unpinned render below, which is today's
+            # behaviour plus the status field saying so.
+            _base_pinned_items = None
+            if _edition_request and _base_body is not None:
+                _pin_items, _edition_status = apply_pinned_edition(
+                    _base_body.get("items"),
+                    await _read_edition_manifest(),
+                    requested_policy=_edition_policy,
+                    now=time.time(),
+                )
+                if _edition_status == EDITION_STATUS_PINNED:
+                    _base_pinned_items = _pin_items
+            if _base_pinned_items is not None:
+                # Rendered through the same pure slicer, off a base whose items
+                # and total are the PINNED list — not the current one — so
+                # `has_more` ends the scroll where the pinned edition ends
+                # rather than running past it into cards the reader's edition
+                # never contained.
+                _base_page = render_feed_page_from_base(
+                    {
+                        **_base_body,
+                        "items": _base_pinned_items,
+                        "total": len(_base_pinned_items),
+                    },
+                    limit=limit,
+                    offset=offset,
+                )
+            else:
+                _base_page = (
+                    render_feed_page_from_base(_base_body, limit=limit, offset=offset)
+                    if _base_body is not None
+                    else None
+                )
+            if _base_page is not None and _edition_status is not None:
+                _base_page[FEED_EDITION_STATUS_FIELD] = _edition_status
+                if _base_pinned_items is not None:
+                    # 🔴 The served token must be the edition the reader is
+                    # ACTUALLY looking at. The base carries the CURRENT build's
+                    # token, and passing that through on a pinned serve would
+                    # hand the client a token it did not ask for — the client
+                    # compares tokens for equality (#4110) and would read the
+                    # difference as "the list changed", re-rendering the very
+                    # scroll the pin exists to hold still. The pin would then
+                    # cause the bug it fixes.
+                    _base_page[FEED_EDITION_FIELD] = _edition_request
             if _base_page is not None:
                 _pb_status = (
                     "page_base_hit"
@@ -4569,6 +4700,29 @@ async def get_feed(
                 "filtered_count": _chain_meta["reviewed_filtered_count"],
             }
 
+        # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
+        # before the slice below, which is the only placement that works —
+        # reordering after the window has been taken would reorder twenty cards
+        # within a page chosen from the wrong list, which looks like a fix and
+        # is not one.
+        #
+        # Nothing needs to override the edition token afterwards: it is a hash
+        # of ordered membership and the manifest holds exactly that membership
+        # in exactly that order, so ``feed_edition_token(feed_items)`` below
+        # re-derives the requested token by construction. If that identity ever
+        # broke, the token would stop matching the pin, and
+        # ``test_a_pinned_build_re_derives_the_very_token_it_was_asked_for``
+        # fails rather than a reader silently seeing a new edition.
+        if _edition_request:
+            _pin_items, _edition_status = apply_pinned_edition(
+                feed_items,
+                await _read_edition_manifest(),
+                requested_policy=_edition_policy,
+                now=time.time(),
+            )
+            if _edition_status == EDITION_STATUS_PINNED and _pin_items is not None:
+                feed_items = _pin_items
+
         total = len(feed_items)
         paginated = feed_items[offset : offset + limit]
 
@@ -4752,6 +4906,51 @@ async def get_feed(
         _edition = feed_edition_token(feed_items)
         if _edition is not None:
             payload[FEED_EDITION_FIELD] = _edition
+        if _edition_status is not None:
+            payload[FEED_EDITION_STATUS_FIELD] = _edition_status
+
+        # T4-B2 / #5102: publish this ordering's manifest so the NEXT page can
+        # ask for it by name. Backgrounded like the page base beside it — a
+        # reader must never wait on a write that only helps their next request.
+        #
+        # 🔴 NOT republished on a pinned serve. A pinned build re-derives the
+        # same token, so writing it back would reset the lease on every page the
+        # reader turns and the "~30 minute browsing lease" would become "as long
+        # as you keep scrolling" — an edition that never ages, pinning a reader
+        # to a slate from hours ago. The lease is measured from the mint.
+        if (
+            _edition is not None
+            and _shared_redis is not None
+            and _edition_status != EDITION_STATUS_PINNED
+        ):
+            try:
+                _manifest = build_edition_manifest(
+                    feed_items,
+                    token=_edition,
+                    policy=_edition_policy,
+                    built_at=time.time(),
+                )
+                if _manifest is not None:
+                    _manifest_json = _json_module.dumps(_manifest, default=str)
+
+                    async def _publish_edition_manifest(
+                        _client=_shared_redis,
+                        _json=_manifest_json,
+                        _key=edition_manifest_cache_key(
+                            token=_edition, policy=_edition_policy
+                        ),
+                    ):
+                        await _rc.bounded_redis_call(
+                            lambda: _client.setex(
+                                _key, EDITION_LEASE_SECONDS, _json
+                            )
+                        )
+
+                    _rc.schedule_background(_publish_edition_manifest())
+            except Exception:
+                # A feed read must not fail because an optimization could not be
+                # written. Same posture as the page-base publish below.
+                pass
 
         if my_teams_only:
             payload["my_teams_only"] = True

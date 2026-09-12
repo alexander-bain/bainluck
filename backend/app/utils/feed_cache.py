@@ -614,6 +614,15 @@ def _feed_edition_member(item: Any) -> str:
     return "?"
 
 
+#: Public name for the identity function above. `app/utils/feed_editions.py`
+#: (T4-B2 / #5102) stores ordered MEMBERSHIP using the very same notion of
+#: "which card is this", because a manifest that disagreed with the token naming
+#: it would pin one order and advertise another. Exported rather than
+#: re-implemented, and aliased rather than renamed so the private call sites and
+#: the guard tests in this module keep reading as they did.
+feed_edition_member = _feed_edition_member
+
+
 def feed_edition_token(items: Any) -> Optional[str]:
     """Stable identifier for one ORDERED feed list.
 
@@ -650,6 +659,7 @@ def feed_response_cache_key(
     my_teams_only: bool = False,
     mode: Optional[str] = None,
     category: Optional[str] = None,
+    edition: Optional[str] = None,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -688,6 +698,19 @@ def feed_response_cache_key(
         # in `parts`, so a bare separator is forgeable. `cat=<len>:<value>` is
         # not: two different categories cannot produce the same prefix.
         parts = f"cat={len(category)}:{category}|{parts}"
+    if edition:
+        # T4-B2 / #5102. A pinned page holds a DIFFERENT ORDER from the
+        # unpinned page at the same offset, so the two cannot share an entry:
+        # without this, one reader's pinned page two would be served to the next
+        # reader as the current list, and a pinned reader would be served the
+        # unpinned order they asked not to get. Prepended and length-delimited
+        # for the reasons `category` gives directly above.
+        #
+        # 🔴 The `if` is what keeps this shippable. An unpinned request — every
+        # request in production today, and every request from any client that
+        # never learns about editions — hashes the byte-identical string it
+        # always did, so this does not cold-start the response cache on deploy.
+        parts = f"ed={len(edition)}:{edition}|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 
