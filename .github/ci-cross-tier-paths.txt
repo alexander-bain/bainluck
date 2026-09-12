@@ -44,3 +44,9 @@ frontend/__tests__/components/tournamentReskin.test.tsx
 frontend/lib/discoverInteractions.ts
 frontend/lib/play/session.ts
 frontend/__tests__/fixtures/
+
+# `test_client_timing_contract.py` parses this file to derive the key set the
+# client sanitizer emits, so the backend suite depends on it (#2751 / PR #3179,
+# merged 2026-09-12 05:4xZ). It arrived without this line and turned master RED
+# — the rot guard doing exactly the job its docstring claims.
+frontend/lib/analytics/sanitize.ts
