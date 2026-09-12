@@ -98,6 +98,22 @@ nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {
     /// box-score fallback still owns the live case.
     let actual: Double?
     let hit: Bool?
+    /// #4577 — THE SCRIPT's baseline, as an OVER probability. Served per prop by
+    /// `_resolve_pregame_mark` (`routes/events.py`) since #195 and thrown away
+    /// here until now, which is why no rung on the phone could show where its
+    /// market opened. ``PlayerPropsScript`` holds the rule for drawing it.
+    ///
+    /// ABSENT ON MOST ROWS, NULL ON OTHERS, AND THE TWO MEAN THE SAME THING: the
+    /// endpoint's two "rescue" prop builders omit the key entirely while its two
+    /// main builders send an explicit null. `decodeIfPresent` — what an optional
+    /// `let` compiles to — collapses both to nil, which is also what the web's
+    /// `pregame_mark == null` does, so the clients cannot disagree about a row.
+    ///
+    /// #4390: this number shares the OVER axis with ``overProbability``, so the
+    /// two are directly comparable on one track — the property the tick relies
+    /// on. No prop reaching this card is an inverted leg (measured: 0 of 141),
+    /// because the card only builds rungs from "Player: N+" outcomes.
+    let pregameMark: Double?
 }
 
 /// Generic game market outcome used for spreads, totals, team totals, and periods.
