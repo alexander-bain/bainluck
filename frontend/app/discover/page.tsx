@@ -35,6 +35,7 @@ import {
 } from "@/lib/discover/feedPaging";
 import FeedBootScript from "@/components/discover/FeedBootScript";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
+import { futuresGroupKey } from "@/lib/discover/groupKey";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
@@ -311,7 +312,13 @@ function interleaveGrouped(items: DiscoverGroupedItem[]): DiscoverGroupedItem[] 
   return result;
 }
 
-/** Group related futures by name prefix (e.g., "Valero Texas Open: ..." → one group card) */
+/**
+ * Group related futures by their stated colon subject
+ * (e.g. "Valero Texas Open: Winner" + "Valero Texas Open: Top 10" → one card).
+ *
+ * #4804: a market with no colon subject is NOT grouped. See
+ * `lib/discover/groupKey.ts` for why the old first-three-words fallback had to go.
+ */
 function groupRelatedMarkets(items: FeedItem[]): DiscoverGroupedItem[] {
   const result: DiscoverGroupedItem[] = [];
   const futuresGroups = new Map<string, FeedItem[]>();
@@ -319,18 +326,18 @@ function groupRelatedMarkets(items: FeedItem[]): DiscoverGroupedItem[] {
 
   for (const item of items) {
     if (item.type === "futures") {
-      const name = (item.data as FeedFuturesData).name;
-      // Group by: text before ":" if present, otherwise first 3 words
-      const colonIdx = name.indexOf(":");
-      const prefix = colonIdx > 0 && colonIdx < 30
-        ? name.slice(0, colonIdx).trim()
-        : name.split(/\s+/).slice(0, 3).join(" ");
+      // #4804 — the key is the colon subject or nothing. The old "otherwise
+      // first 3 words" arm folded any two questions that merely opened the
+      // same way into one card ("Who will be ... Sweden?" + "Who will be
+      // Trump's next Press Secretary?"). See lib/discover/groupKey.ts.
+      const key = futuresGroupKey((item.data as FeedFuturesData).name);
+      if (key === null) continue;
 
-      if (!futuresGroups.has(prefix)) {
-        futuresGroups.set(prefix, []);
-        futuresOrder.push(prefix);
+      if (!futuresGroups.has(key)) {
+        futuresGroups.set(key, []);
+        futuresOrder.push(key);
       }
-      futuresGroups.get(prefix)!.push(item);
+      futuresGroups.get(key)!.push(item);
     }
   }
 
@@ -345,19 +352,28 @@ function groupRelatedMarkets(items: FeedItem[]): DiscoverGroupedItem[] {
     }
 
     const name = (item.data as FeedFuturesData).name;
-    const colonIdx = name.indexOf(":");
-    const prefix = colonIdx > 0 && colonIdx < 30
-      ? name.slice(0, colonIdx).trim()
-      : name.split(/\s+/).slice(0, 3).join(" ");
+    const key = futuresGroupKey(name);
+    // #4804 — a market whose name states no shared subject is not groupable.
+    // It renders as its own card, in place, which is what it is.
+    if (key === null) {
+      result.push({ type: "single", item });
+      continue;
+    }
 
-    if (usedPrefixes.has(prefix)) continue;
-    usedPrefixes.add(prefix);
+    if (usedPrefixes.has(key)) continue;
+    usedPrefixes.add(key);
 
-    const group = futuresGroups.get(prefix)!;
+    const group = futuresGroups.get(key)!;
     if (group.length >= 2) {
-      // L2-243 Item 1 — the grouping KEY stays `prefix`, but the DISPLAYED title
-      // uses the real colon subject or the category, never a truncated question
-      // fragment ("Will the U.S.") in the category pill.
+      // L2-243 Item 1 — the grouping KEY (`key`) and the DISPLAYED title are
+      // decided separately, so the pill never shows a truncated question
+      // fragment ("Will the U.S.").
+      //
+      // #4804 — since a group now only forms on a colon subject,
+      // `deriveGroupDisplayTitle` always takes its colon branch here and returns
+      // that subject. Its category / "Related markets" fallbacks are no longer
+      // reachable from this call site; they are kept because the helper is
+      // exported and must stay honest for any caller that has no subject.
       const groupCategory = (group[0].data as FeedFuturesData).llm_sport_category;
       result.push({
         type: "group",
