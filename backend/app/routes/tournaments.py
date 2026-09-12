@@ -237,6 +237,26 @@ _READ_FAILURES: ContextVar[Optional[list[str]]] = ContextVar(
 )
 
 
+def _log_slug(slug: str) -> str:
+    """The slug, re-sourced from the registry, for use in a log line.
+
+    CodeQL flags a path parameter reaching a log statement as `py/log-injection`
+    (medium): a newline in the value forges log entries. It is not reachable
+    here — `get_tournament` 404s anything that is not a `REGISTERED_TOURNAMENTS`
+    key before any of this runs — but that invariant lives two functions away
+    from the log statement, a scanner cannot see it, and neither can the next
+    person to add a caller.
+
+    Returning the KEY rather than the argument makes it locally true instead of
+    argued: what gets logged is a literal out of our own registry, or nothing.
+    At runtime this is the identity function on every path that exists today.
+    """
+    for known in REGISTERED_TOURNAMENTS:
+        if known == slug:
+            return known
+    return "<unregistered>"
+
+
 def _note_read_failure(what: str) -> None:
     """Record that a read RAISED. Outside a ledger this is a no-op."""
     ledger = _READ_FAILURES.get()
@@ -438,7 +458,7 @@ async def _espn_results(slug: str) -> dict[str, Any]:
         logger.error(
             "tournament results UNREADABLE for %s — a scoreboard read raised, "
             "so we do not know what is on and must not guess (#5728)",
-            slug,
+            _log_slug(slug),
         )
         return {
             "draws": {}, "stats": {}, "errors": [],
@@ -1504,7 +1524,7 @@ async def _hub_payload(
                     logger.error(
                         "tournament %s/%s built from failed reads (%s) — served "
                         "once, NOT cached (#5728)",
-                        slug, group, ",".join(sorted(set(degraded))),
+                        _log_slug(slug), group, ",".join(sorted(set(degraded))),
                     )
                 else:
                     await _cache_set(slug, fragment, group)

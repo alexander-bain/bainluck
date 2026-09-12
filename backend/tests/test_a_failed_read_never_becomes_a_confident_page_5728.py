@@ -311,9 +311,17 @@ class TestTheLedgerIsRequestScoped:
             )
 
     def test_an_exception_does_not_strand_the_ledger(self):
-        with pytest.raises(ValueError):
+        # `try/except` rather than `pytest.raises`: CodeQL cannot see that the
+        # context manager swallows nothing and reads everything after a
+        # `pytest.raises` block as unreachable (py/unreachable-statement).
+        raised = False
+        try:
             with _read_failure_ledger():
                 _note_read_failure("links")
                 raise ValueError("boom")
+        except ValueError:
+            raised = True
+
+        assert raised
         with _read_failure_ledger() as clean:
             assert clean == []
