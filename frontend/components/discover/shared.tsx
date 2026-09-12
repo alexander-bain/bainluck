@@ -5,6 +5,7 @@ import { Check, Heart, Share2 } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { sentencePreview } from "./utils";
 import { PinButton } from "@/components/PinButton";
+import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import type { ActionBarProps } from "./types";
 import type { ForYouCue } from "@/lib/discover/forYouCue";
 import {
@@ -375,7 +376,7 @@ export function SignalBars({
 
 // ── Action Bar ──
 
-export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, pin }: ActionBarProps) {
+export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, pin, priceObservedAt }: ActionBarProps) {
   const [copied, setCopied] = useState(false);
 
   const trackShare = (method: string) => {
@@ -417,6 +418,20 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
         <Heart size={16} fill={liked ? "currentColor" : "none"} strokeWidth={2} />
         {liked ? "Liked" : "Like"}
       </button>
+      <div className="flex-1" />
+      {/* #5752 — HOW OLD THE NUMBER ABOVE THIS BAR IS.
+          It sits in the gap the layout already had (`flex-1` either side), so a
+          card that draws no mark is byte-identical to before and one that does
+          takes no room from Like, the pin or Share.
+          `PriceAgeMark` decides whether to draw at all: nothing inside 30
+          minutes, nothing for a stamp it cannot read. Measured 2026-09-12 22:30Z
+          over the 76 futures cards a `limit=100` feed served, on this ship's own
+          rule (`MAX(last_updated)` per market): p25 13m, p50 133m, p75 493m,
+          max 25h — so 47 of 76 draw and 29 stay silent. That split is the
+          design: a ladder just polled says nothing, and a ladder eight hours
+          cold, sitting beside a live hero that restamps every 20 seconds, is
+          exactly the pair a reader cannot rank without being told. */}
+      <PriceAgeMark observedAt={priceObservedAt} scope="card" />
       <div className="flex-1" />
       {/* UX-P234 (board item 16): Discover was the one surface with no pin at all,
           while search, my-stuff and preferences all had one on the very same market.

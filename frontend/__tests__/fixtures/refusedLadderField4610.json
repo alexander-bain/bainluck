@@ -55,6 +55,7 @@
   "market_type": null,
   "name": "Netflix App Downloads in September",
   "outcome_count": 3,
+  "price_observed_at": null,
   "resolution_date": "2027-01-07T12:00:00+00:00",
   "source": "kalshi",
   "source_count": 1,

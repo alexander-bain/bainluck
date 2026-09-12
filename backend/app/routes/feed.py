@@ -5808,6 +5808,52 @@ from app.utils.futures_market_snapshot import (
 )
 
 
+def _card_price_observed_at(market: Any) -> str | None:
+    """WHEN THE PRICES ON THIS CARD WERE LAST SEEN, for the reader (#5752).
+
+    The value is `price_poll_stamp` — the newest `last_updated` across the
+    market's outcomes, folded per market — and this function exists only to put
+    it on the wire as an ISO string. (Spelled without the attribute dot on
+    purpose: `test_my_stuff_price_freshness_cert949` scans this module for
+    per-outcome reads of that column and strips `#` comments but not
+    docstrings, so the qualified name in prose reads to it as a read.) It is a
+    named function rather than an inline expression at each of the two futures
+    serializers because those two have drifted before (#1698, CERT-622, #2088
+    each record a column that landed on one and missed the other), and a card
+    that discloses its age on Discover but not on the `MORE X` rail is exactly
+    the defect #5752 was filed on.
+
+    ═══ WHY `MAX` AND NOT THE OLDEST LEG ═══
+
+    `lib/sourceAge.ts`'s `oldestSourceStamp` takes the OLDEST of several stamps,
+    and this deliberately does not, which looks like the two rules disagreeing.
+    They do not: that helper merges rows from DIFFERENT sources into one
+    outcome, where one current contributor must not vouch for a stale set. A
+    futures card's legs are one market's prices, written by one poll of one
+    venue, so their stamps answer one question — "when did we last read this
+    book" — and the newest is that read. Taking the oldest here would let a
+    single dead leg (measured: one market's fifth leg at 123 DAYS while its
+    leader was 50 minutes old) date a card whose prices are current.
+    This is `heroFreshness`'s rule stated once more: max WITHIN a number, min
+    ACROSS facts.
+
+    ═══ ABSENT IS NOT ZERO ═══
+
+    `None` propagates. `price_poll_stamp` already returns `None` for a market
+    rehydrated from an older snapshot — "we do not know" — and the client draws
+    nothing for it rather than a stamp it cannot support. Serving the key with a
+    null is the #2088 rule: null is "checked and there is no stamp", absence is
+    "a payload from before this shipped".
+
+    `_utc` for the same naive/aware reason as `resolution_date` beside it: the
+    two carriers hand back stamps that differ in tzinfo, and an isoformat with
+    no offset is read by `Date.parse` as LOCAL time in the reader's browser,
+    which would age a fresh price by the reader's own UTC offset.
+    """
+    stamp = _utc(_price_poll_stamp(market))
+    return stamp.isoformat() if stamp else None
+
+
 def _market_base_trace(market: FuturesMarket, now: datetime) -> dict:
     blockers: list[str] = []
     if market.status != "open":
@@ -9549,6 +9595,11 @@ async def _score_sports_mode_futures(
             "resolution_date": (
                 market.resolution_date.isoformat() if market.resolution_date else None
             ),
+            # #5752 — when these prices were last seen. NOT `resolution_date`,
+            # which is when the question is answered; the two were confused on
+            # the US Open final page, where a card an hour stale sat under a
+            # hero stamped 20s and nothing on it said so.
+            "price_observed_at": _card_price_observed_at(market),
             "top_outcomes": top_outcomes_data,
             # #2088: served even when null — null is "checked, and they do total
             # 100", which is a different fact from the key being absent (a payload
@@ -11192,6 +11243,10 @@ async def _score_futures(
                 "resolution_date": (
                     market.resolution_date.isoformat() if market.resolution_date else None
                 ),
+                # #5752 — see the sibling serializer. Both futures cards carry
+                # the age or neither does; a rail that discloses on one route and
+                # not the other is the defect, not half a fix.
+                "price_observed_at": _card_price_observed_at(market),
                 "top_outcomes": top_outcomes_data,
                 # #2088: served even when null — see the note on the other
                 # serializer. Null means "checked"; absent means "pre-#2088 build".
