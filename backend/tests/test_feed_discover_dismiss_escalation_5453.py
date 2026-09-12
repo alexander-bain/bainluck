@@ -614,6 +614,32 @@ async def test_the_eighth_swipe_does_not_filter_a_futures_card_either_5453(base_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("base_score", _BASE_SCORES)
+async def test_the_eighth_swipe_does_not_filter_a_sports_mode_futures_card_5453(
+    base_score,
+):
+    """THE THIRD GATE. `/sports` mode has its own futures scorer and its own
+    15-bar, and it reads the SAME personalization context as Discover —
+    `_load_personalization_context` is called once for both modes and handed to
+    `_score_sports_mode_futures`. So the reader's DISCOVER swipes were deciding
+    what the SPORTS feed is allowed to show: at the eighth swipe a base-40 NFL
+    futures card arrived as 8 and was dropped from a surface the reader never
+    swiped on.
+
+    CERT-2676 named the event gate and the futures gate; this one has the
+    identical shape and was missed by both of the first two repairs.
+    """
+    from app.routes.feed import _discover_admission_score
+
+    ctx = await _load([("football", "unlike", 8), _WARM])
+    p_result = _futures_multiplier(ctx)
+
+    # The gate's own bar, as written at `_score_sports_mode_futures`.
+    assert min(98, int(base_score * p_result.multiplier)) < base_score
+    assert _discover_admission_score(base_score, p_result) >= 15
+
+
+@pytest.mark.asyncio
 async def test_the_blocked_tree_is_what_this_guard_would_have_caught():
     """RED CHECK, stated as the arithmetic CERT-2676 actually reported.
 
@@ -745,22 +771,48 @@ def test_both_admission_gates_read_the_shared_helper():
         and isinstance(node.func, ast.Name)
         and node.func.id == "_discover_admission_score"
     ]
-    assert len(calls) == 2, (
-        f"expected the event gate and the futures gate to share the helper, "
-        f"found {len(calls)} call sites"
+    assert len(calls) == 3, (
+        f"expected the Discover event gate, the Discover futures gate and the "
+        f"/sports-mode futures gate to share the helper, found {len(calls)} "
+        f"call sites"
     )
+    # Named, not just counted: three calls that all moved into one function
+    # would satisfy a bare count while a gate sat unrepaired again.
+    callers = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(call in ast.walk(node) for call in calls)
+    }
+    assert callers == {
+        "_score_events",
+        "_score_futures",
+        "_score_sports_mode_futures",
+    }, f"the three admission gates are not the three callers: {sorted(callers)}"
     assert any(
         "recycled" in {kw.arg for kw in call.keywords} for call in calls
     ), "the futures gate must keep applying the recycle penalty to admission"
 
-    # And no gate still compares a `personalized_score` against a floor.
-    source = inspect.getsource(feed_module)
-    for forbidden in (
-        "if personalized_score < min_score",
-        "and personalized_score < 55",
-        "and not my_teams_only and personalized_score < 15",
-    ):
-        assert forbidden not in source, (
-            f"{forbidden!r} is back: a swipe-derived downrank is deciding "
-            f"eligibility again (CERT-2676)"
+    # And NO gate anywhere in the module still compares a `personalized_score`
+    # against a floor. Derived from the parse tree rather than from a list of
+    # forbidden source lines: the list this replaces held three strings, one of
+    # which ("and not my_teams_only and personalized_score < 15") matched no
+    # line in either tree, and the gate it was meant to describe — the
+    # /sports-mode one at `_score_sports_mode_futures` — was live and unrepaired
+    # while this guard passed. A scan that enumerates its own population cannot
+    # miss a fourth gate the way a hand-written list missed the third.
+    comparisons = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Compare)
+        and any(
+            isinstance(operand, ast.Name) and operand.id == "personalized_score"
+            for operand in [node.left, *node.comparators]
         )
+    ]
+    assert comparisons == [], (
+        f"`personalized_score` is compared at feed.py line(s) "
+        f"{[node.lineno for node in comparisons]}: a swipe-derived downrank is "
+        f"deciding eligibility again (CERT-2676). It may RANK; the number a "
+        f"gate reads is `_discover_admission_score`."
+    )

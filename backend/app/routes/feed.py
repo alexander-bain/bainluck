@@ -9058,7 +9058,13 @@ async def _score_sports_mode_futures(
         )
         personalized_score = min(98, int(base_score * p_result.multiplier))
         rank_score = max(0.0, rank_score * p_result.multiplier)
-        if not my_teams_only and personalized_score < 15:
+        # CERT-2676, third gate — /sports mode reads the SAME personalization
+        # context as Discover (`_load_personalization_context`, one call for
+        # both modes), so a reader's Discover swipes reach this floor too. The
+        # rule is the same wherever the number is compared to a bar: the
+        # swipe-derived downrank sets the ORDER, never the eligibility. No
+        # recycle here — this path serves fresh futures only.
+        if not my_teams_only and _discover_admission_score(base_score, p_result) < 15:
             continue
 
         reason = generate_futures_reason(
