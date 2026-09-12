@@ -1418,6 +1418,39 @@ def worker_code_identity() -> str:
 _last_worker_code_stamp_s = 0.0
 
 
+def _carried_slug_since(r, key, slug, now) -> int:
+    """The epoch this worker went onto `slug`, carried forward or reset to now.
+
+    Separate from the stamp itself so the carry rule is testable without a
+    worker, and so a fault reading the PREVIOUS marker can never cost the NEW
+    one: any failure here returns `now`, and the stamp still lands. The
+    alternative — letting this raise into the caller's `except` — would drop the
+    whole stamp and turn a healthy worker into an absence, which this census
+    reads as UNKNOWN_VERSION.
+
+    A `None` slug never carries: a worker that cannot name its code has nothing
+    to have been on since, and two consecutive unknowns are not evidence of
+    stability.
+    """
+    if slug is None:
+        return int(now)
+    try:
+        raw = r.get(key)
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        prior = json.loads(raw) if raw else None
+        if isinstance(prior, dict) and prior.get("slug") == slug:
+            carried = prior.get("slug_since")
+            # A carried value must be a real epoch AND not in the future: a
+            # clock that has gone backwards would otherwise freeze this worker's
+            # age at a negative number forever, and "age" is the whole signal.
+            if isinstance(carried, (int, float)) and 0 < carried <= now:
+                return int(carried)
+    except Exception:
+        pass
+    return int(now)
+
+
 def record_worker_code_alive(now_s=None):
     """Stamp what code this worker is running. Best-effort, throttled, worker-only.
 
@@ -1429,6 +1462,14 @@ def record_worker_code_alive(now_s=None):
 
     The throttle clock advances only on a write that succeeded, so a Redis blip
     costs one stamp rather than suppressing the next `REFRESH_S` of them.
+
+    THE STAMP CARRIES TWO CLOCKS, and they answer different questions. `ts` is
+    "when did this worker last speak", which is liveness. `slug_since` is "how
+    long has it been on THIS code", which is the one fact that separates a fleet
+    converging normally from one that is wedged — see `fleet_code_verdict`. It
+    is preserved across stamps while the slug is unchanged and reset the moment
+    it changes, so it costs one extra GET per `REFRESH_S` per worker and nothing
+    in the hot path.
     """
     global _last_worker_code_stamp_s
 
@@ -1439,16 +1480,25 @@ def record_worker_code_alive(now_s=None):
         return
     try:
         r = get_redis_client()
+        key = f"{WORKER_CODE_PREFIX}:{worker_code_identity()}"
+        slug = (os.getenv("HEROKU_SLUG_COMMIT") or "")[:8] or None
         payload = json.dumps({
             "ts": int(now),
             # `None` where the lab is off, never a guess and never the reader's
             # own value: "we cannot tell what this worker is running" and "it is
             # running what you are" are the two answers this census must never
             # confuse.
-            "slug": (os.getenv("HEROKU_SLUG_COMMIT") or "")[:8] or None,
+            "slug": slug,
+            # Carried forward only on an EXACT slug match. A previous marker
+            # that is missing, unparseable, or names a different slug all mean
+            # the same thing here — we cannot vouch for any earlier moment — so
+            # each restarts the clock at now rather than inheriting a number
+            # nobody measured. Restarting is the conservative direction: it
+            # reads as "recently changed", i.e. converging, which understates
+            # a wedge rather than inventing one.
+            "slug_since": _carried_slug_since(r, key, slug, now),
         })
-        r.set(f"{WORKER_CODE_PREFIX}:{worker_code_identity()}", payload,
-              ex=WORKER_CODE_TTL_S)
+        r.set(key, payload, ex=WORKER_CODE_TTL_S)
         _last_worker_code_stamp_s = now
     except Exception:
         # Best-effort by contract, like every recorder here: this sits in front
@@ -1517,7 +1567,67 @@ def _unstamped_expected(detail, expected) -> list:
     return [name for name in expected if name not in seen]
 
 
-def fleet_code_verdict(reader_slug, detail, expected=EXPECTED_WORKER_PROCESSES) -> dict:
+def _on_slug_seconds(detail, identities, now) -> dict:
+    """How long each named worker has been on the slug it is currently naming.
+
+    `None` where the marker predates `slug_since` or carries an unusable value —
+    never `0`, which would read as "it just changed" and is the exact reading
+    that would make a wedged worker look like a converging one.
+
+    WHAT THIS NUMBER IS, precisely, because the obvious misreading is load-
+    bearing: it is time on the CURRENT slug, NOT time spent disagreeing with the
+    reader. A worker that has been stale for a day across four different slugs
+    reports the age of the fourth. That is the intended reading — a worker whose
+    slug keeps moving is one whose sync is alive, which is the thing being
+    distinguished — but it means this number must never be described as "how
+    long it has been behind".
+    """
+    out = {}
+    for identity in identities:
+        since = (detail.get(identity) or {}).get("slug_since")
+        if isinstance(since, (int, float)) and 0 < since <= now:
+            out[identity] = int(now - since)
+        else:
+            out[identity] = None
+    return out
+
+
+def _drift_age_clause(ages) -> str:
+    """The sentence that turns DRIFTED from an adjective into a measurement.
+
+    Reports the OLDEST disagreeing worker, because the fleet is as wedged as its
+    stalest member and a mean would let one fresh restart bury one stuck slot.
+    An all-unknown set says so in words rather than falling back to silence: a
+    missing age is what a marker written before this shipped looks like, and
+    reading that as "no age to report, so nothing to see" is the same silence-
+    is-agreement mistake `unstamped_expected` exists to refuse.
+    """
+    known = [s for s in ages.values() if s is not None]
+    if not known:
+        if not ages:
+            return ""
+        return (
+            " How long is NOT known: these markers predate the age stamp, so "
+            "this cannot yet distinguish one release behind from weeks behind."
+        )
+    oldest = max(known)
+    hours, minutes = divmod(oldest // 60, 60)
+    spell = f"{hours}h{minutes:02d}m" if hours else f"{minutes}m"
+    tail = (
+        "" if len(known) == len(ages)
+        else f" ({len(ages) - len(known)} of them cannot say.)"
+    )
+    return (
+        f" The stalest has been on its current code for {spell}. Heavy converges"
+        " behind main by design since #5662, so a short age here is the normal"
+        " steady state and a long one is the alarm — read the number, not the"
+        f" word.{tail}"
+    )
+
+
+def fleet_code_verdict(
+    reader_slug, detail, expected=EXPECTED_WORKER_PROCESSES, now_s=None
+) -> dict:
     """Is every worker running the code the reader is running? Pure.
 
     `verdict` is five-valued and only one of them is a pass:
@@ -1550,7 +1660,26 @@ def fleet_code_verdict(reader_slug, detail, expected=EXPECTED_WORKER_PROCESSES) 
     worker is still not evidence that it is the CURRENT one, so that reads
     UNKNOWN_VERSION; but workers disagreeing with EACH OTHER is decidable
     without any baseline at all, and that reads DRIFTED.
+
+    DRIFTED IS NO LONGER A RARE WORD, AND THE REASON SAYS SO (#5470, after
+    #5662). Until heavy self-sync shipped, `bainluck-heavy` moved only when a
+    person redeployed it, so any mismatch was the defect and `!=` was the whole
+    test. Now main releases several times an hour and heavy converges behind it,
+    so a non-matching slug is the STEADY STATE and MATCHED is the rare one — an
+    instrument that is red whenever anyone looks is one nobody reads, which is
+    how a real wedge hides inside a permanent red.
+
+    The fix here is deliberately a NUMBER AND NOT A NEW THRESHOLD: `on_slug_s`
+    reports how long each disagreeing worker has been on its current code, so
+    forty minutes and six days stop rendering as the same word. A `BEHIND`
+    verdict splitting those two automatically needs a grace window, and a grace
+    window needs the real convergence period of #5662's sync — which is measured
+    at 136-294 min so far on a sample too small to size a bound on, and is the
+    open question on #5470. Guessing it here would tune a constant against an
+    unmeasured bound and hard-code the answer into the instrument asking the
+    question. So the verdict still says DRIFTED, and now says for how long.
     """
+    now = time.time() if now_s is None else now_s
     baseline = reader_slug or None
     known = {}
     unknown = []
@@ -1589,7 +1718,7 @@ def fleet_code_verdict(reader_slug, detail, expected=EXPECTED_WORKER_PROCESSES) 
             if baseline is not None else
             "the workers disagree with each other about what code they are "
             "running, so at least one of them is stale."
-        )
+        ) + _drift_age_clause(_on_slug_seconds(detail, drifted, now))
     elif silent:
         verdict, reason = "UNKNOWN_VERSION", (
             "nothing has stamped for " + ", ".join(silent) + ": either that "
@@ -1622,6 +1751,10 @@ def fleet_code_verdict(reader_slug, detail, expected=EXPECTED_WORKER_PROCESSES) 
         # cannot see running my code" when that app is too stale to answer at
         # all — the state `bainluck-heavy` is in the moment this ships.
         "unstamped_expected": silent,
+        # Every stamped worker, not just the drifting ones: a reader comparing
+        # a heavy slot against a main-app slot needs both ages, and the MATCHED
+        # ones are the control that says the fleet is moving at all.
+        "on_slug_s": _on_slug_seconds(detail, sorted(known), now),
     }
 
 
