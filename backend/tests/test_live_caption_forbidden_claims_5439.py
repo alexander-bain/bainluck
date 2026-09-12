@@ -42,7 +42,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.routes.feed import _is_discover_event_demotion_exception
+# One import form for `app.routes.feed`, module-level: the AST guards below need
+# the module object for `inspect.getsource`, and mixing `import x` with
+# `from x import y` in one file is a CodeQL `py/import-and-import-from` note.
+import app.routes.feed as feed_module
+
 from app.utils.feed_reasons import compose_live_claim, generate_event_reason
 from app.utils.highlights import (
     EventFlags,
@@ -518,8 +522,6 @@ def _feed_item_dict_node():
     import ast
     import inspect
 
-    import app.routes.feed as feed_module
-
     tree = ast.parse(inspect.getsource(feed_module))
     matches = []
     for node in ast.walk(tree):
@@ -558,8 +560,6 @@ class TestTheCaptionSlotIsWired:
         not raise, it silently makes every card claimless."""
         import ast
         import inspect
-
-        import app.routes.feed as feed_module
 
         tree = ast.parse(inspect.getsource(feed_module))
         calls = [
@@ -603,8 +603,6 @@ class TestTheCaptionSlotIsWired:
         A fix that moved the sentence into both slots would print it twice."""
         import ast
         import inspect
-
-        import app.routes.feed as feed_module
 
         tree = ast.parse(inspect.getsource(feed_module))
         pill_args = [
@@ -674,24 +672,24 @@ class TestTheDemotionExceptionDidNotMoveWithTheCaption:
             headline="Cincinnati Reds leading after starting at 38%",
             label="Upset brewing",
         )
-        assert _is_discover_event_demotion_exception(item) is True
+        assert feed_module._is_discover_event_demotion_exception(item) is True
 
     def test_the_old_payload_shape_still_keeps_its_exception(self):
         """Pre-ship shape, and every fixture written against it."""
-        assert _is_discover_event_demotion_exception(
+        assert feed_module._is_discover_event_demotion_exception(
             self._item(headline="Upset brewing")
         ) is True
 
     def test_a_claim_sentence_alone_is_not_an_exception(self):
         """RED CHECK. Had the read stayed on `headline`, this is the card that
         would have lost 47 points of score for saying something true."""
-        assert _is_discover_event_demotion_exception(
+        assert feed_module._is_discover_event_demotion_exception(
             self._item(headline="Cincinnati Reds leading after starting at 38%")
         ) is False
 
     def test_an_ordinary_live_card_is_still_demotable(self):
         """CONTROL — the retarget did not make everything exceptional."""
-        assert _is_discover_event_demotion_exception(
+        assert feed_module._is_discover_event_demotion_exception(
             self._item(headline="Tight game", label="Coin flip")
         ) is False
 
