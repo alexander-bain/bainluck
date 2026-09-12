@@ -331,8 +331,10 @@ struct EventCardView: View {
             // agreement with `footerRow` decidable from the same inputs the
             // view has; the guard test pins both arms in both directions.
             guard isLive, homeOpening != nil else { return false }
-            // Mirrors `footerRow`'s "Opened X/Y" branch: live, and BOTH sides
-            // priced. One side alone renders nothing, so it is not content.
+            // Mirrors `footerRow`'s two branches: the "Opened X/Y" pair needs
+            // BOTH sides priced, and the named single-sided caption needs the
+            // rule to fire. Home alone on a two-way sport still renders
+            // nothing, so it is still not content.
             return awayOpening != nil || DrawPricedWinner.sportPricesADraw(sport)
         }
     }

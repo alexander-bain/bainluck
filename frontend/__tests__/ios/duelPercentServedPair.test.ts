@@ -392,7 +392,18 @@ describe("#2279 — the widget's fallback IS the shared rule", () => {
     expect(src).toMatch(/let derivedAwayPct = leaderIsHome \? 100 - leaderPct : leaderPct/);
     expect(src).toMatch(/let bothServed = servedHomePct != nil && servedAwayPct != nil/);
     expect(src).toMatch(/homeProb: bothServed \? servedHomePct! : derivedHomePct/);
-    expect(src).toMatch(/awayProb: bothServed \? servedAwayPct! : derivedAwayPct/);
+    // #5363 — the derivation the transcription above mirrors is UNCHANGED; it
+    // is now wrapped by the withholding gate, so a draw-priced sport sends the
+    // widget no away number at all rather than `1 - P(home)`. Pinned as one
+    // expression: drop the gate and soccer lies again, drop the inner ternary
+    // and the served pair stops being preferred.
+    expect(src).toMatch(
+      /awayProb: awayIsWithheld \? nil : \(bothServed \? servedAwayPct! : derivedAwayPct\)/,
+    );
+    // The gate is the SHARED rule, not a transcription of it (ruling 021).
+    expect(src).toMatch(
+      /let awayIsWithheld = DrawPricedWinner\.sportPricesADraw\(event\.sport\)/,
+    );
     // And the trap is gone: `Int(_:)` on a non-finite Double aborts the process.
     expect(src).toMatch(/homeProbability\.isFinite/);
   });

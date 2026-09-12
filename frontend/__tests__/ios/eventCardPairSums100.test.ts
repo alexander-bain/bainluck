@@ -206,7 +206,20 @@ describe("#3049 — every probability the card prints came from a pair", () => {
     // 🔴 RAW SOURCE IN (#4337). The `Opened` line's two calls are inside a string
     // literal; under the stripping read this assertion would pass on a card that
     // had lost both of them.
-    expect(callsMissingRenderedPercent(read(CARD))).toEqual([]);
+    // #5363 — ONE call may omit it, and the set is asserted by EQUALITY so a
+    // second one cannot slip in behind this exception.
+    //
+    // The named single-sided caption ("Opened Boca 68%") prints a lone number
+    // on a draw-priced sport. `openingPercents` is a PAIR rounding — it exists
+    // to stop two numbers summing to 101, and its home entry is rounded to
+    // pair with an away number this branch refuses to print. Consulting it
+    // here would reach for the complement by the back door. `formatProbability`
+    // applies the identical rounding when `renderedPercent` is nil, so the
+    // string a reader sees is unchanged; what changes is that no complement
+    // was consulted to produce it. Same reasoning as the hero's draw arm.
+    expect(callsMissingRenderedPercent(read(CARD))).toEqual([
+      "formatProbability(opened.home)",
+    ]);
   });
 
   it("the live strip takes the served pair, and takes both halves of it", () => {
