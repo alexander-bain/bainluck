@@ -1,6 +1,7 @@
 """Admin endpoints for Celery worker health, inspection, and task metrics."""
 
 
+import logging
 import time
 from datetime import datetime, timezone
 
@@ -8,6 +9,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -1371,11 +1374,23 @@ async def beat_instances(
 
     try:
         census = await run_in_threadpool(get_beat_instances)
-    except BeatCensusUnavailable as exc:
+    except BeatCensusUnavailable:
+        # The detail goes to the log, never to the response body. A Redis error
+        # string carries the connection URL — host, port, and on Heroku the
+        # credentials embedded in REDIS_URL — and this endpoint is reachable with
+        # nothing but the admin secret. CodeQL calls it "information exposure
+        # through an exception" and it is right; CERT-2675 withheld the token
+        # for it.
+        #
+        # The operator loses nothing: `verdict` is what this endpoint is for, and
+        # INCONCLUSIVE is unchanged. Whoever needs the cause reads the dyno log,
+        # where `exc_info` carries the whole traceback rather than 300 truncated
+        # characters.
+        logger.exception("beat census unreadable — returning INCONCLUSIVE")
         return {
             "status": "unreadable",
             "verdict": "INCONCLUSIVE",
-            "error": str(exc)[:300],
+            "error": "the beat census could not be read (see server logs)",
             "reason": (
                 "the beat census could not be read; this is NOT evidence that "
                 "a single beat is running"

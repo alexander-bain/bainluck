@@ -378,3 +378,78 @@ class TestPublishHookWiring:
 
         src = inspect.getsource(tasks_pkg._record_emission)
         assert src.index("record_beat_alive(") < src.index("_published_retries")
+
+
+# ---------------------------------------------------------------------------
+# The repair required by CERT-2675 — a Redis error string is not a payload
+# ---------------------------------------------------------------------------
+
+class TestCensusUnavailableNeverEchoesTheException:
+    """The endpoint must not hand a reader the text of a Redis failure.
+
+    CodeQL flagged the first version as "information exposure through an
+    exception" and CERT-2675 withheld the token for it. The concrete loss is
+    not abstract: a redis-py connection error renders the URL it was dialling,
+    which on Heroku carries the credentials embedded in `REDIS_URL`, and this
+    endpoint is reachable with nothing but the admin secret.
+
+    The sentinel below stands in for that string. The assertion is deliberately
+    made against the WHOLE serialized response rather than the `error` key
+    alone: the defect is "this text reaches a reader", and a later edit that
+    moved it into `reason`, or into a nested detail dict, would satisfy a
+    key-scoped assertion while changing nothing about the exposure.
+    """
+
+    SENTINEL = "redis://h:sekrit-passw0rd@ec2-1-2-3-4.compute.amazonaws.com:6379"
+
+    def _call(self, monkeypatch, exc):
+        import asyncio
+        import json
+
+        from app.routes import admin_celery
+        from app.tasks import redis_state
+
+        monkeypatch.setattr(
+            admin_celery, "_check_admin_secret", lambda *a, **k: None
+        )
+
+        def _boom():
+            raise exc
+
+        monkeypatch.setattr(redis_state, "get_beat_instances", _boom)
+        out = asyncio.run(admin_celery.beat_instances(request=None, secret="x"))
+        return out, json.dumps(out)
+
+    def test_beat_census_unavailable_never_echoes_exception_details(
+        self, monkeypatch
+    ):
+        from app.tasks.redis_state import BeatCensusUnavailable
+
+        out, body = self._call(
+            monkeypatch, BeatCensusUnavailable(self.SENTINEL)
+        )
+
+        assert self.SENTINEL not in body
+        assert "sekrit-passw0rd" not in body
+        # and the verdict half is untouched: suppressing the detail must not
+        # turn an outage into a quiet pass (gotcha #53).
+        assert out["verdict"] == "INCONCLUSIVE"
+        assert out["status"] == "unreadable"
+
+    def test_the_detail_is_logged_rather_than_discarded(self, monkeypatch, caplog):
+        """Suppressed is not the same as lost — an operator still needs the cause.
+
+        Without this, the cheapest way to pass the test above is to delete the
+        information entirely, which trades a disclosure bug for a debugging one.
+        """
+        import logging
+
+        from app.tasks.redis_state import BeatCensusUnavailable
+
+        with caplog.at_level(logging.ERROR, logger="app.routes.admin_celery"):
+            self._call(monkeypatch, BeatCensusUnavailable(self.SENTINEL))
+
+        assert any(
+            self.SENTINEL in r.getMessage() or self.SENTINEL in str(r.exc_info)
+            for r in caplog.records
+        ), "the cause must reach the log even though it must not reach the body"
