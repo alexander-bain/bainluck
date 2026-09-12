@@ -94,7 +94,8 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
         let rendered = DiscoverView.applyFloor(
             to: page,
             keeping: { !profile.suppresses(category: self.categoryOf($0), now: self.now) },
-            backfillPriority: { profile.score(for: self.categoryOf($0), now: self.now) }
+            backfillPriority: { profile.score(for: self.categoryOf($0), now: self.now) },
+            neverBackfill: { _ in false }
         )
         XCTAssertGreaterThanOrEqual(
             rendered.count, DiscoverView.feedFloor,
@@ -122,7 +123,8 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
         let rendered = DiscoverView.applyFloor(
             to: page,
             keeping: { !profile.suppresses(category: self.categoryOf($0), now: self.now) },
-            backfillPriority: { _ in 0 }
+            backfillPriority: { _ in 0 },
+            neverBackfill: { _ in false }
         )
         XCTAssertEqual(rendered.count, 50)
     }
@@ -135,7 +137,8 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
         let rendered = DiscoverView.applyFloor(
             to: page,
             keeping: { !profile.suppresses(category: self.categoryOf($0), now: self.now) },
-            backfillPriority: { _ in 0 }
+            backfillPriority: { _ in 0 },
+            neverBackfill: { _ in false }
         )
         XCTAssertEqual(rendered.count, 3, "backfill is bounded by what was served")
     }
@@ -156,7 +159,8 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
         let rendered = DiscoverView.applyFloor(
             to: page,
             keeping: { !profile.suppresses(category: self.categoryOf($0), now: self.now) },
-            backfillPriority: { profile.score(for: self.categoryOf($0), now: self.now) }
+            backfillPriority: { profile.score(for: self.categoryOf($0), now: self.now) },
+            neverBackfill: { _ in false }
         )
         XCTAssertEqual(rendered.count, DiscoverView.feedFloor)
         XCTAssertEqual(categoryOf(rendered[0]), "tennis", "the kept card still leads")
@@ -256,5 +260,149 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
         let profile = DiscoverInteractionProfile.forTesting(scores: ["politics": -4], recordedAt: now)
         XCTAssertTrue(profile.suppresses(category: "Politics", now: now))
         XCTAssertTrue(profile.suppresses(category: "POLITICS", now: now))
+    }
+
+    // MARK: - #5453 — the floor may not rebuild the page from this sitting's rejects
+    //
+    // Both directions are asserted here, and BOTH are the contract: a card the
+    // reader just swiped never comes back (#5453), and an AGED dismiss history
+    // still cannot collapse a healthy page (#1221). A fix that only holds one
+    // direction trades Alex's loop for the starved page that preceded it.
+
+    private var epoch: TimeInterval { now.timeIntervalSince1970 }
+
+    /// Alex's report, as arithmetic: 47 of a 50-card page swiped away in this
+    /// sitting. Before the fix the floor backfilled 25 of them —
+    /// least-recently-dismissed FIRST, so the card he swiped first led the
+    /// refill: "I see the original one again".
+    func testACardSwipedInThisSittingIsNeverBackfilled() throws {
+        let page = try productionShapedPage()
+        let swiped = page.prefix(47)
+        var dismissedAt: [String: TimeInterval] = [:]
+        // Swiped over about a minute, oldest first — the ordering that used to
+        // decide which reject came back.
+        for (i, item) in swiped.enumerated() {
+            dismissedAt[DiscoverView.feedItemId(item)] = epoch - Double(47 - i)
+        }
+
+        let rendered = DiscoverView.applyDismissFloor(
+            to: page, dismissedAt: dismissedAt, now: epoch)
+
+        XCTAssertEqual(rendered.count, 3, "only the 3 untouched cards remain")
+        let renderedIds = Set(rendered.map { DiscoverView.feedItemId($0) })
+        for item in swiped {
+            XCTAssertFalse(
+                renderedIds.contains(DiscoverView.feedItemId(item)),
+                "a card swiped seconds ago must not be backfilled")
+        }
+        // The specific failure, named: the FIRST card he swiped is the one the
+        // old ordering brought back first.
+        XCTAssertFalse(
+            renderedIds.contains(DiscoverView.feedItemId(page[0])),
+            "\"the original one\" — the oldest swipe of this sitting — must not lead the refill")
+    }
+
+    /// #1221 must not come back. An install carrying an OLD swipe history still
+    /// renders a full page: an aged dismissal is a decayed downrank, and sinking
+    /// it is the design.
+    func testAnAgedDismissHistoryStillCannotCollapseThePage() throws {
+        let page = try productionShapedPage()
+        var dismissedAt: [String: TimeInterval] = [:]
+        for item in page.prefix(47) {
+            dismissedAt[DiscoverView.feedItemId(item)] =
+                epoch - DiscoverView.backfillGraceWindow - 3600   // an hour past the window
+        }
+
+        let rendered = DiscoverView.applyDismissFloor(
+            to: page, dismissedAt: dismissedAt, now: epoch)
+
+        XCTAssertGreaterThanOrEqual(
+            rendered.count, DiscoverView.feedFloor,
+            "#1221: an aged dismiss history must not cut a healthy 50-card page below the floor")
+        XCTAssertEqual(rendered.count, 28, "the floor, stated as a number")
+        XCTAssertEqual(
+            rendered.prefix(3).count, 3,
+            "the 3 undismissed cards still lead; the floor sinks the aged ones, it does not re-rank them up")
+    }
+
+    /// The tuned constant, pinned from BOTH sides. A shorter window lets the loop
+    /// back in; a `dismissTTL`-length one turns #1221's soft, decaying dismiss
+    /// into the permanent client blackhole it exists to prevent.
+    func testBackfillGraceWindowIsPinnedOnBothEdges() throws {
+        let page = try productionShapedPage()
+        let target = page[0]
+        let id = DiscoverView.feedItemId(target)
+
+        func rendersTarget(dismissedAgo: TimeInterval) throws -> Bool {
+            var dismissedAt: [String: TimeInterval] = [:]
+            for item in page.prefix(47) {
+                dismissedAt[DiscoverView.feedItemId(item)] = epoch - dismissedAgo
+            }
+            let rendered = DiscoverView.applyDismissFloor(
+                to: page, dismissedAt: dismissedAt, now: epoch)
+            return rendered.contains { DiscoverView.feedItemId($0) == id }
+        }
+
+        XCTAssertFalse(
+            try rendersTarget(dismissedAgo: DiscoverView.backfillGraceWindow - 1),
+            "one second inside the window: still this sitting, must not return")
+        XCTAssertTrue(
+            try rendersTarget(dismissedAgo: DiscoverView.backfillGraceWindow + 1),
+            "one second outside it: an aged swipe has earned its way back (#1221)")
+
+        XCTAssertEqual(
+            DiscoverView.backfillGraceWindow, 30 * 60,
+            "30 minutes — long enough to outlast one sitting, far short of the 14-day dismiss TTL")
+        XCTAssertLessThan(
+            DiscoverView.backfillGraceWindow, 14 * 24 * 3600,
+            "the grace window is not the dismiss TTL: a dismissal must still decay back in")
+    }
+
+    /// The predicate itself, at its boundary — `<`, not `<=`, and an absent entry
+    /// is not a dismissal.
+    func testWithinBackfillGraceBoundary() {
+        XCTAssertFalse(DiscoverView.isWithinBackfillGrace(dismissedAt: nil, now: epoch))
+        XCTAssertTrue(DiscoverView.isWithinBackfillGrace(dismissedAt: epoch, now: epoch))
+        XCTAssertFalse(
+            DiscoverView.isWithinBackfillGrace(
+                dismissedAt: epoch - DiscoverView.backfillGraceWindow, now: epoch),
+            "exactly at the window has aged out")
+        XCTAssertTrue(
+            DiscoverView.isWithinBackfillGrace(
+                dismissedAt: epoch - DiscoverView.backfillGraceWindow + 1, now: epoch))
+    }
+
+    /// The floor still cannot invent cards — `testShortPageIsNotInflated`'s
+    /// premise, restated for the dismiss stage now that it can withhold.
+    func testDismissFloorNeverInventsCards() throws {
+        let page = try (1...3).map { try card($0, category: "politics") }
+        var dismissedAt: [String: TimeInterval] = [:]
+        dismissedAt[DiscoverView.feedItemId(page[0])] = epoch
+
+        let rendered = DiscoverView.applyDismissFloor(
+            to: page, dismissedAt: dismissedAt, now: epoch)
+
+        XCTAssertEqual(rendered.count, 2, "a short page shrinks honestly; nothing is minted")
+        XCTAssertTrue(rendered.allSatisfy { item in
+            page.contains { DiscoverView.feedItemId($0) == DiscoverView.feedItemId(item) }
+        })
+    }
+
+    /// The count `hideForSession` reads before it decides to ask the server. It
+    /// must see the shortfall the floor used to paper over.
+    func testUndismissedEligibleCountSeesTheShortfall() throws {
+        let page = try productionShapedPage()
+        var dismissedAt: [String: TimeInterval] = [:]
+        for item in page.prefix(47) { dismissedAt[DiscoverView.feedItemId(item)] = epoch }
+
+        XCTAssertEqual(
+            DiscoverView.undismissedEligibleCount(in: page, dismissedAt: [:], now: now), 50,
+            "a clean install sees the whole page")
+        XCTAssertEqual(
+            DiscoverView.undismissedEligibleCount(in: page, dismissedAt: dismissedAt, now: now), 3,
+            "after 47 swipes it sees 3 — under the floor, so the caller fetches")
+        XCTAssertLessThan(
+            DiscoverView.undismissedEligibleCount(in: page, dismissedAt: dismissedAt, now: now),
+            DiscoverView.feedFloor)
     }
 }
