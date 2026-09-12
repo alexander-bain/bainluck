@@ -4106,10 +4106,24 @@ async def _log_search_query(
     top_result_id: Optional[int],
     user_id: Optional[int],
     session_id: Optional[str],
+    origin: Optional[str] = None,
 ) -> None:
     """#239 Item 4: persist a search query, best-effort. Opens its own short-lived
     rw session so it can never affect the read-only search response or its session,
-    and swallows every error — instrumentation must never break search."""
+    and swallows every error — instrumentation must never break search.
+
+    #1916: `origin` is the provenance STAMP, and it is a positional part of the
+    row rather than a derived read because the whole point of the column is that
+    it is recorded at write time. `None` is a real value here and means "this
+    writer does not stamp" — it must stay distinguishable from `'user'`, which is
+    an assertion this system made (gotcha #53).
+
+    Defaulted rather than required. `/search`'s recorder is the only in-tree
+    caller and it always passes a value, but several tests drive
+    `_dispatch_search_log` directly; a required parameter would turn those into
+    `TypeError`s, and the fix a hurried session reaches for is to pass `'user'`
+    from a harness — which is a fabricated human row in an append-only table.
+    """
     try:
         from app.models.models import SearchQueryLog
         from app.services.database import async_session_maker
@@ -4121,6 +4135,7 @@ async def _log_search_query(
                 top_result_id=top_result_id,
                 user_id=user_id,
                 session_id=(session_id or None) and session_id[:100],
+                origin=(origin or None) and origin[:64],
             ))
             await s.commit()
     except Exception as exc:  # noqa: BLE001 — never break search on a logging failure
@@ -4189,6 +4204,62 @@ def _request_is_automation(request: Optional[Request]) -> bool:
     if not raw:
         return False
     return raw.strip().lower() != _ORIGIN_USER
+
+
+def _origin_for_log(request: Optional[Request]) -> str:
+    """#1916: the value to STAMP into `search_query_logs.origin` for this request.
+
+    Returns the verbatim header, lowercased and truncated to the column's 64, or
+    `_ORIGIN_USER` when the caller sent nothing.
+
+    🔴 WHY IT DERIVES THE VALUE INSTEAD OF WRITING THE CONSTANT, when today only
+    one value can ever reach the table. `_record_search_query` returns before the
+    dispatch for any request `_request_is_automation` recognises, so every row
+    this path writes today stamps `'user'` — the agent-named branch below is, at
+    this sha, unreachable through HTTP. Writing the literal `'user'` would be
+    shorter and would encode the suppression as an assumption in a second place.
+    Notice 39 says the opposite is where this is going ("tagged rows stay in the
+    table and are COUNTED, never dropped"), and on the day suppression is relaxed
+    the shorter version does not fail — it labels the whole fleet human, in an
+    append-only table, with no way to tell those rows from the real ones after
+    the fact. The derivation costs one function call and cannot do that.
+
+    ABSENT STAMPS `'user'` AND THAT IS A DELIBERATE ASYMMETRY, not the
+    default-by-absence #1916 exists to end. NULL in this column means "no writer
+    stamped this row"; it is reached by never calling this function — every row
+    that predates this sha, and any future writer that logs without stamping.
+    A row that reaches THIS function has passed the automation gate on a path
+    that stamps, so `'user'` here is an assertion the system is making, not an
+    absence being read as one. `_request_is_automation`'s own direction is the
+    same and for the same reason: it fails toward logging.
+
+    🔴 THE LOCAL IS `header_value` AND NOT `raw`, WHICH IS NOT A STYLE CHOICE —
+    AND THIS PARAGRAPH DOES NOT SPELL THE LINE IT IS ABOUT, FOR THE SAME REASON.
+    `scripts/evals/search_origin_channel_mutations.py`'s M9 anchors on the header
+    read inside `_request_is_automation`, as a verbatim source line beginning
+    `raw =`. Any second copy of that line ANYWHERE in this file — a real read, or
+    a docstring quoting it to explain itself — makes the anchor non-unique, and
+    the harness then refuses M9 as HARNESS-FAIL: the mutant that proves the
+    origin channel is read under the right name silently stops running. CI's
+    residue scan caught the duplicate read on this branch's first push and the
+    quotation in this very comment on its second.
+
+    The de-duplicating refactor is real and is not available cheaply: one shared
+    reader, or `_request_is_automation` expressed in terms of this function
+    (`automation == _origin_for_log(request) != _ORIGIN_USER`, provably
+    equivalent including the exception path). Either removes the needle from the
+    function M9 names, so it needs that harness re-targeted in the same change,
+    and that file is latency's. A different local name costs nothing and keeps
+    both guards live.
+    """
+    header_value = None
+    if request is not None:
+        try:
+            header_value = request.headers.get(_ORIGIN_HEADER)
+        except Exception:  # noqa: BLE001 — a header read never breaks search
+            header_value = None
+    value = (header_value or "").strip().lower() or _ORIGIN_USER
+    return value[:64]
 
 
 # LAT-P090/#2211: suppress the search-query log for the head warmer's OWN calls.
@@ -4419,6 +4490,10 @@ def _record_search_query(payload: dict, *, q: str, request: Request, current_use
             top_result_id=_top_id,
             user_id=_uid,
             session_id=_sid,
+            # #1916: the stamp is taken from the SAME request object the
+            # automation gate above read, in the same call, so the row's
+            # provenance can never disagree with the decision to write it.
+            origin=_origin_for_log(request),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("search-log dispatch failed: %s", exc)

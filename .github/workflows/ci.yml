@@ -785,6 +785,35 @@ jobs:
             exit 1
           fi
 
+      - name: The seven rows a reader sees, out of the real route (real Postgres)
+        # #4922. Three consecutive ships changed what `/typeahead` puts in front
+        # of a reader — #4847 (a nickname resolves to a game), #4986 (that game
+        # outranks the five markets derived from it) and #4914 (a played game's
+        # market leaves the pool) — and not one of them could assert the
+        # finished list. Every guard they shipped sits one layer below the
+        # reader: on `rank_key`, on `Evidence`, on a pool SELECT. Nothing held
+        # the `reserve_headline_slot(_s_rank(...))[:7]` the client renders.
+        #
+        # #4986's own guard file names this gate by number: "nothing here proves
+        # the route SETS `_names_participant` correctly against a live pool,
+        # because that needs a populated database. That control is #4922."
+        #
+        # Real Postgres because the defect class is composition — four recall
+        # arms running against one another over rows a server returned. A
+        # session double answers with whatever the double was told to answer.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_final_seven_route_control_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/final_seven_route_control.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/final_seven_route_control.txt; then
+            echo "::error::#4922 final-seven route control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening
