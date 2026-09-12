@@ -6187,7 +6187,10 @@ async def _poll_live_prediction_market_prices():
 
                 # Write to win_probability_sources on the event
                 from sqlalchemy import update as _sql_upd2
-                from app.utils.aggregation import stamp_source_reading as _stamp2
+                from app.utils.aggregation import (
+                    source_observation_time as _obs2,
+                    stamp_source_reading as _stamp2,
+                )
                 _pm_r2 = await session.execute(
                     select(Event.win_probability_sources).where(Event.id == event.id)
                 )
@@ -6195,9 +6198,34 @@ async def _poll_live_prediction_market_prices():
                 # naming the market that spoke — `reading.eligibility`, minted
                 # by the gate, for the same reason `game_state` above names
                 # `reading.market` rather than the loop's primary.
+                #
+                # #5661: and the write time is the OUTCOME's observation time,
+                # not this task's clock — the same kwarg, helper and reason as
+                # `_phase2_persist_group_reading` (#4028), which this call site
+                # was missed by.
+                #
+                # THE OBJECTION, AND WHY IT DOES NOT HOLD. Unlike the 15-minute
+                # matcher, this task genuinely DOES re-observe the venue, so its
+                # own clock looks defensible. But it re-observes in an EARLIER
+                # phase, and this loop then runs over the re-queried live
+                # population WHOLE — including every market whose fetch was
+                # skipped, errored, or never reached because the pass threw
+                # partway (the deadlock in #5661 was failing 72 of 79 starts).
+                # For those rows this writer re-derives from a row it already
+                # had, which is exactly the case `source_observation_time`
+                # exists for. Re-observing SOMETIMES is not re-observing.
+                #
+                # Bournemouth 2-2 Brentford, LIVE at 78': the Polymarket leg
+                # froze at 13:08Z, 52 minutes before kickoff, and was served to
+                # a reader stamped 15:46:41Z at 40.5% while Gamma said 0.215.
+                # Inert on a healthy poll (`last_updated` ~ now); it only bites
+                # legs that are already dead — and it is what lets the hero's
+                # relative decay demote a frozen leg at all, which forged
+                # freshness makes impossible.
                 _pm_wps2 = _stamp2(
                     _pm_r2.scalar_one_or_none(), market.source, round(home_prob, 4),
                     eligibility=reading.eligibility,
+                    now=_obs2(reading.outcome),
                 )
                 await session.execute(
                     _sql_upd2(Event)
