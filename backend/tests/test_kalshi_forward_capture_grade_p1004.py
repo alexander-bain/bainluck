@@ -45,6 +45,7 @@ module there is part of adding a grader.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -71,11 +72,27 @@ TASK_SOURCE = _TASKS / "kalshi.py"
 #: fail. So the premise is now checked.
 BACKFILL_SOURCE = _TASKS / "backfill_winners.py"
 
-#: Every module that turns a Kalshi ``result`` into ``is_winner``. Adding a
-#: third belongs here in the same commit that adds it.
+#: #5304 / CAL-P1122. The THIRD file that turns a Kalshi ``result`` into an
+#: ``is_winner``, and it carried the same two-state partition until #5304 fixed
+#: it. ``run_lean_settled`` is an admin route rather than a task, which is the
+#: only reason it did not look like a grader — it pages Kalshi's settled events
+#: and writes both sides of the verdict in raw SQL, exactly as the two task
+#: modules do. It was not in this list, so for the whole of that regression NONE
+#: of the class scans below were looking at it.
+ADMIN_SOURCE = (
+    Path(__file__).resolve().parents[1] / "app" / "routes" / "admin_data_quality.py"
+)
+
+#: Every module that turns a Kalshi ``result`` into ``is_winner``.
+#:
+#: 🔴 DO NOT MAINTAIN THIS LIST BY HAND ALONE — that is the defect, four times
+#: over. ``TestTheGraderListIsDiscoveredNotDeclared`` below derives the real
+#: population from the source tree and fails if this list has drifted from it,
+#: so a fourth grader cannot be added without a red test.
 GRADING_SOURCES = [
     pytest.param(TASK_SOURCE, id="tasks/kalshi.py"),
     pytest.param(BACKFILL_SOURCE, id="tasks/backfill_winners.py"),
+    pytest.param(ADMIN_SOURCE, id="routes/admin_data_quality.py"),
 ]
 
 #: The two venue states the 2026-09-04 probe actually returned for legs we had
@@ -262,3 +279,198 @@ class TestNoTwoStateGradeSurvivesInTheTask:
         code = TASK_SOURCE.read_text()
         assert "from app.utils.kalshi_market_status import" in code
         assert "graded_columns" in code
+
+    def test_the_third_grader_defers_too(self):
+        """#5304. ``run_lean_settled`` has exactly ONE decision and it defers.
+
+        Pinned like its two siblings above so a second grading site cannot be
+        added to that route without this test being read.
+        """
+        code = "\n".join(self._code_lines(ADMIN_SOURCE))
+        assert code.count("gradeable_winner(") == 1, code.count("gradeable_winner(")
+
+
+# ---------------------------------------------------------------------------
+# CAL-P1122 (#1852 / #3617): the list stops being the thing that is trusted.
+# ---------------------------------------------------------------------------
+
+#: Modules that write the venue-settlement rung but are NOT Kalshi ``result``
+#: graders, each with the reason it is not one. This is the ONLY sanctioned way
+#: to be a writer and stay outside :data:`GRADING_SOURCES`, and every entry is a
+#: claim the test below re-checks: an entry that stops writing the rung is a
+#: DEAD entry and fails, so this cannot rot into a permission slip.
+NON_KALSHI_RUNG_WRITERS = {
+    "app/tasks/polymarket.py": (
+        "Polymarket's own settlement sync. It reads Polymarket's `umaResolution"
+        "Status`/`outcomePrices`, never a Kalshi `result`, so the three-state "
+        "Kalshi judgment does not apply to it and scanning it for `result == "
+        "\"yes\"` would be scanning the wrong venue's vocabulary."
+    ),
+    "app/tasks/repair_kalshi_fabricated_loss.py": (
+        "The BACKWARD rail. Its single rung write is the `restore_winner` "
+        "branch — the venue told us this leg WON and we had stored a loss — and "
+        "it is licensed by `kalshi_fabricated_loss.classify_leg`, which consumes "
+        "the venue's status/result pair rather than partitioning the raw field. "
+        "It is the repair for this class, not a member of it."
+    ),
+}
+
+#: A write of the top authority rung: ``resolution_source`` ASSIGNED the venue
+#: settlement string, in Python kwarg form or in raw SQL ``SET``.
+_RUNG_WRITE_RE = re.compile(
+    r"""resolution_source\s*=\s*['"]""" + VENUE_SETTLEMENT_SOURCE + r"""['"]"""
+)
+
+#: Contexts where the same text is a READ, not a write — a counted filter, an
+#: authority comparison, a membership test. `futures_price_refresh` refuses to
+#: re-price a leg carrying this rung and must not be dragged in as a grader.
+_RUNG_READ_CONTEXT_RE = re.compile(
+    r"FILTER\s*\(|IS\s+DISTINCT\s+FROM|NOT\s+IN\s*\(|\bIN\s*\(", re.IGNORECASE
+)
+
+
+def _executable_lines(path: Path) -> list[str]:
+    """Source lines with comments AND docstrings removed.
+
+    Docstrings matter here and they do not matter to :meth:`_code_lines`. This
+    module's own prose, ``settled_price``'s and ``kalshi_fabricated_loss``'s all
+    quote the write they exist to describe, and a scan that reads prose as code
+    reports five extra graders and gets switched off. ``ast`` is used rather
+    than a triple-quote regex because a quote inside a SQL string is ordinary.
+    """
+    src = path.read_text()
+    doc_lines: set[int] = set()
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            doc_lines.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+
+    out = []
+    for number, line in enumerate(src.splitlines(), start=1):
+        if number in doc_lines:
+            continue
+        if line.strip().startswith("#"):
+            continue
+        out.append(line.split("  #")[0])
+    return out
+
+
+def _venue_rung_writers(root: Path) -> dict[str, list[str]]:
+    """Every module under ``app/`` that WRITES the venue-settlement rung."""
+    found: dict[str, list[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        hits = [
+            line.strip()
+            for line in _executable_lines(path)
+            if _RUNG_WRITE_RE.search(line) and not _RUNG_READ_CONTEXT_RE.search(line)
+        ]
+        if hits:
+            found[path.relative_to(root.parent).as_posix()] = hits
+    return found
+
+
+class TestTheGraderListIsDiscoveredNotDeclared:
+    """The class guard's own blind spot, closed.
+
+    🔴 THIS IS THE FOURTH TIME, AND THE LIST IS WHY. ``kalshi.py`` held five
+    two-state copies (CAL-P1004); ``_backfill_kalshi_winners_targeted`` held a
+    sixth for a month (#4604); ``_resolve_winners_only`` held a seventh under a
+    renamed local (#5246); ``run_lean_settled`` held an eighth in a ROUTE file
+    (#5304). Every one of those fixes ended the same way — add the next NAME to
+    a hand-kept list — and the next grader was invisible again the next day,
+    because a source-text guard inherits the file list it is given and nothing
+    was checking the list.
+
+    So the list is no longer the thing that is trusted. The population is
+    DERIVED from the tree: anything that writes ``resolution_source =
+    'api_settlement'`` is a settlement writer, and it is either a Kalshi grader
+    (and therefore scanned by every test above) or it is named here with the
+    reason it is not. There is no third state, and "nobody remembered" stops
+    being one of the ways this recurs.
+    """
+
+    APP = Path(__file__).resolve().parents[1] / "app"
+
+    def test_the_scan_finds_the_writers_we_already_know_about(self):
+        """Anti-vacuity, and it is the assertion that earns the rest.
+
+        A discovery guard whose pattern silently stops matching reports an empty
+        population and PASSES — the failure mode this whole file exists to catch,
+        wearing a new hat. So the scanner is required to re-find the two graders
+        CAL-P1004 and #4604 were about, by name, before any conclusion is drawn
+        from what it did not find.
+        """
+        writers = _venue_rung_writers(self.APP)
+        assert "app/tasks/kalshi.py" in writers, sorted(writers)
+        assert "app/tasks/backfill_winners.py" in writers, sorted(writers)
+        assert "app/routes/admin_data_quality.py" in writers, sorted(writers)
+        assert len(writers) >= 4, sorted(writers)
+
+    def test_every_rung_writer_is_scanned_or_justified(self):
+        """No module writes the top authority rung off this file's radar."""
+        writers = set(_venue_rung_writers(self.APP))
+        scanned = {
+            source.values[0].relative_to(self.APP.parent).as_posix()
+            for source in GRADING_SOURCES
+        }
+        unaccounted = writers - scanned - set(NON_KALSHI_RUNG_WRITERS)
+        assert unaccounted == set(), (
+            "a new module writes `resolution_source = 'api_settlement'` and no "
+            "class guard is looking at it. If it grades a Kalshi `result`, add "
+            "it to GRADING_SOURCES (and the two-state scans will then cover it). "
+            "If it does not, add it to NON_KALSHI_RUNG_WRITERS with the reason: "
+            + repr(sorted(unaccounted))
+        )
+
+    def test_the_justified_list_has_no_dead_entries(self):
+        """The other direction: an exemption that no longer writes must go.
+
+        Asserted because a stale exemption is how the next grader gets waved
+        through — a module renamed or rewritten leaves its name behind, and the
+        name then excuses whatever takes its place.
+        """
+        writers = set(_venue_rung_writers(self.APP))
+        dead = set(NON_KALSHI_RUNG_WRITERS) - writers
+        assert dead == set(), (
+            "these modules no longer write the venue-settlement rung, so their "
+            "exemption is stale and must be deleted: " + repr(sorted(dead))
+        )
+
+    def test_a_grading_source_that_stopped_writing_is_noticed(self):
+        """Every file in GRADING_SOURCES must still be a writer.
+
+        A grader that stops writing the rung has either been fixed properly or
+        moved somewhere else; either way the list is now describing the past.
+        """
+        writers = set(_venue_rung_writers(self.APP))
+        scanned = {
+            source.values[0].relative_to(self.APP.parent).as_posix()
+            for source in GRADING_SOURCES
+        }
+        assert scanned <= writers, repr(sorted(scanned - writers))
+
+    def test_prose_about_the_write_is_not_counted_as_a_write(self):
+        """The scan reads code, not the docstrings that describe the defect.
+
+        ``kalshi_fabricated_loss`` and ``settled_price`` both quote the exact
+        write in prose. If those counted, the unaccounted set would be
+        permanently non-empty, and the guard above would be turned off within
+        the week — which is the ordinary way a true guard dies.
+        """
+        writers = _venue_rung_writers(self.APP)
+        assert "app/utils/kalshi_fabricated_loss.py" not in writers
+        assert "app/utils/settled_price.py" not in writers
+        assert "app/tasks/futures_price_refresh.py" not in writers
