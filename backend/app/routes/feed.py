@@ -119,6 +119,7 @@ from app.utils import (
     get_season_multiplier,
 )
 from app.utils.highlights import parse_game_progress
+from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.participant_images import participant_images_for_event
 from app.utils.futures_highlights import (
     compute_futures_highlight,
@@ -6052,6 +6053,25 @@ def _leader_outcome_is_team(outcomes_data: list[dict]) -> bool:
     return bool(outcomes_data) and outcomes_data[0].get("team_id") is not None
 
 
+def _leader_is_ladder_rung(outcomes_data: list[dict]) -> bool:
+    """#4640: is the card's LEADER a rung of ONE cumulative ladder?
+
+    Same contract as `_leader_outcome_is_team` above — `outcomes_data[0]` IS the
+    leader, and unknown reads False so the copy is unchanged unless nestedness is
+    proven.
+
+    Answers on the SET, never on the leader's spelling. "Above 116" and "29,900
+    to 29,999.99" are both numeric labels, but the first is a rung of a nested
+    family (each rung contains the next, so the loosest is dearest by arithmetic
+    and there is no contest to lead) and the second is a mutually exclusive band
+    (where a favorite is a real thing and a lead change is real news). Only the
+    outcome list can tell them apart, which is what `cumulative_outcome_ladder`
+    reads — at least two legs, every leg a cumulative threshold, all pointing the
+    same way, no duplicate rung.
+    """
+    return cumulative_outcome_ladder(outcomes_data, name_key="name") is not None
+
+
 def _top_outcomes_for_trace(
     market: FuturesMarket,
 ) -> tuple[list[dict], str | None, float | None]:
@@ -6614,6 +6634,7 @@ def _score_market_trace(
             top_surprise_change=top_surprise_change,
             leader_name=leader_name,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
+            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_probability=leader_prob,
             source_count=source_count,
             market_name=market.name,
@@ -6629,6 +6650,7 @@ def _score_market_trace(
         market_name=market.name,
         leader_name=leader_name,
         leader_is_team=_leader_outcome_is_team(outcomes_data),
+        leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
         leader_probability=leader_prob,
         source_count=source_count,
         affirmative_probability=affirmative_probability,
@@ -6775,6 +6797,7 @@ def _score_market_trace(
                 top_surprise_change=top_surprise_change,
                 leader_name=leader_name,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
+                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_probability=leader_prob,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
@@ -9348,6 +9371,7 @@ async def _score_sports_mode_futures(
                 top_surprise_change=top_surprise_change,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
+                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 source_count=source_count,
@@ -9365,6 +9389,7 @@ async def _score_sports_mode_futures(
             market_name=market.name,
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
+            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
             source_count=source_count,
@@ -9449,6 +9474,7 @@ async def _score_sports_mode_futures(
             top_surprise_change=top_surprise_change,
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
+            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
             source_count=source_count,
@@ -10719,6 +10745,7 @@ async def _score_futures(
                     top_surprise_change=top_surprise_change,
                     leader_name=_h_leader,
                     leader_is_team=_leader_outcome_is_team(outcomes_data),
+                    leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                     leader_probability=display_leader_prob,
                     rendered_leader_percent=_printed_leader,
                     source_count=source_count,
@@ -10736,6 +10763,7 @@ async def _score_futures(
                 market_name=market.name,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
+                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 source_count=source_count,
@@ -11088,6 +11116,7 @@ async def _score_futures(
                 top_surprise_change=top_surprise_change,
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
+                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 source_count=source_count,

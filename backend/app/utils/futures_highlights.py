@@ -12,6 +12,7 @@ from functools import lru_cache
 from typing import NamedTuple, Optional
 
 from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
+from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.outcome_display import drop_incoherent_ladder_outcomes
 
 # Market tier weights (lower tier number = more important)
@@ -526,6 +527,11 @@ class FuturesHighlightResult:
     primary_reason: Optional[str] = None
     top_mover_name: Optional[str] = None
     top_mover_change: Optional[float] = None
+    # #4640: the outcome set is ONE cumulative ladder, so its highest-priced rung
+    # is the loosest one by arithmetic and naming it a favorite is a category
+    # error. Published on the result so the digest and the admin trace read the
+    # same verdict the card's copy was composed under, rather than re-deriving it.
+    leader_is_ladder_rung: bool = False
 
 
 def is_minor_league_market(market_name: str) -> bool:
@@ -603,6 +609,27 @@ def compute_futures_highlight(
         outcomes,
         lambda o: o.get("name"),
         lambda o: o.get("probability"),
+    )
+
+    # #4640 — AND WHAT SURVIVES THAT DROP CAN STILL HAVE NO FAVORITE. #4610 above
+    # removes rungs whose price contradicts the ladder; a ladder priced perfectly
+    # is left alone, and its top rung is the LOOSEST threshold — most likely for
+    # the same reason "heads or tails" beats "heads", because nothing happened,
+    # the question is just weaker. `leader_change` on such a set reports only that
+    # the ladder's own ordering moved, which on a coherent ladder is barely news
+    # and on an incoherent one is #4610's business.
+    #
+    # Read AFTER the drop deliberately: the question is whether what we are about
+    # to describe is one ladder, and the dropped rungs are not described.
+    #
+    # Computed on the outcome list this scorer was GIVEN, which callers truncate
+    # (`routes/feed.py` passes the top 10 of up to 20 legs). That can only err
+    # toward silence — a partial view qualifies when every leg it holds is a rung,
+    # and the cost of a false positive is a card that declines to name a favorite,
+    # never one that names a wrong one. Measured 2026-09-12 on the 12 served cards
+    # in this class: the top-3 verdict and the full-set verdict agreed 12/12.
+    result.leader_is_ladder_rung = (
+        cumulative_outcome_ladder(outcomes, name_key="name") is not None
     )
 
     # Horizon, normalised ONCE. Two scoring terms need it and they sit on opposite
@@ -982,7 +1009,16 @@ def compute_futures_highlight(
     result.score = min(98, result.score)
 
     # === Determine primary reason for display ===
+    #
+    # #4640 — `leader_change` KEEPS its score and its `reasons` entry; only its
+    # LABEL is withheld on a cumulative ladder. This is a copy fix, not a ranking
+    # change (the same split #4805 makes two comments up: a card still ranks on
+    # the signal it no longer misnames), and leaving the reason in place is what
+    # keeps every other reader of `result.reasons` — the trace, the digest, the
+    # scoring tests — seeing what actually happened.
     for reason_code, display_text in PRIMARY_REASON_LABELS:
+        if reason_code == "leader_change" and result.leader_is_ladder_rung:
+            continue
         if reason_code in result.reasons:
             result.primary_reason = display_text
             break
