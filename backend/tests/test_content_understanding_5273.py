@@ -482,3 +482,289 @@ class TestNothingAboutAdmissionChanges:
                 assert all(
                     kw.arg != "market_type" for kw in node.keywords
                 ), "this clause must never touch the presentation-shape column"
+
+
+# =============================================================================
+# CERT-2733's repair — the one-market event
+# =============================================================================
+
+
+class _PolyMarketDTO:
+    """Only what the ingest reads off a parsed Gamma market."""
+
+    def __init__(self, *, question=None, sports_market_type=None, condition_id=None):
+        self.question = question
+        self.sports_market_type = sports_market_type
+        self.condition_id = condition_id
+
+
+class _PolyEventDTO:
+    def __init__(self, *, event_id="1007524", title=None, markets=()):
+        self.id = event_id
+        self.title = title
+        self.markets = list(markets)
+
+
+#: The live Gamma shape CERT-2733 found: active, non-neg-risk, ONE market.
+PPA_TITLE = "PPA - Women's Singles: Hannah Blatt vs Polina Libo"
+PPA_HOME = "Hannah Blatt"
+PPA_AWAY = "Polina Libo"
+#: The same fixture as Polymarket also titles one-market events — a bare
+#: matchup, which is the shape our own recognizer reads.
+PPA_BARE = f"{PPA_HOME} vs. {PPA_AWAY}"
+
+
+def _single_market_event(*, title=PPA_BARE, venue_type="moneyline", question=None):
+    return _PolyEventDTO(
+        title=title,
+        markets=[
+            _PolyMarketDTO(
+                question=question if question is not None else title,
+                sports_market_type=venue_type,
+                condition_id="0xabc",
+            )
+        ],
+    )
+
+
+class TestTheParentRowIsAPricedRowInEveryShape:
+    """🔴 CERT-2733. Clause (2) typed the decomposed CHILDREN — and
+    `_parent_outcome_data(event)` runs BEFORE the decomposition branch, so the
+    parent carries outcomes in every shape, and sub-markets are written for only
+    one of the three (`not neg_risk and len(markets) > 1`). A one-market event
+    and a negrisk game group therefore have no children at all: the parent IS
+    the row that speaks. All of it went through the typed path and came out
+    untyped, on every poll, forever, because the poll is the only writer.
+    """
+
+    def test_single_market_event_persists_semantic_type_into_blend_record_5273(self):
+        """Ingest → stored metadata → the eligibility record that rides the
+        served number. The named repair, end to end."""
+        event = _single_market_event()
+
+        understanding = polymarket_task.parent_content_understanding(
+            event, sport="tennis"
+        )
+        assert understanding is not None, (
+            "a one-market event must be typed on the parent — no child will do "
+            "it, because the sub-market loop never runs for it"
+        )
+        assert understanding["semantic_type"] == "moneyline"
+        assert understanding["agreement"] == CORROBORATED
+
+        # The dict the parent insert/update actually writes to the column.
+        stored = {
+            "polymarket_event_id": event.id,
+            "event_title": event.title,
+            CONTENT_UNDERSTANDING_KEY: understanding,
+        }
+
+        group = [
+            _entry(
+                1, PPA_BARE,
+                [(1, PPA_HOME, 0.58), (2, PPA_AWAY, 0.42)],
+                external_id=event.id,
+                market_metadata=stored,
+            )
+        ]
+        reading = compute_source_home_probability(group, PPA_HOME, PPA_AWAY)
+
+        assert reading is not None
+        assert reading.eligibility.semantic_type == "moneyline", (
+            "the record substantiating the served number must name the kind of "
+            "question that produced it"
+        )
+        assert reading.eligibility.to_entry()["semantic_type"] == "moneyline"
+
+    def test_the_parent_is_typed_on_its_own_name_not_the_markets_question(self):
+        """🔴 The row a reader sees, and the row `admissible_as_blend_speaker`
+        judges, is named `event.title`. Typing the market's `question` instead
+        would store an understanding of a string that is on no row.
+        """
+        event = _single_market_event(
+            title=f"{CS_HOME} vs {CS_AWAY}",
+            question="Will Nemiga win Map 1?",
+            venue_type=None,
+        )
+        understanding = polymarket_task.parent_content_understanding(event)
+
+        assert understanding["semantic_type"] == "moneyline", (
+            "the bare matchup is the parent row's name; the question is not"
+        )
+
+    def test_a_re_ingest_refreshes_the_understanding_when_the_venue_relabels(self):
+        """The parent write rebuilds `market_metadata` every poll, so a venue
+        relabel must land — a stored blob that could only be written once would
+        pin the first reading forever."""
+        first = polymarket_task.parent_content_understanding(
+            _single_market_event(venue_type="moneyline")
+        )
+        assert first["agreement"] == CORROBORATED
+        assert record_semantic_type(first) == "moneyline"
+
+        relabelled = polymarket_task.parent_content_understanding(
+            _single_market_event(venue_type="child_moneyline")
+        )
+        assert relabelled["venue_type"] == "child_moneyline"
+        assert relabelled["agreement"] == CONTRADICTED
+        assert record_semantic_type(relabelled) == "moneyline:disputed"
+        assert is_disputed(record_semantic_type(relabelled))
+
+    def test_the_stamp_sits_beside_the_other_keys_the_parent_row_carries(self):
+        """Preservation: the understanding is one top-level key among the
+        parent's own, not a replacement for them — the census idiom is jsonb
+        `?`, which cannot see a nested key."""
+        event = _single_market_event()
+        stored = {
+            "polymarket_event_id": event.id,
+            "event_title": event.title,
+            "clob_token_ids": ["123"],
+        }
+        stored[CONTENT_UNDERSTANDING_KEY] = (
+            polymarket_task.parent_content_understanding(event)
+        )
+
+        assert set(stored) == {
+            "polymarket_event_id",
+            "event_title",
+            "clob_token_ids",
+            CONTENT_UNDERSTANDING_KEY,
+        }
+        assert understanding_from_metadata(stored)["semantic_type"] == "moneyline"
+        assert semantic_type_for_market(
+            _Market(1, PPA_BARE, market_metadata=stored)
+        ) == "moneyline"
+
+    def test_the_certs_own_gamma_specimen_records_the_disagreement(self):
+        """🔴 The exact live row CERT-2733 named, pinned as it actually behaves.
+
+        `PPA - Women's Singles: Hannah Blatt vs Polina Libo` IS the match
+        winner, and Gamma says so (`sportsMarketType=moneyline`) — but our title
+        recognizer reads the tournament-and-draw prefix and answers `other`. So
+        the stored record is `other:disputed`, and that is the clause doing its
+        job: the disagreement it exists to write down is ours here, not the
+        venue's. Filed as #5660.
+        """
+        understanding = polymarket_task.parent_content_understanding(
+            _single_market_event(title=PPA_TITLE), sport="tennis"
+        )
+        assert understanding["semantic_type"] == "other"
+        assert understanding["venue_type"] == "moneyline"
+        assert understanding["agreement"] == CONTRADICTED
+        assert record_semantic_type(understanding) == "other:disputed"
+
+    def test_a_negrisk_parent_is_typed_because_it_is_the_row_that_speaks(self):
+        """🔴 The bigger half of the same hole. Sub-markets are written only for
+        `not neg_risk and len(markets) > 1`, so a negrisk game group's legs are
+        FLATTENED onto the parent — which is then the row holding
+        `[home, away, draw]` and the row the blend reads. Measured 2026-09-12:
+        67,855 negrisk rows, 9,340 open, against 13,956 single-market rows.
+        """
+        event = _PolyEventDTO(
+            title=f"{HOME} vs. {AWAY}",
+            markets=[
+                _PolyMarketDTO(question=f"Will {HOME} win?", sports_market_type="moneyline"),
+                _PolyMarketDTO(question=f"Will {AWAY} win?", sports_market_type="moneyline"),
+                _PolyMarketDTO(question="Draw?", sports_market_type="moneyline"),
+            ],
+        )
+        understanding = polymarket_task.parent_content_understanding(event)
+
+        assert understanding["semantic_type"] == "moneyline"
+        assert understanding["venue_type"] == "moneyline", (
+            "three legs of one question carry one label, and the parent's label "
+            "is the one they agree on"
+        )
+        assert understanding["agreement"] == CORROBORATED
+
+    def test_markets_that_disagree_leave_the_parent_UNCONFIRMED(self):
+        """🔴 Disagreement reads as ABSENCE, never as a pick. Taking the first
+        child's label — or the modal one — would put a venue claim on the parent
+        that the venue never made about it, and `agreement` would then compare
+        our reading against something we invented."""
+        event = _PolyEventDTO(
+            title=f"{HOME} vs. {AWAY}",
+            markets=[
+                _PolyMarketDTO(question="A", sports_market_type="moneyline"),
+                _PolyMarketDTO(question="B", sports_market_type="spread"),
+            ],
+        )
+        understanding = polymarket_task.parent_content_understanding(event)
+
+        assert "venue_type" not in understanding
+        assert understanding["agreement"] == UNCONFIRMED
+        assert understanding["semantic_type"] == "moneyline"
+
+        # One label missing is disagreement too — a partially-labelled group
+        # cannot corroborate anything.
+        event.markets[1].sports_market_type = None
+        assert polymarket_task.parent_venue_market_type(event) is None
+
+    def test_a_group_the_venue_never_labelled_is_unconfirmed_not_contradicted(self):
+        """The 21%. `is_full_contest_winner_type(None)` is False, so a group of
+        unlabelled markets must never reach the comparison."""
+        event = _PolyEventDTO(
+            title=f"{HOME} vs. {AWAY}",
+            markets=[_PolyMarketDTO(question="A"), _PolyMarketDTO(question="B")],
+        )
+        assert polymarket_task.parent_venue_market_type(event) is None
+        assert polymarket_task.parent_content_understanding(event)["agreement"] == (
+            UNCONFIRMED
+        )
+
+    def test_an_unnamed_or_marketless_event_stamps_nothing(self):
+        """`None`, never `{}`: the caller writes this straight into the column,
+        and an empty object would overwrite a populated key on re-ingest."""
+        assert polymarket_task.parent_content_understanding(
+            _single_market_event(title=None)
+        ) is None
+        assert polymarket_task.parent_content_understanding(
+            _PolyEventDTO(title=PPA_TITLE, markets=[])
+        ) is None
+
+    def test_nothing_to_say_stamps_no_key_at_all(self):
+        """🔴 Not "stamps a null". The census idiom is jsonb `?`, which sees a
+        key holding JSON `null` and counts the row as understood; and the parent
+        write REPLACES the column, so a stamped null would also erase a good
+        understanding from the poll before it."""
+        meta = {"polymarket_event_id": "1007524"}
+        returned = polymarket_task.stamp_parent_content_understanding(
+            meta, _single_market_event(title=None)
+        )
+        assert returned is meta
+        assert CONTENT_UNDERSTANDING_KEY not in meta
+
+        polymarket_task.stamp_parent_content_understanding(
+            meta, _PolyEventDTO(title=PPA_BARE, markets=[])
+        )
+        assert CONTENT_UNDERSTANDING_KEY not in meta
+
+        polymarket_task.stamp_parent_content_understanding(
+            meta, _single_market_event(), sport="tennis"
+        )
+        assert meta[CONTENT_UNDERSTANDING_KEY]["semantic_type"] == "moneyline"
+        assert meta["polymarket_event_id"] == "1007524"
+
+    def test_the_ingest_stamps_the_parent_key_through_that_helper(self):
+        """🔴 The wiring guard, and the mutation this suite exists to kill: the
+        helper passing its own tests proves nothing if the poll never calls it.
+        Asserted on the AST — the call, and the dict it is handed — rather than
+        on a substring of the source, which would match the comment that
+        explains it."""
+        tree = ast.parse(inspect.getsource(polymarket_task))
+
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", None)
+            == "stamp_parent_content_understanding"
+        ]
+        assert calls, "the poll never stamps the parent's understanding"
+        assert any(
+            node.args and getattr(node.args[0], "id", None) == "poly_metadata"
+            for node in calls
+        ), (
+            "the understanding must be stamped into the dict the PARENT row is "
+            "written from — anywhere else and the one-market row stays untyped"
+        )
