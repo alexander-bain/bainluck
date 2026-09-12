@@ -215,9 +215,65 @@ _SEGMENT_ORDINAL = (
     r"(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|"
     r"sixth|seventh|eighth|ninth|tenth)"
 )
+
+# THE COMPRESSED FORM, where the ordinal and the scope word are fused into one
+# token: "1H", "2H", "1Q", "4Q", "3P" (#5743). `_SEGMENT_ORDINAL` cannot see it
+# — there is no space for the adjacency rule to sit in — so a title the venue
+# writes as "76ers vs. Celtics: 1H Moneyline" read as the whole match.
+#
+# THE LETTER CLASS IS THREE LETTERS BECAUSE IT WAS MEASURED, NOT GUESSED. Over
+# every market name carrying a moneyline or winner word (production,
+# 2026-09-12), the digit-plus-letter tokens that occur at all are: `1h` (281 —
+# the defect), `1q` (1, "Knicks vs. Spurs: 1Q Winner"), and then `9z`
+# ("Counter-Strike: 9z vs FaZe", 46), `3v` ("Kits Esports vs 3v Team", 8), `3m`
+# ("3M Open - Winner", 2), `50m` ("Men's 50m Freestyle Winner", 1) and `1m`
+# ("the $1M bet", 1). Every one of those last five is a TEAM or a TOURNAMENT
+# name — `3M Open - Winner` is a real golf winner and `9z vs FaZe` a real
+# match — so a generic `\d[a-z]` form would retire them. H/Q/P (half, quarter,
+# period) are the only letters that name a PART of a match, and they carry all
+# 282 true positives with zero false ones.
+_COMPRESSED_SEGMENT = r"\d{1,2}\s?[HQP]"
+
 _SEGMENT_SCOPED_WINNER_RE = re.compile(
     rf"\b(?:(?:{_WINNER_SCOPE_ALT})\s+{_SEGMENT_ORDINAL}"
-    rf"|{_SEGMENT_ORDINAL}\s+(?:{_WINNER_SCOPE_ALT}))\b",
+    rf"|{_SEGMENT_ORDINAL}\s+(?:{_WINNER_SCOPE_ALT})"
+    rf"|{_COMPRESSED_SEGMENT})\b",
+    re.IGNORECASE,
+)
+
+# THE MONEYLINE DOOR SUBTRACTS TWO MORE WORDS, AND THE MEASUREMENT IS WHY
+# (#5743). The winner word and the moneyline words disagree about what a
+# "round" is, because they are written about different things. A "Winner" with
+# a numbered round on it is a tournament-stage market — all 44 such names in
+# the corpus are elections ("Brazil Presidential Election First Round Winner"),
+# none a match, so refusing them costs nothing. The explicit MATCH phrases are
+# the opposite: the venue uses them precisely to say "this whole contest, which
+# happens to sit in round 2". Measured at the production CALL SITE (after
+# `_strip_category_prefix`, which is the only measurement that counts — #5660),
+# scope-testing them with `_WINNER_SCOPE_WORDS` refuses four real games today:
+# the "2022 NBA Playoffs, Round 2: Who will win Celtics vs. Bucks?" titles,
+# each a whole match. `leg` goes with it for the reason the comment above
+# already records: a two-legged tie's "Leg 1" is a whole match.
+#
+# What is left is the part-of-a-match vocabulary proper, and on it the two
+# doors agree: over the 305 segment-scoped candidates, this set flips 216
+# names (282 rows) and zero real matches.
+#
+# THE ORDINAL ARM OF THIS PATTERN IS MEASURED INERT TODAY, and saying so is the
+# honest version of the ship: all 216 flips come from `_COMPRESSED_SEGMENT`,
+# because the venue does not currently write "1st Half Moneyline" — only
+# "1H Moneyline". The ordinal arm is kept as the fail-closed margin, exactly as
+# #5660 keeps `_DERIVATIVE_SCOPE_RE`: the spelling exists everywhere else in
+# this module's vocabulary, a venue that adopts it must not thereby publish a
+# half's price as the match, and its failure mode is today's behaviour.
+_MONEYLINE_SCOPE_WORDS = tuple(
+    w for w in _WINNER_SCOPE_WORDS if w not in ("round", "leg")
+)
+_MONEYLINE_SCOPE_ALT = "|".join(_MONEYLINE_SCOPE_WORDS)
+_SEGMENT_SCOPED_MONEYLINE_RE = re.compile(
+    rf"\b(?:(?:{_MONEYLINE_SCOPE_ALT})\s+{_SEGMENT_ORDINAL}"
+    rf"|{_SEGMENT_ORDINAL}\s+(?:{_MONEYLINE_SCOPE_ALT})"
+    rf"|{_COMPRESSED_SEGMENT})\b",
     re.IGNORECASE,
 )
 
@@ -410,12 +466,26 @@ def is_game_winner_market(
          "winner" ticker) — for ALL leagues, not just the few hard-coded ones.
     """
     name = name or ""
-    # Explicit MATCH-level wording wins outright and is never scope-tested:
-    # "Game Winner" and "Match Winner" name the whole contest, and "game" is
-    # itself a segment word, so testing this branch would refuse the very
-    # phrase it exists to recognize.
+    # EXPLICIT MATCH WORDING MUST ALSO SAY WHICH PART (#5743). "Moneyline" was
+    # trusted outright on the reasoning that it names the whole contest — true
+    # of the phrase, false of the title it sits in: the venue writes "76ers vs.
+    # Celtics: 1H Moneyline" for a FIRST-HALF book, 280 of them, and every one
+    # was admitted as the speaker for the whole match. This is #5698's defect
+    # one word over, and it survived that fix because it walks through a
+    # different door.
+    #
+    # The scope set is narrower than the winner word's, and measured: see
+    # `_MONEYLINE_SCOPE_WORDS`. "Game Winner" and "Match Winner" stay admitted
+    # — "game" is subtracted from both sets and neither phrase carries an
+    # ordinal — which is the concern the old comment here was protecting.
+    #
+    # THE REFUSAL IS TERMINAL for the reason the winner branch below records:
+    # falling through would hand a refused title to the Kalshi ticker branch,
+    # where a `KXNBA1HML-…` style ticker containing "game" or "winner" would
+    # re-admit it and make this fix inert exactly where the venue is most
+    # explicit.
     if _MONEYLINE_WORD_RE.search(name):
-        return True
+        return not _SEGMENT_SCOPED_MONEYLINE_RE.search(name)
     # A BARE "Winner" MUST SAY WHAT IT IS THE WINNER OF (#5698). The word alone
     # carried no contest, so "… : Set 1 Winner", "… : 1st Half Winner" and
     # "… - Map 1 Winner" all returned True and were admitted to the blend as
