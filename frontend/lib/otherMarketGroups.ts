@@ -25,6 +25,8 @@
  * PURE: no I/O, no React, no DB.
  */
 
+import { oldestSourceStamp } from "@/lib/sourceAge";
+
 /**
  * How far two probabilities carrying the SAME label may differ and still be
  * treated as one price.
@@ -67,6 +69,12 @@ export interface OtherMarketRow {
   outcome_name?: string | null;
   probability?: number | null;
   source?: string | null;
+  /**
+   * When we last saw this row's price (#4970 card half). Optional AND nullable
+   * because production emits both shapes: the key is absent on completed events
+   * and present-but-null elsewhere. See the note on `GameMarketsResponse`.
+   */
+  observed_at?: string | null;
 }
 
 export interface ParsedPropLabel {
@@ -493,6 +501,12 @@ export interface LabeledRow {
   probability: number | null;
   source: string | null;
   /**
+   * When we last saw this row's price (#4970 card half). Carried straight from
+   * the wire's `observed_at`; absent and null both mean "no observation on
+   * record" and are not distinguished anywhere downstream.
+   */
+  observedAt?: string | null;
+  /**
    * The set this row is about, when the LABEL can no longer say so.
    *
    * `setNumberFromLabel` reads the rendered string, which works only while the
@@ -516,6 +530,30 @@ export interface MergedOutcome {
   source: string;
   /** How many wire rows agreed on this price. Drives the `Nx` badge. */
   sourceCount: number;
+  /**
+   * When we last saw this outcome's price — the OLDEST observation among the
+   * wire rows that merged into it (#4970 card half).
+   *
+   * ═══ OLDEST, NOT NEWEST, AND THAT IS THE WHOLE DECISION ═══
+   *
+   * `mergeOutcomes` collapses every row sharing a label into one, so a single
+   * printed number can stand for two venues that agree within
+   * `AGREEMENT_TOLERANCE`. If Kalshi refreshed two minutes ago and Polymarket
+   * has not moved in three days, the merged row is one where a reader is being
+   * shown agreement between a current number and a stale one.
+   *
+   * Taking the NEWEST would let one live contributor vouch for a row that is
+   * mostly stale, which is the reassuring answer rather than the true one.
+   * Taking the oldest is CERT-411 round 2's rule for the tournament cards —
+   * "a two-market card is as OLD as its oldest leg" — applied to the same
+   * problem one surface over, and the same rule is why this is not re-derived
+   * with a second definition here.
+   *
+   * Absent when NO contributing row carried a stamp. It is deliberately not
+   * defaulted to "now": a price we cannot date must not read as one we just
+   * checked (`lib/sourceAge`'s module header, "ABSENT IS NOT ZERO").
+   */
+  observedAt?: string | null;
   /**
    * The question this row asks is already answered — a set that has been played
    * out — so its number is a last quote, not a chance. The renderer treats it
@@ -594,6 +632,11 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
     // unchanged for every population that never needed it.
     const carried = group.find((r) => r.setNumber != null)?.setNumber;
     const carriedParts = group.find((r) => r.winnerParts != null)?.winnerParts;
+    // The oldest stamp among the rows that merged — see `MergedOutcome.observedAt`.
+    // `oldestSourceStamp` and not a local reduce: `SpecialEventMarkets` needs
+    // the same answer one layer up, and two copies of "which end of the range"
+    // is how the two surfaces come to disagree.
+    const oldest = oldestSourceStamp(group.map((r) => r.observedAt));
     outcomes.push({
       label,
       prob: probs[0],
@@ -601,6 +644,7 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
       sourceCount: group.length,
       ...(carried != null ? { setNumber: carried } : {}),
       ...(carriedParts != null ? { winnerParts: carriedParts } : {}),
+      ...(oldest !== null ? { observedAt: oldest } : {}),
     });
   }
 
@@ -1045,6 +1089,11 @@ export function buildMarketSection(
       label,
       probability: row.probability ?? null,
       source: row.source ?? null,
+      // `?? null` collapses absent and null, which is correct here: both mean
+      // "no observation on record" and the render treats them identically. The
+      // wire produces BOTH — the key goes missing on completed events. See the
+      // note on `GameMarketsResponse["other"][number].observed_at`.
+      observedAt: row.observed_at ?? null,
       setNumber,
       winnerParts,
     });

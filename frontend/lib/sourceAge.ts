@@ -100,6 +100,39 @@ export function sourceIsStale(
 }
 
 /**
+ * The OLDEST of several stamps, or `null` when none of them is readable.
+ *
+ * Added by #4970's card half, and exported from here rather than written twice
+ * because two callers needed it in the same change — `otherMarketGroups`
+ * merging duplicate wire rows into one outcome, and `SpecialEventMarkets`
+ * summarising a card's rows into one mark. A second copy is how the two come to
+ * disagree about which end of a range they take, which is the whole subject of
+ * this module's header.
+ *
+ * OLDEST rather than newest for the reason CERT-411 round 2 gave the tournament
+ * cards: a group is as old as its oldest member, because taking the newest lets
+ * one current contributor vouch for a set that is mostly stale.
+ *
+ * Unreadable and absent stamps are SKIPPED, not treated as very old — an
+ * undatable price is not evidence of anything, and letting it win would poison
+ * a group that has perfectly good stamps in it.
+ */
+export function oldestSourceStamp(
+  stamps: readonly (string | null | undefined)[],
+): string | null {
+  let best: string | null = null;
+  for (const s of stamps) {
+    if (typeof s !== "string") continue;
+    const t = Date.parse(s);
+    if (Number.isNaN(t)) continue;
+    // Compared as PARSED TIME, never as text: `2026-09-11T20:00:00-04:00` is
+    // later than `2026-09-11T23:00:00+00:00` and sorts earlier as a string.
+    if (best === null || t < Date.parse(best)) best = s;
+  }
+  return best;
+}
+
+/**
  * The absolute stamp, for a `title` tooltip.
  *
  * Notice 34 puts the method note in the tooltip and never in the page body, so

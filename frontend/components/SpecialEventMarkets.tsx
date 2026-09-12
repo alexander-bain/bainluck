@@ -17,6 +17,8 @@ import {
   SETTLED_QUOTE_PREFIX,
 } from "@/lib/settledQuote";
 import { renderedPercent } from "@/lib/renderedPercent";
+import { PriceAgeMark } from "@/components/event/PriceAgeMark";
+import { oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
 
 interface SpecialEventMarketsProps {
   data: GameMarketsResponse;
@@ -40,15 +42,38 @@ interface SpecialEventMarketsProps {
   setsWon?: TennisSetsWon | null;
 }
 
+/**
+ * Is this row still carrying a LIVE price?
+ *
+ * The two early returns in `OutcomeBar` decide this today and #4970 needs the
+ * same answer one layer up, in `PropMiniCard`, to know whether a card's age can
+ * be stated once for the whole card. Named here rather than re-derived there,
+ * because a card that disagrees with its own rows about which of them are live
+ * is the failure this whole section keeps re-learning (#2086).
+ */
+function isLivePriced(
+  outcome: MarketCard["outcomes"][0],
+  settled: boolean,
+): boolean {
+  if (outcome.result) return false;
+  return !(settled || outcome.decided === true);
+}
+
 function OutcomeBar({
   outcome,
   rank,
   settled,
+  /**
+   * Draw this row's own age mark. False when the CARD is speaking for all of
+   * its rows — see `PropMiniCard`.
+   */
+  showAge = false,
 }: {
   outcome: MarketCard["outcomes"][0];
   rank: number;
   /** #2086: the game is over, so this number is a frozen quote, not a chance. */
   settled: boolean;
+  showAge?: boolean;
 }) {
   // #3867's ORIGINAL SURFACE. Alex filed the issue against these rows: on
   // `/events/15306225` the served 0.565 printed 56% and 0.145 printed 14% while
@@ -105,6 +130,16 @@ function OutcomeBar({
       <div className={`text-xs flex-1 ${rank === 0 ? "font-semibold" : "text-text-secondary"}`}>
         {outcome.label}
       </div>
+      {/* #4970, the MIXED case only. The card speaks for its rows whenever they
+          all agree about being stale, which is every card measured so far
+          (23 of 23, 0 mixed) — see `PropMiniCard`. This per-row mark is what
+          happens when they DISAGREE: one row quoted four minutes ago beside one
+          quoted three days ago cannot be summarised by a single number without
+          the summary being false about one of them (CERT-411 round 2).
+
+          Only a LIVE row reaches this line — `result` and `frozen` both
+          returned above — so a settled card never draws an age here. */}
+      {showAge && <PriceAgeMark observedAt={outcome.observedAt} />}
       <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden max-w-[140px]">
         <div
           className={`h-full rounded-full transition-all duration-500 ${rank === 0 ? "bg-violet-400" : "bg-text-muted/40"}`}
@@ -123,6 +158,40 @@ function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean })
   const sourceCount =
     maxSourceCount > 1 ? maxSourceCount : new Set(item.outcomes.map((o) => o.source)).size;
 
+  /* ── #4970 CARD HALF: THE AGE IS SAID ONCE, FOR THE CARD ──────────────────
+     The first cut of this put a mark on every stale ROW, and the measurement
+     killed it. On the live slate (2026-09-12 01:45Z, `other` rows over 60
+     events) EVERY priced row on a live event was past the thirty-minute bar —
+     21 of 21 — because these markets are polled on a slower cadence than the
+     hero above them. A per-row mark therefore did not mean "one row in five",
+     it meant eight identical `41m ago`s stacked down one card, which is the
+     grey-text noise notice 34 bans and D102 tempers.
+
+     Said once in the header it is the opposite: one small mark next to the
+     card's title, stating the thing that is actually news — the hero is 29
+     seconds old and these prices are forty minutes old.
+
+     WHY IT IS SAFE TO SAY IT ONCE, AND WHAT HAPPENS WHEN IT IS NOT.
+     Of 23 multi-row cards on that slate, staleness was UNIFORM across the card
+     in 23 and mixed in 0 — rows share a poll batch, so one stamp speaks for
+     all of them. But "0 of 23 tonight" is not "never", and a single mark over
+     a card holding a four-minute-old row and a three-day-old one is false
+     about one of them (CERT-411 round 2, which is that exact bug on the
+     tournament cards). So the card only speaks when its live rows AGREE: all
+     stale ⇒ one card mark; otherwise ⇒ no card mark and the stale rows carry
+     their own. Both directions are asserted, per gotcha #43.
+
+     `livePriced` is the denominator and not `item.outcomes`, because a decided
+     or answered row has no live price for an age to be about — including it
+     would make a card of eight settled set-winners plus one live row read as
+     "mixed" and silently move the mark to the wrong place. */
+  const livePriced = item.outcomes.filter((o) => isLivePriced(o, settled));
+  const staleLive = livePriced.filter((o) => sourceIsStale(o.observedAt));
+  const cardSpeaksForAll = livePriced.length > 0 && staleLive.length === livePriced.length;
+  const cardStamp = cardSpeaksForAll
+    ? oldestSourceStamp(staleLive.map((o) => o.observedAt))
+    : null;
+
   // K10: cap the bars a single card can stack. Live MLB games put 34–61 props
   // under one heading; the overflow is DISCLOSED, never dropped (gotcha #43).
   const shown = item.outcomes.slice(0, MAX_OUTCOMES_PER_CARD);
@@ -132,13 +201,22 @@ function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean })
     <div className="border border-surface-border rounded-lg p-3">
       <div className="flex items-center justify-between mb-2">
         <div className="font-medium text-sm">{item.name}</div>
-        {sourceCount > 1 && (
-          <span className="text-[10px] font-semibold text-blue-600">{sourceCount}x</span>
-        )}
+        <div className="flex items-center gap-2">
+          <PriceAgeMark observedAt={cardStamp} scope="card" />
+          {sourceCount > 1 && (
+            <span className="text-[10px] font-semibold text-blue-600">{sourceCount}x</span>
+          )}
+        </div>
       </div>
       <div className="space-y-1.5">
         {shown.map((o, i) => (
-          <OutcomeBar key={o.label} outcome={o} rank={i} settled={settled} />
+          <OutcomeBar
+            key={o.label}
+            outcome={o}
+            rank={i}
+            settled={settled}
+            showAge={!cardSpeaksForAll}
+          />
         ))}
       </div>
       {rest.length > 0 && (
@@ -148,7 +226,13 @@ function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean })
           </summary>
           <div className="space-y-1.5 pt-1.5">
             {rest.map((o) => (
-              <OutcomeBar key={o.label} outcome={o} rank={1} settled={settled} />
+              <OutcomeBar
+                key={o.label}
+                outcome={o}
+                rank={1}
+                settled={settled}
+                showAge={!cardSpeaksForAll}
+              />
             ))}
           </div>
         </details>
