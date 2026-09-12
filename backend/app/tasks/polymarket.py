@@ -23,6 +23,10 @@ from app.utils.winner_field_coherence import (
     count_near_certain,
     field_is_incoherent,
 )
+from app.utils.content_understanding import (  # CU-1 clause (2), #5273
+    CONTENT_UNDERSTANDING_KEY,
+    build_content_understanding,
+)
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.pair_opening_coherence import (
@@ -311,6 +315,7 @@ def sub_market_metadata(
     event_id,
     matchup_title: Optional[str],
     clob_token_ids: Optional[list] = None,
+    content_understanding: Optional[dict] = None,
 ) -> Optional[dict]:
     """``market_metadata`` for a decomposed Polymarket sub-market, at mint time.
 
@@ -369,7 +374,112 @@ def sub_market_metadata(
         # a float64 can hold, and a token id that has been through a JSON number
         # is a token id that no longer subscribes to anything.
         meta["clob_token_ids"] = [str(t) for t in clob_token_ids if str(t)]
+    if content_understanding:
+        # ── CU-1 clause (2), #5273 ───────────────────────────────────────────
+        #
+        # What KIND of question this market asks, and whether Gamma's own
+        # `sportsMarketType` corroborates it. Clause (4) taught the DTO to
+        # retain that label; it was persisted NOWHERE, so the one place both
+        # signals are in hand at once is right here, in the ingest loop that
+        # already holds the parsed market.
+        #
+        # Stamped through the same merge the caller uses for every other key,
+        # which is the whole reason no backfill is needed: Polymarket re-serves
+        # open events continuously, so live rows ACQUIRE the understanding on
+        # the next poll and a re-ingest refreshes one that has gone stale
+        # because the venue relabelled the market.
+        meta[CONTENT_UNDERSTANDING_KEY] = content_understanding
     return meta or None
+
+
+def parent_venue_market_type(event) -> Optional[str]:
+    """Gamma's ``sportsMarketType`` for the PARENT row, or ``None`` (#5273).
+
+    A parent covers one market or many, so the venue's label for it is the label
+    its markets AGREE on. One market: that market's label. Several that agree
+    (the negrisk game group — three "will X win" legs of one question): the
+    shared value. Several that disagree, or any that is missing: ``None``, which
+    `build_content_understanding` records as UNCONFIRMED.
+
+    🔴 Disagreement must read as ABSENCE, never as a pick. Choosing the first
+    child's label, or the modal one, would put a venue claim on the parent that
+    the venue did not make about it — and `agreement` would then be a comparison
+    against something we invented, which is worse than no comparison at all.
+    Absence is not evidence (it is 21% of the population); a fabricated label is.
+    """
+    labels = {
+        getattr(market, "sports_market_type", None)
+        for market in (getattr(event, "markets", None) or [])
+    }
+    if len(labels) != 1:
+        return None
+    return labels.pop()
+
+
+def parent_content_understanding(event, *, sport: Optional[str] = None) -> Optional[dict]:
+    """The understanding for an event's PARENT row (#5273).
+
+    🔴 CERT-2733's repair. `sub_market_metadata` above types the decomposed
+    children, and that was the whole of clause (2) — but the parent is a priced
+    row in EVERY shape: `_parent_outcome_data(event)` runs before the
+    decomposition branch, so the parent always carries outcomes, and for the two
+    shapes that never decompose it is the only row there is. Sub-markets are
+    written only when ``not event.neg_risk and len(event.markets) > 1``, so:
+
+      * **one market** — the parent IS the market (13,956 rows, 1,750 open,
+        measured 2026-09-12). Gamma serves the shape live: event `1007524`,
+        `PPA - Women's Singles: Hannah Blatt vs Polina Libo`, active,
+        non-neg-risk, one market, `sportsMarketType=moneyline`.
+      * **negrisk** — the legs are flattened onto the parent, which is therefore
+        the row that speaks for the match winner (67,855 rows, 9,340 open).
+        `AFC Bournemouth vs. Brentford FC` with `[Bournemouth, Brentford, Draw]`
+        is one of them, and it is the row the blend read on 2026-09-12.
+      * **decomposed** — the children carry their own and the parent is the
+        group anchor, but it still holds outcomes and is still judged by
+        `admissible_as_blend_speaker`, so recording our reading of it is honest
+        and leaving it blank is not.
+
+    Every one of those went through the typed path and came out untyped, on
+    every poll, forever, because the poll is the only writer.
+
+    TYPED ON THE ROW'S OWN NAME, which for a parent is `event.title` and not any
+    market's `question`. The same rule the sub-market path follows for the
+    opposite reason: the stored type must describe the row a reader sees and the
+    row `admissible_as_blend_speaker` judges, and for this row that string is
+    the event title.
+
+    Returns ``None`` when there is nothing to say — no title, or no markets at
+    all — so the caller stamps no key and a re-ingest cannot overwrite a
+    populated one with an empty object (`sub_market_metadata`'s own rule, for
+    the same reason).
+    """
+    if not (getattr(event, "markets", None) or []):
+        return None
+    return build_content_understanding(
+        name=getattr(event, "title", None),
+        external_id=getattr(event, "id", None),
+        sport=sport,
+        sports_market_type=parent_venue_market_type(event),
+    )
+
+
+def stamp_parent_content_understanding(
+    metadata: dict, event, *, sport: Optional[str] = None
+) -> dict:
+    """Stamp the parent's understanding into ``metadata``, or leave it alone.
+
+    The guard lives here rather than at the call site so that "a row with
+    nothing to say carries NO KEY" is a tested property instead of an ``if`` in
+    the middle of a 200-line ingest block. It is load-bearing twice over: the
+    census idiom for this key is jsonb ``?``, which sees a key holding JSON
+    ``null`` and counts the row as understood; and the parent write REPLACES
+    ``market_metadata`` wholesale, so a stamped null would also erase a good
+    understanding written by the poll before it.
+    """
+    understanding = parent_content_understanding(event, sport=sport)
+    if understanding:
+        metadata[CONTENT_UNDERSTANDING_KEY] = understanding
+    return metadata
 
 
 def _tags_to_category(tags: list[str]) -> tuple[str, Optional[str]]:
@@ -1065,6 +1175,16 @@ async def _process_event_batch(
                             str(t) for t in _single_tokens if str(t)
                         ]
 
+                # CU-1 clause (2) (#5273), CERT-2733's repair. OUTSIDE the
+                # single-market branch above, deliberately: `_parent_outcome_data`
+                # below prices the parent in every shape, and the sub-market loop
+                # runs for only one of the three — so the children's stamp leaves
+                # the parent untyped whatever shape it is, and for a one-market or
+                # negrisk event the parent is the row that actually speaks.
+                stamp_parent_content_understanding(
+                    poly_metadata, event, sport=llm_sport_category
+                )
+
                 # #173/#1024: matchup-title write-hook AT INGEST. A game event's
                 # decomposed sub-markets (spread/prop rows) don't name both
                 # participants in their own `name` (gotcha #18), so the grammar
@@ -1217,6 +1337,20 @@ async def _process_event_batch(
                             # on all 687 live/upcoming rows measured 2026-08-30,
                             # which is why the Polymarket fast lane never ran.
                             clob_token_ids=getattr(market, "clob_token_ids", None),
+                            # CU-1 clause (2) (#5273): our reading of the
+                            # question, plus Gamma's own label for it, which
+                            # clause (4) parsed onto the DTO and nothing stored.
+                            # `sub_name` is the exact string the row is named
+                            # with, so the stored type describes the row a
+                            # reader sees rather than a title we discarded.
+                            content_understanding=build_content_understanding(
+                                name=sub_name,
+                                external_id=market.condition_id,
+                                sport=llm_sport_category,
+                                sports_market_type=getattr(
+                                    market, "sports_market_type", None
+                                ),
+                            ),
                         )
                         # ── ITS OWN 24h VOLUME (UX-P157, #2256).
                         #
