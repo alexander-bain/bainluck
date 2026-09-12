@@ -859,15 +859,48 @@ def effective_source_weights(
 
     Returns ``(keys, values, weights)``, index-aligned; ``([], [], [])`` when
     tier 1 has nothing.
+
+    Thin delegate to :func:`effective_source_weights_detailed`, which also reports
+    WHICH arms decayed all the way to the floor. The three-tuple shape is kept
+    because a dozen call sites unpack it; only the divergence gate needs the
+    fourth value, and it asks for it by name.
+    """
+    keys, values, weights, _floored = effective_source_weights_detailed(
+        event, event_status
+    )
+    return keys, values, weights
+
+
+def effective_source_weights_detailed(
+    event, event_status: Optional[str] = None
+) -> tuple[list[str], list[float], list[float], set[str]]:
+    """``effective_source_weights`` plus the set of arms that hit the decay FLOOR.
+
+    🔴 **The fourth value is the divergence gate's population filter (#5542).** An
+    arm at ``HERO_MIN_STALENESS_MULTIPLIER`` has been told by our own recency rule
+    that it is no longer describing this game. It must not be counted as one of
+    the "sources this event rests on" when deciding whether a two-source pair is
+    diverging — otherwise a dead arm switches the protection off *and* keeps
+    enough post-cap mass to decide which live source is the median.
+
+    It is computed HERE rather than by a second pass over the stamps because the
+    decay lives here: a caller that re-derived "is this arm dead?" from the
+    timestamps would be a detector that can disagree with the weights it gates,
+    which is the exact failure this module's docstring warns about.
+
+    "Floored" means the multiplier reached the floor, NOT merely that the weight
+    is small — a source with a low BASE weight is not stale, it is just lightly
+    trusted, and it keeps its vote.
     """
     prob_readings, stamps = _tier1_readings(event, event_status)
 
     if not prob_readings:
-        return [], [], []
+        return [], [], [], set()
 
     values = list(prob_readings.values())
     keys = list(prob_readings.keys())
     weights = [SOURCE_WEIGHTS.get(src, 0.5) for src in keys]
+    floored: set[str] = set()
 
     # Relative recency. The reference is the freshest stamp on the event,
     # never the wall clock: uniform age is cadence, not staleness, and a
@@ -889,12 +922,15 @@ def effective_source_weights(
             relative_age = (freshest - stamp).total_seconds()
             if relative_age <= 0:
                 continue
-            weights[i] *= _relative_staleness_multiplier(relative_age)
+            multiplier = _relative_staleness_multiplier(relative_age)
+            weights[i] *= multiplier
+            if multiplier <= HERO_MIN_STALENESS_MULTIPLIER:
+                floored.add(src)
 
     weights = cap_weight_shares(
         weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
     )
-    return keys, values, weights
+    return keys, values, weights, floored
 
 
 def assess_event_divergence(
@@ -910,11 +946,71 @@ def assess_event_divergence(
     On the live population read 2026-08-19 this fires on 4 of 76 two-source
     events; three of the four are one class (Polymarket at 0.07 against a
     sportsbook at 0.59-0.63).
+
+    #5542: arms at the decay floor are excluded from the gate's POPULATION — see
+    `_gate_population`.
     """
-    keys, values, weights = effective_source_weights(event, event_status)
+    keys, values, weights, floored = effective_source_weights_detailed(
+        event, event_status
+    )
     if not keys:
         return None
-    return assess_divergence(dict(zip(keys, values)), dict(zip(keys, weights)))
+    return assess_divergence(*_gate_population(keys, values, weights, floored))
+
+
+def _gate_population(
+    keys: list[str],
+    values: list[float],
+    weights: list[float],
+    floored: set[str],
+) -> tuple[dict[str, float], dict[str, float]]:
+    """The readings the divergence gate governs: the arms still SPEAKING (#5542).
+
+    🔴 **A dead arm is not an opinion, but it used to count as a source.** The gate
+    governs events resting on exactly two sources; a third reading took the event
+    out of its population entirely, so the protection switched off exactly as the
+    disagreement got worse. Event 15304937 (live 07:07Z 2026-09-12): `mlb` 0.356
+    at 131 min behind, `kalshi` 0.99, `polymarket` 0.455 — 63 points apart, gate
+    silent, hero 0.455, the losing side of a game the home team had won 6-5.
+
+    Floored arms are dropped from the POPULATION ONLY. They keep their weight in
+    the blend, so this narrows *when the gate fires*, never what the median is
+    made of — "we stopped hearing from Kalshi" still is not "Kalshi does not
+    exist".
+
+    🔴 **This deliberately does NOT widen the gate to the widest pair among N.**
+    On a healthy triple (betting 0.10 / kalshi 0.52 / polymarket 0.55) the widest
+    pair is 0.450, past the threshold, and the capped median correctly returns
+    0.52 — the value the two agreeing sources support. A widest-pair gate would
+    render one source alone and discard that agreement. Rejected on that specimen;
+    see the SCOPE section of ``utils/source_divergence.py``.
+
+    🔴 **THE FILTER NEVER TAKES THE POPULATION BELOW TWO, and that floor is the
+    whole anti-#240 property.** A TWO-source event whose sportsbook is frozen at
+    its stale pregame 65% against a live market at 5% is the case this gate was
+    BUILT for — the stale arm is floored there too, and dropping it would leave
+    one reading, no pair, and no gate, resurrecting exactly the 57%-hero vs
+    20%-chart contradiction the module exists to prevent. So floored arms are
+    dropped only while two live arms remain; otherwise every arm is governed, as
+    before. (`test_the_gate_does_not_print_a_stale_pregame_line_over_a_live_one`
+    is the guard that caught this, and it is why the floor is written down here
+    rather than discovered again.)
+
+    The resulting behaviour table — only the third row moves:
+
+        2 arms, 0 floored      -> both governed          (unchanged)
+        2 arms, 1 floored      -> both governed          (unchanged; anti-#240)
+        3 arms, 1 floored      -> the 2 live governed    (#5542, THE FIX)
+        3 arms, 2 floored      -> all 3 governed => no gate (unchanged)
+        3 arms, 0 floored      -> all 3 governed => no gate (unchanged)
+    """
+    live = [(k, v, w) for k, v, w in zip(keys, values, weights) if k not in floored]
+    if len(live) < 2:
+        live = list(zip(keys, values, weights))
+    return (
+        {k: v for k, v, _ in live},
+        {k: w for k, _, w in live},
+    )
 
 
 def compute_aggregate_probability(
@@ -936,7 +1032,9 @@ def compute_aggregate_probability(
     # Tier 1: win_probability_sources JSONB (live games — multiple sources).
     # Readings, decay and cap all live in `effective_source_weights` so the
     # divergence gate below cannot drift from the value it is gating.
-    keys, values, weights = effective_source_weights(event, event_status)
+    keys, values, weights, floored = effective_source_weights_detailed(
+        event, event_status
+    )
 
     if keys:
         # Weighted MEDIAN (not mean) — the same outlier-resistant method the
@@ -969,8 +1067,11 @@ def compute_aggregate_probability(
         # rebuilt. On the 2026-08-19 population this changes 0 of 76 displayed
         # heroes and flags 4; the value it protects is the invariant that a
         # rendered probability is always a number some source actually stated.
+        # #5542: the gate's population is the arms still SPEAKING — a third arm
+        # decayed to the floor no longer switches the protection off. The BLEND
+        # below is unchanged and still weighs every source.
         divergence = assess_divergence(
-            dict(zip(keys, values)), dict(zip(keys, weights))
+            *_gate_population(keys, values, weights, floored)
         )
         if divergence is not None:
             return round(divergence.primary_value, 6)
