@@ -215,6 +215,18 @@ if [ -n "$SELFTEST" ]; then
     echo "  FAIL  fixture has no 'Executed' line at all — the test is vacuous"; ST_FAIL=1
   fi
 
+  # B2. the same kill, with the detail a synthetic fixture gets wrong: a REAL
+  #     truncated log still contains the "Test Suite 'All tests' started" line,
+  #     because xcodebuild prints that on the way IN. Only the SUMMARY is
+  #     followed by an Executed total, so matching the name is still safe — but
+  #     it must be the -A1 pairing that decides, not the bare name. Verified
+  #     against a real 6,453-line log truncated at 2,417.
+  { echo "Test Suite 'All tests' started at 2026-09-12 03:19:00.000."
+    echo "Test Suite 'DiscoverViewModelLoadTests' passed at 2026-09-12 03:20:00.000."
+    echo "${TAB} Executed 14 tests, with 0 failures (0 unexpected) in 0.011 (0.016) seconds"; } > "$ST_DIR/killed-started.txt"
+  notice10_select "$ST_DIR/killed-started.txt" 137
+  st_check "killed, but 'All tests' STARTED is in the log" PARTIAL -
+
   # C. ran to the end and failed. Real total, but not a pass line.
   { echo "Test Suite 'All tests' failed at 2026-09-12 05:00:30.000."
     echo "${TAB} Executed 2083 tests, with 3 failures (0 unexpected) in 27.902 (29.156) seconds"

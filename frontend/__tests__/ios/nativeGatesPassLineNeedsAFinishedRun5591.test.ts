@@ -74,6 +74,19 @@ describe("#5591 native-gates.sh only offers a pass line from a finished run", ()
     expect(output).toMatch(/the bait is present: old tail -1 would have offered/);
   });
 
+  it("is not fooled by the 'All tests' STARTED line a real killed log carries", () => {
+    // xcodebuild prints "Test Suite 'All tests' started" on the way IN, so a
+    // genuinely truncated log DOES contain that name — only the summary is
+    // followed by an Executed total. Matching the bare name would read a killed
+    // run as a finished one. Case verified against a real 6,453-line log cut at
+    // 2,417; the first synthetic fixture omitted the started line and was
+    // therefore easier than reality.
+    const { output } = runSelftest();
+    expect(output).toMatch(
+      /ok {4}killed, but 'All tests' STARTED is in the log -> PARTIAL/,
+    );
+  });
+
   it("covers the finished-but-failing and never-ran shapes too", () => {
     const { output } = runSelftest();
     expect(output).toMatch(/ok {4}completed run, 3 failures -> SUITE_FAILED/);
