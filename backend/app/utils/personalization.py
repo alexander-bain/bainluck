@@ -143,6 +143,35 @@ class PersonalizationResult:
     multiplier: float = 1.0
     reasons: list[str] = field(default_factory=list)
     is_personalized: bool = False
+    #: The same multiplier with the DISMISSAL downrank left out — the number an
+    #: admission gate is allowed to read. CERT-2676.
+    #:
+    #: "Personalization is bounded and latency-safe — left-swipe is a soft
+    #: downrank, never a hard dismissal" (CLAUDE.md, the Discover operating
+    #: rules). `multiplier` alone cannot honour that, because every admission
+    #: gate in `routes/feed.py` compares `base_score * multiplier` against a
+    #: floor: at the eight-swipe rung the multiplier is 0.20, so base scores of
+    #: 40/60/98 arrive at the gate as 7/11/19 and every one of them is dropped.
+    #: The reader who swiped eight football cards away did not ask to stop
+    #: seeing football — they asked to see less of it — and #1091's rule is that
+    #: game events are never capped into an empty tab.
+    #:
+    #: Deliberately NOT "the multiplier without any penalty". The sport-level
+    #: gates are intentional exclusions the reader chose at onboarding — "Nah"
+    #: to a sport, "only if it's wild" — and they stay inside this number so
+    #: they keep filtering. What is lifted out is EVERY NEGATIVE TERM A SWIPE
+    #: WROTE — the category dismissal, the feature dislike, and the semantic
+    #: resemblance penalty; `rank` still sees all of them, which is the point.
+    #:
+    #: That list is a description, not the contract, and it is not the thing to
+    #: extend when a fourth term appears. CERT-2672/2676/2681 were three
+    #: presentations of ONE defect found three times because each was repaired
+    #: by name: first the category term did not reach NFL cards, then it decided
+    #: admission at two gates, then at a third, then the feature and semantic
+    #: terms turned out to decide it too. The contract is the invariant, and it
+    #: is pinned as one: for a reader whose ONLY signal is swipes, this is
+    #: exactly 1.0 — see `test_no_swipe_derived_term_of_any_name_reaches_admission`.
+    admission_multiplier: float = 1.0
 
 
 def compute_event_multiplier(
@@ -178,6 +207,8 @@ def compute_event_multiplier(
         return PersonalizationResult()
 
     bonus = 0.0
+    # The part of `bonus` that came from a swipe-away (CERT-2676).
+    dismiss_bonus = 0.0
     reasons = []
 
     team_ids = [tid for tid in [home_team_id, away_team_id] if tid is not None]
@@ -240,16 +271,34 @@ def compute_event_multiplier(
     if category_bonus:
         bonus += category_bonus
         reasons.append(_category_affinity_reason(category_bonus))
+        # CERT-2676: a swipe-derived DOWNRANK is not an eligibility test. Held
+        # aside here and added back in `admission_multiplier` below, so the
+        # eighth swipe still ranks the category down hard and still leaves the
+        # card admissible. Only the negative side is held aside — a positive
+        # category affinity is a boost, and a boost that could not raise a card
+        # past an admission floor would be a different bug.
+        if category_bonus < 0:
+            dismiss_bonus += category_bonus
 
     feature_bonus, feature_reason = _feature_affinity_bonus(ctx, feature_tokens)
     if feature_bonus:
         bonus += feature_bonus
         reasons.append(feature_reason)
+        # CERT-2681: the SAME swipe writes this term. Eight dismissed football
+        # matchups leave four shared `-0.12` feature affinities behind, and for
+        # an "if it's wild" reader a base-98 card cleared the 55 bar at 68
+        # without them and fell to 44 with them. A downrank does not decide
+        # eligibility whatever the term is NAMED.
+        dismiss_bonus += min(0.0, feature_bonus)
 
     semantic_bonus, semantic_reason = _semantic_dismiss_bonus(ctx, feature_tokens)
     if semantic_bonus:
         bonus += semantic_bonus
         reasons.append(semantic_reason)
+        # CERT-2681, and this one is dismiss-derived by construction — it is a
+        # penalty for RESEMBLING recent swipes. `min` rather than a bare add
+        # only so the invariant holds if it ever learns a positive side.
+        dismiss_bonus += min(0.0, semantic_bonus)
 
     # --- Minor pro league suppression ---
     # If the event is from a minor pro league (XFL, CFL, AHL, etc.) and
@@ -267,11 +316,15 @@ def compute_event_multiplier(
 
     # --- Clamp and return ---
     multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus))
+    admission_multiplier = max(
+        MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus - dismiss_bonus)
+    )
 
     return PersonalizationResult(
         multiplier=multiplier,
         reasons=reasons,
         is_personalized=bool(reasons),
+        admission_multiplier=admission_multiplier,
     )
 
 
@@ -312,6 +365,8 @@ def compute_futures_multiplier(
         return PersonalizationResult()
 
     bonus = 0.0
+    # The part of `bonus` that came from a swipe-away (CERT-2676).
+    dismiss_bonus = 0.0
     reasons = []
 
     # --- Check if any outcome team is a user favorite ---
@@ -386,16 +441,23 @@ def compute_futures_multiplier(
     if category_bonus:
         bonus += category_bonus
         reasons.append(_category_affinity_reason(category_bonus))
+        # CERT-2676, futures side. Same rule, same reason: `feed.py` gates
+        # futures on `personalized_score < 15` and on the low-affinity 55 bar.
+        if category_bonus < 0:
+            dismiss_bonus += category_bonus
 
     feature_bonus, feature_reason = _feature_affinity_bonus(ctx, feature_tokens)
     if feature_bonus:
         bonus += feature_bonus
         reasons.append(feature_reason)
+        # CERT-2681, futures side — same term, same writer, same rule.
+        dismiss_bonus += min(0.0, feature_bonus)
 
     semantic_bonus, semantic_reason = _semantic_dismiss_bonus(ctx, feature_tokens)
     if semantic_bonus:
         bonus += semantic_bonus
         reasons.append(semantic_reason)
+        dismiss_bonus += min(0.0, semantic_bonus)
 
     # --- Pinned item bonus ---
     if futures_market_id and futures_market_id in ctx.pinned_futures_ids:
@@ -404,11 +466,15 @@ def compute_futures_multiplier(
 
     # --- Clamp and return ---
     multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus))
+    admission_multiplier = max(
+        MIN_MULTIPLIER, min(MAX_MULTIPLIER, 1.0 + bonus - dismiss_bonus)
+    )
 
     return PersonalizationResult(
         multiplier=multiplier,
         reasons=reasons,
         is_personalized=bool(reasons),
+        admission_multiplier=admission_multiplier,
     )
 
 
@@ -469,21 +535,68 @@ def _match_sport_affinity(
     return best_match
 
 
+#: The two vocabularies a Discover interaction's `category` can be written in,
+#: and the map between them. CERT-2672's finding.
+#:
+#: An EVENT card reports the sport-key ROOT; a FUTURES card reports the LLM
+#: category. Measured over 30 days of `discover_interactions` on 2026-09-12:
+#:
+#:     football | native | futures | 520      americanfootball | native | event | 151
+#:     hockey   | native | futures | 470      americanfootball | web    | event |   4
+#:     football | web    | futures | 132      basketball       | native | event |  10
+#:
+#: — the same sport arriving under two keys from two card types. `basketball`
+#: agrees between the vocabularies, which is why the split was invisible: the
+#: scorer canonicalises to the futures vocabulary (`americanfootball_nfl` ->
+#: `football`), so every American-football and ice-hockey EVENT swipe has been
+#: counted into a bucket the event scorer never looks up. On the specimen
+#: #5453 was built from — Alex's own rows, 6 `americanfootball` swipes — the
+#: multiplier came back `1.0`.
+#:
+#: The four pairs are DERIVED, not guessed: every sport-key root served in the
+#: last 30 days, compared against the `llm_sport_category` vocabulary. The four
+#: that differ are below; `test_the_alias_map_covers_every_root_that_disagrees`
+#: re-derives the comparison so a new sport cannot join quietly.
+DISCOVER_CATEGORY_ALIASES: dict[str, str] = {
+    "americanfootball": "football",
+    "icehockey": "hockey",
+    "motorsport": "motorsports",
+    "rugbyleague": "rugby",
+    "rugbyunion": "rugby",
+}
+
+
+def canonical_discover_category(category: str | None) -> str | None:
+    """THE ONE KEY a Discover category affinity is stored and looked up under.
+
+    Every writer of a category key into an affinity rollup and every reader of
+    one goes through here, which is the whole point: two spellings of one sport
+    in one dictionary is a silent zero, not an error, and `.get(key, 0.0)` can
+    never tell you it happened.
+
+    Returns None for an absent or blank category so callers keep their existing
+    "no category, no opinion" branch; it does NOT invent `"other"`.
+    """
+    if not category:
+        return None
+    key = str(category).strip().lower()
+    if not key:
+        return None
+    return DISCOVER_CATEGORY_ALIASES.get(key, key)
+
+
 def _category_from_sport_key(sport_key: str | None) -> str | None:
     if not sport_key:
         return None
-    root = sport_key.split("_")[0].lower()
-    if root == "americanfootball":
-        return "football"
-    if root == "icehockey":
-        return "hockey"
-    return root
+    return canonical_discover_category(sport_key.split("_")[0])
 
 
 def _category_affinity_bonus(ctx: PersonalizationContext, category: str | None) -> float:
     if not category or not ctx.discover_category_affinities:
         return 0.0
-    normalized_category = category.lower()
+    normalized_category = canonical_discover_category(category)
+    if not normalized_category:
+        return 0.0
     value = ctx.discover_category_affinities.get(normalized_category, 0.0)
     if abs(value) < 0.01:
         return 0.0

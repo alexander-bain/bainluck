@@ -232,6 +232,7 @@ from app.utils.outcome_display import (
 )
 from app.utils.personalization import (
     PersonalizationContext,
+    canonical_discover_category,
     compute_event_multiplier,
     compute_futures_multiplier,
     followed_sport_categories,
@@ -356,6 +357,19 @@ _DISCOVER_ACTIONS = {
     "context_expand",
     "context_collapse",
 }
+#: The actions that mean "I do not want this card". Both clients send `unlike`
+#: for the dismissal swipe — web's `"dismiss"` string is only the swipe-overlay
+#: LABEL (`DiscoverCard.tsx:159`), and its tracked action is `unlike`
+#: (`DiscoverCard.tsx:104`); native has no heart button at all, so every
+#: `.unlike` there is a swipe-away or a context-menu "not interested"
+#: (`DiscoverView.swift:617…:1573`). `dismiss` is therefore a name no client has
+#: ever written — it stays in the set because `discover_interactions` is
+#: append-only and historical rows may carry it.
+#:
+#: Named once because three sites branch on it (hard suppression, category
+#: affinity, category negative counts) and a set that drifts between them shows
+#: up as "swiping does nothing" and nowhere else.
+_DISCOVER_NEGATIVE_ACTIONS: frozenset[str] = frozenset({"dismiss", "unlike"})
 _DISCOVER_ITEM_TYPES = {"event", "futures", "grid", "tournament"}
 _DISCOVER_SURFACES = {"web", "native", "unknown"}
 # Queue 310 — canonical market shapes, mirroring app/utils/market_shape.py and
@@ -7084,7 +7098,15 @@ async def _load_personalization_context(
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
-    category_affinities = _build_discover_category_affinities(interactions_result.all())
+    # #5453: materialise once — `Result.all()` is single-use and both builders read
+    # the same (category, action, count) rollup. Calling `.all()` twice would hand
+    # the second builder an empty list, which is exactly the silent-zero shape that
+    # left `discover_category_negative_counts` write-dead in the first place.
+    _category_interaction_rows = interactions_result.all()
+    category_affinities = _build_discover_category_affinities(_category_interaction_rows)
+    category_negative_counts = _build_discover_category_negative_counts(
+        _category_interaction_rows
+    )
     feature_affinities = _build_discover_feature_affinities(
         feature_interactions_result.all()
     )
@@ -7111,7 +7133,7 @@ async def _load_personalization_context(
             except (TypeError, ValueError):
                 continue
             last_seen_dt = _utc(last_seen)
-            if action in ("dismiss", "unlike"):
+            if action in _DISCOVER_NEGATIVE_ACTIONS:
                 if item_type == "event":
                     recent_dismissed_event_ids.add(item_id)
                 elif item_type == "futures":
@@ -7207,6 +7229,7 @@ async def _load_personalization_context(
         pinned_futures_ids=pinned_futures_ids,
         roster_player_names=roster_player_names,
         discover_category_affinities=category_affinities,
+        discover_category_negative_counts=category_negative_counts,
         discover_feature_affinities=feature_affinities,
         recent_seen_event_ids=recent_seen_event_ids,
         recent_seen_futures_ids=recent_seen_futures_ids,
@@ -7219,6 +7242,30 @@ async def _load_personalization_context(
         recent_dismissed_feature_token_sets=recent_dismissed_feature_token_sets,
         is_authenticated=bool(user),
     )
+
+
+def _discover_admission_score(
+    base_score: float,
+    p_result,
+    *,
+    recycled: bool = False,
+) -> int:
+    """The score an admission gate is allowed to read. CERT-2676.
+
+    ONE function rather than the same expression written at the event gate and
+    the futures gate, because the two drifted for exactly the reason this
+    repair exists: both were computing `base_score * multiplier` and neither
+    could be changed without remembering the other. `personalized_score` — the
+    full penalty — remains what RANKS; this is only ever compared to a floor.
+
+    The recycle penalty is inside it on the futures path: a recycled card
+    ranking below fresh ones is a deliberate implicit serving floor, not a
+    swipe-derived downrank, so it keeps deciding eligibility.
+    """
+    score = min(98, int(base_score * p_result.admission_multiplier))
+    if recycled:
+        score = max(1, int(score - FEED_RECYCLE_PENALTY))
+    return score
 
 
 def _build_discover_category_affinities(rows) -> dict[str, float]:
@@ -7250,13 +7297,26 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
     cold_start_boost = 2.0 if _cold_start else 1.0
     weights = {k: v * cold_start_boost for k, v in base_weights.items()}
     for category, action, count in all_rows:
-        if not category or action not in weights:
+        if action not in weights:
             continue
-        key = str(category).lower()
+        # CERT-2672: the rollup is keyed by ONE canonical category, not by
+        # whichever vocabulary the card that produced the swipe happened to use.
+        # An event card writes the sport-key root (`americanfootball`), a
+        # futures card writes the LLM category (`football`), and the scorer
+        # looks up the latter — so 151 of Alex's own event swipes were being
+        # counted into a bucket nothing reads. Canonicalising HERE rather than
+        # at the write is deliberate: it repairs the rows already in the table,
+        # which a write-side normaliser cannot reach, and it leaves the column
+        # itself carrying what the client actually said (story keys and the
+        # admin engagement rollups read that same column and must not be
+        # silently re-keyed — gotcha #25).
+        key = canonical_discover_category(category)
+        if not key:
+            continue
         n = int(count or 0)
         raw_scores[key] = raw_scores.get(key, 0.0) + weights[action] * n
         action_counts[key] = action_counts.get(key, 0) + n
-        if action in ("dismiss", "unlike"):
+        if action in _DISCOVER_NEGATIVE_ACTIONS:
             negative_counts[key] = negative_counts.get(key, 0) + n
 
     affinities: dict[str, float] = {}
@@ -7279,6 +7339,46 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
             floor = -0.15
         affinities[category] = max(floor, min(0.18, score / 20.0))
     return affinities
+
+
+def _build_discover_category_negative_counts(rows) -> dict[str, int]:
+    """How many "I do not want this" actions each category has taken recently.
+
+    #5453. ``PersonalizationContext.discover_category_negative_counts`` is read by
+    ``personalization._category_dismiss_floor`` to unlock the escalated dismissal
+    floors (``-0.60`` at 5 swipes, ``-0.80`` at 8). Until this function existed the
+    field was declared and read but **never written**, so the floor was always the
+    shallow ``CATEGORY_DISMISS_MAX_PENALTY`` (``-0.40``) and
+    ``_category_affinity_bonus``'s closing ``max(floor, value)`` clamped away the
+    deeper floors ``_build_discover_category_affinities`` had already computed.
+
+    The reader-visible effect, which is what Alex reported on TestFlight build 7:
+    swiping away the eighth boring card in a category pushed that category down
+    exactly as hard as swiping away the third, so the feed kept refilling the slot
+    from the same family. The escalation constants and their unit tests
+    (``tests/test_personalization.py``) had been green throughout — they construct
+    the context directly, so they proved the ladder works *if fed* and never that
+    anything fed it.
+
+    Counts the same action set the hard suppression and the affinity score use
+    (``_DISCOVER_NEGATIVE_ACTIONS``), over the same ``(category, action, count)``
+    rollup ``_build_discover_category_affinities`` consumes, so the two cannot
+    disagree about what a negative is.
+    """
+    counts: dict[str, int] = {}
+    for category, action, count in rows:
+        if action not in _DISCOVER_NEGATIVE_ACTIONS:
+            continue
+        # Same canonical key as the affinity builder above (CERT-2672). These
+        # two dictionaries are looked up with one category by
+        # `_category_affinity_bonus`/`_category_dismiss_floor`; keyed
+        # differently, the floor would silently read 0 for exactly the sports
+        # whose two vocabularies disagree.
+        key = canonical_discover_category(category)
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + int(count or 0)
+    return counts
 
 
 _REGIONAL_FEATURE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -8201,7 +8301,23 @@ async def _score_events(
                 min_score = 10
             else:
                 min_score = 30
-            if personalized_score < min_score:
+            # CERT-2676 — THE GATE READS THE ADMISSION SCORE, THE RANK READS THE
+            # PENALTY. "Left-swipe is a soft downrank, never a hard dismissal"
+            # (CLAUDE.md, Discover operating rules) is unenforceable while one
+            # number does both jobs: at the eight-swipe rung the multiplier is
+            # 0.20, so base scores of 40/60/98 reach this line as 7/11/19 and
+            # all three `continue`. A reader who swiped eight football cards
+            # away asked for less football, not for none — and #1091's rule is
+            # that game events are never capped into an empty tab.
+            #
+            # `admission_multiplier` is the same product with only the
+            # swipe-derived category dismissal added back. Every gate above it
+            # still bites: the "Nah" filter and the low-affinity 55 bar read
+            # `p_result.reasons` and the onboarding penalties are still inside
+            # this number. `personalized_score` — with the full penalty — is
+            # what ranks, which is the entire behaviour of #5453.
+            admission_score = _discover_admission_score(base_score, p_result)
+            if admission_score < min_score:
                 continue
 
             # --- Completed-game freshness decay (#3484) ---
@@ -9001,7 +9117,13 @@ async def _score_sports_mode_futures(
         )
         personalized_score = min(98, int(base_score * p_result.multiplier))
         rank_score = max(0.0, rank_score * p_result.multiplier)
-        if not my_teams_only and personalized_score < 15:
+        # CERT-2676, third gate — /sports mode reads the SAME personalization
+        # context as Discover (`_load_personalization_context`, one call for
+        # both modes), so a reader's Discover swipes reach this floor too. The
+        # rule is the same wherever the number is compared to a bar: the
+        # swipe-derived downrank sets the ORDER, never the eligibility. No
+        # recycle here — this path serves fresh futures only.
+        if not my_teams_only and _discover_admission_score(base_score, p_result) < 15:
             continue
 
         reason = generate_futures_reason(
@@ -10623,13 +10745,24 @@ async def _score_futures(
             if is_nah and not my_teams_only:
                 continue  # No override for futures — no "championship" equivalent
 
+            # CERT-2676, futures side — same rule as the event gate above: a
+            # swipe-derived downrank may set the ORDER and may not decide
+            # eligibility. Both bars below read the admission score, which still
+            # carries the onboarding "if it's wild" penalty that the 55 bar is
+            # there to enforce; only the category dismissal is added back.
+            # The recycle penalty stays applied to both, since a recycled card
+            # ranking below fresh ones IS an implicit serving floor by design.
+            admission_score = _discover_admission_score(
+                base_score, p_result, recycled=is_recycled
+            )
+
             # "If it's wild" — higher bar for low-affinity futures too
             is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
-            if is_low_affinity and not my_teams_only and personalized_score < 55:
+            if is_low_affinity and not my_teams_only and admission_score < 55:
                 continue
 
             # Filter low-signal futures (my_teams_only shows everything)
-            if not my_teams_only and personalized_score < 15:
+            if not my_teams_only and admission_score < 15:
                 continue
 
             reason = generate_futures_reason(
