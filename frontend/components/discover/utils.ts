@@ -436,6 +436,26 @@ export function isTrending(item: FeedItem): boolean {
     return !!m && Math.abs(m) >= 0.05;
   }
   if (item.type === "event") {
+    // #5766 — A SETTLED GAME IS NEVER TRENDING, AT ANY EI.
+    //
+    // The EI arm below had no status test, and EI is written for live AND
+    // completed events (`_recent_marquee_final_ids` in `routes/feed.py` says so
+    // in as many words). So a finished game with EI >= 70 wore the orange
+    // present-tense flame over its own `Final` score.
+    //
+    // STRUCTURAL, NOT INCIDENTAL, which is why the guard belongs in the
+    // predicate and not in the one card that showed it: the finished-marquee
+    // arm (#4681 admission, #5100 placement, D118 = B) picks the finals it
+    // seats on page one by EI RANK. The cards it seats are therefore, by
+    // construction, the cards this arm calls trending. Measured on production
+    // 2026-09-12 22:05Z: 16 trend badges on Discover page one, and the only two
+    // on a card reading `Final` were the two seated finals, `ei.score` 100 and
+    // 70 — the whole of the bus's "2 dead / 20".
+    //
+    // `eventIsSettled` rather than a second status list: it is the predicate
+    // the caption chain already uses to pick the past tense, and this file's
+    // own history is two predicates that agreed until they didn't.
+    if (eventIsSettled(item)) return false;
     const ed = item.data as FeedEventData;
     return ed.status === "live" || (ed.ei?.score ?? 0) >= 70;
   }
