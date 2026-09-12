@@ -61,17 +61,30 @@ ORACLES = [
 
 #: (id, description, old, new). `old` must appear EXACTLY once.
 MUTATIONS: list[tuple[str, str, str, str]] = [
+    # RE-TARGETED by lane1/267 (T2-3, #5060), 2026-09-12. The needle drifted
+    # because the route now hands this predicate `_q_identity` — the SUBJECT of
+    # the reader's question — instead of the raw query, and the call wrapped to
+    # two lines. The residue scan caught it as DRIFT, which is the scan working:
+    # a battery quoting a kill count against a drifted needle is quoting nothing.
+    # Nothing about what M1 and M2 mean has changed; only the text they anchor
+    # to. Both were re-run after re-targeting and both are still KILLED.
     (
         "M1",
         "THE DEFECT ITSELF: the blanket flag comes back",
-        '        _ta_concept["_derived"] = not _query_names_typeahead_concept(q, _ta_concept)\n',
+        '        _ta_concept["_derived"] = not _query_names_typeahead_concept(\n'
+        '            _q_identity, _ta_concept\n'
+        '        )\n',
         '        _ta_concept["_derived"] = True\n',
     ),
     (
         "M2",
         "the predicate is INVERTED — the Emmys over-match returns",
-        '        _ta_concept["_derived"] = not _query_names_typeahead_concept(q, _ta_concept)\n',
-        '        _ta_concept["_derived"] = _query_names_typeahead_concept(q, _ta_concept)\n',
+        '        _ta_concept["_derived"] = not _query_names_typeahead_concept(\n'
+        '            _q_identity, _ta_concept\n'
+        '        )\n',
+        '        _ta_concept["_derived"] = _query_names_typeahead_concept(\n'
+        '            _q_identity, _ta_concept\n'
+        '        )\n',
     ),
     (
         "M3",
