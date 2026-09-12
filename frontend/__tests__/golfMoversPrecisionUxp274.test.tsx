@@ -144,7 +144,7 @@ function decodeEntities(s: string): string {
 }
 
 /**
- * The magnitude the badge prints, as a string, e.g. "0.5" from "▼ 0.5%".
+ * The magnitude the badge prints, as a string, e.g. "0.5" from "▼ 0.5 pts".
  *
  * A positive extraction rather than a subtractive one. Chained `.replace()`
  * calls that peel characters off are both imprecise (a bare `.replace("%","")`
@@ -152,10 +152,20 @@ function decodeEntities(s: string): string {
  * states the shape it expects and fails loudly on anything else, so a badge
  * that starts printing something unexpected cannot slip through as a silently
  * mangled string.
+ *
+ * #5666 MOVED THE UNIT, NOT THE SHAPE. The strip prints ` pts` where it printed
+ * `%`, because `formatMovementPoints` always returned POINTS and the `%` beside
+ * it was a mislabel — the sixth and last surface of the family that began at
+ * #4066. Only this scrape moved; every claim below is untouched, and the helper
+ * still fails loudly rather than peeling characters, which is the property that
+ * made it worth keeping. It remains a UNIT ASSERTION as well as an extraction:
+ * a strip that regressed to `%` throws here rather than quietly matching.
  */
 function magnitudeOf(delta: string): string {
-  const m = /^[▲▼]\s*(\d+(?:\.\d+)?)%$/.exec(delta.trim());
-  if (!m) throw new Error(`badge did not print an arrow + magnitude + %: ${JSON.stringify(delta)}`);
+  const m = /^[▲▼]\s*(\d+(?:\.\d+)?) pts$/.exec(delta.trim());
+  if (!m) {
+    throw new Error(`badge did not print an arrow + magnitude + " pts": ${JSON.stringify(delta)}`);
+  }
   return m[1];
 }
 
@@ -288,18 +298,14 @@ describe("UX-P274 — the strip agrees with the card 600px below it", () => {
       // still fails if the card stops printing a one-decimal magnitude at all
       // (`cardMatch` goes null) or if the two surfaces disagree on the number.
       //
-      // THE STRIP HAS NOT MOVED YET, AND THAT IS A KNOWN OPEN WINDOW, not an
-      // oversight: `MoversStrip` still renders `{formatMovementPoints(...)}%`
-      // — the points formatter under a percent sign — so /golf currently reads
-      // "▲ 9.7%" here and "+9.7 pts today" 600px below. Filed as #5666 and
-      // routed to ux, who own this component and the `magnitudeOf` helper that
-      // requires the trailing `%`. It was left out of #5623 deliberately:
-      // closing it means rewriting that helper, which owes this suite's own
-      // red arm, and ux had already scoped #5623 to three files.
-      //
-      // This suite's subject survives the window. Its defect was two different
-      // NUMBERS for one move ("▲ 1%" over "+0.5% today"); the magnitudes here
-      // still agree to the digit, which is exactly what the assertion checks.
+      // THE WINDOW IS NOW CLOSED (#5666). The paragraph that stood here said
+      // the strip had not moved and that /golf read "▲ 9.7%" up here against
+      // "+9.7 pts today" 600px below — one move, one unit, two spellings. It
+      // was true from 14:46Z to 17:4xZ on 2026-09-12 and is kept in the history
+      // rather than in the file. Both surfaces now print ` pts`, `magnitudeOf`
+      // above asserts that unit, and this test compares the two as it always
+      // did: the UNIT agreement is the helper's job, the NUMBER agreement is
+      // this assertion's.
       const cardMatch = /([-+]?\d+\.\d+) pts today/.exec(decodeEntities(cardMarkup));
       expect(cardMatch).not.toBeNull();
       const card = String(Math.abs(Number(cardMatch![1])));
