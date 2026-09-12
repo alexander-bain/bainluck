@@ -179,10 +179,15 @@ class TestEnrichMarketHooksRequiresEvidenceForSpecificDevelopment5461:
         assert session.updates == [], "a hook was written with no evidence behind it"
 
     @pytest.mark.asyncio
-    async def test_a_resolution_date_is_evidence_and_the_model_is_asked_with_it(
-        self, monkeypatch
-    ):
-        """The other direction. A guard that refuses everything is an outage, not a guard."""
+    async def test_a_settlement_date_on_its_own_is_not_asked_about(self, monkeypatch):
+        """Presentation three's measurement, pinned.
+
+        Asking on a bare settlement date is not a TRUTH failure — every one of the 26 lines it
+        produced on production was entailed by its evidence. It is a notice-34 failure: they all
+        read "The question 'X' is settled no later than DATE", which is our settlement mechanic
+        described to a reader, off a date that is routinely the padded latest-possible one
+        (#2644). So the gate is the KIND of evidence, not its presence.
+        """
         market = _FakeMarket(
             id=2,
             name="Will the rate be cut in September?",
@@ -190,12 +195,46 @@ class TestEnrichMarketHooksRequiresEvidenceForSpecificDevelopment5461:
         )
         stats, session, client = await _run_task(monkeypatch, market, _OUTCOMES)
 
+        assert client.calls == [], (
+            "the model was asked to write a card line off a settlement date alone — the only "
+            "sentence that supports is the one notice 34 removed from the US Open page"
+        )
+        assert stats["skipped_no_evidence"] == 1
+        assert stats["generated"] == 0
+        assert session.updates == []
+
+    @pytest.mark.asyncio
+    async def test_a_fixture_is_asked_about_and_its_hook_is_written(self, monkeypatch):
+        """The other direction. A guard that refuses everything is an outage, not a guard.
+
+        This is the whole positive path: the gate opens on a fixture, the settlement date rides
+        along as a second line, the model is asked once, and the answer reaches the row.
+        """
+        real_now = datetime.now(timezone.utc)
+        kickoff = real_now + timedelta(days=2)
+        market = _FakeMarket(
+            id=2,
+            name="Philadelphia vs Atlanta",
+            resolution_date=real_now + timedelta(days=5),
+            event_id=77,
+        )
+        stats, session, client = await _run_task(
+            monkeypatch,
+            market,
+            _OUTCOMES,
+            event_row=(kickoff, "Atlanta Braves", "Philadelphia Phillies"),
+        )
+
         assert len(client.calls) == 1
         prompt = client.calls[0]
         assert "EVIDENCE — the ONLY facts you may state" in prompt
-        assert "Will the rate be cut in September?" in prompt
-        settles = (datetime.now(timezone.utc) + timedelta(days=4)).strftime("%b %d, %Y")
-        assert f"settled no later than {settles}" in prompt
+        stamp = kickoff.strftime("%b %d, %Y")
+        assert f"Philadelphia Phillies vs Atlanta Braves is scheduled for {stamp}." in prompt
+        settles = (real_now + timedelta(days=5)).strftime("%b %d, %Y")
+        assert f"settled no later than {settles}" in prompt, (
+            "the settlement date stopped travelling; it may not stand alone but it is still "
+            "an anchor the sentence may bound itself against"
+        )
         assert stats["generated"] == 1
         assert session.updates and session.updates[0]["hook_description"] == "A sentence."
 
@@ -258,31 +297,71 @@ class TestEnrichMarketHooksRequiresEvidenceForSpecificDevelopment5461:
             monkeypatch, market, _OUTCOMES, event_row=event_row
         )
 
-        prompt = client.calls[0]
-        assert "is scheduled for" not in prompt, "a past fixture was cited as upcoming"
-        # …and the market is still hooked, on the settlement line alone — dropping the
-        # fixture must not silently fail the whole market closed.
-        assert "settled no later than" in prompt
-        assert stats["generated"] == 1
-        assert stats["skipped_no_evidence"] == 0
+        # Dropping the started fixture leaves the settlement date alone, and presentation
+        # three's gate does not open on that — so the market is not asked about at all.
+        # Both halves matter: the past fixture is not cited as upcoming (the falsehood), AND
+        # nothing is written off what remains (the jargon). The evidence helper's own test,
+        # `test_a_kickoff_in_the_past_is_dropped_even_though_it_is_dated`, holds the citation
+        # shape now that no prompt is built here to read it off.
+        assert client.calls == [], "a past fixture was described, or a bare settlement date was"
+        assert stats["skipped_no_evidence"] == 1
+        assert stats["generated"] == 0
+        assert session.updates == []
 
     @pytest.mark.asyncio
     async def test_the_models_no_hook_reply_is_honoured_and_nothing_is_written(
         self, monkeypatch
     ):
+        # The gate has to OPEN for this test to say anything, so the market carries a fixture:
+        # with settlement evidence alone the model is never asked and "it declined" would be
+        # indistinguishable from "we never asked".
+        real_now = datetime.now(timezone.utc)
         market = _FakeMarket(
             id=4,
-            name="Will the rate be cut in September?",
-            resolution_date=datetime.now(timezone.utc) + timedelta(days=4),
+            name="Northgate vs Riverside",
+            resolution_date=real_now + timedelta(days=4),
+            event_id=88,
         )
         stats, session, client = await _run_task(
-            monkeypatch, market, _OUTCOMES, reply=f'"{NO_HOOK_SENTINEL}"'
+            monkeypatch,
+            market,
+            _OUTCOMES,
+            event_row=(real_now + timedelta(days=1), "Riverside", "Northgate"),
+            reply=f'"{NO_HOOK_SENTINEL}"',
         )
 
         assert len(client.calls) == 1, "the model must still be asked — it declined, we did not"
         assert stats["declined_no_hook"] == 1
         assert stats["generated"] == 0
         assert session.updates == [], "a declined hook was written to the row anyway"
+
+
+@pytest.mark.asyncio
+async def test_enrich_market_hooks_requires_evidence_for_specific_development_5461(monkeypatch):
+    """The identifier CERT-2691 named, as a FUNCTION, carrying both directions in one run.
+
+    The class above is spelled the same way, but a class is not selectable by the name the BLOCK
+    wrote: `pytest -k test_enrich_market_hooks_requires_evidence_for_specific_development_5461`
+    collects zero tests against a CamelCase class, and zero collected tests exit 0. A grader
+    reading that as "the named test passes" would be reading the harness, not the product.
+    """
+    no_evidence = _FakeMarket(id=10, name="Will something happen?", resolution_date=None)
+    stats, session, client = await _run_task(monkeypatch, no_evidence, _OUTCOMES)
+    assert client.calls == [] and stats["generated"] == 0 and session.updates == []
+
+    kickoff = datetime.now(timezone.utc) + timedelta(days=3)
+    with_evidence = _FakeMarket(
+        id=11,
+        name="Northgate vs Riverside",
+        resolution_date=datetime.now(timezone.utc) + timedelta(days=6),
+        event_id=42,
+    )
+    stats, session, client = await _run_task(
+        monkeypatch, with_evidence, _OUTCOMES, event_row=(kickoff, "Riverside", "Northgate")
+    )
+    assert len(client.calls) == 1
+    assert kickoff.strftime("%b %d, %Y") in client.calls[0]
+    assert stats["generated"] == 1 and session.updates
 
 
 class TestTheEvidenceHelpersOnTheirOwn:
