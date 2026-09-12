@@ -63,6 +63,28 @@ struct NativeEventDiscoverCard: View {
         EventState.isFinished(event.status)
     }
 
+    /// The card's team line, for every state of the game (#5538).
+    ///
+    /// This used to read `"\(away) \(isDone ? "" : "@") \(home)"`. Dropping the
+    /// "@" once a game is over is a defensible intent — the score is right
+    /// there — but the two spaces live OUTSIDE the interpolation, so a finished
+    /// card rendered `"Away" + " " + "" + " " + "Home"`: a double space and no
+    /// relationship word at all. "Seattle Mariners  Athletics". Overnight and
+    /// every morning most of the feed is finished games, so that was the
+    /// MAJORITY state of this card, not an edge case.
+    ///
+    /// It is now unconditional, which is also the parity fix: the web twin
+    /// (`frontend/components/discover/EventCard.tsx`) prints `{away} @ {home}`
+    /// with no finished/live branch at all, and standing notice 35 says a match
+    /// card is the same component everywhere. Away-at-home is true whether or
+    /// not the game has ended, so there was never a second reading to serve.
+    ///
+    /// Static and internal so the contract is testable without rendering a
+    /// SwiftUI view — the same shape `DiscoverView.applyDismissFloor` uses.
+    static func matchTitle(away: String, home: String) -> String {
+        "\(away) @ \(home)"
+    }
+
     /// live/048 + CERT-786. The `statusText` default arm below is the literal
     /// string "vs" — the pregame reading — so a suspended match printed the
     /// crest strip of a game that has not started, on the app's default screen.
@@ -238,7 +260,7 @@ struct NativeEventDiscoverCard: View {
             // Bottom section
             VStack(alignment: .leading, spacing: 12) {
                 // Team names
-                Text("\(event.awayTeam) \(isDone ? "" : "@") \(event.homeTeam)")
+                Text(NativeEventDiscoverCard.matchTitle(away: event.awayTeam, home: event.homeTeam))
                     .font(.headline.weight(.bold))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
