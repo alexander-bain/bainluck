@@ -17,10 +17,11 @@ from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
 )
+from app.utils.sport_keys import league_family_identity
 from app.utils.standings_shape import public_standings
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -195,11 +196,56 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     now = datetime.now(timezone.utc)
 
     # --- Events: upcoming + recent ---
+    # The two NAME arms are a FALLBACK for rows whose team binding never landed,
+    # and a fallback must not cross leagues (#5491). A Polymarket-derived row in
+    # the `baseball_other` catch-all bearing the string "Boston Red Sox" was
+    # reaching the MLB club's page as "vs Texas Rangers — No result reported":
+    # a real matchup, ingested with no anchor, no team binding, and the INGEST
+    # time in `commence_time` (all 18 specimens sat at 13:00:3x-5x UTC).
+    #
+    # The guard is scoped to rows with NO binding on either side, which is the
+    # only population the name arms serve. That scoping is what keeps it
+    # surgical: a `baseball_mlb` game reaching a `baseball_mlb_preseason` club
+    # (#2498 — 1,604 rows) and an EPL match reaching a club registered under
+    # `soccer_england_efl_cup` both carry real team ids, so neither is tested at
+    # all. Measured over a +/-21-day window on production 2026-09-12: 4,521 rows
+    # excluded, 4,447 of them (98.4%) from a `*_other` catch-all bucket.
+    #
+    # The comparison is `league_family_identity`, NEVER `sport_id` — a row id is
+    # not a league (#1798/#4945: every MLB club has a preseason row too), and a
+    # tennis player registered under `tennis_atp_us_open` must keep their
+    # `tennis_atp` matches.
+    name_arm = or_(
+        Event.home_team_name == team.name,
+        Event.away_team_name == team.name,
+    )
+    team_family = league_family_identity(getattr(team.sport, "key", None))
+    if team_family is not None:
+        family_sport_ids = [
+            sport_id
+            for sport_id, sport_key in (
+                await db.execute(select(Sport.id, Sport.key))
+            ).all()
+            if league_family_identity(sport_key) == team_family
+        ]
+        # An empty list would exclude every unbound row, so only constrain when
+        # the team's own sport resolved — `.in_([])` is a false predicate, and
+        # failing OPEN here costs a stale card while failing closed costs a
+        # club its whole schedule.
+        if family_sport_ids:
+            name_arm = and_(
+                name_arm,
+                or_(
+                    Event.home_team_id.isnot(None),
+                    Event.away_team_id.isnot(None),
+                    Event.sport_id.in_(family_sport_ids),
+                ),
+            )
+
     base_event_filter = or_(
         Event.home_team_id == team.id,
         Event.away_team_id == team.id,
-        Event.home_team_name == team.name,
-        Event.away_team_name == team.name,
+        name_arm,
     )
 
     upcoming_q = (
