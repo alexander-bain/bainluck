@@ -360,6 +360,44 @@ enum MarketMapRail {
         hasDistribution ? "Half \(unit) distribution" : "Half \(unit)"
     }
 
+    // MARK: - Who says we do not hold the played count (#4982)
+
+    /// The footnote `MarketMapView` prints under its maps, or nil.
+    ///
+    /// #4982 / #4969 — lifted out of the view for the reason every other rule in
+    /// this file was: the thing worth asserting is a SENTENCE COUNT ACROSS TWO
+    /// CARDS, and a rule that can only be reached by rasterising a view cannot be
+    /// asserted at all. `PlayedCountAbsenceArbitrationTests` reads this function
+    /// and `ScoreDifferentialChartView.statesPlayedCountAbsence` together, which
+    /// is the only place the page-level guard ("at most one of the two reaches
+    /// the screen") can actually be stated.
+    ///
+    /// The three older gates are unchanged and are still in their original order:
+    ///
+    /// * **#3465** — owed only once the match is under way, and TENSED by the
+    ///   same `isDone` flag that decides it is owed at all.
+    /// * **#3509 / #3533** — owed only where a map ON SCREEN actually withheld
+    ///   its scoreboard tile AND the sentence describes that map's own unit; the
+    ///   caller computes that from the same selectors its maps draw behind.
+    /// * **#3503** — the caller gates the footnote with `showsAnyMap`, so a
+    ///   pointer never outlives the thing it points at.
+    ///
+    /// `statedAbove` is the new one, and it is FIRST because it is the only gate
+    /// that is about the page rather than about this card: however well this
+    /// card has earned its sentence, the reader does not want it twice.
+    static func mapUnitMismatchNote(
+        vocab: SportVocab,
+        statedAbove: Bool,
+        isLive: Bool,
+        isDone: Bool,
+        mapWithheldATile: Bool
+    ) -> String? {
+        guard !statedAbove else { return nil }
+        guard isLive || isDone else { return nil }
+        guard mapWithheldATile else { return nil }
+        return vocab.unitMismatchNote(settled: isDone)
+    }
+
     // MARK: - The tense the scoring-spectrum card may print
 
     /// Which tense EVERY string on the scoring-spectrum card is in.

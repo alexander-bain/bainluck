@@ -45,6 +45,16 @@ struct MarketMapView: View {
     var overUnder: Double?
     var homeScore: Int?
     var awayScore: Int?
+    /// #4982 — has the card ABOVE this one already told the reader we do not
+    /// hold the played count?
+    ///
+    /// Deliberately has NO default. This view cannot see its siblings, so the
+    /// page has to answer it, and a defaulted `false` would let the next surface
+    /// that renders a map reintroduce the duplicated admission silently — which
+    /// is exactly how the two sentences came to sit a screen-third apart in the
+    /// first place. `ScoreDifferentialChartView.statesPlayedCountAbsence` is the
+    /// one function that computes it.
+    let absenceStatedAbove: Bool
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -159,9 +169,22 @@ struct MarketMapView: View {
     /// The sentence a suppressed map owes the reader, once the match is under
     /// way and the missing tile would otherwise be conspicuous.
     private var unitMismatchNote: String? {
-        // #3465: `isDone` is the same flag that decides the note is owed, so it
-        // is also the flag that decides which tense it is owed in.
-        guard isLive || isDone else { return nil }
+        // #4982 — said ONCE per page. The Score Differential chart sits directly
+        // above these maps and, when it draws, opens with the same admission in
+        // its own words ("Played games are not captured yet — the scoreboard
+        // reports sets"). #3503 made this one sentence instead of four by
+        // deduping within this view; this is the same rule applied across the
+        // two views, which neither could do alone.
+        //
+        // Suppressing the footnote does NOT re-orphan the tiles it explains: the
+        // reader has been given the reason one card earlier, in a sentence that
+        // names the same two units. Where the chart is absent or silent the flag
+        // is false and this view speaks, so the explanation is never lost — only
+        // ever said by whichever card the reader reaches first.
+        //
+        // #3465's tense and #3509/#3533's withheld-tile gate did not move — they
+        // now live beside this one in `MarketMapRail.mapUnitMismatchNote`, so the
+        // cross-card count can be asserted without rasterising this view.
         // #3509 — owed only where a map ON SCREEN actually withheld its
         // scoreboard tile. The gate used to be "the sport is tennis", which is
         // now too broad in a way that prints a falsehood: a doubles map whose
@@ -182,8 +205,13 @@ struct MarketMapView: View {
         // sets totals map draws; both are gated by one predicate now.
         let marginWithheld = showsAnyMarginMap && vocab.noteDescribesMap(quotedBy: fullMarginData.unit)
         let totalWithheld = !totalMapIsEmptyChrome && vocab.noteDescribesMap(quotedBy: fullTotalUnit)
-        guard marginWithheld || totalWithheld else { return nil }
-        return vocab.unitMismatchNote(settled: isDone)
+        return MarketMapRail.mapUnitMismatchNote(
+            vocab: vocab,
+            statedAbove: absenceStatedAbove,
+            isLive: isLive,
+            isDone: isDone,
+            mapWithheldATile: marginWithheld || totalWithheld
+        )
     }
 
     private var hasSpreads: Bool { !(gameMarkets.spreads ?? []).isEmpty }
