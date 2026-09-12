@@ -308,7 +308,7 @@ export default function TeamPage() {
                   headline.movement! > 0 ? "text-accent-live" : "text-accent-danger"
                 }`}
               >
-                {headline.movement! > 0 ? "↑" : "↓"} {formatMovementPoints(headline.movement)}% today
+                {headline.movement! > 0 ? "↑" : "↓"} {formatMovementPoints(headline.movement)} pts today
               </span>
             )}
           </div>
@@ -463,7 +463,7 @@ function FutureRow({ item }: { item: TeamFutureItem }) {
             }`}
           >
             {item.probability_change_24h! > 0 ? "+" : "-"}
-            {formatMovementPoints(item.probability_change_24h)}%
+            {formatMovementPoints(item.probability_change_24h)} pts
           </div>
         )}
       </div>
