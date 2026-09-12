@@ -784,6 +784,25 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxnflrecyds": "americanfootball_nfl",           # Player receiving yards
     "kxnflrshyds": "americanfootball_nfl",           # Player rushing yards
     "kxnflrec": "americanfootball_nfl",              # Player receptions
+    # #5621: the SAME hole as Q453 above, one series later and this time it
+    # reached a reader. `KXNFLFFPTS-26SEP13BUFHOU` was unmapped, so step 1 of
+    # `_categorize_kalshi_market` ("AUTHORITATIVE — ticker never lies") returned
+    # nothing and the row fell through to name matching on "Buffalo vs Houston:
+    # Fantasy POINTS…", which reads as basketball. MEASURED on production
+    # 2026-09-12 13:2xZ, the day before NFL Week 1 Sunday: 16 markets minted 16
+    # id-less phantom `events`, ALL under `basketball_other`, with the
+    # orientation reversed and the Kalshi close time standing in for kickoff
+    # (gotcha #14) — and FIVE of them held eight of the eight upcoming slots on
+    # `/api/leagues/basketball_other`, beside three CFL games. Not one of the
+    # page's eight upcoming "basketball" games was basketball.
+    #
+    # The scatter is the signature of an unmapped series, exactly as Q453
+    # records it: one series, four league tags — NFL 13, NBA 1, NCAAF 1 and
+    # WNBA 1 (New York Giants vs Dallas, filed as women's basketball).
+    # `detect_league` is called with `sport_category=`, so it constrains its
+    # candidates to that sport's leagues — correcting the category here is what
+    # closes the league tag too, rather than a second literal somewhere else.
+    "kxnflffpts": "americanfootball_nfl",            # Player fantasy points
     "kxnflanytd": "americanfootball_nfl",            # Anytime TD scorer
     "kxnflfirsttd": "americanfootball_nfl",          # First TD scorer
     "kxnflnexttd": "americanfootball_nfl",           # Next TD scorer
@@ -1181,6 +1200,15 @@ KALSHI_LINK_RATE_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
 
 KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # NFL futures
+    # #5621: `KXNFLH2HWINS-27BUFPHI` ("Buffalo vs Philadelphia: Head-to-Head Win
+    # Total") is a SEASON-LONG comparison — every one of the 11 live markets
+    # resolves 2027-02-01 — so it belongs here and NOT in the game map above.
+    # Unmapped it scattered to `baseball_other` (9), `baseball_mlb` (1) and
+    # `soccer_other` (1). It has minted no events (all 11 carry `event_id IS
+    # NULL`) and putting it in the GAME map would make
+    # `is_kalshi_game_level_ticker` true for it, which is how a season-long
+    # market acquires a game — the failure this file's Q440 note is about.
+    "kxnflh2hwins": "americanfootball_nfl",           # H2H season win total
     "kxnflmvp": "americanfootball_nfl",              # Regular season MVP
     "kxnfldpoty": "americanfootball_nfl",             # Defensive Player of the Year
     "kxnfldpoy": "americanfootball_nfl",              # DPOY (alt)
@@ -1760,6 +1788,7 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxnflrecyds": "NFL",
     "kxnflrshyds": "NFL",
     "kxnflrec": "NFL",
+    "kxnflffpts": "NFL",  # #5621 — mapped beside its sport key, not after it
     "kxnflanytd": "NFL",
     "kxnflfirsttd": "NFL",
     "kxnflnexttd": "NFL",
