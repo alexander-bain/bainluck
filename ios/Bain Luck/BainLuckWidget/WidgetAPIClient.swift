@@ -55,10 +55,39 @@ actor WidgetAPIClient {
             // `PeriodLabel.swift` is: the widget shares the phone's rule rather
             // than carrying a transcription of it (ruling 021).
             let awayIsWithheld = DrawPricedWinner.sportPricesADraw(event.sport)
-            let homeAbbrev = event.homeTeamData?.abbreviation
-                ?? String(event.homeTeam.split(separator: " ").last ?? "")
-            let awayAbbrev = event.awayTeamData?.abbreviation
-                ?? String(event.awayTeam.split(separator: " ").last ?? "")
+            // #5709 — AND THE TEAM LABEL WAS A TRANSCRIPTION TOO, four lines
+            // under the sentence above. This read
+            //
+            //     event.homeTeamData?.abbreviation
+            //         ?? String(event.homeTeam.split(separator: " ").last ?? "")
+            //
+            // which labels a club with the kind of club it is whenever the
+            // server sends no abbreviation: `Girona FC` → **FC**, `Cádiz CF` →
+            // **CF**, `Real Sociedad B` → **B**. Measured on this target's own
+            // endpoint (`/api/feed?limit=100`, 2026-09-12): of 186 team slots,
+            // 103 carry no served abbreviation and so take the fallback, and 8
+            // of those render one or two glyphs onto someone's home screen.
+            //
+            // It is the same line #4285 fixed on the web chart axis and #5651
+            // fixed on the phone — one rule, written independently a fourth
+            // time. `TeamShortName` imports nothing but Foundation, so joining
+            // this target costs it no dependencies.
+            //
+            // `abbreviationPair` rather than `abbreviation`, for two reasons: a
+            // served abbreviation still wins wherever it exists, exactly as
+            // before; and this widget draws BOTH sides of one game, which is the
+            // case #3430 is about — two clubs sharing a distinctive tail were
+            // each rendering the same label here, and the pair rule grows them
+            // apart. A single-name call would have fixed the visible half of
+            // this bug and left that one.
+            let abbrevs = TeamShortName.abbreviationPair(
+                away: event.awayTeam,
+                home: event.homeTeam,
+                awayServed: event.awayTeamData?.abbreviation,
+                homeServed: event.homeTeamData?.abbreviation
+            )
+            let homeAbbrev = abbrevs.home
+            let awayAbbrev = abbrevs.away
 
             // UX-P114: prefer the server's card-level percents. This widget draws
             // both sides of one question, and `awayProbability` above is
