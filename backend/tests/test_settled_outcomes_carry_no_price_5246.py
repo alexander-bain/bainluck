@@ -1583,28 +1583,38 @@ class _FakeResponse:
         return self._payload
 
 
+class _FakeClient:
+    """The `svc.client` half of the stub, holding a back-reference to its owner.
+
+    A nested class closing over the outer `self` would need a differently-named
+    first parameter; a plain back-reference keeps the conventional `self` and
+    reads the same.
+    """
+
+    def __init__(self, svc):
+        self._svc = svc
+
+    async def get(self, url, params=None, headers=None):
+        self._svc.calls += 1
+        # Notice 39: the read must go through the carrier, and the assertion is
+        # EQUALITY with it rather than "the header is present" — `tagged()`
+        # legitimately yields `{}` for a third-party host and for an unnamed
+        # agent, so a presence check would be vacuous in exactly the
+        # environment CI runs in, while still failing if the kwarg is dropped
+        # (`None != {}`).
+        assert headers == tagged(url)
+        return self._svc.responses.pop(0)
+
+
 class _FakeSvc:
     """A KalshiAPIService-shaped stub that serves a scripted status sequence."""
 
     BASE_URL = "https://venue.test"
 
     def __init__(self, responses):
-        self._responses = list(responses)
+        self.responses = list(responses)
         self.calls = 0
-
-        class _Client:
-            async def get(_self, url, params=None, headers=None):
-                self.calls += 1
-                # Notice 39: the read must go through the carrier, and the
-                # assertion is EQUALITY with it rather than "the header is
-                # present" — `tagged()` legitimately yields `{}` for a
-                # third-party host and for an unnamed agent, so a presence
-                # check would be vacuous in exactly the environment CI runs in,
-                # while still failing if the kwarg is dropped (`None != {}`).
-                assert headers == tagged(url)
-                return self._responses.pop(0)
-
-        self.client = _Client()
+        self.client = _FakeClient(self)
 
 
 def _event_payload(ticker, status, result):
