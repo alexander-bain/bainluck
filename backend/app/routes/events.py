@@ -12431,7 +12431,26 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
 # price. Measured: only 198 of 10,091 pinned markets (2.0%) land in the 0–5 min
 # band at all, so the boundary decides almost nothing — 30 markets sit inside
 # one cadence, 168 between two and five minutes and are refused.
-_PREGAME_MARK_MAX_LATENESS_S = 120.0
+# CERT-2719: how much EARLIER than commence a LEGACY pin (one with no
+# `observed_at`) must be stamped to be trusted.
+#
+# This REPLACES `_PREGAME_MARK_MAX_LATENESS_S`, which allowed a pin to be stamped
+# up to one cadence AFTER commence. A legacy pin's `captured_at` is the poller's
+# task-entry clock, read before the venue fetches — so it is a LOWER bound on
+# when the price was actually read, not the read itself. Granting such a stamp
+# extra lateness is exactly backwards: the true read is always at or after the
+# stamp, so lateness must be subtracted, not added. Legacy pins are therefore
+# required to sit a margin BEFORE commence.
+#
+# The margin is the writer's poll cadence (120s), not a tuned number, and it is
+# the same constant for the same reason — one cadence bounds a run that has not
+# overlapped itself. Measured upper bound on the real gap is far smaller: task
+# `2638df63` on 2026-09-12 spent 16.9s between its entry stamp and this loop.
+# Measured cost, all 75,095 pinned markets on production: 534 pins sit in the
+# 0-60s band before commence and 123 in the 60-120s band, so this refuses 657
+# rows (0.9%) that the old rule accepted. 29,658 pins sit in the 5-15 min band
+# (the writer only fires inside a 15-minute lead) and are untouched.
+_PREGAME_MARK_LEGACY_MARGIN_S = 120.0
 
 
 def _coerce_utc_datetime(value):
@@ -12477,16 +12496,28 @@ def _pregame_mark_is_pregame(pm, commence_time) -> bool:
     """
     if not isinstance(pm, dict):
         return False
-    captured_raw = pm.get("captured_at")
-    captured = _coerce_utc_datetime(captured_raw)
-    if captured is None:
+    # CERT-2719: prefer the time the pin was WRITTEN over the poller's task-entry
+    # clock. `captured_at` is stamped before the venue fetches, so a poll that
+    # starts before first pitch and finishes after it presents an in-play price
+    # with a pregame stamp — the gate was being fooled by its own writer.
+    observed = _coerce_utc_datetime(pm.get("observed_at"))
+    captured = _coerce_utc_datetime(pm.get("captured_at"))
+    if observed is None and captured is None:
         return True  # cannot judge — see docstring
     commence = _coerce_utc_datetime(commence_time)
     if commence is None:
         commence = _coerce_utc_datetime(pm.get("commence_time"))
     if commence is None:
         return True  # cannot judge — see docstring
-    return (captured - commence).total_seconds() <= _PREGAME_MARK_MAX_LATENESS_S
+    if observed is not None:
+        # A trustworthy per-market observation time: it names the write, and the
+        # writer refuses to pin after commence. No lateness is allowed, because
+        # none is needed — the slack the old constant absorbed was slack in the
+        # STAMP, and this stamp does not have it.
+        return (observed - commence).total_seconds() <= 0
+    # Legacy pin: `captured_at` is a LOWER bound on the read, so it must clear
+    # commence by a margin rather than be granted lateness past it.
+    return (captured - commence).total_seconds() <= -_PREGAME_MARK_LEGACY_MARGIN_S
 
 
 def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over, commence_time):
