@@ -172,6 +172,32 @@ def _weak_outcome_label(name: str | None) -> bool:
     return False
 
 
+def _leader_is_unnameable(name: str | None, is_ladder_rung: bool) -> bool:
+    """Should this leader label be replaced by the market's own title?
+
+    Two independent reasons, unioned here so every template asks one question.
+
+    `_weak_outcome_label` is about the LABEL: "Above 5K" alone tells the reader
+    nothing, so the sentence borrows the market title for context.
+
+    `is_ladder_rung` (#4640) is about the SET the label came from. On a
+    cumulative ladder every rung is a strict subset of every looser one, so the
+    highest-priced rung is the loosest one by arithmetic — "Above 116 (69%)"
+    outprices "Above 120 (45%)" for the same reason "heads or tails" outprices
+    "heads". Naming it a *favorite* claims a contest that does not exist: there
+    is nothing for the rungs to be winning. The label may be perfectly specific
+    and the price perfectly coherent and the sentence is still a category error,
+    which is why this cannot be a spelling test on the label.
+
+    Deliberately NOT a wider `_weak_outcome_label`: band sets ("29,900 to
+    29,999.99", "Exactly 3.64%") are mutually exclusive, so their favorite is
+    real and their lead changes are real news. The two populations are separated
+    by `cumulative_outcome_ladder`, on the outcome SET — see
+    `routes/feed.py::_leader_is_ladder_rung`.
+    """
+    return is_ladder_rung or _weak_outcome_label(name)
+
+
 def _short_market_name(market_name: str | None, max_len: int = 58) -> str:
     """Shorten a market title for use as the SUBJECT of a composed sentence.
 
@@ -1152,6 +1178,9 @@ def generate_futures_reason(
     # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
     # Defaults False so an uninformed caller keeps the singular verbatim.
     leader_is_team: bool = False,
+    # #4640: is `leader_name` a rung of ONE cumulative ladder? Defaults False so
+    # an uninformed caller's copy is unchanged unless nestedness is proven.
+    leader_is_ladder_rung: bool = False,
     source_count: int = 1,
     affirmative_probability: Optional[float] = None,
     rendered_affirmative_percent: Optional[int] = None,
@@ -1167,6 +1196,8 @@ def generate_futures_reason(
     # #4700: resolved once, above every branch, so no template can disagree with
     # another about the same subject.
     _verb = leader_agreement_verb(leader_name, leader_is_team)
+    # #4640: likewise resolved once — see `_leader_is_unnameable`.
+    _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
 
     # A yes/no question never reaches the field templates below — it has no
     # field. See `compose_binary_card_copy`.
@@ -1194,7 +1225,12 @@ def generate_futures_reason(
         return ""
 
     # Leader change (most interesting)
-    if "leader_change" in reasons:
+    #
+    # #4640 — on a cumulative ladder there is no favorite to change, so this
+    # branch does not speak at all and the next real signal does. Falling
+    # through rather than returning the bare "New favorite in {market}" is the
+    # point: that string is the same false claim with the number removed.
+    if "leader_change" in reasons and not leader_is_ladder_rung:
         if leader_name and leader_probability is not None:
             pct = _display_pct(leader_probability, rendered_leader_percent)
             return f"New favorite: {leader_name} ({pct}%) now {_verb} {market_name}"
@@ -1234,14 +1270,14 @@ def generate_futures_reason(
     # Resolving soon
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
-            if _weak_outcome_label(leader_name):
+            if _no_leader_subject:
                 return f"{market_name} resolving within a week"
             pct = _display_pct(leader_probability, rendered_leader_percent)
             return f"{market_name} resolving soon, {leader_name} {_verb} at {pct}%"
         return f"{market_name} resolving within a week"
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
-            if _weak_outcome_label(leader_name):
+            if _no_leader_subject:
                 return f"{market_name} resolves within a month"
             pct = _display_pct(leader_probability, rendered_leader_percent)
             return (
@@ -1294,7 +1330,7 @@ def generate_futures_reason(
     # have touched it; returning the name AT ALL is the defect. Empty instead, which
     # both clients render as absent (see the note in `compose_binary_card_copy`).
     if leader_name and leader_probability is not None:
-        if _weak_outcome_label(leader_name):
+        if _no_leader_subject:
             return ""
         pct = _display_pct(leader_probability, rendered_leader_percent)
         return f"{leader_name} ({pct}%) {_verb} {market_name}"
@@ -1314,6 +1350,8 @@ def generate_futures_headline(
     # #4700: proven team-ness of `leader_name`, for subject-verb agreement.
     # Defaults False so an uninformed caller keeps the singular verbatim.
     leader_is_team: bool = False,
+    # #4640: see `generate_futures_reason`. Defaults False -> copy unchanged.
+    leader_is_ladder_rung: bool = False,
     source_count: int = 1,
     market_name: Optional[str] = None,
     affirmative_probability: Optional[float] = None,
@@ -1325,6 +1363,8 @@ def generate_futures_headline(
     reasons = set(highlight_reasons)
     # #4700: resolved once, above every branch (see `generate_futures_reason`).
     _verb = leader_agreement_verb(leader_name, leader_is_team)
+    # #4640: likewise resolved once — see `_leader_is_unnameable`.
+    _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
 
     if affirmative_probability is not None:
         return compose_binary_card_copy(
@@ -1348,7 +1388,9 @@ def generate_futures_headline(
     if "stale_past_resolution" in reasons:
         return ""
 
-    if "leader_change" in reasons:
+    # #4640 — a cumulative ladder has no favorite to change; fall through to the
+    # next real signal rather than emit the claim with the subject removed.
+    if "leader_change" in reasons and not leader_is_ladder_rung:
         if leader_name and leader_probability is not None:
             return f"New favorite: {leader_name} ({_display_pct(leader_probability, rendered_leader_percent)}%)"
         return "New favorite"
@@ -1379,14 +1421,14 @@ def generate_futures_headline(
 
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
-            if _weak_outcome_label(leader_name) and market_name:
+            if _no_leader_subject and market_name:
                 return f"{_short_market_name(market_name)} resolving soon"
             return f"Resolving soon: {leader_name} {_verb} at {_display_pct(leader_probability, rendered_leader_percent)}%"
         return "Resolving soon"
 
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
-            if _weak_outcome_label(leader_name) and market_name:
+            if _no_leader_subject and market_name:
                 return f"{_short_market_name(market_name)} resolves within a month"
             return f"{leader_name} {_verb}; resolves within a month"
         return RESOLVING_WITHIN_MONTH_HEADLINE
@@ -1413,7 +1455,7 @@ def generate_futures_headline(
     # morning this shipped.)
 
     if leader_name and leader_probability is not None:
-        if _weak_outcome_label(leader_name) and market_name:
+        if _no_leader_subject and market_name:
             # #4056 — this rung returned the title, chopped, with nothing appended:
             # the question echoed back as its own answer. The card already prints the
             # title one line up, so the headline slot said nothing twice. Every OTHER
@@ -1437,6 +1479,8 @@ def generate_futures_context_summary(
     rendered_leader_percent: Optional[int] = None,
     # #4700: see `generate_futures_reason`. Defaults False -> singular verbatim.
     leader_is_team: bool = False,
+    # #4640: see `generate_futures_reason`. Defaults False -> copy unchanged.
+    leader_is_ladder_rung: bool = False,
     source_count: int = 1,
     affirmative_probability: Optional[float] = None,
     rendered_affirmative_percent: Optional[int] = None,
@@ -1482,7 +1526,9 @@ def generate_futures_context_summary(
     def leader_clause() -> str:
         if _copy_repeats_market_name(leader_name, market_name):
             return ""
-        if _weak_outcome_label(leader_name):
+        # #4640 — the single gate for this generator: every leader sentence it
+        # can emit is composed here, so a ladder rung is refused once.
+        if _leader_is_unnameable(leader_name, leader_is_ladder_rung):
             return ""
         if leader_name and leader_probability is not None:
             return f"{leader_name} {_verb} at {_display_pct(leader_probability, rendered_leader_percent)}%"

@@ -381,9 +381,28 @@ class TestTheCardCannotBeHeadlinedByAnImpossibleRung:
         # The control earns the leader change on the same names, movements and
         # ranks. If this ever fails, every assertion below is vacuous.
         assert "leader_change" in coherent.reasons
-        assert coherent.primary_reason == "New favorite"
+
+        # #4640 amended the SECOND half of this control, and the amendment is the
+        # whole point of that issue rather than a concession to it.
+        #
+        # This line used to read `coherent.primary_reason == "New favorite"`,
+        # because #4610 deliberately left the coherent ladder alone: honestly
+        # priced, and still headlined by its loosest rung. #4640 is exactly that
+        # residue — on a nested family the dearest rung is the weakest claim, so
+        # there is no favorite to have changed and the LABEL is withheld.
+        #
+        # What #4610 owns here is untouched and is what this control still
+        # proves: the coherent treatment REACHES the leader-change signal on the
+        # same inputs. #4640 withholds a label; it does not drop the reason or
+        # the score, which is why the assertion above still discriminates.
+        assert coherent.leader_is_ladder_rung is True
+        assert coherent.primary_reason != "New favorite"
 
     def test_no_new_favorite(self, served):
+        # The load-bearing assertion for #4610. `primary_reason != "New favorite"`
+        # is NO LONGER load-bearing on its own — since #4640 both treatments
+        # withhold that label, so it would pass with #4610 reverted. It stays as
+        # a statement of the served copy; this line is the one that would fail.
         assert "leader_change" not in served.reasons
         assert served.primary_reason != "New favorite"
 
