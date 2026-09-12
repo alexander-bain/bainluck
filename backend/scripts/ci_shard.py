@@ -223,6 +223,110 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def shard_log_files(unpacked: Path, job_prefix: str = "backend-tests") -> tuple[list[Path], int]:
+    """The shard step-logs inside an unpacked Actions log archive, each once.
+
+    Returns `(step_log_paths, job_directory_count)`.
+
+    THE ARCHIVE CONTAINS EVERY SHARD LOG TWICE AND THE DUPLICATE IS NOT OBVIOUS.
+    Alongside the per-job directory `backend-tests (1)/` holding one file per
+    step, the zip carries a flat top-level copy of the whole job,
+    `2_backend-tests (1).txt`. Both match the obvious `*backend-tests*` glob, so
+    the naive selection feeds `--record` every duration line twice — measured on
+    run 34709301550: 10,654 matched duration lines against 5,327 real ones.
+
+    Nothing would have failed. Every weight doubles, so the RELATIVE packing is
+    unchanged and `--verify` still passes; what silently breaks is the
+    sub-threshold census, which is added once at its true scale and so lands at
+    half the influence it was designed for, plus every seconds figure the file
+    reports to a reader. A 2x error in a file whose entire purpose is to be a
+    measurement, arriving as a successful refresh.
+
+    This lives here rather than as a `find` in the workflow for the reason
+    `heavy_sync_decision.py` states about itself: a decision written inline in a
+    workflow is unreachable by every gate we own, and so it rots unnoticed.
+    """
+    job_dirs = sorted(
+        p for p in unpacked.iterdir() if p.is_dir() and p.name.startswith(job_prefix)
+    )
+    # Depth matters and is the whole point: step logs live INSIDE a job
+    # directory, the duplicate whole-job copies sit beside them at the top.
+    step_logs = sorted(p for d in job_dirs for p in d.rglob("*.txt") if p.is_file())
+    return step_logs, len(job_dirs)
+
+
+def cmd_shard_logs(args: argparse.Namespace) -> int:
+    """Print the shard step-logs to concatenate, one per line. See `shard_log_files`."""
+    unpacked = Path(args.shard_logs)
+    if not unpacked.is_dir():
+        print(f"::error::{unpacked} is not a directory")
+        return 2
+    step_logs, job_dirs = shard_log_files(unpacked)
+
+    if job_dirs == 0:
+        print(
+            "::error::no `backend-tests*` job directories in the unpacked archive. A run whose "
+            "change-scope was 'frontend' skips the shards entirely, and there is nothing to "
+            "record from it."
+        )
+        return 1
+    if args.expect is not None and job_dirs != args.expect:
+        # NOT a warning. `--record` REPLACES the hint file with whatever the log
+        # contains, so a missing shard does not degrade the result — it deletes
+        # the measurements for every file that shard owned, roughly a quarter of
+        # the suite, and writes the remainder as if it were a fresh full census.
+        print(
+            f"::error::found {job_dirs} shard job directories, expected {args.expect}. Recording "
+            "from a partial set would drop a whole shard's files and report success."
+        )
+        return 1
+    if not step_logs:
+        print(f"::error::{job_dirs} shard job directories, but no step logs inside them.")
+        return 1
+
+    for p in step_logs:
+        print(p)
+    return 0
+
+
+def cmd_staleness(args: argparse.Namespace) -> int:
+    """The staleness numbers as JSON, using nothing but the standard library.
+
+    #3497's refresh half. `--verify` already prints these, but it prints them in
+    a sentence and it needs pytest — it shells out to `--collect-only`, which
+    means installing the whole backend requirements set before you can learn
+    whether there is any work to do.
+
+    The automated refresh (`.github/workflows/shard-hints-refresh.yml`) asks that
+    question on every single green master run and does the expensive half almost
+    never, so the cheap answer has to be genuinely cheap: a checkout, `rglob`, and
+    one `json.load`. Reading it out of `--verify`'s prose would also make the
+    workflow's decision depend on a sentence nobody thinks of as an interface.
+
+    The verdicts come from `hints_need_refresh`/`hints_are_stale`, not from
+    re-comparing against the constants here, so this command cannot drift away
+    from the pytest guard — the same reason #5220 collapsed the two callers onto
+    one shared pair in the first place.
+    """
+    files = discover_test_files()
+    measured, unmeasured = hint_coverage(files, load_durations())
+    print(
+        json.dumps(
+            {
+                "files": len(files),
+                "measured": measured,
+                "unmeasured": unmeasured,
+                "warn_at": STALE_HINTS_WARN_UNMEASURED,
+                "fail_at": STALE_HINTS_MAX_UNMEASURED,
+                "needs_refresh": hints_need_refresh(unmeasured),
+                "stale": hints_are_stale(unmeasured),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     """Prove the partition is total and disjoint against pytest's own collection.
 
@@ -389,6 +493,31 @@ def cmd_record(args: argparse.Namespace) -> int:
         m = re.match(r"^(tests/[^:\s]+\.py)::", line.strip())
         if m:
             n_tests[m.group(1)] = n_tests.get(m.group(1), 0) + 1
+
+    # A CENSUS THAT ERRORED IS PARTIAL, NOT EMPTY, AND PARTIAL IS THE DANGEROUS ONE.
+    #
+    # `--collect-only` exits non-zero when some file fails to import while the
+    # rest collect fine (pytest's exit 2/3, or 5 for "no tests"). `n_tests` is
+    # then populated and looks entirely healthy — the check below passes — but
+    # every file that failed to collect is missing from it, so those files get
+    # their printed durations alone and none of the sub-threshold estimate.
+    # Exactly the under-weighting `--require-census` exists to prevent, arriving
+    # through the door marked "census present".
+    #
+    # Only the unattended caller refuses: a human running `--record` after a
+    # deliberate breakage can still want the file written.
+    if getattr(args, "require_census", False) and proc.returncode != 0:
+        print(
+            f"::error::the collection census exited {proc.returncode} — it is PARTIAL, not "
+            f"absent ({len(n_tests)} files collected before it stopped). Refusing to write: "
+            "the files that failed to collect would be recorded from printed durations alone, "
+            "with no sub-threshold estimate, and packed lighter than they are. "
+            f"--- pytest stderr ---\n{proc.stderr[-2000:]}"
+        )
+        return 1
+    if proc.returncode != 0:
+        print(f"::warning::collection census exited {proc.returncode}; weights may be partial")
+
     if n_tests:
         HIDDEN_EV = 0.0025  # expected seconds for a test pytest declined to print
         for f, total in n_tests.items():
@@ -398,6 +527,29 @@ def cmd_record(args: argparse.Namespace) -> int:
             per_file[f] = per_file.get(f, 0.0) + hidden * HIDDEN_EV
         est = sum(per_file.values())
         print(f"  census: {len(n_tests)} files, {sum(n_tests.values())} tests; weighted total {est:.1f}s")
+    elif getattr(args, "require_census", False):
+        # A WARNING IS ONLY A WARNING IF SOMEBODY IS READING (gotcha #53).
+        #
+        # An empty census does not stop the write below; it silently downgrades
+        # every weight to "printed durations only", and pytest does not print
+        # anything under 0.005s. A file of 500 fast unit tests then records as
+        # ~0s and is packed as free — the same mis-weighting this whole file
+        # exists to remove, except now it is written down as a measurement and
+        # the next reader has no way to tell it from a good one.
+        #
+        # A human running `--record` sees the warning scroll past and can judge.
+        # The unattended refresh cannot, and it would COMMIT the result — so for
+        # that caller the degraded write is refused outright. Note which way the
+        # default points: interactive use keeps the old lenient behaviour, and
+        # the strictness is opt-in by the caller that needs it.
+        print(
+            "::error::collection census empty, and --require-census was given. Refusing to "
+            "write weights derived from printed durations alone: pytest hides sub-0.005s "
+            "entries, so files of fast tests would be recorded at ~0s and packed as free. "
+            "The census is `pytest tests/ --collect-only`; if that cannot run here, the "
+            "backend requirements are not installed."
+        )
+        return 1
     else:
         print("::warning::collection census empty — weights use printed durations only")
     DURATIONS_FILE.write_text(
@@ -426,6 +578,26 @@ def main() -> int:
     ap.add_argument("--shard", type=int, help="1-based shard index; prints that shard's files")
     ap.add_argument("--verify", action="store_true", help="assert the partition is total and disjoint")
     ap.add_argument("--record", metavar="LOG", help="rebuild duration hints from a --durations=0 log ('-' for stdin)")
+    ap.add_argument(
+        "--require-census",
+        action="store_true",
+        help="with --record: fail instead of writing weights when the pytest census is empty",
+    )
+    ap.add_argument(
+        "--staleness",
+        action="store_true",
+        help="print the hint-staleness counts as JSON (stdlib only; no pytest needed)",
+    )
+    ap.add_argument(
+        "--shard-logs",
+        metavar="DIR",
+        help="print the shard step-logs in an unpacked Actions log archive, each exactly once",
+    )
+    ap.add_argument(
+        "--expect",
+        type=int,
+        help="with --shard-logs: require exactly this many shard job directories",
+    )
     args = ap.parse_args()
 
     if args.of < 1:
@@ -433,6 +605,10 @@ def main() -> int:
         return 2
     if args.record:
         return cmd_record(args)
+    if args.shard_logs:
+        return cmd_shard_logs(args)
+    if args.staleness:
+        return cmd_staleness(args)
     if args.verify:
         return cmd_verify(args)
     if args.shard:
