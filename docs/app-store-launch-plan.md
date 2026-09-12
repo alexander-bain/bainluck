@@ -2,7 +2,9 @@
 
 Everything needed to submit Bain Luck 1.0 to the App Store. Realistic time: **3-4 hours** (mostly screenshots + App Store Connect metadata).
 
-**Current state:** Build 3 on TestFlight, gambling language removed (commit `cea3892`), privacy policy live, privacy manifest in place, native code quality sweep complete, and push notification entitlement set to production. The production native navigation is intentionally launch-safe: the unfinished Futures browser entry point is hidden until iOS-7, the 🍀 Bain Luck sidebar branding is preserved, and Calibration remains visible. Main remaining work is screenshots, App Store Connect metadata, final archive/upload, and the explicit Watch/visionOS submission decision.
+**Current state (2026-09-12, native/136):** Build **7** on TestFlight; build 8 is archived, signed and
+exported by one command with no Xcode (§2 below) and waits only on an App Store Connect API key.
+Earlier state, still true: gambling language removed (commit `cea3892`), gambling language removed (commit `cea3892`), privacy policy live, privacy manifest in place, native code quality sweep complete, and push notification entitlement set to production. The production native navigation is intentionally launch-safe: the unfinished Futures browser entry point is hidden until iOS-7, the 🍀 Bain Luck sidebar branding is preserved, and Calibration remains visible. Main remaining work is screenshots, App Store Connect metadata, final archive/upload, and the explicit Watch/visionOS submission decision.
 
 **Review-safe native state for 1.0:**
 - Discover, Sports, My Stuff, Daily Challenge, category pages, event detail, market detail, and Calibration are available in production navigation.
@@ -63,24 +65,42 @@ To remove: In Xcode, select Bain Luck target → General → Supported Destinati
 
 ---
 
-## Phase 2: Archive & Upload (15 min)
+## Phase 2: Archive & Upload (one command)
 
-### 2.1 Archive
+### 2.1 One command, no Xcode
 
-1. In Xcode, select **Bain Luck** scheme (not BainLuckWatch)
-2. Set destination to **Any iOS Device (arm64)**
-3. **Product → Archive** (⌘⇧B won't work — must use Archive)
-4. Wait for build to complete (2-3 min)
+```bash
+tools/native-upload.sh --upload --build 8
+```
 
-### 2.2 Upload to App Store Connect
+Archive → sign → export → deliver, grading the artifact at every step (an
+`xcodebuild archive` that exits 0 with no archive on disk has happened in this
+repo). `--dry-run` checks the machine and builds nothing; `--export` stops with a
+signed `.ipa` on disk and needs no credential at all.
 
-1. Xcode opens the **Organizer** window automatically after archive
-2. Select the new archive → **Distribute App**
-3. Choose **App Store Connect** → **Upload**
-4. Leave all checkboxes at defaults (bitcode, symbols, etc.)
-5. Xcode auto-signs with your team (`J893F72P4R`) — if it fails, go to Signing & Capabilities and ensure "Automatically manage signing" is checked
-6. Click **Upload** — takes 1-2 min
-7. Wait ~15 min for App Store Connect to process the build (you'll get an email)
+**It needs three environment values once**, and only for the delivery step —
+App Store Connect → Users and Access → Integrations → App Store Connect API → **+**,
+role **App Manager**. Apple lets the `.p8` be downloaded exactly once.
+
+```bash
+ASC_KEY_ID=…          # the Key ID beside the key
+ASC_ISSUER_ID=…       # the Issuer ID at the top of that page
+ASC_KEY_PATH=…        # path to the downloaded AuthKey_<ASC_KEY_ID>.p8
+```
+
+Put them in `~/.claude/.env` (never in the repo). Absent them the script refuses
+**before** archiving rather than after, and says which are missing.
+
+**Name the build number.** App Store Connect rejects a number it has already
+accepted, and it rejects it *after* the upload. `--upload` therefore will not
+inherit a guess from the project file.
+
+### 2.2 The Xcode path, if you'd rather
+
+1. **Bain Luck** scheme (not BainLuckWatch), destination **Any iOS Device (arm64)**
+2. **Product → Archive**, then Organizer → **Distribute App** → **App Store Connect** → **Upload**
+3. Defaults are fine; signing is automatic on team `J893F72P4R`
+4. ~15 min of processing before the build appears (you'll get an email)
 
 ### 2.3 Verify in App Store Connect
 
@@ -97,7 +117,7 @@ Go to App Store Connect → My Apps → Bain Luck → **App Information**.
 | Field | Value |
 |-------|-------|
 | **Name** | `Bain Luck` |
-| **Subtitle** (30 chars) | `Prediction Market Probabilities` |
+| **Subtitle** (30 chars max) | `What the world thinks happens` — 29 characters. The old line here, `Prediction Market Probabilities`, is **31** and App Store Connect refuses it in the field. |
 | **Primary Category** | Sports |
 | **Secondary Category** | News |
 | **Content Rights** | Does not contain third-party content that requires rights |
@@ -114,14 +134,36 @@ Go to App Store Connect → My Apps → Bain Luck → **App Information**.
 | **Privacy Policy URL** | `https://bainluck.com/privacy` |
 | **Data Collection** | Yes |
 
-**Data types to declare:**
+**Data types to declare.** The questionnaire asks what the app collects — *including
+through the SDKs it bundles*, not only through our own code. The table below was taken
+from the shipped build 8 `.ipa`: our own `PrivacyInfo.xcprivacy` plus every bundled SDK
+manifest inside it. (The old two-row version here declared User ID and Product
+Interaction only, which is our code's half and not the answer to Apple's question.)
 
-| Data Type | Category | Purpose | Linked to User? |
-|-----------|----------|---------|-----------------|
-| User ID | Identifiers | App Functionality | Yes |
-| Product Interaction | Usage Data | Analytics | No |
+| Data Type | Category | Purpose | Linked to User? | Who collects it |
+|-----------|----------|---------|-----------------|-----------------|
+| User ID | Identifiers | App Functionality | Yes | us (`users.firebase_uid`) + Google Sign-In |
+| Email Address | Contact Info | App Functionality | Yes | us (`users.email`), from Apple or Google sign-in |
+| Name | Contact Info | App Functionality | Yes | us (`users.display_name`) |
+| Device ID | Identifiers | App Functionality | Yes | Firebase Messaging (the push token) |
+| Product Interaction | Usage Data | Analytics, App Functionality | No | us (`/api/feed/interactions`) |
+| Crash Data | Diagnostics | App Functionality | No | Firebase Crashlytics |
+| Other Diagnostic Data | Diagnostics | App Functionality | No | Crashlytics, Installations, Messaging |
 
-No tracking. Already matches `PrivacyInfo.xcprivacy`.
+**Answer NO to tracking** on every row, and NO to the ATT question. Nothing in the app
+tracks across other companies' apps or sites; `NSPrivacyTracking` is `false` in every
+manifest in the bundle.
+
+**Do NOT declare** Phone Number, Coarse Location or Purchase History. Google Sign-In's
+manifest names them because one manifest covers that whole SDK's surface; this app
+requests only the default email + profile scopes, ships no purchases and asks for no
+location permission.
+
+Sign-in is optional — the app is fully usable signed out — and analytics and crash
+reporting are **deny-by-default** behind an in-app consent prompt
+(`FIREBASE_ANALYTICS_COLLECTION_ENABLED = NO`, `FirebaseCrashlyticsCollectionEnabled = NO`
+in `Bain-Luck-Info.plist`, switched on only by an explicit grant). Data that is collected
+only after a choice is still declared here; that is Apple's rule, not a slip.
 
 ### 3.4 Version Information
 
