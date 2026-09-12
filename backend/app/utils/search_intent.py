@@ -242,6 +242,123 @@ def _threshold_in(query: str, span: tuple[int, int], kind: str) -> float | None:
     return None
 
 
+#: Which row ANSWERS each question, matched on the row's own name. Enumerated
+#: per kind rather than derived from the scaffold patterns above, because the two
+#: vocabularies are genuinely different populations: a reader types "wins", a
+#: market is named "Regular Season Wins" or "Total Wins"; a reader types
+#: "playoffs", a market is named "To Make The Playoffs". Deriving one from the
+#: other would silently answer a question with a row that merely shares a word.
+#:
+#: `today` and `season_year` are ABSENT on purpose and that absence is tested:
+#: neither names a market. "today" asks about a GAME, and is answered by row
+#: TYPE in `_INTENT_ANSWER_TYPES` below rather than by any name; a bare season
+#: is a qualifier on some other question, not a question itself, and is answered
+#: nowhere. A kind mapped here that should not be would promote an arbitrary row
+#: to the top of the page.
+_INTENT_ANSWER_RE: Final[dict[str, re.Pattern[str]]] = {
+    INTENT_PLAYOFFS: re.compile(r"\bplayoffs?\b|\bpostseason\b", re.I),
+    INTENT_DIVISION: re.compile(r"\bdivision\b", re.I),
+    INTENT_WIN_TOTAL: re.compile(
+        r"\bwins?\b|\bwin\s+total\b|\bvictories\b", re.I
+    ),
+    INTENT_MAKE_CUT: re.compile(r"\bcut\b", re.I),
+    INTENT_NEXT_TEAM: re.compile(r"\bnext\s+team\b|\btransfer\b|\bsigns?\s+with\b",
+                                 re.I),
+}
+
+
+#: Kinds answered by what a row IS rather than by what it is called, and the
+#: row kinds that answer them. Disjoint from `_INTENT_ANSWER_RE` by construction
+#: — a kind is answered by its name or by its type, never by both, and a test
+#: asserts the two maps never overlap.
+#:
+#: `today` is the whole population here and it is why this map exists. MEASURED
+#: on production 2026-09-12, before this ship:
+#:
+#:     q="lakers"        -> Los Angeles Lakers, ..., Warriors at Lakers
+#:     q="lakers today"  -> Växjö Lakers at Frölunda (Swedish hockey) FIRST,
+#:                          and Los Angeles Lakers NOT ON THE PAGE AT ALL
+#:     q="red sox"       -> Boston Red Sox, then its games
+#:     q="red sox tonight" -> its games, then Boston Red Sox
+#:
+#: The subject substitution alone fixes the first case and REGRESSES the second:
+#: `red sox tonight` resolves to the `red sox` page, where the team leads and
+#: the game the reader asked about drops behind it. A reader who types "tonight"
+#: asked about a GAME. So `today` promotes event rows, by type, because no
+#: market is named "today" and a name pattern could never see this.
+#:
+#: `season_year` is deliberately in NEITHER map: a bare year is a qualifier on
+#: some other question, not a question, and nothing on the page answers it.
+_INTENT_ANSWER_TYPES: Final[dict[str, frozenset[str]]] = {
+    INTENT_TODAY: frozenset({"event"}),
+}
+
+
+def answers_intent(text: str | None, kind: str) -> bool:
+    """Does a candidate row named ``text`` answer the question ``kind``?
+
+    Read-only and name-based: this decides ORDER, never membership, so a false
+    negative costs the reader the promotion and a false positive costs them a
+    wrong row at the top. Both are ordering errors within an already-matched
+    pool — nothing here can admit a row the query did not already return.
+
+    Returns ``False`` for a kind that names no market (`today`, `season_year`),
+    which is why this is not the whole test — `today` is answered by row TYPE,
+    through `_INTENT_ANSWER_TYPES`, and `row_answers_intent` is the test that
+    knows about both. Read a ``False`` here as "no row is NAMED like this
+    question", never as "no answer exists".
+    """
+    if not text or kind not in _INTENT_ANSWER_RE:
+        return False
+    return _INTENT_ANSWER_RE[kind].search(text) is not None
+
+
+def row_answers_intent(row: dict, kind: str) -> bool:
+    """Does this suggestion row answer ``kind`` — by its type, or by its name?
+
+    THE single answering test, so the two vocabularies cannot drift apart. The
+    type arm is consulted first and exclusively: a kind in `_INTENT_ANSWER_TYPES`
+    is answered by what the row IS, and falling through to the name arm would
+    let "Patriots to Win the Division" answer a "today" question because the two
+    maps happened to share a word.
+    """
+    types = _INTENT_ANSWER_TYPES.get(kind)
+    if types is not None:
+        return (row.get("type") or "") in types
+    return answers_intent(row.get("text"), kind)
+
+
+def promote_answering_rows(
+    suggestions: list[dict], intent: SearchIntent | None
+) -> list[dict]:
+    """Move the rows that ANSWER ``intent`` to the front, order otherwise intact.
+
+    A STABLE PARTITION, not a sort. The answering rows keep their relative order
+    and so does everything else, so this can only lift the answering rows as a
+    block — it can never re-decide an ordering the scorer already settled, which
+    is the second-rule trap the route's own comments keep naming.
+
+    Partitioned by IDENTITY rather than by ``in``: two suggestion dicts can
+    compare equal (the same market reached through two pools) and ``x in list``
+    would then move both on the first one's account. ``id()`` is also what keeps
+    this linear on the hottest path in the API.
+
+    A ``None`` intent, an intent no row answers, and a page where nothing
+    answers are all the SAME no-op, returning the list unchanged.
+    """
+    if intent is None or not suggestions:
+        return suggestions
+    answer_ids = {
+        id(s) for s in suggestions if row_answers_intent(s, intent.kind)
+    }
+    if not answer_ids:
+        return suggestions
+    return (
+        [s for s in suggestions if id(s) in answer_ids]
+        + [s for s in suggestions if id(s) not in answer_ids]
+    )
+
+
 def parse_intent(query: str | None) -> SearchIntent | None:
     """The explicit question in ``query``, or ``None`` for a generic query.
 

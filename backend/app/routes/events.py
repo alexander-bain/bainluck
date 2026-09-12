@@ -90,6 +90,10 @@ from app.utils.search_headline_contender import (
     promote_headline_contenders,
     reserve_headline_slot,
 )
+from app.utils.search_intent import (
+    parse_intent,
+    promote_answering_rows,
+)
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
     SEARCH_RESPONSE_TTL_SECONDS,
@@ -7025,10 +7029,49 @@ async def typeahead_search(
         _ta_t0 = time.perf_counter()
 
     now = datetime.now(timezone.utc)
-    pattern = f"%{q}%"
+
+    # T2-3 (#5060): the reader's explicit question, and the SUBJECT it was asked
+    # of. `None` for every generic query, which is the overwhelmingly common case
+    # and leaves everything below exactly as it was.
+    #
+    # RESOLVED FIRST, before `pattern`, because `_q_identity` is the string every
+    # IDENTITY-resolving step below must read. The rule for the rest of this
+    # function is one line long: **`_q_identity` identifies, `q` echoes.** A site
+    # that decides WHICH rows exist or WHICH entity the reader means takes the
+    # subject; a site that logs, or that echoes the query back to the client,
+    # takes what the reader actually typed. Substituting at some identity sites
+    # and not others is the two-rules trap this file keeps naming — it leaves the
+    # same defect alive on whichever arm was missed, which is exactly how the
+    # outcome arm below was found still dark on `patriots playoffs`.
+    #
+    # WHY IDENTITY MUST RESOLVE ON THE SUBJECT, measured on this tree: the
+    # multi-word arm below builds `team_filter` as an AND over every term, so
+    # `patriots playoffs` requires one team row matching BOTH "patriots" and
+    # "playoffs". No team owns a name containing "playoffs", so the team pool
+    # comes back EMPTY and no ranking change downstream can promote a row the
+    # query never returned. The more precisely the reader asked, the fewer
+    # answers existed. `_strip_search_scaffolding` does not save it: it is a
+    # no-op under three terms, and none of the seven scaffold words are in
+    # `_SEARCH_SCAFFOLDING` anyway (checked, not assumed).
+    #
+    # This is the ruling-041 amendment and its exact limit. Identity is still
+    # resolved on OWNED EVIDENCE by the same filters and the same scorer — the
+    # only change is WHICH STRING is handed to them. Nothing here classifies who
+    # the reader means; it removes a question the reader asked from the string
+    # used to find the thing they asked it about.
+    _ta_intent = parse_intent(q)
+    _q_identity = _ta_intent.subject if _ta_intent else q
+
+    # The recall pattern for the futures OUTCOME arm
+    # (`FuturesOutcome.name ILIKE pattern`). On the subject, because it is a
+    # recall filter and not an ordering key: no outcome on earth is named
+    # "patriots playoffs", so on the raw query this arm matched nothing and the
+    # dropdown silently lost every market a reader reaches through an outcome
+    # name. Same class as the team filter, one arm further out.
+    pattern = f"%{_q_identity}%"
     suggestions = []
 
-    terms = _strip_search_scaffolding(q.strip().split())  # #993 Slice C
+    terms = _strip_search_scaffolding(_q_identity.strip().split())  # #993 Slice C
     is_multi_word = len(terms) > 1
     ta_expanded = _apply_search_synonyms(expand_search_terms(terms))  # #993 Slice C
 
@@ -7202,7 +7245,10 @@ async def typeahead_search(
         (Sport.key.in_(_POOL_PROMINENT_SPORT_KEYS), 0),
         else_=1,
     )
-    _q_norm = q.strip()
+    # Same substitution, same reason (T2-3): this orders the team fetch by exact
+    # name then prefix, and on `patriots playoffs` the unsubstituted string
+    # matches neither arm, so the row the scorer needs is not in the LIMIT.
+    _q_norm = _q_identity.strip()
     team_name_order = case(
         (func.lower(Team.name) == _q_norm.lower(), 0),
         (Team.name.ilike(f"{_escape_like(_q_norm)}%", escape="\\"), 1),
@@ -7325,7 +7371,9 @@ async def typeahead_search(
 
     def _ta_names_participant(ev) -> bool:
         names = (ev.home_team_name, ev.away_team_name)
-        if query_names_participant(q, names):
+        # The SUBJECT (T2-3): this asks whether the reader NAMED a participant,
+        # which is an identity question. "red sox tonight" names the Red Sox.
+        if query_names_participant(_q_identity, names):
             return True
         return _nickname_names_participant(
             _ta_nickname_admissions,
@@ -7584,7 +7632,11 @@ async def typeahead_search(
     # LAT-P143: HELD BACK rather than appended. This is the one arm measured to
     # cost 6-14 s, so it does not join the union until it has proved it can be
     # served inside its own budget — see `_resolve_typeahead_outcome_arm` below.
-    _ta_q_compact = q.strip()
+    # The subject, because this gates the recall `pattern` two lines down and
+    # the two must agree: testing the raw query for an extractable trigram while
+    # filtering on the subject would shed the arm on exactly the queries the
+    # subject was computed to rescue.
+    _ta_q_compact = _q_identity.strip()
     _ta_outcome_arm = None
     if _has_extractable_trigram(_ta_q_compact):
         _ta_outcome_arm = FuturesMarket.id.in_(
@@ -7749,6 +7801,17 @@ async def typeahead_search(
     # weight cannot change the answer. This is the exact vector `_fts_filter`
     # builds for the recall arms, so the keys order on the same text the
     # candidate set was matched on.
+    # T2-3 — the ONE identity-adjacent site on this path that deliberately keeps
+    # the RAW query, so the next reader does not "fix" it. This is an ORDER key,
+    # not a filter, and what it orders is which markets survive
+    # `_TYPEAHEAD_FUTURES_POOL`. The reader's question word is the best available
+    # signal for WHICH market answers them: on `patriots playoffs` the raw query
+    # floats "…make the Playoffs" up the pool, and on the subject alone that
+    # market would compete on "patriots" against every other Patriots market and
+    # could be cut by the LIMIT. The promotion downstream cannot rescue it —
+    # `promote_answering_rows` orders a page, it can never admit a row the query
+    # did not return. Recall is unaffected either way: `_ta_candidate_filter` is
+    # built from `terms`, which is already the subject.
     _ta_futures_prefix_tsquery = _last_token_prefix_tsquery(q)
     _ta_futures_relevance_order_keys = (
         []
@@ -8125,7 +8188,13 @@ async def typeahead_search(
     # They carry no flag and default to not-derived, which is why this loop must
     # run before them and not after.
     for _ta_concept in event_concept_pool:
-        _ta_concept["_derived"] = not _query_names_typeahead_concept(q, _ta_concept)
+        # The subject (T2-3), and this one DROPS ROWS rather than ordering them:
+        # a concept marked derived is discarded by the scorer, so on the raw
+        # query every concept the reader's question touched died as "derived"
+        # despite the reader having named it.
+        _ta_concept["_derived"] = not _query_names_typeahead_concept(
+            _q_identity, _ta_concept
+        )
 
     # #1063: golf majors are query-derived concepts here too (same never-dead keys
     # as /search). Prepended so "the open"/"british open"/"royal birkdale" surface
@@ -8139,7 +8208,7 @@ async def typeahead_search(
     # THIS list is the only thing left deciding that probe. Reordering these
     # inserts below the loop, or making the sort unstable, silently flips it;
     # `TestGolfPrependProtectsTheTie` fails when either happens.
-    _ta_golf_major = _detect_query_golf_major_concept(q)
+    _ta_golf_major = _detect_query_golf_major_concept(_q_identity)
     if _ta_golf_major:
         event_concept_pool = _upsert_query_derived_concept(
             event_concept_pool, _ta_seen_concept_keys,
@@ -8149,7 +8218,7 @@ async def typeahead_search(
 
     # #205: World Cup is query-derived in typeahead too — "world cup"/"fifa" surfaces
     # the concept in the single event_concept slot the dropdown shows.
-    _ta_wc = _detect_query_world_cup_concept(q)
+    _ta_wc = _detect_query_world_cup_concept(_q_identity)
     if _ta_wc:
         event_concept_pool = _upsert_query_derived_concept(
             event_concept_pool, _ta_seen_concept_keys,
@@ -8161,7 +8230,7 @@ async def typeahead_search(
     # "grammys"/"the oscars"/"academy awards" surfaces the ceremony concept in the
     # single event_concept slot the dropdown shows (sport_key "awards" matches the
     # market-name-derived awards path above).
-    _ta_awards = _detect_query_awards_concept(q)
+    _ta_awards = _detect_query_awards_concept(_q_identity)
     if _ta_awards:
         event_concept_pool = _upsert_query_derived_concept(
             event_concept_pool, _ta_seen_concept_keys,
@@ -8209,6 +8278,20 @@ async def typeahead_search(
                 select(
                     Team.id, Team.name, Team.slug, Team.abbreviation,
                     Team.logo_url_small, Sport.key.label("sport_key"),
+                    # T2-3 (#5060) DELIBERATELY DOES NOT SUBSTITUTE THE SUBJECT
+                    # HERE, and this is the second of two documented exceptions
+                    # on this path. The subject would help — "lakrs today"
+                    # currently asks pg_trgm for teams similar to the whole
+                    # question — but this arm is one of TWIN fuzzy surfaces, and
+                    # `test_typeahead_fuzzy_index_lat_p135.py` exists precisely
+                    # because one twin was repaired and nothing compared them
+                    # for 130 cycles. `search_events`' twin has no subject to
+                    # substitute until `/search` gets this ship, so changing
+                    # only this one would rebuild that arrangement facing the
+                    # other way. Both move together, under the follow-up issue,
+                    # or neither moves. (The arm is also the narrowest case
+                    # reachable: it runs only when the subject itself resolved
+                    # no team and no event.)
                     func.similarity(Team.name, q).label("sim"),
                 )
                 .join(Sport, Team.sport_id == Sport.id, isouter=True)
@@ -8296,7 +8379,17 @@ async def typeahead_search(
     # navigational shortcut, so surface it as a first-class typeahead row when the
     # query names a hub. Static match against HUB_CONFIGS (+ a few synonyms), so the
     # four built hubs are reachable from search, not only the Browse nav.
-    hub_pool = _match_hub_suggestions(q)
+    # T2-3: the subject here too, and this one IS a measured defect rather than
+    # a consistency tidy — a hub row is an identity row, so it resolves by the
+    # same rule as the team and event rows above. Measured on this tree:
+    #
+    #     _match_hub_suggestions("tennis")        -> ['Tennis hub']
+    #     _match_hub_suggestions("tennis today")  -> []
+    #
+    # The match is static against HUB_CONFIGS, so the question word does not
+    # merely rank the hub lower — it removes the hub from the page entirely. The
+    # question is not part of the hub's name.
+    hub_pool = _match_hub_suggestions(_q_identity)
 
     # --- Tier-lexicographic assembly (ruling 041, Q325) ---
     #
@@ -8320,8 +8413,16 @@ async def typeahead_search(
     )
 
     _ta_mark("fuzzy_and_concepts")
+    # T2-3: the scorer and the evidence read the SUBJECT, for the reason the
+    # match-class module states in its own docstring — a team with its evidence
+    # withheld drops MC0 -> MC1 and loses to a market on `KIND_ORDER`. Scoring
+    # `patriots playoffs` against the team "New England Patriots" is that same
+    # withheld-evidence shape wearing different clothes: the team owns every
+    # token of the subject and none of the question, so it scores MC3 on the
+    # full string and MC0 on the subject. Handing the two halves different
+    # strings would be two rules, so both read `_q_identity`.
     _ta_candidates = [
-        (_typeahead_evidence(item, q), item)
+        (_typeahead_evidence(item, _q_identity), item)
         for item in (*hub_pool, *team_pool, *event_pool,
                      *event_concept_pool, *futures_pool)
     ]
@@ -8335,13 +8436,40 @@ async def typeahead_search(
     # keys come back from the scorer instead of being recomputed here: the full
     # key carries the plural-namesake penalty, which is a property of the whole
     # candidate set, so a second per-row derivation would be a second rule.
-    _ta_keyed = _s_rank_with_keys(q, _ta_candidates)
+    _ta_keyed = _s_rank_with_keys(_q_identity, _ta_candidates)
     suggestions = reserve_headline_slot(
         [_payload for _key, _payload in _ta_keyed],
         _ta_headline_ids,
         floor=_s_entity_prefix_len(_ta_keyed),
     )[:7]
     _ta_mark("rank")
+
+    # T2-3: the requested answer LEADS (design decision B — "`Patriots playoffs`
+    # opens playoff qualification; card identifies the team").
+    #
+    # This runs AFTER `reserve_headline_slot` and after the slice, and both are
+    # deliberate. After the reservation, because the reservation exists to stop a
+    # GENERIC headline contender jumping a resolved entity (#4614/#5059) — an
+    # explicitly requested answer is the one thing that legitimately outranks the
+    # entity block, and the design says so in the same breath that it says
+    # `reserve_headline_slot` operates inside this policy. After the slice,
+    # because promoting a row the reader was never going to see would change the
+    # page rather than order it; if the answer did not make the visible seven,
+    # the honest outcome is the page the scorer built.
+    #
+    # A STABLE PARTITION, not a sort: the promoted rows keep their relative order
+    # and so does everything else, so this can only ever move the answering rows
+    # up as a block. A comparison-based re-sort here would re-decide orderings the
+    # scorer already settled, which is the second-rule trap this file keeps
+    # naming.
+    # The partition itself is a NAMED FUNCTION rather than inline logic here,
+    # for the reason `test_route_typeahead_entity_floor_4614` states about its
+    # own subject: a guard that hand-orders a list asserts the fixture. The
+    # promotion is testable only if the test can drive the same code the route
+    # runs.
+    if _ta_intent is not None:
+        suggestions = promote_answering_rows(suggestions, _ta_intent)
+        _ta_mark("intent_promote")
 
     for _s in suggestions:
         _s.pop("_derived", None)
@@ -8391,6 +8519,23 @@ async def typeahead_search(
         ]
 
     result: dict = {"suggestions": suggestions, "query": q}
+
+    # T2-3: the intent travels so that BOTH clients render one server-authored
+    # order and can say which question they are answering. Additive and
+    # absent-by-default — a generic query ships no new key at all, so no client
+    # has to change to keep working, and `intent: null` never appears.
+    #
+    # The layouts that consume it are not lane1's to write (notice 41: the web
+    # search page and `SearchView.swift` are ux's and native's). This is the
+    # producer half of that pair; the consumer halves are their own issues.
+    if _ta_intent is not None:
+        result["intent"] = {
+            "kind": _ta_intent.kind,
+            "subject": _ta_intent.subject,
+            "threshold": _ta_intent.threshold,
+            "season": _ta_intent.season,
+            "negated": _ta_intent.negated,
+        }
     if _evidence_echo is not None:
         result["_evidence"] = _evidence_echo
     if did_you_mean:
