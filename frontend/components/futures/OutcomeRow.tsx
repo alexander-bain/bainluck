@@ -431,8 +431,14 @@ export default function OutcomeRow({
                     : "bg-red-500/15 text-red-400"
                 }`}
               >
+                {/* #5686 — POINTS, and the literal says so. `formatMovementPoints`
+                    returns the magnitude in POINTS (37.8% -> 47.8% is ten
+                    points, not ten percent), and the `%` that used to sit here
+                    read as a tenth more than the market had. Ninth surface of
+                    the family discover/044's class scan counted; routed here by
+                    notice 41 because this file is ux's. */}
                 {(change as number) > 0 ? "+" : "-"}
-                {formatMovementPoints(change as number)}%
+                {formatMovementPoints(change as number)} pts
               </span>
             ) : (
               <span className="text-xs text-text-muted">-</span>
