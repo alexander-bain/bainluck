@@ -273,6 +273,14 @@ export function shouldShowRefreshCountdown(args: {
   isLive: boolean;
   isSuspended: boolean;
   commenceTime: string | null | undefined;
+  /**
+   * #5459 — the page's LIVE claim has been withdrawn (`liveClaimIsUnbacked`).
+   *
+   * Optional, and absent means "not withdrawn": every existing caller and every
+   * case below is unchanged by this argument, which is what keeps #3802's own
+   * table honest about what it is still measuring.
+   */
+  liveClaimUnbacked?: boolean;
   now?: Date;
 }): boolean {
   const { isFinished, streamConnected, isLive, isSuspended, commenceTime } = args;
@@ -280,6 +288,14 @@ export function shouldShowRefreshCountdown(args: {
   // Unchanged: a finished event has nothing to refresh, and a pushed event
   // shows its age stamp instead (live/034 S2).
   if (isFinished || streamConnected) return false;
+
+  // #5459 — and BEFORE the two cases below, deliberately. This ring's whole
+  // promise is that the next tick brings a new number; on a page whose number
+  // has not moved in hours, the polls keep landing and keep writing the same
+  // value, so the promise is true about our poll and false about the match.
+  // Placed above `isLive || isSuspended` because those are precisely the two
+  // states an unbacked page is in — checked after them it would never fire.
+  if (args.liveClaimUnbacked) return false;
 
   // An event that is live, or past its start with no result reported, is
   // exactly the case the ring was written for.

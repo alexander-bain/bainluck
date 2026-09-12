@@ -160,7 +160,29 @@ describe("#4861 a page that stopped being fed stops claiming to be live", () => 
   });
 
   it("CONTROL: keeps the countdown on a live page whose fetches are landing", () => {
-    eventPayload = EVENT;
+    // #5459 — THE STAMP IS FRESH HERE, AND THAT IS THE CONTROL GETTING STRONGER.
+    //
+    // `EVENT`'s source stamp is fixed in the past and grows forever, which is
+    // exactly right for the two cases above: they need a permanently stale badge
+    // to assert a stable label. It is wrong for this one. A control for "the
+    // fetches are landing" must not also be asserting a number a day old, and
+    // once the header learned to withdraw its LIVE claim past a one-hour blend
+    // age (`liveClaimIsUnbacked`), this fixture stopped being a healthy live
+    // page at all — it is a page whose number has not moved since yesterday, and
+    // dropping the promise on it is correct.
+    //
+    // So the control now says what it always meant: a live page, fed, showing a
+    // CURRENT number, keeps its countdown. Nothing is weakened — the two
+    // assertions above still run on the original stamp.
+    eventPayload = {
+      ...EVENT,
+      win_probability_sources: {
+        kalshi: {
+          ...EVENT.win_probability_sources.kalshi,
+          updated_at: new Date(Date.now() - 20_000).toISOString(),
+        },
+      },
+    };
     eventFailure = undefined;
 
     // `lastRefresh` initialises to now, so nothing is overdue on first render.
