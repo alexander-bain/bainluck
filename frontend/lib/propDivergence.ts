@@ -757,11 +757,62 @@ function thresholdPhrase(threshold: number): string {
   return `${Math.ceil(threshold)}+`;
 }
 
-/** "Janson Junk" -> "Junk's". Deterministic; no possessive edge-case cleverness
- *  beyond the standard trailing-s rule. */
+/**
+ * A GENERATIONAL SUFFIX IS NOT A SURNAME (#5510).
+ *
+ * Exactly the five the issue's census found on production — `Jr`, `Sr`, `II`,
+ * `III`, `IV`, each with or without a trailing period. **`V` is deliberately
+ * absent**: a bare `V` is far more often an initial than a fifth-generation
+ * suffix, and possessivising the wrong token is the defect this is fixing, so
+ * the ambiguous case keeps today's answer rather than getting a new wrong one.
+ * `MMVIII`-style Roman numerals do not appear in a player name.
+ */
+const NAME_SUFFIX = /^(?:jr|sr|ii|iii|iv)\.?$/i;
+
+/**
+ * "Janson Junk" -> "Junk's". Deterministic; no possessive edge-case cleverness
+ * beyond the standard trailing-s rule.
+ *
+ * ═══ #5510: THE LAST WHITESPACE TOKEN IS NOT ALWAYS THE SURNAME ═══
+ *
+ * THE SCRIPT printed **"Jr.'s 1+ hits was marked 35% — and it hit."** on the
+ * Giants–Padres page, with the correct subject — *Fernando Tatis Jr.: 1+ hits*
+ * — in the subtitle one line below it. The generator took `parts[parts.length
+ * - 1]`, which is a fine assumption for `Jung Hoo Lee` and `Xander Bogaerts`
+ * and wrong for every player carrying a generational suffix: 1,119 legs over 35
+ * distinct subjects in a 7-day production window (Vladimir Guerrero Jr., Aaron
+ * Jones Sr., …). So the walk skips trailing suffixes to reach the real surname
+ * and then applies the SAME trailing-s rule to it — `Tatis Jr.` → `Tatis'`, not
+ * `Tatis Jr.'s` and not `Jr.'s`.
+ *
+ * ═══ 🔴 WHAT THIS DOES *NOT* FIX, AND WHY IT IS NOT AN OVERSIGHT ═══
+ *
+ * #5510's other half is subjects that are not people at all — `Hits Allowed`
+ * → **`Allowed's`**, `Bayer 04 Leverkusen Corners` → **`Corners'`** — 834 legs
+ * over 115 distinct subjects. Those must not be possessivised at all, and the
+ * discriminator has to be STRUCTURAL: a word list is disqualified because
+ * `Dalton Rushing` is a real player.
+ *
+ * Measured while building this half, so the next session does not re-measure
+ * it: **the payload carries no such signal today.** `parsePlayerName`'s
+ * `identified` is `colonIdx >= 0 || stat !== ""`, which is true for
+ * `"…: Hits Allowed"`, and `player_headshot` is absent on 119 of 143 rows on a
+ * single Braves–Phillies page whose subjects include Kyle Schwarber, Bo
+ * Bichette and Juan Soto — it is a coverage gap, not a person flag. So the
+ * second half needs a signal that has to be built, and conflating the two
+ * would have shipped a word list. The issue says the same in its own words.
+ *
+ * A subject that reaches here having survived the suffix walk with nothing
+ * left — a name that is only `"Jr."` — keeps today's answer. There is nothing
+ * better to say about it and inventing something would be the same mistake.
+ */
 function possessive(player: string): string {
   const parts = player.trim().split(/\s+/);
-  const last = parts[parts.length - 1] || player;
+  let i = parts.length - 1;
+  while (i > 0 && NAME_SUFFIX.test(parts[i])) i -= 1;
+  // A trailing comma belongs to the suffix that has just been removed
+  // (`Fernando Tatis, Jr.`), never to the surname.
+  const last = (parts[i] || player).replace(/,+$/, "");
   return last.endsWith("s") ? `${last}'` : `${last}'s`;
 }
 
