@@ -49,6 +49,7 @@ from app.utils.prediction_market_matching import (
 )
 from app.utils.live_blend import (
     MarketOutcomes as _LiveBlendGroup,
+    admissible_speakers_are_all_settled,
     compute_source_home_probability as _compute_source_home_probability,
     count_admissible_speakers,
     select_primary_market as _select_primary_market,
@@ -3344,13 +3345,37 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     docstring; retiring on the transient case would twitch the hero by a whole
     source weight every fifteen minutes).
 
+    A SETTLED BOOK IS THE SECOND STRUCTURAL SILENCE (#5548). Counting speakers
+    catches the group that holds nothing but Player Props; it cannot catch the
+    group whose winner market still EXISTS and has simply stopped being able to
+    answer. Polymarket collapses a settled container to its winning outcome
+    alone, which keeps the bare-matchup title that admits it and loses the second
+    side that prices it, so the count stays 1 and the reading stays None forever.
+    Measured on production 2026-09-12 08:2xZ: seven completed games held a frozen
+    Polymarket leg in exactly this shape (15309667 publishing 0.069 for the
+    Giants after Polymarket had settled the game to the Padres), and across all
+    430 scheduled/live events carrying a Polymarket leg the new arm retires 11 —
+    every one a US Open match already played whose markets are all `resolved`.
+    `admissible_speakers_are_all_settled` is that arm; its abstentions are what
+    keep the transient case out.
+
     Returns True when a leg was retired. Core `update()` for the JSONB write
     (gotcha #4), and the commit is this function's because the caller returns
     before reaching its own.
     """
     from app.models.models import Event
 
-    if count_admissible_speakers(blend_group) > 0:
+    # TWO WAYS A SOURCE FALLS PERMANENTLY SILENT, and only the first was caught.
+    # Zero admissible speakers is structural silence (#5031). A group whose every
+    # admissible speaker is a SETTLED book is structural silence too (#5548): the
+    # settled container is still admissible by title, so the count is non-zero,
+    # but no route through `find_moneyline_outcome` can price a side and none ever
+    # will again. Both are permanent; the transient case this must not touch — an
+    # admissible winner market that is merely unpriced right now — is excluded by
+    # `_is_settled_book` requiring every outcome to be priced AND terminal.
+    speakers = count_admissible_speakers(blend_group)
+    settled_book = admissible_speakers_are_all_settled(blend_group)
+    if speakers > 0 and not settled_book:
         return False
 
     result = await session.execute(
@@ -3367,13 +3392,25 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     )
     await session.commit()
     funnel = stats.setdefault("funnel", {})
-    funnel["blend_source_retired_no_winner_market"] = (
-        funnel.get("blend_source_retired_no_winner_market", 0) + 1
+    # Counted apart so the funnel says WHICH silence retired the leg. Folding
+    # #5548 into #5031's counter would make a new cause look like a spike in an
+    # old one, and the two need separate reach measurements.
+    funnel_key = (
+        "blend_source_retired_settled_book"
+        if speakers > 0
+        else "blend_source_retired_no_winner_market"
     )
+    funnel[funnel_key] = funnel.get(funnel_key, 0) + 1
     logger.info(
-        "Retired %s blend leg on event %s — group holds no market admitted to "
-        "speak for the winner (%d linked markets)",
-        anchor.source, anchor.event_id, len(blend_group),
+        "Retired %s blend leg on event %s — %s (%d linked markets)",
+        anchor.source,
+        anchor.event_id,
+        (
+            "every market admitted to speak is a settled book"
+            if speakers > 0
+            else "group holds no market admitted to speak for the winner"
+        ),
+        len(blend_group),
     )
     return True
 
