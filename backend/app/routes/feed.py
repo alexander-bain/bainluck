@@ -355,6 +355,19 @@ _DISCOVER_ACTIONS = {
     "context_expand",
     "context_collapse",
 }
+#: The actions that mean "I do not want this card". Both clients send `unlike`
+#: for the dismissal swipe — web's `"dismiss"` string is only the swipe-overlay
+#: LABEL (`DiscoverCard.tsx:159`), and its tracked action is `unlike`
+#: (`DiscoverCard.tsx:104`); native has no heart button at all, so every
+#: `.unlike` there is a swipe-away or a context-menu "not interested"
+#: (`DiscoverView.swift:617…:1573`). `dismiss` is therefore a name no client has
+#: ever written — it stays in the set because `discover_interactions` is
+#: append-only and historical rows may carry it.
+#:
+#: Named once because three sites branch on it (hard suppression, category
+#: affinity, category negative counts) and a set that drifts between them shows
+#: up as "swiping does nothing" and nowhere else.
+_DISCOVER_NEGATIVE_ACTIONS: frozenset[str] = frozenset({"dismiss", "unlike"})
 _DISCOVER_ITEM_TYPES = {"event", "futures", "grid", "tournament"}
 _DISCOVER_SURFACES = {"web", "native", "unknown"}
 # Queue 310 — canonical market shapes, mirroring app/utils/market_shape.py and
@@ -7066,7 +7079,15 @@ async def _load_personalization_context(
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
-    category_affinities = _build_discover_category_affinities(interactions_result.all())
+    # #5453: materialise once — `Result.all()` is single-use and both builders read
+    # the same (category, action, count) rollup. Calling `.all()` twice would hand
+    # the second builder an empty list, which is exactly the silent-zero shape that
+    # left `discover_category_negative_counts` write-dead in the first place.
+    _category_interaction_rows = interactions_result.all()
+    category_affinities = _build_discover_category_affinities(_category_interaction_rows)
+    category_negative_counts = _build_discover_category_negative_counts(
+        _category_interaction_rows
+    )
     feature_affinities = _build_discover_feature_affinities(
         feature_interactions_result.all()
     )
@@ -7093,7 +7114,7 @@ async def _load_personalization_context(
             except (TypeError, ValueError):
                 continue
             last_seen_dt = _utc(last_seen)
-            if action in ("dismiss", "unlike"):
+            if action in _DISCOVER_NEGATIVE_ACTIONS:
                 if item_type == "event":
                     recent_dismissed_event_ids.add(item_id)
                 elif item_type == "futures":
@@ -7189,6 +7210,7 @@ async def _load_personalization_context(
         pinned_futures_ids=pinned_futures_ids,
         roster_player_names=roster_player_names,
         discover_category_affinities=category_affinities,
+        discover_category_negative_counts=category_negative_counts,
         discover_feature_affinities=feature_affinities,
         recent_seen_event_ids=recent_seen_event_ids,
         recent_seen_futures_ids=recent_seen_futures_ids,
@@ -7238,7 +7260,7 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         n = int(count or 0)
         raw_scores[key] = raw_scores.get(key, 0.0) + weights[action] * n
         action_counts[key] = action_counts.get(key, 0) + n
-        if action in ("dismiss", "unlike"):
+        if action in _DISCOVER_NEGATIVE_ACTIONS:
             negative_counts[key] = negative_counts.get(key, 0) + n
 
     affinities: dict[str, float] = {}
@@ -7261,6 +7283,39 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
             floor = -0.15
         affinities[category] = max(floor, min(0.18, score / 20.0))
     return affinities
+
+
+def _build_discover_category_negative_counts(rows) -> dict[str, int]:
+    """How many "I do not want this" actions each category has taken recently.
+
+    #5453. ``PersonalizationContext.discover_category_negative_counts`` is read by
+    ``personalization._category_dismiss_floor`` to unlock the escalated dismissal
+    floors (``-0.60`` at 5 swipes, ``-0.80`` at 8). Until this function existed the
+    field was declared and read but **never written**, so the floor was always the
+    shallow ``CATEGORY_DISMISS_MAX_PENALTY`` (``-0.40``) and
+    ``_category_affinity_bonus``'s closing ``max(floor, value)`` clamped away the
+    deeper floors ``_build_discover_category_affinities`` had already computed.
+
+    The reader-visible effect, which is what Alex reported on TestFlight build 7:
+    swiping away the eighth boring card in a category pushed that category down
+    exactly as hard as swiping away the third, so the feed kept refilling the slot
+    from the same family. The escalation constants and their unit tests
+    (``tests/test_personalization.py``) had been green throughout — they construct
+    the context directly, so they proved the ladder works *if fed* and never that
+    anything fed it.
+
+    Counts the same action set the hard suppression and the affinity score use
+    (``_DISCOVER_NEGATIVE_ACTIONS``), over the same ``(category, action, count)``
+    rollup ``_build_discover_category_affinities`` consumes, so the two cannot
+    disagree about what a negative is.
+    """
+    counts: dict[str, int] = {}
+    for category, action, count in rows:
+        if not category or action not in _DISCOVER_NEGATIVE_ACTIONS:
+            continue
+        key = str(category).lower()
+        counts[key] = counts.get(key, 0) + int(count or 0)
+    return counts
 
 
 _REGIONAL_FEATURE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
