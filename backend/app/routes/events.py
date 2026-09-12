@@ -10471,6 +10471,186 @@ def _cached_detail_payload(event_id: int, now: float) -> dict | None:
 _PINNABLE_HERO_SOURCE = "blend"
 
 
+#: How far back the flatness window looks. Two hours, which is the window every
+#: measurement on #5077 was taken through, and comfortably wider than
+#: `MIN_SPAN_SECONDS` so a qualifying series has room to be seen inside it.
+_PINNED_PROBABILITY_WINDOW_HOURS = 2
+
+#: `sport_key → (monotonic stamp, has_anchors)`. A league's ESPN anchor coverage
+#: is a property that moves on the timescale of a season, not a request, so this
+#: is cached hard. Six hours; process-local, like `_event_detail_cache` beside it.
+_league_anchor_coverage_cache: dict[str, tuple[float, bool]] = {}
+_LEAGUE_ANCHOR_COVERAGE_TTL = 6 * 3600
+
+#: The window the coverage question is asked over. 30 days, matching the
+#: measurement the scoping ruling was made on (live/154, 2026-09-11 17:17Z).
+_ANCHOR_COVERAGE_WINDOW_DAYS = 30
+
+
+async def _league_has_espn_anchors(db: AsyncSession, sport_key: str) -> bool | None:
+    """Has this league produced ANY ESPN anchor in the last 30 days?
+
+    `None` on any failure, which the caller treats as a refusal rather than as a
+    default — see `league_may_be_judged_by_flatness`.
+
+    WHY THIS IS COMPUTED AND NOT A LIST. The ruling scoped #5077's rule to
+    "leagues with no ESPN anchor coverage" and handed over the seven leagues that
+    happened to hold live rows when it was written. Measured again six hours
+    later, the live cohort had turned over into eight MORE 0%-anchored leagues
+    that list does not contain — `baseball_milb`, `boxing_boxing`, `tennis_wta`,
+    `mma_mixed_martial_arts`, `esports_other` and three regional soccer/cricket
+    leagues. The population turns over within hours and so does the set of
+    leagues it lands in, so an enumerated allowlist ships this rule blind to
+    roughly half of its own population inside a day. The ruling's governing
+    clause is the PROPERTY; the list was that day's reading of it.
+
+    EXISTS rather than a count, and per-league rather than one grouped map: the
+    grouped form is 334ms and would have to run before we know whether any of it
+    is needed, while this is 60-150ms (measured, worst case `esports`) and is
+    reached only by rows that have ALREADY passed the flatness test — a handful
+    sitewide, each answer then cached for six hours.
+    """
+    now = time.monotonic()
+    entry = _league_anchor_coverage_cache.get(sport_key)
+    if entry is not None and now - entry[0] < _LEAGUE_ANCHOR_COVERAGE_TTL:
+        return entry[1]
+
+    try:
+        result = await db.execute(
+            text(
+                """
+                SELECT EXISTS(
+                    SELECT 1 FROM events e
+                    JOIN sports s ON s.id = e.sport_id
+                    WHERE s.key = :sport_key
+                      AND e.espn_id IS NOT NULL
+                      AND e.commence_time > NOW() - make_interval(days => :days)
+                )
+                """
+            ),
+            {"sport_key": sport_key, "days": _ANCHOR_COVERAGE_WINDOW_DAYS},
+        )
+        has_anchors = bool(result.scalar())
+    except Exception:
+        return None
+
+    _league_anchor_coverage_cache[sport_key] = (now, has_anchors)
+    return has_anchors
+
+
+async def _pinned_live_probability(db: AsyncSession, event) -> dict | None:
+    """The #5077 signal for one event, or `None` if it does not apply.
+
+    Additive and advisory. It never touches `event.status`; a surface decides
+    what to do with it. Returns `None` — the key is then absent from the payload
+    — for every event that is not in scope as well as for every in-scope event
+    whose series IS moving, because both mean the same thing to a reader
+    ("nothing to say here") and collapsing them keeps the client contract a
+    single truthiness test that cannot be misread.
+    """
+    from app.models.models import WinProbSnapshot
+    from app.utils.pinned_live_probability import (
+        league_may_be_judged_by_flatness,
+        probability_series_is_pinned,
+    )
+
+    if event.status != "live" or event.completed_at is not None:
+        return None
+    # Free, and it can only ever agree with the `event_has_espn_anchor` arm of
+    # the rule below — this is that arm run early to skip the queries, not a
+    # second rule. The decision of record is still the one call.
+    has_anchor = bool(event.espn_id)
+    if has_anchor:
+        return None
+    sport_key = event.sport.key if event.sport else ""
+    if not sport_key:
+        return None
+
+    # THE WINDOW IS FLOORED AT KICKOFF, and that is not a refinement — measured
+    # on production 2026-09-12 00:40Z, without it the rule fires on a match 48
+    # minutes old whose "110 minutes of flatness" is mostly PRE-GAME. A pinned
+    # pre-game price is a quiet market, not a finished game, and #1999 is the
+    # standing lesson that a pre-game series and an in-play one are different
+    # populations that must not be reasoned about together.
+    _now = datetime.now(timezone.utc)
+    window_start = _now - timedelta(hours=_PINNED_PROBABILITY_WINDOW_HOURS)
+    if event.commence_time is not None:
+        try:
+            window_start = max(window_start, event.commence_time)
+        except TypeError:
+            # tz-naive vs tz-aware — cannot place kickoff, so do not guess it.
+            return None
+
+    # `coalesce(valid_until, captured_at) >= window_start` — INTERVAL OVERLAP,
+    # never `captured_at >= window_start`.
+    #
+    # Measured, same pass: the obvious filter reports the target rows at 2
+    # observations over 12 minutes and the rule fires on NONE of them. Dedup is
+    # why. A pinned series is held in ONE row that was created when the value
+    # first appeared — before this window — and whose `reading_count` and
+    # `valid_until` have been advancing ever since. Filtering on `captured_at`
+    # discards precisely the row carrying the evidence and leaves the heartbeat
+    # rows created inside the window. Same rows, same data, 10 events found
+    # instead of 0.
+    _series_end = func.max(
+        # `valid_until` is "the last time we looked and it was still this value"
+        # (set to `now` on every dedup bump), not a future expiry — so this, not
+        # `max(captured_at)`, is where the flat stretch actually ends. On a
+        # series held in one deduped row `max(captured_at)` reads a span of zero.
+        func.coalesce(WinProbSnapshot.valid_until, WinProbSnapshot.captured_at)
+    )
+    try:
+        agg = (
+            await db.execute(
+                select(
+                    func.count(func.distinct(WinProbSnapshot.home_win_probability)),
+                    func.coalesce(func.sum(WinProbSnapshot.reading_count), 0),
+                    func.min(WinProbSnapshot.captured_at),
+                    _series_end,
+                    func.min(WinProbSnapshot.home_win_probability),
+                ).where(
+                    WinProbSnapshot.event_id == event.id,
+                    func.coalesce(
+                        WinProbSnapshot.valid_until, WinProbSnapshot.captured_at
+                    )
+                    >= window_start,
+                    WinProbSnapshot.home_win_probability.isnot(None),
+                )
+            )
+        ).one()
+    except Exception:
+        return None
+
+    distinct_values, observations, first_seen, last_seen, value = agg
+    if not first_seen or not last_seen:
+        return None
+    # Clipped to the window: the carrying row legitimately starts before it, and
+    # its pre-window stretch is not evidence about this half of the match.
+    first_seen = max(first_seen, window_start)
+    span_seconds = (last_seen - first_seen).total_seconds()
+
+    if not probability_series_is_pinned(
+        distinct_values=int(distinct_values or 0),
+        total_observations=int(observations or 0),
+        span_seconds=span_seconds,
+    ):
+        return None
+
+    if not league_may_be_judged_by_flatness(
+        league_has_espn_anchors=await _league_has_espn_anchors(db, sport_key),
+        event_has_espn_anchor=has_anchor,
+    ):
+        return None
+
+    return {
+        "pinned": True,
+        "probability": float(value) if value is not None else None,
+        "observations": int(observations or 0),
+        "span_seconds": int(span_seconds),
+        "since": first_seen.isoformat(),
+    }
+
+
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
@@ -10854,6 +11034,17 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
             response["hero_settled_result"] = _hero.settled_result
+
+    # #5077: this page says LIVE, ticks a 20s refresh, shows no score, and its
+    # number has not moved in hours — while the venue settled every market on the
+    # match. The client cannot work that out for itself: it sees one current
+    # number and a fresh-looking stamp, and the stamp IS fresh (the polls write on
+    # schedule; they write the same value). Only the server can see that the same
+    # value came back 27 times over two hours. So it is served, additively, and
+    # the surface decides what to say — the label half is ux's under notice 41.
+    _pinned = await _pinned_live_probability(db, event)
+    if _pinned is not None:
+        response["live_probability_pinned"] = _pinned
 
     # Box score data for player props display
     if event.box_score_data and not event.box_score_data.get("error"):
