@@ -2452,6 +2452,32 @@ export interface CalibrationData {
    * native, or the browser rail — could tell.
    */
   population_version?: string;
+  /**
+   * CAL-P1136 / #5401, klm = A (Alex, 2026-09-12). The served scorecard block.
+   *
+   * Only the held-back fields are typed here, deliberately: the rest of the
+   * block is the lane's needle, not the reader's page, and typing fields no
+   * surface renders invites one to be rendered.
+   *
+   * `held_back_cells` is `[]` when nothing is held back and `null` only on an
+   * unscored board — the two are different facts and the page must not collapse
+   * them (gotcha #53). Optional at the top level because a dated fallback tier
+   * can serve a payload banked before the block existed.
+   */
+  scorecard?: {
+    held_back_cells?: {
+      cell: string;
+      source: string;
+      category: string;
+      ece: number | null;
+      n: number;
+      class?: string;
+      bar_pp?: number;
+    }[] | null;
+    cells_held_back?: number | null;
+    held_back_reason?: string;
+    held_back_issue?: string;
+  } | null;
   // L2-73 payload v2 (#999 §F): display semantics server-side so web + native
   // render the same story. All optional (older cached payloads omit them).
   date_range?: { start: string; end: string } | null;
