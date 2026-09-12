@@ -163,7 +163,20 @@ d("iOS team short names have exactly one implementation", () => {
   it("a designator is never the whole label — the name it qualifies is shown", () => {
     // The branch that fixes the photographed defect. If this inverts, "FC" is
     // back and every other test here still passes on the mascot cases.
-    expect(canonical).toMatch(/if isDesignator\(last\) \{ return parts\.joined\(separator: " "\) \}/);
+    //
+    // #5651 re-aimed this at `isNonDistinctiveToken`. The branch is the same
+    // branch; the predicate it asks is now the BROWSER's, which adds the length
+    // clause that `isDesignator` never had — without it a trailing token of one
+    // or two characters became the whole label and the iPhone called Atalanta
+    // BC "BC" (174 clubs, measured).
+    expect(canonical).toMatch(
+      /if isNonDistinctiveToken\(last\) \{ return parts\.joined\(separator: " "\) \}/,
+    );
+    // ...and it must not quietly go back. `isDesignator` on this branch is the
+    // shipped defect, and it is the one substitution that keeps every mascot
+    // case in this file green, so the guard names it rather than trusting the
+    // positive match above to notice.
+    expect(canonical).not.toMatch(/if isDesignator\(last\) \{ return parts\.joined/);
   });
 
   it("the designator set covers the labels measured to collide in production", () => {

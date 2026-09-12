@@ -91,14 +91,14 @@ final class TeamShortNamePairTests: XCTestCase {
     /// caught it.
     private static let colliding: [(String, String, String, (String, String), (String, String))] = [
         ("3DMAX Academy", "B8 Academy", "Academy", ("3DMAX Academy", "B8 Academy"), ("3DM", "B8A")),
-        ("AA Internacional Limeira SP", "Guarani FC SP", "SP", ("Internacional Limeira SP", "Guarani FC SP"), ("INT", "GUA")),
+        ("AA Internacional Limeira SP", "Guarani FC SP", "SP", ("AA Internacional Limeira SP", "Guarani FC SP"), ("AAI", "GUA")),
         ("AD San Carlos", "Inter San Carlos", "Carlos", ("AD San Carlos", "Inter San Carlos"), ("SAN", "INT")),
         ("Aris Thessaloniki", "PAOK Thessaloniki", "Thessaloniki", ("Aris Thessaloniki", "PAOK Thessaloniki"), ("ARI", "PAO")),
         ("Arsenal WFC", "Brighton and Hove Albion WFC", "WFC", ("Arsenal WFC", "Brighton and Hove Albion WFC"), ("ARS", "BAH")),
         ("B8 Academy", "Inner Circle Academy", "Academy", ("B8 Academy", "Inner Circle Academy"), ("B8A", "INN")),
         ("Baam Esports", "Pyramid IV Esports", "Esports", ("Baam Esports", "Pyramid IV Esports"), ("BAA", "PYR")),
-        ("Barca eSports GC", "GIANTX GC", "GC", ("eSports GC", "GIANTX GC"), ("ESP", "GIA")),
-        ("Barca eSports GC", "Karmine Corp GC", "GC", ("eSports GC", "Corp GC"), ("ESP", "COR")),
+        ("Barca eSports GC", "GIANTX GC", "GC", ("Barca eSports GC", "GIANTX GC"), ("BAR", "GIA")),
+        ("Barca eSports GC", "Karmine Corp GC", "GC", ("Barca eSports GC", "Karmine Corp GC"), ("BAR", "KAR")),
         ("Birmingham City WFC", "Manchester City WFC", "WFC", ("Birmingham City WFC", "Manchester City WFC"), ("BIR", "MAN")),
         ("Capybara Esports", "Way Gaming Esports", "Esports", ("Capybara Esports", "Gaming Esports"), ("CAP", "GAM")),
         ("Cercle Brugge", "Club Brugge", "Brugge", ("Cercle Brugge", "Club Brugge"), ("CER", "BRU")),
@@ -116,13 +116,13 @@ final class TeamShortNamePairTests: XCTestCase {
         ("DRX Challengers", "Hanwha Life Esports Challengers", "Challengers", ("DRX Challengers", "Esports Challengers"), ("DRX", "ESP")),
         ("Estral Esports", "Ei Nerd Esports", "Esports", ("Estral Esports", "Nerd Esports"), ("EST", "NER")),
         ("Eternal Fire Academy", "Vitality Academy", "Academy", ("Eternal Fire Academy", "Vitality Academy"), ("ETE", "VIT")),
-        ("Evil Geniuses GC", "Arashi GC", "GC", ("Geniuses GC", "Arashi GC"), ("GEN", "ARA")),
+        ("Evil Geniuses GC", "Arashi GC", "GC", ("Evil Geniuses GC", "Arashi GC"), ("EVI", "ARA")),
         ("ex-Sashi Academy", "Inner Circle Academy", "Academy", ("ex-Sashi Academy", "Inner Circle Academy"), ("EXS", "INN")),
         ("FC Inter Turku", "TPS Turku", "Turku", ("Inter Turku", "TPS Turku"), ("INT", "TPS")),
         ("FC Lokomotiv 1929 Sofia", "PFC Slavia Sofia", "Sofia", ("Lokomotiv 1929 Sofia", "PFC Slavia Sofia"), ("LOK", "PFC")),
         ("FC Universitatea Cluj", "FC CFR 1907 Cluj", "Cluj", ("FC Universitatea Cluj", "CFR 1907 Cluj"), ("UNI", "CFR")),
         ("Fenix Toulouse Handball", "Saran Loiret Handball", "Handball", ("Toulouse Handball", "Loiret Handball"), ("TOU", "LOI")),
-        ("Ferroviaria Araraquara SP", "AA Internacional Limeira SP", "SP", ("Araraquara SP", "Limeira SP"), ("ARA", "LIM")),
+        ("Ferroviaria Araraquara SP", "AA Internacional Limeira SP", "SP", ("Ferroviaria Araraquara SP", "AA Internacional Limeira SP"), ("FER", "AAI")),
         ("Fire Flux Esports", "Enterprise Esports", "Esports", ("Flux Esports", "Enterprise Esports"), ("FLU", "ENT")),
         ("Fire Flux Esports", "Misa Esports", "Esports", ("Flux Esports", "Misa Esports"), ("FLU", "MIS")),
         ("FK Dinamo Moskva", "FK Lokomotiv Moskva", "Moskva", ("Dinamo Moskva", "Lokomotiv Moskva"), ("DIN", "LOK")),
@@ -137,10 +137,10 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Fram Reykjavik", "Vikingur Reykjavik", "Reykjavik", ("Fram Reykjavik", "Vikingur Reykjavik"), ("FRA", "VIK")),
         ("Frosinone Calcio", "US Sassuolo Calcio", "Calcio", ("Frosinone Calcio", "US Sassuolo Calcio"), ("FRO", "SAS")),
         ("Fukuoka SoftBank Hawks Gaming", "Ground Zero Gaming", "Gaming", ("Hawks Gaming", "Zero Gaming"), ("HAW", "ZER")),
-        ("Gentle Mates GC", "Barca eSports GC", "GC", ("Mates GC", "eSports GC"), ("MAT", "ESP")),
-        ("Gentle Mates GC", "GIANTX GC", "GC", ("Mates GC", "GIANTX GC"), ("MAT", "GIA")),
-        ("Gentle Mates GC", "Karmine Corp GC", "GC", ("Mates GC", "Corp GC"), ("MAT", "COR")),
-        ("GIANTX GC", "Karmine Corp GC", "GC", ("GIANTX GC", "Corp GC"), ("GIA", "COR")),
+        ("Gentle Mates GC", "Barca eSports GC", "GC", ("Gentle Mates GC", "Barca eSports GC"), ("GEN", "BAR")),
+        ("Gentle Mates GC", "GIANTX GC", "GC", ("Gentle Mates GC", "GIANTX GC"), ("GEN", "GIA")),
+        ("Gentle Mates GC", "Karmine Corp GC", "GC", ("Gentle Mates GC", "Karmine Corp GC"), ("GEN", "KAR")),
+        ("GIANTX GC", "Karmine Corp GC", "GC", ("GIANTX GC", "Karmine Corp GC"), ("GIA", "KAR")),
         ("Gimnasia La Plata", "Aldosivi Mar del Plata", "Plata", ("La Plata", "del Plata"), ("LAP", "DEL")),
         ("Gimnasia Y Tiro de Salta", "CA Central Norte Salta", "Salta", ("de Salta", "Norte Salta"), ("DES", "NOR")),
         ("Hanwha Life Esports Challengers", "DRX Challengers", "Challengers", ("Esports Challengers", "DRX Challengers"), ("ESP", "DRX")),
@@ -153,7 +153,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Jackson State Tigers", "Tennessee State Tigers", "Tigers", ("Jackson State Tigers", "Tennessee State Tigers"), ("JAC", "TEN")),
         ("JD Gaming", "Dragon Ranger Gaming", "Gaming", ("JD Gaming", "Ranger Gaming"), ("JDG", "RAN")),
         ("JSK Esports", "Pyramid IV Esports", "Esports", ("JSK Esports", "Pyramid IV Esports"), ("JSK", "PYR")),
-        ("Karmine Corp GC", "Joblife GC", "GC", ("Corp GC", "Joblife GC"), ("COR", "JOB")),
+        ("Karmine Corp GC", "Joblife GC", "GC", ("Karmine Corp GC", "Joblife GC"), ("KAR", "JOB")),
         ("KR Reykjavik", "Fram Reykjavik", "Reykjavik", ("KR Reykjavik", "Fram Reykjavik"), ("KRR", "FRA")),
         ("KT Rolster Challengers", "DN SOOPers Challengers", "Challengers", ("Rolster Challengers", "SOOPers Challengers"), ("ROL", "SOO")),
         ("KT Rolster Challengers", "Dplus KIA Challengers", "Challengers", ("Rolster Challengers", "KIA Challengers"), ("ROL", "KIA")),
@@ -287,6 +287,36 @@ final class TeamShortNamePairTests: XCTestCase {
     /// reason.) All eight values were read off the BROWSER — `teamShortName` and
     /// `teamCrestBadge` in `frontend/lib/teamShortName.ts` — exactly as #4539's
     /// twenty were, and not from the Swift under test.
+    ///
+    /// **#5651 moved TWELVE rows — ten colliding and two clean — and for the
+    /// fourth time the cause is the single-name rule moving underneath them.**
+    /// `TeamShortName.short` now asks the browser's `isNonDistinctiveToken`
+    /// rather than `isDesignator`, so a trailing token of one or two characters
+    /// no longer becomes the whole label. Every moved row is a name whose tail
+    /// was exactly that, and every old value here was the defect:
+    ///
+    ///     Lea Ma                       "Ma"            / MA   ->  whole / LEA
+    ///     Colorado Springs Sw.         "Sw."           / SW   ->  whole / COL
+    ///     Barca eSports GC             "eSports GC"    / ESP  ->  whole / BAR
+    ///     Gentle Mates GC              "Mates GC"      / MAT  ->  whole / GEN
+    ///     Karmine Corp GC              "Corp GC"       / COR  ->  whole / KAR
+    ///     Evil Geniuses GC             "Geniuses GC"   / GEN  ->  whole / EVI
+    ///     Ferroviaria Araraquara SP    "Araraquara SP" / ARA  ->  whole / FER
+    ///     AA Internacional Limeira SP  "Limeira SP"    / LIM  ->  whole / AAI
+    ///
+    /// The colliding rows moved for a second reason worth naming: `grown` starts
+    /// its window at the width of `short`, so when `short` returns the whole name
+    /// there is nothing left to grow and the pair separates on the names
+    /// themselves. That is the same answer, reached one step earlier.
+    ///
+    /// All twelve were read off the BROWSER as #4539's and #4626's were, with
+    /// ONE deliberate exception on the record: `AA Internacional Limeira SP`
+    /// badges `AAI` here and `IL` on the browser, because the browser's fork
+    /// falls back to two glyphs where this file's initials fork fills three.
+    /// That divergence is older than #5651 (the badge read `SP` on both clients
+    /// before this change) and is not introduced by it. Measured over all 13,618
+    /// distinct production names 2026-09-12: badges disagreeing with the browser
+    /// fall 344 -> 184, with 160 repaired and **0 newly divergent**.
     private static let clean: [(String, String, (String, String), (String, String))] = [
         ("Atletico Paranaense", "Corinthians", ("Paranaense", "Corinthians"), ("PAR", "COR")),
         ("FK Novi Pazar", "FK Mladost Lucani", ("Pazar", "Lucani"), ("PAZ", "LUC")),
@@ -295,7 +325,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Erhard", "Kumstat", ("Erhard", "Kumstat"), ("ERH", "KUM")),
         ("Italy", "USA", ("Italy", "USA"), ("ITA", "USA")),
         ("SC Recife", "Ceará SC", ("Recife", "Ceará SC"), ("REC", "CEA")),
-        ("Lea Ma", "Reese Brantmeier", ("Ma", "Brantmeier"), ("MA", "BRA")),
+        ("Lea Ma", "Reese Brantmeier", ("Lea Ma", "Brantmeier"), ("LEA", "BRA")),
         ("US Catanzaro 1929", "Vicenza", ("US Catanzaro 1929", "Vicenza"), ("CAT", "VIC")),
         ("Bouzkova", "Swiatek", ("Bouzkova", "Swiatek"), ("BOU", "SWI")),
         ("Huddersfield Town AFC", "Cambridge United FC", ("Huddersfield Town AFC", "Cambridge United FC"), ("HUD", "CAM")),
@@ -308,7 +338,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Tohoku Rakuten Golden Eagles", "Fukuoka SoftBank Hawks", ("Eagles", "Hawks"), ("TRG", "FSH")),
         ("Wang", "Tang", ("Wang", "Tang"), ("WAN", "TAN")),
         ("Krajicek / Mektic", "Arribage / Guinard", ("Krajicek / Mektic", "Arribage / Guinard"), ("KRA", "ARR")),
-        ("Charleston", "Colorado Springs Sw.", ("Charleston", "Sw."), ("CHA", "SW")),
+        ("Charleston", "Colorado Springs Sw.", ("Charleston", "Colorado Springs Sw."), ("CHA", "COL")),
         ("Kocaelispor", "Basaksehir", ("Kocaelispor", "Basaksehir"), ("KOC", "BAS")),
         ("Damian Knyba", "Andy Ruiz Jr", ("Knyba", "Andy Ruiz Jr"), ("KNY", "AND")),
         ("Orix Buffaloes", "Fukuoka SoftBank Hawks", ("Buffaloes", "Hawks"), ("BUF", "FSH")),
