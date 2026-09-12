@@ -6381,11 +6381,48 @@ celery_app.conf.beat_schedule = {
         # are clear of backfill_winners (:45 @ 3,9,15,21), the integrity beats
         # (:40-:58 @ 5,11,17,23) and compute-calibration-prices (:10 @ 2,8,14,20).
         #
-        # Cadence matches the 6h refresh the 24h TTL was written for, and lands
-        # 20 minutes before the hourly `precompute-calibration-main` (:15) that
-        # consumes the key.
+        # Cadence was 6h, matching the refresh the 24h TTL was written for, and
+        # lands 20 minutes before the hourly `precompute-calibration-main` (:15)
+        # that consumes the key.
+        #
+        # 🔴 CAL-P1122 (#1835): 6h -> 2h, and the reason is NOT that the sweep
+        # got slower. It did not. The dedicated beat above fixed STARVATION and
+        # it still works; what it cannot survive is ARRIVAL. The sweep takes
+        # ~196 s (measured 2026-09-12: 87 sportsbooks, 157,622 points, 434
+        # chunks, 0 irreducible — 12% of its own budget), it runs on
+        # `worker-background` on the MAIN app, and every release SIGTERMs that
+        # worker. A release inside the ~3-minute window kills the run and
+        # NOTHING RETRIES; the next attempt was six hours later.
+        #
+        # Against a 24h TTL that gave the key four chances a day. Measured
+        # 2026-09-09 (calibration/1080): `SystemExit(-241)`, torn down 18 s
+        # after release v4377. With 9-16 releases a day, four consecutive misses
+        # is not a tail event — it happened on 8/29 (23 h dark), 9/9 (9 h) and
+        # 9/12 (4.6 h), and each time the ENTIRE accuracy page froze, because
+        # the publish gate correctly refuses a candidate short ~96K outcomes.
+        #
+        # 2h gives the key TWELVE chances inside one TTL instead of four. The
+        # failure needs twelve consecutive kills rather than four, which is the
+        # difference between "three times in four days" and "not observed".
+        #
+        # COST, stated because it is the whole trade: ~196 s x 12 = ~39 min/day
+        # of background-worker and Postgres aggregate time, up from ~13 min. The
+        # statement is bounded (`_CHUNK_TIMEOUT_S` 45 s per slice) and the queue
+        # measured depth 0 at the time of the change.
+        #
+        # SLOT RE-CHECKED, not assumed — `*/2` is EVEN hours only, so :55 still
+        # clears backfill_winners (:45 @ 3,9,15,21) and the integrity beats
+        # (:40-:58 @ 5,11,17,23), which are all ODD, and
+        # compute-calibration-prices is :10. `test_bookmaker_beat_does_not_
+        # collide_with_the_heavy_calibration_beats` asserts the two that matter.
+        #
+        # This is remedy (3) of the three calibration/1080 listed on #1835.
+        # Remedy (1), `acks_late` + `task_reject_on_worker_lost`, is the
+        # root-ward one and is deliberately NOT taken here: it redelivers on any
+        # worker loss, including losses redelivery cannot cure, which is a
+        # poison-message shape on a task nobody watches at 01:00Z.
         "task": "app.tasks.precompute_bookmaker_calibration",
-        "schedule": crontab(minute=55, hour="0,6,12,18"),
+        "schedule": crontab(minute=55, hour="*/2"),
         "options": {"queue": "background"},
     },
     "sync-polymarket-resolved-status": {

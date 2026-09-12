@@ -53,6 +53,50 @@ PHASE_STUCK_SECONDS = 600  # 10 min unchanged on a non-terminal phase → alert
 # Terminal/expected-idle phases: a run that ended here is not "stuck".
 _TERMINAL_PHASE_PREFIXES = ("done", "fetch_walltime_exceeded", "idle")
 
+# --- #1835 (CAL-P1122): the per-bookmaker curve key, and the freeze it causes -
+#
+# `bainluck:bookmaker_calibration` holds ~96K outcomes — the whole
+# `odds_api_bookmaker` source. `precompute_calibration`'s producer path REFUSES
+# to publish while it is absent rather than publish a curve that is short a
+# source (D21/#1978, and rightly). The consequence nobody wired a rail for: an
+# absent key does not degrade the accuracy page, it FREEZES it, and it stays
+# frozen for as long as the key stays absent, because the only writer runs on
+# its own 6h beat and nothing notices that it has not landed.
+#
+# Measured 2026-09-12: the key expired at ~00:5xZ, the 00:36Z / 01:18Z / 02:15Z
+# / 03:15Z builds all refused 19 ms into their diagnostics phase, and the page
+# served a 4.6-hour-old curve until a lane read the phase ledger by hand and
+# fired the writer from a one-off dyno. That run took **196.5 s** and returned
+# `terminal: complete` — the writer was never slow and never starved. It was
+# killed by a release, four times in a row, six hours apart.
+#
+# The cadence change (`precompute-bookmaker-calibration` 6h -> 2h) is what stops
+# the key expiring; see that beat entry for the arithmetic. THIS is the rail
+# that notices when the cadence is not enough, because the failure it has to
+# catch is the one the cadence cannot fix: a writer that is arriving and still
+# not landing. Before this, the only signal of a frozen accuracy page was a
+# person reading the phase ledger by hand.
+#
+# IT ALERTS AND DOES NOT ACT, and that is deliberate twice over. Re-dispatching
+# the writer from here would be an intra-task dispatch, which
+# `test_no_task_dispatches_another_task` forbids for result-retention reasons;
+# and a watchdog that silently repairs its own subject is a watchdog whose
+# alarm nobody ever tunes. The repair belongs to the cadence.
+#
+# WHY NOT IN `precompute_calibration.py`, where the refusal is raised: that file
+# is frozen by ruling 009 until the publish converges. The refusal there is
+# correct and unchanged.
+BOOKMAKER_CURVE_KEY = "bainluck:bookmaker_calibration"
+#: The key's only writer — named once, so `_writer_cadence_seconds` can read its
+#: real cadence off the beat entry instead of a number retyped here that would
+#: silently stop matching the day the beat moves.
+BOOKMAKER_WRITER_TASK = "app.tasks.precompute_bookmaker_calibration"
+#: Absence younger than this is expected housekeeping between two writer fires;
+#: older than this means a fire has come and gone without landing, which is a
+#: person's problem. Derived from the beat's own cadence plus one run's grace.
+BOOKMAKER_ABSENCE_GRACE_SECONDS = 600
+_BOOKMAKER_ABSENT_SINCE_KEY = "bainluck:watchdog:bookmaker_curve_absent_since"
+
 
 def _bounded_rc():
     """Socket-timeout-bounded sync Redis client (gotcha: a bare client can hang
@@ -493,13 +537,154 @@ def _run_phase_heartbeat_watchdog():
     return {"stuck": stuck}
 
 
+def _writer_cadence_seconds() -> int:
+    """How long the key may legitimately be absent — read from the beat entry.
+
+    A number retyped here would keep its old value the day the beat moves, and
+    the alarm would then fire one cadence early (noise) or one cadence late —
+    the thing it exists to catch, missed. So it is derived from the crontab's
+    own (minute, hour) sets: the LARGEST gap between consecutive fire slots in a
+    day, which is the longest the key can legitimately be unwritten.
+
+    Deliberately NOT ``crontab.remaining_estimate``. That reads as the obvious
+    way to ask a schedule about itself and it answers a different question —
+    it measures from *now* to the next fire after the anchor, not from the
+    anchor — so on the 2h form it returns anything from 5 minutes to 3.5 hours
+    depending on when it is called.
+    """
+    from app.tasks import celery_app
+
+    for entry in celery_app.conf.beat_schedule.values():
+        if entry.get("task") != BOOKMAKER_WRITER_TASK:
+            continue
+        schedule = entry.get("schedule")
+        minutes = sorted(getattr(schedule, "minute", ()) or ())
+        hours = sorted(getattr(schedule, "hour", ()) or ())
+        if not minutes or not hours:
+            break
+        slots = sorted(h * 60 + m for h in hours for m in minutes)
+        # Circular: the last slot of the day is followed by the first of the
+        # next, so the wrap is a real gap and on a 4-fire schedule it is often
+        # the largest one.
+        gaps = [b - a for a, b in zip(slots, slots[1:])]
+        gaps.append(slots[0] + 24 * 60 - slots[-1])
+        return max(gaps) * 60
+    # No beat entry, or a schedule with no (minute, hour) to read. Six hours is
+    # the cadence this beat carried before CAL-P1122 — the most forgiving value
+    # that was ever true, so a fallback can only make this alarm later than it
+    # should be, never noisier.
+    return 6 * 3600
+
+
+def _run_bookmaker_curve_watchdog(rc=None, now=None):
+    """Alarm when the per-bookmaker curve key is absent for longer than one
+    writer cadence.
+
+    The accuracy page does not degrade when ``bainluck:bookmaker_calibration``
+    expires — it FREEZES, because the producer refuses to publish a curve short
+    a whole source. See the constant block above.
+
+    Three states, and the middle one is why this is not a one-line "key missing"
+    alarm:
+
+    * **present** — nothing to report, and the absent-since marker is cleared.
+    * **absent, briefly** — recorded, not alarmed. The key is rewritten by a
+      beat, not continuously, so a short gap after an expiry is housekeeping and
+      paging on it would train everyone to ignore this alarm.
+    * **absent for longer than one writer cadence plus grace** — a fire has come
+      and gone without landing. The cadence cannot fix that, so it is a person's
+      problem and it says so, with the terminal to read.
+
+    Injectable ``rc`` and ``now`` for the guard test. Nothing here may raise: a
+    watchdog that dies on its own newest check takes the two older ones with it.
+    """
+    rc = rc or _bounded_rc()
+    now = now or datetime.now(timezone.utc)
+
+    try:
+        present = bool(rc.get(BOOKMAKER_CURVE_KEY))
+    except Exception:
+        # Cannot tell present from absent, so claim neither rather than start an
+        # absence clock that a Redis blip invented.
+        return {"key_present": None, "alerted": False, "reason": "redis_unreadable"}
+
+    if present:
+        try:
+            rc.delete(_BOOKMAKER_ABSENT_SINCE_KEY)
+        except Exception:
+            pass
+        return {"key_present": True, "alerted": False}
+
+    try:
+        raw = rc.get(_BOOKMAKER_ABSENT_SINCE_KEY)
+    except Exception:
+        raw = None
+    first_seen = None
+    if raw:
+        try:
+            first_seen = datetime.fromisoformat(
+                raw.decode() if isinstance(raw, bytes) else raw
+            )
+        except Exception:
+            first_seen = None
+
+    if first_seen is None:
+        # First reading of this absence. Record the clock and say nothing: the
+        # TTL is 24h and the writer fires far more often than that, so a gap
+        # here is usually the seconds between an expiry and the next fire.
+        try:
+            rc.setex(
+                _BOOKMAKER_ABSENT_SINCE_KEY,
+                7 * 24 * 3600,
+                now.isoformat(),
+            )
+        except Exception:
+            pass
+        return {"key_present": False, "alerted": False, "absent_seconds": 0}
+
+    absent_seconds = (now - first_seen).total_seconds()
+    tolerated = _writer_cadence_seconds() + BOOKMAKER_ABSENCE_GRACE_SECONDS
+    if absent_seconds < tolerated:
+        return {
+            "key_present": False,
+            "alerted": False,
+            "absent_seconds": round(absent_seconds),
+        }
+
+    _alert(
+        "bookmaker_curve_absent",
+        "odds_api_bookmaker",
+        f"{BOOKMAKER_CURVE_KEY} has been absent for {round(absent_seconds / 60)} "
+        f"minutes — longer than one writer cadence ({round(tolerated / 60)} min) "
+        f"— so a fire has come and gone without landing. THE ACCURACY PAGE IS "
+        f"FROZEN: every hourly build refuses rather than publish ~96K outcomes "
+        f"short (#1835). Read the writer's terminal at "
+        f"/api/admin/celery/task-metrics/bookmaker_calibration; re-running "
+        f"{BOOKMAKER_WRITER_TASK} is idempotent and fails closed.",
+    )
+    return {
+        "key_present": False,
+        "alerted": True,
+        "absent_seconds": round(absent_seconds),
+    }
+
+
 async def _run_freshness_watchdog():
     """Combined entry: creation-freshness (async DB) + phase-heartbeat (Redis)."""
     creation = await _run_creation_freshness_watchdog()
     phase = _run_phase_heartbeat_watchdog()
+    try:
+        bookmaker_curve = _run_bookmaker_curve_watchdog()
+    except Exception:
+        # Belt and braces over the function's own internal guards: the two
+        # checks above predate this one and must not be able to fail because of
+        # it.
+        logger.exception("watchdog: bookmaker-curve check raised")
+        bookmaker_curve = {"key_present": None, "refired": False, "reason": "raised"}
     summary = {
         "creation": creation,
         "phase_heartbeat": phase,
+        "bookmaker_curve": bookmaker_curve,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     # Persist the latest result so the admin dashboard / health surface can show
