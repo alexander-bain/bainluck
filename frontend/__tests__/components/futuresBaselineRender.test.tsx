@@ -154,7 +154,12 @@ describe("UX-P233: every number on the futures page states its baseline", () => 
     expect(html).toContain(">Latest<");
     // And the values themselves are untouched — this ship changes no arithmetic.
     expect(testIdText(html, "outcome-open")).toBe("14%");
-    expect(testIdText(html, "outcome-change")).toBe("-71.5%");
+    // #5686 (ux/1219, 2026-09-12): the UNIT on this one moved, not its
+    // arithmetic. `formatMovementPoints` returns POINTS and the literal beside
+    // it said percent, on the ninth surface of that family. The magnitude and
+    // the sign are byte-identical — `-71.5` either way — which is what makes
+    // this an anchor following its label rather than a test rewritten to fit.
+    expect(testIdText(html, "outcome-change")).toBe("-71.5 pts");
   });
 
   test("the sort control names the field honestly", () => {
