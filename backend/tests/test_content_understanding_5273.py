@@ -537,10 +537,20 @@ class TestTheParentRowIsAPricedRowInEveryShape:
     untyped, on every poll, forever, because the poll is the only writer.
     """
 
-    def test_single_market_event_persists_semantic_type_into_blend_record_5273(self):
+    @pytest.mark.parametrize("title", [PPA_BARE, PPA_TITLE])
+    def test_single_market_event_persists_semantic_type_into_blend_record_5273(
+        self, title
+    ):
         """Ingest → stored metadata → the eligibility record that rides the
-        served number. The named repair, end to end."""
-        event = _single_market_event()
+        served number. The named repair, end to end.
+
+        PARAMETRIZED OVER BOTH TITLES BY CERT-2751. This read as end-to-end
+        while riding only `PPA_BARE`, so it proved the chain on a title that
+        never had the defect — the prefixed row classified `moneyline` and then
+        died in the writer's own second parse, and nothing here noticed. The
+        prefixed case is the live row; the bare case is its control.
+        """
+        event = _single_market_event(title=title)
 
         understanding = polymarket_task.parent_content_understanding(
             event, sport="tennis"
@@ -561,7 +571,7 @@ class TestTheParentRowIsAPricedRowInEveryShape:
 
         group = [
             _entry(
-                1, PPA_BARE,
+                1, title,
                 [(1, PPA_HOME, 0.58), (2, PPA_AWAY, 0.42)],
                 external_id=event.id,
                 market_metadata=stored,
@@ -635,23 +645,28 @@ class TestTheParentRowIsAPricedRowInEveryShape:
             _Market(1, PPA_BARE, market_metadata=stored)
         ) == "moneyline"
 
-    def test_the_certs_own_gamma_specimen_records_the_disagreement(self):
-        """🔴 The exact live row CERT-2733 named, pinned as it actually behaves.
+    def test_the_certs_own_gamma_specimen_now_agrees_with_the_venue(self):
+        """🔴 The exact live row CERT-2733 named — and the clause paying out.
 
         `PPA - Women's Singles: Hannah Blatt vs Polina Libo` IS the match
-        winner, and Gamma says so (`sportsMarketType=moneyline`) — but our title
-        recognizer reads the tournament-and-draw prefix and answers `other`. So
-        the stored record is `other:disputed`, and that is the clause doing its
-        job: the disagreement it exists to write down is ours here, not the
-        venue's. Filed as #5660.
+        winner and Gamma says so (`sportsMarketType=moneyline`), while our title
+        recognizer answered `other` on the tournament-and-draw prefix alone. The
+        clause's whole job is to write that disagreement down instead of
+        swallowing it, and it did: the row stored `other:disputed`, the
+        contradiction was filed as #5660, and #5660 fixed the recognizer.
+
+        So this assertion flips from `contradicted` to `corroborated` BY DESIGN.
+        It is the receipt that clause (2) is a working instrument and not
+        decoration — a disagreement it recorded is a disagreement that got
+        closed. #5660's acceptance criterion is this exact line.
         """
         understanding = polymarket_task.parent_content_understanding(
             _single_market_event(title=PPA_TITLE), sport="tennis"
         )
-        assert understanding["semantic_type"] == "other"
+        assert understanding["semantic_type"] == "moneyline"
         assert understanding["venue_type"] == "moneyline"
-        assert understanding["agreement"] == CONTRADICTED
-        assert record_semantic_type(understanding) == "other:disputed"
+        assert understanding["agreement"] == CORROBORATED
+        assert record_semantic_type(understanding) == "moneyline"
 
     def test_a_negrisk_parent_is_typed_because_it_is_the_row_that_speaks(self):
         """🔴 The bigger half of the same hole. Sub-markets are written only for

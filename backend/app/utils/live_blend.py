@@ -40,6 +40,7 @@ from typing import Any, Optional, Sequence
 from app.utils.content_understanding import semantic_type_for_market
 from app.utils.game_market_class import (
     classify_game_market_class,
+    competition_prefix_tail,
     outcomes_refute_game_winner,
 )
 from app.utils.prediction_market_matching import (
@@ -225,9 +226,31 @@ def _class_says_game_winner(market: Any) -> bool:
     list here is the #1951 drift failure, where the second copy does not throw
     when it disagrees, it just quietly answers differently.
 
-    Fail-closed: a prefix neither module recognizes leaves the colon in place,
-    the name is not a bare matchup, and the market stays silent. That is the
-    behaviour it already has today.
+    THAT FAIL-CLOSED SENTENCE WAS THE BUG (#5660), and it used to read here as
+    a reassurance: "a prefix neither module recognizes leaves the colon in
+    place, the name is not a bare matchup, and the market stays silent". It was
+    an accurate description and a silent one — the Kalshi-spelling stripper
+    recognizes none of Polymarket's tournament prefixes, so fixtures titled
+    `M25 Sintra: A vs B`, `PPA - Women's Singles: A vs B`, `Fight Night: A vs B`
+    stayed silent for their prefix alone while Gamma called them `moneyline`.
+    The shared recognizer now reads the matchup behind a competition prefix
+    itself, so the fallback no longer depends on this module's stripper knowing
+    a venue's tournament vocabulary: **319** markets linked to an event
+    commencing within ±7 days newly clear this gate, and **0** stop clearing it
+    (measured 2026-09-12).
+
+    NOT 408 — that is the RAW recognizer's delta, and this function does not
+    call it raw. `_strip_category_prefix` already knew `US Open ATP`, `Top 14`,
+    `United Rugby Championship`, `UFC` and the cricket series, so those 89 were
+    never mute here. They were something subtler and worth naming: they SPOKE
+    while `content_understanding` stored their `semantic_type` as `other`, the
+    writer and the record disagreeing about one row. Event 15310688
+    (Zverev vs Shelton) was carrying a verified leg from exactly such a market.
+
+    Still fail-closed where it must be: the recognizer splits at the LAST colon,
+    so a qualifier hung off the END is refused exactly as before, and a head
+    naming a segment rather than a competition (`Set 1 Winner: …`, `Map 1: …`)
+    is refused by name.
     """
     name = market.name or ""
     return classify_game_market_class(
@@ -667,8 +690,29 @@ def _reading_for_entry(
             return None
 
     # Uses the ticker fallback for generically-named Kalshi markets.
+    #
+    # THE NAME IS NARROWED TO THE MATCHUP FIRST, BY THE SAME FUNCTION THAT
+    # RECOGNIZED IT (CERT-2751). Teaching `_class_says_game_winner` to read a
+    # competition prefix was not enough to let one speak: the writer parses the
+    # title a SECOND time here, and this parser read
+    # `PPA - Women's Singles: Hannah Blatt vs Polina Libo` as `PPA` vs
+    # `Women's Singles`, format `game_prop`, so the market cleared admission and
+    # then produced no reading at all. A classification the writer cannot act on
+    # is not a ship.
+    #
+    # `competition_prefix_tail` returns None for every shape the recognizer
+    # refuses — a trailing qualifier, a segment head, a dash-without-colon — so
+    # `or entry.market.name` is the identity except where the narrowing is
+    # measured, and no derivative is widened by it.
+    #
+    # MEASURED over the same ±7d linked window (1,752 names, 2026-09-12): of the
+    # 408 titles carrying a safe tail, 281 go from UNPARSEABLE to parsed, 11 are
+    # CORRECTED (`PPA`/`Women's Singles` -> the two players; `T20 Series
+    # Zimbabwe`/`South Africa, Women` -> `Zimbabwe`/`South Africa`), and **0**
+    # stop parsing. The remaining 116 already parsed identically.
     matchup = extract_matchup_with_ticker_fallback(
-        entry.market.name, external_id=entry.market.external_id,
+        competition_prefix_tail(entry.market.name) or entry.market.name,
+        external_id=entry.market.external_id,
     )
     if not matchup:
         return None

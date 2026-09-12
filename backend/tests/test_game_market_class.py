@@ -147,3 +147,139 @@ def test_widening_the_team_class_did_not_admit_the_qualified_twins():
     ):
         assert not is_bare_matchup(name), name
         assert classify_game_market_class(name, None) != "moneyline", name
+
+
+def test_a_matchup_behind_a_competition_prefix_is_the_match_winner():
+    """#5660 — a tournament prefix made a real fixture invisible to the recognizer.
+
+    The old test asked whether a ":" or a " - " appeared ANYWHERE in the title
+    and answered "not a bare game" if one did. That is right for a qualifier
+    hung off the END and wrong for a competition hung off the FRONT, which is
+    how Polymarket titles most of its tennis, rugby, cricket, pickleball and
+    doubles fixtures and how Kalshi titles its fight cards.
+
+    MEASURED over every Polymarket/Kalshi market linked to an event commencing
+    within +/-7 days (1,752 distinct names, production 2026-09-12): 408 names
+    move `other` -> `moneyline` and ZERO move the other way.
+
+    These are production strings, not names invented from the pattern.
+    """
+    for name in (
+        "US Open ATP: Alexander Zverev vs Ben Shelton",
+        "US Open WTA: Anna Kalinskaya vs Emma Navarro",
+        "US Open ATP (Doubles): Bolelli/Vavassori vs Gille/Verbeek",
+        "US Open WTA (Doubles): Bondar/Kalinina vs Routliffe/Sutjiadi",
+        "M25 Sintra: Dino Molokova Ferreira vs Lucas Nunez",
+        "W50 Guiyang: Anastasia Kulikova vs Haruka Kaji",
+        "M15 Leme (moved from Sao Luis): Gabriel Schenekenberg vs Victor Pagotto",
+        "Guadalajara Open Akron, Qualification: Carole Monnet vs Julia Garcia",
+        "Barranquilla: Anastasia Tikhonova vs Darja Semenistaja",
+        "Top 14: Bayonne vs ASM Clermont Auvergne",
+        "United Rugby Championship: Benetton Treviso vs Dragons",
+        "Premiership Rugby: Harlequins vs Bath",
+        "T20 Series Japan vs Malaysia, Women: Japan vs Malaysia",
+        "Test Series England vs Pakistan: England vs Pakistan",
+        "Fight Night: Aldrich vs Tarin",
+        "MMA: Kozak vs Echols",
+    ):
+        assert is_bare_matchup(name), name
+        assert classify_game_market_class(name, None) == "moneyline", name
+
+
+def test_the_issues_own_gamma_specimen_classifies_moneyline():
+    """#5660's acceptance, stated as the issue states it.
+
+    Polymarket Gamma event `1007524`, read live 2026-09-12: active,
+    non-neg-risk, ONE market, `sportsMarketType=moneyline`. That row IS the
+    match winner and the venue says so; we answered `other` for the prefix
+    alone, while the identical bare matchup answered `moneyline`.
+    """
+    prefixed = "PPA - Women's Singles: Hannah Blatt vs Polina Libo"
+    bare = "Hannah Blatt vs. Polina Libo"
+    assert classify_game_market_class(prefixed, "1007524", "tennis") == "moneyline"
+    assert classify_game_market_class(bare, "1007524", "tennis") == "moneyline"
+
+
+def test_a_segment_prefix_is_not_a_competition_prefix():
+    """The head is free to name a PART of the match — and then it is not the match.
+
+    This is the defect on the other side of #5660: a strip that trusted any
+    prefix would publish a set winner, a map handicap or a golf head-to-head as
+    the contest's moneyline, which is exactly the #5031/#5273/#5432 class.
+    Production strings; the first four are the largest prefix families in the
+    measured window (493 + 439 + 118 + 64 rows).
+
+    Asserted on `is_bare_matchup`, the predicate this change touches. Four of
+    these ALSO carry a derivative word that other, older branches read, so
+    `classify_game_market_class` answers before the matchup test is reached —
+    see the companion test for the two that it answers WRONGLY today (#5698).
+    """
+    for name in (
+        "Set Handicap: Abasolo (-1.5) vs Marques (+1.5)",
+        "Set 1 Winner: Aboian vs Martin",
+        "Set 2 Winner: Aboian vs Martin",
+        "Game Spread: Acosta (-0.5) vs Munar (+0.5)",
+        "Map Handicap: 1WIN (-1.5) vs Heroic (+1.5)",
+        "Map 2 Rounds Handicap: B8 (-3.5) vs Nuclear TigeRES (+3.5)",
+        "1st Round Head-to-Head: Åberg vs Fleetwood",
+        "Will there be a run scored in the first inning?: "
+        "Chicago White Sox vs. Cleveland Guardians",
+    ):
+        assert not is_bare_matchup(name), name
+
+
+def test_a_segment_scope_prefix_is_refused_by_name():
+    """`_DERIVATIVE_SCOPE_RE` is MEASURED INERT and kept as the fail-closed margin.
+
+    Over the 1,752-name production window it blocked nothing the module's
+    existing vocabulary did not already block. It is here because the esports
+    rows carry these scopes TODAY as a SUFFIX ("Counter-Strike: 1WIN vs B8 -
+    Map 1 Winner", 151 rows, refused by the " - " test), and a venue that moves
+    one to the front must not thereby publish a map winner as the match winner.
+
+    These inputs are therefore MANUFACTURED, not observed, and this test is the
+    only thing standing between that clause and vacuity: delete the scope
+    pattern from `_PREFIX_DISQUALIFIERS` and every line here goes green-to-red.
+    """
+    for name in (
+        "Map 1: 1WIN vs B8",
+        "Period 2: Bruins vs Rangers",
+        "Quarter 3: Celtics vs Warriors",
+        "Frame 4: O'Sullivan vs Trump",
+        "Game 5: Yankees vs Red Sox",
+    ):
+        assert not is_bare_matchup(name), name
+        assert classify_game_market_class(name, None) != "moneyline", name
+
+
+def test_a_trailing_qualifier_is_still_refused_when_a_prefix_is_present():
+    """A qualifier trails the matchup, so the unchanged ":"/" - " test sees it.
+
+    `Counter-Strike: 1WIN vs B8 - Map 1 Winner` is 151 production rows, and it
+    is the case that shows why the tail is re-tested rather than trusted: its
+    dash-bearing second token is one `_BARE_MATCHUP_RE` would happily swallow.
+    """
+    for name in (
+        "Counter-Strike: 1WIN vs B8 - Map 1 Winner",
+        "US Open ATP: Alexander Zverev vs Ben Shelton - Exact Score",
+        "M25 Sintra: Dino Molokova Ferreira vs Lucas Nunez: Total Games",
+    ):
+        assert not is_bare_matchup(name), name
+
+
+def test_a_multi_segment_competition_head_is_read_whole():
+    """Pins the last-colon split, which is otherwise unobservable.
+
+    Every title in the measured window carries exactly ONE colon, so a
+    first-colon and a last-colon split agree on all 1,752 of them and a
+    mutation between the two survives the rest of this file. They diverge only
+    here: a head of two competition segments, which a first-colon split refuses
+    (its tail still holds a ":") and this one admits.
+
+    Admitting it is safe for a stated reason, not by luck — the disqualifier
+    test reads the ENTIRE head, so a derivative word in any segment still
+    refuses, which the second case pins. This input is manufactured; multi-colon
+    titles are unobserved in the window.
+    """
+    assert is_bare_matchup("US Open ATP: Qualification: Carole Monnet vs Julia Garcia")
+    assert not is_bare_matchup("US Open ATP: Set 1 Winner: Carole Monnet vs Julia Garcia")

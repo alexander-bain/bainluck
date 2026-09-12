@@ -39,12 +39,21 @@ FREEZES THE OLD VALUE. The page renders `win_probability_sources`, not this
 task.
 
 THE THIRD THING, and the one that cost the measurement: the gate CANNOT be
-source-agnostic. Applying the class recognizer to every source's primary reads
-as the simpler rule and blanks the entire UFC card — over the same window's 468
-Kalshi groups it refuses 13 live fight winners (`Fight Night: Silva vs
-Delgado`, `KXUFCFIGHT-26SEP12SILDEL`) because the colon defeats the bare-matchup
-shape, no winner word appears, and the ticker holds neither "game" nor "winner".
+source-agnostic. Applying the class recognizer to every source's primary read as
+the simpler rule and blanked the entire UFC card — over the same window's 468
+Kalshi groups it refused 13 live fight winners (`Fight Night: Silva vs
+Delgado`, `KXUFCFIGHT-26SEP12SILDEL`) because the colon defeated the bare-matchup
+shape, no winner word appeared, and the ticker held neither "game" nor "winner".
 `TestTheKalshiCardDoesNotGoBlank` is that regression, pinned.
+
+THAT PARAGRAPH IS NOW HISTORY, AND THE CLASS SAYS SO IN ITS OWN DOCSTRING
+(#5660, 2026-09-12). The recognizer learned to read the matchup behind a
+competition prefix, so those 13 fight winners are `moneyline` on their names and
+the two gates agree on all 900 Kalshi rows sampled that day. The conclusion is
+unchanged and the reason for it inverted: a source-agnostic gate would now ADMIT
+what the ticker rule refuses — 97 of those 900 are period books titled
+`… : 1st Half Winner` / `… : Set 1 Winner`, which the class recognizer calls the
+match winner on the word alone (#5698). The dispatch stands; its specimens moved.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -336,34 +345,81 @@ class TestThePrimaryIsNoLongerExemptFromAdmission:
 
 
 class TestTheKalshiCardDoesNotGoBlank:
-    """A source-agnostic gate refuses 13 live UFC winners. Measured, not feared.
+    """A source-agnostic gate refuses Kalshi rows. Measured, not feared.
 
-    `Fight Night: Silva vs Delgado` is the real fight winner: the colon defeats
-    the bare-matchup shape, the title has no winner word, and `KXUFCFIGHT-…`
-    carries neither "game" nor "winner", so the shared CLASS recognizer answers
-    "other". Kalshi's admission is a venue-side ticker rule
-    (`feeds_win_prob_blend`) applied in `_reading_for_entry`, and that rule —
-    not this one — is the one that is right about a Kalshi row.
+    Kalshi's admission is a venue-side ticker rule (`feeds_win_prob_blend`)
+    applied in `_reading_for_entry`, and that rule — not the class recognizer —
+    is the one that is right about a Kalshi row.
+
+    THE ORIGINAL PREMISE WAS FIXED, NOT LOST (#5660). This class was built on
+    `Fight Night: Silva vs Delgado`, one of 13 live UFC winners the class
+    recognizer refused because a tournament prefix defeated the bare-matchup
+    shape. #5660 taught the recognizer to read the matchup behind a competition
+    prefix, so that row is now `moneyline` on its name alone and no longer needs
+    the exemption at all — which silently emptied three of the guards below:
+    with the exemption deleted they still passed. They are re-pointed onto
+    `DERIVATIVE`, a production Kalshi row from the same window that the
+    recognizer still refuses, so the mutant dies again.
+
+    That the only rows left needing the exemption are DERIVATIVES is itself the
+    finding filed as #5699 — the exemption's motivating population is gone, and
+    whether it should survive is #5031's call, not #5660's.
     """
 
+    # A real Kalshi fight winner. Refused by the recognizer before #5660,
+    # recognized by name after it.
     UFC = "Fight Night: Silva vs Delgado"
     TICKER = "KXUFCFIGHT-26SEP12SILDEL"
 
-    def test_the_class_recognizer_really_does_refuse_a_real_fight_winner(self):
-        """The premise of this whole class. If this flips, the guard is inert."""
+    # A production Kalshi row the recognizer still refuses (measured
+    # 2026-09-12): a MAP winner, whose outcomes are the two competitors.
+    # Refused by the venue ticker rule too, so it can gate but never speak.
+    DERIVATIVE = "100 Thieves vs. HOTU: Map 1"
+    DERIVATIVE_TICKER = "KXCS2MAP-26SEP121000100THOTU-1"
+
+    # CONSTRUCTED, and labelled as such. A reading needs a row the ticker rule
+    # ADMITS whose title the recognizer REFUSES; that pair is empty in
+    # production after #5660 (0 of 900 Kalshi rows, 2026-09-12), so this is the
+    # same fight in the dash-without-colon spelling #5660 deliberately did not
+    # widen. The pair was non-empty yesterday and a punctuation change re-creates
+    # it, which is why the exemption is still live code.
+    UNREADABLE = "UFC 331 - Main Card - Silva vs Delgado"
+
+    def test_5660_taught_the_recognizer_the_fight_winner_this_class_was_built_on(self):
+        """The premise of this class, and the record of it moving.
+
+        Both halves matter: the UFC row is no longer refused, and `DERIVATIVE`
+        still is. If the second line ever flips, every guard below is inert.
+        """
         from app.utils.game_market_class import classify_game_market_class
 
-        assert classify_game_market_class(self.UFC, self.TICKER) != "moneyline"
+        assert classify_game_market_class(self.UFC, self.TICKER) == "moneyline"
+        assert (
+            classify_game_market_class(self.DERIVATIVE, self.DERIVATIVE_TICKER)
+            != "moneyline"
+        )
 
     def test_a_kalshi_primary_is_still_admitted(self):
-        market = _Market(1, self.UFC, source="kalshi", external_id=self.TICKER)
+        market = _Market(
+            1, self.DERIVATIVE, source="kalshi", external_id=self.DERIVATIVE_TICKER
+        )
         assert admissible_as_blend_speaker(market, is_primary=True) is True
 
-    def test_the_ufc_primary_still_speaks_through_the_real_function(self):
+    def test_a_class_refused_kalshi_primary_still_speaks_through_the_real_function(
+        self,
+    ):
+        """Rides `UNREADABLE`, not `DERIVATIVE`, and the difference is the point.
+
+        Producing a READING needs a row the venue ticker rule admits as well —
+        `DERIVATIVE` is refused by both gates, so it can never yield one. The
+        combination this test needs (ticker admits, class refuses) is empty in
+        production after #5660, so the fixture is a constructed spelling of the
+        same fight: see `UNREADABLE`.
+        """
         group = [
             _entry(
                 1,
-                self.UFC,
+                self.UNREADABLE,
                 [(1, "Silva", 0.775), (2, "Delgado", 0.225)],
                 source="kalshi",
                 external_id=self.TICKER,
@@ -376,14 +432,22 @@ class TestTheKalshiCardDoesNotGoBlank:
         )
         assert reading.home_probability == pytest.approx(0.775)
 
+    def test_the_fight_winner_5660_recovered_speaks_without_any_exemption(self):
+        """The #5660 gain, asserted where the loss used to be.
+
+        `is_primary=False` is the point: this row needs no carve-out now.
+        """
+        market = _Market(2, self.UFC, source="kalshi", external_id=self.TICKER)
+        assert admissible_as_blend_speaker(market, is_primary=False) is True
+
     def test_a_kalshi_group_can_never_be_retired_by_the_speaker_count(self):
         group = [
             _entry(
                 1,
-                self.UFC,
-                [(1, "Silva", 0.775)],
+                self.DERIVATIVE,
+                [(1, "100 Thieves", 0.775)],
                 source="kalshi",
-                external_id=self.TICKER,
+                external_id=self.DERIVATIVE_TICKER,
             )
         ]
         assert count_admissible_speakers(group) == 1
@@ -395,7 +459,9 @@ class TestTheKalshiCardDoesNotGoBlank:
         recognizer, which is the #759 "new admission proves itself" rule. A
         mutant that returns True for every Kalshi row dies here.
         """
-        market = _Market(2, self.UFC, source="kalshi", external_id=self.TICKER)
+        market = _Market(
+            2, self.DERIVATIVE, source="kalshi", external_id=self.DERIVATIVE_TICKER
+        )
         assert admissible_as_blend_speaker(market, is_primary=False) is False
 
 
@@ -555,3 +621,112 @@ class TestTheWriterRetiresALegNoWinnerMarketCanBack:
         assert written is not None and "polymarket" in written
         assert written["polymarket"]["value"] == pytest.approx(0.705)
         assert "blend_source_retired_no_winner_market" not in stats.get("funnel", {})
+
+
+# =============================================================================
+# CERT-2751's required repair — a recognized prefix must reach the WRITER
+# =============================================================================
+
+
+class TestAPrefixedWinnerReachesTheWriter:
+    """`5660-PREFIXED-WINNER-REACHES-THE-WRITER`. The BLOCK was right.
+
+    #5660 taught `_class_says_game_winner` to read a competition prefix and I
+    claimed the event page. The claim was false: the writer parses the title a
+    SECOND time with `extract_matchup_with_ticker_fallback`, which read
+    `PPA - Women's Singles: Hannah Blatt vs Polina Libo` as `team_a=PPA`,
+    `team_b=Women's Singles`, `format_type=game_prop` — so the market cleared
+    admission and `compute_source_home_probability` returned None anyway.
+
+    A classification the writer cannot act on is not a ship, and a test that
+    proves the classifier while the writer stays mute is the exact trap that hid
+    it: the staged suite swapped the prefixed title for the bare one before
+    calling the writer. **Every assertion here drives the REAL
+    `compute_source_home_probability` with the REAL prefixed title.**
+
+    MEASURED over the ±7d linked window (1,752 names, 2026-09-12): of the 408
+    titles with a safe tail, 281 go from unparseable to parsed, 11 are corrected
+    (`PPA`/`Women's Singles` -> the two players; `T20 Series Zimbabwe`/
+    `South Africa, Women` -> `Zimbabwe`/`South Africa`), and 0 stop parsing.
+    """
+
+    PREFIXED = "PPA - Women's Singles: Hannah Blatt vs Polina Libo"
+    BARE = "Hannah Blatt vs. Polina Libo"
+    A, B = "Hannah Blatt", "Polina Libo"
+
+    def _group(self, name):
+        return [_entry(1, name, [(0, self.A, 0.58), (1, self.B, 0.42)])]
+
+    def test_the_parser_really_did_mangle_this_title(self):
+        """Not vacuous: the defect must be present in the thing being fixed.
+
+        Asserted against the RAW title, which is what the writer used to pass.
+        If `extract_matchup_with_ticker_fallback` ever learns this shape on its
+        own, this line goes red and the narrowing below becomes redundant —
+        which is information, not a failure.
+        """
+        from app.utils.prediction_market_matching import (
+            extract_matchup_with_ticker_fallback,
+        )
+
+        mangled = extract_matchup_with_ticker_fallback(self.PREFIXED)
+        assert mangled is not None
+        assert (mangled.team_a, mangled.team_b) == ("PPA", "Women's Singles")
+
+    def test_the_prefixed_title_now_produces_the_reading(self):
+        """The repair, end to end, on the title the issue names."""
+        reading = compute_source_home_probability(
+            self._group(self.PREFIXED), self.A, self.B
+        )
+        assert reading is not None, (
+            "the classifier admits it and the writer still cannot read it"
+        )
+        assert reading.home_probability == pytest.approx(0.58)
+
+    def test_the_bare_title_control_is_unchanged(self):
+        """The positive control: the narrowing must not move what already worked."""
+        reading = compute_source_home_probability(
+            self._group(self.BARE), self.A, self.B
+        )
+        assert reading is not None
+        assert reading.home_probability == pytest.approx(0.58)
+
+    def test_the_two_titles_agree(self):
+        """The whole point of #5660, stated as an equality.
+
+        A market is the same market whether or not it wears its tournament.
+        """
+        prefixed = compute_source_home_probability(
+            self._group(self.PREFIXED), self.A, self.B
+        )
+        bare = compute_source_home_probability(self._group(self.BARE), self.A, self.B)
+        assert prefixed.home_probability == bare.home_probability
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Set 1 Winner: Aboian vs Martin",
+            "Set Handicap: Abasolo (-1.5) vs Marques (+1.5)",
+            "Counter-Strike: 1WIN vs B8 - Map 1 Winner",
+            "Hannah Blatt vs. Polina Libo - Exact Score",
+        ],
+    )
+    def test_a_derivative_is_not_narrowed_into_a_winner(self, name):
+        """The refusal side of the repair, on the real refusal families.
+
+        `competition_prefix_tail` returns None for every shape the recognizer
+        refuses, so `or market.name` is the identity here and the derivative is
+        refused exactly as it was. A repair that widened the writer while
+        narrowing the title would be worse than the defect.
+        """
+        from app.utils.game_market_class import competition_prefix_tail
+
+        assert competition_prefix_tail(name) is None, name
+        assert (
+            compute_source_home_probability(
+                [_entry(1, name, [(0, self.A, 0.58), (1, self.B, 0.42)])],
+                self.A,
+                self.B,
+            )
+            is None
+        ), name
