@@ -211,15 +211,33 @@ final class SportCategoryLabelSingleSourceTests: XCTestCase {
     /// row this issue is about bound the key on one line and cased it on the
     /// next, so a line-local scan would have reported the tree clean while the
     /// defect it was written for sat two lines away.
+    ///
+    /// THE WINDOW COUNTS CODE LINES, NOT LINES, and that is not tidiness. The
+    /// first draft counted raw lines and the mutation sweep caught it: reverting
+    /// the Search row to `.capitalized` SURVIVED, because this ship's own
+    /// four-line explanatory comment now sits between the binding and the cased
+    /// line and had eaten the whole window. A guard measured in raw lines gets
+    /// weaker every time someone documents a fix next to it — the same
+    /// backwards incentive as a scan that cannot tell a defect from a
+    /// description of one, and the reason comments are stripped there too.
     private func isAboutACategoryKey(
         _ lines: [String], _ index: Int, window: Int = 4
     ) -> Bool {
-        let lo = max(0, index - window)
-        let hi = min(lines.count - 1, index + 1)
-        let context = lines[lo...hi]
-            .map { $0.components(separatedBy: "//").first ?? $0 }
-            .joined(separator: "\n")
-        return categoryTokens.contains { context.contains($0) }
+        func code(_ i: Int) -> String { lines[i].components(separatedBy: "//").first ?? lines[i] }
+
+        var context = [code(index)]
+        if index + 1 < lines.count { context.append(code(index + 1)) }
+        var seen = 0
+        var i = index - 1
+        while i >= 0 && seen < window {
+            let c = code(i)
+            i -= 1
+            guard !c.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            context.append(c)
+            seen += 1
+        }
+        let joined = context.joined(separator: "\n")
+        return categoryTokens.contains { joined.contains($0) }
     }
 
     // MARK: - Anti-vacuity
@@ -237,6 +255,7 @@ final class SportCategoryLabelSingleSourceTests: XCTestCase {
             "Bain Luck/Views/SearchView.swift",
             "Bain Luck/Views/FuturesDetailView.swift",
             "Bain Luck/Views/MyStuffView.swift",
+            "Bain Luck/Components/FuturesBrowseComponents.swift",
         ] {
             XCTAssertTrue(
                 sources.contains { $0.path == control },
@@ -282,6 +301,29 @@ final class SportCategoryLabelSingleSourceTests: XCTestCase {
         XCTAssertEqual(casedLabelSites(in: deliberate).count, 0)
     }
 
+    /// The regression the mutation sweep found in this scan's first draft: a
+    /// later reader explains the fix in a comment, the comment sits between the
+    /// binding and the label, and a window measured in raw lines stops reaching
+    /// the binding. If this fails, documenting a fix disarms the guard on it.
+    func testACommentBetweenTheBindingAndTheLabelDoesNotBlindTheScan() {
+        let withComment = """
+        if let category = market.llmSportCategory ?? market.category {
+            // #5723: `.capitalized` printed the raw key — "ufc" returns
+            // ten futures rows all labelled "Mma" (Alex, bug report 145,
+            // the half #1938 closed without checking this tab), and a
+            // table-tennis row read "Table_Tennis".
+            Text(category.capitalized)
+        }
+        """
+        let lines = withComment.components(separatedBy: .newlines)
+        let sites = casedLabelSites(in: withComment)
+        XCTAssertEqual(sites.count, 1)
+        XCTAssertTrue(
+            isAboutACategoryKey(lines, sites[0].index),
+            "four comment lines were enough to hide the category key from the scan"
+        )
+    }
+
     // MARK: - The assertion
 
     func testNoFileCasesARawCategoryKeyItself() throws {
@@ -303,6 +345,52 @@ final class SportCategoryLabelSingleSourceTests: XCTestCase {
             sportCategoryDisplayName. That is how one label came to have four \
             spellings (#5723). Call the shared rule, or add the file to \
             knownOutstanding with the reason it cannot be fixed yet.
+            """
+        )
+    }
+
+    /// The other way to write a second rule for this label, and the one the
+    /// casing scan above cannot see: calling the raw-key formatter that
+    /// `sportCategoryDisplayName` delegates to, instead of the rule itself.
+    /// Browse did exactly that in two places and was the fourth spelling.
+    ///
+    /// The discriminator is the FILE, not the line, and deliberately so: Browse
+    /// bound the category into a local called `tag` a hundred lines above the
+    /// formatter call, so nothing in that call's neighbourhood named the
+    /// vocabulary. A file that handles `llmSportCategory` at all is a file whose
+    /// labels belong to this rule.
+    ///
+    /// `SportDisplayNames.swift` is exempt without being listed, because it is
+    /// the delegation itself and never names `llmSportCategory`. So is
+    /// `CalibrationViewModel`, which owns a genuinely different vocabulary — the
+    /// calibration cohort names, with their own map and their own normalisation
+    /// (#1938, #3657) — and likewise never touches this field.
+    func testAFileThatHandlesCategoriesUsesTheSharedRuleNotTheFormatterUnderIt() throws {
+        var offenders: [String] = []
+        for (path, text) in try swiftSources() {
+            let lines = text.components(separatedBy: .newlines)
+            let handlesCategories = lines.contains { line in
+                let code = line.components(separatedBy: "//").first ?? line
+                return code.contains("llmSportCategory")
+            }
+            guard handlesCategories else { continue }
+            for (i, line) in lines.enumerated() {
+                let code = line.components(separatedBy: "//").first ?? line
+                // No trailing paren. `.map(toTitleCaseAcronymSafe)` passes the
+                // function itself, and matching on "toTitleCaseAcronymSafe("
+                // let exactly that form through — the Browse ROW survived its
+                // mutant while the Browse CHIP, one call-shape away, died.
+                guard code.contains("toTitleCaseAcronymSafe") else { continue }
+                offenders.append("\(path):\(i + 1) — \(code.trimmingCharacters(in: .whitespaces))")
+            }
+        }
+        XCTAssertEqual(
+            offenders, [],
+            """
+            a file that renders market categories reaches past \
+            sportCategoryDisplayName to the formatter underneath it. Both then \
+            have to be kept in step by hand, which is how "mma" came to render \
+            four different ways (#5723). Call the shared rule.
             """
         )
     }

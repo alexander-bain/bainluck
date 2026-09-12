@@ -82,7 +82,13 @@ struct FuturesCategoryOption: Identifiable, Hashable {
 
     private static func title(for tag: String) -> String {
         // Acronym-safe: "pga_tour" -> "PGA Tour", "mma" -> "MMA" (no more "Pga").
-        toTitleCaseAcronymSafe(tag)
+        //
+        // #5723: through the shared rule rather than straight to the raw-key
+        // formatter under it. The two agree on all 77 production
+        // `llm_sport_category` values, so no chip's text moves today — the
+        // point is that the chip and the row it filters cannot drift apart
+        // later, which is how this label came to have four spellings.
+        sportCategoryDisplayName(tag)
     }
 
     private static func group(for tag: String) -> FuturesCategoryGroup {
