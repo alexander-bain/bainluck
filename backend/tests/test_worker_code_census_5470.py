@@ -749,3 +749,253 @@ class TestEndpointNeverEchoesTheException:
         with pytest.raises(PermissionError):
             asyncio.run(admin_celery.fleet_code(request=None, secret="wrong"))
         assert called
+
+
+# ---------------------------------------------------------------------------
+# How long, not just whether (#5470, after #5662)
+#
+# Until heavy self-sync shipped, `bainluck-heavy` moved only when a person
+# redeployed it, so `slug != reader` WAS the defect and the word DRIFTED was
+# rare enough to mean something. #5662 made main release several times an hour
+# and heavy converge behind it, so DRIFTED became the steady state: read live at
+# 22:15Z on 9/12 with heavy HEALTHY (it had self-synced 37 minutes earlier), the
+# endpoint said DRIFTED. Notice 48 asks every lane to read this line to
+# discharge a heavy receipt, and a line that is red whenever anyone looks is a
+# line nobody reads — the real wedge then hides inside the permanent red.
+#
+# So the marker carries a second clock and the verdict carries the number. What
+# these tests defend is that the number is HONEST where it is absent: a missing
+# age must read as "cannot say", never as 0, because 0 renders as "it just
+# changed", which is precisely how a worker stuck for a week would pass.
+# ---------------------------------------------------------------------------
+
+def _aged_marker(slug, since, ts=None):
+    return json.dumps(
+        {"ts": ts if ts is not None else since, "slug": slug, "slug_since": since}
+    ).encode()
+
+
+class TestTheStampRemembersWhenTheCodeChanged:
+    KEY = f"{WORKER_CODE_PREFIX}:heavy-unnamed/worker-heavy.1"
+
+    def _stamp(self, fake, monkeypatch, slug, now):
+        monkeypatch.setenv("HEAVY_APP", "1")
+        monkeypatch.setenv("DYNO", "worker-heavy.1")
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+        if slug is None:
+            monkeypatch.delenv("HEROKU_SLUG_COMMIT", raising=False)
+        else:
+            monkeypatch.setenv("HEROKU_SLUG_COMMIT", slug)
+        monkeypatch.setattr(redis_state, "_last_worker_code_stamp_s", 0.0)
+        redis_state.record_worker_code_alive(now_s=now)
+        return json.loads(fake.strings[self.KEY].decode())
+
+    def test_a_first_stamp_dates_the_code_to_now(self, fake, as_worker, monkeypatch):
+        got = self._stamp(fake, monkeypatch, "aaaaaaaa", now=1_000_000)
+        assert got["slug_since"] == 1_000_000
+
+    def test_the_same_slug_carries_its_original_date_so_the_age_GROWS(
+        self, fake, as_worker, monkeypatch
+    ):
+        """The whole point. If each stamp reset the clock, a worker wedged for a
+        week would report an age of `REFRESH_S` forever — the instrument would
+        agree with the bug."""
+        self._stamp(fake, monkeypatch, "aaaaaaaa", now=1_000_000)
+        later = self._stamp(fake, monkeypatch, "aaaaaaaa", now=1_600_000)
+
+        assert later["slug_since"] == 1_000_000, "the date of the CODE, not of the stamp"
+        assert later["ts"] == 1_600_000, "liveness is still the stamp's own clock"
+
+    def test_a_new_slug_resets_the_date(self, fake, as_worker, monkeypatch):
+        """A converging worker must look converging: heavy landing on a new sha
+        is the healthy event, and inheriting the old date would render the
+        recovery as a deepening wedge."""
+        self._stamp(fake, monkeypatch, "aaaaaaaa", now=1_000_000)
+        after = self._stamp(fake, monkeypatch, "bbbbbbbb", now=1_600_000)
+        assert after["slug_since"] == 1_600_000
+
+    def test_a_marker_written_before_this_shipped_restarts_the_clock(
+        self, fake, as_worker, monkeypatch
+    ):
+        """A legacy marker has a `ts` and no `slug_since`. Adopting its `ts`
+        would be inventing a measurement nobody took; `now` understates the age,
+        which is the direction that cannot manufacture a false alarm."""
+        fake.strings[self.KEY] = _marker("aaaaaaaa", ts=500)
+        got = self._stamp(fake, monkeypatch, "aaaaaaaa", now=1_000_000)
+        assert got["slug_since"] == 1_000_000
+
+    def test_two_consecutive_unknowns_are_not_stability(
+        self, fake, as_worker, monkeypatch
+    ):
+        """A worker that cannot name its code has nothing to have been on
+        since."""
+        first = self._stamp(fake, monkeypatch, None, now=1_000_000)
+        second = self._stamp(fake, monkeypatch, None, now=1_600_000)
+        assert first["slug"] is None and second["slug"] is None
+        assert second["slug_since"] == 1_600_000
+
+    @pytest.mark.parametrize("poison", [0, -1, 9_999_999_999, "yesterday", None])
+    def test_an_unusable_carried_date_is_refused_not_propagated(
+        self, fake, as_worker, monkeypatch, poison
+    ):
+        """A future date (a clock that went backwards) would freeze this worker's
+        age negative forever, and age is the entire signal."""
+        fake.strings[self.KEY] = json.dumps(
+            {"ts": 500, "slug": "aaaaaaaa", "slug_since": poison}
+        ).encode()
+        got = self._stamp(fake, monkeypatch, "aaaaaaaa", now=1_000_000)
+        assert got["slug_since"] == 1_000_000
+
+    def test_a_fault_reading_the_PRIOR_marker_still_lands_the_NEW_stamp(
+        self, as_worker, monkeypatch
+    ):
+        """The read is an enrichment. Letting it escape into the caller's except
+        would drop the stamp entirely and turn a healthy worker into an absence,
+        which this census reads as UNKNOWN_VERSION — a worse answer than a reset
+        clock."""
+        class _GetFails(_Redis):
+            def get(self, key):
+                raise ConnectionError("redis read is gone")
+
+        r = _GetFails()
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: r)
+        got = json.loads(self._stamp(r, monkeypatch, "aaaaaaaa", now=1_000_000)
+                         and r.strings[self.KEY].decode())
+        assert got["slug"] == "aaaaaaaa"
+        assert got["slug_since"] == 1_000_000
+
+
+class TestTheVerdictCarriesTheNumberNotJustTheWord:
+    def test_each_worker_reports_its_age_on_its_current_code(self):
+        got = fleet_code_verdict(
+            "cccccccc",
+            {
+                "bainluck/worker-realtime.1": {"slug": "cccccccc", "slug_since": 9_000},
+                "bainluck/worker-background.1": {"slug": "cccccccc", "slug_since": 9_000},
+                "bainluck-heavy/worker-heavy.1": {"slug": "aaaaaaaa", "slug_since": 8_000},
+            },
+            now_s=10_000,
+        )
+        assert got["on_slug_s"]["bainluck-heavy/worker-heavy.1"] == 2_000
+        assert got["on_slug_s"]["bainluck/worker-realtime.1"] == 1_000
+
+    def test_an_age_that_cannot_be_measured_is_None_and_NEVER_zero(self):
+        """0 renders as "it just changed" — the reading under which a worker
+        stuck for a week passes. A legacy marker must say "cannot say"."""
+        got = fleet_code_verdict(
+            "cccccccc",
+            {
+                "bainluck/worker-realtime.1": {"slug": "cccccccc"},
+                "bainluck/worker-background.1": {"slug": "cccccccc"},
+                "bainluck-heavy/worker-heavy.1": {"slug": "aaaaaaaa"},
+            },
+            now_s=10_000,
+        )
+        ages = got["on_slug_s"]
+        assert set(ages) == {
+            "bainluck/worker-realtime.1",
+            "bainluck/worker-background.1",
+            "bainluck-heavy/worker-heavy.1",
+        }
+        assert all(v is None for v in ages.values())
+        assert 0 not in ages.values()
+
+    def test_the_drift_reason_states_how_long_and_a_long_wedge_reads_DIFFERENTLY(self):
+        """Vacuity guard: the verdict word is identical in both, so if the
+        reason did not move, this instrument would still be the one that cannot
+        tell one desk batch from six days."""
+        def _reason(age_s):
+            return fleet_code_verdict(
+                "cccccccc",
+                {
+                    "bainluck/worker-realtime.1": {"slug": "cccccccc", "slug_since": 1},
+                    "bainluck/worker-background.1": {"slug": "cccccccc", "slug_since": 1},
+                    "bainluck-heavy/worker-heavy.1": {
+                        "slug": "aaaaaaaa", "slug_since": 1_000_000 - age_s
+                    },
+                },
+                now_s=1_000_000,
+            )
+
+        fresh = _reason(40 * 60)
+        wedged = _reason(6 * 24 * 3600)
+
+        assert fresh["verdict"] == wedged["verdict"] == "DRIFTED"
+        assert "40m" in fresh["reason"]
+        assert "144h00m" in wedged["reason"]
+        assert fresh["reason"] != wedged["reason"]
+
+    def test_the_reason_reports_the_STALEST_not_an_average(self):
+        """A fleet is as wedged as its worst slot, and one fresh restart must
+        not bury one stuck one."""
+        got = fleet_code_verdict(
+            None,
+            {
+                "a/worker-realtime.1": {"slug": "aaaaaaaa", "slug_since": 1_000_000 - 60},
+                "b/worker-heavy.1": {"slug": "bbbbbbbb", "slug_since": 1_000_000 - 36_000},
+            },
+            expected=(),
+            now_s=1_000_000,
+        )
+        assert got["verdict"] == "DRIFTED"
+        assert "10h00m" in got["reason"], got["reason"]
+
+    def test_all_ages_unknown_says_so_rather_than_going_quiet(self):
+        """Silence is not agreement — the same rule `unstamped_expected` exists
+        for. A DRIFTED with no age clause would read as a plain old alarm."""
+        got = fleet_code_verdict(
+            "cccccccc",
+            {
+                "bainluck/worker-realtime.1": {"slug": "cccccccc"},
+                "bainluck/worker-background.1": {"slug": "cccccccc"},
+                "bainluck-heavy/worker-heavy.1": {"slug": "aaaaaaaa"},
+            },
+            now_s=10_000,
+        )
+        assert got["verdict"] == "DRIFTED"
+        assert "NOT known" in got["reason"]
+
+    def test_a_partly_measurable_set_names_how_many_cannot_say(self):
+        got = fleet_code_verdict(
+            None,
+            {
+                "a/worker-realtime.1": {"slug": "aaaaaaaa", "slug_since": 1_000_000 - 600},
+                "b/worker-heavy.1": {"slug": "bbbbbbbb"},
+            },
+            expected=(),
+            now_s=1_000_000,
+        )
+        assert "10m" in got["reason"]
+        assert "1 of them cannot say" in got["reason"]
+
+    def test_a_MATCHED_fleet_still_publishes_its_ages(self):
+        """The matched slots are the control: they say the fleet is moving at
+        all, which is what makes a heavy slot's age readable."""
+        got = fleet_code_verdict(
+            "cccccccc",
+            {
+                "bainluck/worker-realtime.1": {"slug": "cccccccc", "slug_since": 9_400},
+                "bainluck/worker-background.1": {"slug": "cccccccc", "slug_since": 9_400},
+                "bainluck-heavy/worker-heavy.1": {"slug": "cccccccc", "slug_since": 9_400},
+            },
+            now_s=10_000,
+        )
+        assert got["verdict"] == "MATCHED"
+        assert got["on_slug_s"]["bainluck-heavy/worker-heavy.1"] == 600
+
+    def test_no_automatic_BEHIND_verdict_exists_yet(self):
+        """Deliberate non-feature, asserted so nobody adds one without the
+        measurement. A grace window needs #5662's true convergence period; it is
+        measured at 136-294 min on a sample too small to size a bound on, and
+        guessing it would hard-code an answer into the instrument asking the
+        question (#5470)."""
+        got = fleet_code_verdict(
+            "cccccccc",
+            {
+                "bainluck/worker-realtime.1": {"slug": "cccccccc", "slug_since": 1},
+                "bainluck/worker-background.1": {"slug": "cccccccc", "slug_since": 1},
+                "bainluck-heavy/worker-heavy.1": {"slug": "aaaaaaaa", "slug_since": 999_900},
+            },
+            now_s=1_000_000,
+        )
+        assert got["verdict"] == "DRIFTED", "a short age is still DRIFTED, with the number"

@@ -1430,6 +1430,15 @@ async def fleet_code(
     means nothing stamped at all. An unreadable Redis renders `INCONCLUSIVE`,
     never `NONE` (gotcha #53).
 
+    **READ `on_slug_s`, NOT THE WORD, WHEN DISCHARGING A NOTICE-48 RECEIPT.**
+    Since #5662 the heavy app self-syncs behind main, so `DRIFTED` is its normal
+    steady state and `MATCHED` is the rare coincidence of the two apps landing
+    on one slug. `on_slug_s` gives each worker's age on its current code, which
+    is what separates "one desk batch behind" from "the sync has been wedged for
+    days". A deliberate non-feature: there is no automatic BEHIND verdict,
+    because the grace window it needs is #5662's true convergence period and
+    that is still being measured (#5470).
+
     Off-loop via `run_in_threadpool` for the reason its beat sibling is:
     `get_redis_client()` is bounded at 5s (gotcha #39) and the single uvicorn
     loop should not wear that under a refreshing dashboard tab (#1994).
@@ -1465,8 +1474,12 @@ async def fleet_code(
         "status": "ok",
         **report,
         "note": (
-            "MATCHED is the only healthy verdict. UNKNOWN_VERSION means a live "
-            "worker cannot name its own slug (`heroku labs:enable "
+            "MATCHED is the only healthy verdict, but since #5662 it is also "
+            "the rare one: the heavy app self-syncs BEHIND main, so a DRIFTED "
+            "naming only heavy slots is the expected steady state. Read "
+            "`on_slug_s` — seconds each worker has been on its current code — "
+            "to tell one desk batch behind from a wedged sync. UNKNOWN_VERSION "
+            "means a live worker cannot name its own slug (`heroku labs:enable "
             "runtime-dyno-metadata -a <app>`), and is not agreement. A worker "
             f"slot that is scaled away keeps its marker for up to {report['ttl_s']}s; "
             "a slot that merely restarts overwrites its own, so DRIFTED clears "
