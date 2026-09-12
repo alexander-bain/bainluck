@@ -1195,7 +1195,10 @@ private struct MyTeamFuturesCard: View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
-                Text(futures.llmSportCategory?.capitalized ?? "Futures")
+                // #5723: the shared rule, not `.capitalized` — same form as
+                // `FuturesCardView`, which keeps "Futures" for a missing
+                // category rather than the helper's generic "Market".
+                Text(futures.llmSportCategory.map(sportCategoryDisplayName) ?? "Futures")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()

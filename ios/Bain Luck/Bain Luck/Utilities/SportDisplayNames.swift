@@ -66,8 +66,19 @@ func sportCategoryDisplayName(_ raw: String?) -> String {
     ]
     if let f = familyMap[family] { return f }
 
-    // 4. Fallback: acronym-aware title casing — never surface underscores.
-    return properTitleCase(key.replacingOccurrences(of: "_", with: " "))
+    // 4. Fallback: acronym-aware title casing of a raw key — never surface an
+    //    underscore, and never hand back a lowercase label.
+    //
+    //    #5723: this arm used `properTitleCase`, which is the wrong one of this
+    //    file's two acronym-aware formatters. `properTitleCase` only *repairs*
+    //    acronyms inside an already-cased display string and deliberately
+    //    leaves words it does not recognise untouched, so a raw key arrived
+    //    here lowercase and left lowercase — "table tennis", "rugby", "other".
+    //    `toTitleCaseAcronymSafe` is the one that owns the "raw lowercase key
+    //    -> title" job, and says so in its own docstring. 4,351 of the 43,632
+    //    categorised open futures markets reach this arm (production db-query,
+    //    2026-09-12); the largest are table_tennis (2,635) and other (1,467).
+    return toTitleCaseAcronymSafe(key)
 }
 
 /// Maps a raw golf-tour key (as sent by the backend) to a presentable tour

@@ -203,7 +203,12 @@ struct FuturesBrowseMarketRow: View {
     private var category: FuturesCategoryOption {
         FuturesCategoryOption(
             tag: market.llmSportCategory ?? "",
-            title: market.llmSportCategory.map(toTitleCaseAcronymSafe) ?? "Futures",
+            // #5723: the shared rule rather than the raw-key formatter under
+            // it, so a league key resolves ("americanfootball_nfl" -> "NFL",
+            // not "Americanfootball Nfl") and Browse agrees with every other
+            // surface. `sportCategoryDisplayName` delegates here for keys its
+            // maps do not cover, so nothing this row printed correctly moves.
+            title: market.llmSportCategory.map(sportCategoryDisplayName) ?? "Futures",
             group: .other,
             count: nil
         )

@@ -1126,7 +1126,11 @@ struct SearchView: View {
 
             HStack(spacing: 6) {
                 if let category = market.llmSportCategory ?? market.category {
-                    Text(category.capitalized)
+                    // #5723: `.capitalized` printed the raw key — "ufc" returns
+                    // ten futures rows all labelled "Mma" (Alex, bug report 145,
+                    // the half #1938 closed without checking this tab), and a
+                    // table-tennis row read "Table_Tennis".
+                    Text(sportCategoryDisplayName(category))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

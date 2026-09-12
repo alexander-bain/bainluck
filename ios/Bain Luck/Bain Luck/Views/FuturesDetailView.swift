@@ -163,7 +163,12 @@ struct FuturesDetailView: View {
                 // Top row: category pill + status badges
                 HStack {
                     if let category = market.llmSportCategory {
-                        Text(category.uppercased())
+                        // #5723: `.uppercased()` on the raw key put the
+                        // underscore on the hero — a table-tennis page's pill
+                        // read "TABLE_TENNIS". The four Discover cards already
+                        // upper-case the shared rule's output; this is the same
+                        // form, so the pill and the card agree.
+                        Text(sportCategoryDisplayName(category).uppercased())
                             .font(.system(size: 9, weight: .heavy))
                             .tracking(0.8)
                             .foregroundStyle(.white.opacity(0.78))
