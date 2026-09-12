@@ -47,6 +47,8 @@ their follow-up. A ninth site fails this file on the day it is written.
 import ast
 from pathlib import Path
 
+import pytest
+
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
@@ -304,3 +306,56 @@ def test_an_omitted_basis_stores_null_beside_a_real_opening():
             "no opening means no basis: the conditional must reach the database "
             "as SQL NULL, not as the string 'None'"
         )
+
+
+# ---------------------------------------------------------------------------
+# The instruments that MEASURE this ship must not carry a bound that rots.
+# ---------------------------------------------------------------------------
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+
+#: Every fold that sweeps `futures_markets.id` in chunks. Each one used to stop
+#: at a literal `60_097_325`, measured once in CAL-P1118 and never re-read; by
+#: 2026-09-12 that bound excluded 47,767 of 316,132 Kalshi markets (15.1% of the
+#: source, and 99% of the `other` category) and every sweep at defaults reported
+#: the short answer with nothing to show anything was missing. A ceiling over a
+#: table that only grows is a measurement, not a constant.
+ID_SWEEP_SCRIPTS = (
+    "calibration_fold_opening_source.py",
+    "fold_dedup_verdict_cell.py",
+)
+
+
+@pytest.mark.parametrize("script", ID_SWEEP_SCRIPTS)
+def test_no_id_sweep_carries_a_frozen_upper_bound(script):
+    """`--max-id` must default to None and be READ, never remembered."""
+    text = (SCRIPTS / script).read_text()
+    tree = ast.parse(text)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not node.args or getattr(node.args[0], "value", None) != "--max-id":
+            continue
+        # `_keyword` returns the ast.keyword NODE, not its value.
+        keyword = _keyword(node, "default")
+        assert keyword is not None, f"{script}: --max-id has no default= at all"
+        default = keyword.value
+        assert isinstance(default, ast.Constant) and default.value is None, (
+            f"{script}: --max-id defaults to a frozen literal "
+            f"({ast.unparse(default)}). It must default to None and be "
+            f"measured at run time, or the sweep silently truncates as the "
+            f"table grows past it."
+        )
+        break
+    else:  # pragma: no cover - the argument was renamed or removed
+        raise AssertionError(f"{script}: no --max-id argument found")
+
+
+@pytest.mark.parametrize("script", ID_SWEEP_SCRIPTS)
+def test_the_bound_is_actually_measured_before_use(script):
+    """A None default that nothing resolves is worse than a stale literal."""
+    text = (SCRIPTS / script).read_text()
+    assert "def measured_max_id(" in text, f"{script}: no bound measurement"
+    assert "args.max_id = measured_max_id(" in text, (
+        f"{script}: --max-id defaults to None and is never resolved, so the "
+        f"sweep would compare an int against None"
+    )

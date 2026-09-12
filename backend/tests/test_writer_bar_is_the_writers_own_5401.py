@@ -292,3 +292,73 @@ class TestTheExclusionIsCounted:
     def test_the_catch_all_is_still_last(self) -> None:
         """Inserting a rung after the terminal ELSE would make it unreachable."""
         assert _COVERAGE_RUNG_PREDICATES[-1] == ("representative_not_selected", "")
+
+
+class TestTheExclusionIsDisclosed:
+    """A rung that removes rows and names itself nowhere is gotcha #144.
+
+    The coverage census counts this exclusion (``TestTheExclusionIsCounted``),
+    but that surface answers "how much of the population did we account for".
+    The ``*_filter`` family answers a different question — "what did the curve
+    refuse, and why" — and it is the one a reader of ``/api/calibration`` meets
+    beside ``liquidity_filter`` and ``golf_placeholder_filter``. Shipping the
+    predicate without its entry there is the exact shape of ruling 103: a
+    population change whose only trace is a number that moved.
+    """
+
+    def test_the_rule_text_is_actually_used(self) -> None:
+        """It was defined and referenced NOWHERE — that is what this catches."""
+        source = Path(
+            __file__
+        ).resolve().parents[1] / "app" / "tasks" / "precompute_calibration.py"
+        text = source.read_text()
+        # The definition itself is one occurrence; a second means something
+        # consumes it. Its sibling KALSHI_LIQUIDITY_RULE_TEXT has three.
+        assert text.count("KALSHI_WRITER_BAR_RULE_TEXT") >= 2, (
+            "KALSHI_WRITER_BAR_RULE_TEXT is defined and never read, so the "
+            "exclusion ships with no disclosure beside liquidity_filter"
+        )
+
+    def test_the_payload_block_carries_the_rule_and_both_counts(self) -> None:
+        source = Path(
+            __file__
+        ).resolve().parents[1] / "app" / "tasks" / "precompute_calibration.py"
+        block = source.read_text().split('"writer_bar_filter": {', 1)
+        assert len(block) == 2, "the writer_bar_filter payload block is gone"
+        body = block[1].split("},", 1)[0]
+        assert '"applies_to": "kalshi"' in body
+        assert "KALSHI_WRITER_BAR_RULE_TEXT" in body
+        assert '"included": writer_bar_included' in body
+        assert '"excluded": writer_bar_excluded' in body
+
+    def test_the_counts_are_computed_in_the_summary_sql(self) -> None:
+        """Not a comment: the two counts must be real columns of liq_summary.
+
+        Asserted on the GENERATED sql rather than the source, so a count that
+        is written but never reaches the statement fails here.
+        """
+        from app.tasks.precompute_calibration import _main_futures_sql
+
+        sql = _main_futures_sql()
+        for column in ("writer_bar_included", "writer_bar_excluded"):
+            # once in liq_summary, once in the projection that carries it out
+            assert sql.count(column) >= 2, f"{column} never reaches the query"
+        assert "is_below_writer_bar) AS writer_bar_excluded" in sql
+
+    def test_the_two_kalshi_bars_are_disclosed_as_nested_not_additive(
+        self,
+    ) -> None:
+        """A reader who adds the two exclusion counts gets a wrong number.
+
+        Writer-bar-met implies a snapshot with ``yes_bid > 0``, which is exactly
+        what ``is_liquid`` asks for — so every illiquid row is ALSO below the
+        bar and the cohorts nest. The payload has to say so, because the two
+        blocks sit next to each other and look like peers.
+        """
+        source = Path(
+            __file__
+        ).resolve().parents[1] / "app" / "tasks" / "precompute_calibration.py"
+        body = source.read_text().split('"writer_bar_filter": {', 1)[1]
+        body = body.split("},", 1)[0]
+        assert "relation_to_liquidity_filter" in body
+        assert "not additive" in body

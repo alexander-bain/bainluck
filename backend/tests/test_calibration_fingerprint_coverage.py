@@ -224,8 +224,26 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         file — ``app/tasks/kalshi.py``'s own writer bar — and therefore has a
         named reason to move that its static siblings do not. The siblings' gap
         is filed (#5430), not widened.
+
+        CAL-P1121 (#5401, 2026-09-12) takes this to **68**, and is the FIRST of
+        this series to move ``uncovered_count`` — 54 -> 55. The one input is
+        ``KALSHI_WRITER_BAR_RULE_TEXT``, and it arrives only because the writer
+        bar's disclosure was wired into the payload: the constant existed at
+        CAL-P1119 but nothing read it, so the deriver could not see it. A rung
+        that removes rows and names itself nowhere is the ruling-103 /
+        gotcha-#144 failure, so closing that gap is the ship, not a nicety.
+
+        It arrives UNCOVERED on purpose, and this is not the precedent above
+        being ignored. That precedent is about PREDICATES — values that decide
+        which rows publish, which must be hashed or a bank can be resumed by
+        code that disagrees with it. This is PROSE: a sentence shown to a reader
+        beside the count. Hashing it would re-key the cursor and force a ~3.3h
+        bank rebuild for a copy edit, which buys nothing and costs the thing the
+        hash exists to protect. All NINETEEN of its ``*_RULE_TEXT`` siblings are
+        uncovered for the same reason; this one is not a new hole in the
+        unguarded surface so much as the same hole, one sentence wider.
         """
-        assert artifact["input_count"] == 67
+        assert artifact["input_count"] == 68
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -239,7 +257,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # which is the claim the docstring above makes: the unguarded surface
         # did not grow.
         assert len(artifact["covered_by_value"]) == 13
-        assert artifact["uncovered_count"] == 54
+        # CAL-P1121 (#5401): 54 -> 55, the prose disclosure string. See the
+        # docstring — covered_by_value deliberately does NOT move with it.
+        assert artifact["uncovered_count"] == 55
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -463,7 +483,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         )
         assert pair_tolerance["definition_sha16"]
         assert pair_tolerance["origin"].startswith("app.utils.pair_opening_coherence")
-        assert len(cross) + 48 == artifact["uncovered_count"]
+        # 48 -> 49 at CAL-P1121: KALSHI_WRITER_BAR_RULE_TEXT is same-module
+        # prose, so it lands in the non-cross tier and the cross list is
+        # unchanged -- which is the property this line is really pinning.
+        assert len(cross) + 49 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

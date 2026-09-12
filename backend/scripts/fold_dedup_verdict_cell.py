@@ -25,6 +25,21 @@ Usage::
     python3 backend/scripts/fold_dedup_verdict_cell.py \\
         --source polymarket --category basketball --market-type quantity \\
         --out artifacts/cal-p991/verdict-basketball-quantity.json
+
+CHUNKING IS NOT NEUTRAL — READ THIS BEFORE TRUSTING A NUMBER FROM HERE.
+``event_sizes`` (and ``group_sizes``) are computed INSIDE ``market_info_extra``,
+so an event whose markets straddle an ``fm.id`` chunk boundary is counted short,
+its ``event_size >= 3`` test flips, and its markets drop out of their grouped
+``vm_id`` into singletons — changing ``is_grouped``, ``vm_stats``,
+``field_completeness`` and the ``deduped`` ladder, i.e. changing which rows the
+fold believes are published. Measured on Kalshi 2026-09-12: 4,553 of 13,782
+event-groups of size >= 3 span more than 100k ids and 1,288 span more than 1M
+(max span 58.7M), so the default 1M width splits them by construction, and
+adaptive splitting on timeout makes the answer depend on where the timeouts
+happened. Per-CELL folds are usually safe from this (a small category's events
+rarely straddle), but a SOURCE-WIDE number must not be taken with this
+instrument — use ``calibration_population_move_5401.py``, which partitions on
+the ``event_id`` VALUE so an event can never be split.
 """
 
 from __future__ import annotations
@@ -77,6 +92,22 @@ CASE
 END
 """
 
+#: ``--max-id``'s old default was the literal ``60_097_325``, measured once and
+#: then left to rot: by 2026-09-12 it excluded 47,767 of 316,132 Kalshi markets
+#: — 15.1% of the source, including 99% of the ``other`` category — and a sweep
+#: at defaults reported the short answer with no sign that anything was missing.
+#: A bound over a table that only grows has to be READ, not remembered.
+def measured_max_id(source: str) -> int:
+    """One past the highest ``futures_markets.id`` this source currently has."""
+    res = db_query(
+        f"SELECT MAX(id) AS hi FROM futures_markets WHERE source = '{source}'"
+    )
+    rows = res.get("rows") or []
+    if not rows or rows[0][0] is None:
+        raise RuntimeError(f"no futures_markets rows for source={source!r}")
+    return int(rows[0][0]) + 1
+
+
 
 def cell_sql(source: str, category: str, market_type: str, lo: int, hi: int) -> str:
     pop = _calibration_population_ctes(
@@ -110,9 +141,12 @@ def main() -> int:
     ap.add_argument("--market-type", required=True)
     ap.add_argument("--width", type=int, default=1_000_000)
     ap.add_argument("--min-id", type=int, default=1)
-    ap.add_argument("--max-id", type=int, default=60_097_325)
+    ap.add_argument("--max-id", type=int, default=None)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    if args.max_id is None:
+        args.max_id = measured_max_id(args.source)
+        print(f"max-id measured: {args.max_id:,}")
 
     stack: list[tuple[int, int]] = []
     lo = args.min_id

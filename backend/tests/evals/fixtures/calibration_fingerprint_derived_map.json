@@ -21,7 +21,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 67,
+  "input_count": 68,
   "inputs": [
     {
       "covered_by_value": false,
@@ -343,6 +343,17 @@
       "sql_interpolated": true,
       "used_in": [
         "_calibration_population_ctes"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "KALSHI_WRITER_BAR_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:KALSHI_WRITER_BAR_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
       ]
     },
     {
@@ -797,8 +808,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "2a9c24c035e7eec5ba07bdbe546f18f7319b29b584cca99d46fb9f8dbb986ce4",
-  "uncovered_behavior_or_evidence": 32,
-  "uncovered_count": 54,
+  "source_sha256": "4a0ffb4e9e7b98ed63de20a4e2d62ac7a34a7d54df652c895f6bb97c1588c70f",
+  "uncovered_behavior_or_evidence": 33,
+  "uncovered_count": 55,
   "uncovered_sql_shaping": 22
 }

@@ -82,7 +82,17 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: ``test_the_new_helper_is_not_inside_the_hashed_source`` below. This constant
 #: is the tripwire for an UNINTENDED move: if you did not mean to change which
 #: rows qualify and this test is red, you have moved the population.
-LIVE_INPUT_FINGERPRINT = "634f4e35c9c5368355b560cf56b34730"
+#:
+#: RE-ANCHORED for #5401 (CAL-P1121). The move is NOT a population
+#: change: the edit that caused it adds two payload-only transparency
+#: counts (`writer_bar_included` / `writer_bar_excluded`) to
+#: `liq_summary`, which no row qualifies or fails on. It moves anyway
+#: because the hash covers the SOURCE of `_main_futures_sql` wholesale,
+#: not just its population predicates — a known imprecision, and a
+#: deliberately conservative one. It costs nothing here: the writer-bar
+#: exclusion in the same commit re-keys the cursor on its own account,
+#: so the rebuild is paid once, not twice.
+LIVE_INPUT_FINGERPRINT = "b1126a29a0dd30eca45ffaf595e9ef99"
 
 
 class _Db:

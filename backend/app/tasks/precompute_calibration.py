@@ -4691,6 +4691,13 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 SELECT
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND is_liquid) AS kalshi_included,
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_liquid) AS kalshi_excluded,
+                    -- #5401: the writer bar's own split, on the same footing as
+                    -- the liquidity bar above it. Counted over `normalized` like
+                    -- every sibling here, so `included + excluded` is the Kalshi
+                    -- candidate pool and NOT the published count — the rungs
+                    -- overlap, and a below-bar row is very often illiquid too.
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_below_writer_bar) AS writer_bar_included,
+                    COUNT(*) FILTER (WHERE source = 'kalshi' AND is_below_writer_bar) AS writer_bar_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included,
                     -- Queue #220/221 Item 3: exclusion-symmetry census. Poly
@@ -4829,6 +4836,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err,
                 MAX(ls.kalshi_included) AS kalshi_included,
                 MAX(ls.kalshi_excluded) AS kalshi_excluded,
+                MAX(ls.writer_bar_included) AS writer_bar_included,
+                MAX(ls.writer_bar_excluded) AS writer_bar_excluded,
                 MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
                 MAX(ls.poly_included) AS poly_included,
                 MAX(ls.poly_never_traded_total) AS poly_never_traded_total,
@@ -5683,6 +5692,17 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         kalshi_excluded = (
             int(rows[0].kalshi_excluded)
             if rows and rows[0].kalshi_excluded is not None
+            else 0
+        )
+        # #5401: the writer bar's own transparency counts, same carry.
+        writer_bar_included = (
+            int(rows[0].writer_bar_included)
+            if rows and rows[0].writer_bar_included is not None
+            else 0
+        )
+        writer_bar_excluded = (
+            int(rows[0].writer_bar_excluded)
+            if rows and rows[0].writer_bar_excluded is not None
             else 0
         )
         # L2-76: Polymarket no-bid placeholder exclusion transparency counts.
@@ -6670,6 +6690,30 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": KALSHI_LIQUIDITY_RULE_TEXT,
             "kalshi_included": kalshi_included,
             "kalshi_excluded": kalshi_excluded,
+        },
+        # #5401. A rung that removes rows from the published curve and says so
+        # NOWHERE in this payload is the ruling-103 / gotcha-#144 failure exactly
+        # — the golf/entertainment openings this drops were themselves invisible
+        # because a COALESCE fallback had no disclosure beside it. The coverage
+        # census carries an `opening_below_writer_bar` rung, but that surface
+        # answers "how much of the population did we account for", not "what did
+        # the curve refuse and why", which is what this family is for.
+        "writer_bar_filter": {
+            "applies_to": "kalshi",
+            "rule": KALSHI_WRITER_BAR_RULE_TEXT,
+            "included": writer_bar_included,
+            "excluded": writer_bar_excluded,
+            # The two Kalshi bars are nested, not disjoint: every row the
+            # liquidity bar drops is also below this one (a leg that never
+            # showed a bid never showed a bid with an ask beside it), so these
+            # counts must not be added to `liquidity_filter`'s to get a total.
+            "relation_to_liquidity_filter": (
+                "Strictly stronger than liquidity_filter: that rung admits an "
+                "outcome that ever showed a bid OR a trade, this one requires a "
+                "two-sided book the Kalshi poller would itself have recorded an "
+                "opening from. The cohorts nest, so the counts overlap and are "
+                "not additive."
+            ),
         },
         "poly_placeholder_filter": {  # L2-76 (#151/#997)
             "applies_to": "polymarket",

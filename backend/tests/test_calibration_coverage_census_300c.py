@@ -76,6 +76,8 @@ class TestRungDriftIsRefused:
 # them positionally off row 0.
 _EXISTING_TRANSPARENCY_COLUMNS = (
     "kalshi_included", "kalshi_excluded", "poly_placeholder_excluded", "poly_included",
+    # #5401 writer-bar disclosure counts.
+    "writer_bar_included", "writer_bar_excluded",
     "poly_never_traded_total", "poly_never_traded_in_curve", "both_false_excluded",
     "both_winner_excluded", "golf_placeholder_excluded", "mex_normalized_outcomes",
     "mex_candidate_markets", "mex_normalized_markets", "field_incomplete_markets",
