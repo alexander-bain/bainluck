@@ -83,6 +83,30 @@ def _no_shared_cache(monkeypatch):
     monkeypatch.setattr(tournaments, "_cache_set", _noop)
 
 
+@pytest.fixture(autouse=True)
+def _scoreboard_is_merely_absent(monkeypatch):
+    """A test box with no Redis must mean "no scoreboard", not "Redis broke".
+
+    These tests are about which section group gets BUILT and CACHED. They are
+    not about Redis health — but there is no Redis here, so `_espn_results`
+    RAISES, and since #5728 a raise is a distinguishable state: the slate is
+    withheld and the fragment is deliberately not cached. That is correct
+    product behaviour and it would make every assertion in this file about the
+    cache a measurement of the degraded path instead of the split.
+
+    Worth saying plainly, because it is the bug in miniature: before #5728 this
+    rig was already running through the failure branch on every test, and
+    nothing could tell — the raise and the clean miss returned the same bytes.
+    Pinned to the CLEAN-MISS result (keys absent, Redis answering), which is
+    what these tests have always meant by "no scoreboard".
+    """
+
+    async def _absent(slug):
+        return {"draws": {}, "stats": {}, "errors": [], "scoreboard": "unavailable"}
+
+    monkeypatch.setattr(tournaments, "_espn_results", _absent)
+
+
 def _register_ids() -> dict[str, set[int]]:
     """The committed register's own id sets — the population this route bounds
     itself by. Read from the file, never restated here, so the numbers in the

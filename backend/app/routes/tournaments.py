@@ -19,9 +19,11 @@ cleverer scorer.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections import defaultdict
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -200,6 +202,59 @@ def _cache_key(slug: str, group: str = SECTION_FIRST) -> str:
     return f"{CACHE_PREFIX}{slug}:{group}"
 
 
+#: A results read that RAISED, as distinct from one that found nothing. See
+#: :func:`_read_failure_ledger`; `live` / `last_good` / `unavailable` are
+#: `_espn_results`' three existing states and this is the fourth.
+SCOREBOARD_DEGRADED = "degraded"
+
+#: Every read on this page that RAISED while assembling the current response.
+#:
+#: ═══ #5728: NO ACCESSOR IS WRONG; THE COMPOSITION IS ═══
+#:
+#: Measured on production 2026-09-12, finals day. At 19:51:18Z one request
+#: rebuilt the page into the tournament's FIRST ROUND — 96 R128 rows dated
+#: 2026-08-30, zero results — with healthy responses seven seconds either side.
+#: Four independent Redis reads had to miss at once to produce it (the hub
+#: fragment cache, the results primary key, the results last-good key, and the
+#: link overlay). Four keys with four TTLs and four writers cannot expire in the
+#: same millisecond and all be back five seconds later; a dropped connection
+#: explains all four and key absence explains none.
+#:
+#: Every one of those accessors swallows its own exception, and every one is
+#: individually defensible — "cache is an optimisation, never a gate" is true of
+#: each. Composed, they turn one dropped connection into a confident, fully
+#: rendered, thirteen-day-old page. The fix is not in any single accessor's
+#: except clause; it is that nothing downstream could tell a read that FAILED
+#: from a read that found nothing (gotcha #53, one level above the function
+#: whose docstring already quotes it). This ledger is that signal.
+#:
+#: A request-scoped ContextVar rather than a threaded argument because
+#: `_espn_results` has two call sites and a flag only one of them passes is a
+#: flag the other silently loses — the same reasoning that put `scoreboard` on
+#: the payload instead of beside it.
+_READ_FAILURES: ContextVar[Optional[list[str]]] = ContextVar(
+    "tournament_read_failures", default=None
+)
+
+
+def _note_read_failure(what: str) -> None:
+    """Record that a read RAISED. Outside a ledger this is a no-op."""
+    ledger = _READ_FAILURES.get()
+    if ledger is not None:
+        ledger.append(what)
+
+
+@contextlib.contextmanager
+def _read_failure_ledger():
+    """Collect the reads that raised while one response is assembled."""
+    ledger: list[str] = []
+    token = _READ_FAILURES.set(ledger)
+    try:
+        yield ledger
+    finally:
+        _READ_FAILURES.reset(token)
+
+
 async def _cache_get(slug: str, group: str = SECTION_FIRST) -> Optional[dict[str, Any]]:
     try:
         from app.tasks.redis_state import get_async_redis_client
@@ -208,6 +263,11 @@ async def _cache_get(slug: str, group: str = SECTION_FIRST) -> Optional[dict[str
         if raw:
             return json.loads(raw)
     except Exception as exc:  # noqa: BLE001 — cache is an optimisation, never a gate
+        # Still not a gate: a cache read that fails only costs a rebuild, and
+        # the rebuild is correct as long as the DATA reads work. Noted anyway,
+        # because it is the loudest single symptom of the Redis trouble that
+        # makes the data reads fail too, and the ledger is read by symptom.
+        _note_read_failure(f"cache:{group}")
         logger.warning("tournament cache read failed for %s/%s: %s", slug, group, exc)
     return None
 
@@ -225,6 +285,28 @@ async def _cache_set(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("tournament cache write failed for %s/%s: %s", slug, group, exc)
+
+
+def _withheld_slate(slate: dict[str, Any]) -> dict[str, Any]:
+    """The day's card, withheld: same keys, no claims (#5728).
+
+    Built by emptying the real slate rather than by writing a literal, so the
+    key set cannot drift away from `build_slate`'s — a client reading a field
+    this function forgot would get a KeyError on exactly the unlucky request,
+    which is the last place anybody would look for it.
+
+    Every count goes to zero because every count was derived from a scoreboard
+    we never read. `scoreboard` is left alone: it already says `degraded`, and
+    it is the field that tells a reader of this payload why the card is empty.
+    """
+    out = dict(slate)
+    out["matches"] = []
+    for key, value in list(out.items()):
+        if key != "scoreboard" and isinstance(value, int) and not isinstance(value, bool):
+            out[key] = 0
+    out["order_of_play_complete"] = False
+    out["withheld_reason"] = "scoreboard_read_failed"
+    return out
 
 
 def _merge_fragment(payload: dict[str, Any], fragment: dict[str, Any]) -> None:
@@ -310,6 +392,7 @@ async def _espn_results(slug: str) -> dict[str, Any]:
     """
     from app.tasks.redis_state import get_async_redis_client
 
+    raised = False
     for prefix, state in (
         (RESULTS_PREFIX, "live"),
         (RESULTS_LAST_GOOD_PREFIX, "last_good"),
@@ -317,6 +400,17 @@ async def _espn_results(slug: str) -> dict[str, Any]:
         try:
             raw = await get_async_redis_client().get(f"{prefix}{slug}")
         except Exception as exc:  # noqa: BLE001 — a results section is not a gate
+            # ═══ #5728: A READ THAT RAISED IS NOT A READ THAT FOUND NOTHING ═══
+            #
+            # The three states above are honest about what was FOUND and silent
+            # about whether we managed to look. This `continue` made the raise
+            # and the absence produce the same bytes, and the difference is the
+            # whole question: both keys absent is a quiet day, and rewinding the
+            # slate to the register is defensible; a read that raised is our
+            # infrastructure blinking, and rewinding is a lie that renders as a
+            # thirteen-day-old opening round on finals day.
+            raised = True
+            _note_read_failure(f"results:{state}")
             logger.warning("tournament results cache read failed for %s: %s", slug, exc)
             continue
         if not raw:
@@ -336,6 +430,20 @@ async def _espn_results(slug: str) -> dict[str, Any]:
             )
         payload["scoreboard"] = state
         return payload
+
+    if raised:
+        # The fourth state (#5728). Same empty body, a different word, and the
+        # word is what stops `build_slate` being handed `order_of_play={}` and
+        # printing the whole decided main draw as today's card.
+        logger.error(
+            "tournament results UNREADABLE for %s — a scoreboard read raised, "
+            "so we do not know what is on and must not guess (#5728)",
+            slug,
+        )
+        return {
+            "draws": {}, "stats": {}, "errors": [],
+            "scoreboard": SCOREBOARD_DEGRADED,
+        }
 
     logger.warning(
         "tournament results unavailable for %s — no primary and no last-good "
@@ -1365,19 +1473,42 @@ async def _hub_payload(
     """
     fragments: dict[str, dict[str, Any]] = {}
     missing: list[str] = []
-    for group in groups:
-        cached = await _cache_get(slug, group)
-        if cached is None:
-            missing.append(group)
-        else:
-            fragments[group] = cached
+    with _read_failure_ledger() as failures:
+        for group in groups:
+            cached = await _cache_get(slug, group)
+            if cached is None:
+                missing.append(group)
+            else:
+                fragments[group] = cached
 
-    if missing:
-        for group, fragment in (
-            await _build_sections(slug, spec, db, groups=tuple(missing))
-        ).items():
-            await _cache_set(slug, fragment, group)
-            fragments[group] = fragment
+        if missing:
+            built = await _build_sections(slug, spec, db, groups=tuple(missing))
+            # ═══ #5728: A DEGRADED BUILD IS SERVED ONCE, NEVER PERSISTED ═══
+            #
+            # Measured on production 2026-09-12 at 20:21:05Z: one payload
+            # assembled while the link overlay was unreadable was written here
+            # and then served to FIVE consecutive requests over nineteen
+            # seconds — all five carried the same `generated_at` to the
+            # microsecond. So the reach of a Redis blip is not one request; it
+            # is every reader for the life of the TTL, and it is WORSE when
+            # Redis is only partly unwell, because a partial failure is exactly
+            # the state in which the read fails and the write succeeds.
+            #
+            # Only DATA reads count. A `cache:*` failure means we rebuilt, and a
+            # rebuild from healthy data is correct and worth caching — refusing
+            # to cache that would turn one bad Redis moment into a cold page for
+            # as long as the trouble lasted.
+            degraded = [f for f in failures if not f.startswith("cache:")]
+            for group, fragment in built.items():
+                if degraded:
+                    logger.error(
+                        "tournament %s/%s built from failed reads (%s) — served "
+                        "once, NOT cached (#5728)",
+                        slug, group, ",".join(sorted(set(degraded))),
+                    )
+                else:
+                    await _cache_set(slug, fragment, group)
+                fragments[group] = fragment
 
     # Merged in GROUP ORDER, never in the order the fragments were resolved —
     # `_merge_fragment` gives the earlier group the shared meta keys and that
@@ -1463,6 +1594,12 @@ async def _build_sections(
             authority_links = raw_authority
         register, linked = apply_resolved_links(register, links)
     except Exception as exc:  # noqa: BLE001
+        # Still falls back, still never a gate — but it says so now (#5728).
+        # This is the read that failed in the SECOND production event, at
+        # 20:21:05Z: the scoreboard was fine, the slate was right, and the
+        # overlay's absence alone was enough to serve `blend_linked: 0` and
+        # `incoherent: 2` over two rows both reporting `coherent: true`.
+        _note_read_failure("links")
         logger.warning("tournament link overlay failed for %s: %s", slug, exc)
 
     reg = TournamentRegister(register)
@@ -1643,6 +1780,18 @@ async def _build_sections(
         # was silent or was never reached, and only the second one is anybody's
         # emergency. This says which, on the payload, without a log.
         first["slate"]["scoreboard"] = espn.get("scoreboard") or "unavailable"
+        # ═══ #5728: NEVER THE OPENING ROUND BECAUSE WE COULD NOT LOOK ═══
+        #
+        # `build_slate`'s only route to DECIDED requires the scoreboard to NAME
+        # the fixture, so an empty map retires nothing and the pinned-fixture
+        # clock exemption (CERT-544) then prints the entire decided main draw as
+        # the day's card. That is correct behaviour on a genuinely silent
+        # scoreboard and a lie when the read raised, and until #5728 the two
+        # were the same call. An honest empty beats a confident wrong round:
+        # the reader sees no card rather than a fortnight-old one, and every
+        # other section of the page — results, grids, boards — still renders.
+        if first["slate"]["scoreboard"] == SCOREBOARD_DEGRADED:
+            first["slate"] = _withheld_slate(first["slate"])
         # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
         # `draw_released`; populated by the same `ingest_tournament_draw.py` run,
         # so Thursday is a data change and not a deploy.
