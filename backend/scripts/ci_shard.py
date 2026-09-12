@@ -493,6 +493,31 @@ def cmd_record(args: argparse.Namespace) -> int:
         m = re.match(r"^(tests/[^:\s]+\.py)::", line.strip())
         if m:
             n_tests[m.group(1)] = n_tests.get(m.group(1), 0) + 1
+
+    # A CENSUS THAT ERRORED IS PARTIAL, NOT EMPTY, AND PARTIAL IS THE DANGEROUS ONE.
+    #
+    # `--collect-only` exits non-zero when some file fails to import while the
+    # rest collect fine (pytest's exit 2/3, or 5 for "no tests"). `n_tests` is
+    # then populated and looks entirely healthy — the check below passes — but
+    # every file that failed to collect is missing from it, so those files get
+    # their printed durations alone and none of the sub-threshold estimate.
+    # Exactly the under-weighting `--require-census` exists to prevent, arriving
+    # through the door marked "census present".
+    #
+    # Only the unattended caller refuses: a human running `--record` after a
+    # deliberate breakage can still want the file written.
+    if getattr(args, "require_census", False) and proc.returncode != 0:
+        print(
+            f"::error::the collection census exited {proc.returncode} — it is PARTIAL, not "
+            f"absent ({len(n_tests)} files collected before it stopped). Refusing to write: "
+            "the files that failed to collect would be recorded from printed durations alone, "
+            "with no sub-threshold estimate, and packed lighter than they are. "
+            f"--- pytest stderr ---\n{proc.stderr[-2000:]}"
+        )
+        return 1
+    if proc.returncode != 0:
+        print(f"::warning::collection census exited {proc.returncode}; weights may be partial")
+
     if n_tests:
         HIDDEN_EV = 0.0025  # expected seconds for a test pytest declined to print
         for f, total in n_tests.items():

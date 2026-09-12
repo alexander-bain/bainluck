@@ -174,7 +174,9 @@ def test_the_matching_case_succeeds_and_prints_the_paths(tmp_path, capsys):
 # 3. The census, and the unattended write
 # --------------------------------------------------------------------------
 
-def _record_with_census(monkeypatch, tmp_path, census_stdout: str, *, require: bool):
+def _record_with_census(
+    monkeypatch, tmp_path, census_stdout: str, *, require: bool, returncode: int = 0
+):
     """Run `--record` with the pytest collection census stubbed to `census_stdout`."""
     durations = tmp_path / "durations.json"
     sentinel = '{"files": {"tests/test_pre_existing.py": 9.0}}'
@@ -183,7 +185,9 @@ def _record_with_census(monkeypatch, tmp_path, census_stdout: str, *, require: b
     monkeypatch.setattr(
         ci_shard.subprocess,
         "run",
-        lambda *a, **k: SimpleNamespace(stdout=census_stdout, stderr="", returncode=0),
+        lambda *a, **k: SimpleNamespace(
+            stdout=census_stdout, stderr="import error in tests/test_x.py", returncode=returncode
+        ),
     )
     log = tmp_path / "shards.log"
     log.write_text(_dur("tests/test_alpha.py") + "\n")
@@ -227,6 +231,38 @@ def test_without_the_flag_the_lenient_behaviour_is_unchanged(monkeypatch, tmp_pa
     assert rc == 0
     assert durations.read_text() != sentinel, "the lenient path must still write"
     assert "::warning::collection census empty" in capsys.readouterr().out
+
+
+def test_a_census_that_errored_is_refused_even_though_it_collected_files(monkeypatch, tmp_path, capsys):
+    """CERT-2752's named follow-up: partial is more dangerous than empty.
+
+    `--collect-only` exits non-zero when some file fails to import while the rest
+    collect fine. `n_tests` is then populated and the emptiness check passes — but
+    every file that failed to collect is missing, so it records from printed
+    durations alone with no sub-threshold estimate and is packed lighter than it
+    is. The bad write arrives through the door marked "census present", which is
+    why a non-empty census is not on its own sufficient.
+    """
+    census = "tests/test_alpha.py::test_one\ntests/test_alpha.py::test_two\n"
+    rc, durations, sentinel = _record_with_census(
+        monkeypatch, tmp_path, census_stdout=census, require=True, returncode=2
+    )
+    assert rc == 1
+    assert durations.read_text() == sentinel, "a partial census must not be written"
+    out = capsys.readouterr().out
+    assert "PARTIAL" in out
+    assert "exited 2" in out
+
+
+def test_a_partial_census_still_writes_for_the_interactive_caller(monkeypatch, tmp_path, capsys):
+    """The strictness stays opt-in, and the warning still names what happened."""
+    census = "tests/test_alpha.py::test_one\n"
+    rc, durations, sentinel = _record_with_census(
+        monkeypatch, tmp_path, census_stdout=census, require=False, returncode=2
+    )
+    assert rc == 0
+    assert durations.read_text() != sentinel
+    assert "census exited 2" in capsys.readouterr().out
 
 
 def test_a_healthy_census_writes_under_require_census(monkeypatch, tmp_path):
@@ -411,6 +447,204 @@ def test_the_branch_is_pushed_before_the_pr_is_attempted(workflow):
     assert run.index("git push --force origin") < run.index("gh pr create"), (
         "the refreshed branch must be pushed before the PR is attempted"
     )
+
+
+# --------------------------------------------------------------------------
+# 6. The refusal path, EXECUTED (CERT-2752's required repair + test)
+# --------------------------------------------------------------------------
+#
+# The structural tests above read the YAML. These run the step's actual shell
+# against stubbed `git` and `gh`, because the property under test is a runtime
+# ordering and an exit code, and neither is visible in the document.
+#
+# The defect this closes: the first version caught `gh pr create`'s refusal and
+# exited 0. The refreshed hints then sat on a branch nobody was told about while
+# master kept decaying toward the hard stop — a GREEN run that silently needed a
+# human, which is the same shape as #5662's "stay green and sync nothing".
+
+_GIT_STUB = r"""#!/usr/bin/env bash
+echo "git $*" >> "$STUB_LOG"
+case "$1 $2" in
+  # There ARE changes to propose, so the step does not take its early exit.
+  "diff --quiet") exit 1 ;;
+esac
+exit 0
+"""
+
+_GH_STUB = r"""#!/usr/bin/env bash
+echo "gh $*" >> "$STUB_LOG"
+case "$1 $2" in
+  "pr view")   exit "${STUB_PR_VIEW_RC:-1}" ;;
+  "pr create") echo "$STUB_PR_CREATE_MSG"; exit "${STUB_PR_CREATE_RC:-1}" ;;
+  "pr edit")   exit "${STUB_PR_EDIT_RC:-0}" ;;
+esac
+exit 0
+"""
+
+
+def _run_pr_step(tmp_path, **env):
+    """Execute the 'Open (or update) the refresh PR' step with git/gh stubbed."""
+    doc = yaml.safe_load(WORKFLOW.read_text())
+    step = next(
+        s for s in doc["jobs"]["refresh"]["steps"]
+        if str(s.get("name", "")).startswith("Open (or update)")
+    )
+    # GitHub expression interpolation is the runner's job, not bash's.
+    script = re.sub(r"\$\{\{[^}]*\}\}", "175", step["run"])
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, body in (("git", _GIT_STUB), ("gh", _GH_STUB)):
+        f = bindir / name
+        f.write_text(body)
+        f.chmod(0o755)
+
+    runner_temp = tmp_path / "rt"
+    runner_temp.mkdir()
+    (runner_temp / "staleness-after.json").write_text('{"unmeasured": 0}')
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    log = tmp_path / "stub.log"
+    log.touch()
+
+    script_file = tmp_path / "step.sh"
+    script_file.write_text(script)
+
+    import os
+    import subprocess
+
+    proc = subprocess.run(
+        ["bash", str(script_file)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "RUNNER_TEMP": str(runner_temp),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "STUB_LOG": str(log),
+            "RUN_ID": "34709301550",
+            "REPO": "alexander-bain/bainluck",
+            "SOURCE_SHA": "deadbeef",
+            "STUB_PR_CREATE_MSG": "GitHub Actions is not permitted to create or approve pull requests",
+            **env,
+        },
+    )
+    return proc, log.read_text(), summary.read_text()
+
+
+def test_a_refused_pr_creation_fails_loudly_after_the_branch_is_preserved(tmp_path):
+    """CERT-2752's required test. Four properties, all on one real execution.
+
+    A green run whose work needs a human is worse than a red one, because only
+    the red is ever looked at. But failing BEFORE the branch is pushed would
+    throw away the download, the census and the record — so the order matters as
+    much as the exit code, and both are asserted here rather than inferred.
+    """
+    proc, log, summary = _run_pr_step(
+        tmp_path, STUB_PR_VIEW_RC="1", STUB_PR_CREATE_RC="1"
+    )
+
+    # 1. It fails. This is the repair.
+    assert proc.returncode != 0, (
+        f"a refused PR must not exit 0.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+
+    # 2. The branch was pushed, and pushed BEFORE the PR was attempted — so the
+    #    expensive half is banked and a retry is a click, not a rerun.
+    assert "git push --force origin ci/shard-hints-refresh" in log, log
+    assert log.index("git push --force") < log.index("gh pr create"), (
+        f"the branch must be pushed before the PR is attempted:\n{log}"
+    )
+
+    # 3. The work is recoverable by hand, and the summary says exactly how.
+    assert "ci/shard-hints-refresh" in summary
+    assert "gh pr create --base master --head ci/shard-hints-refresh" in summary
+    assert "nothing needs redoing" in summary
+
+    # 4. The failure explains itself where a reader will be looking — the log —
+    #    rather than only in a summary tab.
+    assert "::error::" in proc.stdout
+    assert "REFUSED" in proc.stdout
+
+
+def test_the_step_succeeds_when_the_pr_can_be_created(tmp_path):
+    """Positive control.
+
+    Without it, the repair above is satisfied by a step that always fails — and
+    a workflow that is permanently red is one nobody reads either.
+    """
+    proc, log, summary = _run_pr_step(
+        tmp_path, STUB_PR_VIEW_RC="1", STUB_PR_CREATE_RC="0"
+    )
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    assert "git push --force origin ci/shard-hints-refresh" in log
+    assert "::error::" not in proc.stdout
+
+
+def test_updating_an_already_open_pr_succeeds(tmp_path):
+    """The rolling-proposal path: the branch already has a PR, so update its body.
+
+    This is the common case after the first firing, and it must not be swept into
+    the failure branch by the repair above.
+    """
+    proc, log, _ = _run_pr_step(
+        tmp_path, STUB_PR_VIEW_RC="0", STUB_PR_EDIT_RC="0"
+    )
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    assert "gh pr edit" in log
+    assert "gh pr create" not in log
+
+
+def test_a_failed_update_of_an_open_pr_is_also_loud(tmp_path):
+    """The other way the PR half can fail silently.
+
+    `gh pr edit` failing leaves an OPEN PR carrying a stale body — describing a
+    different run, a different sha and a different unmeasured count — which is
+    more misleading than no PR at all.
+    """
+    proc, _, _ = _run_pr_step(
+        tmp_path, STUB_PR_VIEW_RC="0", STUB_PR_EDIT_RC="1"
+    )
+    assert proc.returncode != 0, f"stdout:\n{proc.stdout}"
+
+
+def test_the_step_holds_when_there_is_nothing_to_propose(tmp_path):
+    """If the hints are already current on this sha, exit 0 and touch nothing.
+
+    Proven by the absence of a push, not by the exit code alone — exit 0 is also
+    what a successful run returns.
+    """
+    git_noop = _GIT_STUB.replace('"diff --quiet") exit 1 ;;', '"diff --quiet") exit 0 ;;')
+    doc = yaml.safe_load(WORKFLOW.read_text())
+    step = next(
+        s for s in doc["jobs"]["refresh"]["steps"]
+        if str(s.get("name", "")).startswith("Open (or update)")
+    )
+    import os
+    import subprocess
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "git").write_text(git_noop)
+    (bindir / "git").chmod(0o755)
+    (bindir / "gh").write_text(_GH_STUB)
+    (bindir / "gh").chmod(0o755)
+    rt = tmp_path / "rt"
+    rt.mkdir()
+    log = tmp_path / "stub.log"
+    log.touch()
+    sf = tmp_path / "step.sh"
+    sf.write_text(re.sub(r"\$\{\{[^}]*\}\}", "175", step["run"]))
+    proc = subprocess.run(
+        ["bash", str(sf)], capture_output=True, text=True, cwd=tmp_path,
+        env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+             "RUNNER_TEMP": str(rt), "GITHUB_STEP_SUMMARY": str(tmp_path / "s.md"),
+             "STUB_LOG": str(log), "RUN_ID": "1", "REPO": "o/r", "SOURCE_SHA": "abc"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "git push" not in log.read_text(), "nothing should be pushed when there is no change"
 
 
 def test_the_checkout_pins_the_sha_whose_logs_are_read(workflow):
