@@ -309,7 +309,13 @@ _REPAIRS = {
     # three market-shape conjuncts that reached 225 markets and left 1,965
     # behind. ?min_harm= drains the worst-priced cohort first (arm B; it is a
     # threshold and not a re-sort, because sorting on a per-market aggregate
-    # re-introduces the #2528 timeout). Mutually-exclusive markets holding
+    # re-introduces the #2528 timeout). CAL-P1125 (CERT-2705): ?min_harm= is a
+    # COHORT selector exactly as ?band= is, so it scopes the two completion keys
+    # the same way — `exhausted_scope` names every selector in force
+    # ("min_harm", or "band+min_harm" for both) and `population_exhausted` can
+    # only be true when neither is. A drained 90%+ slice is not a drained
+    # population, and the attended run must not halt as though it were.
+    # Mutually-exclusive markets holding
     # exactly one winner are EXCLUDED by design — their remaining legs lost by
     # exclusion, so retracting them would delete correct rows from the curve.
     # Unlike every earlier version of this rail, the retraction arm now MOVES the

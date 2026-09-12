@@ -2833,6 +2833,20 @@ async def _dry_run(
         order_rank={int(r.market_id): i for i, r in enumerate(rows)},
     )
 
+    # CAL-P1125 (CERT-2705): every cohort selector in force, in a fixed order so
+    # the scope string is stable ("band" alone still reads "band"). A non-empty
+    # list means this page spoke for a SLICE, which is the whole test
+    # `population_exhausted` needs — it can be made false by any selector and
+    # true by none of them.
+    exhaustion_selectors = [
+        name
+        for name, active in (
+            ("band", bool(parsed_band)),
+            ("min_harm", min_harm is not None),
+        )
+        if active
+    ]
+
     return {
         "apply": False,
         "window": {
@@ -2941,10 +2955,22 @@ async def _dry_run(
         # clause above (gotcha #53), one level up. So the scope is stated and the
         # population's own answer is a SEPARATE key that a band can only make
         # false, never true.
-        "exhausted_scope": "band" if parsed_band else "population",
+        #
+        # CAL-P1125 (CERT-2705, repair `3617-THRESHOLD-EXHAUSTION-IS-COHORT-ONLY`):
+        # the scope was derived from the band ALONE while arm B added a SECOND
+        # cohort selector beside it. `?min_harm=0.9` over an empty high-harm
+        # cohort therefore answered `exhausted_scope: "population"` and
+        # `population_exhausted: true` with 1,965 lower-harm markets never asked
+        # about — the payload's own `min_harm_means` ("`exhausted` at a threshold
+        # says nothing about rows beneath it") denied the two keys beside it, and
+        # an operator reading the drain's halt line would stop the attended run
+        # with false venue-losses still on the curve. Both keys now read the SET
+        # of active selectors, so a third selector is one list entry, not another
+        # silent re-run of this bug.
+        "exhausted_scope": "+".join(exhaustion_selectors) or "population",
         "population_exhausted": (
             False
-            if parsed_band
+            if exhaustion_selectors
             else ((not timed_out) and (not rate_limited) and len(rows) < window)
         ),
         "band_note": (

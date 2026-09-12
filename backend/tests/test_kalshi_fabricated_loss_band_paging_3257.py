@@ -204,6 +204,7 @@ async def _dry_run(
     cursor=None,
     band_as_of=None,
     now=_DB_NOW,
+    min_harm=None,
 ):
     """Run the shipping `_dry_run` against a venue that answers nothing."""
     import app.services.kalshi_api as kalshi_api
@@ -233,6 +234,7 @@ async def _dry_run(
         time.monotonic(),
         band=band,
         band_as_of=band_as_of,
+        min_harm=min_harm,
     )
     return result, session
 
@@ -354,6 +356,46 @@ class TestABandedPageIsNeverAFinishedDrain:
                 monkeypatch, rows=rows, band="47-67", limit=limit
             )
             assert result["population_exhausted"] is False
+
+    @pytest.mark.asyncio
+    async def test_min_harm_exhaustion_does_not_claim_population_exhaustion_3617(
+        self, monkeypatch
+    ):
+        """CAL-P1125 / CERT-2705. `?min_harm=` is the SECOND cohort selector, and
+        the two completion keys were derived from the band alone — so a drained
+        90%+ slice answered `population` / `True` with every lower-harm market
+        never asked about, and the attended run's halt line told the operator the
+        curve was clean while false venue-losses were still on it.
+
+        Asserted over all four selector combinations, because a fix that made the
+        threshold honest while leaving the pair (or the plain population case)
+        wrong would be the same bug with a smaller blast radius.
+        """
+        cases = (
+            # (band, min_harm, expected scope, expected population_exhausted)
+            (None, None, "population", True),
+            (None, 0.9, "min_harm", False),
+            ("47-67", None, "band", False),
+            ("47-67", 0.9, "band+min_harm", False),
+        )
+
+        for band, min_harm, scope, population_exhausted in cases:
+            # An EMPTY cohort against a window of 40 — the grader's scenario, and
+            # the only shape in which the old code asserted a finished population.
+            result, _ = await _dry_run(
+                monkeypatch, rows=[], band=band, limit=40, min_harm=min_harm
+            )
+            label = f"band={band!r} min_harm={min_harm!r}"
+
+            assert result["exhausted"] is True, label
+            assert result["exhausted_scope"] == scope, label
+            assert result["population_exhausted"] is population_exhausted, label
+
+            # The payload must not deny itself: `min_harm_means` already promised
+            # that exhaustion at a threshold says nothing about the rows beneath
+            # it, and that promise is only worth the key that has to honour it.
+            if result["window"]["min_harm_means"] is not None:
+                assert result["population_exhausted"] is False, label
 
     @pytest.mark.asyncio
     async def test_the_band_travels_into_the_plan_context(self, monkeypatch):
