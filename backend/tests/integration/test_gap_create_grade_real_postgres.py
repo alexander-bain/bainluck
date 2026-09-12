@@ -352,6 +352,13 @@ async def _run_poll(session, events):
     service = MagicMock()
     service.get_all_events = AsyncMock(return_value=events)
     service.close = AsyncMock()
+    # #5637: the poll resolves the venue's series tag for tickers with no
+    # mapping in `sport_keys.py`. A bare MagicMock attribute is not awaitable,
+    # which the top-level handler turns into "processed 0/1 events". `None` =
+    # "this series carries no tag", so these gap-create specimens keep being
+    # classified exactly as they were before that ship — the behaviour this
+    # file is about is unchanged.
+    service.get_series_metadata = AsyncMock(return_value=None)
 
     @asynccontextmanager
     async def _session_cm(**_budget):

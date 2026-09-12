@@ -662,7 +662,28 @@ async def _resolve_series_tag(service, event_ticker: Optional[str]) -> Optional[
     if series in _SERIES_TAG_CACHE:
         return _SERIES_TAG_CACHE[series]
 
-    data = await service.get_series_metadata(series)
+    # The tag is an ENRICHMENT and ingestion is critical, so a failure here
+    # degrades to the pre-#5637 cascade instead of taking the beat down. Found
+    # the hard way: the first CI run of this ship reported
+    # "Kalshi poll processed 0/1 events — ingestion may be broken" because one
+    # raise inside this resolve aborted the whole poll at the top level.
+    #
+    # Narrow on purpose — it wraps the single service call and nothing else —
+    # and LOUD, not silent (gotcha #53): the warning names the series, and the
+    # miss is cached so a sick series costs one line per beat, not one per
+    # event. `get_series_metadata` already returns None for a real 404, so
+    # reaching this means something unexpected, and unexpected is worth saying.
+    try:
+        data = await service.get_series_metadata(series)
+    except Exception as exc:
+        logger.warning(
+            "#5637: could not resolve the Kalshi series tag for %s (%s) — "
+            "falling back to name-based classification for this series",
+            series,
+            exc,
+        )
+        data = None
+
     tags = (data or {}).get("tags") or []
     tag = tags[0] if tags else None
     if len(_SERIES_TAG_CACHE) < _SERIES_TAG_CACHE_MAX:

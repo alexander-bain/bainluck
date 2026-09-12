@@ -25,6 +25,7 @@ into ours is derivable from `SPORT_PREFIX_TO_LLM_CATEGORY` with no literals.
 """
 
 import pytest
+from unittest.mock import MagicMock
 
 from app.tasks.kalshi import (
     _SERIES_TAG_CACHE,
@@ -316,6 +317,49 @@ async def test_a_missing_series_does_not_raise_and_does_not_guess():
     service = _FakeService({})
     assert await _resolve_series_tag(service, "KXNOSUCHSERIES-26") is None
     assert service.calls == ["KXNOSUCHSERIES"]
+
+
+@pytest.mark.asyncio
+async def test_a_raising_series_lookup_degrades_instead_of_killing_the_beat():
+    """Ingestion must survive a sick enrichment.
+
+    The first CI run of this ship failed with "Kalshi poll processed 0/1
+    events — ingestion may be broken", because one raise inside the resolve
+    aborted the whole poll at the top level. A tag we cannot read is a reason
+    to classify the old way, never a reason to stop ingesting Kalshi.
+    """
+
+    class _Raising:
+        async def get_series_metadata(self, series_ticker):
+            raise RuntimeError("kalshi /series is having a day")
+
+    assert await _resolve_series_tag(_Raising(), "KXEFLL1GAME-25SEP12AFCVDON") is None
+
+
+@pytest.mark.asyncio
+async def test_a_non_awaitable_service_attribute_degrades_too():
+    """The exact shape that broke CI: a fake whose method is not awaitable."""
+    service = MagicMock()
+    assert await _resolve_series_tag(service, "KXEFLL1GAME-25SEP12AFCVDON") is None
+
+
+@pytest.mark.asyncio
+async def test_a_sick_series_is_only_looked_up_once_per_beat():
+    """The degraded result is cached too, so a bad series costs one line, not
+    one per event in it."""
+
+    class _CountingRaiser:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_series_metadata(self, series_ticker):
+            self.calls += 1
+            raise RuntimeError("boom")
+
+    service = _CountingRaiser()
+    for _ in range(3):
+        assert await _resolve_series_tag(service, "KXEFLL1GAME-25SEP12X") is None
+    assert service.calls == 1
 
 
 @pytest.mark.asyncio
