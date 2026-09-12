@@ -2262,6 +2262,38 @@ def league_identity(sport_key: Optional[str]) -> Optional[str]:
     return "/".join(mapped) if mapped else base
 
 
+def league_family_identity(sport_key: Optional[str]) -> Optional[str]:
+    """The set of play that belongs on one entity's page, as a single token.
+
+    `league_identity` already collapses a SEASON VARIANT onto its parent
+    (``baseball_mlb_preseason`` → ``baseball/mlb``). This adds the TOUR case:
+    for a league in :data:`TOUR_LEAGUES_INCLUDING_TOURNAMENTS`, every
+    ``<tour>_<tournament>`` key is that tour's own play, so a player registered
+    under ``tennis_atp_us_open`` and a match ingested under ``tennis_atp`` are
+    one family. Without that arm, a read-side league guard cuts a player off
+    from their own matches — measured on production 2026-09-12, 1,454 of the
+    unbound name-matched rows in a ±21-day window are exactly this shape.
+
+    Membership is a plain ``<tour>_`` prefix test, NOT the confirmed-key test
+    `tour_scope_sport_keys` uses, and the difference is deliberate. That helper
+    WIDENS a scope query, so an uningested tournament key must not count. This
+    one decides whether to EXCLUDE, so widening is the safe direction: a key
+    this test admits in error costs a row that was already being shown, while a
+    key it misses costs a player their match. Fail open (D55 is about inferring
+    MEMBERSHIP of a competition; the tour opt-in here is still declared).
+
+    Returns ``None`` for a missing key, like `league_identity` — callers decide
+    their own fallback rather than being handed an identity that equates every
+    unknown.
+    """
+    if not sport_key:
+        return None
+    for tour in TOUR_LEAGUES_INCLUDING_TOURNAMENTS:
+        if sport_key == tour or sport_key.startswith(f"{tour}_"):
+            return tour
+    return league_identity(sport_key)
+
+
 def normalize_to_win_prob_key(sport_key: str) -> str:
     """Map an Odds API sport key to the canonical win-prob model key.
 
