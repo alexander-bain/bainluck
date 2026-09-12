@@ -31,6 +31,9 @@ while looking like a clean rollback.
   python3 scripts/unreachable_suspended_door.py --close
 
   # -- one command to put every retired row back exactly as it was --
+  # It shuts the door, waits out any pass that already latched a budget, and
+  # only then writes. It can therefore BLOCK for up to the marker expiry, and it
+  # exits 2 without touching a row rather than restore into a live writer.
   python3 scripts/unreachable_suspended_door.py --restore
 """
 
@@ -45,7 +48,16 @@ from sqlalchemy import text  # noqa: E402
 
 #: The one app this may be pointed at. A repair script that will run anywhere is
 #: a repair script that will eventually run somewhere else (notice 47(c)).
-ALLOWED_APPS = ("bainluck", "bainluck-heavy")
+#:
+#: FOLLOW-UP `5532-REQUIRE-THE-MAIN-APP-NOT-EITHER-APP` (CERT-2757). This read
+#: `("bainluck", "bainluck-heavy")`, which is not "a named app" — it is two, and
+#: notice 47(c) asks for the one where the thing being controlled actually runs.
+#: The arm lives in `transition_event_statuses` on the **realtime** queue, which
+#: is the main app; `bainluck-heavy` runs a different worker off the same
+#: database, so a `--close` typed there would be correct about Redis and yet
+#: leave the operator watching the wrong dyno for the effect. Narrowed to the
+#: app whose logs answer "did it stop?".
+ALLOWED_APPS = ("bainluck",)
 
 
 def _constants():
@@ -53,6 +65,8 @@ def _constants():
         SUSPENDED_RESUME_WINDOW,
         UNREACHABLE_SUSPENDED_BACKUP_TABLE,
         UNREACHABLE_SUSPENDED_BUDGET_KEY,
+        UNREACHABLE_SUSPENDED_INFLIGHT_KEY,
+        UNREACHABLE_SUSPENDED_INFLIGHT_TTL,
         UNREACHABLE_SUSPENDED_MAX_BUDGET,
     )
     from app.utils.event_completion import (
@@ -63,6 +77,8 @@ def _constants():
     return {
         "table": UNREACHABLE_SUSPENDED_BACKUP_TABLE,
         "key": UNREACHABLE_SUSPENDED_BUDGET_KEY,
+        "inflight_key": UNREACHABLE_SUSPENDED_INFLIGHT_KEY,
+        "inflight_ttl": UNREACHABLE_SUSPENDED_INFLIGHT_TTL,
         "max_budget": UNREACHABLE_SUSPENDED_MAX_BUDGET,
         "terminal": UNREACHABLE_SUSPENDED_TERMINAL,
         # Derived from the arm's own constants, never restated here — a runbook
@@ -166,6 +182,23 @@ async def _restore():
               "pass would re-retire every row this restores. Nothing written.")
         return 2
 
+    # 🔴 THEN WAIT OUT THE PASS THAT IS ALREADY RUNNING
+    # (CERT-2757, repair `5532-RESTORE-FENCES-IN-FLIGHT-RETIREMENT`).
+    #
+    # Closing the door stops every FUTURE pass and says nothing about the
+    # current one. A pass that read the budget key a moment ago holds that
+    # number in memory, is inside an uncommitted transaction, and will write
+    # `voided` AFTER this UPDATE has handed the row back — so the rollback
+    # reports success and the row ends retired anyway. That is the same failure
+    # CERT-2753 caught, one layer down: not "the next pass undoes it" but "the
+    # pass already in flight undoes it".
+    #
+    # Ordering is the fix, and it only works in this sequence: close first so no
+    # new pass can latch a budget, THEN drain, so the set being waited on can
+    # only shrink. Draining first would race forever against new passes.
+    if not _wait_out_inflight_passes():
+        return 2
+
     async with get_task_session() as session:
         r = await session.execute(
             text(
@@ -205,6 +238,80 @@ def _close_door() -> bool:
         return False
     print(f"{c['key']} deleted — the arm is off from its next pass.")
     return True
+
+
+def _live_inflight_markers(client, now):
+    """Markers of passes that may still write; expired ones are pruned.
+
+    Each field's value is a deadline. A field past it belongs to a pass that was
+    hard-killed before it could clear up, and it is deleted HERE rather than
+    left to the registry's own expiry — every fresh registration pushes that
+    expiry out, so on a task that registers every 60 seconds a dead field would
+    otherwise be immortal and no restore would ever run again.
+
+    A value that will not parse counts as LIVE. That is one unreadable byte
+    weighed against writing a terminal status onto rows somebody just asked to
+    have back; the registry's expiry bounds how long it can hold restore up.
+    """
+    live, expired = [], []
+    for field, value in (client.hgetall(_constants()["inflight_key"]) or {}).items():
+        raw = value.decode() if isinstance(value, bytes) else value
+        try:
+            deadline = float(raw)
+        except (TypeError, ValueError):
+            live.append(field)
+            continue
+        (live if deadline > now else expired).append(field)
+    if expired:
+        client.hdel(_constants()["inflight_key"], *expired)
+    return live
+
+
+def _wait_out_inflight_passes(poll_seconds: float = 1.0) -> bool:
+    """Block until no pass holds a latched budget. False ⇒ do not restore.
+
+    Bounded by the marker expiry plus a margin, so this terminates even if the
+    registry is wedged. It can only terminate EARLY on a positive answer — the
+    door is already shut when we get here, so the set of in-flight passes can
+    only shrink, and "empty once" cannot become "non-empty again".
+
+    Every failure returns False. A restore that cannot see the fence is a
+    restore that cannot promise the rows stay restored, and saying so is worth
+    more than performing the UPDATE.
+    """
+    import time
+
+    c = _constants()
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+    except Exception as exc:  # noqa: BLE001
+        print(f"REFUSING to restore: no Redis to read the in-flight fence: {exc}")
+        return False
+
+    give_up_at = time.monotonic() + c["inflight_ttl"] + 5
+    announced = False
+    while True:
+        try:
+            live = _live_inflight_markers(client, time.time())
+        except Exception as exc:  # noqa: BLE001
+            print(f"REFUSING to restore: in-flight fence unreadable: {exc}")
+            return False
+        if not live:
+            if announced:
+                print("in-flight pass finished; restoring.")
+            return True
+        if time.monotonic() >= give_up_at:
+            print(f"REFUSING to restore: {len(live)} pass(es) still hold a "
+                  f"latched budget after {c['inflight_ttl'] + 5}s. They would "
+                  f"re-void the rows this restores. Nothing written.")
+            return False
+        if not announced:
+            print(f"door shut; waiting out {len(live)} pass(es) that already "
+                  f"latched a budget (up to {c['inflight_ttl'] + 5}s)...")
+            announced = True
+        time.sleep(poll_seconds)
 
 
 def _set_budget(value):

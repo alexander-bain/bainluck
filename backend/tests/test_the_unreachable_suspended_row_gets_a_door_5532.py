@@ -465,6 +465,17 @@ class TestRestoreClosesTheDoorBeforeRestoringRows:
             self.calls.append(("redis.get", key))
             return b"200" if self._still else None
 
+        # The in-flight fence (CERT-2757) reads a hash on the way to the UPDATE.
+        # Given to the fake rather than stubbed past, so these tests still
+        # exercise the real `_restore` — an empty registry is the state they
+        # were written in: no pass has latched a budget.
+        def hgetall(self, key):
+            self.calls.append(("redis.hgetall", key))
+            return {}
+
+        def hdel(self, key, *fields):
+            self.calls.append(("redis.hdel", key))
+
         # -- session half --
         async def execute(self, *a, **k):
             self.calls.append(("sql.execute", None))
@@ -618,3 +629,375 @@ class TestAnAbsentAppNameIsNotTheNamedApp:
         assert task_base  # the guard must not be what stops us
         assert mod.main() == 0
         assert called["n"] == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CERT-2757: `5532-RESTORE-FENCES-IN-FLIGHT-RETIREMENT`
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _FenceRedis:
+    """A Redis with the four operations the fence needs, and a call journal.
+
+    Deliberately not a mock: the ordering claim below ("the registration happens
+    before the budget read") is only worth something if one object sees both
+    halves in the order the real client would.
+    """
+
+    def __init__(self, budget=None, hset_raises=False):
+        self.strings = {}
+        self.hashes = {}
+        self.calls = []
+        self._hset_raises = hset_raises
+        if budget is not None:
+            self.strings[
+                "events:unreachable_suspended_budget"
+            ] = str(budget).encode()
+
+    def get(self, key):
+        self.calls.append(("get", key))
+        return self.strings.get(key)
+
+    def set(self, key, value):
+        self.calls.append(("set", key))
+        self.strings[key] = str(value).encode()
+
+    def delete(self, key):
+        self.calls.append(("delete", key))
+        self.strings.pop(key, None)
+
+    def hset(self, key, field, value):
+        self.calls.append(("hset", key))
+        if self._hset_raises:
+            raise RuntimeError("redis down")
+        self.hashes.setdefault(key, {})[field] = str(value).encode()
+
+    def hdel(self, key, *fields):
+        self.calls.append(("hdel", key))
+        for f in fields:
+            self.hashes.get(key, {}).pop(f, None)
+
+    def hgetall(self, key):
+        self.calls.append(("hgetall", key))
+        return dict(self.hashes.get(key, {}))
+
+    def expire(self, key, ttl):
+        self.calls.append(("expire", key))
+
+
+class TestTheInFlightFenceBracketsTheBudget:
+    """The arm's half of CERT-2757's named repair.
+
+    Closing the door stops future passes. This is about the pass that already
+    read the key: its budget is latched in memory, its transaction is open, and
+    nothing in Redis says it exists. These assert that something does.
+    """
+
+    def _redis(self, monkeypatch, fake):
+        import app.tasks.redis_state as redis_state
+
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        return fake
+
+    def test_registration_precedes_the_budget_read_5532(self, monkeypatch):
+        """Reverse these two lines and the defect is back.
+
+        Register after the read and there is an instant in which a pass holds a
+        positive budget while the registry is clean — which is exactly the
+        instant a restore looks.
+        """
+        from app.tasks import espn_sync
+
+        fake = self._redis(monkeypatch, _FenceRedis(budget=5))
+        budget, token = espn_sync._latch_unreachable_suspended_budget()
+
+        assert budget == 5 and token
+        names = [c[0] for c in fake.calls]
+        assert "hset" in names and "get" in names
+        assert names.index("hset") < names.index("get"), fake.calls
+
+    def test_a_latched_pass_is_visible_in_the_registry_5532(self, monkeypatch):
+        from app.tasks import espn_sync
+
+        fake = self._redis(monkeypatch, _FenceRedis(budget=5))
+        _, token = espn_sync._latch_unreachable_suspended_budget()
+        assert token in fake.hashes[espn_sync.UNREACHABLE_SUSPENDED_INFLIGHT_KEY]
+
+    def test_releasing_clears_the_marker_5532(self, monkeypatch):
+        from app.tasks import espn_sync
+
+        fake = self._redis(monkeypatch, _FenceRedis(budget=5))
+        _, token = espn_sync._latch_unreachable_suspended_budget()
+        espn_sync._release_unreachable_suspended_inflight(token)
+        assert not fake.hashes[espn_sync.UNREACHABLE_SUSPENDED_INFLIGHT_KEY]
+
+    def test_a_pass_that_cannot_register_retires_nothing_5532(self, monkeypatch):
+        """Fail closed, for the same reason the budget read does: 'the fence is
+        broken' and 'the operator asked for this' must not look alike."""
+        from app.tasks import espn_sync
+
+        self._redis(monkeypatch, _FenceRedis(budget=500, hset_raises=True))
+        assert espn_sync._latch_unreachable_suspended_budget() == (0, None)
+
+    def test_a_zero_budget_pass_does_not_hold_the_fence_5532(self, monkeypatch):
+        """The door is shut almost always. If every pass left a marker behind
+        until it ended, a restore would wait on passes that never write."""
+        from app.tasks import espn_sync
+
+        fake = self._redis(monkeypatch, _FenceRedis(budget=None))
+        budget, token = espn_sync._latch_unreachable_suspended_budget()
+        assert (budget, token) == (0, None)
+        assert not fake.hashes.get(espn_sync.UNREACHABLE_SUSPENDED_INFLIGHT_KEY)
+
+    def test_the_inflight_ttl_outlasts_the_hard_kill_that_is_enforced_5532(self):
+        """Two constants answering one question; assert the gap.
+
+        The marker expiry must outlive the longest a pass can possibly run. The
+        bound that is ENFORCED is Celery's global `task_time_limit` — this task
+        declares none of its own — not the 60s beat, which is the number it is
+        tempting to size against. Under the kill and a live pass loses its
+        marker while still holding a budget; the fence would open under it.
+        """
+        from app.tasks import celery_app, espn_sync
+
+        enforced = celery_app.conf.task_time_limit
+        assert enforced, "no enforced task limit to size the fence against"
+        assert espn_sync.UNREACHABLE_SUSPENDED_INFLIGHT_TTL > enforced, (
+            f"marker expiry {espn_sync.UNREACHABLE_SUSPENDED_INFLIGHT_TTL}s does "
+            f"not outlast the {enforced}s hard kill"
+        )
+
+    def test_the_release_is_outside_the_transaction_block_5532(self):
+        """Structural, because the property is structural.
+
+        `get_task_session` commits when its block exits. Releasing inside the
+        block clears the fence while the retirement it fences is still
+        uncommitted — restore would then update rows a live writer is about to
+        void. Asserted on the parse tree rather than on indentation in a string.
+        """
+        import ast
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "app" / "tasks" / "espn_sync.py"
+        ).read_text()
+        fn = next(
+            n for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.AsyncFunctionDef)
+            and n.name == "_transition_event_statuses_impl"
+        )
+
+        def _releases(node):
+            return [
+                c for c in ast.walk(node)
+                if isinstance(c, ast.Call)
+                and getattr(c.func, "id", None)
+                == "_release_unreachable_suspended_inflight"
+            ]
+
+        inside = [r for w in ast.walk(fn) if isinstance(w, ast.AsyncWith)
+                  for r in _releases(w)]
+        assert not inside, "the release sits inside the transaction it fences"
+        assert _releases(fn), "the pass never releases its marker at all"
+
+
+class TestRestoreWaitsOutAPassThatAlreadyLatchedABudget:
+    """CERT-2757's REQUIRED test, and the control that proves it is not vacuous.
+
+    The grader's reproduction: the real task latches budget 1, `_restore`
+    deletes the key and returns 0 while the row is suspended, the pass resumes
+    and leaves the row voided. The rollback reports success and reverses the
+    operator — the same defect CERT-2753 caught, one layer down.
+    """
+
+    TERMINAL = "voided"
+    PREVIOUS = "suspended"
+
+    class _Row:
+        def __init__(self, status):
+            self.status = status
+
+    def _wire(self, monkeypatch, fake, row):
+        """One fake Redis and one fake session, both over the same row."""
+        import contextlib
+
+        import app.tasks.base as task_base
+        import app.tasks.redis_state as redis_state
+
+        mod = TestRestoreClosesTheDoorBeforeRestoringRows._load()
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+
+        class _Session:
+            async def execute(self, *a, **k):
+                # The restore's UPDATE, modelled: previous status back, but only
+                # for a row that is actually in the terminal state right now.
+                hit = row.status == TestRestoreWaitsOutAPassThatAlreadyLatchedABudget.TERMINAL
+                if hit:
+                    row.status = (
+                        TestRestoreWaitsOutAPassThatAlreadyLatchedABudget.PREVIOUS
+                    )
+
+                class _R:
+                    rowcount = 1 if hit else 0
+
+                return _R()
+
+            async def commit(self):
+                pass
+
+        @contextlib.asynccontextmanager
+        async def _session():
+            yield _Session()
+
+        monkeypatch.setattr(task_base, "get_task_session", _session)
+        return mod
+
+    def test_restore_waits_out_a_pass_that_latched_budget_5532(self, monkeypatch):
+        import asyncio
+        import threading
+        import time
+
+        from app.tasks import espn_sync
+
+        fake = _FenceRedis(budget=1)
+        row = self._Row(self.PREVIOUS)
+        mod = self._wire(monkeypatch, fake, row)
+
+        # 1. A pass latches a positive budget and is PAUSED before retiring.
+        budget, token = espn_sync._latch_unreachable_suspended_budget()
+        assert budget == 1 and token
+
+        # 2. The operator starts the rollback while that pass is mid-flight.
+        result = {}
+        restore = threading.Thread(
+            target=lambda: result.update(code=asyncio.run(mod._restore()))
+        )
+        restore.start()
+
+        # 3. It must WAIT. The door is shut by now, but nothing has been written.
+        time.sleep(2.0)
+        assert restore.is_alive(), "restore did not wait for the in-flight pass"
+        assert "code" not in result
+        assert espn_sync._unreachable_suspended_budget() == 0, "door not shut first"
+
+        # 4. The pass resumes, writes its terminal, commits, releases.
+        row.status = self.TERMINAL
+        espn_sync._release_unreachable_suspended_inflight(token)
+
+        # 5. Only now may the restore act — and the row ends where it began.
+        restore.join(timeout=30)
+        assert not restore.is_alive(), "restore never woke up"
+        assert result["code"] == 0
+        assert row.status == self.PREVIOUS, (
+            "the in-flight pass reversed the operator: the row finished "
+            f"{row.status!r}"
+        )
+        assert espn_sync._unreachable_suspended_budget() == 0
+
+    def test_without_the_fence_the_in_flight_pass_wins_5532(self, monkeypatch):
+        """THE CONTROL. Same script, same ordering, fence disabled.
+
+        Without this the test above passes whether or not the wait does
+        anything — every step would still run in the order written. Here the
+        restore is allowed straight through, the paused pass then writes its
+        terminal, and the row finishes RETIRED with the rollback reporting
+        success. That is the defect CERT-2757 named, reproduced.
+        """
+        import asyncio
+
+        from app.tasks import espn_sync
+
+        fake = _FenceRedis(budget=1)
+        row = self._Row(self.PREVIOUS)
+        mod = self._wire(monkeypatch, fake, row)
+
+        budget, token = espn_sync._latch_unreachable_suspended_budget()
+        assert budget == 1 and token
+
+        monkeypatch.setattr(mod, "_wait_out_inflight_passes", lambda *a, **k: True)
+        assert asyncio.run(mod._restore()) == 0  # "success"
+
+        row.status = self.TERMINAL  # the pass resumes and commits
+        espn_sync._release_unreachable_suspended_inflight(token)
+
+        assert row.status == self.TERMINAL, (
+            "the control did not reproduce the defect, so the test above proves "
+            "nothing"
+        )
+
+    def test_an_expired_marker_is_pruned_rather_than_blocking_forever_5532(
+        self, monkeypatch
+    ):
+        """A hard-killed pass cannot clear up after itself, and this task IS
+        hard-killed. Leaving the dead field to the registry's own expiry is not
+        enough: every fresh registration pushes that expiry out, so on a 60s
+        beat the field would be immortal and no restore would ever run again."""
+        import asyncio
+        import time
+
+        from app.tasks import espn_sync
+
+        fake = _FenceRedis(budget=1)
+        key = espn_sync.UNREACHABLE_SUSPENDED_INFLIGHT_KEY
+        fake.hashes[key] = {"corpse": str(time.time() - 1).encode()}
+
+        row = self._Row(self.TERMINAL)
+        mod = self._wire(monkeypatch, fake, row)
+
+        assert asyncio.run(mod._restore()) == 0
+        assert row.status == self.PREVIOUS
+        assert "corpse" not in fake.hashes[key], "the dead marker was not pruned"
+
+    def test_an_unparseable_marker_counts_as_live_5532(self, monkeypatch):
+        """One unreadable byte against writing a terminal onto rows somebody
+        just asked to have back. Held, then refused — never restored blind."""
+        import time
+
+        from app.tasks import espn_sync
+
+        fake = _FenceRedis(budget=1)
+        fake.hashes[espn_sync.UNREACHABLE_SUSPENDED_INFLIGHT_KEY] = {
+            "junk": b"not-a-deadline"
+        }
+        mod = TestRestoreClosesTheDoorBeforeRestoringRows._load()
+
+        import app.tasks.redis_state as redis_state
+
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        assert mod._live_inflight_markers(fake, time.time()) == ["junk"]
+
+    def test_restore_refuses_when_the_fence_is_unreadable_5532(self, monkeypatch):
+        """A restore that cannot see the fence cannot promise the rows stay
+        restored, and saying so beats performing the UPDATE."""
+        import asyncio
+
+        fake = _FenceRedis(budget=1)
+        row = self._Row(self.TERMINAL)
+        mod = self._wire(monkeypatch, fake, row)
+
+        def _boom(*a, **k):
+            raise RuntimeError("redis down")
+
+        monkeypatch.setattr(fake, "hgetall", _boom)
+        assert asyncio.run(mod._restore()) == 2
+        assert row.status == self.TERMINAL, "it wrote anyway"
+
+
+class TestEitherAppIsNotANamedApp:
+    """Follow-up `5532-REQUIRE-THE-MAIN-APP-NOT-EITHER-APP` (CERT-2757).
+
+    `("bainluck", "bainluck-heavy")` is not "the named app" — it is two. The arm
+    runs in `transition_event_statuses` on the realtime queue, which is the main
+    app, so that is the one place where `--close` and its effect are observable
+    from the same logs.
+    """
+
+    def test_heavy_is_no_longer_accepted(self, monkeypatch):
+        assert TestAnAbsentAppNameIsNotTheNamedApp._main_with(
+            monkeypatch, ["--open", "50"], "bainluck-heavy"
+        ) != 0
+
+    def test_the_main_app_still_is(self):
+        mod = TestRestoreClosesTheDoorBeforeRestoringRows._load()
+        assert mod.ALLOWED_APPS == ("bainluck",)

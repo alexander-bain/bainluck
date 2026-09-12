@@ -5,6 +5,7 @@ ESPN live sync, metadata enrichment, and team logo backfill tasks.
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy import select, distinct, and_, or_, func
 from sqlalchemy.orm import selectinload
@@ -873,6 +874,37 @@ UNREACHABLE_SUSPENDED_BACKUP_TABLE = "backup_unreachable_suspended_5532"
 #: radius of choosing it wrong.
 UNREACHABLE_SUSPENDED_MAX_BUDGET = 500
 
+#: THE IN-FLIGHT REGISTRY, and it exists because closing the door is not enough
+#: (CERT-2757, repair ``5532-RESTORE-FENCES-IN-FLIGHT-RETIREMENT``).
+#:
+#: ``--restore`` deletes the budget key first, which stops every FUTURE pass. It
+#: does nothing about a pass that already read the key: that budget is latched in
+#: this process's memory, its transaction has not committed, and it will happily
+#: land a ``voided`` write AFTER the restore's UPDATE has handed the row back.
+#: Reproduced by the grader — restore reported 0 rows and the row finished
+#: ``voided``, which is the rollback silently reversing the operator in a second,
+#: subtler way than the one CERT-2753 caught.
+#:
+#: So the budget read and the retirement write are bracketed: a pass that latches
+#: a positive budget writes a field here before it reads, and clears it after its
+#: transaction has committed. Restore closes the door and then WAITS for this to
+#: drain. Registering BEFORE the read is the whole ordering — register after, and
+#: a pass that read a positive budget is invisible for the instant restore looks.
+UNREACHABLE_SUSPENDED_INFLIGHT_KEY = "events:unreachable_suspended_inflight"
+
+#: How long a marker is honoured when nobody clears it, and it is SIZED ON THE
+#: BOUND THAT IS ENFORCED, not on the one that is handy. The handy number is the
+#: 60s beat; the enforced number is Celery's global ``task_time_limit`` (300s),
+#: which is what actually stops this task — it declares no limit of its own, and
+#: it IS hard-killed in production. A pass killed mid-retirement can never clear
+#: its own marker, so without an expiry one hard kill would block every restore
+#: forever; with one sized under the kill, a live pass would lose its marker and
+#: the fence would open under it. Hence: the hard kill plus a margin.
+#:
+#: ``test_the_inflight_ttl_outlasts_the_hard_kill_that_is_enforced_5532`` asserts
+#: the gap against the configured limit, so the two cannot drift into a hole.
+UNREACHABLE_SUSPENDED_INFLIGHT_TTL = 360
+
 
 def _unreachable_suspended_budget() -> int:
     """How many rows may this pass retire? 0 unless an attended step said so.
@@ -896,6 +928,86 @@ def _unreachable_suspended_budget() -> int:
     if budget <= 0:
         return 0
     return min(budget, UNREACHABLE_SUSPENDED_MAX_BUDGET)
+
+
+def _latch_unreachable_suspended_budget() -> tuple[int, Optional[str]]:
+    """Read the budget AND announce this pass, in that bracket, or refuse.
+
+    Returns ``(budget, token)``. A positive budget always comes with a token the
+    caller must hand back to :func:`_release_unreachable_suspended_inflight`
+    after its transaction has committed; ``(0, None)`` means this pass retires
+    nothing.
+
+    🔴 THE REGISTRATION PRECEDES THE READ, and reversing those two lines
+    reintroduces exactly the defect this exists to close (CERT-2757). Register
+    afterwards and there is an instant where a pass holds a positive budget and
+    nothing in Redis says so — restore looks, sees a clean registry, and updates
+    rows out from under a writer that is about to void them again.
+
+    A pass that cannot register does not run. That is the same fail-closed rule
+    the budget read already follows, for the same reason: "the fence is broken"
+    and "the operator asked for this" must not look alike. The cost of being
+    wrong here is a pass that retires nothing, which is the off state.
+    """
+    import time
+    import uuid
+
+    token = uuid.uuid4().hex
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        client.hset(
+            UNREACHABLE_SUSPENDED_INFLIGHT_KEY,
+            token,
+            str(time.time() + UNREACHABLE_SUSPENDED_INFLIGHT_TTL),
+        )
+        # Refreshed on every registration so the registry cannot outlive the
+        # passes in it. Each refresh is at least as long as the field just
+        # written, so the hash never expires under a live marker.
+        client.expire(
+            UNREACHABLE_SUSPENDED_INFLIGHT_KEY, UNREACHABLE_SUSPENDED_INFLIGHT_TTL
+        )
+    except Exception as exc:
+        logger.info(
+            "Unreachable-suspended pass could not register as in flight, "
+            "arm stays off: %s",
+            exc,
+        )
+        return 0, None
+
+    budget = _unreachable_suspended_budget()
+    if budget <= 0:
+        # Nothing to fence. Hand the marker back immediately rather than leaving
+        # a restore to wait out a pass that was never going to write.
+        _release_unreachable_suspended_inflight(token)
+        return 0, None
+    return budget, token
+
+
+def _release_unreachable_suspended_inflight(token: Optional[str]) -> None:
+    """Drop this pass's marker. Best effort — the TTL is the guarantee.
+
+    Called after the transaction has COMMITTED, never before: the marker exists
+    to cover the window in which a retirement is written but not yet durable,
+    and releasing inside that window is the same as never holding it.
+
+    A release that fails leaves restore waiting out the TTL, which is slower and
+    still correct. There is no failure mode here worth raising into a task that
+    has already done its work.
+    """
+    if not token:
+        return
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().hdel(UNREACHABLE_SUSPENDED_INFLIGHT_KEY, token)
+    except Exception as exc:
+        logger.info(
+            "Unreachable-suspended in-flight marker %s not cleared; the %ds "
+            "expiry will retire it: %s",
+            token, UNREACHABLE_SUSPENDED_INFLIGHT_TTL, exc,
+        )
 
 
 async def _settle_authority_stragglers(session, espn, now, stats, update_fields_fn):
@@ -2186,6 +2298,11 @@ async def _transition_event_statuses_impl() -> dict:
     )
 
     stats = {"scheduled_to_live": 0, "live_to_suspended": 0, "suspended_to_live": 0}
+    # Declared out here because it is RELEASED out here — after the session
+    # block, which is where the transaction commits (`get_task_session` commits
+    # on a clean exit). Releasing inside the block would clear the fence while
+    # the retirement it is fencing is still uncommitted (CERT-2757).
+    unreachable_inflight_token: Optional[str] = None
 
     async with get_task_session() as session:
         now = datetime.now(timezone.utc)
@@ -2445,7 +2562,10 @@ async def _transition_event_statuses_impl() -> dict:
         # resumable by the other.
         unreachable_floor = SUSPENDED_RESUME_WINDOW + UNREACHABLE_SUSPENDED_MARGIN
         stats["unreachable_suspended_retired"] = 0
-        stats["unreachable_suspended_budget"] = _unreachable_suspended_budget()
+        (
+            stats["unreachable_suspended_budget"],
+            unreachable_inflight_token,
+        ) = _latch_unreachable_suspended_budget()
 
         if stats["unreachable_suspended_budget"] > 0:
             # THE ANCHOR-ACQUISITION EXCLUSION, and it is the one channel that
@@ -2644,6 +2764,12 @@ async def _transition_event_statuses_impl() -> dict:
                 stats["unreachable_suspended_budget"],
             )
 
+    # OUTSIDE THE BLOCK ON PURPOSE: the `async with` above is what commits, so
+    # this is the first line at which any retirement this pass wrote is durable
+    # and a restore may safely act (CERT-2757). An exception skips it and the
+    # marker's expiry cleans up — which is the right direction, because an
+    # exception also rolled the retirement back.
+    _release_unreachable_suspended_inflight(unreachable_inflight_token)
     return stats
 
 
