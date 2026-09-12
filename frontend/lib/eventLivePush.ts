@@ -127,6 +127,95 @@ export function eventFeedIsStalled(args: {
   return msSinceLastLanding > STALLED_POLL_INTERVALS * refreshInterval;
 }
 
+/**
+ * How old the blend may be before the page stops calling itself live (#5459).
+ *
+ * NOT a new number. It is the server's own floor in
+ * `_pinned_live_probability` — a pinned verdict needs the probability to have
+ * held across ≥5 observations spanning **≥60 minutes** measured from kickoff —
+ * reused rather than re-chosen, so the two halves of this pair cannot drift into
+ * disagreeing about how long is too long. That is the argument
+ * `STALE_AFTER_S_BY_FACT` makes inside `LiveAgeStamp`, one module outward.
+ *
+ * It is deliberately an order of magnitude past the badge's own stale boundary
+ * (120s for a price). The badge greying at two minutes is a whisper on a healthy
+ * page mid-poll; withdrawing the LIVE pill there would flicker it off and on
+ * every poll cycle on every healthy game in the app. Removing a word needs a
+ * bound nothing ordinary can reach, and an NFL game on a two-minute beat never
+ * comes within thirty times of this one.
+ */
+export const LIVE_CLAIM_MAX_BLEND_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Is this page's LIVE claim backed by anything? (#5459, consumer half of #5077)
+ *
+ * ═══ WHAT THE READER SAW ═══
+ *
+ * Jeanjean v Liu, production, 2026-09-12 03:26Z
+ * (`artifacts/ux-1204/BEFORE-15310172-390-top.png`). A **LIVE** chip, a **20s**
+ * refresh ticker beside it, a second **20s** beside "Win Probability" — and two
+ * centimetres above all three, the page's own age badge reading a grey
+ * `146m ago`. Hero 1% – 99%, no score anywhere, chart dead flat at 1% for three
+ * hours. The match was long over and Liu had won; 1%/99% is the settled-market
+ * signature (bid 0.00 / ask 1.00 on every rung), not a forecast.
+ *
+ * The page already contained its own refutation. `LiveAgeStamp` had computed
+ * that the number was two and a half hours old and had greyed itself and dropped
+ * the word "live" accordingly, while the element beside it promised a fresh one
+ * in twenty seconds. That is the #4469/#5069 lesson — *a second copy of the
+ * comparison is how a dot and its caption come to disagree* — reaching one more
+ * element outward, and it is why this is one predicate and not three JSX
+ * conditions.
+ *
+ * ═══ TWO DISQUALIFIERS, BECAUSE THEY SEE DIFFERENT ROWS ═══
+ *
+ * `pinned` is the server's verdict and is the authoritative one: it is the only
+ * thing that can see a value the polls keep rewriting UNCHANGED, where the stamp
+ * is genuinely fresh and no age rule could ever fire. It is also rare — live/162
+ * measured the shipped rule firing on **2–3 of the 39** rows in #5077's target
+ * shape, because 28 of them have no probability series in the window at all.
+ *
+ * `blendAgeMs` is this page's own reading and covers most of the rest: a blend
+ * an hour old cannot back a twenty-second promise, whatever the server managed
+ * to work out. Alex's MiLB specimen (15310413, `234m ago` under a 20s ticker) is
+ * one of the 24 rows #5469 says the backend rule currently cannot reach, and is
+ * the argument these are complementary rather than redundant.
+ *
+ * Neither is a claim about the MATCH — we are not asserting it ended. It is a
+ * claim about our own number, which is the only thing we are entitled to speak
+ * about. Under standing notice 34 the remedy is to stop making the claim, not to
+ * explain on the page why it was withdrawn.
+ *
+ * An absent or unparseable stamp is NOT unbacked. "We cannot say how old this
+ * is" and "this is old" are different claims, and only the second earns the
+ * removal of a word — the same rule `heroStampIsStale` is written to.
+ *
+ * Pure and exported because a Next.js page may not carry named exports, so this
+ * is the only seam a guard can hold.
+ */
+export function liveClaimIsUnbacked(args: {
+  /** `Event.live_probability_pinned` — present ONLY when the server says so. */
+  pinned: unknown;
+  /**
+   * Age of the freshest write across the blend's sources, in ms. `null` when
+   * nothing on the page is stamped.
+   *
+   * The BLEND's age (`freshestSourceStamp`, a max across sources) and not the
+   * glance's (`heroStamp`, a min across facts) — deliberately the same input
+   * #5069's caption reads, because both are claims about the number rather than
+   * about the whole hero. Using the glance here would strip "LIVE" off a
+   * ten-second-old probability whenever a score on a ten-minute beat happened to
+   * be the older fact.
+   */
+  blendAgeMs: number | null;
+  maxBlendAgeMs?: number;
+}): boolean {
+  const { pinned, blendAgeMs } = args;
+  if (pinned) return true;
+  if (blendAgeMs === null || !Number.isFinite(blendAgeMs)) return false;
+  return blendAgeMs > (args.maxBlendAgeMs ?? LIVE_CLAIM_MAX_BLEND_AGE_MS);
+}
+
 export interface LiveFrame {
   p: number;
   source: string;

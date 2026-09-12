@@ -15,6 +15,7 @@ import {
   applyLiveFrame,
   eventFeedIsStalled,
   eventRefreshInterval,
+  liveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
@@ -249,11 +250,9 @@ export default function EventPage({ params }: EventPageProps) {
   // to a moment in the past**. The two consumers below (the countdown
   // suppression and the hero badge) are the ones live/048 wrote for exactly
   // this shape of lie; they need the widened predicate, not a second branch.
-  const isSuspended = hasNoReportedResult(event?.status, event?.commence_time);
+  // #5459 declares these three below, after `freshestSourceStamp`, because the
+  // page's answer to "is this live" now depends on how old its own number is.
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
-
-  // Effectively live = event is live status
-  const effectivelyLive = isLive;
 
   // ── live/034 S2 — SSE push ────────────────────────────────────────────────
   // Live events only, per the ruling; everything else keeps polling. The number
@@ -297,6 +296,49 @@ export default function EventPage({ params }: EventPageProps) {
     if (stamps.length === 0) return null;
     return stamps.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
   }, [event?.win_probability_sources]);
+
+  // ── #5459 / #5077 — THE PAGE STOPS PROMISING LIVENESS IT CANNOT BACK ───────
+  //
+  // On Jeanjean v Liu (production, 2026-09-12) this header carried a LIVE chip,
+  // a 20s ticker, a second 20s beside the chart — and its own age badge reading
+  // a grey `146m ago`, over a hero of 1% – 99% with no score and a chart flat
+  // for three hours. The reasoning, both disqualifiers and the measured reach of
+  // each live in `liveClaimIsUnbacked`; this is only the wiring.
+  //
+  // Read during render rather than held in state: `countdown` already re-renders
+  // this component once a second, so the age is re-derived on the same tick the
+  // chrome is drawn from and there is no second timer to fall out of step with
+  // the first — the same argument `feedStalled` below is written to.
+  const liveClaimUnbacked = liveClaimIsUnbacked({
+    pinned: event?.live_probability_pinned,
+    blendAgeMs: freshestSourceStamp
+      ? Date.now() - Date.parse(freshestSourceStamp)
+      : null,
+  });
+
+  // Everything on this page that ASSERTS motion reads this, so there is exactly
+  // one answer: the pulsing phase badge, the two `{countdown}s` tickers, the
+  // chart's own ring and the `isLive` the charts are handed. #4861 dropped the
+  // header's countdown group on a stalled feed and left those behind, which is
+  // why Jeanjean v Liu still said LIVE in three places.
+  const effectivelyLive = isLive && !liveClaimUnbacked;
+
+  // THE PAGE'S ONE `hasNoReportedResult` ANSWER (#4015), and #5459 widens it
+  // rather than adding a second predicate beside it.
+  //
+  // A pinned live match IS this state, in the exact words `SUSPENDED_LABEL` was
+  // chosen for — *this match should have happened and nobody has told us
+  // anything*. It is also the only honest destination for the phase badge:
+  // `effectivelyLive` alone would drop it through to "Pregame" on a match hours
+  // past its own kickoff, which is #3211's lie told in the other direction.
+  //
+  // Widened HERE and not inside `hasNoReportedResult`, which is shared card
+  // vocabulary keyed on status and time alone and must stay that way — a page
+  // payload field has no business in it. Widened rather than forked because
+  // #4015 exists precisely so the hero badge, the games map (`noResultReported`)
+  // and the projected-final suppression cannot answer this question three ways.
+  const isSuspended =
+    hasNoReportedResult(event?.status, event?.commence_time) || liveClaimUnbacked;
 
   // When the stream stops delivering, refetch ONCE. This does two jobs: it
   // settles the page on a number that came from the database rather than the
@@ -814,14 +856,35 @@ export default function EventPage({ params }: EventPageProps) {
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
 
-  // #3802 — the poll ring only where an update could land while you are looking.
-  // The rule (and why 3h) lives in `shouldShowRefreshCountdown`.
+  // #3802 — is this page on a visible poll at all? The rule (and why 3h) lives
+  // in `shouldShowRefreshCountdown`.
+  //
+  // #5459 asks it WITHOUT the withdrawal, deliberately, because two different
+  // things read this answer. The RING is a promise and must go. The age badge
+  // below is #4861's ADMISSION — the honest thing the header says instead of the
+  // promise — and suppressing that would delete the remedy along with the
+  // defect. Folding the withdrawal in here did exactly that, and #4861's own
+  // guard caught it: its stalled page stopped saying "ago" at all.
+  const onVisiblePoll = shouldShowRefreshCountdown({
+    isFinished,
+    streamConnected,
+    isLive,
+    isSuspended,
+    commenceTime: event?.commence_time,
+  });
+
+  // #5459 — and the withdrawal applied, for the ring alone. Passed through
+  // `shouldShowRefreshCountdown` rather than `&&`-ed on here so the rule stays
+  // in the one pure seam a guard can hold, and because the widened `isSuspended`
+  // above would otherwise turn the ring ON for an unbacked page
+  // (`isLive || isSuspended` returns true) — the exact promise this withdraws.
   const showRefreshCountdown = shouldShowRefreshCountdown({
     isFinished,
     streamConnected,
     isLive,
     isSuspended,
     commenceTime: event?.commence_time,
+    liveClaimUnbacked,
   });
 
   // #4861 — and only where one actually IS landing. The ring above counts down
@@ -843,8 +906,12 @@ export default function EventPage({ params }: EventPageProps) {
   // it exactly once (#4469). Mutually exclusive by construction: the first
   // needs the stream, and `shouldShowRefreshCountdown` is false while the
   // stream is connected.
+  //
+  // #5459 — `onVisiblePoll`, NOT `showRefreshCountdown`. See its note: the age
+  // badge is the admission that replaces the promise, so it must survive the
+  // promise being withdrawn.
   const pushedAge = !isFinished && streamConnected;
-  const stalledAge = showRefreshCountdown && feedStalled;
+  const stalledAge = onVisiblePoll && feedStalled;
 
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
@@ -988,6 +1055,10 @@ export default function EventPage({ params }: EventPageProps) {
               updatedAt={heroStamp.stamp}
               oldestFact={heroStamp.fact}
               connected={streamConnected}
+              // #5459 — the hero two lines below now reads "No result reported".
+              // Without this the badge would pulse a green `live · 20s ago`
+              // beside it on a pinned page, whose stamp really is that fresh.
+              claimWithdrawn={liveClaimUnbacked}
             />
           </div>
         )}

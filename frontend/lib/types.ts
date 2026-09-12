@@ -347,6 +347,35 @@ export interface EventDetailResponse extends Event {
   league_context?: LeagueContextData;
   sport_key?: string;
   box_score_data?: Record<string, unknown>;
+  /**
+   * #5077 — THE SERVER WITHDRAWING THIS PAGE'S CLAIM TO BE LIVE.
+   *
+   * Present ONLY when the claim is unbacked, absent otherwise, and that shape is
+   * the contract rather than an omission: a moving series and an out-of-scope
+   * event both mean "nothing to say here", so there is no `false` to get wrong
+   * and no absent-vs-null trap. The whole client test is `if (pinned)`.
+   *
+   * It exists because the client cannot work this out for itself. The page sees
+   * one current number under a stamp that IS fresh — the polls write on
+   * schedule, they just write the same value back — so no frontend age rule can
+   * see this shape. Only the server can see that the same number came back
+   * eleven times over two hours (`backend/app/routes/events.py`,
+   * `_pinned_live_probability`, shipped in PR #5445).
+   *
+   * The fields below are for a probe and for a tooltip that may one day want
+   * them. Standing notice 34 keeps them off the page body: the treatment is
+   * removing a promise, not printing the reason it was removed.
+   */
+  live_probability_pinned?: LiveProbabilityPinned;
+}
+
+/** @see Event.live_probability_pinned */
+export interface LiveProbabilityPinned {
+  pinned: true;
+  probability: number;
+  observations: number;
+  span_seconds: number;
+  since: string;
 }
 
 export interface OddsHistoryPoint {

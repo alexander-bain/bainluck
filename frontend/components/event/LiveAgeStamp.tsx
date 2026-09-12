@@ -43,6 +43,24 @@ interface LiveAgeStampProps {
   oldestFact?: "price" | "score" | null;
   /** Whether the SSE stream is currently delivering. */
   connected: boolean;
+  /**
+   * #5459 — the page has withdrawn its claim to be live (`liveClaimIsUnbacked`),
+   * so this badge may not make it either.
+   *
+   * It exists for ONE shape, and only the server can see that shape: a pinned
+   * probability whose stamp is genuinely fresh. The polls are writing every two
+   * minutes and writing the same value back, so `age` is 20s, `heroFactIsStale`
+   * is correctly false, and this badge would pulse a green `live · 20s ago`
+   * directly beside a hero that now reads "No result reported". True about the
+   * write, false about the number — and one hero contradicting itself is the
+   * bug #4469, #5069 and #4861 were each filed for.
+   *
+   * It forces the presentation the stale branch already owns rather than adding
+   * a third one: the age still shows, the green and the word "live" go. The
+   * label is untouched, because the stamp really is that old and saying so is
+   * the admission, not the claim.
+   */
+  claimWithdrawn?: boolean;
 }
 
 /** Past this the number is not "live" in any useful sense; say so plainly. */
@@ -112,6 +130,7 @@ export default function LiveAgeStamp({
   updatedAt,
   oldestFact = null,
   connected,
+  claimWithdrawn = false,
 }: LiveAgeStampProps) {
   const [age, setAge] = useState<number | null>(() => ageSeconds(updatedAt));
 
@@ -123,7 +142,10 @@ export default function LiveAgeStamp({
 
   if (age === null) return null;
 
-  const stale = heroFactIsStale(age, oldestFact);
+  // #5459 — a withdrawn claim takes the stale presentation whatever the age
+  // says. OR rather than a replacement: an old number is still old when nobody
+  // withdrew anything.
+  const stale = claimWithdrawn || heroFactIsStale(age, oldestFact);
   const label = age < 60 ? `${age}s ago` : `${Math.floor(age / 60)}m ago`;
 
   return (
