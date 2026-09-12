@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatProbability } from "@/lib/api";
+import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
 // L2-78 Item 2 — golf-default flip. FLIPPED TRUE in Queue #213: Alex ruled the
@@ -126,9 +127,34 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                   {leader.score && <> · {leader.score}</>}
                   {/* No live "% today" movement once settled — the result is fixed. */}
                   {!whatHit && leader.hole && <> · {leader.hole}</>}
-                  {!whatHit && leader.movement != null && Math.abs(leader.movement) > 0.001 && (
+                  {/* #5623 — `movement` is a probability DELTA, so `* 100` is
+                      percentage POINTS and this line called them `%`. A leader who
+                      went 37.8% -> 47.8% read "+10.0%", which a reader takes as a
+                      tenth more than he had (~4.8 points): under half the real move,
+                      in a unit the number was never in. Same family as the Discover
+                      pill (#4066) and the eight backend sentences (#5619).
+
+                      TWO HOUSE RULES MEET HERE AND THEY PULL OPPOSITE WAYS ON PURPOSE
+                      (ux/1217, Sat 2026-09-12). (a) The noun is the ABBREVIATION:
+                      a badge takes `pts`, a sentence takes the word — the backend
+                      prose says "moved up 38 points today", this compact caption
+                      beside a name on a 390px card says `pts`, same as the Discover
+                      pill. (b) The trailing zero is KEPT here and DROPPED by the
+                      backend formatter, because this number's consistency is
+                      INTERNAL to the card: it stands in a column with five sibling
+                      `.toFixed(1)` probabilities (the hero at :112, both chasers at
+                      :151, the two-outcome pair at :246/:257), 40px away, whereas
+                      the backend sentence has no numbers beside it. Neither is drift
+                      and neither should be "harmonised" to the other.
+
+                      `formatMovementPoints` returns the ABSOLUTE magnitude, so the
+                      sign is composed here — and it must be an explicit "-", not the
+                      old `: ""`. The old empty branch worked only because
+                      `(m * 100).toFixed(1)` carried its own minus; with an absolute
+                      helper it would render a fall as a rise wearing red. */}
+                  {!whatHit && leader.movement != null && isRenderedMove(leader.movement) && (
                     <span className={leader.movement > 0 ? " text-green-600 font-semibold" : " text-red-600 font-semibold"}>
-                      {" "}{leader.movement > 0 ? "+" : ""}{(leader.movement * 100).toFixed(1)}% today
+                      {" "}{leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)} pts today
                     </span>
                   )}
                 </div>
