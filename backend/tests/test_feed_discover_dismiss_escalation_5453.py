@@ -40,6 +40,7 @@ So the controls below are as load-bearing as the escalation tests —
 if this change ever turns into a mute button.
 """
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -816,3 +817,328 @@ def test_both_admission_gates_read_the_shared_helper():
         f"deciding eligibility again (CERT-2676). It may RANK; the number a "
         f"gate reads is `_discover_admission_score`."
     )
+
+
+# ---------------------------------------------------------------------------
+# CERT-2681 — EVERY term a swipe wrote, not the ones named so far
+# ---------------------------------------------------------------------------
+#
+# Presentation three removed the category term from admission at all three
+# gates and was BLOCKed anyway, because the SAME swipe rows write two more
+# negative terms and both were still inside `admission_multiplier`:
+#
+#   * `discover_feature_dislike` — `_feature_affinity_bonus`. Eight dismissed
+#     football matchups leave four shared `-0.12` feature affinities behind.
+#   * `semantic_dismiss` — `_semantic_dismiss_bonus`, a penalty for RESEMBLING
+#     recent swipes, dismiss-derived by construction.
+#
+# The cert's probe: for an "if it's wild" NFL reader, a base-98 card for a
+# DIFFERENT matchup passed the 55 bar at 68 without the feature term and fell
+# to 44 with it. Same defect as CERT-2676, one term to the left.
+#
+# THE LESSON THIS FILE KEEPS RE-LEARNING: three presentations repaired this by
+# NAME and a fourth name kept appearing. So the guard below is not "the feature
+# term is excluded" — it is the invariant itself, over whatever terms exist: a
+# reader whose ONLY signal is swipes has an admission multiplier of exactly 1.0.
+# A fourth swipe-derived term breaks it on the day it is written.
+
+
+def _dismissal_only_context(rollup_rows, feature_rows, recent_rows=()):
+    """A context whose ONLY input is swipes — no onboarding, no teams, no pins."""
+    return _load_with_features(rollup_rows, feature_rows, recent_rows)
+
+
+async def _load_with_features(rollup_rows, feature_rows, recent_rows=()):
+    """`_load` plus the FEATURE rollup, which `_load` answers with `[]`.
+
+    `_load_personalization_context` issues three reads against
+    `discover_interactions` and the existing helper deliberately starves two of
+    them. The feature rollup is the one that writes `discover_feature_affinities`
+    — the term CERT-2681 found — so a test that cannot feed it cannot see the
+    defect. Routed on the projection, `max(` FIRST: the recent-items read
+    contains BOTH `max(` and `item_name`, so testing `item_name` first would
+    hand five-column feature rows to a reader unpacking six.
+
+    `recent_rows` feeds that third read, which is what writes
+    `recent_dismissed_feature_token_sets` and therefore the SEMANTIC term. It is
+    here because a mutation survived without it: with the read starved, deleting
+    the semantic exclusion left all 46 tests green.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.routes.feed import _load_personalization_context
+
+    def _result(rows):
+        result = MagicMock()
+        result.all.return_value = rows
+        result.fetchall.return_value = rows
+        result.scalars.return_value.all.return_value = rows
+        result.scalars.return_value.first.return_value = None
+        result.scalar_one_or_none.return_value = None
+        return result
+
+    async def mock_execute(stmt, *args, **kwargs):
+        lowered = str(stmt).lower()
+        if "discover_interactions" not in lowered:
+            return _result([])
+        if "max(" in lowered:
+            return _result(list(recent_rows))
+        if "item_name" in lowered:
+            return _result(list(feature_rows))
+        return _result(list(rollup_rows))
+
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=mock_execute)
+    session.rollback = AsyncMock()
+
+    return await _load_personalization_context(
+        session, None, session_id=_SESSION_ID, config=None
+    )
+
+
+#: Eight NFL matchups swiped away — the cert's own specimen. Distinct names, so
+#: they share tokens the way real football cards do.
+_EIGHT_NFL_SWIPES = [
+    ("event", f"{away} @ {home}", "americanfootball", "unlike", 1)
+    for away, home in (
+        ("Patriots", "Jets"),
+        ("Bills", "Dolphins"),
+        ("Ravens", "Steelers"),
+        ("Bengals", "Browns"),
+        ("Texans", "Colts"),
+        ("Jaguars", "Titans"),
+        ("Broncos", "Chiefs"),
+        ("Raiders", "Chargers"),
+    )
+]
+
+#: A football card that is NOT one of the eight — the reader never saw it. It
+#: is the one the cert's probe dropped.
+_UNSEEN_NFL_TOKENS = ["category:americanfootball", "type:event", "entity:cowboys"]
+
+
+@pytest.mark.asyncio
+async def test_the_feature_term_is_really_written_by_these_swipes():
+    """PREMISE. If the swipes produce no feature affinities, everything below is
+    vacuous — it would be asserting an invariant over an empty input."""
+    ctx = await _load_with_features([("americanfootball", "unlike", 8), _WARM], _EIGHT_NFL_SWIPES)
+
+    assert ctx.discover_feature_affinities, (
+        "the eight swipes wrote no feature affinities — the guards below would "
+        "pass against the BLOCKed tree"
+    )
+    assert any(v < 0 for v in ctx.discover_feature_affinities.values())
+
+
+@pytest.mark.asyncio
+async def test_no_swipe_derived_term_of_any_name_reaches_admission():
+    """THE INVARIANT, and the reason this cert chain ran to four presentations.
+
+    Not "the category term is excluded" and not "the feature term is excluded"
+    — repairing by name is what let three presentations each find a fourth
+    place the same defect lived. For a reader whose ONLY signal is swipes there
+    is nothing else in the product that may filter them, so the admission
+    multiplier is exactly 1.0. Any future swipe-derived term fails this on the
+    day it is written, whatever it is called.
+    """
+    from app.utils.personalization import (
+        compute_event_multiplier,
+        compute_futures_multiplier,
+    )
+
+    ctx = await _dismissal_only_context(
+        [("americanfootball", "unlike", 8), _WARM], _EIGHT_NFL_SWIPES
+    )
+
+    event = compute_event_multiplier(
+        ctx, None, None, "americanfootball_nfl", None,
+        feature_tokens=_UNSEEN_NFL_TOKENS,
+    )
+    futures = compute_futures_multiplier(
+        ctx,
+        sport_category="football",
+        outcome_team_ids=[],
+        futures_market_id=None,
+        sport_key="americanfootball_nfl",
+        feature_tokens=_UNSEEN_NFL_TOKENS,
+    )
+
+    for name, result in (("event", event), ("futures", futures)):
+        assert result.multiplier < 1.0, (
+            f"{name}: the swipes stopped downranking — this guard would pass "
+            f"for the wrong reason"
+        )
+        assert result.admission_multiplier == pytest.approx(1.0), (
+            f"{name}: a swipe-derived term is still deciding eligibility. "
+            f"multiplier={result.multiplier}, "
+            f"admission_multiplier={result.admission_multiplier}, "
+            f"reasons={result.reasons}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_if_its_wild_reader_still_sees_the_unseen_football_card_5453():
+    """CERT-2681'S OWN SPECIMEN, at the bar it named.
+
+    An "only if it's wild" NFL reader (low affinity, the 55 bar) who has swiped
+    eight football matchups away. A base-98 card for a matchup they never saw
+    reached that bar at 68 without the feature term and 44 with it. The
+    onboarding penalty must still be inside the number — it is the reader's own
+    choice — so the card is admitted at 68, not at 98.
+    """
+    from app.routes.feed import _discover_admission_score
+    from app.utils.personalization import LOW_AFFINITY_PENALTY, compute_event_multiplier
+
+    ctx = await _dismissal_only_context(
+        [("americanfootball", "unlike", 8), _WARM], _EIGHT_NFL_SWIPES
+    )
+    ctx.is_authenticated = True
+    ctx.sport_affinities = {"americanfootball_nfl": 0.1}
+
+    p_result = compute_event_multiplier(
+        ctx, None, None, "americanfootball_nfl", None,
+        feature_tokens=_UNSEEN_NFL_TOKENS,
+    )
+
+    assert any("sport_suppress" in r for r in p_result.reasons)
+    # The onboarding choice survives, and ONLY it.
+    assert p_result.admission_multiplier == pytest.approx(1.0 + LOW_AFFINITY_PENALTY)
+
+    admission = _discover_admission_score(98, p_result)
+    assert admission >= 55, (
+        f"the cert's specimen is still dropped: base 98 reaches the "
+        f"low-affinity bar as {admission} (multiplier={p_result.multiplier}, "
+        f"admission_multiplier={p_result.admission_multiplier})"
+    )
+    # And it still ranks below where it would sit unswiped.
+    assert min(98, int(98 * p_result.multiplier)) < admission
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "floor,gate",
+    [
+        (30, "_score_events"),
+        (55, "_score_futures low-affinity bar"),
+        (15, "_score_sports_mode_futures"),
+    ],
+)
+async def test_every_gate_floor_admits_the_swiped_reader_5453(floor, gate):
+    """The three floors the three gates compare, driven through the real helper.
+
+    `test_both_admission_gates_read_the_shared_helper` proves these three
+    functions are the callers and that nothing else compares a
+    `personalized_score`; this proves the number they get clears each bar for a
+    reader whose only signal is swipes.
+    """
+    from app.routes.feed import _discover_admission_score
+
+    ctx = await _dismissal_only_context(
+        [("americanfootball", "unlike", 8), _WARM], _EIGHT_NFL_SWIPES
+    )
+    p_result = _nfl_multiplier(ctx)
+
+    assert _discover_admission_score(98, p_result) >= floor, gate
+
+
+#: `last_seen` for the recent-items rows. Offset from the clock rather than
+#: fixed, because the loader compares it against a `dismiss_cutoff` computed at
+#: call time — a hardcoded date would age out and quietly empty the read
+#: (gotcha #44: offset FIRST, and no `if` in the anchor).
+_NOW = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+#: The same eight swipes as rows of the RECENT-ITEMS read — the projection that
+#: writes `recent_dismissed_feature_token_sets` and so the semantic term.
+_EIGHT_NFL_RECENT = [
+    ("event", 9000 + i, "unlike", _NOW, f"{away} @ {home}", "americanfootball")
+    for i, (away, home) in enumerate(
+        (
+            ("Patriots", "Jets"),
+            ("Bills", "Dolphins"),
+            ("Ravens", "Steelers"),
+            ("Bengals", "Browns"),
+            ("Texans", "Colts"),
+            ("Jaguars", "Titans"),
+            ("Broncos", "Chiefs"),
+            ("Raiders", "Chargers"),
+        )
+    )
+]
+
+
+@pytest.mark.asyncio
+async def test_the_semantic_term_is_really_written_and_really_fires():
+    """PREMISE for the semantic half, and the reason it exists.
+
+    The first version of this file's CERT-2681 guards starved the recent-items
+    read, so `recent_dismissed_feature_token_sets` was empty,
+    `_semantic_dismiss_bonus` returned 0.0 on every call, and DELETING its
+    exclusion from `admission_multiplier` left every test green. A term that
+    never fires cannot be guarded. This asserts the field is written by real
+    rows through the real loader, and that a near-identical card trips it.
+    """
+    from app.utils.personalization import (
+        SEMANTIC_DISMISS_PENALTY,
+        compute_event_multiplier,
+    )
+
+    ctx = await _dismissal_only_context(
+        [("americanfootball", "unlike", 8), _WARM],
+        _EIGHT_NFL_SWIPES,
+        _EIGHT_NFL_RECENT,
+    )
+
+    assert ctx.recent_dismissed_feature_token_sets, (
+        "the recent-items read wrote no dismissed token sets — the semantic "
+        "guard below would pass against a tree that never excludes the term"
+    )
+
+    # A card that looks like one they just swiped away.
+    resembling = list(ctx.recent_dismissed_feature_token_sets[0])
+    p_result = compute_event_multiplier(
+        ctx, None, None, "americanfootball_nfl", None, feature_tokens=resembling
+    )
+
+    assert any("semantic_dismiss" in r for r in p_result.reasons), (
+        f"the semantic term did not fire on a card built from a dismissed "
+        f"token set: {p_result.reasons}"
+    )
+    # It is in the RANK …
+    assert p_result.multiplier <= 1.0 + SEMANTIC_DISMISS_PENALTY
+    # … and out of the gate.
+    assert p_result.admission_multiplier == pytest.approx(1.0), (
+        f"the semantic dismissal is still deciding eligibility: "
+        f"admission_multiplier={p_result.admission_multiplier}, "
+        f"reasons={p_result.reasons}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_invariant_holds_with_all_three_terms_live_at_once():
+    """The invariant again, on the context where every swipe-derived term fires.
+
+    `test_no_swipe_derived_term_of_any_name_reaches_admission` runs without the
+    recent-items read; this is the same assertion with the semantic term live
+    too, so all three are excluded simultaneously rather than one at a time.
+    """
+    from app.routes.feed import _discover_admission_score
+    from app.utils.personalization import compute_event_multiplier
+
+    ctx = await _dismissal_only_context(
+        [("americanfootball", "unlike", 8), _WARM],
+        _EIGHT_NFL_SWIPES,
+        _EIGHT_NFL_RECENT,
+    )
+    resembling = list(ctx.recent_dismissed_feature_token_sets[0])
+    p_result = compute_event_multiplier(
+        ctx, None, None, "americanfootball_nfl", None, feature_tokens=resembling
+    )
+
+    fired = {r.split(":")[0] for r in p_result.reasons}
+    assert {"discover_category_dismiss", "semantic_dismiss"} <= fired or (
+        "discover_feature_dislike" in fired and "semantic_dismiss" in fired
+    ), f"expected the swipe-derived terms to be live on this context: {p_result.reasons}"
+
+    assert p_result.admission_multiplier == pytest.approx(1.0)
+    assert _discover_admission_score(40, p_result) == 40
+    assert min(98, int(40 * p_result.multiplier)) < 40
