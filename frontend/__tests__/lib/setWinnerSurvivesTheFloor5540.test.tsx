@@ -55,12 +55,17 @@ const NPB_WIRE: OtherMarketRow[] = [
 ];
 
 /**
- * `/api/events/15310602/game-markets`, live esports — SIX wire rows and ZERO
- * survivors, because `Liquid vs. NRG: Map 1` is a two-sided pair summing to 1.0
- * that `periodWinnerParts` does not recognise as period-scoped, so the map
- * winners are eaten as the hero's own question. That is a DIFFERENT defect and
- * is filed separately; it is here as the both-direction guard, because no floor
- * can rescue an empty kept set and this ship must not pretend to.
+ * `/api/events/15310602/game-markets`, live esports — SIX wire rows, and until
+ * #5555 shipped, ZERO survivors: `Liquid vs. NRG: Map 1` is a two-sided pair
+ * summing to 1.0 that `periodWinnerParts` could not read as period-scoped, so
+ * both map winners were eaten as the hero's own question and the page rendered
+ * no section at all.
+ *
+ * It was filed as a separate defect and entered this file as the
+ * both-direction guard. #5555 taught `periodWinnerParts` the SUFFIX grammar
+ * (`<matchup>: Map N`), so it now asserts the ship rather than the gap, and the
+ * both-direction guard moved to `DASH_WIRE` below — which is the stronger place
+ * for it, because that payload is one this module refuses ON PURPOSE.
  */
 const ESPORTS_WIRE: OtherMarketRow[] = [
   { market_name: "Liquid vs. NRG", outcome_name: "NRG", probability: 0.99, source: KALSHI, observed_at: AT },
@@ -69,6 +74,47 @@ const ESPORTS_WIRE: OtherMarketRow[] = [
   { market_name: "Liquid vs. NRG: Map 1", outcome_name: "Liquid", probability: 0.01, source: KALSHI, observed_at: AT },
   { market_name: "Liquid vs. NRG: Map 2", outcome_name: "NRG", probability: 0.99, source: KALSHI, observed_at: AT },
   { market_name: "Liquid vs. NRG: Map 2", outcome_name: "Liquid", probability: 0.01, source: KALSHI, observed_at: AT },
+];
+
+/**
+ * `/api/events/15310533/game-markets` (production, 2026-09-12 09:58Z) — the
+ * OTHER esports grammar, and the both-direction guard.
+ *
+ * Same sport, same question, written with a DASH and a trailing `Winner`, and
+ * served as a bare `Yes`/`No` instead of two named sides. `periodWinnerParts`
+ * refuses it deliberately: there is no `Winner: A vs B` to read sides out of,
+ * so un-hiding it would print `Yes 60%` at a reader — the exact defect #3575
+ * narrowed this filter to prevent. The BO3 parent carries two colons and is
+ * refused for the same reason the suffix pattern is bounded by `[^:]`.
+ *
+ * So this payload must keep rendering NOTHING, and it is what stops #5555's
+ * widening from being mistaken for "exempt anything with a colon in it".
+ */
+const DASH_WIRE: OtherMarketRow[] = [
+  { market_name: "Counter-Strike: Noir Verse vs  Phantom Academy - Map 2 Winner", outcome_name: "Yes", probability: 0.6, source: KALSHI, observed_at: AT },
+  { market_name: "Counter-Strike: Noir Verse vs  Phantom Academy - Map 2 Winner", outcome_name: "No", probability: 0.4, source: KALSHI, observed_at: AT },
+  { market_name: "Counter-Strike: Noir Verse vs  Phantom Academy - Map 1 Winner", outcome_name: "No", probability: 0.9995, source: KALSHI, observed_at: AT },
+  { market_name: "Counter-Strike: Noir Verse vs  Phantom Academy - Map 1 Winner", outcome_name: "Yes", probability: 0.0005, source: KALSHI, observed_at: AT },
+  { market_name: "Counter-Strike: Noir Verse vs  Phantom Academy (BO3) - CCT Europe Closed Qualifier: Series #9 Group C", outcome_name: "No", probability: 0.585, source: KALSHI, observed_at: AT },
+  { market_name: "Counter-Strike: Noir Verse vs  Phantom Academy (BO3) - CCT Europe Closed Qualifier: Series #9 Group C", outcome_name: "Yes", probability: 0.415, source: KALSHI, observed_at: AT },
+];
+
+/**
+ * The suffix SHAPE with a tail outside the period vocabulary — the mutation
+ * guard for #5555's central claim.
+ *
+ * `Liquid vs. NRG: Map 1` and `Liquid vs. NRG: Total Goals` are the same
+ * grammar; only `PERIOD_SCOPE` tells them apart. Production has 7,926
+ * event-linked open markets in the `vs … :` shape and only 151 with a period
+ * tail, so if the exemption ever came to rest on the COLON instead of the
+ * vocabulary, this row would be spared the hero filter and printed as
+ * `Liquid wins Total Goals`.
+ *
+ * `Total Goals` is the third-commonest real tail in that population (246).
+ */
+const SUFFIX_NON_PERIOD_WIRE: OtherMarketRow[] = [
+  { market_name: "Liquid vs. NRG: Total Goals", outcome_name: "Yes", probability: 0.55, source: KALSHI, observed_at: AT },
+  { market_name: "Liquid vs. NRG: Total Goals", outcome_name: "No", probability: 0.45, source: KALSHI, observed_at: AT },
 ];
 
 function labelsOf(rows: OtherMarketRow[], opts = {}) {
@@ -110,9 +156,44 @@ describe("#5540 — the survivors decide, not the wire count", () => {
     expect(labelsOf(NPB_WIRE).join(" ")).toContain("Yes");
   });
 
+  test("#5555 — the suffix grammar survives too, both sides named", () => {
+    // `Liquid vs. NRG: Map 1` is the SAME question as `Set 1 Winner: A vs B`
+    // with the scope written last. Both sides are priced by the venue and named
+    // by it, so both render: naming them states the wire rather than inferring
+    // a complement, which is why `No` is still dropped above.
+    expect(labelsOf(ESPORTS_WIRE)).toEqual([
+      "NRG wins Map 1",
+      "Liquid wins Map 1",
+      "NRG wins Map 2",
+      "Liquid wins Map 2",
+    ]);
+  });
+
+  test("#5555 — and the hero's own matchup is still not among them", () => {
+    // The failure mode the issue's 🔴 warning names: a `:`-grammar exemption
+    // would also spare the bare `Liquid vs. NRG` moneyline and put the hero's
+    // own number back in the rail (#3575). The scope vocabulary is what stops
+    // it, so this asserts the moneyline specifically, not just the row count.
+    const labels = labelsOf(ESPORTS_WIRE);
+    expect(labels).not.toContain("NRG");
+    expect(labels).not.toContain("Liquid");
+    expect(labels.some((l) => /wins Map/.test(l))).toBe(true);
+  });
+
+  test("#5555 — the exemption is the period VOCABULARY, not the colon", () => {
+    // Kill this and the widening becomes the one the issue warned against:
+    // 7,926 markets share this shape and only 151 are period-scoped.
+    const labels = labelsOf(SUFFIX_NON_PERIOD_WIRE);
+    expect(labels.join(" ")).not.toContain("Total Goals");
+    expect(buildMarketSection(SUFFIX_NON_PERIOD_WIRE).renderedOutcomes).toBe(0);
+  });
+
   test("BOTH DIRECTIONS: no survivors still renders nothing", () => {
-    expect(buildMarketSection(ESPORTS_WIRE).categories).toEqual([]);
-    expect(buildMarketSection(ESPORTS_WIRE).renderedOutcomes).toBe(0);
+    // Moved off ESPORTS_WIRE by #5555 onto a payload this module refuses ON
+    // PURPOSE — see `DASH_WIRE`. A both-direction guard is only worth having
+    // while something can still fail it.
+    expect(buildMarketSection(DASH_WIRE).categories).toEqual([]);
+    expect(buildMarketSection(DASH_WIRE).renderedOutcomes).toBe(0);
   });
 });
 
@@ -138,9 +219,19 @@ describe("#5540 — through the component the reader actually gets", () => {
     expect(html).toContain("51");
   });
 
-  test("and renders nothing at all when nothing survives", () => {
+  test("#5555 — the esports map card reaches the reader, headed by the matchup", () => {
     const html = renderToStaticMarkup(
       <SpecialEventMarkets data={payload(ESPORTS_WIRE)} eventStatus="live" completedSets={0} />,
+    );
+    expect(html).toContain("Additional Markets");
+    expect(html).toContain("Liquid vs NRG");
+    expect(html).toContain("NRG wins Map 1");
+    expect(html).toContain("Liquid wins Map 2");
+  });
+
+  test("and renders nothing at all when nothing survives", () => {
+    const html = renderToStaticMarkup(
+      <SpecialEventMarkets data={payload(DASH_WIRE)} eventStatus="live" completedSets={0} />,
     );
     expect(html).toBe("");
   });

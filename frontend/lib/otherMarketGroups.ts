@@ -242,6 +242,43 @@ export function categorizeMarketName(name: string): { category: string; subtitle
 /** `Set 1 Winner: Swiatek vs Zheng` → scope `Set 1`, sides `Swiatek` / `Zheng`. */
 const SCOPED_WINNER_MARKET = /^(.+?)\s+winner\s*:\s*(.+?)\s+vs\.?\s+(.+?)\s*$/i;
 
+/**
+ * The SAME question with the scope written last — `Phantom Academy vs. Noir
+ * Verse: Map 1` → sides `Phantom Academy` / `Noir Verse`, scope `Map 1`.
+ *
+ * Tennis puts the scope first and the word `winner` before the colon; esports
+ * puts the matchup first and the scope after it, with no `winner` anywhere. One
+ * question, two grammars, and `SCOPED_WINNER_MARKET` can only read the first —
+ * so on `/events/15310602` both map markets were classified as restatements of
+ * the hero and the page rendered no Additional Markets section at all (#5555).
+ *
+ * ── WHY THIS IS NOT THE `:`-GRAMMAR WIDENING THE ISSUE WARNS AGAINST ────────
+ *
+ * Because the exemption is still granted by `PERIOD_SCOPE`, not by the colon.
+ * Measured over every event-linked open market on production (2026-09-12
+ * 09:5xZ): **7,926** carry a `vs … :` shape, and of those exactly **151**, in
+ * **66** events, have a tail in the period vocabulary — `Map 1` (66), `Map 2`
+ * (66), `Map 3` (19) and nothing else. The tails this refuses are the ones it
+ * should: `Spread` (390), `Total Sets O/U 2.5` (309), `Total Goals` (246),
+ * `BTTS` (208), `Team Total`, `Overtime`, `Total Maps`. A `:` rule would have
+ * exempted all 7,926 and put the hero's own number back in the rail (#3575).
+ *
+ * The near miss is `A vs B: 1st Half Winner` (132) and `First Half Winner`
+ * (94), refused here because `PERIOD_SCOPE` has no room for the trailing word.
+ * That refusal costs nothing and was checked rather than assumed: **all 226 of
+ * those markets serve THREE outcomes** (home/draw/away), so they never match
+ * `findWinProbMarkets`' two-sided pair clause and were never being hidden. The
+ * 151 map markets all serve exactly TWO, which is why they were.
+ *
+ * Both sides are bounded by `[^:]` rather than `.+?`, so this reads only the
+ * single-colon shape it was measured on — all 151 carry exactly one colon. That
+ * also keeps it off `Counter-Strike: G2 vs TYLOO - Map 1 Winner`, whose scope
+ * hangs off a DASH and whose rows are a bare `Yes`/`No`: un-hiding that one
+ * would print `Yes 50%` at a reader, which is the defect `periodWinnerParts`
+ * was narrowed to prevent in the first place. It stays filtered, as before.
+ */
+const SUFFIX_SCOPED_WINNER_MARKET = /^([^:]+?)\s+vs\.?\s+([^:]+?)\s*:\s*([^:]+?)\s*$/i;
+
 /** A scope that names ONE PERIOD of a match — `Set 1`, `1st Half`, `Map 2`. */
 const PERIOD_SCOPE = /^(?:\d+(?:st|nd|rd|th)?\s+)?(?:set|period|quarter|inning|frame|half|map|leg)(?:\s*\d+(?:st|nd|rd|th)?)?$/i;
 
@@ -313,9 +350,26 @@ export function periodSequenceFromScope(scope: string | null | undefined): numbe
 export function periodWinnerParts(
   marketName: string | null | undefined,
 ): { scope: string; first: string; second: string } | null {
-  const m = SCOPED_WINNER_MARKET.exec((marketName ?? "").trim());
-  if (!m) return null;
-  const [, scope, first, second] = m;
+  const name = (marketName ?? "").trim();
+  const prefix = SCOPED_WINNER_MARKET.exec(name);
+  if (prefix) {
+    const [, scope, first, second] = prefix;
+    return winnerParts(scope, first, second);
+  }
+  const suffix = SUFFIX_SCOPED_WINNER_MARKET.exec(name);
+  if (suffix) {
+    const [, first, second, scope] = suffix;
+    return winnerParts(scope, first, second);
+  }
+  return null;
+}
+
+/** The shared tail of both grammars: a period scope and two named sides. */
+function winnerParts(
+  scope: string,
+  first: string,
+  second: string,
+): { scope: string; first: string; second: string } | null {
   if (!PERIOD_SCOPE.test(scope.trim())) return null;
   if (!first.trim() || !second.trim()) return null;
   return { scope: scope.trim(), first: first.trim(), second: second.trim() };
@@ -426,8 +480,29 @@ export function scopedWinnerLabel(
 ): string | null {
   const parts = periodWinnerParts(marketName);
   if (!parts) return null;
-  if (!/^yes$/i.test((outcomeName ?? "").trim())) return null;
-  return `${parts.first} wins ${parts.scope}`;
+  const outcome = (outcomeName ?? "").trim();
+  if (/^yes$/i.test(outcome)) return `${parts.first} wins ${parts.scope}`;
+  // A SIDE-NAMED ROW IS NAMED, NOT GUESSED (#5555).
+  //
+  // The paragraph above drops `No` because calling it `B wins Set 1` would be
+  // an inference this module cannot make. That reasoning does not reach a row
+  // the venue has already labelled with a side: `Phantom Academy vs. Noir
+  // Verse: Map 1` ships `Noir Verse 0.465` and `Phantom Academy 0.445` as two
+  // separately priced, separately named outcomes, so naming both states what
+  // the wire says rather than deriving a complement. It is the same two-sided
+  // shape the hero itself renders.
+  //
+  // Matched against the parsed sides rather than accepted verbatim, so a row
+  // whose outcome is neither `Yes` nor a side keeps returning null and keeps
+  // being dropped by the caller — no raw venue string reaches a reader. That
+  // costs two of the 151 map markets measured on 2026-09-12, where one side is
+  // written `6666 wins map 2` instead of `6666`; those pages render the side
+  // that does resolve instead of nothing at all, which is the direction this
+  // ship is going anyway.
+  for (const side of [parts.first, parts.second]) {
+    if (side.toLowerCase() === outcome.toLowerCase()) return `${side} wins ${parts.scope}`;
+  }
+  return null;
 }
 
 /**
