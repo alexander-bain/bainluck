@@ -999,7 +999,38 @@ export function buildMarketSection(
     (m) => !isRedundantWithMarketMaps(m) && !winProb.has(m.market_name || ""),
   );
 
-  if (kept.length < 3)
+  // ── #5540: THE FLOOR COUNTS A POPULATION THE PAGE'S GATE NEVER SAW ──────────
+  // This used to read `kept.length < 3`, mirroring the event page's own
+  // `(gameMarkets.other?.length ?? 0) >= 3`. The same number, applied to two
+  // different populations: the page counts the WIRE, this counts what survives
+  // `findWinProbMarkets` and `isRedundantWithMarketMaps`. So the page mounts the
+  // section and the section returns null, and no one is told anything.
+  //
+  // The gap is not an edge case. Measured by replaying this module over the real
+  // `other[]` wire of 22 events (2026-09-12 07:5x–08:0xZ, live + completed):
+  // SIX of the seven LIVE events whose payload passes the page's `>= 3` gate
+  // rendered nothing. Five of the six are this floor — including three live
+  // tennis matches whose only surviving market is `Set 1 Winner`, a question the
+  // hero above it does not answer. (The sixth, an esports match, keeps ZERO rows
+  // because its `Map 1` / `Map 2` winners are eaten as the hero's own question —
+  // a different defect, filed separately; no floor can rescue a kept set of 0.)
+  //
+  // WHY ZERO IS THE RIGHT FLOOR AND NOT A SMALLER NUMBER. A binary question is
+  // TWO rows on the wire and renders as ONE — `scopedWinnerLabel` drops the `No`
+  // complement, because one question gets one number. So any floor above zero is
+  // counting wire rows to decide whether a READER has enough to look at, and the
+  // two are not the same quantity. What survives the filters above is, by
+  // construction, a question the rest of the page does not answer; if a card of
+  // it survives every filter below, it is worth its heading. Emptiness is still
+  // caught — cards that lose all their outcomes are dropped downstream, and
+  // `SpecialEventMarkets` renders nothing on zero categories.
+  //
+  // Settled pages do not move: all ten completed events in that sample keep 3+
+  // rows, so this relaxes nothing a finished game shows. The page's own `>= 3`
+  // wire gate is deliberately left alone — the two payloads it hides at 1–2 rows
+  // are a stray `(-2.5)` handicap and a 99% BTTS row on a finished match, and
+  // neither is a market a reader is missing.
+  if (kept.length === 0)
     return { categories: [], renderedOutcomes: 0, quotedOutcomes: 0, withheld: 0 };
 
   interface Draft {
