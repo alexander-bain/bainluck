@@ -262,17 +262,21 @@ class TestTheTransientCaseIsLeftAlone:
         assert admissible_speakers_are_all_settled(group) is False
 
     def test_one_live_admissible_market_saves_the_group(self):
-        """15304201's real shape: a terminal book AND a live one, both admissible.
+        """A settled book AND a live winner market, both admissible.
 
-        Kills the `any`-instead-of-`all` mutant. The source can still speak, so
-        nothing may be retired.
+        Kills the `any`-instead-of-`all` mutant: one settled speaker must not
+        condemn a group that still has a speaker able to price a side. The
+        second market is a clean two-sided winner deliberately — a container
+        carrying a `Spread -16.5` outcome is refused a step earlier by
+        `outcomes_refute_game_winner` (#5273), so building this case out of one
+        would test that gate instead of this one and pass for the wrong reason.
         """
         group = [
             _entry(55275300, "Will Kansas State beat Kansas?", [(1, "Yes", 1.0), (2, "No", 0.0)]),
             _entry(
                 59947630,
                 "Washington State vs. Kansas State",
-                [(1, "Washington State", 0.115), (2, "Spread -16.5", 0.545)],
+                [(1, "Washington State", 0.115), (2, "Kansas State", 0.885)],
             ),
         ]
         assert count_admissible_speakers(group) == 2
