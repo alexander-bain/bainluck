@@ -165,8 +165,20 @@ struct TeamDetailView: View {
                 Text("\(teamScore)–\(oppScore)")
                     .font(.subheadline).bold().monospacedDigit()
                     .foregroundStyle(won ? .primary : .secondary)
-            } else if let odds = event.currentOdds, let homeProb = odds.homeProbability {
-                let prob = isHome ? homeProb : (1 - homeProb)
+            } else if let odds = event.currentOdds, let homeProb = odds.homeProbability,
+                      // #5363 — this row's number is THIS PAGE'S TEAM's chance,
+                      // and for an away fixture it was derived as `1 − P(home)`.
+                      // On a draw-priced sport that is *away win or draw*, so a
+                      // soccer team's own page overstated every away fixture by
+                      // the draw — 20–30pp pre-match. There is no second slot
+                      // and no other side to name here: the number belongs to
+                      // the team whose page this is, so when we do not hold that
+                      // team's price the row simply carries no number, the same
+                      // as a fixture with no odds at all.
+                      let prob = isHome
+                        ? homeProb
+                        : DrawPricedWinner.printablePair(
+                            away: 1 - homeProb, home: homeProb, sport: event.sport)?.away {
                 Text(formatPct(prob)).font(.subheadline).bold().monospacedDigit().foregroundStyle(.blue)
             }
         }

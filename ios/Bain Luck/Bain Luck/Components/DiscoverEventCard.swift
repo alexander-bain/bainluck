@@ -121,10 +121,19 @@ struct NativeEventDiscoverCard: View {
             servedAway: event.currentOdds?.awayRenderedPercent,
             servedHome: event.currentOdds?.homeRenderedPercent
         )
+        // #5363 — the sentence LEAVES THE APP, so it is the last place a
+        // complement may be quoted. On a draw-priced sport the away percent is
+        // withheld, which makes this half a duel — and `eventShareMessage`
+        // already answers that with the bare fixture and no numbers ("no price
+        // is not a price"). Deliberately NOT a new one-sided sentence form: the
+        // share's stated job is to mirror a card a reader can check it against,
+        // and "Boca 68%" with no second number reads, out of context in someone
+        // else's chat, as the pair it is not.
+        let awayPercent = DrawPricedWinner.sportPricesADraw(event.sport) ? nil : duel[0]
         return eventShareMessage(
             away: event.awayTeam,
             home: event.homeTeam,
-            awayPercent: duel[0],
+            awayPercent: awayPercent,
             homePercent: duel[1]
         )
     }
@@ -252,9 +261,20 @@ struct NativeEventDiscoverCard: View {
                 // live/048 — `!isSuspended` for the same honesty reason as
                 // `!isDone`: the split would be the last live blend on a match
                 // nothing is reporting on, drawn as a current read.
+                //
+                // #5363 — THE PAIR RULE, and this strip is a genuine two-slot
+                // surface, so `printablePair` is the right question: its
+                // two-way behaviour ("no away price ⇒ no strip") is exactly the
+                // guard that stood here before, and its draw-priced answer
+                // withholds the away slot. On soccer the away figure is
+                // `1 − P(home)` = *away win **or** draw*, so the strip printed a
+                // pair summing to 100 on a match that can be drawn.
                 if !isDone, !isSuspended,
-                   let homeProbability = event.currentOdds?.homeProbability,
-                   let awayProbability = event.currentOdds?.awayProbability {
+                   let printable = DrawPricedWinner.printablePair(
+                       away: event.currentOdds?.awayProbability,
+                       home: event.currentOdds?.homeProbability,
+                       sport: event.sport) {
+                    let homeProbability = printable.home
                     // UX-P114 — these two are two sides of ONE question (the feed
                     // derives away as `1 - home`), so they are decided together or
                     // they sum to 101. Measured 2026-08-21: 34 of 414 live/upcoming
@@ -270,7 +290,7 @@ struct NativeEventDiscoverCard: View {
                     // Both probabilities above come from `currentOdds`, so the
                     // served pair describes exactly the pair being drawn.
                     let duel = duelPercents(
-                        away: awayProbability,
+                        away: printable.away ?? (1 - homeProbability),
                         home: homeProbability,
                         servedAway: event.currentOdds?.awayRenderedPercent,
                         servedHome: event.currentOdds?.homeRenderedPercent
@@ -279,19 +299,50 @@ struct NativeEventDiscoverCard: View {
                     let homePct = duel[1]
                     VStack(spacing: 6) {
                         HStack {
-                            Text(formatProbability(awayProbability, renderedPercent: awayPct))
-                                .font(.title3.weight(.black).monospacedDigit())
-                                .foregroundStyle(awayColor)
-                            Spacer()
-                            Text("Win Probability")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(formatProbability(homeProbability, renderedPercent: homePct))
-                                .font(.title3.weight(.black).monospacedDigit())
-                                .foregroundStyle(homeColor)
+                            if let awayProbability = printable.away {
+                                Text(formatProbability(awayProbability, renderedPercent: awayPct))
+                                    .font(.title3.weight(.black).monospacedDigit())
+                                    .foregroundStyle(awayColor)
+                                Spacer()
+                                Text("Win Probability")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(formatProbability(homeProbability, renderedPercent: homePct))
+                                    .font(.title3.weight(.black).monospacedDigit())
+                                    .foregroundStyle(homeColor)
+                            } else {
+                                // #5363 — the strip has collapsed to ONE number,
+                                // and a lone number in a slot a reader learned to
+                                // read positionally belongs to neither side. So
+                                // it is NAMED, exactly as the event page's hero
+                                // names its survivor, using the short name the
+                                // crests above already carry (#3430 — the pair
+                                // decides it, so both sides never read "Tigers").
+                                //
+                                // Rounded plainly, not through `duelPercents`:
+                                // that contract's job is to stop a PAIR summing
+                                // to 101, and its answer for one side can be
+                                // `100 − other` — a number about the complement
+                                // this branch exists to refuse.
+                                Text("Win Probability")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(cardSides.home)
+                                    .font(.caption2.weight(.bold))
+                                    .lineLimit(1)
+                                    .foregroundStyle(homeColor)
+                                Text(formatProbability(homeProbability))
+                                    .font(.title3.weight(.black).monospacedDigit())
+                                    .foregroundStyle(homeColor)
+                            }
                         }
-                        probabilityBar(awayProbability: awayProbability, homeProbability: homeProbability)
+                        probabilityBar(
+                            awayProbability: printable.away ?? (1 - homeProbability),
+                            homeProbability: homeProbability,
+                            awayIsWithheld: printable.away == nil
+                        )
                     }
                 }
 
@@ -445,11 +496,19 @@ struct NativeEventDiscoverCard: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func probabilityBar(awayProbability: Double, homeProbability: Double) -> some View {
+    /// #5363 — a withheld away side still has a BAR: the two segments are a
+    /// partition and the remainder is a true quantity, "not the home team".
+    /// What it is not is the away team, so it loses that team's colour along
+    /// with its number (#5271's rule, `EventDetailView.probabilityBarAndNumbers`).
+    private func probabilityBar(
+        awayProbability: Double,
+        homeProbability: Double,
+        awayIsWithheld: Bool
+    ) -> some View {
         GeometryReader { geo in
             HStack(spacing: 0) {
                 Rectangle()
-                    .fill(awayColor)
+                    .fill(awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor)
                     .frame(width: max(3, geo.size.width * awayProbability))
                 Rectangle()
                     .fill(homeColor)
@@ -462,15 +521,19 @@ struct NativeEventDiscoverCard: View {
     }
 
     private func renderedShareImage() -> PlatformImage? {
-        guard let homeProbability = event.currentOdds?.homeProbability,
-              let awayProbability = event.currentOdds?.awayProbability else {
+        // #5363 — the same pair rule the card's own strip draws, so the image a
+        // reader shares carries the reading they were looking at.
+        guard let printable = DrawPricedWinner.printablePair(
+            away: event.currentOdds?.awayProbability,
+            home: event.currentOdds?.homeProbability,
+            sport: event.sport) else {
             return nil
         }
         return ShareCardRenderer.renderEventCard(
             homeTeam: event.homeTeam,
             awayTeam: event.awayTeam,
-            homeProbability: homeProbability,
-            awayProbability: awayProbability,
+            homeProbability: printable.home,
+            awayProbability: printable.away,
             sportName: event.sportName ?? event.sport ?? "Sports",
             homeColor: homeColor,
             awayColor: awayColor,

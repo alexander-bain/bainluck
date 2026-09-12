@@ -20,20 +20,26 @@ final class EventCardFooterEmptinessTests: XCTestCase {
 
     private typealias Footer = EventCardView.EventCardFooter
 
+    /// #5363 — every specimen in this file is Cardinals @ Giants or its
+    /// neighbours, and the NFL prices no draw. Named rather than left to `nil`
+    /// so these rows keep testing the two-way arm explicitly.
+    private let twoWay = "americanfootball_nfl"
+    private let soccer = "soccer_spain_la_liga"
+
     // MARK: - The settled card, which is the whole point
 
     func testSettledCardWithNoReasonHasNoFooter() {
         // What #4094 leaves on the wire for Cardinals @ Giants: reason "",
         // headline nil, game over so `isLive` false.
         XCTAssertFalse(
-            Footer.hasContent(reason: "", isLive: false, awayOpening: 0.454, homeOpening: 0.546),
+            Footer.hasContent(reason: "", isLive: false, awayOpening: 0.454, homeOpening: 0.546, sport: twoWay),
             "a finished card whose reason is empty must not draw a footer row"
         )
     }
 
     func testSettledCardWithNilReasonHasNoFooter() {
         XCTAssertFalse(
-            Footer.hasContent(reason: nil, isLive: false, awayOpening: 0.454, homeOpening: 0.546)
+            Footer.hasContent(reason: nil, isLive: false, awayOpening: 0.454, homeOpening: 0.546, sport: twoWay)
         )
     }
 
@@ -42,7 +48,7 @@ final class EventCardFooterEmptinessTests: XCTestCase {
     /// the footer, because "Opened X/Y" is the live strip and would double it.
     func testSettledOpeningPricesDoNotResurrectTheFooter() {
         XCTAssertFalse(
-            Footer.hasContent(reason: nil, isLive: false, awayOpening: 0.4, homeOpening: 0.6)
+            Footer.hasContent(reason: nil, isLive: false, awayOpening: 0.4, homeOpening: 0.6, sport: twoWay)
         )
     }
 
@@ -53,14 +59,14 @@ final class EventCardFooterEmptinessTests: XCTestCase {
         XCTAssertTrue(
             Footer.hasContent(
                 reason: "Won as 34% underdog", isLive: false,
-                awayOpening: 0.6589, homeOpening: 0.3411
+                awayOpening: 0.6589, homeOpening: 0.3411, sport: twoWay
             )
         )
     }
 
     func testLiveCardWithBothOpeningPricesKeepsItsFooter() {
         XCTAssertTrue(
-            Footer.hasContent(reason: nil, isLive: true, awayOpening: 0.45, homeOpening: 0.55),
+            Footer.hasContent(reason: nil, isLive: true, awayOpening: 0.45, homeOpening: 0.55, sport: twoWay),
             "the live 'Opened X/Y' strip is footer content on its own"
         )
     }
@@ -69,7 +75,7 @@ final class EventCardFooterEmptinessTests: XCTestCase {
         XCTAssertTrue(
             Footer.hasContent(
                 reason: "San Francisco Giants odds shifted 41%", isLive: true,
-                awayOpening: nil, homeOpening: nil
+                awayOpening: nil, homeOpening: nil, sport: twoWay
             )
         )
     }
@@ -77,7 +83,7 @@ final class EventCardFooterEmptinessTests: XCTestCase {
     func testScheduledCardWithAReasonKeepsItsFooter() {
         XCTAssertTrue(
             Footer.hasContent(reason: "Starting soon", isLive: false,
-                              awayOpening: nil, homeOpening: nil)
+                              awayOpening: nil, homeOpening: nil, sport: twoWay)
         )
     }
 
@@ -89,16 +95,61 @@ final class EventCardFooterEmptinessTests: XCTestCase {
     /// exactly the rows the strip cannot draw.
     func testALivePriceOnOneSideOnlyIsNotContent() {
         XCTAssertFalse(
-            Footer.hasContent(reason: nil, isLive: true, awayOpening: 0.45, homeOpening: nil)
+            Footer.hasContent(reason: nil, isLive: true, awayOpening: 0.45, homeOpening: nil, sport: twoWay)
         )
         XCTAssertFalse(
-            Footer.hasContent(reason: nil, isLive: true, awayOpening: nil, homeOpening: 0.55)
+            Footer.hasContent(reason: nil, isLive: true, awayOpening: nil, homeOpening: 0.55, sport: twoWay)
         )
     }
 
     func testLiveWithNoOpeningPricesAndNoReasonIsNotContent() {
         XCTAssertFalse(
-            Footer.hasContent(reason: nil, isLive: true, awayOpening: nil, homeOpening: nil)
+            Footer.hasContent(reason: nil, isLive: true, awayOpening: nil, homeOpening: nil, sport: twoWay)
+        )
+    }
+
+    // MARK: - #5363, where the mirror had to move
+
+    /// A draw-priced sport draws the NAMED single-sided caption ("Opened Boca
+    /// 68%"), so a live row holding only the home opening price IS content —
+    /// the exact input the assertion above requires to be false on the NFL.
+    ///
+    /// This pair is the mirror test in both directions on one input, which is
+    /// what makes it worth writing: the same arguments, two sports, opposite
+    /// answers. A `hasContent` that ignored its new `sport` argument passes the
+    /// two-way half and fails here.
+    func testADrawPricedLiveRowWithOnlyTheHomePriceIsContent() {
+        XCTAssertTrue(
+            Footer.hasContent(reason: nil, isLive: true, awayOpening: nil,
+                              homeOpening: 0.55, sport: soccer),
+            "soccer's footer prints 'Opened <home> 55%', so home alone is content"
+        )
+        XCTAssertFalse(
+            Footer.hasContent(reason: nil, isLive: true, awayOpening: nil,
+                              homeOpening: 0.55, sport: twoWay),
+            "the same row on a two-way sport still renders nothing"
+        )
+    }
+
+    /// The home price is load-bearing on BOTH arms: the withheld caption is
+    /// built on it, so a draw-priced row without it is as empty as any other.
+    func testADrawPricedLiveRowWithNoHomePriceIsStillEmpty() {
+        XCTAssertFalse(
+            Footer.hasContent(reason: nil, isLive: true, awayOpening: 0.45,
+                              homeOpening: nil, sport: soccer)
+        )
+        XCTAssertFalse(
+            Footer.hasContent(reason: nil, isLive: true, awayOpening: nil,
+                              homeOpening: nil, sport: soccer)
+        )
+    }
+
+    /// `isLive` still gates the strip on a draw-priced sport — a settled soccer
+    /// card must not acquire a footer the two-way card does not get.
+    func testADrawPricedSettledRowGetsNoFooter() {
+        XCTAssertFalse(
+            Footer.hasContent(reason: nil, isLive: false, awayOpening: nil,
+                              homeOpening: 0.55, sport: soccer)
         )
     }
 
@@ -107,7 +158,7 @@ final class EventCardFooterEmptinessTests: XCTestCase {
     /// `!reason.isEmpty`, and the mirror is only worth having while it is exact.
     func testEmptyStringIsNotAReason() {
         XCTAssertFalse(
-            Footer.hasContent(reason: "", isLive: false, awayOpening: nil, homeOpening: nil)
+            Footer.hasContent(reason: "", isLive: false, awayOpening: nil, homeOpening: nil, sport: twoWay)
         )
     }
 }

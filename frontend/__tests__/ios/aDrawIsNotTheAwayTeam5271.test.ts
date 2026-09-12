@@ -336,19 +336,287 @@ d("a draw is not the away team on iOS", () => {
     }
   });
 
+  // ══════════════════════════════════════════════════════════════════════
+  // #5363 — THE CARD FAMILY.
+  //
+  // The boundary test that used to sit here asserted `EventCardView` was
+  // knowingly still on the old reading. It has been deleted because it stopped
+  // being true, which was always its exit condition. What replaces it is the
+  // same coverage the event page gets: every card site, by name.
+  //
+  // The rule the sites divide on, stated once so it does not have to be
+  // rediscovered from the diff — WHAT REPLACES A WITHHELD AWAY NUMBER:
+  //
+  //  * the slot survives, as the app's em-dash, where the surface keeps a
+  //    two-slot layout whose OTHER slot still attributes the survivor
+  //    (`RelatedByTagView`'s "— / 55%", sitting on the same line as its
+  //    "<away> @ <home>" title);
+  //  * the survivor is NAMED where the pair collapses to a lone number a
+  //    reader had been attributing positionally (the Discover strip, the
+  //    search row, the menu-bar row, the card footer's "Opened …") — the
+  //    hero's rule in #5271, for the hero's reason;
+  //  * nothing is drawn where the number was already attached to its own
+  //    named row (`EventCardView`'s per-team rows, the widget's team rows,
+  //    `TeamDetailView`, the share image's away crest);
+  //  * and the BAR keeps its remainder everywhere, minus the away team's
+  //    colour, because a partition's other half is a true quantity.
+  // ══════════════════════════════════════════════════════════════════════
+
+  const card = (p: string) => () => readFileSync(join(IOS_ROOT, p), "utf8");
+  const eventCard = card("Components/EventCardView.swift");
+  const discoverCard = card("Components/DiscoverEventCard.swift");
+  const relatedCard = card("Components/RelatedByTagView.swift");
+  const searchView = card("Views/SearchView.swift");
+  const menuBar = card("Views/MenuBarView.swift");
+  const teamDetail = card("Views/TeamDetailView.swift");
+  const shareCard = card("Utilities/ShareCardRenderer.swift");
+  const percents = card("Utilities/RenderedPercent.swift");
+  const widgetClient = () =>
+    readFileSync(join(IOS_ROOT, "../BainLuckWidget/WidgetAPIClient.swift"), "utf8");
+  const widgetView = () =>
+    readFileSync(join(IOS_ROOT, "../BainLuckWidget/LiveGamesWidget.swift"), "utf8");
+  const widgetModels = () =>
+    readFileSync(join(IOS_ROOT, "../BainLuckWidget/WidgetModels.swift"), "utf8");
+
   /**
-   * THE BOUNDARY, recorded rather than left to be rediscovered. The card
-   * family draws the same complement off the same served field and is #5363 —
-   * a separate ship under notice 35's one-card-family rule. If someone fixes
-   * those, this assertion fails and they delete it, which is the point: it
-   * cannot silently stop describing the app.
+   * THE STACKED CARD. Its two numbers live in per-team rows, so the withheld
+   * side simply renders nothing — and it asks `sportPricesADraw` rather than
+   * `printablePair` ON PURPOSE: the pair rule answers `nil` for a two-way sport
+   * holding no away price, which would newly blank the HOME number on a card
+   * that has always printed it alone. That regression is the mutant here.
    */
-  it("the card surfaces are knowingly still on the old reading (#5363)", () => {
-    const cards = readFileSync(
-      join(IOS_ROOT, "Components/EventCardView.swift"),
+  it("the stacked card withholds only the away side, per row", () => {
+    const code = stripComments(eventCard());
+
+    expect(code).toMatch(
+      /private var awayIsWithheld: Bool \{\s*DrawPricedWinner\.sportPricesADraw\(event\.sport\)/
+    );
+    // Both per-side readers gate the AWAY branch and neither touches home.
+    expect(code).toMatch(
+      /side == \.home\s*\?\s*event\.currentOdds\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : event\.currentOdds\?\.awayProbability\)/
+    );
+    expect(code).toMatch(
+      /side == \.home\s*\?\s*opening\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : opening\?\.awayProbability\)/
+    );
+    // Both bars keep the remainder and drop the colour.
+    const neutralised =
+      code.match(/awayIsWithheld\s*\r?\n?\s*\?\s*Color\.secondary\.opacity\(0\.25\)/g) ??
+      code.match(/awayIsWithheld \? Color\.secondary\.opacity\(0\.25\)/g) ??
+      [];
+    expect(
+      (code.match(/Color\.secondary\.opacity\(0\.25\)/g) ?? []).length
+    ).toBe(2);
+    expect(neutralised.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * THE FOOTER, and its emptiness mirror. `hasContent` has to agree with
+   * `footerRow` on BOTH arms now: home-alone is content on a draw-priced sport
+   * and is not on any other. A `hasContent` that ignored the sport would leave
+   * the 8pt dead strip #4094 removed, on soccer only.
+   */
+  it("the footer's caption and its emptiness gate move together", () => {
+    const code = stripComments(eventCard());
+
+    expect(code).toMatch(/sport: String\?\s*\)\s*-> Bool/);
+    expect(code).toMatch(
+      /return awayOpening != nil \|\| DrawPricedWinner\.sportPricesADraw\(sport\)/
+    );
+    // The caption itself goes through the rule and names its survivor.
+    expect(code).toMatch(
+      /if isLive, let opened = DrawPricedWinner\.printablePair\(/
+    );
+    expect(code).toMatch(
+      /Text\("Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"\)/
+    );
+  });
+
+  /** THE DISCOVER STRIP — the pair collapses, so the survivor is named. */
+  it("the discover strip asks the rule and names the side it keeps", () => {
+    const code = stripComments(discoverCard());
+
+    expect(code).toMatch(
+      /let printable = DrawPricedWinner\.printablePair\([\s\S]{0,200}sport: event\.sport\)/
+    );
+    expect(code).toMatch(/if let awayProbability = printable\.away \{/);
+    // The withheld arm names the home side beside its number.
+    expect(code).toMatch(
+      /\} else \{[\s\S]{0,600}Text\(cardSides\.home\)[\s\S]{0,300}Text\(formatProbability\(homeProbability\)\)/
+    );
+    // The bar is told, explicitly, rather than inferring from a colour.
+    expect(code).toMatch(/awayIsWithheld: printable\.away == nil/);
+    expect(code).toMatch(
+      /awayIsWithheld \? Color\.secondary\.opacity\(0\.25\) : awayColor/
+    );
+  });
+
+  /**
+   * THE SHARE SENTENCE AND THE SHARE IMAGE — the two artefacts that leave the
+   * app, where there is no page underneath to check a number against.
+   */
+  it("neither shared artefact carries the complement", () => {
+    const cardCode = stripComments(discoverCard());
+    const renderer = stripComments(shareCard());
+
+    // The sentence: a withheld away side makes this half a duel, and half a
+    // duel already quotes no number.
+    expect(cardCode).toMatch(
+      /let awayPercent = DrawPricedWinner\.sportPricesADraw\(event\.sport\) \? nil : duel\[0\]/
+    );
+    expect(cardCode).toMatch(/awayPercent: awayPercent,/);
+
+    // The image: an OPTIONAL away probability, no default on the entry point.
+    expect(renderer).toMatch(/let awayProbability: Double\?/);
+    expect(renderer).toMatch(/awayProbability: Double\?,\s*\n\s*sportName: String,/);
+    expect(renderer).toMatch(/if let awayProbability \{/);
+    // …and the card hands it the rule's answer, not the served field.
+    expect(cardCode).toMatch(/awayProbability: printable\.away,/);
+  });
+
+  /** THE COMPACT PAIR — the slot survives as the app's absent marker. */
+  it("the related-by-tag row dashes the slot rather than collapsing it", () => {
+    const code = stripComments(relatedCard());
+
+    expect(code).toMatch(
+      /let printable = DrawPricedWinner\.printablePair\([\s\S]{0,200}sport: data\.sport\)/
+    );
+    expect(code).toMatch(/formatProbabilityOrDash\(printable\.away, renderedPercent: awayPct\)/);
+  });
+
+  /**
+   * THE SEARCH ROW — the densest copy of the defect, because a lone number has
+   * no second number beside it to look wrong against. The helper moves the
+   * reading to HOME and the row NAMES it; the two-way arm is byte-identical.
+   */
+  it("the search row's lone number changes sides and gains a name", () => {
+    const helper = stripComments(percents());
+    const view = stripComments(searchView());
+
+    expect(helper).toMatch(
+      /sport sportKey: String\?\s*\)\s*-> \(probability: Double, percent: Int, isHome: Bool\)\?/
+    );
+    expect(helper).toMatch(
+      /if DrawPricedWinner\.sportPricesADraw\(sportKey\) \{[\s\S]{0,240}isHome: true\)/
+    );
+    // No default on the sport, or a call site can silently keep the old reading.
+    expect(helper).not.toMatch(/sport sportKey: String\? = nil/);
+
+    expect(view).toMatch(/sport: event\.sport/);
+    expect(view).toMatch(
+      /if firstNamed\.isHome \{[\s\S]{0,400}TeamShortName\.shortPair\([\s\S]{0,140}\)\.home/
+    );
+  });
+
+  /** THE MENU BAR and THE WIDGET — the two surfaces that derive `1 − home`. */
+  it("the menu bar and the widget both gate their derived away number", () => {
+    const menu = stripComments(menuBar());
+    const client = stripComments(widgetClient());
+    const view = stripComments(widgetView());
+    const models = stripComments(widgetModels());
+
+    expect(menu).toMatch(/let awayProb: Int\?/);
+    expect(menu).toMatch(
+      /let printable = DrawPricedWinner\.printablePair\([\s\S]{0,200}sport: event\.sport\s*\)/
+    );
+    expect(menu).toMatch(/awayProb: printableAwayPct,/);
+    expect(menu).toMatch(/Text\("\\\(game\.homeAbbrev\) \\\(game\.homeProb\)"\)/);
+
+    // The widget is a STANDALONE TARGET and shares the rule rather than
+    // transcribing it — the membership exception is asserted below.
+    expect(client).toMatch(
+      /let awayIsWithheld = DrawPricedWinner\.sportPricesADraw\(event\.sport\)/
+    );
+    expect(client).toMatch(/awayProb: awayIsWithheld \? nil :/);
+    expect(models).toMatch(/let awayProb: Int\?/);
+    // "Who leads" is unanswerable with one price, so neither side claims it.
+    expect(models).toMatch(/var awayIsLeading: Bool \{\s*guard let awayProb else \{ return false \}/);
+    expect(models).toMatch(/var homeIsLeading: Bool \{\s*guard let awayProb else \{ return false \}/);
+    expect(view).not.toMatch(/game\.awayProb > game\.homeProb/);
+    expect(view).not.toMatch(/game\.homeProb > game\.awayProb/);
+  });
+
+  /**
+   * The widget can only call the rule because the rule is a MEMBER of its
+   * target. Xcode 16 file-system-synchronized groups mean membership is the
+   * pbxproj exception set and nothing else, so this is the assertion that the
+   * `DrawPricedWinner` call above is not a build error waiting to happen —
+   * and CI compiles no Swift, so nothing else would catch it.
+   */
+  it("the widget target actually contains the rule it calls", () => {
+    const pbxproj = readFileSync(
+      join(IOS_ROOT, "../Bain Luck.xcodeproj/project.pbxproj"),
       "utf8"
     );
-    expect(cards).toMatch(/awayProbability/);
-    expect(stripComments(cards)).not.toMatch(/DrawPricedWinner/);
+    const widgetExceptions = pbxproj.match(
+      /Exceptions for "Bain Luck" folder in "BainLuckWidget" target \*\/ = \{[\s\S]*?\};/
+    );
+    expect(widgetExceptions).not.toBeNull();
+    expect(widgetExceptions![0]).toMatch(/Utilities\/DrawPricedWinner\.swift,/);
+    expect(widgetExceptions![0]).toMatch(/Utilities\/SportVocab\.swift,/);
+  });
+
+  /** THE TEAM PAGE — a site the issue's own grep missed. */
+  it("a team's own page stops inventing its away-fixture number", () => {
+    const code = stripComments(teamDetail());
+
+    expect(code).toMatch(
+      /: DrawPricedWinner\.printablePair\(\s*away: 1 - homeProb, home: homeProb, sport: event\.sport\)\?\.away/
+    );
+    // The old unconditional complement is gone.
+    expect(code).not.toMatch(/let prob = isHome \? homeProb : \(1 - homeProb\)/);
+  });
+
+  /**
+   * THE SWEEP, over the whole card family this time. Same shape as the
+   * event-page sweep above and same reason: an eleventh site added later fails
+   * here rather than shipping the bug an eleventh time.
+   *
+   * Every survivor is pinned as a literal. Each is either a BAR REMAINDER (a
+   * partition's other half, which the assertions above require to be drawn in
+   * the neutral colour) or a value handed to `duelPercents`/the rule itself —
+   * never a number printed under an away crest.
+   */
+  it("no card-family file prints an away number it derived itself", () => {
+    const expected: Record<string, string[]> = {
+      "EventCardView.swift": [],
+      "SearchView.swift": [],
+      "TeamDetailView.swift": [],
+      "RenderedPercent.swift": [],
+      "LiveGamesWidget.swift": [],
+      "DiscoverEventCard.swift": [
+        "                        away: printable.away ?? (1 - homeProbability),",
+        "                            awayProbability: printable.away ?? (1 - homeProbability),",
+      ],
+      "RelatedByTagView.swift": [
+        "                    away: printable.away ?? (1 - homeProbability),",
+      ],
+      "MenuBarView.swift": [
+        "                let awayProbability = 1.0 - homeProbability",
+      ],
+      "ShareCardRenderer.swift": [
+        "    private var awayBarShare: Double { awayProbability ?? (1 - homeProbability) }",
+      ],
+      "WidgetAPIClient.swift": [
+        "            let awayProbability = 1.0 - homeProbability",
+      ],
+    };
+
+    for (const [name, source] of [
+      ["EventCardView.swift", eventCard()],
+      ["DiscoverEventCard.swift", discoverCard()],
+      ["RelatedByTagView.swift", relatedCard()],
+      ["SearchView.swift", searchView()],
+      ["MenuBarView.swift", menuBar()],
+      ["TeamDetailView.swift", teamDetail()],
+      ["ShareCardRenderer.swift", shareCard()],
+      ["RenderedPercent.swift", percents()],
+      ["WidgetAPIClient.swift", widgetClient()],
+      ["LiveGamesWidget.swift", widgetView()],
+    ] as const) {
+      const offenders = withoutRuleCalls(stripComments(source))
+        .split("\n")
+        .filter((line) => DERIVES_A_COMPLEMENT.test(line));
+      expect({ name, offenders }).toEqual({ name, offenders: expected[name] });
+    }
   });
 });

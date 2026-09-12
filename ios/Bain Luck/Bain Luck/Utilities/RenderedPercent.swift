@@ -235,12 +235,40 @@ nonisolated func duelPercents(
 /// not about the rounding), so a call site holding only the integer cannot
 /// format the number correctly, and a call site deriving the Double itself is a
 /// second copy of the rule this function exists to hold.
+/// ## A draw-priced sport hands back the OTHER side (#5363)
+///
+/// Everything above reasons about the away side because the away side is the
+/// one a row names first. On soccer that number is `1 − P(home)` — *away win
+/// **or** draw* — and the home-only fallback three lines down DERIVES it, so
+/// this function was the single densest copy of the defect `DrawPricedWinner`
+/// exists to stop: one number, no second number beside it to look wrong
+/// against, on the surface a reader meets before they have opened anything.
+///
+/// So a draw-priced sport gets the price we actually hold, which is home's, and
+/// says so with `isHome` — the caller must NAME it, because the whole reason a
+/// bare number worked here was positional (#4306: the reader anchors it to the
+/// name they read first) and that anchor is exactly what moving sides breaks.
+///
+/// `sport` has NO DEFAULT, deliberately, following #4044: a defaulted sport is a
+/// call site that silently keeps the old reading, and there are two of them.
+///
+/// The draw arm rounds plainly instead of asking `duelPercents`, for the reason
+/// the hero states in `EventDetailView`: that contract exists to stop a PAIR
+/// summing to 101, and its answer for one side can be `100 − other` — a number
+/// about the very complement this arm refuses to print. `formatProbability`
+/// applies the identical rounding for a nil `renderedPercent`, so the string is
+/// unchanged; what changes is that no complement was consulted to produce it.
 nonisolated func firstNamedSideNumber(
     away awayProbability: Double?,
     home homeProbability: Double?,
     servedAway: Int?,
-    servedHome: Int?
-) -> (probability: Double, percent: Int)? {
+    servedHome: Int?,
+    sport sportKey: String?
+) -> (probability: Double, percent: Int, isHome: Bool)? {
+    if DrawPricedWinner.sportPricesADraw(sportKey) {
+        guard let home = homeProbability else { return nil }
+        return (probability: home, percent: Int((home * 100).rounded()), isHome: true)
+    }
     guard let away = awayProbability ?? homeProbability.map({ 1 - $0 }) else { return nil }
     guard let percent = duelPercents(
         away: away,
@@ -248,7 +276,7 @@ nonisolated func firstNamedSideNumber(
         servedAway: servedAway,
         servedHome: servedHome
     )[0] else { return nil }
-    return (probability: away, percent: percent)
+    return (probability: away, percent: percent, isHome: false)
 }
 
 /// The same lone number, for a row that may be priced by `current_odds` OR by the
@@ -276,19 +304,27 @@ nonisolated func firstNamedSideNumber(
 ///
 /// Preference order is `current_odds` first so that no row which renders correctly
 /// today changes: the hero pair is strictly a fallback for rows drawing nothing.
+///
+/// #5363 — `sport` is passed straight through to both arms, so the hero pair is
+/// withheld on a draw-priced sport for the same reason `current_odds` is: the
+/// server derives `hero_probability_away` from `away_probability`, which is the
+/// same complement wearing a second name (`Models/SearchModels.swift` says so on
+/// the field itself).
 nonisolated func firstNamedSideNumber(
     oddsAway: Double?,
     oddsHome: Double?,
     servedAway: Int?,
     servedHome: Int?,
     heroAway: Double?,
-    heroHome: Double?
-) -> (probability: Double, percent: Int)? {
+    heroHome: Double?,
+    sport sportKey: String?
+) -> (probability: Double, percent: Int, isHome: Bool)? {
     if let fromOdds = firstNamedSideNumber(
         away: oddsAway,
         home: oddsHome,
         servedAway: servedAway,
-        servedHome: servedHome
+        servedHome: servedHome,
+        sport: sportKey
     ) {
         return fromOdds
     }
@@ -296,6 +332,7 @@ nonisolated func firstNamedSideNumber(
         away: heroAway,
         home: heroHome,
         servedAway: nil,
-        servedHome: nil
+        servedHome: nil,
+        sport: sportKey
     )
 }

@@ -158,7 +158,9 @@
 		A7C0000000000000000000B1 /* Exceptions for "Bain Luck" folder in "BainLuckWidget" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Utilities/DrawPricedWinner.swift,
 				Utilities/PeriodLabel.swift,
+				Utilities/SportVocab.swift,
 			);
 			target = A7C0000000000000000000F1 /* BainLuckWidget */;
 		};

@@ -48,6 +48,13 @@ actor WidgetAPIClient {
             }
 
             let awayProbability = 1.0 - homeProbability
+            // #5363 — and this target derives the away side ITSELF, one line up,
+            // which on soccer makes it *away win or draw* under the away crest
+            // on someone's home screen. `DrawPricedWinner.swift` and
+            // `SportVocab.swift` are members of this target for the same reason
+            // `PeriodLabel.swift` is: the widget shares the phone's rule rather
+            // than carrying a transcription of it (ruling 021).
+            let awayIsWithheld = DrawPricedWinner.sportPricesADraw(event.sport)
             let homeAbbrev = event.homeTeamData?.abbreviation
                 ?? String(event.homeTeam.split(separator: " ").last ?? "")
             let awayAbbrev = event.awayTeamData?.abbreviation
@@ -98,7 +105,7 @@ actor WidgetAPIClient {
                 homeScore: event.homeScore,
                 awayScore: event.awayScore,
                 homeProb: bothServed ? servedHomePct! : derivedHomePct,
-                awayProb: bothServed ? servedAwayPct! : derivedAwayPct,
+                awayProb: awayIsWithheld ? nil : (bothServed ? servedAwayPct! : derivedAwayPct),
                 // #4880 — see `PeriodLabel.liveStatusText`. `PeriodLabel.swift` is
                 // a member of this target so the widget shares the phone's rule.
                 period: PeriodLabel.liveStatusText(

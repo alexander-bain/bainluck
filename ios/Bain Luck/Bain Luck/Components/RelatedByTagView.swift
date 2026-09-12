@@ -83,9 +83,22 @@ struct RelatedByTagView: View {
                 }
             }
             Spacer()
+            //
+            // #5363 — on a draw-priced sport the away half is `1 − P(home)`,
+            // i.e. *away win or draw*, and it is withheld. The SLOT survives as
+            // the app's absent marker ("— / 55%") rather than collapsing to a
+            // lone number: this pair sits on the same line as the "<away> @
+            // <home>" title that attributes it, so keeping the position keeps
+            // the attribution, and the dash says the true thing — we hold no
+            // price for that side. The surfaces that NAME their survivor
+            // instead are the ones where the pair collapses out of a layout the
+            // reader was reading positionally.
             if let odds = data.currentOdds,
-               let homeProbability = odds.homeProbability,
-               let awayProbability = odds.awayProbability {
+               let printable = DrawPricedWinner.printablePair(
+                   away: odds.awayProbability,
+                   home: odds.homeProbability,
+                   sport: data.sport) {
+                let homeProbability = printable.home
                 // UX-P114 — this row prints BOTH sides of one question separated by
                 // a slash, so it is the same 101 as the Discover card's strip.
                 //
@@ -95,14 +108,16 @@ struct RelatedByTagView: View {
                 // direction. Both probabilities come from `odds`, so the served
                 // pair describes the pair being drawn.
                 let duel = duelPercents(
-                    away: awayProbability,
+                    away: printable.away ?? (1 - homeProbability),
                     home: homeProbability,
                     servedAway: odds.awayRenderedPercent,
                     servedHome: odds.homeRenderedPercent
                 )
                 let awayPct = duel[0]
                 let homePct = duel[1]
-                Text("\(formatProbability(awayProbability, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))")
+                // The home half keeps its served percent; the away half is
+                // `formatProbabilityOrDash` on a nil, which is the em-dash.
+                Text("\(formatProbabilityOrDash(printable.away, renderedPercent: awayPct)) / \(formatProbability(homeProbability, renderedPercent: homePct))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
