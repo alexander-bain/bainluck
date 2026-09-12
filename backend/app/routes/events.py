@@ -5323,11 +5323,36 @@ async def search_events(
     # so a group never collapses to nothing and a raw page holding N ≥ 1 rows
     # always serves at least one. Raw reachability and non-empty pages are
     # therefore both true, not traded off.
+    # 🔴 #5559: AND THE ADJUSTMENT ONLY GENERALISES WHEN THE PAGE IS THE CORPUS.
+    # Everything above is true of one page. Applied to page two it is a DIFFERENT
+    # subtraction from the same corpus count, so the header moves as the reader
+    # pages — and because later pages fold less, it moves UPWARD. Measured on
+    # production 2026-09-12, `red sox`: 61 raw rows, three groups folded on page
+    # one, one on page two, none on page three, so the same query printed
+    # 58 -> 60 -> 61 games. A count that grows when you press Next reads as a
+    # bug whichever number is right, and it disagrees with the pager beside it,
+    # which has counted raw rows since #5513.
+    #
+    # The rule is the one the paragraph above already states, taken literally:
+    # this is an observation about the rows we actually looked at. When those
+    # rows ARE all the rows (`total_pages <= 1`, i.e. the corpus fits inside
+    # `per_page`), the observation is complete and the count is exact — that is
+    # #2623's ship, the case where the reader can literally count the cards and
+    # catch us. When they are one sample of several, the observation does not
+    # generalise, so we do not extrapolate from it: the raw count stands, stable
+    # on every page and equal to what the pager is built on. It over-counts by
+    # the duplicates we never looked at, which is the same direction #2623
+    # already accepted (an under-count of the COLLAPSE) and the only estimate
+    # that does not change under paging.
+    #
+    # Measured with it: 3 of 8 marquee team queries paginate and all three fold
+    # on page one; the other five already satisfy `total_results == rendered`
+    # and are untouched by this branch.
     _raw_total_count = total_count
-    _page_duplicates_dropped = _fixture_duplicates_dropped + _twin_duplicates_dropped
-    if _page_duplicates_dropped:
-        total_count = max(len(formatted_results), total_count - _page_duplicates_dropped)
     total_pages = (_raw_total_count + per_page - 1) // per_page
+    _page_duplicates_dropped = _fixture_duplicates_dropped + _twin_duplicates_dropped
+    if _page_duplicates_dropped and total_pages <= 1:
+        total_count = max(len(formatted_results), total_count - _page_duplicates_dropped)
 
     # Also search futures markets by name or outcome name.
     # #993 index-usage: recall is trigram-ILIKE only (name + outcome). The old
