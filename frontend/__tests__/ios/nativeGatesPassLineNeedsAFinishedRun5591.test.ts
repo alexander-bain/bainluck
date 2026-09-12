@@ -101,3 +101,77 @@ describe("#5591 native-gates.sh only offers a pass line from a finished run", ()
     );
   });
 });
+
+/**
+ * #5635 — the recompile proof must read the log that COULD hold the file.
+ *
+ * `--selftest` exiting 0 does not prove these cases exist: delete them and it
+ * still exits 0. So each case is asserted BY NAME, the same way #5591's are
+ * above. Without this block the guard would pass on a script that had quietly
+ * dropped the whole section.
+ */
+describe("#5635 native-gates.sh proves test sources against the TEST log", () => {
+  it("does not call a BainLuckTests file unseen just because the macOS log lacks it", () => {
+    const { output } = runSelftest();
+    // Both directions. The first alone would pass for a proof that matches
+    // nothing at all; the second alone would pass for the original bug.
+    expect(output).toMatch(
+      /ok {4}call site: test sources vs the macOS log are UNSEEN \(the #5635 bug\) -> 1/,
+    );
+    expect(output).toMatch(
+      /ok {4}call site: test sources vs the TEST log are proved -> 0/,
+    );
+  });
+
+  it("requires the target clause, so a file merely named in the log is not 'compiled'", () => {
+    const { output } = runSelftest();
+    expect(output).toMatch(/ok {4}mentioned-but-not-compiled, clause required -> 0/);
+    // Anti-vacuity: the fixture must actually contain the bait, or the case
+    // above proves nothing about the clause.
+    expect(output).toMatch(
+      /ok {4}\.\.\.and WITHOUT the clause it would have read as compiled -> 2/,
+    );
+    expect(output).toMatch(
+      /ok {4}call site: mentioned-but-not-compiled stays unseen -> 1/,
+    );
+  });
+
+  it("routes on the path, not the filename, and matches basenames literally", () => {
+    const { output } = runSelftest();
+    expect(output).toMatch(/ok {4}routing: BainLuckTests\/ path -> test log -> yes/);
+    expect(output).toMatch(
+      /ok {4}routing: app file merely NAMED \*Tests -> macOS log -> yes/,
+    );
+    // A basename is full of dots; both grep branches carry their own -F and a
+    // case that exercises one leaves the other free to regress.
+    expect(output).toMatch(
+      /ok {4}basename is literal, not a regex \(clause branch\) -> 0/,
+    );
+    expect(output).toMatch(
+      /ok {4}basename is literal, not a regex \(bare branch\) -> 0/,
+    );
+  });
+
+  it("keeps the one line --selftest cannot execute pinned to the TEST log", () => {
+    // Section 3a needs a real build, so this case reads the script's own source.
+    // Weaker than the behavioural cases above, and here because the alternative
+    // for that specific regression is no guard at all.
+    const { output } = runSelftest();
+    expect(output).toMatch(
+      /ok {4}section 3a hands prove_test_sources the TEST log -> yes/,
+    );
+  });
+
+  it("reports nothing at all when no test file changed", () => {
+    const { output } = runSelftest();
+    expect(output).toMatch(
+      /ok {4}call site: no changed test files -> nothing unproved -> 0/,
+    );
+    // The count alone cannot see a phantom empty filename — `grep -F ""` matches
+    // every line, so an empty entry reads as "compiled". The output assertion is
+    // what makes that case non-vacuous.
+    expect(output).toMatch(
+      /ok {4}call site: no changed test files -> and no verdict lines printed -> 0/,
+    );
+  });
+});
