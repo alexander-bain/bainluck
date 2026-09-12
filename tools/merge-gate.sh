@@ -174,16 +174,36 @@ resolve_cert_id () {
 # ─────────────────────────────────────────────────────────────────────────────
 IS_SHALLOW=""
 ANC_STATE=""; ANC_HOW=""
+# `ANC_CACHE`, when set, is a TSV of `<full-sha>\t<compare-status>` that the
+# sweep fills in parallel before its loop. It short-circuits the REQUEST, never
+# the DECISION: a cached row is fed through the same `case` below as a live one,
+# so there is exactly one place where a compare status becomes a verdict. A
+# second mapping table in the sweep would be a second instrument, and two
+# instruments answering one question is how they come to disagree.
+ANC_CACHE=""
 ancestry_of () {
-  local full="$1"
-  if git -C "$REPO_PATH" merge-base --is-ancestor "$full" "$MASTER" 2>/dev/null; then
-    ANC_STATE=merged; ANC_HOW=local; return
+  local full="$1" st=""
+
+  # A cache hit means the caller has ALREADY established, by the same relation,
+  # that this sha is not reachable from master locally — the sweep's screen is
+  # membership in `rev-list <master>`, which is what `--is-ancestor` computes.
+  # Re-running the local test here would ask the identical question a second
+  # time, once per sha, at a git process each; that was ~98 processes on a loaded
+  # machine and it is the whole reason the sweep did not finish.
+  if [ -n "$ANC_CACHE" ] && [ -r "$ANC_CACHE" ]; then
+    st="$($GREP -m1 "^$full	" "$ANC_CACHE" | cut -f2)"
   fi
-  if [ "$IS_SHALLOW" != "true" ]; then
-    ANC_STATE=not-merged; ANC_HOW=local; return
+
+  if [ -z "$st" ]; then
+    if git -C "$REPO_PATH" merge-base --is-ancestor "$full" "$MASTER" 2>/dev/null; then
+      ANC_STATE=merged; ANC_HOW=local; return
+    fi
+    if [ "$IS_SHALLOW" != "true" ]; then
+      ANC_STATE=not-merged; ANC_HOW=local; return
+    fi
+    st="$(gh api "repos/$REPO_SLUG/compare/${full}...master" --jq '.status' 2>/dev/null)"
   fi
-  local st
-  st="$(gh api "repos/$REPO_SLUG/compare/${full}...master" --jq '.status' 2>/dev/null)"
+
   case "$st" in
     ahead|identical) ANC_STATE=merged;     ANC_HOW=remote ;;
     behind|diverged) ANC_STATE=not-merged; ANC_HOW=remote ;;
@@ -772,30 +792,103 @@ if [ "$SHA_IN" = "--orphans" ]; then
   n_merged=0; n_unres=0; n_parked=0; n_super=0; n_window=0; n_out=0; n_orph=0
   orph_out=""; unres_out=""; parked_out=""; super_out=""; review_out=""
 
+  # ── PROCESS COUNT IS THE WHOLE PERFORMANCE STORY ─────────────────────────────
+  #
+  # The obvious shape — resolve and ancestry-test each sha inside the loop — is
+  # two `git` invocations per row, about 1,400 of them. On an idle machine that
+  # is ~60 ms each and nobody notices. This is not an idle machine: the fleet is
+  # ten lane runners plus a bus, and at the moment this was written the load
+  # average was 920, every `git` here is wrapped by another `git`, and those same
+  # calls were taking seconds. The loop did not finish inside 300 s twice.
+  #
+  # So the per-row work is lifted out into three batched calls, and the only
+  # per-row git call left is on the handful of shas that look like orphans.
+  #
+  # `cat-file --batch-check` resolves every token in ONE process and preserves
+  # input order, so the answers paste straight back onto the rows.
+  orph_tmp="$(mktemp -d)"
+  trap 'rm -rf "$orph_tmp"' EXIT
+
+  printf '%s\n' "$uniq_shas" | awk -F'\t' -v cutoff="$cutoff" -v all="$ORPH_ALL" '
+    $1 == "" { next }
+    all == 0 && $2 < cutoff { print > "/dev/stderr"; next }
+    { print }
+  ' > "$orph_tmp/win.tsv" 2> "$orph_tmp/out.tsv"
+  n_window="$(/usr/bin/grep -c . < "$orph_tmp/win.tsv" || true)"
+  n_out="$(/usr/bin/grep -c . < "$orph_tmp/out.tsv" || true)"
+
+  awk -F'\t' '{print $1 "^{commit}"}' "$orph_tmp/win.tsv" |
+    git -C "$REPO_PATH" cat-file --batch-check 2>/dev/null > "$orph_tmp/resolved.txt"
+
+  # Paste resolutions back onto their rows. A `missing`/`ambiguous` answer is its
+  # own class: the object is not in this clone, which is usually a branch deleted
+  # after merge but can also be a sha never pushed here. It is never folded into
+  # "merged" — an absent object is not evidence of anything.
+  paste "$orph_tmp/resolved.txt" "$orph_tmp/win.tsv" |
+    awk -F'\t' '
+      {
+        split($1, r, " ")
+        if (r[2] == "commit") print r[1] "\t" $3 "\t" $4 "\t" $5 > "'"$orph_tmp"'/ok.tsv"
+        else                  print $2  "\t" $3 "\t" $4 "\t" $5 > "'"$orph_tmp"'/bad.tsv"
+      }'
+  touch "$orph_tmp/ok.tsv" "$orph_tmp/bad.tsv"
+
   while IFS=$'\t' read -r tok dt cert lane; do
     [ -n "$tok" ] || continue
-    if [ "$ORPH_ALL" -eq 0 ] && [ "$dt" \< "$cutoff" ]; then
-      n_out=$((n_out + 1)); continue
-    fi
-    n_window=$((n_window + 1))
-
-    full="$(git -C "$REPO_PATH" rev-parse --verify --quiet "${tok}^{commit}" 2>/dev/null)"
-    rc=$?
-    if [ "$rc" -ne 0 ] || ! printf '%s' "$full" | $GREP -Eq '^[0-9a-f]{40}$'; then
-      # Not judgeable: the object is not in this clone. That is usually a branch
-      # deleted after merge, but it can also be a sha never pushed here, so it is
-      # reported as its own class and never folded into "merged".
-      n_unres=$((n_unres + 1))
-      unres_out="$unres_out
+    n_unres=$((n_unres + 1))
+    unres_out="$unres_out
     $tok  $dt  $cert  $lane"
-      continue
-    fi
+  done < "$orph_tmp/bad.tsv"
 
-    # The gate's own predicate, via the same helper the single-sha gate uses —
-    # not a second instrument that agrees with it today. Inside the clamped
-    # window the local graph is complete, so this answers locally; the remote is
-    # reached only for a sha that looks like an orphan in a shallow clone, which
-    # is a handful of calls and buys exactness on the only rows we will print.
+  # Membership in `rev-list <master>` is not a second opinion about ancestry — it
+  # is the same relation: rev-list emits exactly the commits reachable from
+  # master, so a hit is an ancestor and cannot be a false positive. A MISS is the
+  # only answer that needs care, and every miss is re-checked below by
+  # `ancestry_of`, the gate's own predicate. The screen is therefore exact in
+  # both directions while costing two processes instead of seven hundred.
+  git -C "$REPO_PATH" rev-list "$MASTER" 2>/dev/null | sort -u > "$orph_tmp/rl.txt"
+  cut -f1 "$orph_tmp/ok.tsv" | sort -u > "$orph_tmp/cand.txt"
+  comm -12 "$orph_tmp/cand.txt" "$orph_tmp/rl.txt" > "$orph_tmp/merged.txt"
+  comm -23 "$orph_tmp/cand.txt" "$orph_tmp/rl.txt" > "$orph_tmp/miss.txt"
+  n_merged="$(/usr/bin/grep -c . < "$orph_tmp/merged.txt" || true)"
+  n_miss="$(/usr/bin/grep -c . < "$orph_tmp/miss.txt" || true)"
+
+  # ── In a shallow clone the misses are mostly NOT orphans. Measured on the real
+  # ledger the night this was written: 178 candidates in window, 78 found on
+  # master locally, 98 missed — and the first three sampled were all `ahead`,
+  # i.e. merged, invisible only because they sit at the 9/10 boundary. So the
+  # confirmations are the sweep's real cost and its real correctness, and they
+  # are worth doing properly rather than skipping.
+  #
+  # Serially that is ~98 round trips. They are independent, so they run eight at
+  # a time into a cache that `ancestry_of` reads; the verdict still comes out of
+  # the one `case` in that function. `xargs -P` and not a hand-rolled job pool
+  # because the failure mode of the latter is a lost answer, which here would be
+  # spelled "orphan".
+  if [ "$IS_SHALLOW" = "true" ] && [ "${n_miss:-0}" -gt 0 ]; then
+    echo "  ${n_miss} sha(s) not found on master locally — confirming against the remote"
+    echo "  (a shallow clone cannot see past $SHALLOW_FLOOR; 'git fetch --unshallow' makes this instant)"
+    ANC_CACHE="$orph_tmp/anc.tsv"
+    : > "$ANC_CACHE"
+    export REPO_SLUG
+    xargs -P 8 -I{} sh -c \
+      'printf "%s\t%s\n" "{}" "$(gh api "repos/$REPO_SLUG/compare/{}...master" --jq ".status" 2>/dev/null)"' \
+      < "$orph_tmp/miss.txt" >> "$ANC_CACHE" 2>/dev/null
+    echo "  confirmed $(/usr/bin/grep -c . < "$ANC_CACHE" || true)/${n_miss}"
+    echo
+  fi
+
+  while IFS= read -r full; do
+    [ -n "$full" ] || continue
+    row="$($GREP -m1 "^$full	" "$orph_tmp/ok.tsv")"
+    dt="$(printf '%s' "$row" | cut -f2)"
+    cert="$(printf '%s' "$row" | cut -f3)"
+    lane="$(printf '%s' "$row" | cut -f4)"
+
+    # The gate's own predicate, via the same helper the single-sha gate uses.
+    # Only reached for a sha the screen could not find on master, so this is a
+    # handful of calls, and in a shallow clone it is what stops a long-merged
+    # commit being reported as an unoffered token.
     ancestry_of "$full"
     if [ "$ANC_STATE" = merged ]; then
       n_merged=$((n_merged + 1)); continue
@@ -845,9 +938,7 @@ if [ "$SHA_IN" = "--orphans" ]; then
     [ "$SUP_VERDICT" = review ] && flag="  [notice 18: REVIEW — read the row before offering]"
     orph_out="$orph_out
     $short  $dt  $cert  $lane$flag"
-  done <<EOF
-$uniq_shas
-EOF
+  done < "$orph_tmp/miss.txt"
 
   echo "  population: $granted_rows granted row(s) -> $n_uniq unique sha(s); $no_sha row(s) carried no sha"
   if [ -n "$SHALLOW_FLOOR" ]; then
