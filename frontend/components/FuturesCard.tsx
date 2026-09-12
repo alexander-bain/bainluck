@@ -19,6 +19,11 @@ import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+// #5552 — the SAME predicate `components/futures/OutcomeRow` uses, imported rather
+// than restated. Its docstring records that restating `isResolved && is_winner === X`
+// per branch is exactly how that surface drifted, so this card calls the one function
+// instead of growing a private second copy of the rule.
+import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -292,6 +297,36 @@ function OutcomeRow({
   const movement = outcome.movement ?? outcome.probability_change_24h;
   const prob = outcome.probability ?? 0;
 
+  // #5552 / #5457 — `is_winner` is `boolean NULL DEFAULT false`, so on a RESOLVED
+  // market `is_winner === false` answers two different questions with one bit: "a
+  // grader called this a loser" and "nobody has ever been here". Measured on
+  // production 2026-09-12: **609,703 legs across 283,030 resolved markets** carry
+  // `(is_winner false, resolution_source null)` — every one of them printed a
+  // confident `Lost` at 0% width from the four branches below.
+  //
+  // `outcomeRowVerdict` is the discriminator that already ships on the sibling
+  // surface: a row with no `resolution_source` was not graded, whatever `is_winner`
+  // says, and it says nothing. Computed ONCE here rather than per branch, so the bar
+  // cannot be dimmed as a loss while the cell declines to call it one.
+  //
+  // Note the `=== null` fence inside it is load-bearing for THIS card specifically.
+  // `resolution_source` is serialised by `/api/futures/{id}` and not by the feed or
+  // grouped-feed payloads, so:
+  //   * `/my-stuff` and `/preferences` (`fetchFuturesByIds` → `fetchFuturesMarket`,
+  //     `lib/api.ts:978`) carry the field ⇒ the guard bites, which is precisely the
+  //     reachable population #5552 was filed on (a reader pins a market, it later
+  //     resolves, nobody grades it);
+  //   * `/discover`, `/search`, `/hub` and `DiscoverCard` serve it ABSENT, and absent
+  //     means "this payload cannot say" ⇒ unchanged behaviour, not a blackout.
+  // That asymmetry is the intended outcome, not a gap.
+  //
+  // The `✓` chip below is deliberately NOT routed through this: it reads the TRUE
+  // arm, and `(is_winner true, resolution_source null)` is **0 rows** site-wide
+  // (measured same session), so it tells no lie. Gating it would instead delete the
+  // chip from the 3,885 graded legs sitting on markets still `open` — a different
+  // question ("may an open market show a winner tick?") that is not this ship's.
+  const verdict = outcomeRowVerdict(outcome, isResolved);
+
   // Determine entity image type
   const isNonSports = isNonSportsCategory(marketCategory ?? null);
 
@@ -344,18 +379,18 @@ function OutcomeRow({
           <motion.div
             className="h-full rounded-full"
             style={{
-              backgroundColor: isResolved && outcome.is_winner === true
+              backgroundColor: verdict === "won"
                 ? "var(--accent-live, #10b981)"
-                : isResolved && outcome.is_winner === false
+                : verdict === "lost"
                 ? "var(--text-muted)"
                 : isLeader ? "var(--accent-futures)" : "var(--text-muted)",
-              opacity: isResolved && outcome.is_winner === false ? 0.15
+              opacity: verdict === "lost" ? 0.15
                 : isLeader ? 0.7 : 0.3,
             }}
             animate={{
-              width: isResolved && outcome.is_winner === true
+              width: verdict === "won"
                 ? "100%"
-                : isResolved && outcome.is_winner === false
+                : verdict === "lost"
                 ? "0%"
                 : `${Math.min(prob * 100, 100)}%`,
             }}
@@ -366,11 +401,11 @@ function OutcomeRow({
 
       {/* Probability + movement */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        {isResolved && outcome.is_winner === true ? (
+        {verdict === "won" ? (
           <span className="font-mono text-sm tabular-nums font-bold text-emerald-600">
             Won
           </span>
-        ) : isResolved && outcome.is_winner === false ? (
+        ) : verdict === "lost" ? (
           <span className="font-mono text-sm tabular-nums text-text-muted">
             Lost
           </span>
