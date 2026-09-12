@@ -384,6 +384,20 @@ struct EventDetailView: View {
                     }
                     // Market Maps (margin + total density curves)
                     if let gameMarkets = vm.gameMarkets {
+                        // #4982 — the page is the only thing that can see both
+                        // cards, so the page is what decides which one states
+                        // that we do not hold the played count. Everything but
+                        // the payload's presence is decided inside the chart's
+                        // own predicate, so this cannot drift from what the
+                        // chart above actually rendered.
+                        let absenceStatedAbove = vm.history.map {
+                            ScoreDifferentialChartView.statesPlayedCountAbsence(
+                                history: $0,
+                                sportKey: event.sport,
+                                eventStatus: event.status,
+                                commenceTime: event.commenceTime
+                            )
+                        } ?? false
                         MarketMapView(
                             gameMarkets: gameMarkets,
                             eventStatus: event.status,
@@ -400,7 +414,8 @@ struct EventDetailView: View {
                             homeSpread: event.currentOdds?.homeSpread,
                             overUnder: event.currentOdds?.overUnder,
                             homeScore: event.homeScore,
-                            awayScore: event.awayScore
+                            awayScore: event.awayScore,
+                            absenceStatedAbove: absenceStatedAbove
                         )
                     }
                     // Total Points Spectrum (projected scoring + threshold ladder)

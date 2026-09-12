@@ -206,10 +206,21 @@ struct ScoreDifferentialChartView: View {
         return nil
     }
 
-    private func buildDataPoints() -> [DiffPoint] {
-        let startDate = isGameStarted ? gameStartDate : nil
-        let endDate = gameEndDate
-
+    /// The projected-margin series, bucketed to the minute.
+    ///
+    /// #4982 — extracted from ``buildDataPoints()`` rather than copied, because
+    /// ``statesPlayedCountAbsence(history:sportKey:eventStatus:commenceTime:)``
+    /// has to answer "will this chart draw?" and a second transcription of these
+    /// two loops would be a rule with two spellings that drift. Both callers run
+    /// THIS function, so the predicate cannot disagree with the view it predicts.
+    ///
+    /// `history.history` wins a minute outright; the bookmaker series only fills
+    /// buckets it left empty. That precedence is the shipped behaviour and is
+    /// preserved exactly.
+    private static func projectedDiffPoints(
+        history: EventHistoryResponse,
+        since startDate: Date?
+    ) -> [Int: DiffPoint] {
         // Projected spread from odds history (projected home score - projected away score)
         var projectedByMinute: [Int: DiffPoint] = [:]
         for h in history.history {
@@ -234,6 +245,70 @@ struct ScoreDifferentialChartView: View {
                 }
             }
         }
+        return projectedByMinute
+    }
+
+    /// Does this chart put the played-count absence sentence on the screen?
+    ///
+    /// #4982 / #4969. Two adjacent cards told a live US Open reader the same
+    /// thing twice — this chart's *"Played games are not captured yet — the
+    /// scoreboard reports sets"* and, a card below, `MarketMapView`'s *"The
+    /// scoreboard reports sets, this market quotes games — we do not hold the
+    /// games played yet"*. Each already dedups WITHIN itself (#3503 is why the
+    /// map prints one footnote under all its maps), and neither can see the
+    /// other, so two correct single prints landed as one repeated admission.
+    /// D102 / notice 34: the second copy adds nothing the first did not say.
+    ///
+    /// The page arbitrates by ORDER — this chart is rendered above the maps, and
+    /// its sentence is the better one to keep because it also carries what only
+    /// it knows (*"the line below is the sportsbooks' projected game margin"*).
+    /// So the chart speaks and the map defers to it; where the chart is absent
+    /// or silent, the map is the one that speaks and nothing is lost.
+    ///
+    /// THREE CONDITIONS, AND EVERY ONE IS NECESSARY. The sentence exists (the
+    /// vocab guard: a sport whose scoreboard does not count the unit its markets
+    /// quote), the page puts this chart on screen at all (`EventDetailView`
+    /// draws it only once the match is live or over), AND this view actually
+    /// draws rather than returning `EmptyView` — a chart with no series prints
+    /// no note, and suppressing the map on a chart that never spoke would
+    /// re-orphan the suppressed tile that #3503 exists to explain.
+    ///
+    /// The status gate lives HERE rather than beside the call, so that the page
+    /// cannot drift from the chart it is predicting: the caller supplies the
+    /// payload and this function answers for the whole rendering.
+    ///
+    /// `hasActual` is deliberately not consulted: whenever the note is owed,
+    /// `scoreboardCountsTheUnit` is false and ``buildDataPoints()`` takes its
+    /// early return with `actualByMinute` empty, so the projected series alone
+    /// decides whether anything is drawn. `testTheAbsenceIsNotClaimedWithoutASeries`
+    /// pins that, so the shortcut cannot quietly stop being true.
+    static func statesPlayedCountAbsence(
+        history: EventHistoryResponse,
+        sportKey: String?,
+        eventStatus: String?,
+        commenceTime: String?
+    ) -> Bool {
+        let vocab = SportVocab.forSport(sportKey)
+        // #3465 — tensed, so the tense has to be passed here too: a settled
+        // match's sentence is a different string, but it is equally the one the
+        // reader would otherwise meet twice.
+        guard vocab.projectedMarginNote(settled: EventState.isFinished(eventStatus)) != nil else {
+            return false
+        }
+        // The page's own render condition, restated once: a chart that is not in
+        // the tree cannot have told the reader anything.
+        let started = eventStatus == "live" || EventState.isFinished(eventStatus)
+        guard started else { return false }
+        // `isGameStarted` is true past that guard, so this is exactly the
+        // `startDate` `buildDataPoints()` computes.
+        return !projectedDiffPoints(history: history, since: commenceTime?.asDate).isEmpty
+    }
+
+    private func buildDataPoints() -> [DiffPoint] {
+        let startDate = isGameStarted ? gameStartDate : nil
+        let endDate = gameEndDate
+
+        var projectedByMinute = Self.projectedDiffPoints(history: history, since: startDate)
 
         // Actual scores — only where the scoreboard counts the unit the
         // projection is quoted in. For tennis this stays empty on purpose: the
