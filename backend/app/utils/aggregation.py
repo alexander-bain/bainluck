@@ -112,10 +112,19 @@ HERO_RELATIVE_GRACE_SECONDS = 600.0  # 10 min of age difference: no penalty
 HERO_RELATIVE_DECAY_SECONDS = 1800.0  # next 30 min: linear decay to the floor
 HERO_MIN_STALENESS_MULTIPLIER = 0.1  # a floor, not zero — see below
 
-# The floor exists so decay DEMOTES a source instead of deleting it. A source
-# at 10% of its base weight cannot carry a median, but it still breaks ties and
-# still shows up in the envelope check — and "we stopped hearing from Kalshi"
-# is not the same claim as "Kalshi does not exist".
+# The floor exists so decay DEMOTES a source instead of deleting it. A source at
+# 10% of its base weight cannot carry a median BY VALUE — its own reading is
+# never the one returned — but it CAN still decide which other source is the
+# median BY POSITION, and that is not a small effect. #5542, event 15304937: an
+# `mlb` arm 131 min behind the freshest sits at this floor and still holds a 30%
+# post-cap share, which is enough mass below the middle to move the crossing from
+# kalshi 0.99 to polymarket 0.455 — 53 points, across the favourite line.
+#
+# So do not read this floor as "harmless"; the earlier wording ("cannot carry a
+# median") was true by value and false by position, and it is load-bearing prose
+# for whoever tunes the constant next. What remains true: it still breaks ties and
+# still shows up in the envelope check — and "we stopped hearing from Kalshi" is
+# not the same claim as "Kalshi does not exist".
 
 MAX_SOURCE_WEIGHT_SHARE = 0.35  # no single source may exceed this share
 MIN_SOURCES_FOR_WEIGHT_CAP = 3

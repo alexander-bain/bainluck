@@ -30,6 +30,7 @@ from app.utils.aggregation import (
     SOURCE_WEIGHTS,
     _weighted_median,
     assess_event_divergence,
+    cap_weight_shares,
     compute_aggregate_probability,
     effective_source_weights,
     parse_source_entry,
@@ -153,6 +154,120 @@ def test_a_pair_just_past_the_threshold_does_gate():
 def test_the_gate_ignores_populations_it_does_not_govern(readings):
     weights = {k: SOURCE_WEIGHTS.get(k, 0.8) for k in readings}
     assert assess_divergence(readings, weights) is None
+
+
+# ── #5542: the `!= 2` is a CHOICE, and one arm of it is a measured hole ──────
+#
+# These three pin the CURRENT behaviour on purpose. The dead-arm case is a known
+# unfixed hole (module docstring, SCOPE) whose fix changes served heroes and
+# whose reach is unmeasured — so it is pinned LOUD rather than left to be
+# rediscovered. If someone fixes it, test 1 goes red and tells them what moved.
+
+
+def _three_source_specimen():
+    """Event 15304937 as read live at 07:07Z 2026-09-12 (#5542).
+
+    `mlb` is 131 min behind the freshest, so relative decay drops it to
+    `HERO_MIN_STALENESS_MULTIPLIER`. The other two are current and 63 points
+    apart — well past the 0.40 threshold.
+    """
+    now = datetime.now(timezone.utc)
+    return _Ev(
+        {
+            "mlb": {
+                "value": 0.356,
+                "updated_at": (now - timedelta(minutes=131)).isoformat(),
+            },
+            "kalshi": {"value": 0.99, "updated_at": now.isoformat()},
+            "polymarket": {"value": 0.455, "updated_at": now.isoformat()},
+        },
+        "live",
+    )
+
+
+def test_a_third_arm_at_the_staleness_floor_switches_the_gate_off():
+    """The protection switches off exactly as the disagreement gets worse.
+
+    Two live sources 63 points apart would be gated on their own. A third arm we
+    have already decided is not describing this game removes them from the gate's
+    population, and the statistic arbitrates the broken pair after all.
+
+    Pinned as-is because the fix is #5542's second half (reach unmeasured,
+    `M-20260912-live170`). The assertions below are the behaviour to CHANGE, not
+    the behaviour to keep.
+    """
+    ev = _three_source_specimen()
+    keys, values, weights = effective_source_weights(ev, "live")
+    assert len(keys) == 3, f"specimen must carry three real sources, got {keys}"
+
+    shares = {k: w / sum(weights) for k, w in zip(keys, weights)}
+    assert shares["mlb"] == pytest.approx(0.30, abs=0.01), (
+        "NON-VACUITY: the dead arm must still hold real post-cap mass, else this "
+        f"test no longer demonstrates anything. shares={shares}"
+    )
+
+    widest = max(values) - min(values)
+    assert spread_exceeds(widest), (
+        f"NON-VACUITY: widest pair {widest:.3f} must be past the threshold"
+    )
+
+    # The hole itself: silent, and the blend arbitrates.
+    assert assess_event_divergence(ev, "live") is None
+    assert compute_aggregate_probability(ev, "live") == pytest.approx(0.455)
+
+    # The same two live sources, assessed without the dead arm, ARE gated — and
+    # they resolve to the other side of the favourite line.
+    live_only = {k: v for k, v in zip(keys, values) if k != "mlb"}
+    live_weights = {k: w for k, w in zip(keys, weights) if k != "mlb"}
+    without_dead_arm = assess_divergence(live_only, live_weights)
+    assert without_dead_arm is not None
+    assert without_dead_arm.primary_source == "kalshi"
+    assert without_dead_arm.primary_value == pytest.approx(0.99)
+
+
+def test_the_dead_arms_own_value_is_never_the_number_we_render():
+    """`HERO_MIN_STALENESS_MULTIPLIER`'s comment is true BY VALUE.
+
+    Half of the aggregation comment is right and worth keeping honest: a source
+    at the floor never wins the median itself. It is the other half — that it
+    therefore "cannot carry a median" — that the test above refutes, by position.
+    """
+    ev = _three_source_specimen()
+    rendered = compute_aggregate_probability(ev, "live")
+    assert rendered != pytest.approx(0.356), (
+        "the floored source's own reading was rendered; the floor is not "
+        "demoting it at all"
+    )
+
+
+def test_governing_the_widest_pair_among_three_would_discard_a_healthy_agreement():
+    """Why `!= 2` stands, rather than widening to the widest pair among N.
+
+    A healthy triple with one genuine outlier already has a widest pair past the
+    threshold. The median resists the outlier and renders the value the two
+    agreeing sources support. A widest-pair gate would fire here and render ONE
+    source alone — strictly worse. This pins the rejected design so the next
+    reader does not re-propose it.
+    """
+    keys = ["betting", "kalshi", "polymarket"]
+    values = [0.10, 0.52, 0.55]
+    # The CAPPED weights, because that is what the blend actually median-s over.
+    # With raw base weights `betting` (3.0) holds a 65% share and carries the
+    # median by value on its own — a different situation, and not the one the
+    # weight cap ships to produce.
+    weights = cap_weight_shares(
+        [SOURCE_WEIGHTS[k] for k in keys], exempt=[False] * len(keys)
+    )
+
+    widest = max(values) - min(values)
+    assert spread_exceeds(widest), (
+        f"NON-VACUITY: healthy triple's widest pair {widest:.3f} must be past "
+        "the threshold, or this proves nothing about widening"
+    )
+
+    # Today: silent, and the median lands on the agreeing pair, not the outlier.
+    assert assess_divergence(dict(zip(keys, values)), dict(zip(keys, weights))) is None
+    assert _weighted_median(values, weights) == pytest.approx(0.52)
 
 
 # ── the anti-#240 property: primary follows EFFECTIVE weight ─────────────────

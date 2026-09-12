@@ -83,12 +83,52 @@ Where the gate DOES change numbers is the futures merge, where the pair is
 equal-weight and the midpoint rule would otherwise average Kalshi's 57.5% with
 Polymarket's 6%.
 
-## SCOPE
+## SCOPE — TWO SOURCES, AND THE ONE CASE WHERE THAT IS WRONG (#5542)
 
-Two sources only. With three or more there IS an outlier to resist, the weight
-cap applies, and a wide spread is a minority opinion the median already handles
-— that is the mechanism working, not a bad pair. A one-source event has no
-spread. Both are left alone.
+Two sources only. A one-source event has no spread. Both are left alone.
+
+The `len(keys) != 2` below is a DELIBERATE population choice, not an
+implementation detail, and it is right for the case it was written for: with
+three or more HEALTHY sources there is a genuine outlier to resist and the
+median already resists it. Measured on the shape rather than asserted —
+
+    betting 0.10 · kalshi 0.52 · polymarket 0.55
+    widest pair 0.450 (past the 0.40 threshold) · median 0.5200
+
+— the two sources that agree carry the number and the outlier is discarded. Had
+the gate governed the WIDEST PAIR among N it would fire here and render ONE
+source alone, throwing away the agreement of the other two. That is strictly
+worse than blending, so **"widest pair among N" is REJECTED**, on that specimen.
+
+### The hole: a dead arm is not an opinion, but it still counts as a source
+
+That argument assumes the third reading is a live opinion. It is not always. A
+source decayed to `HERO_MIN_STALENESS_MULTIPLIER` has been told by our own
+recency rule that it is no longer describing this game — and it STILL takes the
+event out of this gate's population, and STILL holds enough post-cap mass to
+decide which of the two live sources is the median.
+
+Measured on event 15304937, live at 07:07Z 2026-09-12:
+
+    mlb 0.356 (131 min behind the freshest) · kalshi 0.99 · polymarket 0.455
+    post-cap shares   mlb 0.30 · kalshi 0.35 · polymarket 0.35
+    3 sources         -> median 0.4550, assess_divergence None   (SILENT)
+    dead arm removed  -> gate FIRES, primary kalshi 0.99
+
+The widest pair is 63 points — worse than the 51.5-point pair this module was
+written against — and the protection is off. **The protection switches off
+exactly as the data gets worse.** The dead arm's own value is never the median;
+it decides WHICH source is, by position. The served hero was 0.455, the losing
+side, on a game the home team had already won 6-5.
+
+This is a KNOWN, UNFIXED hole, recorded here rather than quietly tolerated. It
+is not fixed in this pass because the fix changes served heroes and its reach is
+unmeasured: at 09:26Z 2026-09-12 the live population held 16 events and NONE
+with three real sources, so the reach cannot be read off an overnight slate.
+(`betting_book_count` is a metadata key in the same JSONB — counting it as a
+source is how that census goes wrong, and did once before it was corrected.)
+The measurement is parked as `M-20260912-live170`; the fix is #5542's second
+half. Do not "simplify" the `!= 2` away in either direction without it.
 """
 
 from __future__ import annotations
@@ -178,6 +218,12 @@ def assess_divergence(
     Returns ``None`` — meaning "blend normally" — for any population this gate
     does not govern: fewer or more than two sources, or a spread at or below the
     threshold.
+
+    🔴 The "more than two" arm has a MEASURED hole: a third source decayed to the
+    staleness floor is not a live opinion, but it still removes the event from
+    this gate's population. See the SCOPE section of the module docstring for the
+    specimen (event 15304937, 63 points apart and silent) and for why the
+    obvious widening — governing the widest pair among N — is the wrong fix.
     """
     keys = list(readings.keys())
     if len(keys) != 2:
