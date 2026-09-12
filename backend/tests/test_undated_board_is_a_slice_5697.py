@@ -73,8 +73,6 @@ Every ESPN row below is CAPTURED from the two responses quoted above.
 """
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from app.services.espn_api import ESPNEvent, ESPNTeam
 from app.tasks.espn_sync import (
     MAX_DATED_BOARDS_PER_SPORT,
