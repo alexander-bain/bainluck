@@ -1031,6 +1031,134 @@ def test_apply_is_refused_on_a_broken_filter_and_reached_on_a_drained_backlog():
     assert "if small.message:" in src
 
 
+def _drive_apply(monkeypatch, *, plan_count, manifest_rows):
+    """Run `run()` under `--backup --apply` against a fake session.
+
+    Returns the list of SQL strings the run actually executed, so the caller
+    asks "did the forward write happen", not "does the source say it would".
+
+    Everything the run touches EXCEPT the branch under test is stubbed: the
+    cohort scan, the manifest count, the backup and its reconciliation. That is
+    deliberate — the subject is the one `if`, and a stub that also decided the
+    outcome would make the test vacuous in the way the file's own docstring
+    warns about. `plan` is stubbed to a fixed size so both cases below present
+    an IDENTICALLY small plan and differ only in the discriminator's input.
+    """
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    executed: list[str] = []
+
+    class _Result:
+        rowcount = 1
+
+        @staticmethod
+        def fetchall():
+            return []
+
+    class _Session:
+        async def execute(self, stmt, params=None):
+            executed.append(str(stmt))
+            return _Result()
+
+        async def commit(self):
+            executed.append("COMMIT")
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield _Session()
+
+    legs = [
+        {"outcome_id": i, "market_id": 1, "residue": 0.01}
+        for i in range(plan_count)
+    ]
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+    monkeypatch.setattr(mod, "plan", lambda rows: (legs, []))
+    monkeypatch.setattr(mod, "manifest_count", _async_const(manifest_rows))
+    monkeypatch.setattr(mod, "backup", _async_const(None))
+    # `backup_is_exact` requires a non-empty dict of zeros, so the backup gate
+    # PASSES and cannot be what stops the write in either case below.
+    monkeypatch.setattr(mod, "reconcile_backup", _async_const({"missing": 0}))
+
+    class _Args:
+        limit = None
+        backup = True
+        apply = True
+
+    asyncio.run(mod.run(_Args()))
+    return executed
+
+
+def _async_const(value):
+    async def _f(*a, **kw):
+        return value
+
+    return _f
+
+
+def test_the_floors_two_causes_reach_opposite_WRITE_outcomes_when_actually_run():
+    """The same small plan writes on one cause and refuses on the other.
+
+    THIS IS THE TEST THE SOURCE SCAN ABOVE CANNOT BE. `inspect.getsource` proves
+    `if small.blocks_apply:` is present in the text; it cannot prove the run
+    reaches it, that the backup gate above it does not return first, or that the
+    non-blocking cause gets all the way to the UPDATE. The defect it is guarding
+    (#5452) was exactly a discriminator that computed the right answer and did
+    not change what the caller DID — a shape a text assertion is structurally
+    blind to.
+
+    So both cases below present a plan of the SAME size, far under the floor,
+    and differ in one input: how many rows the manifest already holds. That is
+    the discriminator, and nothing else varies.
+    """
+    import pytest
+
+    from scripts.repair_5246_settled_outcomes_still_carrying_a_price import (
+        SANITY_FLOOR,
+        SQL,
+    )
+
+    plan_count = 5
+    mp = pytest.MonkeyPatch()
+
+    # DRAINED BACKLOG: manifest + plan clears the floor -> the write proceeds.
+    try:
+        drained = _drive_apply(
+            mp, plan_count=plan_count, manifest_rows=SANITY_FLOOR - plan_count
+        )
+    finally:
+        mp.undo()
+
+    # FILTER BROKE: one row short of the floor -> the write is refused.
+    mp = pytest.MonkeyPatch()
+    try:
+        broken = _drive_apply(
+            mp, plan_count=plan_count, manifest_rows=SANITY_FLOOR - plan_count - 1
+        )
+    finally:
+        mp.undo()
+
+    clear_sql = SQL["clear"]
+
+    assert sum(s == clear_sql for s in drained) == plan_count, (
+        "a drained backlog is the branch the floor was BUILT to allow: every "
+        "planned row must be cleared"
+    )
+    assert "COMMIT" in drained
+
+    assert not any(s == clear_sql for s in broken), (
+        "a broken filter must not write a single row"
+    )
+    assert "COMMIT" not in broken
+
+    # The two runs must genuinely DIVERGE. Asserting only the refusal would pass
+    # against a run that refuses both — which is the #5452 defect exactly.
+    assert drained != broken
+
+
 def test_the_repair_writes_only_the_price_columns():
     """No verdict moves, and no calibration input moves.
 
