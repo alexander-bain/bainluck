@@ -49,7 +49,11 @@ from app.utils.tournament_event_link import (
     resolve_matchup_events,
 )
 from app.utils.tournament_grid import build_grids
-from app.tasks.tournament_matchup_linker import apply_resolved_links, read_links
+from app.tasks.tournament_matchup_linker import (
+    LINKS_DEGRADED,
+    apply_resolved_links,
+    read_links,
+)
 from app.utils.tournament_match import build_match_detail
 from app.utils.tournament_register import TournamentRegister, load_register
 from app.utils.tournament_slate import (
@@ -1110,13 +1114,21 @@ async def _with_link_overlay(
     """
     try:
         from app.tasks.tournament_matchup_linker import (  # noqa: PLC0415
+            LINKS_DEGRADED,
             apply_resolved_links,
             read_links,
         )
 
-        links = (await read_links(slug)).get("links") or {}
+        overlay = await read_links(slug)
+        # #5728 / CERT-2766, the twin of the site in `_tournament_payload`. The
+        # accessor does not raise on a dead Redis, so this `except` never sees
+        # the failure; the flag is the only way it reaches the ledger.
+        if overlay.get(LINKS_DEGRADED):
+            _note_read_failure("links")
+        links = overlay.get("links") or {}
         return apply_resolved_links(register, links)
     except Exception as exc:  # noqa: BLE001 — an overlay is never a gate
+        _note_read_failure("links")
         logger.warning("tournament link overlay unavailable for %s: %s", slug, exc)
         return register, 0
 
@@ -1608,17 +1620,26 @@ async def _build_sections(
     authority_links: dict[str, Any] = {}
     try:
         overlay = await read_links(slug)
+        # #5728 / CERT-2766. The `except` below CANNOT catch the failure this
+        # ship exists for: `read_links` swallows its own Redis exception and
+        # returns, so on the only path production actually takes nothing raised
+        # here, the ledger stayed empty, and the incomplete page was cached.
+        # The accessor now reports its own verdict and the ledger reads THAT.
+        # This is the read that failed in the SECOND production event, at
+        # 20:21:05Z: the scoreboard was fine, the slate was right, and the
+        # overlay's absence alone was enough to serve `blend_linked: 0` and
+        # `incoherent: 2` over two rows both reporting `coherent: true`.
+        if overlay.get(LINKS_DEGRADED):
+            _note_read_failure("links")
         links = overlay.get("links") or {}
         raw_authority = overlay.get("authority_links")
         if isinstance(raw_authority, dict):
             authority_links = raw_authority
         register, linked = apply_resolved_links(register, links)
     except Exception as exc:  # noqa: BLE001
-        # Still falls back, still never a gate — but it says so now (#5728).
-        # This is the read that failed in the SECOND production event, at
-        # 20:21:05Z: the scoreboard was fine, the slate was right, and the
-        # overlay's absence alone was enough to serve `blend_linked: 0` and
-        # `incoherent: 2` over two rows both reporting `coherent: true`.
+        # Kept for the raise `read_links` does not make: `apply_resolved_links`
+        # is real work over a payload a different process wrote. Still falls
+        # back, still never a gate.
         _note_read_failure("links")
         logger.warning("tournament link overlay failed for %s: %s", slug, exc)
 

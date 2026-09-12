@@ -107,6 +107,34 @@ def _scoreboard_is_merely_absent(monkeypatch):
     monkeypatch.setattr(tournaments, "_espn_results", _absent)
 
 
+@pytest.fixture(autouse=True)
+def _link_overlay_is_merely_absent(monkeypatch):
+    """The same pinning for the LINK read, and for the same reason (CERT-2766).
+
+    The fixture above pinned the SCOREBOARD read when #5728 made a raise
+    distinguishable from an absence. The link overlay was the other half and it
+    was still indistinguishable: `read_links` caught its own Redis error and
+    returned the clean-miss bytes, so on a box with no Redis these tests ran
+    through the failure branch and could not tell — which is precisely the
+    defect CERT-2766 found in the shipped route.
+
+    Now that the accessor reports its own verdict, an unpinned rig here would
+    correctly refuse to cache and every cache assertion in this file would be
+    measuring the degraded path instead of the split. So: a Redis that ANSWERS,
+    with the key absent. Cheaper than a real one and it says what it means.
+    """
+
+    class _AbsentKeys:
+        async def get(self, key):
+            return None
+
+    from app.tasks import redis_state
+
+    monkeypatch.setattr(
+        redis_state, "get_async_redis_client", lambda *a, **k: _AbsentKeys()
+    )
+
+
 def _register_ids() -> dict[str, set[int]]:
     """The committed register's own id sets — the population this route bounds
     itself by. Read from the file, never restated here, so the numbers in the
