@@ -33,12 +33,34 @@ name: Heavy app sync
 
 on:
   schedule:
-    # Every 3 hours, bounding drift to ~3h against the ~7h that re-accumulated
-    # 158 commits. :42 sits inside the band `window_bounds()` derives (:34-:58);
-    # the job re-reads the clock itself, so a late-firing cron HOLDs rather than
-    # landing on the rebuild — GitHub's scheduler is routinely minutes late and
-    # is never trusted as the window.
-    - cron: '42 */3 * * *'
+    # HOURLY, AND THE MINUTE IS DECORATIVE. #5662, measured 2026-09-12 over all
+    # 100 `event=schedule` runs in this repo (2026-09-02..09-12, four workflows
+    # whose crons each name a FIXED minute — :00, :17, :30, :40):
+    #
+    #   * fired within 5 min of their slot:            0 / 98
+    #   * delay min / median / max:            19m / 239m / 359m
+    #   * `created_at` == `run_started_at`, so the lateness is the SCHEDULER
+    #     itself, not a runner queue we could wait out.
+    #
+    # This file's first version read "GitHub's scheduler is routinely MINUTES
+    # late and is never trusted as the window" — wrong by two orders of
+    # magnitude. A 19-359 min delay randomises the fire minute: those four fixed
+    # crons land across all six 10-minute buckets (14/15/26/18/17/10), so the
+    # `42` below has no bearing on when the job actually reads the clock. Two
+    # estimators agree on the cost: applying the observed delays to a :42 base
+    # puts 35/98 (36%) inside the band, and the observed fire minutes themselves
+    # 38/100 (38%).
+    #
+    # The band stays — it is derived, not picked (`window_bounds()`), and HOLDing
+    # outside it is right. What changes is the TRIGGER, because at ~40% in-band a
+    # 3-hourly cron is 8 attempts/day => ~8.3h expected wait, against a design
+    # that claimed to bound drift to ~3h. The number of ATTEMPTS is the only
+    # lever we hold on the fire minute, and attempts are nearly free: `decide`
+    # returns HOLD on `main_live == heavy_live` BEFORE it consults the clock, so
+    # a run against an already-synced app costs two `ls-remote`s and never
+    # deploys. Hourly => 24 attempts/day, ~2.5h expected wait, P(no sync in 12h)
+    # ~0.2%. Raise to `*/20` if the tail proves long; do not narrow the band.
+    - cron: '42 * * * *'
   workflow_dispatch:
 
 permissions:
