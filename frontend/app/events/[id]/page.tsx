@@ -1742,8 +1742,21 @@ export default function EventPage({ params }: EventPageProps) {
           awayLogo={event.away_team_data?.logo_small || undefined}
           homeWinProb={event.current_odds?.home_probability ?? undefined}
           awayWinProb={event.current_odds?.away_probability ?? undefined}
-          homeSpread={event.current_odds?.home_spread ?? null}
+          /* #5414: `current_odds.home_spread` is a key the API has never
+             emitted — it serialises the same column as `spread` — so this prop
+             has been null on every render since it was added, and the card's
+             PRE-GAME tile has always taken its closest-to-50%-rung fallback.
+             Kept, correctly spelled, as the second rung behind the opening
+             line: it is the right answer for a live card with no opening
+             quote, and it is the one `hasDerivedSpread` governs. */
+          homeSpread={event.current_odds?.spread ?? null}
           overUnder={event.current_odds?.over_under ?? null}
+          /* #5414: what the market quoted BEFORE play, which is what the three
+             markers labelled `Pre-game` are asking for. Served by the detail
+             route as of this same change; `?? null` because 90.5% / 95.0% of
+             events with sportsbook odds carry one, not all of them. */
+          openingHomeSpread={event.opening_odds?.spread ?? null}
+          openingOverUnder={event.opening_odds?.over_under ?? null}
           sportKey={event.sport || undefined}
           espnHistory={historyData?.espn_history as Array<{ period?: string; home_score?: number; away_score?: number; timestamp?: string }>}
           // live/073: the games this match was actually played to. Without it a

@@ -128,6 +128,34 @@ function renderMaps(sportKey: string) {
       awayWinProb={0.9687}
       homeSpread={-4.6}
       overUnder={34.8}
+      /* #5414/CERT-2674: the frozen pre-game line this fixture predates, so its
+         `Pre-game` assertion keeps meaning "the pre-game half of the card
+         survives" now that the marker is drawn only where a pre-game reading
+         exists.
+
+         ⚠️ **POSITIVE 4.6, where the line above it is negative, and that is not
+         a typo.** A negative `home_spread` means the HOME player is favoured
+         (measured: event 15309206, Zverev home at 0.7966, `opening_home_spread`
+         -5.5). Home here is Marozsan at **3.13%**, so his line is `+4.6` — he
+         is the one receiving games. The `homeSpread={-4.6}` above contradicts
+         this fixture's own win probabilities and has never been visible on the
+         tennis arm because #2441 gates the derived rung off for tennis; wiring
+         the opening line in surfaced it, rendering `Pre-game MAR by 4.6+` under
+         a headline reading `ZHE 97%` — #4598's defect exactly.
+
+         This is a FIXTURE defect and not a data one; the convention holds in
+         production. Measured over 30 days: of 453 tennis events carrying an
+         opening spread, 3 look inverted and all three are coinflips on the
+         other side of a half-point (home at 0.511 / 0.501 / 0.504, spread 0.5).
+         Baseball's 29 are the runline working correctly — a marginal moneyline
+         favourite is an underdog to win BY 2+ — and NFL, NCAAF, WNBA and every
+         soccer league are 0 for 1,800+.
+
+         Filed as #5484 rather than rewritten here: the NBA control below uses
+         the same helper and that sign is load-bearing for it, so correcting it
+         means splitting the arms, which is more than this ship should carry. */
+      openingHomeSpread={4.6}
+      openingOverUnder={34.8}
       sportKey={sportKey}
     />
   );

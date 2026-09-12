@@ -58,6 +58,43 @@ interface MarketMapSectionProps {
   awayWinProb?: number;
   homeSpread?: number | null;
   overUnder?: number | null;
+  /**
+   * ═══ #5414: WHAT THE MARKET QUOTED BEFORE PLAY, FOR THE TILE THAT SAYS SO ═══
+   *
+   * `homeSpread` / `overUnder` above are the LATEST snapshot. Three of this
+   * card's markers are labelled `Pre-game`, and two of them (the `live` and
+   * `done` arms) are drawn on a game whose latest snapshot is no longer a
+   * pre-game quantity at all. Measured on event 15310077 (Cubs–Pirates): the
+   * last snapshot was captured 21:00Z against an 18:20Z first pitch, at
+   * `home_probability` 0.999 and `spread` **-7.9**, on a game that OPENED at
+   * -1.5. So the freshest number is the wrong number under this label, and it
+   * gets wronger the longer the game runs.
+   *
+   * These two are `events.opening_*` — the last pre-game consensus, frozen at
+   * first pitch by `_maybe_set_opening_odds`. They outrank the latest snapshot
+   * on every arm, including `pre`, where the two agree anyway (both keep
+   * updating until the game starts) and preferring one rule to a
+   * status-dependent pair is one less thing to get wrong.
+   *
+   * ⚠️ **A QUOTED LINE, NOT A DERIVED ONE — WHICH IS WHY `hasDerivedSpread`
+   * DOES NOT GATE THEM.** #2441 banned a spread this page INVENTED from the
+   * win probability over a sport with no points. `opening_home_spread` is the
+   * median of the `spreads` market's home `point` across the quoting books
+   * (`odds_polling._parse_snapshot_values` → `_maybe_set_opening_odds`); for
+   * tennis those books quote GAMES, which is the unit this file already
+   * declares for tennis (`unit: "games"`, `marginRange: 6`). #2441's rule is
+   * "show what a venue quoted, lose only what we made up" — this is the
+   * quoted half, so it passes the rule rather than bypassing it. Coverage is
+   * not the reason either: 129 of 129 US Open ATP events carry one (measured
+   * 2026-09-11, 30 days). The unit question tennis really does have is
+   * `scoreboardCountsTheUnit`, and that is answered separately and unchanged.
+   *
+   * Both `number | null`: a PICK'EM opens at a spread of exactly **0.0**, so
+   * every test between here and the marker is `!= null`, never truthiness.
+   * 557 of 7,717 events with an opening spread (7.2%) opened at 0.
+   */
+  openingHomeSpread?: number | null;
+  openingOverUnder?: number | null;
   sportKey?: string;
   espnHistory?: Array<{ period?: string; home_score?: number; away_score?: number; timestamp?: string }>;
   /**
@@ -199,6 +236,8 @@ export default function MarketMapSection({
   awayWinProb,
   homeSpread,
   overUnder,
+  openingHomeSpread,
+  openingOverUnder,
   sportKey,
   espnHistory,
   linescore,
@@ -360,14 +399,58 @@ export default function MarketMapSection({
 
     const markers: MarketMapMarker[] = [];
 
-    // #2441: `homeSpread` is a POINTS figure derived from the moneyline by a
-    // model that assumes interchangeable points. On the Berrettini match it
-    // produced -4.3 and the page printed `BER +4.5` over a sport with no
-    // points. A sport that does not declare `hasDerivedSpread` keeps every
-    // market a venue actually quoted and loses only the number we made up —
-    // the fallback below still finds the closest-to-50% REAL rung.
-    let projValue = vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
-    if (projValue == null && parsed.length > 0) {
+    // #5414: THE QUOTED PRE-GAME LINE FIRST — see `openingHomeSpread`.
+    //
+    // Every marker built from `projValue` below is labelled `Pre-game` or is
+    // the `pre` arm's forecast, so the pre-game quote is the number they are
+    // all asking for. It is ungated by `hasDerivedSpread` because it is a line
+    // the books quoted, not one this page derived; the docstring on the prop
+    // carries the reasoning and the measurement.
+    //
+    // `!= null`, not truthiness: a pick'em opens at exactly 0.0, and
+    // `-0` is still a number that must reach the "Tied" label below rather
+    // than fall through to the rung fallback as if no line existed.
+    //
+    // #2441 (unchanged in what it gates, now the SECOND rung): `homeSpread` is
+    // the LATEST snapshot's figure, and it is still gated on
+    // `hasDerivedSpread`, because on a sport that declares no derived spread
+    // this page has no standing to draw one.
+    //
+    // ⚠️ **AND IT IS ADMISSIBLE ONLY WHILE `status === "pre"`.** That is new
+    // here, and it is what makes correcting its spelling safe. `page.tsx` fed
+    // this prop `current_odds.home_spread`, a key the API has never emitted
+    // (it serialises the same column as `spread`), so the rung has never once
+    // fired on the event page and the rung fallback below is what every reader
+    // has actually been shown. Spelling it correctly without a tense rule
+    // would have switched it ON for live and settled games — where the marker
+    // it feeds is labelled `Pre-game` and the latest snapshot is emphatically
+    // not a pre-game quantity (event 15310077's was -7.9 on a game that opened
+    // at -1.5). Before the game starts the two tenses coincide and the fresher
+    // number is the better one, so `pre` keeps it.
+    let projValue = openingHomeSpread != null ? -openingHomeSpread : null;
+    if (projValue == null && status === "pre") {
+      projValue = vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
+    }
+    // CERT-2674: AND THE RUNG FALLBACK IS A PRE-STATUS FALLBACK TOO.
+    //
+    // The first cut of this fix left the fallback reachable on `live` and
+    // `done`, where the marker it feeds is labelled `Pre-game` — so a card with
+    // no opening line went on presenting a CURRENT rung as the pre-game
+    // reading, which is the whole defect, surviving in the 9.5% of events that
+    // carry no opening spread. Worse on a settled card: #3769 measured that a
+    // finished match's rung prices are the RESOLVED ones (0.0005 on both of
+    // Paul–Alcaraz's), so "closest to a coin flip" there is not a market
+    // opinion at all, it is an artefact of settlement.
+    //
+    // A tile with nothing true to say says nothing: `projValue` stays null, the
+    // three arms below are already each guarded on `projValue != null`, and the
+    // `Pre-game` marker is simply not drawn. Alex's rule for the empty case —
+    // leave the space empty, do not explain the emptiness (notice 34).
+    //
+    // On `pre` the fallback stands and must: the marker there is `Projection`,
+    // an unplayed game's quoted rungs are live pre-game quotes, and it is the
+    // only number many a scheduled card has.
+    if (projValue == null && status === "pre" && parsed.length > 0) {
       const closest = parsed.reduce((best, s) =>
         Math.abs(s.probability - 0.5) < Math.abs(best.probability - 0.5) ? s : best
       );
@@ -525,7 +608,7 @@ export default function MarketMapSection({
       markers,
       ladder,
     };
-  }, [gameMarkets.spreads, status, homeScore, awayScore, homeWinProb, awayWinProb, homeSpread, homeTeam, awayTeam, hAbbr, aAbbr, homeLogo, awayLogo, sportKey, vocab]);
+  }, [gameMarkets.spreads, status, homeScore, awayScore, homeWinProb, awayWinProb, homeSpread, openingHomeSpread, homeTeam, awayTeam, hAbbr, aAbbr, homeLogo, awayLogo, sportKey, vocab]);
 
   // ── Total Map ──
   const totalData = useMemo(() => {
@@ -548,6 +631,9 @@ export default function MarketMapSection({
     if (actualTotal != null) allValues.push(actualTotal);
     if (paceProj != null) allValues.push(paceProj);
     if (overUnder != null) allValues.push(overUnder);
+    // #5414: the number `ouVal` now prefers has to be inside the rail it is
+    // drawn on, or the marker pins to an end and reads as an extreme.
+    if (openingOverUnder != null) allValues.push(openingOverUnder);
     const dataMin = Math.min(...allValues);
     const dataMax = Math.max(...allValues);
     const span = dataMax - dataMin;
@@ -569,16 +655,43 @@ export default function MarketMapSection({
     const pace = vocab.scoreboardCountsTheUnit ? gameMarkets.pace : null;
     const scored = pace?.total_scored ?? (homeScore != null && awayScore != null ? homeScore + awayScore : null);
     const projected = pace?.projected_total ?? null;
-    const ouVal = overUnder ?? ouLine.threshold;
+    // #5414: the quoted pre-game total first, for the same reason the margin
+    // map takes the quoted pre-game spread first — this value feeds a marker
+    // labelled `Pre-game` on the live and settled arms, and `overUnder` is the
+    // LATEST snapshot's total, which on a finished game is not a pre-game
+    // quantity. Fixed on the same pass as the margin one deliberately: the two
+    // rails sit on ONE card, and #3210's own finding on this file is that
+    // fixing one and leaving the other is worse than the bug.
+    //
+    // `??`, so an opening total of 0 would be taken rather than skipped — the
+    // pick'em reasoning on `openingHomeSpread` applied to the other rail.
+    //
+    // And `overUnder` survives only on `pre`, the same tense rule the margin
+    // rail applies to `homeSpread`: once play starts, the latest total under a
+    // `Pre-game` label is a wrong answer.
+    //
+    // CERT-2674: and `ouLine.threshold` is a PRE-STATUS fallback for the same
+    // reason the margin rail's rung fallback is — on a live or settled card the
+    // marker this feeds is labelled `Pre-game`, and #3769 measured that a
+    // finished match's rung prices are the RESOLVED ones, so the
+    // nearest-to-even rung there is an artefact of settlement rather than an
+    // opinion anyone held before play. Nullable, and both arms below draw the
+    // marker only when it is a real pre-game reading.
+    const ouVal: number | null =
+      openingOverUnder ?? (status === "pre" ? overUnder ?? ouLine.threshold : null);
 
     // #5206: `Projected 3` on a match nobody reported was the headline in the
     // bug report. In `pre` this number is just the over/under LINE rounded — a
     // quote, dressed as a forecast — so an unreported match shows no headline
     // at all rather than a projection it has no standing to make.
+    // CERT-2674: `ouVal` is nullable now, and on `pre` it cannot be null —
+    // `ouLine.threshold` is that arm's final fallback and `gameTotals` is
+    // non-empty by the early return above. The `?? ouLine.threshold` is here so
+    // the compiler knows it, not because the branch can be reached.
     const headlineValue = status === "pre"
       ? noForecast
         ? ""
-        : `Projected ${Math.round(ouVal)}`
+        : `Projected ${Math.round(ouVal ?? ouLine.threshold)}`
       : status === "live" && projected != null
       ? `Projected ${Math.round(projected)}`
       : "";
@@ -586,13 +699,15 @@ export default function MarketMapSection({
     const markers: MarketMapMarker[] = [];
 
     if (status === "pre") {
+      // CERT-2674: see `headlineValue` — on this arm `ouVal` cannot be null.
+      const preVal = ouVal ?? ouLine.threshold;
       markers.push({
         key: noForecast ? "pre" : "proj",
-        value: ouVal,
+        value: preVal,
         type: noForecast ? "pre" : "proj",
         // #5206: past tense for a match nobody reported — see `noForecast`.
         label: noForecast ? "Pre-game" : "Projection",
-        displayValue: String(Math.round(ouVal)),
+        displayValue: String(Math.round(preVal)),
         // #3360: the ring carries its own number. `hideTile: true` means this
         // marker draws NO tile underneath, so the dot was the only mark on the
         // rail and it was empty — a 26px ring with nothing in it, which reads
@@ -602,7 +717,7 @@ export default function MarketMapSection({
         // #5206: a `pre` mark draws its own TILE, so it needs neither the
         // fallback nor `hideTile` — carrying them over would hide the only mark
         // on the rail and reproduce #3360 in the arm this fix creates.
-        logoFallback: noForecast ? undefined : String(Math.round(ouVal)),
+        logoFallback: noForecast ? undefined : String(Math.round(preVal)),
         hideTile: noForecast ? undefined : true,
       });
     } else if (status === "live") {
@@ -615,13 +730,20 @@ export default function MarketMapSection({
           displayValue: withUnit(scored, vocab),
         });
       }
-      markers.push({
-        key: "pre",
-        value: ouVal,
-        type: "pre",
-        label: "Pre-game",
-        displayValue: String(Math.round(ouVal)),
-      });
+      // CERT-2674: only when there IS a pre-game reading. With no opening total
+      // this rail used to label the nearest-to-even CURRENT rung `Pre-game` —
+      // and on a settled card those prices are the RESOLVED ones (#3769), so it
+      // was an artefact of settlement wearing a pre-game label. No number, no
+      // marker; the rail, the band and the ladder are all still drawn.
+      if (ouVal != null) {
+        markers.push({
+          key: "pre",
+          value: ouVal,
+          type: "pre",
+          label: "Pre-game",
+          displayValue: String(Math.round(ouVal)),
+        });
+      }
       if (projected != null) {
         markers.push({
           key: "proj",
@@ -639,13 +761,20 @@ export default function MarketMapSection({
         });
       }
     } else {
-      markers.push({
-        key: "pre",
-        value: ouVal,
-        type: "pre",
-        label: "Pre-game",
-        displayValue: String(Math.round(ouVal)),
-      });
+      // CERT-2674: only when there IS a pre-game reading. With no opening total
+      // this rail used to label the nearest-to-even CURRENT rung `Pre-game` —
+      // and on a settled card those prices are the RESOLVED ones (#3769), so it
+      // was an artefact of settlement wearing a pre-game label. No number, no
+      // marker; the rail, the band and the ladder are all still drawn.
+      if (ouVal != null) {
+        markers.push({
+          key: "pre",
+          value: ouVal,
+          type: "pre",
+          label: "Pre-game",
+          displayValue: String(Math.round(ouVal)),
+        });
+      }
       if (scored != null) {
         markers.push({
           key: "final",
@@ -722,7 +851,7 @@ export default function MarketMapSection({
       markers,
       ladder,
     };
-  }, [gameMarkets.totals, gameMarkets.pace, status, homeScore, awayScore, overUnder, vocab, sportKey]);
+  }, [gameMarkets.totals, gameMarkets.pace, status, homeScore, awayScore, overUnder, openingOverUnder, vocab, sportKey]);
 
   // #3240: `derivePeriod` now lives in `marketMapUtils` beside the half-total
   // selector that also needs it.
