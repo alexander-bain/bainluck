@@ -44,7 +44,10 @@ asserts only what is genuinely new: the clause's content, and that both call
 sites splice it with DIFFERENT prices.
 """
 
+import collections
 import re
+
+from app.utils.agent_origin import tagged
 
 import pytest
 
@@ -1079,6 +1082,17 @@ def _drive_apply(monkeypatch, *, plan_count, manifest_rows):
     monkeypatch.setattr(mod, "plan", lambda rows: (legs, []))
     monkeypatch.setattr(mod, "manifest_count", _async_const(manifest_rows))
     monkeypatch.setattr(mod, "backup", _async_const(None))
+    # The venue precondition (#5515) is stubbed WIDE OPEN here so it cannot be
+    # what stops the write in either branch below — the subject of these tests
+    # is the sanity floor's discriminator, and a second gate that also refused
+    # would make them pass for the wrong reason. The precondition's own
+    # behaviour is driven separately by `_drive_apply_with_venue`.
+    monkeypatch.setattr(mod, "attach_venue_coordinates", _async_const(None))
+    monkeypatch.setattr(
+        mod,
+        "confirm_against_venue",
+        _async_const((legs, [], collections.Counter())),
+    )
     # `backup_is_exact` requires a non-empty dict of zeros, so the backup gate
     # PASSES and cannot be what stops the write in either case below.
     monkeypatch.setattr(mod, "reconcile_backup", _async_const({"missing": 0}))
@@ -1268,3 +1282,517 @@ def test_only_a_declared_result_reaches_a_verdict(status, result, expected):
     from app.utils import kalshi_market_status as kms
 
     assert kms.gradeable_winner(status, result) is expected
+
+
+# ---------------------------------------------------------------------------
+# #5515 — the venue-agreement precondition.
+#
+# The repair's own docstring used to assert "the grade is already right". On
+# 2026-09-10 #3617's producer began stamping `api_settlement` losses onto legs
+# Kalshi still lists `active`, and on 2026-09-11 this repair zeroed 167 of them
+# on screen — the FTSE 100 ladder's "At least £10,900" rung rendered 0% while
+# stored at 0.995 and trading at the venue. These tests bind the premise to the
+# venue instead of to the docstring.
+# ---------------------------------------------------------------------------
+
+
+def _venue_leg(**over):
+    """A leg that satisfies every PRE-venue clause, so only the venue can refuse it."""
+    leg = {
+        "outcome_id": 198634385,
+        "market_id": 52755923,
+        "outcome_name": "At least £10,900",
+        "outcome_ticker": "KXFTSE-26DEC31-10900",
+        "residue": 0.995,
+        "live_field_survives": True,
+        "source": "kalshi",
+        "event_ticker": "KXFTSE-26DEC31",
+    }
+    leg.update(over)
+    return leg
+
+
+def _book(status, result, ticker="KXFTSE-26DEC31-10900"):
+    return {ticker: {"ticker": ticker, "status": status, "result": result}}
+
+
+def test_a_leg_the_venue_still_lists_active_is_refused():
+    """THE REGRESSION, in the shape production actually served.
+
+    `KXFTSE-26DEC31-10900` on 2026-09-12: stored `is_winner = false,
+    resolution_source = 'api_settlement'`, priced 0.995, on an `open` market
+    resolving 2027-01-01 whose siblings are priced — so it passes the cohort
+    SQL and the sibling refusal together, and the venue reports it `active`
+    with an empty result. Nothing except the venue can stop this row.
+    """
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    call = mod.venue_verdict(_venue_leg(), _book("active", ""))
+
+    assert call.verdict == mod.VENUE_REFUTES
+    assert "active" in call.reason
+
+
+def test_a_venue_confirmed_loss_is_the_one_shape_that_clears():
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    call = mod.venue_verdict(_venue_leg(), _book("finalized", "no"))
+
+    assert call.verdict == mod.VENUE_AGREES
+
+
+def test_an_inverted_grade_is_refused_rather_than_priced_to_zero():
+    """The venue says this side WON and the row says it lost.
+
+    lane1b/179 found one of these in 619 venue-checked rows. Zeroing its price
+    would make a wrong verdict look settled, which is worse than the residue
+    the repair exists to clear.
+    """
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    call = mod.venue_verdict(_venue_leg(), _book("finalized", "yes"))
+
+    assert call.verdict == mod.VENUE_REFUTES
+    assert "yes" in call.reason
+
+
+@pytest.mark.parametrize(
+    "status,result",
+    [("finalized", ""), ("finalized", "void"), ("closed", ""), ("initialized", "")],
+)
+def test_every_shape_short_of_a_declared_loss_refuses(status, result):
+    """Fail-closed: AGREES is reachable only by the one positive statement."""
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    assert mod.venue_verdict(
+        _venue_leg(), _book(status, result)
+    ).verdict != mod.VENUE_AGREES
+
+
+def test_an_unreadable_event_refuses_instead_of_clearing():
+    """A transport failure must never read as licence to write (gotcha #36)."""
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    call = mod.venue_verdict(_venue_leg(), None)
+
+    assert call.verdict == mod.VENUE_UNKNOWN
+    assert call.reason == "event_unreadable"
+
+
+def test_a_leg_absent_from_the_venues_book_is_refused():
+    """8 rows stored, 7 markets served — the FTSE event's real shape."""
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    call = mod.venue_verdict(_venue_leg(), _book("finalized", "no", "SOMETHING-ELSE"))
+
+    assert call.verdict == mod.VENUE_UNKNOWN
+    assert call.reason == "leg_absent_from_book"
+
+
+def test_a_source_with_no_venue_reader_is_refused_and_says_so():
+    """Polymarket has no reader here, so its rows are named, not trusted."""
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    call = mod.venue_verdict(
+        _venue_leg(source="polymarket"), _book("finalized", "no")
+    )
+
+    assert call.verdict == mod.VENUE_UNKNOWN
+    assert "polymarket" in call.reason
+
+
+def test_a_leg_whose_market_vanished_from_the_lookup_fails_closed():
+    """`attach_venue_coordinates` leaving `source` unset must not widen the write."""
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    call = mod.venue_verdict(
+        _venue_leg(source=None, event_ticker=None), _book("finalized", "no")
+    )
+
+    assert call.verdict == mod.VENUE_UNKNOWN
+
+
+def test_the_split_counts_every_refusal_by_reason():
+    """The operator must see WHY a plan shrank, not merely that it did."""
+    import asyncio
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    legs = [
+        _venue_leg(outcome_id=1, outcome_ticker="T-LOST"),
+        _venue_leg(outcome_id=2, outcome_ticker="T-LIVE"),
+        _venue_leg(outcome_id=3, source="polymarket"),
+    ]
+    book = {
+        "T-LOST": {"ticker": "T-LOST", "status": "finalized", "result": "no"},
+        "T-LIVE": {"ticker": "T-LIVE", "status": "active", "result": ""},
+    }
+
+    async def _reader(tickers):
+        return {"KXFTSE-26DEC31": mod.VenueRead(book, "")}
+
+    confirmed, refused, reasons = asyncio.run(
+        mod.confirm_against_venue(legs, reader=_reader)
+    )
+
+    assert [leg["outcome_id"] for leg in confirmed] == [1]
+    assert len(refused) == 2
+    assert reasons["venue_status:active"] == 1
+    assert reasons["no_venue_reader:polymarket"] == 1
+
+
+def test_the_reader_is_never_asked_about_a_source_it_cannot_read():
+    """A polymarket-only plan makes no Kalshi calls at all."""
+    import asyncio
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    asked = []
+
+    async def _reader(tickers):
+        asked.append(tickers)
+        return {}
+
+    confirmed, refused, _ = asyncio.run(
+        mod.confirm_against_venue(
+            [_venue_leg(source="polymarket")], reader=_reader
+        )
+    )
+
+    assert asked == []
+    assert confirmed == [] and len(refused) == 1
+
+
+def _drive_apply_with_venue(monkeypatch, legs, book):
+    """Run `run()` under `--backup --apply` with the REAL venue precondition.
+
+    Only the network is stubbed. `attach_venue_coordinates`,
+    `confirm_against_venue`, `venue_verdict` and the gating in `run` are all the
+    shipped ones, so this answers the question the source cannot: did the
+    verdict reach the write, or merely get computed near it.
+
+    Returns the outcome ids the forward write was actually executed for.
+    """
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    written: list[int] = []
+
+    class _Result:
+        rowcount = 1
+
+        @staticmethod
+        def fetchall():
+            return []
+
+    class _Session:
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            if "UPDATE futures_outcomes" in sql and params and "oid" in params:
+                written.append(params["oid"])
+            return _Result()
+
+        async def commit(self):
+            return None
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield _Session()
+
+    async def _reader(tickers):
+        return {t: mod.VenueRead(book, "http_404" if book is None else "")
+                for t in tickers}
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+    monkeypatch.setattr(mod, "plan", lambda rows: (legs, []))
+    monkeypatch.setattr(mod, "manifest_count", _async_const(mod.SANITY_FLOOR))
+    monkeypatch.setattr(mod, "backup", _async_const(None))
+    monkeypatch.setattr(mod, "reconcile_backup", _async_const({"missing": 0}))
+    # The coordinates are stamped by the fixture, not read from the DB — the
+    # subject is the verdict's effect on the write, not the lookup.
+    monkeypatch.setattr(mod, "attach_venue_coordinates", _async_const(None))
+    monkeypatch.setattr(
+        mod, "_read_books", _reader
+    )
+
+    class _Args:
+        limit = None
+        backup = True
+        apply = True
+
+    asyncio.run(mod.run(_Args()))
+    return written
+
+
+def test_the_venue_verdict_reaches_the_write_and_does_not_merely_get_computed(
+    monkeypatch,
+):
+    """THE MUTANT THIS KILLS: the check relocated after the write loop, or ignored.
+
+    Two legs identical in every stored respect — same market, same grade, same
+    residue, both past the sibling refusal, both on a plan well clear of the
+    sanity floor. They differ only in what the venue says. If the precondition
+    is computed but not gating, or runs after the loop, BOTH are written and
+    this fails; that is exactly how #5452's discriminator was decorative for two
+    sessions, and how `explain_small_plan`'s was before it.
+    """
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    lost = _venue_leg(outcome_id=111, outcome_ticker="T-LOST")
+    live = _venue_leg(outcome_id=222, outcome_ticker="T-LIVE")
+    book = {
+        "T-LOST": {"ticker": "T-LOST", "status": "finalized", "result": "no"},
+        "T-LIVE": {"ticker": "T-LIVE", "status": "active", "result": ""},
+    }
+
+    written = _drive_apply_with_venue(monkeypatch, [lost, live], book)
+
+    assert written == [111], (
+        f"the venue-refuted leg 222 reached the forward write: {written}"
+    )
+    assert mod.VENUE_AGREES != mod.VENUE_REFUTES
+
+
+def test_an_unreadable_venue_writes_nothing_at_all(monkeypatch):
+    """Fail closed end-to-end: no answer from Kalshi means no zeros written."""
+    written = _drive_apply_with_venue(
+        monkeypatch, [_venue_leg(outcome_id=333, outcome_ticker="T-LOST")], None
+    )
+
+    assert written == []
+
+
+def test_the_settled_statuses_do_not_admit_a_trading_market():
+    """A widening of this set is the one edit that silently restores the defect."""
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    assert "active" not in mod.VENUE_SETTLED_STATUSES
+    assert "initialized" not in mod.VENUE_SETTLED_STATUSES
+    assert mod.VENUE_SETTLED_STATUSES == frozenset({"finalized", "settled"})
+    assert mod.VENUE_LOSS_RESULT == "no"
+
+
+class _FakeResponse:
+    def __init__(self, status_code, payload=None):
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
+
+
+class _FakeClient:
+    """The `svc.client` half of the stub, holding a back-reference to its owner.
+
+    A nested class closing over the outer `self` would need a differently-named
+    first parameter; a plain back-reference keeps the conventional `self` and
+    reads the same.
+    """
+
+    def __init__(self, svc):
+        self._svc = svc
+
+    async def get(self, url, params=None, headers=None):
+        self._svc.calls += 1
+        # Notice 39: the read must go through the carrier, and the assertion is
+        # EQUALITY with it rather than "the header is present" — `tagged()`
+        # legitimately yields `{}` for a third-party host and for an unnamed
+        # agent, so a presence check would be vacuous in exactly the
+        # environment CI runs in, while still failing if the kwarg is dropped
+        # (`None != {}`).
+        assert headers == tagged(url)
+        return self._svc.responses.pop(0)
+
+
+class _FakeSvc:
+    """A KalshiAPIService-shaped stub that serves a scripted status sequence."""
+
+    BASE_URL = "https://venue.test"
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+        self.client = _FakeClient(self)
+
+
+def _event_payload(ticker, status, result):
+    return {"event": {"markets": [
+        {"ticker": ticker, "status": status, "result": result}
+    ]}}
+
+
+def test_a_rate_limited_read_is_retried_not_counted_as_a_venue_answer():
+    """429 is the venue saying "later", and refusing on it fabricates a finding.
+
+    MEASURED, which is why this test exists: at 8-wide with no backoff, Kalshi
+    rate-limited 183 of 309 event tickers and the run reported 421 rows
+    `event_unreadable` — a number that reads as "the venue does not list these"
+    and was produced entirely by the rig. Three of the first six re-read
+    sequentially answered 200.
+    """
+    import asyncio
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    svc = _FakeSvc([
+        _FakeResponse(429),
+        _FakeResponse(429),
+        _FakeResponse(200, _event_payload("T-LOST", "finalized", "no")),
+    ])
+    monkey_sleep = asyncio.sleep
+
+    async def _go():
+        # Keep the test fast without stubbing the retry itself away.
+        mod.asyncio.sleep = lambda _s: monkey_sleep(0)
+        try:
+            return await mod.read_event_book(svc, "KXFOO")
+        finally:
+            mod.asyncio.sleep = monkey_sleep
+
+    read = asyncio.run(_go())
+
+    assert svc.calls == 3, "the reader gave up on a rate limit"
+    assert read.book is not None
+    assert read.book["T-LOST"]["result"] == "no"
+
+
+def test_a_persistent_rate_limit_ends_in_a_refusal_named_as_such():
+    """Exhausted retries still refuse — but the reason must not read as a 404."""
+    import asyncio
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    svc = _FakeSvc([_FakeResponse(429)] * mod.VENUE_READ_ATTEMPTS)
+    real_sleep = asyncio.sleep
+
+    async def _go():
+        mod.asyncio.sleep = lambda _s: real_sleep(0)
+        try:
+            return await mod.read_event_book(svc, "KXFOO")
+        finally:
+            mod.asyncio.sleep = real_sleep
+
+    read = asyncio.run(_go())
+
+    assert read.book is None
+    assert read.reason == "rate_limited"
+    assert read.reason != "http_404"
+
+
+def test_a_404_is_an_answer_and_costs_no_retry():
+    """Kalshi purges MARKET rows (gotcha #35); a 404 is not worth four attempts."""
+    import asyncio
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    svc = _FakeSvc([_FakeResponse(404)])
+    read = asyncio.run(mod.read_event_book(svc, "KXGONE"))
+
+    assert svc.calls == 1
+    assert read.book is None and read.reason == "http_404"
+
+
+def test_the_refusal_report_names_the_transport_cause(monkeypatch):
+    """`event_unreadable` alone cannot tell an operator whether to re-run."""
+    import asyncio
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    async def _reader(tickers):
+        return {t: mod.VenueRead(None, "rate_limited") for t in tickers}
+
+    _, refused, reasons = asyncio.run(
+        mod.confirm_against_venue([_venue_leg()], reader=_reader)
+    )
+
+    assert len(refused) == 1
+    assert reasons["event_unreadable:rate_limited"] == 1
+
+
+def test_the_venue_read_budget_is_pinned_at_its_measured_value():
+    """A tuned constant needs a guard pinning it from BOTH sides.
+
+    8-wide is the value that was MEASURED failing: Kalshi rate-limited 183 of
+    309 event tickers on 2026-09-12 and the run reported the shortfall as a
+    venue finding. The backoff added since makes 8 survivable rather than
+    correct — it would simply spend the run sleeping. 1-wide is the opposite
+    error: 309 sequential reads inside a repair nobody will wait for. Neither
+    bound is arbitrary, so neither is left unasserted.
+    """
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    assert 2 <= mod.VENUE_CONCURRENCY <= 4, (
+        "8-wide was measured rate-limiting 183/309 event tickers; 1-wide is a "
+        "309-read serial crawl. Re-measure before moving this."
+    )
+    assert mod.VENUE_READ_ATTEMPTS >= 3
+    assert mod.VENUE_BACKOFF_SECONDS >= 1.0
+
+
+def test_the_backup_covers_exactly_what_the_venue_confirmed(monkeypatch):
+    """The undo must describe the write, not the plan.
+
+    A backup keyed on the PRE-venue plan records rows this repair never
+    touched, and the manifest then answers "what did the repair do?" with a
+    superset — the CERT-2439 lesson this script's `MANIFEST_TABLE` comment was
+    written for. The write loop is already gated; this binds the undo to the
+    same set.
+    """
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from scripts import repair_5246_settled_outcomes_still_carrying_a_price as mod
+
+    backed_up = []
+
+    class _Result:
+        rowcount = 1
+
+        @staticmethod
+        def fetchall():
+            return []
+
+    class _Session:
+        async def execute(self, stmt, params=None):
+            return _Result()
+
+        async def commit(self):
+            return None
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield _Session()
+
+    async def _backup(session, outcome_ids):
+        backed_up.extend(outcome_ids)
+
+    lost = _venue_leg(outcome_id=111, outcome_ticker="T-LOST")
+    live = _venue_leg(outcome_id=222, outcome_ticker="T-LIVE")
+    book = {
+        "T-LOST": {"ticker": "T-LOST", "status": "finalized", "result": "no"},
+        "T-LIVE": {"ticker": "T-LIVE", "status": "active", "result": ""},
+    }
+
+    async def _reader(tickers):
+        return {t: mod.VenueRead(book, "") for t in tickers}
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+    monkeypatch.setattr(mod, "plan", lambda rows: ([lost, live], []))
+    monkeypatch.setattr(mod, "manifest_count", _async_const(mod.SANITY_FLOOR))
+    monkeypatch.setattr(mod, "attach_venue_coordinates", _async_const(None))
+    monkeypatch.setattr(mod, "_read_books", _reader)
+    monkeypatch.setattr(mod, "backup", _backup)
+    monkeypatch.setattr(mod, "reconcile_backup", _async_const({"missing": 0}))
+
+    class _Args:
+        limit = None
+        backup = True
+        apply = True
+
+    asyncio.run(mod.run(_Args()))
+
+    assert backed_up == [111], (
+        f"the backup covered rows the venue refused: {backed_up}"
+    )
