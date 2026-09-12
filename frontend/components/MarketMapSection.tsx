@@ -431,7 +431,26 @@ export default function MarketMapSection({
     if (projValue == null && status === "pre") {
       projValue = vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
     }
-    if (projValue == null && parsed.length > 0) {
+    // CERT-2674: AND THE RUNG FALLBACK IS A PRE-STATUS FALLBACK TOO.
+    //
+    // The first cut of this fix left the fallback reachable on `live` and
+    // `done`, where the marker it feeds is labelled `Pre-game` — so a card with
+    // no opening line went on presenting a CURRENT rung as the pre-game
+    // reading, which is the whole defect, surviving in the 9.5% of events that
+    // carry no opening spread. Worse on a settled card: #3769 measured that a
+    // finished match's rung prices are the RESOLVED ones (0.0005 on both of
+    // Paul–Alcaraz's), so "closest to a coin flip" there is not a market
+    // opinion at all, it is an artefact of settlement.
+    //
+    // A tile with nothing true to say says nothing: `projValue` stays null, the
+    // three arms below are already each guarded on `projValue != null`, and the
+    // `Pre-game` marker is simply not drawn. Alex's rule for the empty case —
+    // leave the space empty, do not explain the emptiness (notice 34).
+    //
+    // On `pre` the fallback stands and must: the marker there is `Projection`,
+    // an unplayed game's quoted rungs are live pre-game quotes, and it is the
+    // only number many a scheduled card has.
+    if (projValue == null && status === "pre" && parsed.length > 0) {
       const closest = parsed.reduce((best, s) =>
         Math.abs(s.probability - 0.5) < Math.abs(best.probability - 0.5) ? s : best
       );
@@ -649,19 +668,30 @@ export default function MarketMapSection({
     //
     // And `overUnder` survives only on `pre`, the same tense rule the margin
     // rail applies to `homeSpread`: once play starts, the latest total under a
-    // `Pre-game` label is a wrong answer, and `ouLine.threshold` — the quoted
-    // rung nearest a coin flip, taken from the ladder drawn on this very card —
-    // is tenseless and at least says something the market said.
-    const ouVal = openingOverUnder ?? (status === "pre" ? overUnder : null) ?? ouLine.threshold;
+    // `Pre-game` label is a wrong answer.
+    //
+    // CERT-2674: and `ouLine.threshold` is a PRE-STATUS fallback for the same
+    // reason the margin rail's rung fallback is — on a live or settled card the
+    // marker this feeds is labelled `Pre-game`, and #3769 measured that a
+    // finished match's rung prices are the RESOLVED ones, so the
+    // nearest-to-even rung there is an artefact of settlement rather than an
+    // opinion anyone held before play. Nullable, and both arms below draw the
+    // marker only when it is a real pre-game reading.
+    const ouVal: number | null =
+      openingOverUnder ?? (status === "pre" ? overUnder ?? ouLine.threshold : null);
 
     // #5206: `Projected 3` on a match nobody reported was the headline in the
     // bug report. In `pre` this number is just the over/under LINE rounded — a
     // quote, dressed as a forecast — so an unreported match shows no headline
     // at all rather than a projection it has no standing to make.
+    // CERT-2674: `ouVal` is nullable now, and on `pre` it cannot be null —
+    // `ouLine.threshold` is that arm's final fallback and `gameTotals` is
+    // non-empty by the early return above. The `?? ouLine.threshold` is here so
+    // the compiler knows it, not because the branch can be reached.
     const headlineValue = status === "pre"
       ? noForecast
         ? ""
-        : `Projected ${Math.round(ouVal)}`
+        : `Projected ${Math.round(ouVal ?? ouLine.threshold)}`
       : status === "live" && projected != null
       ? `Projected ${Math.round(projected)}`
       : "";
@@ -669,13 +699,15 @@ export default function MarketMapSection({
     const markers: MarketMapMarker[] = [];
 
     if (status === "pre") {
+      // CERT-2674: see `headlineValue` — on this arm `ouVal` cannot be null.
+      const preVal = ouVal ?? ouLine.threshold;
       markers.push({
         key: noForecast ? "pre" : "proj",
-        value: ouVal,
+        value: preVal,
         type: noForecast ? "pre" : "proj",
         // #5206: past tense for a match nobody reported — see `noForecast`.
         label: noForecast ? "Pre-game" : "Projection",
-        displayValue: String(Math.round(ouVal)),
+        displayValue: String(Math.round(preVal)),
         // #3360: the ring carries its own number. `hideTile: true` means this
         // marker draws NO tile underneath, so the dot was the only mark on the
         // rail and it was empty — a 26px ring with nothing in it, which reads
@@ -685,7 +717,7 @@ export default function MarketMapSection({
         // #5206: a `pre` mark draws its own TILE, so it needs neither the
         // fallback nor `hideTile` — carrying them over would hide the only mark
         // on the rail and reproduce #3360 in the arm this fix creates.
-        logoFallback: noForecast ? undefined : String(Math.round(ouVal)),
+        logoFallback: noForecast ? undefined : String(Math.round(preVal)),
         hideTile: noForecast ? undefined : true,
       });
     } else if (status === "live") {
@@ -698,13 +730,20 @@ export default function MarketMapSection({
           displayValue: withUnit(scored, vocab),
         });
       }
-      markers.push({
-        key: "pre",
-        value: ouVal,
-        type: "pre",
-        label: "Pre-game",
-        displayValue: String(Math.round(ouVal)),
-      });
+      // CERT-2674: only when there IS a pre-game reading. With no opening total
+      // this rail used to label the nearest-to-even CURRENT rung `Pre-game` —
+      // and on a settled card those prices are the RESOLVED ones (#3769), so it
+      // was an artefact of settlement wearing a pre-game label. No number, no
+      // marker; the rail, the band and the ladder are all still drawn.
+      if (ouVal != null) {
+        markers.push({
+          key: "pre",
+          value: ouVal,
+          type: "pre",
+          label: "Pre-game",
+          displayValue: String(Math.round(ouVal)),
+        });
+      }
       if (projected != null) {
         markers.push({
           key: "proj",
@@ -722,13 +761,20 @@ export default function MarketMapSection({
         });
       }
     } else {
-      markers.push({
-        key: "pre",
-        value: ouVal,
-        type: "pre",
-        label: "Pre-game",
-        displayValue: String(Math.round(ouVal)),
-      });
+      // CERT-2674: only when there IS a pre-game reading. With no opening total
+      // this rail used to label the nearest-to-even CURRENT rung `Pre-game` —
+      // and on a settled card those prices are the RESOLVED ones (#3769), so it
+      // was an artefact of settlement wearing a pre-game label. No number, no
+      // marker; the rail, the band and the ladder are all still drawn.
+      if (ouVal != null) {
+        markers.push({
+          key: "pre",
+          value: ouVal,
+          type: "pre",
+          label: "Pre-game",
+          displayValue: String(Math.round(ouVal)),
+        });
+      }
       if (scored != null) {
         markers.push({
           key: "final",

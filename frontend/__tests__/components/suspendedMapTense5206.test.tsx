@@ -113,6 +113,17 @@ function render(
         awayWinProb={0.5}
         homeSpread={-1.5}
         overUnder={8}
+        /* #5414/CERT-2674: the frozen pre-game line, which every real MLB card
+           carries (380 of 380 events measured over 30 days) and which this
+           fixture predates. It is here so the payload matches production, not
+           to satisfy an assertion: the `Pre-game` marker is now drawn only when
+           there IS a pre-game reading, and a fixture without one would make the
+           finished-game CONTROL below assert the absence of a marker rather
+           than the tense of the card, which is not what #5206 is about. Same
+           values as the latest snapshot above, so nothing this file measures
+           moves. */
+        openingHomeSpread={-1.5}
+        openingOverUnder={8}
         sportKey="baseball_mlb"
         noResultReported={noResultReported}
       />

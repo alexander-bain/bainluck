@@ -148,6 +148,15 @@ function renderMaps(
       awayWinProb={0.99}
       homeSpread={6.5}
       overUnder={29}
+      /* #5414/CERT-2674: the frozen pre-game line this fixture predates. Every
+         real US Open card carries one (129 of 129 ATP events measured over 30
+         days). The `Pre-game` marker is now drawn only where there IS a
+         pre-game reading, and without this the settled assertions below would
+         be testing the absence of a marker rather than the tense and the unit
+         this file is about. Same values as the latest snapshot, so nothing
+         measured here moves. */
+      openingHomeSpread={6.5}
+      openingOverUnder={29}
       sportKey={sportKey}
       linescore={linescore}
     />

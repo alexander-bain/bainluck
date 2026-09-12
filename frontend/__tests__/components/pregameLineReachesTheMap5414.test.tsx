@@ -244,6 +244,31 @@ describe("#5414 — the PRE-GAME tile reads the pre-game line", () => {
     const text = renderPickem({ homeSpread: -7.9 }, "completed");
     expect(text).toContain("Run margin map");
     expect(text).not.toContain("CHC by 7.9+");
+  });
+
+  it("NEGATIVE CONTROL — a settled card with no pre-game reading draws NO Pre-game marker", () => {
+    // CERT-2674. The first cut of this fix left the rung fallback reachable
+    // here, so a card with no opening line went on labelling the CURRENT
+    // nearest-to-even rung `Pre-game` — the defect surviving in the 9.5% of
+    // events that carry no opening spread. On a settled card it is worse than
+    // stale: #3769 measured that a finished match's rung prices are the
+    // RESOLVED ones, so "closest to a coin flip" is an artefact of settlement.
+    //
+    // A tile with nothing true to say says nothing (notice 34: leave the space
+    // empty, do not explain the emptiness).
+    const text = renderPickem({ homeSpread: -7.9 }, "completed");
+    expect(text).not.toMatch(/Pre-game\s+CHC by/);
+    expect(text).not.toMatch(/Pre-game\s+PIT by/);
+    // …and the card is still a card: rail, band and ladder all still drawn.
+    // Without this the assertion above would pass against a deleted component.
+    expect(text).toContain("Run margin map");
+    expect(text).toContain("CHC by 1.5+"); // the ladder rung, which is honest
+  });
+
+  it("the marker returns the moment there IS a pre-game reading to put in it", () => {
+    // The other side of the control above, or "omit it" degenerates into
+    // "never draw it".
+    const text = renderPickem({ homeSpread: -7.9, openingHomeSpread: -1.5 }, "completed");
     expect(text).toMatch(/Pre-game\s+CHC by 1\.5\+/);
   });
 
@@ -280,13 +305,21 @@ describe("#5414 — the totals rail on the same card, fixed in the same pass", (
     expect(text).not.toMatch(/Pre-game\s+44/);
   });
 
-  it("a settled card with no opening total takes a quoted rung, never the latest", () => {
-    // The tense rule on this rail. `44` is on the payload and is the freshest
-    // thing the card holds; under a `Pre-game` label it is still wrong, so the
-    // marker falls to the nearest-to-even quoted rung, 34.5 → 35.
+  it("NEGATIVE CONTROL — a settled card with no opening total draws NO Pre-game marker", () => {
+    // CERT-2674, the totals half. `44` is on the payload and is the freshest
+    // thing the card holds; `35` (the nearest-to-even rung) is the tenseless
+    // one. Neither is a pre-game reading, so the marker is not drawn at all
+    // rather than drawn from whichever is least bad.
     const text = renderZverev({ overUnder: 44 });
-    expect(text).not.toMatch(/Pre-game\s+44/);
-    expect(text).toMatch(/Pre-game\s+35/);
+    expect(text).not.toMatch(/Pre-game\s+\d/);
+    // The rail is still a rail — band, ladder and axis all drawn.
+    expect(text).toContain("Games map");
+    expect(text).toContain("Over 34.5");
+  });
+
+  it("the totals marker returns the moment there IS an opening total", () => {
+    const text = renderZverev({ overUnder: 44, openingOverUnder: 38.5 });
+    expect(text).toMatch(/Pre-game\s+39/);
   });
 
   it("the opening total is read by presence, so `??` cannot decay into `||`", () => {
