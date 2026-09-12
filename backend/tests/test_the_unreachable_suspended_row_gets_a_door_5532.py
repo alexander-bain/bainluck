@@ -414,3 +414,207 @@ class TestTheArmSpendsTheSharedPredicateRatherThanACopyOfIt:
         """A hand-copied list of 26 sport keys goes stale the day coverage
         changes; this must resolve `ESPN_SPORT_MAPPING` itself."""
         assert "ESPN_SPORT_MAPPING.keys()" in self._arm_source()
+
+
+class TestRestoreClosesTheDoorBeforeRestoringRows:
+    """CERT-2753's named repair, `5532-RESTORE-CLOSES-THE-DOOR-FIRST`.
+
+    The first version restored the rows and then PRINTED "run --close if you also
+    want it shut". That is not a rollback. The arm runs every 60s off the same
+    budget key and every restored row is still eligible by construction — the
+    predicate that selected it has not changed — so the next pass re-retires
+    exactly what was just handed back. The claimed one-command undo was two
+    commands with a race between them, and the race runs in the direction that
+    silently reverses the operator.
+
+    Three claims, which is what the cert asked for: the Redis deletion PRECEDES
+    the UPDATE; a close that fails PREVENTS the UPDATE; and after a successful
+    close the arm's own budget reader sees zero.
+    """
+
+    @staticmethod
+    def _load():
+        import importlib.util
+        import pathlib
+
+        path = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "unreachable_suspended_door.py"
+        )
+        spec = importlib.util.spec_from_file_location("_door_script", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    class _Journal:
+        """One ordered record of everything both halves did."""
+
+        def __init__(self, delete_raises=False, still_there_after_delete=False):
+            self.calls = []
+            self._delete_raises = delete_raises
+            self._still = still_there_after_delete
+
+        # -- redis half --
+        def delete(self, key):
+            self.calls.append(("redis.delete", key))
+            if self._delete_raises:
+                raise RuntimeError("redis down")
+
+        def get(self, key):
+            self.calls.append(("redis.get", key))
+            return b"200" if self._still else None
+
+        # -- session half --
+        async def execute(self, *a, **k):
+            self.calls.append(("sql.execute", None))
+
+            class _R:
+                rowcount = 7
+
+            return _R()
+
+        async def commit(self):
+            self.calls.append(("sql.commit", None))
+
+    def _patched(self, monkeypatch, journal):
+        """Wire both halves of the script to one journal."""
+        import contextlib
+
+        import app.tasks.base as task_base
+        import app.tasks.redis_state as redis_state
+
+        mod = self._load()
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: journal)
+
+        @contextlib.asynccontextmanager
+        async def _session():
+            yield journal
+
+        monkeypatch.setattr(task_base, "get_task_session", _session)
+        return mod
+
+    def test_the_delete_precedes_the_update(self, monkeypatch):
+        import asyncio
+
+        j = self._Journal()
+        mod = self._patched(monkeypatch, j)
+        assert asyncio.run(mod._restore()) == 0
+        names = [c[0] for c in j.calls]
+        assert "redis.delete" in names and "sql.execute" in names
+        assert names.index("redis.delete") < names.index("sql.execute"), names
+
+    def test_a_close_that_raises_prevents_the_update(self, monkeypatch):
+        import asyncio
+
+        j = self._Journal(delete_raises=True)
+        mod = self._patched(monkeypatch, j)
+        assert asyncio.run(mod._restore()) == 2
+        assert "sql.execute" not in [c[0] for c in j.calls], j.calls
+
+    def test_a_delete_that_did_not_take_prevents_the_update(self, monkeypatch):
+        """`delete` returning without raising says the command was accepted, not
+        that the key is gone. The read-back is the guarantee."""
+        import asyncio
+
+        j = self._Journal(still_there_after_delete=True)
+        mod = self._patched(monkeypatch, j)
+        assert asyncio.run(mod._restore()) == 2
+        assert "sql.execute" not in [c[0] for c in j.calls], j.calls
+
+    def test_after_a_successful_close_the_next_pass_reads_zero(self, monkeypatch):
+        """The claim that matters: the ARM's own budget reader — not the
+        script's opinion of it — returns 0 against the post-close Redis."""
+        import asyncio
+
+        import app.tasks.redis_state as redis_state
+        from app.tasks import espn_sync
+
+        j = self._Journal()
+        mod = self._patched(monkeypatch, j)
+        assert asyncio.run(mod._restore()) == 0
+
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: j)
+        assert espn_sync._unreachable_suspended_budget() == 0
+
+    def test_close_alone_reports_failure_rather_than_success(self, monkeypatch):
+        """`--close` used on its own must not print a reassuring line when the
+        key is still armed."""
+        import app.tasks.redis_state as redis_state
+
+        j = self._Journal(still_there_after_delete=True)
+        mod = self._load()
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: j)
+        assert mod._set_budget(None) == 2
+
+    def test_restore_no_longer_tells_the_operator_to_run_close_afterwards(self):
+        """The defect was a sentence as much as a control flow."""
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "scripts" / "unreachable_suspended_door.py"
+        ).read_text()
+        assert "run --close if you also want it shut" not in src
+
+
+class TestAnAbsentAppNameIsNotTheNamedApp:
+    """Follow-up `5532-REQUIRE-NAMED-HEROKU-APP` (nonblocking, taken anyway).
+
+    The first version refused a WRONG `HEROKU_APP_NAME` and let an ABSENT one
+    through — and absent is the case that covers every laptop and lane worktree,
+    so it was the one path that could point a mutating run at whatever
+    `DATABASE_URL` was exported."""
+
+    @staticmethod
+    def _main_with(monkeypatch, argv, app_name):
+        import pathlib
+        import sys
+
+        import pytest as _pytest
+
+        from tests.test_the_unreachable_suspended_row_gets_a_door_5532 import (
+            TestRestoreClosesTheDoorBeforeRestoringRows as _T,
+        )
+
+        assert pathlib.Path  # keep the import meaningful
+        mod = _T._load()
+        if app_name is None:
+            monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+        else:
+            monkeypatch.setenv("HEROKU_APP_NAME", app_name)
+        monkeypatch.setattr(sys, "argv", ["unreachable_suspended_door.py"] + argv)
+        with _pytest.raises(SystemExit) as exc:
+            mod.main()
+        return exc.value.code
+
+    @pytest.mark.parametrize("argv", [["--open", "50"], ["--close"], ["--restore"],
+                                      ["--create-backup"]])
+    def test_a_mutating_action_refuses_with_no_app_name(self, monkeypatch, argv):
+        assert self._main_with(monkeypatch, argv, None) != 0
+
+    @pytest.mark.parametrize("argv", [["--open", "50"], ["--restore"]])
+    def test_a_mutating_action_refuses_on_a_foreign_app(self, monkeypatch, argv):
+        assert self._main_with(monkeypatch, argv, "some-other-app") != 0
+
+    def test_dry_run_is_exempt_because_it_writes_nothing(self, monkeypatch):
+        """Exempt deliberately: --dry-run is how the population is read locally,
+        and it is the command this script's own docstring leads with."""
+        import sys
+
+        import app.tasks.base as task_base
+
+        mod = TestRestoreClosesTheDoorBeforeRestoringRows._load()
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+        monkeypatch.setattr(sys, "argv", ["x", "--dry-run"])
+
+        called = {"n": 0}
+
+        async def _boom():
+            called["n"] += 1
+            return 0
+
+        monkeypatch.setattr(mod, "_dry_run", _boom)
+        assert task_base  # the guard must not be what stops us
+        assert mod.main() == 0
+        assert called["n"] == 1
