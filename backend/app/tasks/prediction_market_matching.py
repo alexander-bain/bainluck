@@ -6237,8 +6237,32 @@ async def _poll_live_prediction_market_prices():
                     outcome_probs[str(o.id)] = round(float(o.current_probability), 6)
             if not outcome_probs:
                 continue
+            # CERT-2719: `now` is the TASK-ENTRY clock, read once before the venue
+            # fetches. The prices above were read during those fetches, so a poll
+            # that starts before first pitch and finishes after it stamps an
+            # in-play price with a pregame time, and the reader's own
+            # `_pregame_mark_is_pregame` gate is fooled by its own writer.
+            # MEASURED on production 2026-09-12: task `2638df63` was received at
+            # 15:07:09.972Z and reached this loop at 15:07:26.892Z — 16.9s of
+            # fetching between the stamp and the write.
+            #
+            # `observed_at` is read HERE, per market, so it names when this pin
+            # was written. It is an UPPER bound on when the price was read (the
+            # fetch precedes it), and that is the safe direction: it can refuse a
+            # pin that was really pregame, never accept one that was not.
+            observed_at = datetime.now(timezone.utc)
+            if observed_at > commence:
+                # Nothing pregame is left to capture. Writing it anyway would be
+                # worse than writing nothing: the mark is idempotent — first write
+                # wins, forever — so an in-play price would occupy the slot and
+                # could never be replaced by a better one.
+                continue
             mark_payload = {
+                # Kept so pins written before and after this change have one
+                # shape; it remains the task-entry clock and is NOT trustworthy
+                # on its own. `observed_at` is the field to judge by.
                 "captured_at": now.isoformat(),
+                "observed_at": observed_at.isoformat(),
                 "commence_time": commence.isoformat(),
                 "outcomes": outcome_probs,
             }

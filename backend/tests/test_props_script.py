@@ -21,29 +21,36 @@ def _market(meta):
 
 
 class TestResolvePregameMark:
+    """These pins carry no `captured_at`, so #5509's lateness gate cannot judge
+    them and leaves them alone — the orientation and fallback behaviour each
+    test below was written for is unchanged. The trailing `None` is the event's
+    `commence_time`, which #5509 made a required argument; the lateness class
+    itself is pinned in `test_pregame_pin_after_first_pitch_5509.py`.
+    """
+
     def test_prefers_pinned_commence_mark_over_opening(self):
         m = _market({"pregame_mark": {"outcomes": {"7": 0.62}}})
         # is_over=True: raw is already the over probability.
-        assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.40) == 0.62
+        assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.40, None) == 0.62
 
     def test_under_orientation_is_converted(self):
         m = _market({"pregame_mark": {"outcomes": {"7": 0.62}}})
         # is_under=True, is_over=False → over prob = 1 - raw.
-        assert _resolve_pregame_mark(m, _outcome(7), False, True, 0.40) == 0.38
+        assert _resolve_pregame_mark(m, _outcome(7), False, True, 0.40, None) == 0.38
 
     def test_falls_back_to_opening_when_no_pin(self):
-        assert _resolve_pregame_mark(_market(None), _outcome(7), True, False, 0.41) == 0.41
+        assert _resolve_pregame_mark(_market(None), _outcome(7), True, False, 0.41, None) == 0.41
 
     def test_falls_back_when_outcome_not_in_pin(self):
         m = _market({"pregame_mark": {"outcomes": {"99": 0.5}}})
-        assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.33) == 0.33
+        assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.33, None) == 0.33
 
     def test_returns_none_when_neither_available(self):
-        assert _resolve_pregame_mark(_market({}), _outcome(7), True, False, None) is None
+        assert _resolve_pregame_mark(_market({}), _outcome(7), True, False, None, None) is None
 
     def test_malformed_pin_does_not_raise(self):
         m = _market({"pregame_mark": {"outcomes": {"7": "not-a-number"}}})
-        assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.5) == 0.5
+        assert _resolve_pregame_mark(m, _outcome(7), True, False, 0.5, None) == 0.5
 
 
 class TestBuildPropsScript:
