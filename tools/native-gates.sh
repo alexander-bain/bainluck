@@ -76,12 +76,33 @@
 # reported in the same words as the legitimate no-op. Both conditions now fail
 # the gate by name and say which one happened.
 #
+# ═══ A PASS LINE COMES ONLY FROM A RUN THAT FINISHED (#5591, native/129) ═══
+#
+# The companion to #5480 above. That one was the right count from the WRONG TREE;
+# this one was the right tree, right sha, and a count from a run that DID NOT
+# HAPPEN. `xcodebuild` prints "Executed N tests, with M failures" once per test
+# CLASS as well as once for the suite — 173 of them in a healthy run of this
+# suite, one of which is the total. The line was picked with `tail -1`, which is
+# the total only if the run reached the end. native/128, gating `124a1c82`, hit
+# the #5229 silent hang; the suite was killed at 513 of ~2056 and the script
+# printed `Executed 5 tests, with 0 failures` under "paste this line into the PR
+# body", with "it is the count for <sha>" beneath it. Notice 10's iOS clause is
+# satisfied by exactly that string, and nothing downstream can tell 5 from 2083.
+#
+# Now: the number is read from the "Test Suite 'All tests'" summary BY NAME, and
+# it is offered as a notice-10 line only when the run exited 0 AND left
+# "** TEST SUCCEEDED **" behind. A finished-but-failing run prints its real total
+# labelled as a failure; a killed run prints its class count labelled PARTIAL and
+# do-not-paste; `$LINE` is empty in both, so the SUMMARY cannot pair FAIL with a
+# green-looking number either. `--explain` states the whole rule without building.
+#
 # ═══ USAGE ═══
 #
 #   tools/native-gates.sh              # both gates, diff measured vs origin/master
 #   tools/native-gates.sh --build-only # just the macOS build + recompile proof
 #   tools/native-gates.sh --base <ref> # measure the diff against another ref
 #   tools/native-gates.sh --explain    # resolve tree/sha/diff and STOP. No xcodebuild.
+#   tools/native-gates.sh --selftest   # prove the #5591 pass-line rule. No Xcode, no tree.
 #   tools/native-gates.sh --project-root <path>   # gate a tree explicitly
 #
 # Exit 0 only when every gate it ran passed. Logs are left in $TMPDIR for reading;
@@ -96,21 +117,136 @@ LOGDIR="${TMPDIR:-/tmp}/native-gates-$$"
 BASE="origin/master"
 BUILD_ONLY=""
 EXPLAIN=""
+SELFTEST=""
 PROJECT_ROOT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --build-only) BUILD_ONLY=1 ;;
     --explain) EXPLAIN=1 ;;
+    --selftest) SELFTEST=1 ;;
     --base) BASE="${2:?--base needs a ref}"; shift ;;
     --project-root) PROJECT_ROOT="${2:?--project-root needs a path}"; shift ;;
-    -h|--help) sed -n '1,85p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    # Derived, not a magic number: everything above `set -u` is the header. The
+    # literal 85 was already clipping the last lines of USAGE before #5591 added
+    # a section above it, which would have cut the usage list off entirely.
+    -h|--help) sed -n '1,/^set -u/p' "${BASH_SOURCE[0]}" | sed '$d'; exit 0 ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
 say () { printf '\n=== %s\n' "$*"; }
+
+# ── notice-10 pass-line selection (#5591) ────────────────────────────────────
+# PURE: reads a log path + an exit code, writes four globals and prints nothing,
+# so `--selftest` can drive the SAME code path the real run uses. A copy of this
+# logic inside a test would prove nothing about this script.
+#
+#   LINE           the notice-10 line, EMPTY unless it is genuinely one
+#   VERDICT        PASS_LINE | SUITE_FAILED | PARTIAL | NEVER_RAN
+#   ALL_TESTS_LINE the "Test Suite 'All tests'" total, if the run reached it
+#   LAST_EXEC_LINE the last "Executed N tests" line of any kind (may be a class)
+notice10_select () {
+  _n10_log="$1"; _n10_exit="$2"
+  # BY NAME, not by position: the total is the count under "Test Suite 'All
+  # tests'", which only a run that reached the end ever prints.
+  ALL_TESTS_LINE=$(/usr/bin/grep -A1 "Test Suite 'All tests'" "$_n10_log" 2>/dev/null \
+                   | /usr/bin/grep -E "Executed [0-9]+ tests, with .* failures" \
+                   | tail -1 | sed 's/^[[:space:]]*//')
+  LAST_EXEC_LINE=$(/usr/bin/grep -E "^[[:space:]]+Executed [0-9]+ tests, with .* failures" "$_n10_log" 2>/dev/null \
+                   | tail -1 | sed 's/^[[:space:]]*//')
+  if /usr/bin/grep -q '^\*\* TEST SUCCEEDED \*\*' "$_n10_log" 2>/dev/null; then
+    _n10_ok=1
+  else
+    _n10_ok=0
+  fi
+
+  LINE=""
+  if [ "$_n10_exit" -eq 0 ] && [ "$_n10_ok" -eq 1 ] && [ -n "$ALL_TESTS_LINE" ]; then
+    LINE="$ALL_TESTS_LINE"; VERDICT=PASS_LINE
+  elif [ -n "$ALL_TESTS_LINE" ]; then
+    VERDICT=SUITE_FAILED
+  elif [ -n "$LAST_EXEC_LINE" ]; then
+    VERDICT=PARTIAL
+  else
+    VERDICT=NEVER_RAN
+  fi
+}
+
+# ── --selftest: prove the rule above, on log shapes, with no Xcode ───────────
+# A gate that lied is being repaired; the repair owes proof that it no longer
+# does. These fixtures go through notice10_select() itself, not a copy of it.
+if [ -n "$SELFTEST" ]; then
+  say "--selftest — #5591 pass-line selection (no xcodebuild, no tree needed)"
+  ST_DIR="$(mktemp -d)"; ST_FAIL=0
+  TAB="$(printf '\t')"
+
+  st_check () { # name expected_verdict expect_line_substr(or -) actual_extra_note
+    if [ "$VERDICT" = "$2" ] && { [ "$3" = "-" ] && [ -z "$LINE" ] || { [ "$3" != "-" ] && [ "${LINE#*$3}" != "$LINE" ]; }; }; then
+      echo "  ok    $1 -> $VERDICT${LINE:+, offered \"$LINE\"}"
+    else
+      echo "  FAIL  $1 -> got VERDICT=$VERDICT LINE=\"$LINE\"; wanted $2 / ${3}"
+      ST_FAIL=1
+    fi
+  }
+
+  # A. a healthy, completed run. The one shape that may be pasted.
+  { echo "Test Suite 'DiscoverViewModelLoadTests' passed at 2026-09-12 05:00:00.000."
+    echo "${TAB} Executed 5 tests, with 0 failures (0 unexpected) in 1.737 (1.739) seconds"
+    echo "Test Suite 'All tests' passed at 2026-09-12 05:00:30.000."
+    echo "${TAB} Executed 2083 tests, with 0 failures (0 unexpected) in 27.902 (29.156) seconds"
+    echo "** TEST SUCCEEDED **"; } > "$ST_DIR/pass.txt"
+  notice10_select "$ST_DIR/pass.txt" 0
+  st_check "completed run, exit 0" PASS_LINE "Executed 2083 tests, with 0 failures"
+
+  # B. THE #5591 BUG, reproduced: killed mid-suite (#5229). No 'All tests'
+  #    summary is ever written, so the last count is a CLASS count. The old code
+  #    offered exactly this under "paste this line into the PR body".
+  { echo "Test Suite 'DiscoverViewModelLoadTests' passed at 2026-09-12 03:20:00.000."
+    echo "${TAB} Executed 5 tests, with 0 failures (0 unexpected) in 1.737 (1.739) seconds"; } > "$ST_DIR/killed.txt"
+  notice10_select "$ST_DIR/killed.txt" 137
+  st_check "killed at exit 137 (#5229)" PARTIAL -
+  # ANTI-VACUITY: the fixture must actually contain the bait. If LAST_EXEC_LINE
+  # were empty this case would pass for the wrong reason and prove nothing.
+  if [ -n "$LAST_EXEC_LINE" ]; then
+    echo "  ok    ...and the bait is present: old tail -1 would have offered \"$LAST_EXEC_LINE\""
+  else
+    echo "  FAIL  fixture has no 'Executed' line at all — the test is vacuous"; ST_FAIL=1
+  fi
+
+  # C. ran to the end and failed. Real total, but not a pass line.
+  { echo "Test Suite 'All tests' failed at 2026-09-12 05:00:30.000."
+    echo "${TAB} Executed 2083 tests, with 3 failures (0 unexpected) in 27.902 (29.156) seconds"
+    echo "** TEST FAILED **"; } > "$ST_DIR/failed.txt"
+  notice10_select "$ST_DIR/failed.txt" 65
+  st_check "completed run, 3 failures" SUITE_FAILED -
+
+  # D. never started (bad simulator, build error).
+  : > "$ST_DIR/empty.txt"
+  notice10_select "$ST_DIR/empty.txt" 70
+  st_check "suite never ran" NEVER_RAN -
+
+  # E. defensive, not observed in the wild: a class count printed AFTER the
+  #    total. `tail -1` would take it; reading 'All tests' BY NAME does not.
+  { echo "Test Suite 'All tests' passed at 2026-09-12 05:00:30.000."
+    echo "${TAB} Executed 2083 tests, with 0 failures (0 unexpected) in 27.902 (29.156) seconds"
+    echo "Test Suite 'StragglerTests' passed at 2026-09-12 05:00:31.000."
+    echo "${TAB} Executed 2 tests, with 0 failures (0 unexpected) in 0.100 (0.101) seconds"
+    echo "** TEST SUCCEEDED **"; } > "$ST_DIR/trailing.txt"
+  notice10_select "$ST_DIR/trailing.txt" 0
+  st_check "total not last in the log" PASS_LINE "Executed 2083 tests, with 0 failures"
+
+  # F. exit 0 but no success marker — a shape we refuse rather than guess about.
+  { echo "Test Suite 'All tests' passed at 2026-09-12 05:00:30.000."
+    echo "${TAB} Executed 2083 tests, with 0 failures (0 unexpected) in 27.902 (29.156) seconds"; } > "$ST_DIR/nomarker.txt"
+  notice10_select "$ST_DIR/nomarker.txt" 0
+  st_check "exit 0, no '** TEST SUCCEEDED **'" SUITE_FAILED -
+
+  rm -rf "$ST_DIR"
+  say "done (--selftest) — $([ $ST_FAIL -eq 0 ] && echo 'all cases passed' || echo 'FAILURES ABOVE'); nothing was built"
+  exit $ST_FAIL
+fi
 
 # ── 0. RESOLVE THE TREE BEFORE ANYTHING ELSE ─────────────────────────────────
 # Every git read below is `git -C "$GATE_ROOT"`. A bare git call would read the
@@ -195,6 +331,18 @@ if [ -n "$EXPLAIN" ]; then
   else
     printf '%s\n' "$CHANGED" | sed 's/^/  /'
   fi
+  # #5591 asked for this: the pass-line rule should be readable WITHOUT having to
+  # produce a failing run to discover it.
+  say "notice-10 pass line — the rule a real run would apply"
+  echo "  OFFERED as a notice-10 line only when BOTH hold:"
+  echo "    1. xcodebuild test exits 0, and"
+  echo "    2. the log contains '** TEST SUCCEEDED **'."
+  echo "  The number is then read from the \"Test Suite 'All tests'\" summary BY NAME."
+  echo "  It is NOT 'the last Executed line': xcodebuild prints that shape once per"
+  echo "  test class as well as once for the suite (173 lines in a healthy run of"
+  echo "  this suite, 1 of them the total), so on a killed run the last one is a"
+  echo "  class count wearing the suite's clothes (#5591, #5229)."
+  echo "  Short of both conditions the count still prints, labelled, marked do-not-paste."
   say "done (--explain) — nothing was built"
   exit 0
 fi
@@ -289,13 +437,48 @@ xcodebuild test \
 TEST_EXIT=$?
 echo "EXIT CODE: $TEST_EXIT   log: $TESTLOG"
 
-# THE LINE STANDING NOTICE 10 WANTS IN THE PR BODY, printed verbatim.
-LINE=$(/usr/bin/grep -E "^[[:space:]]+Executed [0-9]+ tests, with .* failures" "$TESTLOG" | tail -1 | sed 's/^[[:space:]]*//')
-if [ -n "$LINE" ]; then
+# THE LINE STANDING NOTICE 10 WANTS IN THE PR BODY, printed verbatim — but ONLY
+# from a run that reached the end.
+#
+# #5591: xcodebuild prints "Executed N tests, with M failures" once PER CLASS as
+# well as once for the whole suite — 173 such lines in a healthy run of this
+# suite, exactly ONE of which is the total. `tail -1` is that total only on a run
+# that finished; on a run killed partway (exit 137, the #5229 silent-hang
+# signature) it is whichever class happened to finish last, and this script used
+# to hand that over with "paste this line into the PR body" and an assurance that
+# it was "the count for <sha>". Nothing downstream can tell `Executed 5` from
+# `Executed 2083`, so a grader reading the PR body saw a green pass line for a
+# suite that never ran. Same class as #5480 (right tree, wrong count) one step on.
+#
+# So: the line is taken from the 'All tests' summary BY NAME rather than by
+# position, and it is offered as a notice-10 line only when the run both exited 0
+# and left "** TEST SUCCEEDED **" in the log. Anything else is printed as labelled
+# evidence that explicitly must not be pasted.
+notice10_select "$TESTLOG" "$TEST_EXIT"
+
+if [ "$VERDICT" = PASS_LINE ]; then
   echo "  $LINE"
   echo "  ^ paste this line into the PR body — notice 10's iOS clause requires it"
   echo "    it is the count for $GATE_SHA ($GATE_BRANCH) in $GATE_ROOT"
   echo "    — if that is not the sha you are shipping, do not paste it (#5480)"
+elif [ "$VERDICT" = SUITE_FAILED ]; then
+  # The suite ran to the end and FAILED. The total is real; it is just not a pass.
+  echo "  SUITE FINISHED AND FAILED — not a notice-10 line, do not paste it (#5591)."
+  echo "    suite total : $ALL_TESTS_LINE"
+  echo "    exit $TEST_EXIT; '** TEST SUCCEEDED **' absent from the log."
+  echo "    Fix the failures and re-run. Read $TESTLOG."
+elif [ "$VERDICT" = PARTIAL ]; then
+  # Killed/hung partway: there is no 'All tests' summary, so the last count is a class.
+  echo "  PARTIAL RUN — the suite did NOT finish. NOT a notice-10 line, do not paste it (#5591)."
+  echo "    last count in the log : $LAST_EXEC_LINE"
+  echo "    ^ that is a PER-CLASS summary, not the suite total: no \"Test Suite 'All tests'\""
+  echo "      summary exists in this log, which is what a completed run always leaves."
+  if [ "$TEST_EXIT" -eq 137 ]; then
+    echo "    exit 137 = SIGKILL — the silent-hang signature (#5229), not a test result."
+  else
+    echo "    exit $TEST_EXIT — a harness story, not a test result (gotcha #54)."
+  fi
+  echo "    Read $TESTLOG."
 else
   echo "  NO 'Executed N tests' LINE IN THE LOG — the suite never ran."
   echo "  That is a harness story, not a test result. Read $TESTLOG."
@@ -312,6 +495,8 @@ echo "  gated tree  : $GATE_ROOT"
 echo "  gated sha   : $GATE_SHA  ($GATE_BRANCH)"
 echo "  macOS build : $([ $MAC_EXIT -eq 0 ] && echo PASS || echo "FAIL (exit $MAC_EXIT)")"
 echo "  recompile   : $([ -n "$CHANGED_ERR" ] && echo "COULD NOT TELL — proof did not run" || echo "checked $(printf '%s' "$CHANGED" | /usr/bin/grep -c . ) changed Swift file(s)")"
-echo "  BainLuckTests: $([ $TEST_EXIT -eq 0 ] && echo PASS || echo "FAIL (exit $TEST_EXIT)")   ${LINE:-}"
+# ${LINE} is empty unless the run finished AND succeeded (#5591), so the summary
+# can no longer pair the word FAIL with a green-looking count from a dead run.
+echo "  BainLuckTests: $([ $TEST_EXIT -eq 0 ] && echo PASS || echo "FAIL (exit $TEST_EXIT)")   ${LINE:-no notice-10 line — see above}"
 echo "  logs: $LOGDIR"
 exit $FAILED
