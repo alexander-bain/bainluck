@@ -10,6 +10,7 @@ from app.utils.event_rails import (
     recent_or_unreported_condition,
     upcoming_rail_condition,
 )
+from app.utils.event_twin_fold import fold_twin_events
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.lifecycle import served_event_status
 from app.utils.season_variant_team import (
@@ -22,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome, TeamIdentityMapping
 from app.services import get_db
@@ -35,6 +37,88 @@ from app.utils.proven_duplicates import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+#: Cards per rail on the team page. Was a bare `5` inline on both queries; the
+#: fold below has to reason about it, so it gets a name.
+EVENT_CARD_LIMIT = 5
+
+#: How many raw rows to ask the DB for so the fold can still fill the rail.
+#: Doubling is exactly enough whenever a fixture has at most TWO rows, which is
+#: the whole measured population (one row per supplier). A fixture carrying
+#: three rows could still shrink a full rail by one card — strictly better than
+#: today, where it shows three cards, and it degrades by losing a card rather
+#: than by failing.
+_EVENT_FETCH_LIMIT = EVENT_CARD_LIMIT * 2
+
+
+def _fold_rail(rows: list, rail: str, team_slug: str) -> list:
+    """One fixture, one card — the team-page half of #4100.
+
+    WHY THIS ROUTE NEEDED ITS OWN CALL. `/api/feed` and `GET /api/events` have
+    folded twin rows since `ac6eb2c1`/#4100, but the team page is served by
+    `GET /api/teams/{identifier}`, which never called the helper. Measured on
+    production 2026-09-12 03:4xZ: `/api/teams/boston-red-sox` returned BOTH
+    `15310368` (espn_id set, 188 odds snapshots) and `15305549`
+    (statpal_fixture_id set, 0 snapshots) for the same 20:10:00Z fixture
+    against Kansas City, while `/api/events?sport=baseball_mlb` — same minute,
+    same teams, folded — returned only `15310368`. Two cards, one game, on the
+    page Alex opens.
+
+    The proven-duplicate filter is already on both queries and cannot help
+    here: it reads a `provenance:duplicate-of:` tag that only a prover writes,
+    and neither row carries one. (Named without its parentheses on purpose —
+    `test_the_team_page_rails` counts the literal call text in this file, so a
+    mention in prose reads to it as a third rail and reddens CI on a comment.)
+    Ruling 048 (gotcha #32) is why the registry itself
+    correctly refuses to merge them — each row is anchored to a different
+    provider's game id, so there is no shared id to absorb on. The durable
+    repair is that shared id (#2693 / #1946); this is the serve-time fold that
+    keeps the bug off the reader's page until it lands, and it claims nothing
+    more than that.
+
+    🔴 THE CAP IS APPLIED AFTER THE FOLD HERE, WHICH IS THE OPPOSITE OF
+    `list_events`, AND THE DIFFERENCE IS REASONED, NOT INHERITED. That route
+    folds after its `limit` because it is OFFSET-PAGINATED: over-fetching would
+    make page one consume more raw rows than `limit`, so `offset=limit` would
+    re-serve rows page one already showed. This route has no `offset` and no
+    cursor — it is a fixed five-card rail — so that hazard cannot arise, and
+    folding after a DB `limit` of 5 would instead silently spend a card slot on
+    a row it then drops: a twin pair at the top would leave the reader FOUR
+    upcoming games instead of five. So the query over-fetches and the fold's
+    output is truncated to the cap.
+
+    `set_committed_value` delivers the union onto the hydrated row WITHOUT
+    marking it dirty, so no later flush can persist a serve-time blend into
+    `events` (gotcha #4's neighbourhood). A plain assignment here would be a
+    write waiting for a commit.
+
+    Gotcha #42 applied to a whole stage: the fold improves the rail, it is
+    never a precondition for having one. If it raises, the unfolded rail is
+    served — today's bug — rather than no page at all.
+    """
+    try:
+        fold = fold_twin_events(rows)
+        if fold.dropped_ids:
+            for survivor_id, merged in fold.merged_sources.items():
+                survivor = next(e for e in fold.events if e.id == survivor_id)
+                set_committed_value(survivor, "win_probability_sources", merged)
+            logger.info(
+                "team page twin fold: %s/%s collapsed %d duplicate event rows, "
+                "%d rows gained a venue (dropped=%s)",
+                team_slug,
+                rail,
+                fold.folded_count,
+                len(fold.merged_sources),
+                fold.dropped_ids[:20],
+            )
+        rows = fold.events
+    except Exception:
+        logger.exception(
+            "team page twin fold failed for %s/%s; serving the unfolded rail",
+            team_slug,
+            rail,
+        )
+    return rows[:EVENT_CARD_LIMIT]
 
 
 @router.get("/{identifier}")
@@ -138,7 +222,8 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             live_first_order(now),
             Event.commence_time.asc(),
         )
-        .limit(5)
+        # Over-fetched so the twin fold can still fill the rail — see `_fold_rail`.
+        .limit(_EVENT_FETCH_LIMIT)
     )
 
     recent_q = (
@@ -181,13 +266,22 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             not_a_proven_duplicate(),  # #2263, as above
         )
         .order_by(Event.commence_time.desc())
-        .limit(5)
+        # Over-fetched so the twin fold can still fill the rail — see `_fold_rail`.
+        .limit(_EVENT_FETCH_LIMIT)
     )
 
     _mark("resolve_team")
     upcoming_r, recent_r = await db.execute(upcoming_q), await db.execute(recent_q)
+    # Row fold FIRST, then the blend fold below. Two different folds with two
+    # different jobs: this one decides HOW MANY CARDS the rail has (one per
+    # fixture), `_folded_briefs` decides WHAT NUMBER each surviving card
+    # prints. Running the row fold first also means the batch lookup in
+    # `_folded_briefs` runs over deduped rows, and lets the union this fold
+    # writes onto the survivor be the fallback that lookup degrades to.
+    upcoming_rows = _fold_rail(list(upcoming_r.scalars().all()), "upcoming", team.slug)
+    recent_rows = _fold_rail(list(recent_r.scalars().all()), "recent", team.slug)
     upcoming_events, recent_events = await _folded_briefs(
-        db, team, upcoming_r.scalars().all(), recent_r.scalars().all()
+        db, team, upcoming_rows, recent_rows
     )
     _mark("events")
 
