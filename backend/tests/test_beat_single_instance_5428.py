@@ -168,6 +168,34 @@ class TestRecordBeatAlive:
         # TTL would keep a dead beat alive forever behind a live sibling.
         assert fake.ttls[key] == redis_state.BEAT_ALIVE_TTL_S
 
+    def test_the_stamp_carries_the_slug_it_is_running(self, fake, as_beat, monkeypatch):
+        """The writer half of the drift question.
+
+        Seeded-reader tests cover how a slug is REPORTED and none of them
+        notices if the stamp never records one — a mutant pinning the payload's
+        slug to None survived the whole file until this existed.
+        """
+        import json
+
+        monkeypatch.setenv("HEROKU_APP_NAME", "bainluck-heavy")
+        monkeypatch.setenv("DYNO", "scheduler.1")
+        monkeypatch.setenv("HEROKU_SLUG_COMMIT", "3d322638aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+        redis_state.record_beat_alive(now_s=1000.0)
+
+        key = f"{BEAT_ALIVE_PREFIX}:{redis_state.beat_identity()}"
+        assert json.loads(fake.strings[key].decode())["slug"] == "3d322638"
+
+    def test_the_stamp_records_no_slug_rather_than_a_wrong_one(self, fake, as_beat, monkeypatch):
+        """No dyno metadata means unknown, and unknown must reach the reader."""
+        import json
+
+        monkeypatch.delenv("HEROKU_SLUG_COMMIT", raising=False)
+        redis_state.record_beat_alive(now_s=1000.0)
+
+        key = f"{BEAT_ALIVE_PREFIX}:{redis_state.beat_identity()}"
+        assert json.loads(fake.strings[key].decode())["slug"] is None
+
     def test_throttled_within_the_refresh_window(self, fake, as_beat):
         redis_state.record_beat_alive(now_s=1000.0)
         fake.strings.clear()
@@ -254,6 +282,57 @@ class TestGetBeatInstances:
         monkeypatch.setattr(redis_state, "get_redis_client", lambda: _DeadRedis())
         with pytest.raises(BeatCensusUnavailable):
             redis_state.get_beat_instances()
+
+    def test_a_legacy_bare_marker_is_still_COUNTED(self, fake):
+        """The count must not depend on the payload format.
+
+        A marker written by a release before the slug was carried parses as an
+        int, not a dict. Dropping it would under-count beats at exactly the
+        moment a fleet is half-upgraded — which is during a deploy, which is
+        when two beats are most likely to coexist.
+        """
+        fake.strings[f"{BEAT_ALIVE_PREFIX}:bainluck/scheduler.1/10"] = b"1"
+        out = redis_state.get_beat_instances()
+        assert out["count"] == 1
+        assert out["verdict"] == "SINGLE"
+        assert out["slugs"] == ["unknown"]
+
+    def test_the_slug_is_reported_because_the_schedule_is_code(self, fake):
+        """A beat on an older slug runs an older schedule.
+
+        `bainluck-heavy` was 88 commits behind `bainluck` when the scheduler
+        move was written. A beat entry added in that gap would simply never
+        fire, with no other observer anywhere in the system.
+        """
+        import json
+        fake.strings[f"{BEAT_ALIVE_PREFIX}:bainluck-heavy/scheduler.1/20"] = json.dumps(
+            {"ts": 1000, "slug": "3d322638"}
+        ).encode()
+
+        out = redis_state.get_beat_instances()
+        assert out["slugs"] == ["3d322638"]
+        assert out["detail"]["bainluck-heavy/scheduler.1/20"]["slug"] == "3d322638"
+
+    def test_an_absent_slug_reads_unknown_never_current(self, fake):
+        """Unknown must not be rendered as agreement — that is the safe direction."""
+        import json
+        fake.strings[f"{BEAT_ALIVE_PREFIX}:a/scheduler.1/1"] = json.dumps(
+            {"ts": 1000, "slug": None}
+        ).encode()
+        assert redis_state.get_beat_instances()["slugs"] == ["unknown"]
+
+    def test_two_beats_on_different_slugs_show_both(self, fake):
+        import json
+        fake.strings[f"{BEAT_ALIVE_PREFIX}:bainluck/scheduler.1/10"] = json.dumps(
+            {"ts": 1000, "slug": "cc705833"}
+        ).encode()
+        fake.strings[f"{BEAT_ALIVE_PREFIX}:bainluck-heavy/scheduler.1/20"] = json.dumps(
+            {"ts": 1000, "slug": "3d322638"}
+        ).encode()
+
+        out = redis_state.get_beat_instances()
+        assert out["verdict"] == "MULTIPLE"
+        assert out["slugs"] == ["3d322638", "cc705833"]
 
     def test_the_census_reads_only_its_own_namespace(self, fake):
         """A neighbouring key must never be counted as a beat."""

@@ -1215,7 +1215,17 @@ def record_beat_alive(now_s=None):
         return
     try:
         r = get_redis_client()
-        r.set(f"{BEAT_ALIVE_PREFIX}:{beat_identity()}", int(now),
+        # The slug rides along because the beat SCHEDULE is code. A scheduler on
+        # an app whose slug is older than the main app's runs an older schedule,
+        # and a beat entry added since simply never fires — a silent failure with
+        # no other observer. `bainluck-heavy` was 88 commits behind `bainluck`
+        # when this was written, which is fine only because none of those 88
+        # touched the schedule.
+        payload = json.dumps({
+            "ts": int(now),
+            "slug": (os.getenv("HEROKU_SLUG_COMMIT") or "")[:8] or None,
+        })
+        r.set(f"{BEAT_ALIVE_PREFIX}:{beat_identity()}", payload,
               ex=BEAT_ALIVE_TTL_S)
         _last_beat_stamp_s = now
     except Exception:
@@ -1242,11 +1252,27 @@ def get_beat_instances() -> dict:
         r = get_redis_client()
         prefix = f"{BEAT_ALIVE_PREFIX}:"
         identities = []
+        detail = {}
         for key in r.keys(f"{prefix}*"):
             key_str = key.decode() if isinstance(key, bytes) else key
             identity = key_str[len(prefix):]
-            if identity:
-                identities.append(identity)
+            if not identity:
+                continue
+            identities.append(identity)
+            # A marker written before the slug was carried, or by a beat whose
+            # app has no dyno metadata, reads as an unknown slug — never as a
+            # matching one, which would be the reassuring direction.
+            raw = r.get(key_str)
+            try:
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
+                parsed = json.loads(raw) if raw else {}
+                # A bare marker from an older release parses as an int, not a
+                # dict. It is still a live beat and must still be COUNTED — only
+                # its slug is unknown.
+                detail[identity] = parsed if isinstance(parsed, dict) else {}
+            except (TypeError, ValueError):
+                detail[identity] = {}
         identities.sort()
     except Exception as exc:
         raise BeatCensusUnavailable(str(exc)) from exc
@@ -1256,6 +1282,11 @@ def get_beat_instances() -> dict:
         "count": len(identities),
         "verdict": ("SINGLE" if len(identities) == 1
                     else "MULTIPLE" if identities else "NONE"),
+        "detail": detail,
+        # The slug the running beat's schedule came from, for the drift question
+        # the census answers alongside the count. `None` means the beat has no
+        # dyno metadata (the `runtime-dyno-metadata` lab) — unknown, not current.
+        "slugs": sorted({(d.get("slug") or "unknown") for d in detail.values()}),
         "refresh_s": BEAT_ALIVE_REFRESH_S,
         "ttl_s": BEAT_ALIVE_TTL_S,
     }
