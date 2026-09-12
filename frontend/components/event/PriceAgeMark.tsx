@@ -17,11 +17,29 @@ import {
  * number is". It returns `null` for a price inside `SOURCE_STALE_AFTER_MS`, and
  * `null` for a price we cannot date at all.
  *
- * Measured on production 2026-09-12 (latency/342, 2,651 priced legs): the p50
- * age is **17.9 minutes**, which is the poll cadence and not news, and 22.1% of
- * legs are past thirty minutes. So a mark on every row would print "18m ago"
- * four times out of five — the same number, next to every price, telling a
- * reader nothing they can act on. That is precisely the shape notice 34 bans
+ * ### The measurement, with its population named — because there are THREE
+ *
+ * An earlier revision of this comment quoted "22.1% on 2,651 priced legs" with no
+ * population beside it, which is the one thing a staleness number cannot survive:
+ * three independent cuts were taken within days of each other and they disagree by
+ * an order of magnitude, entirely because they counted different legs.
+ *
+ * | cut | population | p50 age | past 30m |
+ * |---|---|---|---|
+ * | latency/342, 2026-09-12 | 2,651 priced legs, **all states** | 17.9m | 22.1% |
+ * | ux/1206 | 717 **live** legs | **3.0m** | — |
+ * | latency/346 | 206 legs | — | 28.6% |
+ *
+ * They are not in conflict and none supersedes the others. A live leg is polled
+ * hard and sits at a 3-minute median; the all-states pool is dominated by rows
+ * whose game is over and whose price will never move again, which is what drags
+ * the median to 17.9m. Quote whichever cut matches the rows your caller actually
+ * renders, and say which one you quoted.
+ *
+ * For THIS component the governing figure is the all-states 17.9m p50, because the
+ * mark is placed on market-card rows rather than on the live blend: a mark on every
+ * row would print "18m ago" four times out of five — the same number, next to every
+ * price, telling a reader nothing they can act on. That is precisely the shape notice 34 bans
  * ("a reader sees the number, the small source mark, and at most one short
  * caption") and D102 tempers ("small grey type is fine where it makes sense and
  * offers the reader value"). An age has value exactly when it is surprising.
