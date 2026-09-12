@@ -617,6 +617,34 @@ VERDICT_POLLUTED = "POLLUTED_COLUMN"
 VERDICT_AMBIGUOUS = "AMBIGUOUS"
 VERDICT_UNMATCHED = "UNMATCHED"
 
+#: Two of our rows matched, and one of them ALREADY holds exactly this contest's
+#: id. The id is the thing that tells them apart, so this is not the ambiguity
+#: `AMBIGUOUS` describes — we are not guessing which row is the contest, we are
+#: reading it off the column. The write goes to the other row, the one holding
+#: nothing.
+#:
+#: Why write at all, when a duplicate is #2693's to resolve and not this task's
+#: (D35): because the write is not the resolution. `merge_duplicate_events`
+#: already drains duplicates, and `event_merge_invariant.PROVIDER_ID_COLUMNS`
+#: makes a SHARED provider id the only key it will destroy a row on (ruling
+#: 048). A twin whose halves share nothing is invisible to it. So the two halves
+#: sit there, each refusing to help the other: the stamper will not write
+#: because there are two rows, and the drain will not fire because they share no
+#: id. This verdict breaks that deadlock from the only side this lane owns — it
+#: hands the pair the id-anchored correspondence ruling 048 requires and lets
+#: the merge decide, under its own guards, whether to fuse them. Nothing is
+#: merged or deleted here.
+#:
+#: MEASURED before it was written (production, 2026-09-12 09:21Z pass): of the
+#: 24 MLB fixtures this task called `AMBIGUOUS`, **20** are exactly this shape —
+#: two candidates, one holding this id, one holding none — and **0** are the
+#: shape where two candidates both hold nothing, which is the genuine coin flip
+#: and stays `AMBIGUOUS`. 19 of the 20 become `merge_duplicate_events`
+#: candidates the moment the id is shared; the 20th is blocked by a separate
+#: name-normalisation defect (`St.Louis` vs `St. Louis`) that belongs to the
+#: merge, not here.
+VERDICT_STAMP_TWIN = "STAMP_TWIN"
+
 #: The column holds a digit id that this pass's authority endpoint cannot
 #: resolve AT ALL — it names nothing in the id space the anchor is written in.
 #:
@@ -686,6 +714,15 @@ class StampRun:
     foreign_id_space: list[dict[str, Any]] = field(default_factory=list)
     #: Two of our rows for one StatPal contest. D35: filed, not resolved.
     ambiguous: list[dict[str, Any]] = field(default_factory=list)
+    #: Two of our rows, one already holding this contest's id, and the write
+    #: went to the other one (`VERDICT_STAMP_TWIN`). A SUBSET of `stamped`, not
+    #: a sibling of it — these are counted there too, because they are ordinary
+    #: column+anchor writes and every consumer of `stamped` should keep seeing
+    #: them. Listed separately because the consequence is not ordinary: the
+    #: pair now shares a provider id, so `merge_duplicate_events` can delete one
+    #: of the two. Both row ids are in the receipt so the deletion that follows
+    #: can be traced back to the write that enabled it.
+    stamped_twins: list[dict[str, Any]] = field(default_factory=list)
     #: StatPal has this contest and we hold no row for it — an ingestion gap.
     unmatched_fixtures: list[dict[str, Any]] = field(default_factory=list)
     #: We hold this row and no StatPal contest matched it — a candidate phantom,
@@ -752,6 +789,7 @@ class StampRun:
             "polluted_column": len(self.polluted_column),
             "foreign_id_space": len(self.foreign_id_space),
             "ambiguous": len(self.ambiguous),
+            "stamped_twins": len(self.stamped_twins),
             "unmatched_fixtures": len(self.unmatched_fixtures),
             "unmatched_rows": len(self.unmatched_rows),
             "collisions": len(self.collisions),
@@ -797,6 +835,54 @@ class StampRun:
         if self.stats_id_coverage == STATS_ID_ON_NO_FIXTURE:
             return self.stats_id_present == 0
         return self.stats_id_present > 0 and self.stats_id_absent > 0
+
+
+def _twin_of_an_identified_row(
+    matches: list[dict[str, Any]], fixture_id: Any
+) -> Optional[list[dict[str, Any]]]:
+    """Is this "two rows, one of which is already known to BE this contest"?
+
+    Returns the candidates reordered so the row to write is first, or ``None``
+    if the set is anything else. Pure, and deliberately narrow.
+
+    Exactly two candidates, exactly one holding this contest's id, exactly one
+    holding nothing. Every other shape returns ``None`` and stays `AMBIGUOUS`:
+
+    * two rows both holding nothing — nothing distinguishes them, and picking
+      one would be the coin flip `AMBIGUOUS` exists to refuse;
+    * a row holding a DIFFERENT id — that is a contradiction between two rows
+      and is a bigger finding than a missing stamp;
+    * three or more rows — a shape this was never measured against. The
+      production census found none; when one appears it should be looked at,
+      not absorbed by a rule written before it existed.
+
+    The narrowness is the safety. The write's consequence is that
+    `merge_duplicate_events` becomes able to delete one of these two rows, so
+    the predicate has to be one that cannot select two rows that are different
+    games. "One of them already carries this exact contest id, written by a
+    different pass on different evidence" is that, and a name window is not.
+    """
+    if len(matches) != 2:
+        return None
+    wanted = str(fixture_id).strip()
+    if not wanted:
+        return None
+
+    identified = [
+        c
+        for c in matches
+        if c.get("statpal_fixture_id") is not None
+        and str(c["statpal_fixture_id"]).strip() == wanted
+    ]
+    unlinked = [
+        c
+        for c in matches
+        if c.get("statpal_fixture_id") is None
+        or not str(c["statpal_fixture_id"]).strip()
+    ]
+    if len(identified) != 1 or len(unlinked) != 1:
+        return None
+    return [unlinked[0], identified[0]]
 
 
 def classify_fixture(
@@ -853,6 +939,15 @@ def classify_fixture(
     if len(matches) > 1:
         # Two of our rows for one contest is a duplicate, proven by something
         # better than a name window, and not this task's to resolve (D35, #2693).
+        #
+        # Unless one of them already holds this contest's id, in which case the
+        # duplicate is not what is being decided: which row is the contest is
+        # answered by the column, and the other row is simply unstamped. See
+        # `VERDICT_STAMP_TWIN` — the write hands `merge_duplicate_events` the
+        # shared id ruling 048 requires, and resolves nothing itself.
+        twin = _twin_of_an_identified_row(matches, fixture.fixture_id)
+        if twin is not None:
+            return VERDICT_STAMP_TWIN, twin
         return VERDICT_AMBIGUOUS, matches
 
     row = matches[0]
@@ -1313,6 +1408,45 @@ async def _write_link(
     return written.outcome
 
 
+async def _write_twin_column(
+    session,
+    fixture: StatPalFixture,
+    candidate: dict,
+) -> bool:
+    """Write the column onto the unstamped half of a twin. No anchor. Returns won.
+
+    Same guarded UPDATE as `_write_link`, and deliberately WITHOUT the anchor
+    write that follows it there.
+
+    The anchor for this contest already exists and already names the other half
+    of the pair — measured on all 20 of the production twins this verdict was
+    written for. Calling `record_anchor` here would therefore return `COLLISION`
+    (first writer wins), which is not committable, and the column write would
+    roll back: the stamp would be silently inert, which is the failure this
+    whole path exists to end.
+
+    Forcing the commit past that refusal would be worse than inert. The
+    collision path tags the LOSING row `provenance:duplicate-of:<incumbent>`,
+    and the losing row here is ours — the ESPN-anchored row carrying the odds
+    id and the snapshots, which is exactly the row `merge_duplicate_events`
+    keeps. The tag would survive the merge pointing at a deleted event and call
+    the survivor a duplicate of it.
+
+    So: the anchor is not written, not challenged and not corrected. It says
+    "this contest is that event" and that is true. This write says "this row
+    carries that contest's id too", which is the duplicate evidence ruling 048
+    requires before anything may be absorbed, and it is all the merge reads.
+    When the merge folds the pair the anchor repoints to the survivor with every
+    other `event_id` child (`event_child_repoint`), so the end state holds one
+    row with both the column and the anchor.
+    """
+    result = await session.execute(
+        text(SET_FIXTURE_ID),
+        {"event_id": candidate["id"], "fixture_id": fixture.fixture_id},
+    )
+    return bool(result.rowcount or 0)
+
+
 async def _write_anchor_only(
     session,
     spec: LeagueSpec,
@@ -1542,6 +1676,65 @@ async def _run_stamp_v1_statpal_fixtures(
                             "anchor_source_id": _anchor_source_id(spec, fixture),
                         }
                     )
+                    if verdict == VERDICT_STAMP_TWIN:
+                        run.stamped_twins.append(
+                            _fixture_receipt(
+                                fixture,
+                                event_id=candidate["id"],
+                                already_identified_event_id=matches[1]["id"],
+                                already_identified_holds=(
+                                    matches[1]["statpal_fixture_id"]
+                                ),
+                            )
+                        )
+                continue
+
+            if verdict == VERDICT_STAMP_TWIN:
+                # Its own branch rather than an arm of the write below, because
+                # the commit rule is different: there is no anchor outcome to
+                # check against `COMMITTABLE_OUTCOMES`, by design (see
+                # `_write_twin_column`). Kept whole here so that the whitelist
+                # every other path commits under is not touched.
+                try:
+                    won = await _write_twin_column(session, fixture, candidate)
+                except Exception as e:  # one bad row never wipes a pass (#42)
+                    await session.rollback()
+                    logger.exception(
+                        "StatPal %s twin stamp failed for contest %s -> event %s: %s",
+                        spec.label, fixture.fixture_id, candidate["id"], e,
+                    )
+                    run.unmatched_fixtures.append(
+                        _fixture_receipt(fixture, error=str(e))
+                    )
+                    continue
+
+                if not won:
+                    # Another pass claimed the column between the candidate
+                    # query and here. Same reading as `_write_link`'s.
+                    run.already_linked += 1
+                    await session.rollback()
+                    continue
+
+                await session.commit()
+                run.stamped += 1
+                run.stamped_twins.append(
+                    _fixture_receipt(
+                        fixture,
+                        event_id=candidate["id"],
+                        already_identified_event_id=matches[1]["id"],
+                        already_identified_holds=matches[1]["statpal_fixture_id"],
+                    )
+                )
+                run.committed_writes.append(
+                    {
+                        "event_id": candidate["id"],
+                        "fixture_id": fixture.fixture_id,
+                        "anchor_source_id": _anchor_source_id(spec, fixture),
+                        "column_written": True,
+                        # Deliberately, and the reason is in `_write_twin_column`.
+                        "anchor_written": False,
+                    }
+                )
                 continue
 
             try:
@@ -1706,6 +1899,7 @@ async def _run_stamp_v1_statpal_fixtures(
         "foreign_id_space_receipts": run.foreign_id_space,
         "live_unkeyable_receipts": run.live_unkeyable,
         "ambiguous_receipts": run.ambiguous,
+        "stamped_twin_receipts": run.stamped_twins,
         "unmatched_fixture_receipts": run.unmatched_fixtures,
         "unmatched_row_receipts": run.unmatched_rows,
         "collision_receipts": run.collisions,
