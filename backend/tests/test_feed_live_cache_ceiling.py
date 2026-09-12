@@ -799,8 +799,35 @@ def _setex_ttls_not_derived_from_live_helper(source: str) -> list[str]:
             continue
         if isinstance(ttl, ast.Name) and ttl.id in live_derived:
             continue
+        if isinstance(ttl, ast.Name) and ttl.id in _PAYLOAD_FREE_WRITER_TTLS:
+            continue
         offenders.append(ast.unparse(ttl))
     return offenders
+
+
+#: The ONLY TTLs in ``get_feed`` allowed not to be live-derived, because the
+#: thing they bound holds NO PAYLOAD.
+#:
+#: 🔴 READ THE ARGUMENT BEFORE ADDING TO THIS SET. The rule above exists because
+#: a page holding a live card may not outlive the live ceiling (#2216). Its
+#: subject is a PAYLOAD: a stored score, price or probability that could be
+#: served to a reader as current when it is not. An entry that stores no payload
+#: cannot commit that error — there is nothing in it to serve.
+#:
+#: ``EDITION_LEASE_SECONDS`` (T4-B2 / #5102) bounds the edition manifest, which
+#: is a list of card IDENTITIES and nothing else. Page two is rendered by
+#: reordering the CURRENT build into that order, so every number a pinned reader
+#: sees was computed by the request serving it. A live-derived TTL here would in
+#: fact be the bug: the lease has to OUTLIVE the page base (30s while anything
+#: is live) or it expires before the scroll it exists to hold together, and the
+#: feature would silently do nothing.
+#:
+#: The exemption is not taken on trust. ``test_the_exempt_writer_really_stores
+#: _no_payload`` builds a manifest from a deck of priced cards and requires that
+#: no price, score or payload survives into the stored body — so an edit that
+#: made the manifest carry payloads would fail there rather than quietly inherit
+#: a licence written for something else.
+_PAYLOAD_FREE_WRITER_TTLS = frozenset({"EDITION_LEASE_SECONDS"})
 
 
 def test_every_setex_writer_derives_its_ttl_from_the_live_helper():
@@ -820,6 +847,62 @@ def test_every_setex_writer_derives_its_ttl_from_the_live_helper():
         f"not derived from `_live_ttls`: {offenders}. A live page cached under "
         "an unconditional TTL is the #2216 bug returning."
     )
+
+
+def test_the_exempt_writer_really_stores_no_payload():
+    """🔴 THE PROOF OBLIGATION THAT LICENSES ``_PAYLOAD_FREE_WRITER_TTLS``.
+
+    The exemption above rests on one factual claim — the edition manifest holds
+    card identities and no payload — and an allowlist entry is worth exactly as
+    much as the claim behind it. If a later change made the manifest carry the
+    cards themselves (an easy, plausible "optimization": page two could then be
+    served without rebuilding), the manifest would become a payload cache with a
+    thirty-minute TTL, which is #2216 with a new name, and the allowlist above
+    would silently keep licensing it.
+
+    So: build a manifest from a deck of priced cards and require that no price
+    survives into the stored body.
+    """
+    import json as _json
+
+    from app.utils.feed_editions import build_edition_manifest
+
+    deck = [
+        {"type": "event", "data": {"id": 1, "home_score": 3, "probability": 0.61}},
+        {"type": "futures", "data": {"id": 2, "probability": 0.99, "score": 87}},
+    ]
+    manifest = build_edition_manifest(
+        deck, token="t", policy="p", built_at=1_789_200_000.0
+    )
+    assert manifest is not None
+
+    stored = _json.dumps(manifest)
+    for leaked in ("0.61", "0.99", "home_score", "probability", "87"):
+        assert leaked not in stored, (
+            f"the edition manifest stored {leaked!r} — it now carries payload, "
+            "so its exemption from the live-ceiling rule no longer holds"
+        )
+    assert manifest["members"] == ["event:1", "futures:2"]
+
+
+def test_the_payload_free_exemption_is_not_a_blanket_hole():
+    """The exemption must cover ONE name, not "anything that looks constant".
+
+    A future edit widening it to, say, every ``*_SECONDS`` constant would
+    re-open the rule for real payload writers without anybody re-reading the
+    argument.
+    """
+    assert _PAYLOAD_FREE_WRITER_TTLS == frozenset({"EDITION_LEASE_SECONDS"})
+
+    clean = _clean_get_feed_source()
+    mutant = clean + (
+        "\n"
+        "    async def _publish_payload_on_a_long_ttl(_client=None, _key='k', _json='{}'):\n"
+        "        await _client.setex(_key, SOME_OTHER_CONSTANT, _json)\n"
+    )
+    assert _setex_ttls_not_derived_from_live_helper(mutant) == [
+        "SOME_OTHER_CONSTANT"
+    ], "the exemption leaked to a constant it was never argued for"
 
 
 def test_the_fifth_writer_guard_actually_fails_on_a_fifth_writer():

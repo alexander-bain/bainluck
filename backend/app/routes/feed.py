@@ -4909,48 +4909,6 @@ async def get_feed(
         if _edition_status is not None:
             payload[FEED_EDITION_STATUS_FIELD] = _edition_status
 
-        # T4-B2 / #5102: publish this ordering's manifest so the NEXT page can
-        # ask for it by name. Backgrounded like the page base beside it — a
-        # reader must never wait on a write that only helps their next request.
-        #
-        # 🔴 NOT republished on a pinned serve. A pinned build re-derives the
-        # same token, so writing it back would reset the lease on every page the
-        # reader turns and the "~30 minute browsing lease" would become "as long
-        # as you keep scrolling" — an edition that never ages, pinning a reader
-        # to a slate from hours ago. The lease is measured from the mint.
-        if (
-            _edition is not None
-            and _shared_redis is not None
-            and _edition_status != EDITION_STATUS_PINNED
-        ):
-            try:
-                _manifest = build_edition_manifest(
-                    feed_items,
-                    token=_edition,
-                    policy=_edition_policy,
-                    built_at=time.time(),
-                )
-                if _manifest is not None:
-                    _manifest_json = _json_module.dumps(_manifest, default=str)
-
-                    async def _publish_edition_manifest(
-                        _client=_shared_redis,
-                        _json=_manifest_json,
-                        _key=edition_manifest_cache_key(
-                            token=_edition, policy=_edition_policy
-                        ),
-                    ):
-                        await _rc.bounded_redis_call(
-                            lambda: _client.setex(
-                                _key, EDITION_LEASE_SECONDS, _json
-                            )
-                        )
-
-                    _rc.schedule_background(_publish_edition_manifest())
-            except Exception:
-                # A feed read must not fail because an optimization could not be
-                # written. Same posture as the page-base publish below.
-                pass
 
         if my_teams_only:
             payload["my_teams_only"] = True
@@ -5226,6 +5184,49 @@ async def get_feed(
                 _rc.schedule_background(_publish_feed_cache())
             except Exception:
                 pass
+
+            # T4-B2 / #5102: publish this ordering's manifest so the NEXT page can
+            # ask for it by name. Backgrounded like the page base beside it — a
+            # reader must never wait on a write that only helps their next request.
+            #
+            # 🔴 NOT republished on a pinned serve. A pinned build re-derives the
+            # same token, so writing it back would reset the lease on every page the
+            # reader turns and the "~30 minute browsing lease" would become "as long
+            # as you keep scrolling" — an edition that never ages, pinning a reader
+            # to a slate from hours ago. The lease is measured from the mint.
+            if (
+                _edition is not None
+                and _shared_redis is not None
+                and _edition_status != EDITION_STATUS_PINNED
+            ):
+                try:
+                    _manifest = build_edition_manifest(
+                        feed_items,
+                        token=_edition,
+                        policy=_edition_policy,
+                        built_at=time.time(),
+                    )
+                    if _manifest is not None:
+                        _manifest_json = _json_module.dumps(_manifest, default=str)
+
+                        async def _publish_edition_manifest(
+                            _client=_shared_redis,
+                            _json=_manifest_json,
+                            _key=edition_manifest_cache_key(
+                                token=_edition, policy=_edition_policy
+                            ),
+                        ):
+                            await _rc.bounded_redis_call(
+                                lambda: _client.setex(
+                                    _key, EDITION_LEASE_SECONDS, _json
+                                )
+                            )
+
+                        _rc.schedule_background(_publish_edition_manifest())
+                except Exception:
+                    # A feed read must not fail because an optimization could not be
+                    # written. Same posture as the page-base publish below.
+                    pass
 
             # --- LAT-P141: publish the offset-independent page base ----------
             #
