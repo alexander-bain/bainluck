@@ -572,10 +572,19 @@ _REPAIRS = {
     # (`cascade_disagrees`), on a mapped ticker (`mapped_ticker`, no call made),
     # or when the row is already right (`already_correct`).
     #
-    # Writes `llm_sport_category` ONLY, Core UPDATE, compare-and-set on the value
-    # read. No price, outcome, `is_winner`, resolution field or event row — the
-    # `*_other` ghost EVENTS the wrong category already created are ruling 048 /
-    # D35 duplicates and belong to lane1's #2693, not to this rail.
+    # TWO ARMS. (a) `futures_markets.llm_sport_category`, compare-and-set on the
+    # value read. (b) the ghost EVENT the wrong category already minted — CERT-2744
+    # blocked the first cut for scoping this out, correctly: search serves EVENTS,
+    # so correcting the badge alone leaves `q=Redblacks` returning the game twice.
+    # An event is retired (`status='voided'`, never deleted) only on proof it is a
+    # duplicate: minted by us (no external_id, kalshi commence source, both team ids
+    # NULL, kalshi-only markets), in the WRONG sport, and a real counterpart exists
+    # with BOTH team ids bound, same teams either orientation, within 36h, IN the
+    # venue's sport. Measured 2026-09-12: 13 candidates, only 4 pass — the other 9
+    # are the only row we hold for that match and retiring one would remove the game,
+    # not a duplicate. Its markets are then unhooked (`event_id` NULL) so they can
+    # reach the real fixture (gotcha #15). Ceiling refuses, never trims.
+    # No price, outcome, `is_winner` or resolution field is read or written.
     # D51: every planned row carries its `before` and the payload carries a
     # runnable `restore_sql`, on the dry run as well as the apply.
     # Accepts ?after_date=&after_id= for keyset resumption; page until

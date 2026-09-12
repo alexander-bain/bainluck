@@ -62,6 +62,7 @@ class _Row:
         external_id,
         llm_sport_category,
         commence_time=None,
+        event_id=None,
     ):
         self.id = id
         self.name = name
@@ -69,38 +70,68 @@ class _Row:
         self.external_id = external_id
         self.llm_sport_category = llm_sport_category
         self.commence_time = commence_time
+        self.event_id = event_id
+
+
+class _GhostRow:
+    """One row of `_GHOST_EVENT_SQL`, as the event arm reads it."""
+
+    def __init__(
+        self, id, h, a, st, sport_key, real_id=None, real_key=None, real_ct=None
+    ):
+        self.id = id
+        self.h = h
+        self.a = a
+        self.ct = None
+        self.st = st
+        self.sport_key = sport_key
+        self.real_id = real_id
+        self.real_key = real_key
+        self.real_ct = real_ct
 
 
 class _FakeSession:
-    """Enough session to run the PLAN half. It refuses to write.
+    """Enough session to run the PLAN half of both arms. It refuses to write.
 
-    The rail issues two statements: the population SELECT and a `count()` for
-    the remaining floor. Both are selects, so "any select after the first is the
-    count" is sufficient here and keeps the fake honest about ordering.
+    Three statements reach it: the population SELECT, the raw-`text()` ghost
+    query, and a `count()` for the remaining floor. They are told apart by
+    SHAPE, not by call order — an ordering fake silently mis-answers the moment
+    a statement is added, which is how a fake starts lying.
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, ghosts=()):
         self._rows = rows
-        self._select_calls = 0
+        self._ghosts = list(ghosts)
         self.writes = 0
+        self.ghost_query_args = None
 
-    async def execute(self, statement):
-        if getattr(statement, "__visit_name__", None) != "select":
+    async def execute(self, statement, params=None):
+        visit = getattr(statement, "__visit_name__", None)
+        if visit == "textclause":
+            self.ghost_query_args = params
+            ghosts = self._ghosts
+
+            class _GhostResult:
+                def all(self):
+                    return ghosts
+
+            return _GhostResult()
+        if visit != "select":
             self.writes += 1
             raise AssertionError(
                 "the plan half issued a write — `apply=False` must never reach "
                 "the UPDATE"
             )
-        self._select_calls += 1
         rows = self._rows
-        first = self._select_calls == 1
+        # The count is the only SELECT with no FROM-list entity of its own; the
+        # rail asks for it via `scalar_one`, so both are served and the caller
+        # picks. That keeps the fake shape-driven rather than order-driven.
 
         class _Result:
             def all(self):
                 return rows
 
             def scalar_one(self):
-                assert not first, "the population SELECT is not the count"
                 return len(rows)
 
         return _Result()
@@ -590,8 +621,16 @@ def test_the_rail_calls_the_shipped_classifier_and_not_a_copy():
         assert "from app.tasks.kalshi import" in source and symbol in source, (
             f"the rail must ask the shipped {symbol}, never reimplement it"
         )
-    assert "re.compile" not in source and "import re" not in source, (
+    # 🔴 Matched on LINES, not as a substring. `"import re" not in source` was
+    # the first spelling and it went red on
+    # `from app.utils.match_receipts import record_link_change_receipts` — a
+    # guard keyed on a substring fires on the import that merely starts with it.
+    import_lines = [ln.strip() for ln in source.splitlines() if ln.strip().startswith(("import ", "from "))]
+    assert "re.compile" not in source, (
         "a regex over market names here would be a second classifier"
+    )
+    assert not any(ln == "import re" or ln.startswith("import re ") for ln in import_lines), (
+        "this rail must not reach for the regex module"
     )
 
 
@@ -631,3 +670,522 @@ def test_the_keyset_resumes_the_null_commence_region():
         "after_id alone IS a resume — it is the NULL region"
     )
     assert rail._keyset_after({"after_date": "2026-09-12T20:00:00+00:00", "after_id": 5}) is not None
+
+
+# ---------------------------------------------------------------------------
+# CERT-2744's finding — the ghost EVENT arm. The duplicate CARD a reader sees
+# is an `events` row; correcting the market's badge does not remove it.
+# ---------------------------------------------------------------------------
+
+#: The ghost and its real counterpart, both read off production 2026-09-12.
+_GHOST_EVENT_ID = 15308761        # basketball_other, "Ottawa Redblacks vs Toronto Argonauts"
+_REAL_EVENT_ID = 15307938         # americanfootball_cfl, the same fixture, teams reversed
+
+
+async def _plan_with_ghosts(rows, tags, ghosts, monkeypatch, apply=False):
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(kalshi_module, "_resolve_series_tag_result", _TagStub(tags))
+    session = _FakeSession(rows, ghosts=ghosts)
+    return await rail.repair(session, apply=apply), session
+
+
+def _redblacks_market():
+    return _Row(
+        _REDBLACKS_ID, _REDBLACKS_NAME, "kalshi", _REDBLACKS_TICKER, "basketball",
+        event_id=_GHOST_EVENT_ID,
+    )
+
+
+@pytest.mark.asyncio
+async def test_served_search_returns_one_fixture_after_historical_repair_5637(
+    monkeypatch,
+):
+    """THE TEST CERT-2744 NAMED.
+
+    `q=Redblacks` returns the game twice: the real CFL fixture and a
+    `basketball_other` ghost minted from the Kalshi prop. Search serves EVENTS,
+    so the second card only disappears when that event row is retired.
+
+    This asserts the decision and the write, against the real shapes: the ghost
+    is planned, the retire is a compare-and-set on the status it actually held,
+    and the market is unhooked so it can reach the real fixture. The served
+    disappearance follows from `status='voided'`, which is the same value
+    `repair_5621_phantom_ffpts_events` uses for the same purpose.
+    """
+    ghost = _GhostRow(
+        _GHOST_EVENT_ID, "Ottawa Redblacks", "Toronto Argonauts", "scheduled",
+        "basketball_other",
+        real_id=_REAL_EVENT_ID, real_key="americanfootball_cfl",
+    )
+    out, _ = await _plan_with_ghosts(
+        [_redblacks_market()],
+        {_REDBLACKS_TICKER: _result(tag="Football")},
+        [ghost],
+        monkeypatch,
+    )
+
+    assert len(out["ghost_events_planned"]) == 1, (
+        "the duplicate card is an events row — planning only the market leaves "
+        "the reader looking at two fixtures"
+    )
+    plan = out["ghost_events_planned"][0]
+    assert plan["event_id"] == _GHOST_EVENT_ID
+    assert plan["real_event_id"] == _REAL_EVENT_ID
+    assert plan["before_status"] == "scheduled", "the undo must name the real status"
+    assert plan["venue_sport"] == "football"
+    assert out["ghost_events_retired"] == 0, "a dry run retires nothing"
+    assert "scheduled" in out["event_restore_sql"], (
+        "the D51 undo for the event arm travels on the dry run too"
+    )
+
+    # 🔴 AND THE SERVED HALF, PROVEN RATHER THAN INFERRED. `GET
+    # /api/events/search` filters on an ALLOWLIST of statuses, so the retired
+    # ghost leaves the results exactly when `RETIRED_STATUS` is absent from it —
+    # and the real fixture stays exactly when ITS status is present. Read off the
+    # route module, so a change to either list fails here rather than silently
+    # making this rail write a value that changes nothing a reader sees.
+    from app.routes.events import _SEARCH_STARTED_STATUSES, _SEARCH_STATUSES
+
+    assert "scheduled" in _SEARCH_STATUSES, (
+        "control: the survivor's status must be served, or this proves nothing"
+    )
+    assert rail.RETIRED_STATUS not in _SEARCH_STATUSES, (
+        f"search serves {_SEARCH_STATUSES}; retiring a ghost to "
+        f"{rail.RETIRED_STATUS!r} would leave the duplicate card on the page"
+    )
+    assert rail.RETIRED_STATUS not in _SEARCH_STARTED_STATUSES, (
+        "the started-only arm of search must not serve it either"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_ghost_with_no_real_counterpart_is_never_retired(monkeypatch):
+    """🔴 THE GATE THAT DECIDES WHETHER A READER LOSES A GAME.
+
+    Measured on production 2026-09-12: of 13 candidate ghosts in these families
+    only 4 have a counterpart. The other 9 — five NWSL fixtures among them — are
+    the ONLY row we hold for that match. Retiring one would not remove a
+    duplicate, it would remove the game from the site.
+    """
+    alone = _GhostRow(
+        15308754, "Houston", "Utah Royals", "scheduled", "baseball_other",
+        real_id=None,
+    )
+    out, _ = await _plan_with_ghosts(
+        [_Row(1, "Houston vs Utah Royals", "kalshi",
+              "KXNWSLGAME-26SEP12HDAURO", "baseball", event_id=15308754)],
+        {"KXNWSLGAME-26SEP12HDAURO": _result(tag="Soccer")},
+        [alone],
+        monkeypatch,
+    )
+    assert out["ghost_events_planned"] == []
+    assert out["ghost_events_refused"] == {"no_real_counterpart": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_counterpart_in_the_wrong_sport_does_not_authorise_a_retire(
+    monkeypatch,
+):
+    """Two teams with those names playing within 36 hours is not enough.
+
+    The counterpart has to be the same fixture PROPERLY FILED — in the sport the
+    venue says. A lookalike in another sport proves nothing, and retiring on it
+    would delete a real game on the strength of a name collision, which is the
+    very family of mistake #5637 is about.
+    """
+    ghost = _GhostRow(
+        _GHOST_EVENT_ID, "Ottawa Redblacks", "Toronto Argonauts", "scheduled",
+        "basketball_other",
+        real_id=999, real_key="basketball_nba",
+    )
+    out, _ = await _plan_with_ghosts(
+        [_redblacks_market()],
+        {_REDBLACKS_TICKER: _result(tag="Football")},
+        [ghost],
+        monkeypatch,
+    )
+    assert out["ghost_events_planned"] == []
+    assert out["ghost_events_refused"] == {"counterpart_wrong_sport": 1}
+
+
+@pytest.mark.asyncio
+async def test_an_event_already_in_the_right_sport_is_left_alone(monkeypatch):
+    """An event we minted, in the RIGHT sport, is not a wrong-sport ghost.
+
+    Several of the 13 candidates are `soccer_other` NWSL fixtures — made by us,
+    but correctly sported. Retiring those would be vandalism, and the counterpart
+    gate alone would not stop it.
+    """
+    ghost = _GhostRow(
+        15307901, "Kansas City", "Orlando", "scheduled", "soccer_other",
+        real_id=12345, real_key="soccer_usa_nwsl",
+    )
+    out, _ = await _plan_with_ghosts(
+        [_Row(2, "Kansas City vs Orlando", "kalshi",
+              "KXNWSLGAME-26SEP12KCORL", "tennis", event_id=15307901)],
+        {"KXNWSLGAME-26SEP12KCORL": _result(tag="Soccer")},
+        [ghost],
+        monkeypatch,
+    )
+    assert out["ghost_events_planned"] == []
+    assert out["ghost_events_refused"] == {"event_already_right_sport": 1}
+
+
+@pytest.mark.asyncio
+async def test_an_ingested_event_never_reaches_the_event_arm(monkeypatch):
+    """Gate 1 lives in SQL, so its refusal is an ABSENCE from the result set.
+
+    An absence is exactly the shape that reads as "nothing to do" (gotcha #53),
+    so the arm counts the ids the query did not return under their own name
+    rather than inferring a shortfall.
+    """
+    out, _ = await _plan_with_ghosts(
+        [_redblacks_market()],
+        {_REDBLACKS_TICKER: _result(tag="Football")},
+        [],  # the SQL returned nothing: this event is ingested, not ours
+        monkeypatch,
+    )
+    assert out["ghost_events_planned"] == []
+    assert out["ghost_events_refused"] == {"event_not_ours_to_retire": 1}
+
+
+@pytest.mark.asyncio
+async def test_the_event_arm_is_only_asked_about_events_it_has_a_verdict_for(
+    monkeypatch,
+):
+    """The ghost query is bounded by the ids this pass planned, never open-ended.
+
+    A rail that scanned `events` freely would be a different, far larger ship
+    than #5637, and its blast radius would not be the population anyone measured.
+    """
+    out, session = await _plan_with_ghosts(
+        [_redblacks_market()],
+        {_REDBLACKS_TICKER: _result(tag="Football")},
+        [],
+        monkeypatch,
+    )
+    assert session.ghost_query_args == {"event_ids": [_GHOST_EVENT_ID]}
+
+
+def test_the_event_arm_has_a_ceiling_and_refuses_rather_than_trimming():
+    """A sudden crowd is a reason to stop, not a reason to retire 60 of them."""
+    assert rail.MAX_EXPECTED_GHOST_EVENTS >= 13, (
+        "the ceiling must clear the measured population or the arm never runs"
+    )
+    assert rail.MAX_EXPECTED_GHOST_EVENTS <= 200, (
+        "a ceiling that clears any plausible crowd is not a ceiling"
+    )
+
+
+def test_the_event_undo_names_the_status_each_row_actually_held():
+    """One statement per distinct prior status, and never a Python repr."""
+    sql = rail.event_restore_sql(
+        [
+            {"event_id": 2, "before_status": "scheduled"},
+            {"event_id": 1, "before_status": "scheduled"},
+            {"event_id": 3, "before_status": None},
+        ]
+    )
+    assert "UPDATE events SET status = 'scheduled' WHERE id IN (1, 2);" in sql
+    assert "UPDATE events SET status = NULL WHERE id IN (3);" in sql
+    assert "{" not in sql, "a dict in the undo is the senate sibling's first bug"
+
+
+def test_the_undo_restores_only_the_rows_the_write_actually_matched():
+    """CERT-2744 follow-up `5637-RESTORE-ONLY-CAS-MATCHED-ROWS`.
+
+    A drifted row's planned `before` is a value the database no longer holds, so
+    restoring it would write a STALE sport onto a row the rail deliberately left
+    alone. An undo that corrupts a row the repair refused to touch is worse than
+    no undo.
+    """
+    planned = [
+        {"id": 1, "before": "basketball"},
+        {"id": 2, "before": "tennis"},   # drifted: never written
+    ]
+    applied = [{"id": 1, "before": "basketball"}]
+
+    assert "tennis" in rail.restore_sql(planned), "control: the plan does name it"
+    undo = rail.restore_sql(applied)
+    assert "tennis" not in undo, (
+        "restoring a row the compare-and-set refused would overwrite whatever "
+        "the other writer put there"
+    )
+    assert undo == "UPDATE futures_markets SET llm_sport_category = 'basketball' WHERE id IN (1);"
+
+
+class _ApplySession(_FakeSession):
+    """Runs the APPLY half, and lets a row DRIFT.
+
+    🔴 This class exists because of a survivor. `test_the_undo_restores_only_the
+    _rows_the_write_actually_matched` calls `restore_sql` directly, so swapping
+    the payload back to `restore_sql(planned)` left it green — the guard proved
+    the helper and never proved the WIRING. Only an apply that reaches the
+    payload can catch that.
+
+    `matched_ids` is what the compare-and-set is pretended to have matched;
+    anything planned and absent from it is a row another writer moved.
+    """
+
+    def __init__(self, rows, matched_ids, ghosts=()):
+        super().__init__(rows, ghosts=ghosts)
+        self._matched = set(matched_ids)
+        self.committed = 0
+        self.market_unhooks = 0
+        self.unhooked_event_ids = None
+
+    async def execute(self, statement, params=None):
+        visit = getattr(statement, "__visit_name__", None)
+        if visit == "update":
+            table = statement.table.name
+            if table == "futures_markets" and not statement._returning:
+                self.market_unhooks += 1
+                # 🔴 Record WHICH events the unhook targeted, not merely that it
+                # ran. Asserting the call count alone left `retired_ids = []`
+                # green — the statement still executes, against nothing.
+                self.unhooked_event_ids = sorted(
+                    statement.compile().params.get("event_id_1") or []
+                )
+
+                class _Empty:
+                    rowcount = 0
+
+                    def fetchall(self):
+                        return []
+
+                return _Empty()
+            # Return the intersection of THIS statement's targets with the
+            # matched set. Returning the whole matched set for every group made
+            # the compare-and-set look like it matched the same id twice —
+            # `changed` read 2 for one row, and the fake, not the rail, was
+            # wrong.
+            targeted = set(statement.compile().params.get("id_1") or [])
+            hit = sorted(targeted & self._matched)
+
+            class _Written:
+                rowcount = len(hit)
+
+                def fetchall(self):
+                    return [(i,) for i in hit]
+
+            return _Written()
+        return await super().execute(statement, params)
+
+    async def commit(self):
+        self.committed += 1
+
+
+@pytest.mark.asyncio
+async def test_the_payload_undo_is_built_from_the_matched_rows_not_the_plan(
+    monkeypatch,
+):
+    """The wiring half of `5637-RESTORE-ONLY-CAS-MATCHED-ROWS`.
+
+    Two rows planned, one drifts. The returned `restore_sql` must name only the
+    row that actually moved — the drifted one's `before` is a value the database
+    no longer holds, and writing it back would corrupt a row this rail refused
+    to touch.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    rows = [
+        _Row(_REDBLACKS_ID, _REDBLACKS_NAME, "kalshi", _REDBLACKS_TICKER, "basketball"),
+        _Row(_WIMBLEDON_ID, _WIMBLEDON_NAME, "kalshi", _WIMBLEDON_TICKER, "tennis"),
+    ]
+    monkeypatch.setattr(
+        kalshi_module,
+        "_resolve_series_tag_result",
+        _TagStub(
+            {
+                _REDBLACKS_TICKER: _result(tag="Football"),
+                _WIMBLEDON_TICKER: _result(tag="Soccer"),
+            }
+        ),
+    )
+    # Only the Redblacks row matches; the Wimbledon row drifted.
+    session = _ApplySession(rows, matched_ids=[_REDBLACKS_ID])
+    out = await rail.repair(session, apply=True)
+
+    assert out["changed"] == 1
+    assert [r["id"] for r in out["applied_rows"]] == [_REDBLACKS_ID]
+    assert "basketball" in out["restore_sql"]
+    assert "tennis" not in out["restore_sql"], (
+        "🔴 the drifted row must not appear in the undo — its planned `before` "
+        "is not what the database holds"
+    )
+    assert out["drifted"], "a plan/write shortfall is never unexplained"
+    assert out["drifted"][0]["skipped_ids"] == [_WIMBLEDON_ID]
+    assert session.committed == 1
+
+
+@pytest.mark.asyncio
+async def test_the_event_undo_is_also_built_from_the_matched_rows(monkeypatch):
+    """Same rule, the other table — and the unhook only touches retired events."""
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(
+        kalshi_module,
+        "_resolve_series_tag_result",
+        _TagStub({_REDBLACKS_TICKER: _result(tag="Football")}),
+    )
+    ghost = _GhostRow(
+        _GHOST_EVENT_ID, "Ottawa Redblacks", "Toronto Argonauts", "scheduled",
+        "basketball_other",
+        real_id=_REAL_EVENT_ID, real_key="americanfootball_cfl",
+    )
+    receipts = []
+
+    async def _fake_receipt(market_rows, **kwargs):
+        receipts.append((market_rows, kwargs))
+        return len(market_rows)
+
+    monkeypatch.setattr(rail, "_record_link_change", _fake_receipt)
+
+    session = _ApplySession(
+        [_redblacks_market()], matched_ids=[_REDBLACKS_ID, _GHOST_EVENT_ID],
+        ghosts=[ghost],
+    )
+    out = await rail.repair(session, apply=True)
+
+    assert out["ghost_events_retired"] >= 1
+    assert "scheduled" in out["event_restore_sql"]
+    assert session.market_unhooks == 1, (
+        "the markets on a retired event must be unhooked, or gotcha #15 keeps "
+        "the prop pinned to the voided row forever"
+    )
+    assert session.unhooked_event_ids == [_GHOST_EVENT_ID], (
+        "the unhook must name the events actually retired — an UPDATE against "
+        "an empty id list runs, reports nothing, and frees no market"
+    )
+    # LINKLOSS-03: clearing `event_id` without receipting it leaves the price
+    # gone from a card with no explanation anywhere in the system. CI's
+    # `test_every_unlink_writer_in_the_app_records_a_link_change` caught this
+    # one; the assertion below is so THIS file catches the next one.
+    assert len(receipts) == 1, "every retired event owes exactly one link-change receipt"
+    rows, kwargs = receipts[0]
+    assert kwargs["previous_event_id"] == _GHOST_EVENT_ID
+    assert kwargs["new_event_id"] is None
+    assert [r["id"] for r in rows] == [_REDBLACKS_ID], (
+        "the receipt names the markets read BEFORE the update — the previous "
+        "event id does not survive it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_drifted_event_is_left_out_of_the_event_undo(monkeypatch):
+    """The event arm's half of `5637-RESTORE-ONLY-CAS-MATCHED-ROWS`.
+
+    Two ghosts planned, one drifts (somebody moved its status between the scan
+    and the write). The event undo must name only the one that moved — writing
+    `scheduled` back onto an event another writer just completed would undo
+    THEIR work, not ours.
+
+    Without this the mutation "build the event undo from `ghost_planned`"
+    survives, because in the happy path planned and applied are the same list.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(
+        kalshi_module,
+        "_resolve_series_tag_result",
+        _TagStub(
+            {
+                _REDBLACKS_TICKER: _result(tag="Football"),
+                _WIMBLEDON_TICKER: _result(tag="Soccer"),
+            }
+        ),
+    )
+    drifted_event_id = 15307874
+    ghosts = [
+        _GhostRow(
+            _GHOST_EVENT_ID, "Ottawa Redblacks", "Toronto Argonauts", "scheduled",
+            "basketball_other",
+            real_id=_REAL_EVENT_ID, real_key="americanfootball_cfl",
+        ),
+        _GhostRow(
+            drifted_event_id, "Wimbledon", "Doncaster", "postponed", "tennis_other",
+            real_id=15305089, real_key="soccer_england_league1",
+        ),
+    ]
+    rows = [
+        _redblacks_market(),
+        _Row(_WIMBLEDON_ID, _WIMBLEDON_NAME, "kalshi", _WIMBLEDON_TICKER, "tennis",
+             event_id=drifted_event_id),
+    ]
+    async def _fake_receipt(market_rows, **kwargs):
+        return len(market_rows)
+
+    monkeypatch.setattr(rail, "_record_link_change", _fake_receipt)
+
+    # Everything matches EXCEPT the postponed ghost.
+    session = _ApplySession(
+        rows,
+        matched_ids=[_REDBLACKS_ID, _WIMBLEDON_ID, _GHOST_EVENT_ID],
+        ghosts=ghosts,
+    )
+    out = await rail.repair(session, apply=True)
+
+    assert out["ghost_events_retired"] == 1
+    assert "scheduled" in out["event_restore_sql"]
+    assert "postponed" not in out["event_restore_sql"], (
+        "🔴 the drifted event must not appear in the undo — restoring a status "
+        "the row no longer holds overwrites whoever moved it"
+    )
+    assert out["ghost_events_drifted"], "an event shortfall is never unexplained"
+    assert out["ghost_events_drifted"][0]["skipped_ids"] == [drifted_event_id]
+    assert session.unhooked_event_ids == [_GHOST_EVENT_ID], (
+        "only the retired event's markets are unhooked; the drifted event's "
+        "market stays attached to a row that is still live"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_crowd_of_ghosts_refuses_the_arm_instead_of_retiring_them(
+    monkeypatch,
+):
+    """The ceiling is a REFUSAL, not a trim.
+
+    Measured population was 13 candidates / 4 retirable. If this predicate ever
+    matches a crowd, something upstream changed and a person should look before
+    games start vanishing from the site — so the arm writes NOTHING and says
+    why, rather than retiring the first `MAX_EXPECTED_GHOST_EVENTS` of them.
+
+    Asserting the constant's value alone left "ignore the ceiling" green; this
+    is the behaviour.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    over = rail.MAX_EXPECTED_GHOST_EVENTS + 1
+    tickers = {f"KXCFLTOTAL-26SEP12X{i:03d}": _result(tag="Football") for i in range(over)}
+    monkeypatch.setattr(
+        kalshi_module, "_resolve_series_tag_result", _TagStub(tickers)
+    )
+    rows = [
+        _Row(1000 + i, f"A{i} vs B{i}", "kalshi", t, "basketball", event_id=2000 + i)
+        for i, t in enumerate(tickers)
+    ]
+    ghosts = [
+        _GhostRow(
+            2000 + i, f"A{i}", f"B{i}", "scheduled", "basketball_other",
+            real_id=3000 + i, real_key="americanfootball_cfl",
+        )
+        for i in range(over)
+    ]
+    async def _fake_receipt(market_rows, **kwargs):  # never reached over the ceiling
+        raise AssertionError("nothing is unhooked when the ceiling refuses")
+
+    monkeypatch.setattr(rail, "_record_link_change", _fake_receipt)
+    session = _ApplySession(
+        rows, matched_ids=[r.id for r in rows] + [g.id for g in ghosts], ghosts=ghosts
+    )
+    out = await rail.repair(session, apply=True)
+
+    assert out["ghost_events_over_ceiling"] is True
+    assert len(out["ghost_events_planned"]) == over, (
+        "the plan is still reported in full — an operator needs to SEE the crowd"
+    )
+    assert out["ghost_events_retired"] == 0, (
+        "🔴 nothing is retired over the ceiling, and nothing is trimmed to fit"
+    )
+    assert session.unhooked_event_ids is None, "no market is unhooked either"
