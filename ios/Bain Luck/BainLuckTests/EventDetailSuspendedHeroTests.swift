@@ -107,57 +107,54 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
     /// The 184. A projected FINAL score for a match that will never be given
     /// one, printed in the score's slot, on a hero that had no state label.
     func testASuspendedGameDrawsNoProjectedFinal() {
-        XCTAssertFalse(EventDetailView.showsProjection(status: "suspended", commenceTime: Self.started, now: Self.now))
+        // #5697 AC2 added a score term; a suspended game is refused for the
+        // #4002 reason whether or not it has one, so both are pinned.
+        XCTAssertFalse(EventDetailView.showsProjection(
+            status: "suspended", commenceTime: Self.started, hasScore: true, now: Self.now))
+        XCTAssertFalse(EventDetailView.showsProjection(
+            status: "suspended", commenceTime: Self.started, hasScore: false, now: Self.now))
     }
 
     func testTheProjectionSurvivesWhereItIsStillAProjection() {
-        XCTAssertTrue(EventDetailView.showsProjection(status: "live", commenceTime: Self.started, now: Self.now))
-        XCTAssertTrue(EventDetailView.showsProjection(status: "scheduled", commenceTime: Self.notYet, now: Self.now))
+        XCTAssertTrue(EventDetailView.showsProjection(
+            status: "live", commenceTime: Self.started, hasScore: true, now: Self.now))
+        XCTAssertTrue(EventDetailView.showsProjection(
+            status: "scheduled", commenceTime: Self.notYet, hasScore: false, now: Self.now))
     }
 
     func testTheProjectionGateAgreesWithIsFinishedEverywhereElse() {
         // The pre-fix gate was `!isFinished` and nothing else. The fix must
         // differ from it on exactly ONE status — a wider change here would be
         // silently removing the projection from states nobody complained about.
+        //
+        // #5697 AC2 — held at `hasScore: true` on purpose. This arm is #4002's
+        // claim about the STATUS axis, and it must keep testing that axis alone;
+        // the score axis #5697 added is pinned next door in
+        // `LiveProjectionNeedsAScore5697Tests`. Passing false here would fold
+        // two rules into one assertion and neither would be legible.
         for status in Self.vocabulary where !EventState.isSuspended(status) {
             XCTAssertEqual(
                 EventDetailView.showsProjection(
-                    status: status, commenceTime: Self.started, now: Self.now),
+                    status: status, commenceTime: Self.started, hasScore: true, now: Self.now),
                 !EventState.isFinished(status),
                 "the projection gate moved on \(status ?? "nil"), which #4002 did not ask for"
             )
         }
     }
 
-    // MARK: - The label (#3014)
-
-    /// #3014's specimen: a LIVE game with no score at all, where "Proj. 2-3" is
-    /// the only pair of numbers on the hero and reads as the score.
-    func testALiveGameWithNoScoreSpellsTheWordOut() {
-        XCTAssertEqual(
-            EventDetailView.projectionLabel(status: "live", hasScore: false),
-            "Projected final"
-        )
-    }
-
-    func testTheAbbreviationStaysWhereARealScoreIsStandingBesideIt() {
-        // With a score on screen the pair cannot be misread, and the centre
-        // column is `fixedSize` — a longer label there squeezes the crests.
-        XCTAssertEqual(EventDetailView.projectionLabel(status: "live", hasScore: true), "Proj.")
-        XCTAssertEqual(EventDetailView.projectionLabel(status: "scheduled", hasScore: false), "Proj.")
-    }
-
-    func testTheLabelNeverClaimsAFinalForAGameThatIsNotBeingPlayed() {
-        // Before kick-off there is no score slot to be confused with, and after
-        // the whistle the projection does not draw at all.
-        for status in Self.vocabulary where status != "live" {
-            XCTAssertEqual(
-                EventDetailView.projectionLabel(status: status, hasScore: false),
-                "Proj.",
-                "spelled the label out on \(status ?? "nil")"
-            )
-        }
-    }
+    // MARK: - The label (#3014) — RETIRED by #5697 AC2, deliberately not replaced
+    //
+    // Three tests stood here, pinning `projectionLabel` and the string
+    // "Projected final". #3014's whole population was live-and-scoreless: the
+    // pair read as the score, so the word was spelled out to disambiguate it.
+    // #5697 AC2 withdraws the projection on exactly that population, which is
+    // the stronger form of the same fix — there is no pair left to misread.
+    //
+    // That made "Projected final" unreachable from the only call site, and the
+    // three tests would have gone on passing against a helper the app could
+    // never draw: a guard proving nothing, which is worse than no guard because
+    // the next reader trusts it. The helper and its tests were deleted together.
+    // Git holds them if the gate is ever narrowed back.
 
     // MARK: - #4021 — the clock, and the regression this ship nearly shipped
 
@@ -184,7 +181,7 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
         )
         XCTAssertTrue(
             EventDetailView.showsProjection(
-                status: "suspended", commenceTime: Self.notYet, now: Self.now),
+                status: "suspended", commenceTime: Self.notYet, hasScore: false, now: Self.now),
             "a game nobody has played lost its projection"
         )
         XCTAssertFalse(
@@ -201,7 +198,7 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
         XCTAssertFalse(EventDetailView.showsBroadcast(
             status: "suspended", commenceTime: Self.started, now: Self.now))
         XCTAssertFalse(EventDetailView.showsProjection(
-            status: "suspended", commenceTime: Self.started, now: Self.now))
+            status: "suspended", commenceTime: Self.started, hasScore: true, now: Self.now))
     }
 
     /// A dateless suspended row keeps the repair. Stated as a test because the
@@ -232,7 +229,7 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
             XCTAssertFalse(EventDetailView.showsBroadcast(
                 status: status, commenceTime: Self.notYet, now: Self.now))
             XCTAssertFalse(EventDetailView.showsProjection(
-                status: status, commenceTime: Self.notYet, now: Self.now))
+                status: status, commenceTime: Self.notYet, hasScore: true, now: Self.now))
         }
     }
 
@@ -246,13 +243,13 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
             // all four renders, without this file naming the strings.
             if EventState.isFinished(status) {
                 XCTAssertFalse(EventDetailView.showsProjection(
-                    status: status, commenceTime: Self.started, now: Self.now))
+                    status: status, commenceTime: Self.started, hasScore: true, now: Self.now))
                 XCTAssertFalse(EventDetailView.showsBroadcast(
                     status: status, commenceTime: Self.started, now: Self.now))
             }
             if EventState.isSuspended(status) {
                 XCTAssertFalse(EventDetailView.showsProjection(
-                    status: status, commenceTime: Self.started, now: Self.now))
+                    status: status, commenceTime: Self.started, hasScore: true, now: Self.now))
                 XCTAssertFalse(EventDetailView.showsBroadcast(
                     status: status, commenceTime: Self.started, now: Self.now))
                 XCTAssertTrue(EventDetailView.showsScore(status: status, away: 3, home: 4))

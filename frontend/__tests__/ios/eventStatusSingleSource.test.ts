@@ -154,12 +154,42 @@ d("iOS reads one event-status vocabulary", () => {
 
     it("the projection gate asks the helper instead of restating !isFinished", () => {
       expect(detail()).toMatch(
-        /EventDetailView\.showsProjection\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\)/
+        /EventDetailView\.showsProjection\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate,\n\s*hasScore: hasScore\)/
       );
       // The pre-fix gate, verbatim. Its absence is the assertion.
       expect(stripComments(detail())).not.toMatch(
         /projectedAwayScore,\s*\n\s*!isFinished \{/
       );
+    });
+
+    it("#5697 AC2 — the projection is gated on the score the hero actually DRAWS", () => {
+      // The call site must hand `showsProjection` the same `hasScore` the score
+      // row is drawn from, two lines up. A gate reading `event.homeScore`
+      // directly would keep every Swift test in
+      // `LiveProjectionNeedsAScore5697Tests` green — that file calls the helper
+      // with a Bool and cannot see which Bool the BODY passes — and would go on
+      // projecting a final over a status that draws no score. CI compiles no
+      // Swift, so this scan is the only thing standing on that wire.
+      const code = stripComments(detail());
+      expect(code).toMatch(/hasScore: hasScore\)/);
+      // The mutant, stated as an absence: the payload field instead of the
+      // hero's resolved pair.
+      expect(code).not.toMatch(/hasScore: event\.homeScore/);
+      expect(code).not.toMatch(/hasScore: event\.awayScore/);
+      expect(code).not.toMatch(/hasScore: true/);
+    });
+
+    it("#3014's spelled-out label is gone, not left unreachable", () => {
+      // #5697 AC2 withdraws the projection on live-and-scoreless, which was
+      // `projectionLabel`'s entire population. Leaving the helper behind leaves
+      // a string the app can never draw and three Swift tests that pass while
+      // proving nothing — so the retirement is asserted, not assumed.
+      const code = stripComments(detail());
+      expect(code).not.toMatch(/projectionLabel/);
+      expect(code).not.toMatch(/Projected final/);
+      // ...and the abbreviation the hero still draws is still drawn. Without
+      // this the two assertions above are satisfied by deleting the row.
+      expect(code).toMatch(/Text\("Proj\. \\\(/);
     });
 
     it("both broadcast chips are gated, the hero's and Game Info's", () => {
@@ -600,13 +630,33 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
   });
 
   it("the hero and the cards share one definition", () => {
-    // #4002's helper is now a delegation. If someone re-inlines it, the hero and
-    // the cards can disagree about `suspended` again, which is the whole defect.
-    expect(read(DETAIL)).toMatch(
-      // NOTE the parameter list contains `Date()`, so a `[^)]*` span stops short
-      // of it and the assertion silently never matches. Non-greedy to `-> Bool`.
-      /static func showsProjection\([\s\S]*?\) -> Bool \{\s*EventState\.canStillBeGraded\(status, commenceTime: commenceTime, now: now\)\s*\}/,
+    // #4002's helper delegates the GRADABILITY question. If someone re-inlines
+    // it, the hero and the cards can disagree about `suspended` again, which is
+    // the whole defect.
+    //
+    // #5697 AC2 — the body is no longer a bare one-line delegation: the hero now
+    // asks a second question the cards do not (is there a score on screen to
+    // frame a forecast against), so the old whole-body regex is split in two.
+    // The shared half is still pinned verbatim; the hero-only half is pinned
+    // below it, so neither can be dropped silently.
+    //
+    // NOTE the parameter list contains `Date()`, so a `[^)]*` span stops short
+    // of it and the assertion silently never matches. Non-greedy to `-> Bool`.
+    const body = stripComments(read(DETAIL)).match(
+      /static func showsProjection\([\s\S]*?\) -> Bool \{([\s\S]*?)\n    \}/,
     );
+    expect(body).not.toBeNull();
+    const code = body![1];
+
+    // The shared definition — the delegation #4018 exists to keep single.
+    expect(code).toMatch(
+      /EventState\.canStillBeGraded\(status, commenceTime: commenceTime, now: now\)/,
+    );
+    // The hero-only term. `canStillBeGraded` cannot ask this and must not learn
+    // to: the three market cards below the hero carry their own labels and
+    // context, and suppressing them is a different ship.
+    expect(code).toMatch(/hasScore/);
+    expect(code).toMatch(/EventState\.hasStarted\(commenceTime: commenceTime, now: now\)/);
   });
 
   it("the props card captions its rungs from EventState, not a literal", () => {
