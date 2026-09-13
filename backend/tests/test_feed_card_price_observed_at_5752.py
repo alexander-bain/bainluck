@@ -81,46 +81,56 @@ class _Outcome:
         self.current_probability = current_probability
 
 
-class _Market:
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
+class _SnapshotOutcome:
+    """An outcome on the WIRE carrier: the observation is a derived int second.
 
-
-def _orm_market(*stamps) -> _Market:
-    """The carrier `_score_sports_mode_futures` holds: outcomes carry the stamp.
-
-    Positional order IS rank (#5809): the first stamp is the leader's, and
-    probabilities descend from there. Before #5809 the fold was `MAX` over every
-    leg and rank was irrelevant, so these fixtures carried no probability at
-    all; now the top-three window is the whole question and a fixture with no
-    ranking would silently make every leg "displayed".
+    `price_observed_epoch` and NO `last_updated` — that column is
+    `OUTCOME_LOAD_ONLY_EXTRA`, loaded and deliberately not carried, so a rebuilt
+    leg genuinely does not have the attribute. Spelled as a separate class
+    rather than a flag on `_Outcome` because "has one and it is `None`" and "does
+    not have it at all" are different objects and only the second is what
+    `from_plain` produces.
     """
-    return _Market(
-        outcomes=[
-            _Outcome(stamp, current_probability=0.9 - i / 100)
-            for i, stamp in enumerate(stamps)
-        ]
-    )
+
+    def __init__(self, epoch, current_probability=None):
+        self.price_observed_epoch = epoch
+        self.current_probability = current_probability
 
 
-def _snapshot_market(folded) -> _Market:
-    """The carrier `from_plain` rebuilds: the value is folded onto the row.
+def _printed(*stamps) -> list:
+    """THE LEGS THE CARD PRINTS, on the ORM carrier (#5809 completed).
 
-    Its outcomes deliberately carry `last_updated=None` — that column is
-    `OUTCOME_LOAD_ONLY_EXTRA`, loaded and deliberately NOT on the wire — so a
-    reader that re-derived from them here would get `None` off every one.
+    The helper's argument is no longer a market — it is `card_outcomes[:3]`, the
+    same list the serializer builds `top_outcomes_data` from. The window is the
+    CALLER's, because only the caller knows it: the printed legs are the top
+    three of a filtered list, and no rule applied to a market reproduces that
+    set. `test_the_serializers_pass_the_printed_legs` in
+    `test_card_displayed_price_age_5809` is where that binding is asserted
+    against the route; here the fold is tested over the set it is handed.
 
-    Both derived keys are set (#5809). `price_polled_at` is what the dead-market
-    clock reads and `top_price_observed_at` is what the card's age mark reads;
-    a fixture carrying only the first would send this file's snapshot-carrier
-    leg down the re-derive path and read `None`, which is the mutant the leg
-    exists to kill rather than a thing to assert.
+    Positional order is still rank-descending, so a fixture reads the way a card
+    does even though nothing in the fold sorts any more.
     """
-    return _Market(
-        price_polled_at=folded,
-        top_price_observed_at=folded,
-        outcomes=[_Outcome(None), _Outcome(None)],
-    )
+    return [
+        _Outcome(stamp, current_probability=0.9 - i / 100)
+        for i, stamp in enumerate(stamps)
+    ]
+
+
+def _printed_from_wire(*stamps) -> list:
+    """The same legs as they come back off the shared artifact.
+
+    Whole UTC seconds, because that is what the wire carries and what the ORM
+    path is truncated to as well — the two carriers must not disagree by a
+    microsecond, or the cached feed is a different feed from the direct one.
+    """
+    return [
+        _SnapshotOutcome(
+            None if stamp is None else int(stamp.timestamp()),
+            current_probability=0.9 - i / 100,
+        )
+        for i, stamp in enumerate(stamps)
+    ]
 
 
 # ── 1. the fold, on both carriers ───────────────────────────────────────────
@@ -136,25 +146,42 @@ def test_ship_orm_carrier_serialises_the_age_of_the_displayed_prices():
     the card prints — the only claim all three of them support.
     """
     older = NOW - timedelta(hours=25)
-    out = _card_price_observed_at(_orm_market(older, SIXTY_ONE_MIN, older))
+    out = _card_price_observed_at(_printed(older, SIXTY_ONE_MIN, older))
     assert out == older.isoformat()
 
 
-def test_ship_snapshot_carrier_serialises_the_folded_value():
-    """SHIP: a rehydrated market answers the same question, not `None`.
+def test_ship_snapshot_carrier_serialises_the_same_instant():
+    """SHIP: a rehydrated card answers the same question, not `None`.
 
-    Mutant this dies to: re-deriving from `outcomes` instead of reading the
-    folded key. Discover's flagship path serves from the shared artifact, so
-    that mutant leaves the age absent on exactly the reads that matter most
-    while every ORM-carrier test stays green.
+    Mutant this dies to: reading `last_updated` off the legs instead of the
+    derived second. Discover's flagship path serves from the shared artifact and
+    a rebuilt leg does not HAVE that attribute, so that mutant leaves the age
+    absent on exactly the reads that matter most while every ORM-carrier test
+    stays green.
     """
-    assert _card_price_observed_at(_snapshot_market(SIXTY_ONE_MIN)) == (
+    assert _card_price_observed_at(_printed_from_wire(SIXTY_ONE_MIN)) == (
         SIXTY_ONE_MIN.isoformat()
     )
 
 
+def test_control_the_two_carriers_return_the_identical_string():
+    """CONTROL: the cached feed is the same feed, to the character.
+
+    Not implied by the two tests above passing — each could be right about its
+    own carrier and disagree in the last digit, which is how a snapshot path
+    becomes "a DIFFERENT feed, not a cheaper one". Whole-second truncation on
+    BOTH sides is what makes this hold, and this is the assertion that would
+    notice it being applied to only one.
+    """
+    stamps = (NOW - timedelta(hours=25), SIXTY_ONE_MIN, NOW - timedelta(minutes=4))
+
+    assert _card_price_observed_at(_printed(*stamps)) == _card_price_observed_at(
+        _printed_from_wire(*stamps)
+    )
+
+
 def test_guard_a_dead_leg_the_card_does_not_show_does_not_date_it():
-    """GUARD: the dead leg is excluded by the top-three WINDOW, not by `MAX`.
+    """GUARD: the dead leg is excluded by the printed WINDOW, not by `MAX`.
 
     Measured on production 2026-09-12 over the 76 futures cards a `limit=100`
     feed served: one market's FIFTH-ranked leg was last written 123 DAYS ago
@@ -163,11 +190,11 @@ def test_guard_a_dead_leg_the_card_does_not_show_does_not_date_it():
     on a card whose displayed prices are current would be its own defect.
 
     That measurement is why this guard survives #5809 unchanged in substance —
-    and why the fixture had to change. The leg in it is FIFTH, so a card that
-    prints three never shows it, and the mechanism that excludes it is the
-    window. The old two-leg fixture could not tell "the window excluded it" from
-    "`MAX` outvoted it", and under the new rule it asserts the opposite of what
-    it means: with two legs, both ARE displayed.
+    and why the fixture changed twice. The leg is FIFTH, so a card that prints
+    three never shows it. The original two-leg fixture could not tell "the
+    window excluded it" from "`MAX` outvoted it"; and now the window is not the
+    fold's at all, so the exclusion is expressed the way production expresses
+    it — the fifth leg is simply not in the list handed over.
 
     Not `oldestSourceStamp` contradicted, then or now — `heroFreshness` states
     the shared rule: max WITHIN a number, min ACROSS facts. #5809 only corrected
@@ -175,7 +202,7 @@ def test_guard_a_dead_leg_the_card_does_not_show_does_not_date_it():
     """
     dead = NOW - timedelta(days=123)
     fresh = NOW - timedelta(minutes=50)
-    card = _orm_market(fresh, fresh, fresh, fresh, dead)
+    card = _printed(fresh, fresh, fresh, fresh, dead)[:3]
 
     assert _card_price_observed_at(card) == fresh.isoformat()
 
@@ -189,7 +216,7 @@ def test_guard_a_dead_leg_the_card_DOES_show_dates_it():
     """
     dead = NOW - timedelta(days=123)
     fresh = NOW - timedelta(minutes=50)
-    card = _orm_market(fresh, dead, fresh, fresh, fresh)
+    card = _printed(fresh, dead, fresh, fresh, fresh)[:3]
 
     assert _card_price_observed_at(card) == dead.isoformat()
 
@@ -200,10 +227,10 @@ def test_guard_a_dead_leg_the_card_DOES_show_dates_it():
 @pytest.mark.parametrize(
     "market",
     [
-        pytest.param(_Market(outcomes=[]), id="no-outcomes"),
-        pytest.param(_orm_market(None, None), id="outcomes-with-no-stamp"),
-        pytest.param(_Market(), id="pre-this-build-snapshot-no-outcomes-key"),
-        pytest.param(_snapshot_market(None), id="folded-to-none"),
+        pytest.param([], id="no-printed-legs"),
+        pytest.param(_printed(None, None), id="printed-legs-with-no-stamp"),
+        pytest.param(_printed_from_wire(None), id="wire-leg-carrying-none"),
+        pytest.param([object()], id="a-carrier-with-neither-column"),
     ],
 )
 def test_guard_an_undatable_market_serialises_none(market):
@@ -235,7 +262,7 @@ def test_guard_a_naive_stamp_is_serialised_with_an_offset():
     tz-aware datetime and stays green.
     """
     naive = SIXTY_ONE_MIN.replace(tzinfo=None)
-    out = _card_price_observed_at(_orm_market(naive))
+    out = _card_price_observed_at(_printed(naive))
     assert out is not None
     assert out.endswith("+00:00"), out
     # And it is the SAME instant, not shifted by the fix.
@@ -277,7 +304,9 @@ def test_guard_both_futures_serializers_carry_the_key():
     blocks = _futures_data_blocks()
     assert len(blocks) == 2, f"expected 2 futures_data literals, found {len(blocks)}"
     for block in blocks:
-        assert '"price_observed_at": _card_price_observed_at(market)' in block
+        assert (
+            '"price_observed_at": _card_price_observed_at(printed_outcomes)' in block
+        )
 
 
 def test_control_the_key_is_not_resolution_date_under_a_new_name():

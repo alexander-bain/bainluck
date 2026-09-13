@@ -198,6 +198,16 @@ class TestBothSerializersMoved:
         # The scale and the slice must agree on WHICH list is the card. Sports mode
         # sliced `sorted_outcomes[:3]` while scaling something else, which is how one
         # outcome ends up rendering two numbers (Queue 283 / #1487).
+        #
+        # #5809: the slice is now spelled with `CARD_PRICE_AGE_LEG_COUNT` and bound
+        # to `printed_outcomes`, because the card's age mark folds over the very
+        # same rows and a second slice is how the two stop agreeing. So the literal
+        # `3` moved out of the expression; what this asserts is unchanged — the
+        # printed rows come off `card_outcomes`, the list the drop produced, and
+        # never off `sorted_outcomes`, the list before it.
         src = inspect.getsource(getattr(feed, fn_name))
         assert "sorted_outcomes[:3]" not in src, fn_name
-        assert "card_outcomes[:3]" in src, fn_name
+        assert (
+            "printed_outcomes = card_outcomes[:CARD_PRICE_AGE_LEG_COUNT]" in src
+        ), fn_name
+        assert "enumerate(printed_outcomes, start=1)" in src, fn_name

@@ -5802,27 +5802,33 @@ from app.utils.market_staleness import (
 # `_biggest_move_from_opening`, and the same analyser follows it there: the
 # market is passed positionally into a module-level name, which is exactly the
 # escape it is built to trace rather than refuse.
+#
+# `displayed_price_stamp` (#5809) is the third, and it is not reached off a
+# market at all — it takes the printed legs. That is why it is safe under the
+# same analyser: no market escapes into it.
 from app.utils.futures_market_snapshot import (
+    CARD_PRICE_AGE_LEG_COUNT,
     opening_baseline_stamp,
     price_poll_stamp as _price_poll_stamp,
-    top_price_stamp as _top_price_stamp,
+    displayed_price_stamp as _displayed_price_stamp,
 )
 
 
-def _card_price_observed_at(market: Any) -> str | None:
+def _card_price_observed_at(displayed_outcomes: list) -> str | None:
     """WHEN THE PRICES ON THIS CARD WERE LAST SEEN, for the reader (#5752).
 
-    The value is `top_price_stamp` — the OLDEST `last_updated` among the legs
-    the card prints, folded per market — and this function exists only to put
-    it on the wire as an ISO string. (Spelled without the attribute dot on
-    purpose: `test_my_stuff_price_freshness_cert949` scans this module for
-    per-outcome reads of that column and strips `#` comments but not
-    docstrings, so the qualified name in prose reads to it as a read.) It is a
-    named function rather than an inline expression at each of the two futures
-    serializers because those two have drifted before (#1698, CERT-622, #2088
-    each record a column that landed on one and missed the other), and a card
-    that discloses its age on Discover but not on the `MORE X` rail is exactly
-    the defect #5752 was filed on.
+    The value is `displayed_price_stamp` over THE VERY LEGS THE CALLER IS ABOUT
+    TO PRINT — the argument is `printed_outcomes`, the same list
+    `top_outcomes_data` is built from, not a market to re-derive them off — and
+    this function exists only to put the result on the wire as an ISO string.
+    (Spelled without the attribute dot on purpose: `test_my_stuff_price_
+    freshness_cert949` scans this module for per-outcome reads of that column
+    and strips `#` comments but not docstrings, so the qualified name in prose
+    reads to it as a read.) It is a named function rather than an inline
+    expression at each of the two futures serializers because those two have
+    drifted before (#1698, CERT-622, #2088 each record a column that landed on
+    one and missed the other), and a card that discloses its age on Discover but
+    not on the `MORE X` rail is exactly the defect #5752 was filed on.
 
     ═══ THE OLDEST LEG THE CARD SHOWS — NOT THE NEWEST LEG IT HAS (#5809) ═══
 
@@ -5834,8 +5840,8 @@ def _card_price_observed_at(market: Any) -> str | None:
     presidential nominee", whose served stamp was byte-identical to the
     observation time of a 1% candidate the card does not display.
 
-    So the value is now `top_price_stamp` — `MIN` over the legs the card PRINTS
-    — and the change is a narrowing of the SET, not an inversion of the rule.
+    So the value is now `MIN` over the legs the card PRINTS — and the change is
+    a narrowing of the SET, not an inversion of the rule.
     `lib/sourceAge.ts`'s `oldestSourceStamp` has always taken the oldest, and
     this now agrees with it for the same reason: three displayed probabilities
     are three facts, one mark speaks for all of them, and the oldest is the only
@@ -5843,25 +5849,40 @@ def _card_price_observed_at(market: Any) -> str | None:
     ACROSS facts.
 
     The measurement the `MAX` was defending is intact and is why the fold is
-    top-N rather than all-N: a single dead leg (measured: one market's fifth leg
-    at 123 DAYS while its leader was 50 minutes old) must not date a card whose
-    prices are current, and it cannot, because it is not in the top three. See
-    `_top_price_observed_at` for the residue that filtering leaves behind.
+    over the printed legs rather than all of them: a single dead leg (measured:
+    one market's fifth leg at 123 DAYS while its leader was 50 minutes old) must
+    not date a card whose prices are current, and it cannot, because the card
+    does not print it.
+
+    ═══ THE PRINTED LEGS, NOT THE TOP THREE BY PROBABILITY ═══
+
+    #5809's first half folded per market over the top three by probability,
+    which is a close PROXY for "displayed" and is not one. The card prints the
+    top three of a list that has been through `drop_duplicate_legs`, the
+    expired-rung and fabricated-book gates, `display_rank_order`,
+    `drop_incoherent_ladder_outcomes`, `_strip_mixed_binary_meta` and
+    `drop_dominant_field_outcomes` — and the two serializers below do not apply
+    the same chain as each other. So on any card those filters touch, a
+    market-level fold reads a leg the reader cannot see AND skips one they can.
+    Nothing computed away from the selection can be right about it, which is why
+    this takes the selection as its ARGUMENT and re-derives nothing. The
+    per-leg carrier that makes the fold answerable on a rehydrated snapshot is
+    `DERIVED_OUTCOME_COLUMNS`; its cost is measured in that module's note.
 
     ═══ ABSENT IS NOT ZERO ═══
 
-    `None` propagates. `price_poll_stamp` already returns `None` for a market
-    rehydrated from an older snapshot — "we do not know" — and the client draws
-    nothing for it rather than a stamp it cannot support. Serving the key with a
-    null is the #2088 rule: null is "checked and there is no stamp", absence is
-    "a payload from before this shipped".
+    `None` propagates. `displayed_price_stamp` returns `None` when no printed
+    leg carries an observation — "we do not know" — and the client draws nothing
+    for it rather than a stamp it cannot support. Serving the key with a null is
+    the #2088 rule: null is "checked and there is no stamp", absence is "a
+    payload from before this shipped".
 
     `_utc` for the same naive/aware reason as `resolution_date` beside it: the
     two carriers hand back stamps that differ in tzinfo, and an isoformat with
     no offset is read by `Date.parse` as LOCAL time in the reader's browser,
     which would age a fresh price by the reader's own UTC offset.
     """
-    stamp = _utc(_top_price_stamp(market))
+    stamp = _utc(_displayed_price_stamp(displayed_outcomes))
     return stamp.isoformat() if stamp else None
 
 
@@ -9364,9 +9385,15 @@ async def _score_sports_mode_futures(
         # their own card did not print. Nothing here reads anything the composers
         # produce; the move is an ordering change only.
         # Build compact feed data (same shape as _score_futures)
-        # UX-P005 class (a): display rank = position in the probability-sorted
-        # list, never the stored `rank` column (which disagrees on ~23% of
+        # UX-P005 class (a): display rank = display position in the probability-
+        # sorted list, never the stored `rank` column (which disagrees on ~23% of
         # feed-surfaced markets).
+        #
+        # #5809: bound ONCE and reused, rather than sliced again wherever the
+        # printed legs are needed. `price_observed_at` below has to be the age of
+        # exactly THESE rows, and two slices that happen to agree today are how a
+        # later edit to one of them dates a card by a leg it stopped printing.
+        printed_outcomes = card_outcomes[:CARD_PRICE_AGE_LEG_COUNT]
         top_outcomes_data = [
             {
                 "id": o.id,
@@ -9381,7 +9408,7 @@ async def _score_sports_mode_futures(
                     else None
                 ),
             }
-            for position, o in enumerate(card_outcomes[:3], start=1)
+            for position, o in enumerate(printed_outcomes, start=1)
         ]
         # The pre-humanization names, for `_printed_affirmative_percent`: after
         # the rewrite below a "Yes" row is a restatement of the question.
@@ -9610,7 +9637,7 @@ async def _score_sports_mode_futures(
             # which is when the question is answered; the two were confused on
             # the US Open final page, where a card an hour stale sat under a
             # hero stamped 20s and nothing on it said so.
-            "price_observed_at": _card_price_observed_at(market),
+            "price_observed_at": _card_price_observed_at(printed_outcomes),
             "top_outcomes": top_outcomes_data,
             # #2088: served even when null — null is "checked, and they do total
             # 100", which is a different fact from the key being absent (a payload
@@ -10732,6 +10759,10 @@ async def _score_futures(
             # outcome that was not the probability leader — any consumer that
             # trusts the stored column (native list ordering, "the favorite")
             # names the wrong winner while the probabilities beside it disagree.
+            # #5809: bound ONCE — see the sibling serializer. `price_observed_at`
+            # below is the age of exactly these rows, so they may not be selected
+            # twice.
+            printed_outcomes = card_outcomes[:CARD_PRICE_AGE_LEG_COUNT]
             top_outcomes_data = [
                 {
                     "id": o.id,
@@ -10748,7 +10779,7 @@ async def _score_futures(
                     ),
                 }
                 # Show top 3 in feed card
-                for position, o in enumerate(card_outcomes[:3], start=1)
+                for position, o in enumerate(printed_outcomes, start=1)
             ]
 
             # The pre-humanization names, for `_printed_affirmative_percent`:
@@ -11257,7 +11288,7 @@ async def _score_futures(
                 # #5752 — see the sibling serializer. Both futures cards carry
                 # the age or neither does; a rail that discloses on one route and
                 # not the other is the defect, not half a fix.
-                "price_observed_at": _card_price_observed_at(market),
+                "price_observed_at": _card_price_observed_at(printed_outcomes),
                 "top_outcomes": top_outcomes_data,
                 # #2088: served even when null — see the note on the other
                 # serializer. Null means "checked"; absent means "pre-#2088 build".

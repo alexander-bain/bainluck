@@ -299,16 +299,25 @@ class TestThePricePolledAtDerivation:
 
         assert rebuilt.price_polled_at is None
 
-    def test_the_wire_still_does_not_carry_a_per_outcome_stamp(self):
-        """Loaded is not carried, and that distinction is the cost saving.
+    def test_the_wire_carries_a_derived_second_and_never_the_datetime(self):
+        """Loaded is not carried, and the distinction survives #5809's completion.
 
-        `last_updated` on 193 outcomes per market was measured at +15% of a
-        2.9 MB size-capped artifact. It is loaded so the fold can happen and
-        then dropped, so nothing downstream may read it off a rebuilt outcome —
-        that read is an `AttributeError` in the per-item serializer, which
-        empties the whole futures pool (gotcha #42).
+        The refusal on record is against `last_updated` ITSELF: a `datetime` is a
+        TAGGED value on this wire, and one per outcome across up to 193 legs per
+        market was measured at +15% of a 2.9 MB size-capped artifact. That is
+        unchanged and this asserts it — the column stays loaded-and-dropped, and
+        reading `.last_updated` off a rebuilt outcome stays an `AttributeError`
+        in the per-item serializer, i.e. the whole futures pool (gotcha #42).
+
+        What #5809 added is a DERIVED int of whole UTC seconds beside it, which
+        is the same fact untagged and was measured on the LAT-P221 fixture at
+        +1.3% of the envelope. So the assertion here is not "no per-outcome
+        stamp" — it is the narrower and still load-bearing one: whatever the
+        outcome row carries, it is not the datetime, and the raw column does not
+        survive the wire under its own name.
         """
         assert "last_updated" not in fms.OUTCOME_COLUMNS
+        assert "last_updated" not in fms.OUTCOME_ROW_COLUMNS
         assert "last_updated" in fms.OUTCOME_LOAD_ONLY_EXTRA
 
         market = _orm_market(9104, "US Open Men's Singles Winner")
@@ -318,6 +327,12 @@ class TestThePricePolledAtDerivation:
 
         assert rebuilt.price_polled_at == FRESHLY_POLLED
         assert not hasattr(rebuilt.outcomes[0], "last_updated")
+        # The derived value IS there, and it is an int — not a datetime that
+        # merely travels under a different key, which would be the refusal
+        # re-entering through the name it was refused under.
+        carried = rebuilt.outcomes[0].price_observed_epoch
+        assert isinstance(carried, int) and not isinstance(carried, bool)
+        assert carried == int(FRESHLY_POLLED.timestamp())
 
     def test_no_consumer_reads_the_dropped_column_off_a_snapshot(self):
         """The other half of the line above, read off the route's source.
@@ -372,19 +387,27 @@ class TestTheSnapshotCarriesIt:
         This tuple is MEANT to rot. Changing the wire shape should fail here and
         be fixed by bumping the version in the same commit.
 
-        Rotted twice, as designed: `(3, 30, 12, 2)` -> `(4, 31, 12, 2)` for
-        #4758's `opening_baseline_at`, the second derived market column, then
-        `(4, 31, 12, 2)` -> `(5, 32, 12, 2)` for #5809's `top_price_observed_at`,
-        the third. This test is the reason each bump is in the same commit as
-        the column.
+        Rotted three times, as designed: `(3, 30, 12, 2)` -> `(4, 31, 12, 2)`
+        for #4758's `opening_baseline_at`, the second derived market column,
+        then `(4, 31, 12, 2)` -> `(5, 32, 12, 2)` for #5809's
+        `top_price_observed_at`, the third, then `(5, 32, 12, 2)` ->
+        `(6, 31, 13, 2)` when #5809 was completed: that market column removed and
+        `price_observed_epoch` added to the OUTCOME row.
+
+        The third rot is the one this tuple was really written for. Both widths
+        moved in the SAME commit and in OPPOSITE directions, so a v5 entry read
+        under v5's arity rules is one value long on the market row and one short
+        on the outcome row — and the module's own note says arity is not the
+        version's backstop. Reading the OUTCOME row width, not `OUTCOME_COLUMNS`,
+        for the same reason: the wire shape is what the version guards.
         """
         shape = (
             fms.SNAPSHOT_SCHEMA_VERSION,
             len(fms.MARKET_ROW_COLUMNS),
-            len(fms.OUTCOME_COLUMNS),
+            len(fms.OUTCOME_ROW_COLUMNS),
             len(fms.SPORT_COLUMNS),
         )
-        assert shape == (5, 32, 12, 2), (
+        assert shape == (6, 31, 13, 2), (
             "the snapshot wire shape changed. Bump `SNAPSHOT_SCHEMA_VERSION` "
             "(it is part of the shared cache key, so the bump is what stops this "
             "build reading a predecessor's rows) and update this tuple."

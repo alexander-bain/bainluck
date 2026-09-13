@@ -689,19 +689,29 @@ class TestDisplayRankMatchesProbability:
 
         return inspect.getsource(feed_module._score_sports_mode_futures)
 
+    #: The slice, spelled the way both serializers now spell it. #5809 bound it
+    #: to a name and read the count off `CARD_PRICE_AGE_LEG_COUNT`, because the
+    #: card's price-age mark folds over the SAME rows and two independent slices
+    #: are how the printed legs and the dated legs stop being the same legs. The
+    #: property THIS class guards is untouched: `rank` comes from `enumerate`,
+    #: never from the stale stored `rank` column.
+    _PRINTED_SLICE = "printed_outcomes = card_outcomes[:CARD_PRICE_AGE_LEG_COUNT]"
+    _PRINTED_ENUMERATE = "for position, o in enumerate(printed_outcomes, start=1)"
+
     def test_discover_card_rank_is_positional(self):
         src = self._score_futures_source()
-        assert "for position, o in enumerate(card_outcomes[:3], start=1)" in src
+        assert self._PRINTED_SLICE in src
+        assert self._PRINTED_ENUMERATE in src
         assert '"rank": position,' in src
 
     def test_sports_card_rank_is_positional(self):
-        # UX-P163: the enumerated list is now `card_outcomes`, matching the Discover
-        # sibling above. The property this test guards — `rank` comes from
-        # `enumerate`, never from the stale stored `rank` column — is unchanged; only
-        # WHICH list is enumerated moved, so that the slice and the display scale
-        # agree on what the card is (a no-bid ~100% "Other" is in neither).
+        # UX-P163: the enumerated list is `card_outcomes`, matching the Discover
+        # sibling above. Only WHICH list is enumerated moved, so that the slice and
+        # the display scale agree on what the card is (a no-bid ~100% "Other" is in
+        # neither) — and since #5809, so that the age mark agrees with both.
         src = self._sports_mode_source()
-        assert "for position, o in enumerate(card_outcomes[:3], start=1)" in src
+        assert self._PRINTED_SLICE in src
+        assert self._PRINTED_ENUMERATE in src
         assert '"rank": position,' in src
 
     def test_scoring_paths_keep_the_stored_rank(self):
