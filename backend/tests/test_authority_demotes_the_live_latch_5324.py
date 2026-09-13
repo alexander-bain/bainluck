@@ -623,3 +623,35 @@ def test_a_naive_stamp_is_read_as_utc_rather_than_crashing():
     made it and a `TypeError` here would take the whole transition task down."""
     naive = (NOW - timedelta(minutes=1)).replace(tzinfo=None)
     assert authority_not_started_holds({ESPN_NOT_STARTED_KEY: naive.isoformat()}, NOW) is True
+
+
+def test_a_period_arriving_on_a_HELD_row_releases_it_through_the_promoter():
+    """M3's survivor: the predicate's period guard had no test at all.
+
+    A demoted row that later gains a period is being played by some source
+    other than the one that demoted it — StatPal, MLB, a score write — and the
+    clock must be allowed to promote it again without waiting for either the
+    clearing pass or the TTL. Driven through the real promoter, not asserted on
+    the helper, because the helper is only as good as the loop that calls it.
+    """
+    ours = _FakeEvent(espn_id="401860883", status="scheduled", period=2)
+    ours.win_probability_sources = {ESPN_NOT_STARTED_KEY: NOW.isoformat()}
+
+    stats = _run_transition([ours], now=NOW + timedelta(seconds=60))
+
+    assert ours.status == "live"
+    assert stats["scheduled_to_live"] == 1
+    assert stats["held_authority_not_started"] == 0
+
+
+def test_a_game_clock_arriving_on_a_HELD_row_releases_it_through_the_promoter():
+    """The other half of the same guard. A clock is running; nobody may hold
+    this row out of `live` on a minutes-old statement that it had not begun."""
+    ours = _FakeEvent(espn_id="401860883", status="scheduled", game_clock="11:48")
+    ours.win_probability_sources = {ESPN_NOT_STARTED_KEY: NOW.isoformat()}
+
+    stats = _run_transition([ours], now=NOW + timedelta(seconds=60))
+
+    assert ours.status == "live"
+    assert stats["scheduled_to_live"] == 1
+    assert stats["held_authority_not_started"] == 0
