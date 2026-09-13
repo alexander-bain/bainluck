@@ -87,6 +87,10 @@ const visible = (html: string) =>
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
     .replace(/&#x2F;/g, "/")
+    // #5984: `<1%` / `>99%` reach the markup as entities. Decoded so the
+    // assertions read as the screen does rather than as the encoding.
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ");
 
@@ -142,7 +146,11 @@ describe("Additional Markets on a live tennis match: a played set is not a chanc
 
   test("set 1 is over, so it states a last quote and loses its bar", () => {
     const text = visible(render(1));
-    expect(text).toContain(`${SETTLED_QUOTE_PREFIX} 0%`);
+    // #5984: the row is priced 0.0005 in this very wire, and `0%` asserted the
+    // market had quoted zero. The claim this test makes — set 1 is over, so it
+    // states a LAST QUOTE and loses its bar — is untouched; only the quote's
+    // spelling moved, and the bar count below is the load-bearing half.
+    expect(text).toContain(`${SETTLED_QUOTE_PREFIX} <1%`);
     // The row is not deleted — a reader can still see the market exists. Its
     // label is the sided one now (#3575), which is also proof the set number
     // survives being rewritten out of the rendered string.

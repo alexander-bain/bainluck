@@ -17,7 +17,7 @@ import {
   SETTLED_SECTION_NOTE_NO_QUOTES,
   SETTLED_QUOTE_PREFIX,
 } from "@/lib/settledQuote";
-import { renderedPercent } from "@/lib/renderedPercent";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import { oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
 
@@ -83,7 +83,23 @@ function OutcomeBar({
   // not reach this line, because this line was a second copy of the rule
   // (CERT-2224). It is the contract's now; the bar's WIDTH below stays raw
   // geometry, which is a picture and not a claim.
-  const percent = renderedPercent(outcome.prob) ?? 0;
+  //
+  // #5984 — AND THE CONTRACT'S INTEGER IS NOT THE WHOLE ANSWER. `renderedPercent`
+  // is the cross-runtime ROUNDING contract and deliberately carries no boundary
+  // rule, so it answered 100 for `Set 2 Winner: Zverev vs Shelton` priced 0.999
+  // on the US Open men's final (`/api/events/15310688/game-markets`, read 20:11Z
+  // 2026-09-13) — a set standing at 6-6 and printed to a reader as decided.
+  // `probabilityDisplay` already owns that rule and already says the two compose:
+  // "a served 100 over a probability of 0.996 is still `>99%`, because rounding
+  // may never move a probability across a boundary it is not on". This line took
+  // the integer and skipped the rule. `formatProbabilityPercent` applies both and
+  // rounds with `renderedPercent` internally, so the CONTRACT is untouched and
+  // every row that is not on a boundary prints exactly what it printed before.
+  //
+  // The `?? 0` it replaces was dead: `mergeOutcomes` writes `probability ?? 0`,
+  // so `prob` is always a finite number by the time it reaches here, and a wire
+  // `null` arrives as a genuine 0 that still prints `0%` through both paths.
+  const percentText = formatProbabilityPercent(outcome.prob);
   // A finished GAME settles every row; a finished SET settles only the rows
   // that asked about it. Both end in the same render, because both are the same
   // statement to a reader: this number stopped being a chance.
@@ -120,7 +136,7 @@ function OutcomeBar({
           {outcome.label}
         </div>
         <span className="font-mono tabular-nums text-text-muted">
-          {SETTLED_QUOTE_PREFIX} {percent}%
+          {SETTLED_QUOTE_PREFIX} {percentText}
         </span>
       </div>
     );
@@ -141,14 +157,31 @@ function OutcomeBar({
           Only a LIVE row reaches this line — `result` and `frozen` both
           returned above — so a settled card never draws an age here. */}
       {showAge && <PriceAgeMark observedAt={outcome.observedAt} />}
+      {/* #5984, the SECOND defect on that same row: the bar read as EMPTY beside
+          a number claiming 100%. IT WAS NOT EMPTY — IT WAS FULL AND INVISIBLE.
+          `bg-text-muted/40` composites over this track to #C8CCD3 against
+          `--surface-border` #E5E7EB, which is 1.30:1 on a 6px bar: a 99.9%-wide
+          fill and a 0%-wide one are the same picture. De-emphasis is right here
+          — rank 0 owns the violet — but de-emphasis may not mean "conveys no
+          quantity", because the bar is the part of the row a reader takes in
+          first, and it was the half that disagreed with the number.
+
+          DROPPING THE /40 IS THE WHOLE FIX, and the alpha is the only thing that
+          moves. Measured against the track: muted/40 1.30:1 → muted 2.05:1, with
+          the violet leader at 2.20:1. That ordering is the reason this is not
+          `text-secondary`, which was the first choice because the LABEL beside it
+          is `text-text-secondary`: at 3.90:1 it is darker than the leader's bar,
+          so the de-emphasised row would out-shout the emphasised one and the
+          card's hierarchy would invert. A fix for invisibility that overshoots
+          into prominence is the same bug facing the other way. */}
       <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden max-w-[140px]">
         <div
-          className={`h-full rounded-full transition-all duration-500 ${rank === 0 ? "bg-violet-400" : "bg-text-muted/40"}`}
+          className={`h-full rounded-full transition-all duration-500 ${rank === 0 ? "bg-violet-400" : "bg-text-muted"}`}
           style={{ width: `${outcome.prob * 100}%` }}
         />
       </div>
       <span className="font-mono tabular-nums text-xs font-semibold w-10 text-right">
-        {percent}%
+        {percentText}
       </span>
     </div>
   );
