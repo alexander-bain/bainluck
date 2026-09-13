@@ -278,6 +278,15 @@ class LiveBlendRefresher:
                     MarketOutcomes(
                         market=market,
                         outcomes=outcomes_by_market.get(market.id, []),
+                        # #5820. The 15-minute matcher retires a leg whose only
+                        # speaker is a settled market on a game with no result;
+                        # this lane recomputes the same number every two
+                        # seconds from the same rows, so without the same input
+                        # it would re-publish what the matcher just cleared and
+                        # the two writers would disagree — the one thing this
+                        # module exists to prevent. The Event row is already
+                        # joined here, so it costs no query.
+                        event_has_result=event.completed_at is not None,
                     )
                 )
 

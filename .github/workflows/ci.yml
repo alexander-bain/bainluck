@@ -1761,6 +1761,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#5820 the settled-speaker sweep reaches the suspended cohort (real Postgres)"
+        # CERT-2787. The clause that stops a settled market speaking for a game
+        # with no result shipped correct and UNREACHABLE: on the matcher it is
+        # only asked about rows Phase 2 selected, and Phase 2 selects
+        # scheduled/live plus completed inside 24h — while 144 of the 150
+        # affected production events are `suspended`. The 18 guards that shipped
+        # with it all passed against a build whose reach was zero.
+        #
+        # Real Postgres because the repair IS a selector: `jsonb_exists` over a
+        # JSONB column, a correlated EXISTS over `futures_markets` carrying a
+        # second EXISTS over `futures_outcomes`, and an expanding bind. A fake
+        # session evaluates none of them, and the first does not exist outside
+        # PostgreSQL.
+        #
+        # Same skip-detection as every gate in this job: adding the file is not
+        # adding the gate.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_settled_speaker_sweep_reaches_suspended_5820_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/sweep5820.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/sweep5820.txt; then
+            echo "::error::#5820 settled-speaker sweep gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4745 empty-book openings actually leave the published curve (real Postgres)"
         # CERT-2508 BLOCKed the guard that shipped in `ece46743`: it only reaches
         # rows where `opening_probability IS NULL`, so the ~16,960 legs the
