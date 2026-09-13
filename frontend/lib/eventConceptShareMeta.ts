@@ -93,10 +93,19 @@ export interface EventConceptShareSource {
 }
 
 /** A competitor we are willing to print: a name and a printable probability. */
-interface PricedCompetitor {
+export interface PricedCompetitor {
   name: string;
   /** Already formatted, e.g. `"55%"`. */
   probability: string;
+  /**
+   * The raw 0..1 value `probability` was formatted from.
+   *
+   * Carried rather than parsed back out of the string (#5888) — see the same
+   * field on `tournamentShareMeta`'s `BoardLeader`. The card draws a bar from
+   * this; re-deriving it from `"55%"` is the seam where the picture and the
+   * sentence beneath it start to disagree.
+   */
+  fraction: number;
 }
 
 /**
@@ -155,7 +164,11 @@ function pricedCompetitors(
     .map((competitor) => {
       const name = cleanText(competitor.name);
       const probability = formatShareProbability(competitor.probability);
-      return name && probability ? { name, probability } : null;
+      // A returned string means `competitor.probability` is finite and non-zero
+      // — that is precisely what `formatShareProbability` rejects on.
+      return name && probability
+        ? { name, probability, fraction: competitor.probability as number }
+        : null;
     })
     .filter((competitor): competitor is PricedCompetitor => competitor !== null);
 }
@@ -179,18 +192,59 @@ function separator(name: string): string {
   return name.includes(":") ? " — " : ": ";
 }
 
+/**
+ * The facts the unfurl reads, before anything decides how to say them.
+ *
+ * #5888 — the CARD needs these too. Until this existed, a pasted event-concept
+ * link carried a title built from the payload and a picture that was the site's
+ * house card: the same image for a UFC main event, the 2026 midterms and a slug
+ * that does not exist.
+ *
+ * Extracted rather than re-derived. Every judgement above is one the image must
+ * make identically or the card will contradict its own caption — `settled` is
+ * read from `event.status`, `winner` ONLY from the authoritative `won` flag and
+ * never inferred from a 0.99 price (see the header: that exact inference would
+ * have unfurled a live fight as won), and `priced` drops 0% longshots rather
+ * than printing them. One implementation, two readers.
+ */
+export interface EventConceptShareFacts {
+  /** The event's own name, or `"Event"` when it has none. */
+  name: string;
+  /** The primary contest's label, or null when absent or merely the role. */
+  label: string | null;
+  /** Venue and location as one phrase, or null. */
+  where: string | null;
+  /** Priced competitors, best first. Empty when nothing is priced. */
+  priced: PricedCompetitor[];
+  /** `event.status === "settled"`. */
+  settled: boolean;
+  /** The flagged winner's name, or null. Never inferred from a price. */
+  winner: string | null;
+}
+
+export function eventConceptShareFacts(
+  source: EventConceptShareSource
+): EventConceptShareFacts {
+  return {
+    name: cleanText(source.event?.name) ?? "Event",
+    label: contestLabel(source),
+    where: place(source),
+    priced: pricedCompetitors(source),
+    settled: cleanText(source.event?.status)?.toLowerCase() === "settled",
+    winner: flaggedWinner(source),
+  };
+}
+
 /** The unfurl copy for one event concept. */
 export function buildEventConceptShareCopy(source: EventConceptShareSource): {
   title: string;
   description: string;
 } {
-  const name = cleanText(source.event?.name) ?? "Event";
-  const label = contestLabel(source);
-  const where = place(source);
+  const { name, label, where, priced, settled, winner } =
+    eventConceptShareFacts(source);
   const sep = separator(name);
 
   // ── SETTLED, WITH AN AUTHORITATIVE WINNER ──────────────────────────────────
-  const winner = flaggedWinner(source);
   if (winner) {
     return {
       title: `${name}${sep}${winner} won`,
@@ -203,7 +257,7 @@ export function buildEventConceptShareCopy(source: EventConceptShareSource): {
   // ── SETTLED, AND NOTHING NAMED A WINNER ────────────────────────────────────
   // `/events/[id]`'s last rung. A price here is a forecast on a closed
   // question, which is why it is not printed.
-  if (cleanText(source.event?.status)?.toLowerCase() === "settled") {
+  if (settled) {
     return {
       title: `${name}${sep}Final`,
       description: truncateShareText(
@@ -211,8 +265,6 @@ export function buildEventConceptShareCopy(source: EventConceptShareSource): {
       ),
     };
   }
-
-  const priced = pricedCompetitors(source);
 
   // ── NOTHING PRICED ─────────────────────────────────────────────────────────
   // Say what the page is; claim nothing about who is ahead.
