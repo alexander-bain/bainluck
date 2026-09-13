@@ -5,6 +5,8 @@ import { fetchFeed } from "@/lib/api";
 import type { FeedConceptData, FeedEventData, FeedFuturesData } from "@/lib/types";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
+import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { eventPath } from "@/lib/eventKey";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 
@@ -56,6 +58,31 @@ const RENDERABLE = new Set(["event", "futures", "concept"]);
  *   already returned `-` for absent data and that is kept, but a card with no
  *   priced outcome at all shows its title and no field rather than a list of
  *   dashes.
+ *
+ * ═══ #5961: A CARD'S TWO ROWS ARE ONE ROUNDING ═══
+ *
+ * Both branches below called `formatProbability(probability)` with no second
+ * argument, so every row was rounded on its own and a two-row card could print
+ * 101. That is the arithmetic `contracts/rendered_percent.json` exists to
+ * replace, and `formatProbabilityPercent`'s `{ rendered }` option is the exact
+ * hole this component left unfilled.
+ *
+ * Measured on production 2026-09-13 19:38Z, over the 17 sport-category feeds
+ * these two call sites can request (108 cards): **2 print a sum other than 100
+ * and both are corrected** — `Buffalo Bills @ Houston Texans` at 0.625/0.375
+ * printing `63` over `38`, and `Will Arthur Fils Make the Top 10…` at
+ * 0.785/0.215 printing `79` over `22` while the payload it was handed carried
+ * `79` and `21`. Four more print a non-100 and are deliberately LEFT ALONE —
+ * `Novak Djokovic: Retirement` (49 + 21), `Russia x Ukraine ceasefire` (23 + 7),
+ * `Worlds 2026: Winner` (38 + 1), `Worlds 2026: Finals MVP` (11 + 8) — because
+ * those pairs fall outside the complement band and normalizing them would
+ * invent probability rather than round it (gotcha #43: the unfixed direction is
+ * asserted as explicitly as the fixed one).
+ *
+ * ALSO SEEN, ALSO THIS: ux/1239 photographed `US Open Men's Singles Winner` on
+ * `/events/15310688` at 17:36Z printing `Alexander Zverev 58%` over
+ * `Ben Shelton 43%` (`artifacts/ux-1239/SHOP-mens-final-prematch-1736Z-390.png`)
+ * — 0.575 + 0.425, an exact complement, on the most-read page of the day.
  */
 const CARD =
   "flex flex-col rounded-2xl border border-surface-border bg-surface-card px-3.5 py-3 " +
@@ -137,10 +164,34 @@ export default function RelatedByTag({
           if (item.type === "event") {
             const d = item.data as FeedEventData;
             /* A game's field is its two sides. Away first, matching the title,
-               so the two lines below read in the order the title names them. */
-            const sides: { name: string; probability: number | null | undefined }[] = [
-              { name: d.away_team, probability: d.current_odds?.away_probability },
-              { name: d.home_team, probability: d.current_odds?.home_probability },
+               so the two lines below read in the order the title names them.
+
+               THE SERVER DECIDES THIS PAIR (#5961), AND IT IS TAKEN WHOLE OR
+               NOT AT ALL (#2279). `current_odds.{away,home}_rendered_percent` is
+               the card-level answer for a duel, served precisely because four
+               surfaces draw this strip; this one ignored it and rounded each
+               side independently. `servedDuelPercents` is the adoption every
+               other web surface uses: both served or the pair falls back whole
+               to the contract rule. Coalescing the two fields SEPARATELY is the
+               defect #2279 closed — a payload carrying one and not the other
+               (the fields are optional because a Discover response is cached)
+               then prints a served value beside a locally derived one, which is
+               the same 101 arriving from the other side. */
+            const awayProbability = d.current_odds?.away_probability;
+            const homeProbability = d.current_odds?.home_probability;
+            const duel = servedDuelPercents(
+              awayProbability,
+              homeProbability,
+              d.current_odds?.away_rendered_percent,
+              d.current_odds?.home_rendered_percent,
+            );
+            const sides: {
+              name: string;
+              probability: number | null | undefined;
+              rendered: number | null | undefined;
+            }[] = [
+              { name: d.away_team, probability: awayProbability, rendered: duel[0] },
+              { name: d.home_team, probability: homeProbability, rendered: duel[1] },
             ];
             const priced = sides.some(
               (side) => side.probability !== null && side.probability !== undefined
@@ -175,7 +226,9 @@ export default function RelatedByTag({
                       <li key={side.name} className={FIELD_ROW}>
                         <span className={FIELD_NAME}>{side.name}</span>
                         <span className={FIELD_VALUE}>
-                          {formatProbability(side.probability)}
+                          {formatProbability(side.probability, {
+                            rendered: side.rendered,
+                          })}
                         </span>
                       </li>
                     ))}
@@ -230,6 +283,35 @@ export default function RelatedByTag({
           const field = (d.top_outcomes ?? [])
             .filter((outcome) => typeof outcome.probability === "number")
             .slice(0, MAX_FIELD_ROWS);
+          /* THE SERVED PERCENT ANSWERS FOR A CARD THIS ONE IS NOT (#5961), so
+             here the card rule is re-derived over the rows actually printed and
+             the served value is the fallback — the opposite precedence to the
+             game branch above, for a reason.
+
+             `feed._apply_card_percents` says it plainly: it is taken over the
+             already-sliced `top_outcomes_data`, "which IS the printed card …
+             the arity here is the arity a reader sees". True of `FeedCard`,
+             which prints all three. NOT true here: the filter directly above
+             drops unpriced outcomes (ux/1034 B6 — "a rank with no number in it
+             is not a rank"), so a knockout market narrowed to two priced
+             finalists arrives as arity 3 and is PRINTED as arity 2. The server
+             rounded three outcomes independently and was right to; the card
+             then showed two of them as a pair. That gap is the whole defect,
+             and it opened the day this component started filtering.
+
+             `renderedOutcomeRowPercents` yields all-nulls for any arity but
+             two, so on every other card this reads through to the server's own
+             answer and nothing moves.
+
+             WHOLE OR NOT AT ALL, for #2279's reason one arm wider: the choice
+             is made ONCE for the card rather than per row, so no card can ever
+             print a derived number beside a served one. */
+          const derivedField = renderedOutcomeRowPercents(
+            field.map((outcome) => outcome.probability),
+          );
+          const fieldPercents = derivedField.every((percent) => percent !== null)
+            ? derivedField
+            : field.map((outcome) => outcome.rendered_percent ?? null);
           return (
             <Link
               key={`rel-futures-${d.id}`}
@@ -241,11 +323,13 @@ export default function RelatedByTag({
               <span className={CARD_TITLE}>{d.name}</span>
               {field.length > 0 && (
                 <ol className="mt-1.5 space-y-0.5" data-testid="related-card-field">
-                  {field.map((outcome) => (
+                  {field.map((outcome, index) => (
                     <li key={outcome.name} className={FIELD_ROW}>
                       <span className={FIELD_NAME}>{outcome.name}</span>
                       <span className={FIELD_VALUE}>
-                        {formatProbability(outcome.probability)}
+                        {formatProbability(outcome.probability, {
+                          rendered: fieldPercents[index],
+                        })}
                       </span>
                     </li>
                   ))}
