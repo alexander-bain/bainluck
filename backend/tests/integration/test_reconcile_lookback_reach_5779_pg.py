@@ -125,6 +125,25 @@ async def pg_session():
             text("DELETE FROM sports WHERE key = ANY(:keys)"),
             {"keys": SEEDED_SPORT_KEYS},
         )
+        # 🔴 Measured in CI, not guessed: `UniqueViolationError: duplicate key
+        # value violates unique constraint "sports_pkey", Key (id)=(1) already
+        # exists`. Several gates in this job seed `sports` and `events` with
+        # EXPLICIT ids (#5789's NFL rows are literal production ids), which never
+        # advances the serial sequence — so the next gate that lets the sequence
+        # assign one gets `1` in a table that already holds `1`. It passes on a
+        # fresh local database and fails on the shared CI one, which is the worst
+        # shape a gate can have, so the sequences are resynced here rather than
+        # left to the running order.
+        for table in ("sports", "events"):
+            await conn.execute(
+                text(
+                    "SELECT setval("
+                    "  pg_get_serial_sequence(:t, 'id'),"
+                    f"  COALESCE((SELECT MAX(id) FROM {table}), 0) + 1,"
+                    "  false)"
+                ),
+                {"t": table},
+            )
 
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
