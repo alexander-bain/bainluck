@@ -89,6 +89,68 @@ def espn_replay_unsettles(event_status, espn_status) -> bool:
     return espn_status == "in" and event_status in ("completed", "closed")
 
 
+def play_evidence(home_score=None, away_score=None, period=None, game_clock=None) -> bool:
+    """Is there positive evidence on this row that the game is being PLAYED?
+
+    THE ONE DEFINITION, shared by all four sites that ask (#5324, CERT-2782).
+    The demotion refuses on it, the promoter's hold is superseded by it, the
+    marker is cleared on it, and the refresh declines on it. They were three
+    copies of the same loop for one revision and that is how a row starts
+    ping-ponging between two tasks that disagree by a field — so the agreement
+    is structural here rather than a convention three docstrings promise.
+
+    A non-zero score, a period, or a game clock. A 0-0 with no clock is NOT
+    evidence: ``COALESCE(home_score,0)=0`` conflates absence with a real nil-nil
+    (live/182 rider 2), and that ambiguous shape is precisely what the authority
+    exists to break the tie on.
+
+    ``isinstance(True, int)`` is True in Python, so a bool in a score column
+    would otherwise read as 1. A bool there is garbage, not an observation.
+    """
+    if period or game_clock:
+        return True
+    for side in (home_score, away_score):
+        if isinstance(side, bool) or not isinstance(side, int):
+            continue
+        if side != 0:
+            return True
+    return False
+
+
+def espn_scheduled_marks_not_started(
+    event_status,
+    espn_status,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+) -> bool:
+    """Should this row CARRY the "authority says not started" marker right now?
+
+    CERT-2782's required repair, `5324-REPEATED-SCHEDULED-PASS-RETAINS-HOLD`.
+    The demotion predicate below answers a narrower question — *should the
+    status change* — and it is False once the row is already ``scheduled``. The
+    first cut used "the demotion did not fire" as the cue to CLEAR the marker,
+    so the second consecutive ESPN `scheduled` pass deleted the very fact the
+    first one recorded and the next transition restored ``LIVE``. The flicker
+    came back with a period of two passes instead of one.
+
+    So the marker's presence is its own question, asked of the same authority
+    statement: ESPN says not started, our row is ``live`` (about to be demoted)
+    or already ``scheduled`` (demoted on an earlier pass), and nothing on the
+    row says it is being played. While all three hold the marker is REFRESHED,
+    which is also what keeps the hold alive past its TTL for a start that slides
+    a long way.
+
+    Any other ESPN state leaves the marker exactly where it is. In particular
+    ``status_delayed`` neither stamps nor clears — ESPN publishes it before a
+    start and mid-game alike, so it is not a statement either way.
+    """
+    if espn_status != "scheduled" or event_status not in ("live", "scheduled"):
+        return False
+    return not play_evidence(home_score, away_score, period, game_clock)
+
+
 def espn_scheduled_demotes_live(
     event_status,
     espn_status,
@@ -152,14 +214,7 @@ def espn_scheduled_demotes_live(
     """
     if espn_status != "scheduled" or event_status != "live":
         return False
-    if period or game_clock:
-        return False
-    for side in (home_score, away_score):
-        if isinstance(side, bool) or not isinstance(side, int):
-            continue
-        if side != 0:
-            return False
-    return True
+    return not play_evidence(home_score, away_score, period, game_clock)
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -252,13 +307,8 @@ def authority_not_started_holds(
     clock, so when in doubt the ordinary promotion path must win; the alternative
     is a row stuck out of `live` on a corrupt string nobody can see.
     """
-    if period or game_clock:
+    if play_evidence(home_score, away_score, period, game_clock):
         return False
-    for side in (home_score, away_score):
-        if isinstance(side, bool) or not isinstance(side, int):
-            continue
-        if side != 0:
-            return False
 
     raw = (sources or {}).get(ESPN_NOT_STARTED_KEY)
     if not isinstance(raw, str):

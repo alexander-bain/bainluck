@@ -1239,6 +1239,8 @@ async def _process_live_sport(
     from app.utils.espn_helpers import (
         clear_authority_not_started,
         espn_scheduled_demotes_live,
+        espn_scheduled_marks_not_started,
+        play_evidence,
         stamp_authority_not_started,
     )
 
@@ -1472,11 +1474,19 @@ async def _process_live_sport(
         # because that fold is real; ruling 048's id-anchored correspondence is
         # the bar for a claim about identity, and this is one. The tennis
         # authority write next door is likewise anchored-only.
-        if match_method == "espn_id" and espn_scheduled_demotes_live(
+        _authority_says_not_started = match_method == "espn_id" and (
+            espn_scheduled_marks_not_started(
+                event.status, ee.status,
+                home_score=event.home_score, away_score=event.away_score,
+                period=event.period, game_clock=event.game_clock,
+            )
+        )
+        _demotes = _authority_says_not_started and espn_scheduled_demotes_live(
             event.status, ee.status,
             home_score=event.home_score, away_score=event.away_score,
             period=event.period, game_clock=event.game_clock,
-        ):
+        )
+        if _demotes:
             logger.info(
                 "ESPN authority demotes LIVE -> scheduled: event %d (%s vs %s) "
                 "— ESPN reports STATUS_SCHEDULED, our commence %s (#5324)",
@@ -1514,14 +1524,44 @@ async def _process_live_sport(
                 stats.get("live_demoted_by_authority", 0) + 1
             )
             changed = True
-        elif match_method == "espn_id":
-            # THE HOLD IS RELEASED BY THE SAME AUTHORITY THAT SET IT.
+        elif _authority_says_not_started:
+            # THE SECOND, THIRD AND FOURTH `scheduled` PASS (CERT-2782).
             #
-            # Any anchored pass that is NOT "the authority says not started"
-            # clears the marker — ESPN reporting play, halftime, final, or a
-            # score landing on the row. Without this the hold would expire on
-            # its TTL instead of on evidence, which is slower and, worse, reads
-            # as a timeout rather than as a fact being superseded.
+            # The row is already `scheduled` — there is nothing to demote — but
+            # the authority is still saying the game has not begun, so the
+            # marker is REFRESHED rather than left to age out. Without this the
+            # hold would expire on its TTL while ESPN was still, every 60
+            # seconds, telling us the game had not started.
+            #
+            # The first cut had no branch here at all: it read "the demotion
+            # did not fire" as "clear the marker", so this pass DELETED the
+            # fact the previous one recorded and the next transition put the
+            # row back to LIVE. That is the flicker, with a period of two
+            # passes instead of one.
+            _wps_refreshed = stamp_authority_not_started(
+                event.win_probability_sources, datetime.now(timezone.utc)
+            )
+            await session.execute(
+                sql_update(Event)
+                .where(Event.id == event.id)
+                .values(win_probability_sources=_wps_refreshed)
+            )
+            event.win_probability_sources = _wps_refreshed
+            stats["authority_not_started_refreshed"] = (
+                stats.get("authority_not_started_refreshed", 0) + 1
+            )
+            changed = True
+        elif match_method == "espn_id" and play_evidence(
+            event.home_score, event.away_score, event.period, event.game_clock,
+        ):
+            # CLEARED ONLY ON POSITIVE PLAY, which is the whole correction.
+            #
+            # The marker is a claim that the game has not begun. Only evidence
+            # that it HAS may retract it — the same `play_evidence` the hold is
+            # superseded by and the demotion refuses on, so no pass can clear a
+            # fact another pass would immediately re-stamp. An ambiguous or
+            # unrecognised ESPN state (`status_delayed` above all) leaves the
+            # marker exactly where it is; silence retracts nothing.
             _wps_cleared = clear_authority_not_started(event.win_probability_sources)
             if _wps_cleared is not event.win_probability_sources:
                 await session.execute(

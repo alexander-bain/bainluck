@@ -68,7 +68,9 @@ from app.utils.espn_helpers import (
     ESPN_NOT_STARTED_KEY,
     authority_not_started_holds,
     espn_scheduled_demotes_live,
+    espn_scheduled_marks_not_started,
     match_event_to_espn,
+    play_evidence,
 )
 
 SPORT = "americanfootball_ncaaf"
@@ -655,3 +657,156 @@ def test_a_game_clock_arriving_on_a_HELD_row_releases_it_through_the_promoter():
     assert ours.status == "live"
     assert stats["scheduled_to_live"] == 1
     assert stats["held_authority_not_started"] == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CERT-2782's REQUIRED REPAIR: THE SECOND `scheduled` PASS MUST NOT CLEAR
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The first repair held for exactly one cycle. `espn_scheduled_demotes_live` is
+# False once the row is already `scheduled` — there is nothing left to demote —
+# and the clearing arm read that as "the authority has stopped saying it", so
+# the SECOND consecutive `scheduled` pass deleted the marker the first one wrote
+# and the next transition restored LIVE. Same flicker, period two passes.
+#
+# `espn_scheduled_marks_not_started` now answers the marker's own question, and
+# clearing requires positive play rather than the mere absence of a demotion.
+
+
+def test_repeated_authority_scheduled_pass_retains_hold_5324():
+    """THE REPAIR: two ESPN passes and two transition passes, in production
+    order, exactly the cycle CERT-2782 reproduced.
+
+    The grader's sequence was
+    `scheduled/marker=true -> held -> marker=false/cleared -> live`.
+    It must now be `scheduled/marker -> held -> scheduled/marker -> held`.
+    """
+    ours = _FakeEvent(espn_id="401860883", status="live")
+    board = [_espn_event("401860883", status="scheduled")]
+
+    # Pass 1: demote and stamp.
+    s1 = _run_frozen([ours], board, now=NOW)
+    assert ours.status == "scheduled"
+    assert s1["live_demoted_by_authority"] == 1
+    first_stamp = ours.win_probability_sources[ESPN_NOT_STARTED_KEY]
+
+    # Transition 1: held.
+    t1 = _run_transition([ours], now=NOW + timedelta(seconds=60))
+    assert ours.status == "scheduled"
+    assert t1["held_authority_not_started"] == 1
+
+    # Pass 2 — THE ONE THAT USED TO WIPE IT. Nothing to demote; the authority is
+    # still saying not started, so the marker is refreshed, never cleared.
+    later = NOW + timedelta(seconds=120)
+    s2 = _run_frozen([ours], board, now=later)
+    assert ESPN_NOT_STARTED_KEY in (ours.win_probability_sources or {})
+    assert s2.get("authority_not_started_cleared", 0) == 0
+    assert s2.get("authority_not_started_refreshed", 0) == 1
+    assert s2.get("live_demoted_by_authority", 0) == 0
+    assert ours.win_probability_sources[ESPN_NOT_STARTED_KEY] != first_stamp, (
+        "the marker must be REFRESHED, or the hold ages out while ESPN is "
+        "still saying the game has not begun"
+    )
+
+    # Transition 2: still held. This is the assertion that was exit 1.
+    t2 = _run_transition([ours], now=later + timedelta(seconds=60))
+    assert ours.status == "scheduled", "the second cycle restored LIVE"
+    assert t2["held_authority_not_started"] == 1
+    assert t2["scheduled_to_live"] == 0
+
+
+def test_the_hold_outlives_its_own_TTL_while_the_authority_keeps_saying_it():
+    """The refresh is not cosmetic: a start that slides past the TTL must stay
+    demoted, because ESPN is still reporting it has not begun every 60s."""
+    ours = _FakeEvent(espn_id="401860883", status="live")
+    board = [_espn_event("401860883", status="scheduled")]
+
+    _run_frozen([ours], board, now=NOW)
+    # Well past the TTL, but re-stamped on the way there.
+    far = NOW + AUTHORITY_NOT_STARTED_TTL + timedelta(minutes=30)
+    _run_frozen([ours], board, now=far)
+
+    stats = _run_transition([ours], now=far + timedelta(seconds=60))
+
+    assert ours.status == "scheduled"
+    assert stats["held_authority_not_started"] == 1
+
+
+def test_an_ambiguous_state_does_not_retract_the_marker():
+    """`status_delayed` is published before a start AND mid-game. It stamps
+    nothing and — the half CERT-2782 caught — it must clear nothing either.
+    Silence retracts no fact."""
+    ours = _FakeEvent(espn_id="401860883", status="live")
+    _run_frozen([ours], [_espn_event("401860883", status="scheduled")], now=NOW)
+    assert ESPN_NOT_STARTED_KEY in ours.win_probability_sources
+
+    stats = _run_frozen(
+        [ours], [_espn_event("401860883", status="status_delayed")],
+        now=NOW + timedelta(seconds=120),
+    )
+
+    assert ESPN_NOT_STARTED_KEY in (ours.win_probability_sources or {})
+    assert stats.get("authority_not_started_cleared", 0) == 0
+
+
+def test_play_ARRIVING_is_what_clears_the_marker():
+    """The only retraction there is. A score lands, so the claim that the game
+    has not begun is false and the marker goes."""
+    ours = _FakeEvent(espn_id="401860883", status="live")
+    _run_frozen([ours], [_espn_event("401860883", status="scheduled")], now=NOW)
+    assert ESPN_NOT_STARTED_KEY in ours.win_probability_sources
+
+    stats = _run_frozen(
+        [ours], [_espn_event("401860883", status="in", hs=7, aws=3, clock="4:01")],
+        now=NOW + timedelta(seconds=120),
+    )
+
+    assert ESPN_NOT_STARTED_KEY not in (ours.win_probability_sources or {})
+    assert stats["authority_not_started_cleared"] == 1
+
+    _run_transition([ours], now=NOW + timedelta(seconds=180))
+    assert ours.status == "live"
+
+
+# ── `play_evidence`, the one definition the four sites share ────────────────
+
+
+def test_the_marker_question_accepts_an_already_scheduled_row():
+    """The whole difference from the demotion predicate, stated directly."""
+    assert espn_scheduled_marks_not_started("scheduled", "scheduled") is True
+    assert espn_scheduled_demotes_live("scheduled", "scheduled") is False
+
+
+def test_the_marker_question_refuses_a_settled_row():
+    for settled in ("completed", "closed", "suspended"):
+        assert espn_scheduled_marks_not_started(settled, "scheduled") is False
+
+
+def test_the_marker_question_refuses_play_evidence():
+    assert espn_scheduled_marks_not_started(
+        "scheduled", "scheduled", home_score=21, away_score=14,
+    ) is False
+    assert espn_scheduled_marks_not_started(
+        "scheduled", "scheduled", period=3,
+    ) is False
+    assert espn_scheduled_marks_not_started(
+        "scheduled", "scheduled", game_clock="0:42",
+    ) is False
+
+
+@pytest.mark.parametrize("espn_status", ["in", "post", "status_halftime",
+                                         "status_delayed", "", None])
+def test_only_scheduled_marks_not_started(espn_status):
+    assert espn_scheduled_marks_not_started("live", espn_status) is False
+
+
+def test_play_evidence_is_the_shared_definition():
+    """If these four ever disagree the row ping-pongs between two tasks, which
+    is the defect class twice over. Pinned as one question."""
+    assert play_evidence() is False
+    assert play_evidence(home_score=0, away_score=0) is False
+    assert play_evidence(home_score=True, away_score=False) is False
+    assert play_evidence(home_score=1) is True
+    assert play_evidence(away_score=2) is True
+    assert play_evidence(period=1) is True
+    assert play_evidence(game_clock="12:00") is True
