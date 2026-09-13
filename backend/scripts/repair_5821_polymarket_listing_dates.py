@@ -5,9 +5,20 @@ CERT-2793 BLOCK, required repair `5821-EXISTING-SPLIT-CONTAINERS-COLLAPSE`.
 ------------------------------------------------------------------------------
 WHAT A READER SEES, AND THE SPECIMEN THE ISSUE NAMES
 ------------------------------------------------------------------------------
-`/api/events/search?q=Al Nassr` serves ONE AFC Champions League fixture TWICE,
-both reading `live`, for a match that has not kicked off. Measured on
-production 2026-09-13 10:2xZ (`db-query`):
+Searching for "Al Nassr" serves ONE AFC Champions League fixture TWICE, both
+reading `live`, for a match that has not kicked off. Measured on production
+2026-09-13 10:2xZ (`db-query`):
+
+(The endpoint is named in prose rather than written as a query URL, and that is
+deliberate. `test_every_search_probing_script_declares_itself_machine_traffic`
+treats the search path followed by a query separator, in ANY file under
+`scripts/`, as a script addressing a search surface — one that must therefore
+tag itself `x-bainluck-origin` so our own robots never vote in the warm head
+(notice 39). This script sends no request of any kind. Naming the surface
+without building its URL is the honest side of that line; declaring machine
+traffic a script never emits would be the dishonest one. Twice, in fact: the
+first rewrite still spelled the URL inside this very parenthesis and reddened
+the same guard.)
 
     15311503  Al Ain FC v Al Nassr Club  commence 2026-09-13 03:46:20Z  suspended
               holds Gamma container 1014622  venue_game_start 2026-09-15T16:00:00Z
