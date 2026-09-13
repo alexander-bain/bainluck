@@ -327,6 +327,9 @@ class _RecordingSession:
         if statement is fpr._KALSHI_WITHDRAW_PRE_KICKOFF_SQL:
             # Three rungs, the shape production holds for SEVVCF.
             return _Result([(1,), (2,), (3,)])
+        if statement is fpr._KALSHI_WITHDRAW_EVENT_HERO_SQL:
+            # One event — the specimen's — cleared of its Kalshi blend key.
+            return _Result([(924_270,)])
         return _Result()
 
     async def commit(self):
@@ -414,3 +417,115 @@ class TestTheRunWithdrawsAndCounts:
         session = _RecordingSession()
         stats = asyncio.run(_drive(monkeypatch, session, verdict=None))
         assert "pre_kickoff_quotes_withdrawn" in stats
+
+
+# --- 6. CERT-2772's repair: the statement that clears the PAGE ---------------
+
+
+class TestTheHeroStatement:
+    """The leg and the number a reader sees are two different rows.
+
+    CERT-2772: the withdrawal above made `futures_outcomes.current_probability`
+    NULL and `bainluck.com/events/15298125` went on serving 99%, because the
+    hero and the chart read `Event.win_probability_sources` — stamped by the
+    15-minute matcher and never re-derived when its source row goes quiet.
+    These assert the scope of the statement that repairs it; the SERVED number
+    itself is proved against real rows in
+    `tests/integration/test_futures_price_refresh_writes_pg.py::TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine`,
+    because a recording double cannot observe a page.
+    """
+
+    SQL = str(fpr._KALSHI_WITHDRAW_EVENT_HERO_SQL)
+
+    def test_it_is_scoped_to_an_event_that_has_not_started(self):
+        """Settled means settled: a finished contest SHOULD carry its terminal
+        number, and this must be inert there by construction."""
+        assert "e.status = 'scheduled'" in self.SQL
+        assert "e.commence_time > NOW()" in self.SQL
+
+    def test_it_removes_the_key_rather_than_zeroing_it(self):
+        """The blend's vocabulary is membership — `compute_aggregate_probability`
+        weighs the keys that are present. Any value we could write there would
+        be a number we do not have."""
+        assert "SET win_probability_sources = e.win_probability_sources - 'kalshi'" in (
+            " ".join(self.SQL.split())
+        )
+        # It READS `current_probability` in its second arm and must never WRITE
+        # one: the assertion is on the assignment, not on the word.
+        assert "current_probability =" not in self.SQL
+        assert "opening_home_probability" not in self.SQL
+
+    def test_it_speaks_only_for_kalshi(self):
+        """Polymarket, the sportsbook blend and the card's metadata key are not
+        collateral: nothing here has read anything about them."""
+        assert "polymarket" not in self.SQL
+        assert "betting" not in self.SQL
+        assert "espn" not in self.SQL
+
+    def test_it_has_both_arms_and_they_are_not_the_same_arm(self):
+        """Arm 1 is attribution — the stored entry names the market that wrote
+        it, so a DIFFERENT valid Kalshi speaker is untouched. Arm 2 is the
+        pre-attribution shape, where the only safe test is that no Kalshi price
+        survives on the event at all."""
+        assert "'{kalshi,eligibility,market_id}'" in self.SQL
+        assert "NOT EXISTS" in self.SQL
+        assert "fo2.current_probability IS NOT NULL" in self.SQL
+
+    def test_it_only_speaks_for_the_market_it_was_handed(self):
+        assert "fm.id = :market_id" in self.SQL
+        assert "e.id = fm.event_id" in self.SQL
+
+
+class TestTheRunClearsTheHero:
+    def test_the_hero_statement_runs_and_is_counted(self, monkeypatch):
+        session = _RecordingSession()
+        stats = asyncio.run(_drive(monkeypatch, session, verdict=fpr.VENUE_SETTLED))
+
+        run = [
+            params
+            for stmt, params in session.statements
+            if stmt is fpr._KALSHI_WITHDRAW_EVENT_HERO_SQL
+        ]
+        assert run == [{"market_id": 60482102}]
+        assert stats["pre_kickoff_heroes_cleared"] == 1
+
+    def test_it_runs_after_the_quote_withdrawal_and_before_the_commit(
+        self, monkeypatch
+    ):
+        """The ORDER is the argument, not a style point.
+
+        Arm 2 asks whether any Kalshi price is still standing on the event. Run
+        BEFORE the quote withdrawal, that question answers itself with the legs
+        we are in the middle of retiring, and the key would survive on every
+        single-market event — the exact case the specimen is. Run in a separate
+        transaction, a page could be left serving 99% while the "don't look
+        again" stamp survived.
+        """
+        session = _RecordingSession()
+        asyncio.run(_drive(monkeypatch, session, verdict=fpr.VENUE_SETTLED))
+
+        order = [stmt for stmt, _ in session.statements]
+        quote = order.index(fpr._KALSHI_WITHDRAW_PRE_KICKOFF_SQL)
+        hero = order.index(fpr._KALSHI_WITHDRAW_EVENT_HERO_SQL)
+        assert quote < hero, "the hero arm would read the legs we are retiring"
+        assert session.commits >= 1
+
+    def test_a_live_venue_clears_nothing(self, monkeypatch):
+        session = _RecordingSession()
+        stats = asyncio.run(_drive(monkeypatch, session, verdict=[]))
+
+        assert not [
+            1
+            for stmt, _ in session.statements
+            if stmt is fpr._KALSHI_WITHDRAW_EVENT_HERO_SQL
+        ]
+        assert stats["pre_kickoff_heroes_cleared"] == 0
+
+    def test_the_counter_is_reported_even_when_nothing_is_cleared(self, monkeypatch):
+        """`pre_kickoff_quotes_withdrawn` without its companion cannot be read:
+        quotes withdrawn and no hero cleared is FINE (no blend key, or a second
+        speaker still standing), a hero cleared with no quote withdrawn is worth
+        reading about, and one number says neither."""
+        session = _RecordingSession()
+        stats = asyncio.run(_drive(monkeypatch, session, verdict=None))
+        assert "pre_kickoff_heroes_cleared" in stats

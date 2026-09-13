@@ -595,3 +595,321 @@ class TestTheSweepReachesTheFrontPage:
         )
         assert [m["id"] for m in served] == [market.id]
         assert served[0]["priority"] is True and served[0]["served"] is True
+
+
+# --- #5771 / CERT-2772: withdrawing the LEG is not withdrawing the NUMBER ------
+#
+# CERT-2772 BLOCKed #5771's first presentation on exactly the split this file
+# exists to catch. The task's new refusal and its `futures_outcomes` withdrawal
+# both worked and were both green — against a recording session. The page did
+# not move: the event hero and the chart read `Event.win_probability_sources`,
+# which the 15-minute matcher stamps from those outcome rows and does not
+# re-derive when one goes quiet. Graded reproduction on the exact sha:
+# `before=0.99:blend after=0.99:blend`.
+#
+# So the gate is the SERVED number, resolved and formatted the way the route
+# resolves and formats it — `compute_aggregate_probability`, then
+# `rendered_duel_percents`, which is the pair the event page prints — over rows
+# a real Postgres holds after the REAL task has run. A recording double cannot
+# fail this test, which is the point of putting it here.
+#
+# THE SPECIMEN, at its production values (read 2026-09-12/13):
+#   event 15298125, `scheduled`, kicks off 2026-09-13 19:00Z
+#   win_probability_sources = {'kalshi': {'value': 0.99, 'eligibility':
+#       {'market_id': 60482102, 'source_market_id': 'KXLALIGAGAME-26SEP13SEVVCF',
+#        ...}}, 'betting_book_count': 2}
+#   opening_home_probability = 0.5856
+#   one linked Kalshi market, three legs, all three priced (0.99 / 0.01 / 0.01)
+
+_SEVILLA_TICKER = "KXLALIGAGAME-26SEP13SEVVCF"
+_SEVILLA_HERO = 0.99
+_SEVILLA_OPENING = 0.5856
+
+
+async def _seed_sport(session):
+    from sqlalchemy import select
+
+    from app.models.models import Sport
+
+    existing = (
+        await session.execute(select(Sport).where(Sport.key == "soccer_spain_la_liga"))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    sport = Sport(key="soccer_spain_la_liga", name="La Liga", group="Soccer")
+    session.add(sport)
+    await session.flush()
+    return sport
+
+
+def _kalshi_entry(value, market_id):
+    """The stored blend entry at its production shape, attribution included.
+
+    `eligibility.market_id` is what makes "is this the speaker we just silenced?"
+    a fact on the row rather than an inference, so the fixture carries it rather
+    than a bare value.
+    """
+    return {
+        "value": value,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "eligibility": {
+            "v": 1,
+            "rule": "live_blend.admissible_as_blend_speaker@5031",
+            "scope": "full_event_winner",
+            "status": "verified",
+            "market_id": market_id,
+            "source_market_id": _SEVILLA_TICKER,
+        },
+    }
+
+
+async def _seed_pre_kickoff_event(session, *, external_id="sevvcf"):
+    from app.models.models import Event
+
+    sport = await _seed_sport(session)
+    event = Event(
+        sport_id=sport.id,
+        external_id=f"test-{external_id}",
+        home_team_name="Sevilla",
+        away_team_name="Valencia",
+        commence_time=datetime.now(timezone.utc) + timedelta(hours=18),
+        status="scheduled",
+        opening_home_probability=_SEVILLA_OPENING,
+    )
+    session.add(event)
+    await session.flush()
+    return event
+
+
+async def _seed_kalshi_market(session, event, *, ticker, probabilities, tier=1):
+    """A linked Kalshi market the sweep's value arm selects, with priced legs."""
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    market = FuturesMarket(
+        source="kalshi",
+        external_id=ticker,
+        name="Sevilla vs Valencia: Winner",
+        category="sports",
+        market_tier=tier,
+        volume=250_000,
+        status="open",
+        event_id=event.id,
+        resolution_date=datetime.now(timezone.utc) + timedelta(days=2),
+    )
+    session.add(market)
+    await session.flush()
+    for name, prob in probabilities.items():
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=f"{ticker}-{name}",
+                name=name,
+                is_winner=False,
+                current_probability=prob,
+            )
+        )
+    await session.flush()
+    return market
+
+
+def _served_hero(event):
+    """The number the event page prints, through the route's own two steps."""
+    from app.utils.aggregation import compute_aggregate_probability
+    from app.utils.graded_card import rendered_duel_percents
+
+    prob = compute_aggregate_probability(event, event.status)
+    if prob is None:
+        return None, None
+    # `opening_home_probability` is `Numeric`, so the tier-3 fallback hands back
+    # a `Decimal` and `1.0 - Decimal` raises. The route reaches the same value
+    # through a float payload; coerce here rather than assert around it.
+    prob = float(prob)
+    _away_pct, home_pct = rendered_duel_percents(round(1.0 - prob, 6), prob)
+    return prob, home_pct
+
+
+async def _drive_the_real_task(monkeypatch, session, verdicts):
+    """Run `_refresh_stale_futures_prices` for real against `session`.
+
+    Only the VENUE is faked — `verdicts` maps a ticker to what Kalshi answers —
+    so the selector, both withdrawal statements, the transaction boundary and
+    the stats all belong to the task. Everything patched below is I/O this test
+    has no business reaching (Redis attempt-skips, the served-signal cache, the
+    Polymarket client, the tournament register).
+    """
+    import contextlib
+
+    from app.tasks import futures_price_refresh as fpr
+    from app.utils.feed_served_markets import SERVED_UNAVAILABLE, ServedSignal
+
+    @contextlib.asynccontextmanager
+    async def _fake_session(**_kw):
+        yield session
+
+    class _Svc:
+        async def close(self):
+            return None
+
+    monkeypatch.setenv("KALSHI_API_KEY", "test-key")
+    monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+    monkeypatch.setattr(
+        "app.utils.tournament_register.registered_market_ids", lambda: set()
+    )
+    monkeypatch.setattr(
+        "app.utils.feed_served_markets.served_signal",
+        lambda: ServedSignal(state=SERVED_UNAVAILABLE, ids=[]),
+    )
+    monkeypatch.setattr(
+        "app.utils.feed_served_markets.note_served_signal_healthy", lambda *a, **k: None
+    )
+    monkeypatch.setattr(fpr, "_load_attempt_skips", lambda ids: set())
+    monkeypatch.setattr(fpr, "_mark_attempted", lambda ids, ttl_seconds: None)
+    monkeypatch.setattr(
+        "app.services.polymarket_api.PolymarketAPIService", lambda: _Svc()
+    )
+    monkeypatch.setattr("app.services.kalshi_api.KalshiAPIService", lambda: _Svc())
+
+    async def _fetch(_service, external_id):
+        return verdicts.get(external_id)
+
+    monkeypatch.setattr(fpr, "_fetch_kalshi_prices", _fetch)
+    return await fpr._refresh_stale_futures_prices()
+
+
+class TestTheVenueAnsweredAndThePageHasToStopSayingNinetyNine:
+    async def test_venue_answered_pre_kickoff_clears_the_served_hero_5771(
+        self, db, monkeypatch
+    ):
+        """CERT-2772's required test. The number a reader sees, before and after.
+
+        The BEFORE assertion is not decoration: it is the whole reason the
+        repair exists. If the seeded row does not serve 99% through the real
+        resolver, this test cannot observe the defect and its AFTER would pass
+        on the broken code.
+        """
+        from sqlalchemy import select, text
+
+        from app.models.models import Event
+
+        event = await _seed_pre_kickoff_event(db)
+        market = await _seed_kalshi_market(
+            db,
+            event,
+            ticker=_SEVILLA_TICKER,
+            probabilities={"Sevilla": _SEVILLA_HERO, "Draw": 0.01, "Valencia": 0.01},
+        )
+        event.win_probability_sources = {
+            "kalshi": _kalshi_entry(_SEVILLA_HERO, market.id),
+            "betting_book_count": 2,
+        }
+        await db.commit()
+
+        before_prob, before_pct = _served_hero(event)
+        assert before_pct == 99, (
+            f"the seed does not reproduce the defect (served {before_pct}%), so "
+            "the assertion after the run would pass on the broken code"
+        )
+
+        from app.tasks import futures_price_refresh as fpr
+
+        stats = await _drive_the_real_task(
+            monkeypatch, db, {_SEVILLA_TICKER: fpr.VENUE_SETTLED}
+        )
+
+        db.expire_all()
+        after = (
+            await db.execute(select(Event).where(Event.id == event.id))
+        ).scalar_one()
+        after_prob, after_pct = _served_hero(after)
+
+        assert "kalshi" not in (after.win_probability_sources or {}), (
+            "the settled speaker is still in the blend, so the hero is still "
+            "quoting a contest that has not kicked off — CERT-2772 exactly"
+        )
+        assert after_pct != 99, f"the page still prints {after_pct}%"
+        assert after_prob == pytest.approx(_SEVILLA_OPENING, abs=1e-3), (
+            "the hero should fall to the sources still speaking — here the "
+            f"opening line — and instead reads {after_prob}"
+        )
+        # The other keys are not collateral. `betting_book_count` is metadata the
+        # card prints beside the number and has nothing to do with Kalshi.
+        assert (after.win_probability_sources or {}).get("betting_book_count") == 2
+
+        # ...and the first half still holds on the same rows.
+        priced = (
+            await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM futures_outcomes "
+                    "WHERE market_id = :mid AND current_probability IS NOT NULL"
+                ),
+                {"mid": market.id},
+            )
+        ).scalar()
+        assert priced == 0
+        assert stats["pre_kickoff_quotes_withdrawn"] == 3
+        assert stats["pre_kickoff_heroes_cleared"] == 1
+
+    async def test_a_different_valid_kalshi_speaker_is_preserved_5771(
+        self, db, monkeypatch
+    ):
+        """The control the required repair names, and it is the risk here.
+
+        One event, two linked Kalshi markets: the one the venue answered, and a
+        second still quoting. The blend entry names the second. Silencing the
+        first must not take the second's number off the page — a repair that
+        blanks the key whenever any Kalshi market settles would empty the hero
+        on every multi-market event.
+        """
+        from sqlalchemy import select
+
+        from app.models.models import Event
+        from app.tasks import futures_price_refresh as fpr
+
+        event = await _seed_pre_kickoff_event(db, external_id="two-speakers")
+        settled = await _seed_kalshi_market(
+            db,
+            event,
+            ticker=_SEVILLA_TICKER,
+            probabilities={"Sevilla": _SEVILLA_HERO, "Valencia": 0.01},
+        )
+        live = await _seed_kalshi_market(
+            db,
+            event,
+            ticker=f"{_SEVILLA_TICKER}-ALT",
+            probabilities={"Sevilla": 0.44, "Valencia": 0.56},
+        )
+        event.win_probability_sources = {"kalshi": _kalshi_entry(0.44, live.id)}
+        await db.commit()
+
+        stats = await _drive_the_real_task(
+            monkeypatch,
+            db,
+            {
+                _SEVILLA_TICKER: fpr.VENUE_SETTLED,
+                f"{_SEVILLA_TICKER}-ALT": [
+                    {
+                        "external_id": f"{_SEVILLA_TICKER}-ALT-Sevilla",
+                        "probability": 0.44,
+                        "yes_bid": 0.43,
+                        "yes_ask": 0.45,
+                        "last_price": 0.44,
+                    }
+                ],
+            },
+        )
+
+        db.expire_all()
+        after = (
+            await db.execute(select(Event).where(Event.id == event.id))
+        ).scalar_one()
+        wps = after.win_probability_sources or {}
+        assert "kalshi" in wps, (
+            "the live market's own reading was deleted because a DIFFERENT "
+            "market on the same event settled"
+        )
+        assert wps["kalshi"]["value"] == 0.44
+        assert stats["pre_kickoff_heroes_cleared"] == 0
+        # The settled market's legs are still withdrawn — the control is about
+        # the blend key, not about pricing a settled book.
+        assert stats["pre_kickoff_quotes_withdrawn"] == 2
+        assert settled.id != live.id

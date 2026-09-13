@@ -1393,6 +1393,66 @@ _KALSHI_WITHDRAW_PRE_KICKOFF_SQL = text(
 )
 
 
+#: CERT-2772's required repair, `5771-WITHDRAW-THE-EVENT-KALSHI-HERO`.
+#:
+#: 🔴 WITHDRAWING THE LEG IS NOT WITHDRAWING THE NUMBER A READER SEES. The event
+#: hero and the chart do not read ``futures_outcomes`` — they read
+#: :attr:`Event.win_probability_sources`, which the 15-minute matcher stamps from
+#: those rows, and a stamped key is not re-derived just because its source row
+#: went quiet. Measured on the specimen at 01:07Z: the leg became NULL and
+#: `bainluck.com/events/15298125` went on serving **99%** under a "Sep 13" header.
+#: The statement above is the price; this one is the page.
+#:
+#: THE KEY IS REMOVED, NOT ZEROED, AND IT NAMES ITS OWN WRITER. The stored entry
+#: carries the market that wrote it —
+#: ``{'kalshi': {'value': 0.99, 'eligibility': {'market_id': 60482102, …}}}`` on
+#: the specimen — so "is this the speaker we just silenced?" is a fact on the row
+#: rather than an inference. A different valid Kalshi speaker (a second linked
+#: Kalshi market, still quoting) writes its own ``market_id`` there and is
+#: untouched by the first arm. The second arm is for the pre-attribution shape:
+#: no ``market_id`` to check, so the key goes only when NO Kalshi market on the
+#: event still holds a readable price. It runs after the withdrawal above, in the
+#: same transaction, so "still holds a price" already excludes what we just
+#: withdrew.
+#:
+#: Removal rather than a zero or a flag because the blend's vocabulary is
+#: membership: :func:`compute_aggregate_probability` weighs the keys that are
+#: there (kalshi 0.8), and every other value would be a number we do not have.
+#: With the key gone the hero falls to the sources that are still speaking —
+#: on the specimen, the 0.5856 opening line rather than a 99% settlement.
+#:
+#: SCOPED BY THE EVENT'S OWN CLOCK, exactly as its sibling is: a contest that has
+#: already started or finished SHOULD carry its terminal number ("settled means
+#: settled"), and this is inert there by construction. It never touches
+#: ``polymarket``, ``betting``, ``espn`` or the ``betting_book_count`` metadata
+#: key, and it never writes a probability.
+_KALSHI_WITHDRAW_EVENT_HERO_SQL = text(
+    """
+    UPDATE events e
+       SET win_probability_sources = e.win_probability_sources - 'kalshi'
+      FROM futures_markets fm
+     WHERE fm.id = :market_id
+       AND e.id = fm.event_id
+       AND e.status = 'scheduled'
+       AND e.commence_time > NOW()
+       AND jsonb_exists(e.win_probability_sources, 'kalshi')
+       AND (
+             (e.win_probability_sources #>> '{kalshi,eligibility,market_id}')
+                 = CAST(:market_id AS text)
+             OR NOT EXISTS (
+                   SELECT 1
+                     FROM futures_markets fm2
+                     JOIN futures_outcomes fo2 ON fo2.market_id = fm2.id
+                    WHERE fm2.event_id = e.id
+                      AND fm2.source = 'kalshi'
+                      AND fo2.current_probability IS NOT NULL
+                )
+           )
+ RETURNING e.id
+    """
+)
+
+
 #: Markets carrying frozen-certain legs that the PRICE pass will never hand us.
 #:
 #: 🔴 THE SWEEP SHIPPED WITH ITS REACH INVERTED, AND THIS IS THAT HALF.
@@ -1910,6 +1970,14 @@ async def _refresh_stale_futures_prices(
         # (`venue_settled`, `pre_kickoff_quotes_withdrawn`) is the only way to
         # read whether the second half ever fires.
         "pre_kickoff_quotes_withdrawn": 0,
+        # CERT-2772's repair. Reported APART from the counter above rather than
+        # folded into it, because the two can legitimately disagree and the
+        # disagreement is the diagnosis: quotes withdrawn with no hero cleared
+        # means either the event never had a Kalshi blend key or a different
+        # Kalshi speaker is still standing (both fine), while a hero cleared
+        # with no quote withdrawn would mean the key outlived every price and
+        # is worth reading about. One number could say neither.
+        "pre_kickoff_heroes_cleared": 0,
         # The #4253 reach arm (`_sweep_unreached_kalshi_frozen`). Reported
         # unconditionally, same rule as above: `unreached_markets_found` at 0 and
         # `unreached_markets_checked` at 0 are DIFFERENT passes — the first says
@@ -2297,6 +2365,19 @@ async def _refresh_stale_futures_prices(
                                 {"market_id": market["id"]},
                             )
                         ).fetchall()
+                        # CERT-2772's repair, and the ORDER is the argument: the
+                        # hero statement asks whether any Kalshi price is still
+                        # standing on this event, and the answer must already
+                        # exclude the legs withdrawn one line above. Same
+                        # transaction for the same reason as the stamp — a page
+                        # left serving 99% while the "don't look again" marker
+                        # survived is the state this repair exists to end.
+                        heroes = (
+                            await session.execute(
+                                _KALSHI_WITHDRAW_EVENT_HERO_SQL,
+                                {"market_id": market["id"]},
+                            )
+                        ).fetchall()
                         await session.commit()
                     except Exception as exc:
                         await session.rollback()
@@ -2311,6 +2392,15 @@ async def _refresh_stale_futures_prices(
                                 "quote(s) on market %s (%s) — the venue answered a "
                                 "contest that has not started (#5771)",
                                 len(withdrawn), market["id"], market["external_id"],
+                            )
+                        if heroes:
+                            stats["pre_kickoff_heroes_cleared"] += len(heroes)
+                            logger.info(
+                                "futures_price_refresh: cleared the Kalshi blend "
+                                "speaker on event(s) %s — the leg it was stamped "
+                                "from is withdrawn, so the hero stops serving a "
+                                "settlement as a price (#5771, CERT-2772)",
+                                [r[0] for r in heroes],
                             )
                     continue
                 if priced is None:
