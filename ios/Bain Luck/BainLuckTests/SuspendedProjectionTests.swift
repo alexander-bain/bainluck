@@ -97,15 +97,38 @@ final class SuspendedProjectionTests: XCTestCase {
     /// hero rule and the market cards' rule are the same function now; before
     /// #4018 they were two, and they disagreed on exactly this status.
     func testTheHeroAndTheCardsAskOneQuestion() {
+        // #5697 AC2 — still one question ABOUT GRADABILITY, and that is what
+        // this test was always making. The hero now asks a second question the
+        // cards do not: is there a score on screen to frame a forecast against.
+        // Held at `hasScore: true` so the shared claim stays testable on its own
+        // axis; the divergence is asserted deliberately in the test below rather
+        // than left to weaken this one.
         for (status, now) in [("suspended", afterStart), ("suspended", beforeStart),
                               ("live", afterStart), ("completed", afterStart),
                               ("scheduled", beforeStart)] {
             XCTAssertEqual(
-                EventDetailView.showsProjection(status: status, commenceTime: started, now: now),
+                EventDetailView.showsProjection(
+                    status: status, commenceTime: started, hasScore: true, now: now),
                 EventState.canStillBeGraded(status, commenceTime: started, now: now),
                 "hero and cards disagree about \(status)"
             )
         }
+    }
+
+    /// #5697 AC2 — the ONE place the hero is deliberately stricter than the
+    /// cards, pinned so nobody "restores" the identity above by deleting it.
+    ///
+    /// A market card one scroll below carries its own label and its own context;
+    /// the hero's projection sits in the score's slot with nothing beside it. On
+    /// an underway game with no score the hero withholds and the cards do not.
+    func testOnlyTheHeroWithholdsAProjectionOverAnAbsentScore() {
+        XCTAssertTrue(
+            EventState.canStillBeGraded("live", commenceTime: started, now: afterStart),
+            "the cards' question is unchanged — a live game can still be graded")
+        XCTAssertFalse(
+            EventDetailView.showsProjection(
+                status: "live", commenceTime: started, hasScore: false, now: afterStart),
+            "the hero must withhold a projected final over a game with no score")
     }
 
     // MARK: - Why the ladder needs a local gate as well

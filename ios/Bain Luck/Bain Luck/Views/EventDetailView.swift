@@ -638,20 +638,46 @@ struct EventDetailView: View {
     /// the three market cards one scroll below this hero needed the same answer
     /// and were each carrying their own `isFinished` copy instead. This stays as
     /// the hero's name for it; the logic has exactly one home.
-    static func showsProjection(status: String?, commenceTime: Date?, now: Date = Date()) -> Bool {
-        EventState.canStillBeGraded(status, commenceTime: commenceTime, now: now)
-    }
-
-    /// #3014 — "Proj. 2-3" beside a LIVE badge on a game with no score reads as
-    /// the score, because it is the only pair of numbers on the hero and the
-    /// abbreviation is 10pt tertiary. Where a real score stands beside it the
-    /// abbreviation is unambiguous and stays short; where the score slot is
-    /// empty on a game already being played, the word is spelled out. Scoped to
-    /// live-and-scoreless on purpose: before kick-off nothing can be mistaken
-    /// for a score, and widening the label there would only widen the hero's
-    /// centre column, which is `fixedSize` and squeezes the crests.
-    static func projectionLabel(status: String?, hasScore: Bool) -> String {
-        (status == "live" && !hasScore) ? "Projected final" : "Proj."
+    ///
+    /// #5697 AC2 — AND A PROJECTION OF THE FINAL NEEDS A GAME WHOSE STATE THE
+    /// READER CAN SEE. `canStillBeGraded` asks whether a final can still arrive;
+    /// it cannot ask whether the reader has anything to read the forecast
+    /// against. Production specimen `15311077` (Fukuoka SoftBank Hawks v Chiba
+    /// Lotte Marines, NPB), `status='live'`, both scores null, nearly two hours
+    /// past its own first pitch, served a projection captured minutes earlier:
+    /// the hero drew a confident `7 - 5.5` shaped exactly like a scoreline with
+    /// no score anywhere on it. The number is FRESH — that was measured, not
+    /// assumed — and it is still unreadable, because a projected FINAL only
+    /// means something against how much game is left, and a reader who cannot
+    /// see the score cannot tell the first inning from the ninth.
+    ///
+    /// BEFORE THE OFF THE PROJECTION IS THE HONEST THING and stays: nothing has
+    /// happened yet, so the frame is known and the forecast says just what it
+    /// means. It is withdrawn only once the game is underway, where a reader has
+    /// started expecting a score. Notice 34 — where a number cannot be shown
+    /// honestly the space is left empty rather than explained.
+    ///
+    /// THE PAIR, NOT A SIDE: `hasScore` is the hero's own `showsScore`, the very
+    /// value the score row is drawn from one line below. The question is what is
+    /// ON THE SCREEN beside the projection, not what the payload happens to
+    /// carry, so a status that draws no score withholds the forecast too.
+    ///
+    /// Twin of the web's `projectionHasGameStateToFrame` (#5803, `ade48eb95`).
+    /// It reuses `EventState.hasStarted`, whose nil-date default is TRUE where
+    /// the web's is false; that boundary is unreachable — production carries 0
+    /// events with a null `commence_time` (measured 2026-09-12) — and reusing
+    /// the shared predicate keeps one definition of "has started" rather than
+    /// growing the second one #4018 exists to prevent. It fails toward
+    /// withholding, which is the safe direction here.
+    static func showsProjection(
+        status: String?, commenceTime: Date?, hasScore: Bool, now: Date = Date()
+    ) -> Bool {
+        guard EventState.canStillBeGraded(status, commenceTime: commenceTime, now: now) else {
+            return false
+        }
+        let underway = status == "live"
+            || EventState.hasStarted(commenceTime: commenceTime, now: now)
+        return !underway || hasScore
     }
 
     private func heroSection(_ event: EventDetail) -> some View {
@@ -960,13 +986,25 @@ struct EventDetailView: View {
                     // for a match nobody scores in games. Naming the unit is
                     // the smallest honest fix — the projection is real and
                     // useful, it was simply anonymous.
+                    //
+                    // #3014's SPELLED-OUT LABEL IS RETIRED HERE, not overruled.
+                    // It existed for one population — live, and no score — where
+                    // "Proj. 2-3" was the only pair on the hero and read as the
+                    // score, so the word was spelled out to disambiguate it.
+                    // #5697 AC2 withdraws the projection on exactly that
+                    // population instead, which is the stronger form of the same
+                    // fix: there is no longer a pair there to be misread. That
+                    // left `projectionLabel` returning "Proj." for every input it
+                    // could still be called with, and three tests pinning a
+                    // string the app could no longer draw — a guard that passes
+                    // while proving nothing. Deleted rather than left standing.
                     if let phs = event.currentOdds?.projectedHomeScore, let pas = event.currentOdds?.projectedAwayScore,
                        EventDetailView.showsProjection(
-                        status: event.status, commenceTime: event.commenceTime?.asDate) {
+                        status: event.status, commenceTime: event.commenceTime?.asDate,
+                        hasScore: hasScore) {
                         let vocab = SportVocab.forSport(event.sport)
                         let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
-                        let label = EventDetailView.projectionLabel(status: event.status, hasScore: hasScore)
-                        Text("\(label) \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))")
+                        Text("Proj. \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
