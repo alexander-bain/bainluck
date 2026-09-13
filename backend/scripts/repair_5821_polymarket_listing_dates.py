@@ -339,12 +339,20 @@ def wrong_app_refusal(args):
     only interpreter whose deployed code is the code that could put the defect
     back while we are writing.
 
+    THE UNDO IMPORTS THIS (`5821-RESTORE-WRONG-APP-REFUSAL`). A restore is a
+    production write in the opposite direction and earns the identical gate —
+    and it is the write most likely to be typed in a hurry, by someone who has
+    just decided the repair went wrong.
+
     `HEROKU_APP_NAME` comes from the `runtime-dyno-metadata` lab, enabled on
     both apps. UNSET refuses too rather than falling through — unset means a
     laptop pointed at the production database with whatever happens to be
     checked out, which is precisely the case this gate exists to stop.
     """
-    if not (args.apply or args.backup):
+    # `getattr`, because the UNDO imports this function and its parser has no
+    # `--backup` (`5821-RESTORE-WRONG-APP-REFUSAL`). One refusal, two programs,
+    # and the one that does not have a flag must not raise on reading it.
+    if not (getattr(args, "apply", False) or getattr(args, "backup", False)):
         return None
 
     app = os.environ.get("HEROKU_APP_NAME")
@@ -552,6 +560,7 @@ async def run(args):
             return 2
 
         written = 0
+        lifted_written = 0
         skipped = []
         for r in rows:
             plan = plans.get(r.id) or {}
@@ -576,6 +585,15 @@ async def run(args):
             )
             if result.rowcount:
                 written += 1
+                if "status" in plan:
+                    # `5821-REPORT-ACTUAL-LIFTED-COUNT`: counted on the LANDING,
+                    # not on the plan. `lifted` above is how many rows the plan
+                    # would lift; a row whose compare-and-set lost a race is
+                    # skipped, and reporting it as lifted would tell an operator
+                    # a fixture reads `scheduled` when it still reads
+                    # `suspended` — the exact claim this repair exists to make
+                    # true, made falsely.
+                    lifted_written += 1
                 # The receipt, written in the same transaction as the change it
                 # attests to, so the undo can never offer to revert a row this
                 # run did not touch (`5821-RESTORE-ONLY-SUCCESSFUL-CAS`).
@@ -591,7 +609,15 @@ async def run(args):
                 skipped.append(r.id)
         await s.commit()
 
-        print(f"\nAPPLIED: re-dated {written} events, {lifted} lifted to `scheduled`.")
+        print(
+            f"\nAPPLIED: re-dated {written} events, {lifted_written} lifted to "
+            "`scheduled`."
+        )
+        if lifted_written != lifted:
+            print(
+                f"  (the plan would have lifted {lifted}; "
+                f"{lifted - lifted_written} of those did not land)"
+            )
         if skipped:
             print(
                 f"  SKIPPED {len(skipped)} that moved between the read and the "

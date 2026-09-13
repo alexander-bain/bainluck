@@ -26,6 +26,14 @@ task that mints these rows, is in HEAVY_TASKS; see that script's header and
 standing notice 48), so the undo is taken against the deploy that produced the
 state.
 
+🔴 THAT IS ENFORCED HERE, NOT ASKED FOR (`5821-RESTORE-WRONG-APP-REFUSAL`). The
+repair refuses to WRITE anywhere but that app; this file said the same thing in
+prose and then wrote wherever it was run. An undo is a production write in the
+opposite direction and deserves the identical gate — and it is the write most
+likely to be typed in a hurry, by someone who has just decided the repair went
+wrong. The refusal is the repair's own `wrong_app_refusal`, imported rather than
+re-spelled, so the two can never drift. A dry run reads, and runs anywhere.
+
 WHY IT JOINS RATHER THAN LOOPS. The backup holds the prior clock per id, so the
 restore is one `UPDATE … FROM`. A loop would restore partially if it died
 halfway; a single statement either lands or does not.
@@ -47,14 +55,36 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# …and this script's OWN directory, so the sibling import below resolves however
+# the file is loaded. Running `python3 scripts/restore_….py` puts `scripts/` on
+# the path for free; importing the file by its path (a guard test does) does
+# not, and the difference is an ImportError nobody sees until CI.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 BACKUP_TABLE = "backup_5821_event_dates"
+
+#: The app the repair writes from, and therefore the app the UNDO writes from.
+#: Imported from the repair rather than re-spelled: two constants for one
+#: decision is how a runbook and its program start to disagree.
+from repair_5821_polymarket_listing_dates import (  # noqa: E402
+    PRODUCER_APP,
+    wrong_app_refusal,
+)
 
 
 async def run(args):
     from sqlalchemy import text
 
     from app.tasks.base import get_task_session
+
+    refusal = wrong_app_refusal(args)
+    if refusal:
+        print(refusal.replace("REFUSING to write", "REFUSING to restore"))
+        print(
+            f"         (the repair writes from '{PRODUCER_APP}'; its undo is a "
+            "production write too, and takes the same gate)"
+        )
+        return 2
 
     async with get_task_session() as s:
         present = (
