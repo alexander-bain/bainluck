@@ -131,6 +131,14 @@ class PersonalizationContext:
     recent_seen_futures_at: dict[int, datetime] = field(default_factory=dict)
     recent_dismissed_event_ids: set[int] = field(default_factory=set)
     recent_dismissed_futures_ids: set[int] = field(default_factory=set)
+    # Dismissed cards whose id is a STRING KEY, not a row id — concept cards
+    # (`event:f1:spanish-grand-prix-winner`), tournaments (`the_open`) and
+    # bundles. The two sets above are `int` because a game and a market are
+    # rows; these cards are not, so their swipes had nowhere to land and were
+    # dropped on an `int()` parse. Kept as one set across item types because the
+    # key already names its own kind and because the surfaces disagree about the
+    # label they send for the same card (native says `concept`, web says `grid`).
+    recent_dismissed_keys: set[str] = field(default_factory=set)
     recent_dismissed_story_keys: set[str] = field(default_factory=set)
     recent_dismissed_group_ids: set[str] = field(default_factory=set)
     # Whether this is a real user context (vs anonymous)

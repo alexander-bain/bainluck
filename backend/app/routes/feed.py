@@ -386,7 +386,14 @@ _DISCOVER_ACTIONS = {
 #: affinity, category negative counts) and a set that drifts between them shows
 #: up as "swiping does nothing" and nowhere else.
 _DISCOVER_NEGATIVE_ACTIONS: frozenset[str] = frozenset({"dismiss", "unlike"})
-_DISCOVER_ITEM_TYPES = {"event", "futures", "grid", "tournament"}
+# `concept` and `bundle` were missing, and the miss was silent in the worst way:
+# `_normalize_discover_value` coerces an unrecognized type to its DEFAULT, which
+# here is `"futures"`. So every swipe on a UFC/F1/cycling concept card was stored
+# as a futures dismissal carrying a concept KEY in `item_id` — a row that no
+# suppression path can ever match. Measured on production 2026-09-13: ten native
+# swipes in 21 seconds, nine of them the same `event:f1:spanish-grand-prix-winner`
+# card, because it came back every time.
+_DISCOVER_ITEM_TYPES = {"event", "futures", "grid", "tournament", "concept", "bundle"}
 _DISCOVER_SURFACES = {"web", "native", "unknown"}
 # Queue 310 — canonical market shapes, mirroring app/utils/market_shape.py and
 # frontend/lib/marketShape.ts. Validated on ingest for the same reason actions
@@ -2708,6 +2715,57 @@ def _should_skip_futures_for_recent_dismissal(
     )
 
 
+def _drop_dismissed_keyed_items(
+    items: list[dict],
+    *,
+    ctx: PersonalizationContext,
+    my_teams_only: bool,
+) -> list[dict]:
+    """Drop the string-keyed cards this viewer has already swiped away (#5951).
+
+    The sibling of the `recent_dismissed_event_ids` / `recent_dismissed_futures_ids`
+    checks inside `_score_events` and `_score_futures` — the same feed-hygiene
+    rule ("do not show a reader the exact card they just dismissed"), for the
+    card types whose identity is a key rather than a row id. Hard-drop, like
+    both siblings, and skipped under `my_teams_only` for the same reason they
+    are: that surface's contract is "only what you follow", and it is filtered
+    by the follow list rather than by swipe history.
+
+    Applied HERE, on the built list, and deliberately not inside the tier
+    builders. `_score_event_concepts` runs behind `_shared_get_or_build`, whose
+    cache key is the sport filter and a time bucket and carries no viewer — so a
+    filter applied in there would serve one reader's dismissals to everyone who
+    landed in the same bucket. Per-viewer filtering belongs on this side of that
+    cache.
+    """
+    if my_teams_only or not ctx.recent_dismissed_keys:
+        return items
+
+    def _keeps(item: dict) -> bool:
+        data = item.get("data") or {}
+        # TWO identities, because the clients genuinely send two. Native
+        # identifies both card types by key (`DiscoverView.rawItemId`), and so
+        # does web's concept card — but web's tournament card deliberately sends
+        # the RAW NAME, because `itemId` doubles as the GA4 analytics identity
+        # there and re-keying it would split every existing series on these
+        # tournaments in two (`TournamentCard.tsx:108`). Matching the name as
+        # well is what makes the rule true on that surface without touching that
+        # decision. The two vocabularies cannot collide by accident: a key is a
+        # slug (`event:f1:…`, `the_open`) and a name is display text.
+        for identity in (data.get("key"), data.get("name")):
+            # A card with no identity is not "the card whose key is the empty
+            # string" — it is a card this rule cannot speak about, so it is
+            # kept. Falling through to `""` would let one malformed entry in the
+            # set silently suppress every keyless card in the tier.
+            if not isinstance(identity, str) or not identity:
+                continue
+            if identity in ctx.recent_dismissed_keys:
+                return False
+        return True
+
+    return [item for item in items if _keeps(item)]
+
+
 def _dedupe_futures_by_group_id(futures_items: list[dict]) -> list[dict]:
     """Deduplicate futures by group_id, keeping the highest-scoring per group.
 
@@ -4325,6 +4383,9 @@ async def get_feed(
                     provenance_sink=_golf_prov_sink,
                 )
                 _golf_provenance = _golf_prov_sink.get("golf")
+                tournament_items = _drop_dismissed_keyed_items(
+                    tournament_items, ctx=ctx, my_teams_only=my_teams_only
+                )
                 if tournament_items:
                     feed_items.extend(tournament_items)
             except Exception as e:
@@ -4485,6 +4546,9 @@ async def get_feed(
                     _concept_key,
                     _build_concepts,
                     reuse_sink=_shared_reuse,
+                )
+                concept_items = _drop_dismissed_keyed_items(
+                    concept_items or [], ctx=ctx, my_teams_only=my_teams_only
                 )
                 if concept_items:
                     feed_items.extend(concept_items)
@@ -7425,7 +7489,15 @@ async def _load_personalization_context(
         )
         .where(
             interaction_identity_clause,
-            DiscoverInteraction.item_type.in_(("event", "futures")),
+            # The string-keyed card types are read too (#5951). Web labels a
+            # dismissed concept `grid`, native labels it `concept`, and rows
+            # written before the ingest allowlist learned the word carry
+            # `futures` — so the label cannot be trusted to tell a row id from a
+            # key, and the loop below decides that by PARSING the id instead.
+            # Listing them here is what lets those rows reach the loop at all.
+            DiscoverInteraction.item_type.in_(
+                ("event", "futures", "grid", "tournament", "concept", "bundle")
+            ),
             DiscoverInteraction.action.in_(("impression", "dismiss", "unlike")),
             DiscoverInteraction.created_at >= dismiss_cutoff,
         )
@@ -7470,6 +7542,7 @@ async def _load_personalization_context(
     recent_seen_futures_at: dict[int, datetime] = {}
     recent_dismissed_event_ids: set[int] = set()
     recent_dismissed_futures_ids: set[int] = set()
+    recent_dismissed_keys: set[str] = set()
     recent_dismissed_story_keys: set[str] = set()
     recent_dismissed_group_ids: set[str] = set()
     recent_dismissed_feature_token_sets: list[set[str]] = []
@@ -7482,13 +7555,24 @@ async def _load_personalization_context(
             item_name,
             category,
         ) in recent_items_result.all():
+            # A non-numeric id is a card KEY, not a row id — and it used to
+            # `continue` here, which threw the whole row away before the
+            # negative-action branch below could read it. That cost more than the
+            # id: the story-key and semantic-token suppression underneath never
+            # saw these swipes either, so a dismissed concept card was not even
+            # softly penalised by name. Parse, don't skip.
+            item_id: int | None
             try:
                 item_id = int(item_id_raw)
             except (TypeError, ValueError):
-                continue
+                item_id = None
+                if not (isinstance(item_id_raw, str) and item_id_raw.strip()):
+                    continue
             last_seen_dt = _utc(last_seen)
             if action in _DISCOVER_NEGATIVE_ACTIONS:
-                if item_type == "event":
+                if item_id is None:
+                    recent_dismissed_keys.add(item_id_raw)
+                elif item_type == "event":
                     recent_dismissed_event_ids.add(item_id)
                 elif item_type == "futures":
                     recent_dismissed_futures_ids.add(item_id)
@@ -7505,7 +7589,16 @@ async def _load_personalization_context(
                             )
                         )
             elif (
-                action == "impression" and last_seen_dt and last_seen_dt >= seen_cutoff
+                action == "impression"
+                and last_seen_dt
+                and last_seen_dt >= seen_cutoff
+                # The seen sets and their timestamp maps are keyed by ROW ID and
+                # are read as such (`market.id in …`, `.get(market.id)`). A
+                # key-shaped impression has no row id to contribute, so it is
+                # counted as seen by nothing rather than inserted as `None` —
+                # which would not have matched anything anyway, and would have
+                # put a junk `None` key in the recycling timestamps.
+                and item_id is not None
             ):
                 if item_type == "event":
                     recent_seen_event_ids.add(item_id)
@@ -7591,6 +7684,7 @@ async def _load_personalization_context(
         recent_seen_futures_at=recent_seen_futures_at,
         recent_dismissed_event_ids=recent_dismissed_event_ids,
         recent_dismissed_futures_ids=recent_dismissed_futures_ids,
+        recent_dismissed_keys=recent_dismissed_keys,
         recent_dismissed_story_keys=recent_dismissed_story_keys,
         recent_dismissed_group_ids=recent_dismissed_group_ids,
         recent_dismissed_feature_token_sets=recent_dismissed_feature_token_sets,
