@@ -3297,6 +3297,8 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         authority_score_write,
         authority_write,
         games_line_write,
+        result_refuted_by_format,
+        sets_to_win,
         state_contradiction,
     )
     from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
@@ -3564,6 +3566,25 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                         "Tennis contradiction %s: event %s (%s v %s) ours=%s/%s espn=%s",
                         contradiction, event.id, ours[0], ours[1],
                         event.status, event.completed_at, competition["state"],
+                    )
+
+                # THE REFUSAL IS COUNTED WHERE IT IS MADE (#5987). Silently
+                # declining the authority is how a rail stops working without
+                # anyone noticing: a board that starts publishing short finals
+                # for a real reason must show up as a number, not as rows that
+                # quietly never settle.
+                if result_refuted_by_format(competition):
+                    stats["decided_refused"] = stats.get("decided_refused", 0) + 1
+                    logger.warning(
+                        "Tennis FINAL REFUSED: event %s (%s v %s) — ESPN says %s "
+                        "but the winner holds %s of the %s sets this format needs",
+                        event.id, ours[0], ours[1], competition.get("status_name"),
+                        next(
+                            (s.get("sets_won") for s in (competition.get("sides") or [])
+                             if s.get("winner")),
+                            None,
+                        ),
+                        sets_to_win(competition),
                     )
 
                 changes = authority_write(

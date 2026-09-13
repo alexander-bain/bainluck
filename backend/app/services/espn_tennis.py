@@ -1279,6 +1279,29 @@ def scoreboard_competitions(
                         "players": names,
                         "pair_key": pair_key(names) if len(names) == 2 else None,
                         "sets_with_play": sets_with_play(competition),
+                        # ═══ HOW THE MATCH ENDED, AND OVER WHAT DISTANCE ═══
+                        #
+                        # `state` folds ESPN's four post words into one
+                        # `decided`, which is right for "is this match over"
+                        # and wrong for "could a completed match have ended
+                        # here".  A straight-sets FINAL and a RETIRED at the
+                        # same set count are the same `decided` and the
+                        # opposite statement; the board tells them apart by
+                        # name (measured 2026-09-13: 612 STATUS_FINAL, 8
+                        # STATUS_RETIRED, 4 STATUS_WALKOVER), so the name
+                        # travels rather than being re-derived downstream.
+                        #
+                        # The round rides with it because the DISTANCE is not a
+                        # property of the draw: `mens-singles` at a Slam holds
+                        # both a best-of-five main draw and a best-of-three
+                        # qualifying, and on that same board the split is
+                        # exact — 124 of 124 main-draw finals were won in three
+                        # sets, 107 of 107 qualifying finals in two.  See
+                        # `espn_tennis_anchor.sets_to_win`.
+                        "status_name": str(status.get("name") or "") or None,
+                        "espn_round": (
+                            (competition.get("round") or {}).get("displayName")
+                        ),
                         # THE RESULT, CARRIED WITH THE LINK (lane1/064). The
                         # anchor consumer writes `events.home_score` through
                         # this, and it has to come off the SAME read as the

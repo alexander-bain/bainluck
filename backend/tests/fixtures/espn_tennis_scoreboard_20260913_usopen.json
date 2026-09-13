@@ -1,0 +1,1619 @@
+{
+ "events": [
+  {
+   "id": "189-2026",
+   "name": "US Open",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "1",
+      "slug": "mens-singles",
+      "displayName": "Men's Singles"
+     },
+     "competitions": [
+      {
+       "id": "184607",
+       "uid": "s:850~l:851~e:189-2026~c:184607",
+       "date": "2026-08-24T15:05Z",
+       "startDate": "2026-08-24T15:05Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 2,
+        "type": {
+         "id": "3",
+         "name": "STATUS_FINAL",
+         "state": "post",
+         "completed": true,
+         "description": "Final",
+         "detail": "Final",
+         "shortDetail": "Final"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": "Court 5"
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "Jacob Fearnley (GBR) bt Roberto Carballes Baena (ESP) 7-6 (7-3) 6-3",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ESPN+",
+          "logo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ESPN+"
+         ]
+        }
+       ],
+       "broadcast": "ESPN+",
+       "competitors": [
+        {
+         "id": "2012",
+         "uid": "s:850~l:851~a:2012",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 6.0,
+           "tiebreak": 3,
+           "winner": false
+          },
+          {
+           "value": 3.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "485f849c-3bbf-9140-10f8-16c3c450c749",
+          "displayName": "Roberto Carballes Baena",
+          "shortName": "R. Carballes Baena",
+          "fullName": "Roberto Carballes Baena",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/esp.png",
+           "alt": "Spain",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/2012/roberto-carballes-baena",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "11685",
+         "uid": "s:850~l:851~a:11685",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 7.0,
+           "tiebreak": 7,
+           "winner": true
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          }
+         ],
+         "athlete": {
+          "guid": "dbf5766d-f283-30f0-8b52-778dd47c684d",
+          "displayName": "Jacob Fearnley",
+          "shortName": "J. Fearnley",
+          "fullName": "Jacob Fearnley",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/gbr.png",
+           "alt": "Great Britain",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/11685/jacob-fearnley",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "11",
+        "displayName": "Qualifying 1st Round"
+       },
+       "wasSuspended": false
+      },
+      {
+       "id": "184599",
+       "uid": "s:850~l:851~e:189-2026~c:184599",
+       "date": "2026-08-25T15:05Z",
+       "startDate": "2026-08-25T15:05Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 3,
+        "type": {
+         "id": "38",
+         "name": "STATUS_RETIRED",
+         "state": "post",
+         "completed": true,
+         "description": "Retired",
+         "detail": "Retired",
+         "shortDetail": "Retired"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": "Court 10"
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "Dusan Lajovic (SER) bt SoonWoo Kwon (KOR) 4-6 7-5 3-1 ret",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ESPN+",
+          "logo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ESPN+"
+         ]
+        }
+       ],
+       "broadcast": "ESPN+",
+       "competitors": [
+        {
+         "id": "1769",
+         "uid": "s:850~l:851~a:1769",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 4.0,
+           "winner": false
+          },
+          {
+           "value": 7.0,
+           "winner": true
+          },
+          {
+           "value": 3.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "5178cb68-023e-aaeb-6559-6c1defcc9cc4",
+          "displayName": "Dusan Lajovic",
+          "shortName": "D. Lajovic",
+          "fullName": "Dusan Lajovic",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/ser.png",
+           "alt": "Serbia",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/1769/dusan-lajovic",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "2872",
+         "uid": "s:850~l:851~a:2872",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 5.0,
+           "winner": false
+          },
+          {
+           "value": 1.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "5b5597fe-242d-784c-1eaa-a81462790303",
+          "displayName": "SoonWoo Kwon",
+          "shortName": "S. Kwon",
+          "fullName": "SoonWoo Kwon",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/kor.png",
+           "alt": "Korea",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/2872/soonwoo-kwon",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "11",
+        "displayName": "Qualifying 1st Round"
+       },
+       "wasSuspended": false
+      },
+      {
+       "id": "184769",
+       "uid": "s:850~l:851~e:189-2026~c:184769",
+       "date": "2026-08-27T16:30Z",
+       "startDate": "2026-08-27T16:30Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 1,
+        "type": {
+         "id": "40",
+         "name": "STATUS_WALKOVER",
+         "state": "post",
+         "completed": true,
+         "description": "Walkover",
+         "detail": "Walkover",
+         "shortDetail": "Walkover"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": ""
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "Grigor Dimitrov (BUL) bt Otto Virtanen (FIN) w/o",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ESPN+",
+          "logo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ESPN+"
+         ]
+        }
+       ],
+       "broadcast": "ESPN+",
+       "competitors": [
+        {
+         "id": "1287",
+         "uid": "s:850~l:851~a:1287",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": true,
+         "athlete": {
+          "guid": "16641195-ec8b-a983-e046-3f768b99ff28",
+          "displayName": "Grigor Dimitrov",
+          "shortName": "G. Dimitrov",
+          "fullName": "Grigor Dimitrov",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/bul.png",
+           "alt": "Bulgaria",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/1287/grigor-dimitrov",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "4099",
+         "uid": "s:850~l:851~a:4099",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": false,
+         "athlete": {
+          "guid": "c25805a1-57e2-3a93-b09e-ad8ae6a8cb38",
+          "displayName": "Otto Virtanen",
+          "shortName": "O. Virtanen",
+          "fullName": "Otto Virtanen",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/fin.png",
+           "alt": "Finland",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/4099/otto-virtanen",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "14",
+        "displayName": "Qualifying Final"
+       },
+       "wasSuspended": false
+      },
+      {
+       "id": "182656",
+       "uid": "s:850~l:851~e:189-2026~c:182656",
+       "date": "2026-08-30T15:05Z",
+       "startDate": "2026-08-30T15:05Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 4,
+        "type": {
+         "id": "3",
+         "name": "STATUS_FINAL",
+         "state": "post",
+         "completed": true,
+         "description": "Final",
+         "detail": "Final",
+         "shortDetail": "Final"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": "Grandstand"
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "(18) Jiri Lehecka (CZE) bt Pablo Carreno Busta (ESP) 6-1 7-6 (7-5) 4-6 6-2",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ESPN Unlmtd",
+          "logo": "https://a.espncdn.com/guid/54bf758e-5371-31f9-bb3d-8059d58f785c/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/54bf758e-5371-31f9-bb3d-8059d58f785c/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ESPN Unlmtd"
+         ]
+        }
+       ],
+       "broadcast": "ESPN Unlmtd",
+       "competitors": [
+        {
+         "id": "1590",
+         "uid": "s:850~l:851~a:1590",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 1.0,
+           "winner": false
+          },
+          {
+           "value": 6.0,
+           "tiebreak": 5,
+           "winner": false
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 2.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "7ba77580-4f3a-73fd-66f7-7354306769dd",
+          "displayName": "Pablo Carreno Busta",
+          "shortName": "P. Carreno Busta",
+          "fullName": "Pablo Carreno Busta",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/esp.png",
+           "alt": "Spain",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/1590/pablo-carreno-busta",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "3754",
+         "uid": "s:850~l:851~a:3754",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": true,
+         "curatedRank": {
+          "current": 18
+         },
+         "linescores": [
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 7.0,
+           "tiebreak": 7,
+           "winner": true
+          },
+          {
+           "value": 4.0,
+           "winner": false
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          }
+         ],
+         "athlete": {
+          "guid": "959c133c-1c3d-1a03-182c-588ba5225a3b",
+          "displayName": "Jiri Lehecka",
+          "shortName": "J. Lehecka",
+          "fullName": "Jiri Lehecka",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/cze.png",
+           "alt": "Czechia",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/3754/jiri-lehecka",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "1",
+        "displayName": "Round 1"
+       },
+       "wasSuspended": false
+      },
+      {
+       "id": "182706",
+       "uid": "s:850~l:851~e:189-2026~c:182706",
+       "date": "2026-09-01T18:50Z",
+       "startDate": "2026-09-01T18:50Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 3,
+        "type": {
+         "id": "38",
+         "name": "STATUS_RETIRED",
+         "state": "post",
+         "completed": true,
+         "description": "Retired",
+         "detail": "Retired",
+         "shortDetail": "Retired"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": "Court 7"
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "Dane Sweeny (AUS) bt Corentin Moutet (FRA) 7-6 (7-4) 6-4 3-0 ret",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ESPN Unlmtd",
+          "logo": "https://a.espncdn.com/guid/54bf758e-5371-31f9-bb3d-8059d58f785c/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/54bf758e-5371-31f9-bb3d-8059d58f785c/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ESPN Unlmtd"
+         ]
+        }
+       ],
+       "broadcast": "ESPN Unlmtd",
+       "competitors": [
+        {
+         "id": "2886",
+         "uid": "s:850~l:851~a:2886",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 6.0,
+           "tiebreak": 4,
+           "winner": false
+          },
+          {
+           "value": 4.0,
+           "winner": false
+          },
+          {
+           "value": 0.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "e1e9551c-c350-ef8f-ce97-d8407b0be41d",
+          "displayName": "Corentin Moutet",
+          "shortName": "C. Moutet",
+          "fullName": "Corentin Moutet",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/fra.png",
+           "alt": "France",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/2886/corentin-moutet",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "4030",
+         "uid": "s:850~l:851~a:4030",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 7.0,
+           "tiebreak": 7,
+           "winner": true
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 3.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "ed90f943-db78-39b5-8a36-5d92effc26f3",
+          "displayName": "Dane Sweeny",
+          "shortName": "D. Sweeny",
+          "fullName": "Dane Sweeny",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/aus.png",
+           "alt": "Australia",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/4030/dane-sweeny",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "1",
+        "displayName": "Round 1"
+       },
+       "wasSuspended": false
+      },
+      {
+       "id": "182677",
+       "uid": "s:850~l:851~e:189-2026~c:182677",
+       "date": "2026-09-13T18:15Z",
+       "startDate": "2026-09-13T18:15Z",
+       "timeValid": true,
+       "recent": true,
+       "status": {
+        "period": 3,
+        "type": {
+         "id": "2",
+         "name": "STATUS_IN_PROGRESS",
+         "state": "in",
+         "completed": false,
+         "description": "In Progress",
+         "detail": "3rd Set",
+         "shortDetail": "3rd"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": "Arthur Ashe Stadium"
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "(8) Ben Shelton (USA) leads (1) Alexander Zverev (GER) 3-6 6-7 (2-7) 5-4",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ABC",
+          "logo": "https://a.espncdn.com/guid/2acff74d-269f-36ac-96eb-9c66f8ba52ff/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/2acff74d-269f-36ac-96eb-9c66f8ba52ff/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ABC"
+         ]
+        }
+       ],
+       "broadcast": "ABC",
+       "competitors": [
+        {
+         "id": "9250",
+         "uid": "s:850~l:851~a:9250",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "possession": false,
+         "curatedRank": {
+          "current": 8
+         },
+         "linescores": [
+          {
+           "value": 3.0,
+           "winner": false
+          },
+          {
+           "value": 6.0,
+           "tiebreak": 2,
+           "winner": false
+          },
+          {
+           "value": 5.0
+          }
+         ],
+         "athlete": {
+          "guid": "2358bec1-f6f0-3540-a37e-13bc322d2c08",
+          "displayName": "Ben Shelton",
+          "shortName": "B. Shelton",
+          "fullName": "Ben Shelton",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/usa.png",
+           "alt": "USA",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/9250/ben-shelton",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "2375",
+         "uid": "s:850~l:851~a:2375",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "possession": true,
+         "curatedRank": {
+          "current": 1
+         },
+         "linescores": [
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 7.0,
+           "tiebreak": 7,
+           "winner": true
+          },
+          {
+           "value": 4.0
+          }
+         ],
+         "athlete": {
+          "guid": "fd06b6ea-593b-d5b3-da2b-767ec3e4232c",
+          "displayName": "Alexander Zverev",
+          "shortName": "A. Zverev",
+          "fullName": "Alexander Zverev",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/ger.png",
+           "alt": "Germany",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/2375/alexander-zverev",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "situation": {
+        "onFirst": false,
+        "onSecond": false,
+        "onThird": false
+       },
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "7",
+        "displayName": "Final"
+       },
+       "wasSuspended": false
+      }
+     ]
+    },
+    {
+     "grouping": {
+      "id": "2",
+      "slug": "womens-singles",
+      "displayName": "Women's Singles"
+     },
+     "competitions": [
+      {
+       "id": "184694",
+       "uid": "s:850~l:851~e:189-2026~c:184694",
+       "date": "2026-08-24T15:05Z",
+       "startDate": "2026-08-24T15:05Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 2,
+        "type": {
+         "id": "3",
+         "name": "STATUS_FINAL",
+         "state": "post",
+         "completed": true,
+         "description": "Final",
+         "detail": "Final",
+         "shortDetail": "Final"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": "Court 16"
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "Clara Burel (FRA) bt YeXin Ma (CHN) 6-4 6-2",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ESPN+",
+          "logo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ESPN+"
+         ]
+        }
+       ],
+       "broadcast": "ESPN+",
+       "competitors": [
+        {
+         "id": "13615",
+         "uid": "s:850~l:851~a:13615",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 4.0,
+           "winner": false
+          },
+          {
+           "value": 2.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "aa4c1af9-cbdd-3724-a109-fbfaffdae905",
+          "displayName": "Ma YeXin",
+          "shortName": "Y. Ma",
+          "fullName": "Ma YeXin",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/chn.png",
+           "alt": "China",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/13615/ma-yexin",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "3508",
+         "uid": "s:850~l:851~a:3508",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          }
+         ],
+         "athlete": {
+          "guid": "ae5e5017-94a5-321e-832f-12e149cf4a86",
+          "displayName": "Clara Burel",
+          "shortName": "C. Burel",
+          "fullName": "Clara Burel",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/fra.png",
+           "alt": "France",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/3508/clara-burel",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "2",
+        "text": "Women's Singles",
+        "slug": "womens-singles"
+       },
+       "round": {
+        "id": "11",
+        "displayName": "Qualifying 1st Round"
+       },
+       "wasSuspended": false
+      },
+      {
+       "id": "184744",
+       "uid": "s:850~l:851~e:189-2026~c:184744",
+       "date": "2026-08-24T19:45Z",
+       "startDate": "2026-08-24T19:45Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 1,
+        "type": {
+         "id": "38",
+         "name": "STATUS_RETIRED",
+         "state": "post",
+         "completed": true,
+         "description": "Retired",
+         "detail": "Retired",
+         "shortDetail": "Retired"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": "Court 11"
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "Lucia Bronzetti (ITA) bt Luisina Giovannini (ARG) 5-0 ret",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ESPN+",
+          "logo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/322a7e47-3cdb-3b5c-ab1b-678e1f2c27e5/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ESPN+"
+         ]
+        }
+       ],
+       "broadcast": "ESPN+",
+       "competitors": [
+        {
+         "id": "13950",
+         "uid": "s:850~l:851~a:13950",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 0.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "f70ef2b9-b49c-3194-8d4a-28230a585b0d",
+          "displayName": "Luisina Giovannini",
+          "shortName": "L. Giovannini",
+          "fullName": "Luisina Giovannini",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/arg.png",
+           "alt": "Argentina",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/13950/luisina-giovannini",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "4666",
+         "uid": "s:850~l:851~a:4666",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 5.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "b89e8ea6-ef2c-32e6-b209-74cd0a5d6f1c",
+          "displayName": "Lucia Bronzetti",
+          "shortName": "L. Bronzetti",
+          "fullName": "Lucia Bronzetti",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/ita.png",
+           "alt": "Italy",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/4666/lucia-bronzetti",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "2",
+        "text": "Women's Singles",
+        "slug": "womens-singles"
+       },
+       "round": {
+        "id": "11",
+        "displayName": "Qualifying 1st Round"
+       },
+       "wasSuspended": false
+      },
+      {
+       "id": "182632",
+       "uid": "s:850~l:851~e:189-2026~c:182632",
+       "date": "2026-08-30T15:05Z",
+       "startDate": "2026-08-30T15:05Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 3,
+        "type": {
+         "id": "3",
+         "name": "STATUS_FINAL",
+         "state": "post",
+         "completed": true,
+         "description": "Final",
+         "detail": "Final",
+         "shortDetail": "Final"
+        }
+       },
+       "venue": {
+        "fullName": "New York, USA",
+        "court": "Louis Armstrong Stadium"
+       },
+       "format": {
+        "regulation": {
+         "periods": 5
+        }
+       },
+       "notes": [
+        {
+         "text": "(19) Jasmine Paolini (ITA) bt Veronika Erjavec (SLO) 6-3 3-6 6-4",
+         "type": "event"
+        }
+       ],
+       "geoBroadcasts": [
+        {
+         "type": {
+          "id": "1",
+          "shortName": "TV"
+         },
+         "market": {
+          "id": "1",
+          "type": "National"
+         },
+         "media": {
+          "shortName": "ABC",
+          "logo": "https://a.espncdn.com/guid/2acff74d-269f-36ac-96eb-9c66f8ba52ff/logos/default.png",
+          "darkLogo": "https://a.espncdn.com/guid/2acff74d-269f-36ac-96eb-9c66f8ba52ff/logos/default-dark.png"
+         },
+         "lang": "en",
+         "region": "us"
+        }
+       ],
+       "broadcasts": [
+        {
+         "market": "national",
+         "names": [
+          "ABC"
+         ]
+        }
+       ],
+       "broadcast": "ABC",
+       "competitors": [
+        {
+         "id": "5878",
+         "uid": "s:850~l:851~a:5878",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 3.0,
+           "winner": false
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 4.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "guid": "45a384a9-ebbe-3616-baf7-28421f08dbda",
+          "displayName": "Veronika Erjavec",
+          "shortName": "V. Erjavec",
+          "fullName": "Veronika Erjavec",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/slo.png",
+           "alt": "Slovenia",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/5878/veronika-erjavec",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        },
+        {
+         "id": "2615",
+         "uid": "s:850~l:851~a:2615",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": true,
+         "curatedRank": {
+          "current": 19
+         },
+         "linescores": [
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 3.0,
+           "winner": false
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          }
+         ],
+         "athlete": {
+          "guid": "1cb6cc14-00ad-6c8b-301e-aa8adc243503",
+          "displayName": "Jasmine Paolini",
+          "shortName": "J. Paolini",
+          "fullName": "Jasmine Paolini",
+          "flag": {
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/ita.png",
+           "alt": "Italy",
+           "rel": [
+            "country-flag"
+           ]
+          },
+          "links": [
+           {
+            "language": "en-US",
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/tennis/player/_/id/2615/jasmine-paolini",
+            "text": "Player Card",
+            "shortText": "Player Card",
+            "isExternal": false,
+            "isPremium": false,
+            "isHidden": false
+           }
+          ]
+         },
+         "statistics": []
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "2",
+        "text": "Women's Singles",
+        "slug": "womens-singles"
+       },
+       "round": {
+        "id": "1",
+        "displayName": "Round 1"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
