@@ -378,13 +378,22 @@ describe("a dynamic route does not unfurl as the home page", () => {
  * the list below is the shape `INHERITS_THE_ROOT_IDENTITY` uses. It fails in
  * BOTH directions, so a route cannot quietly join it and cannot quietly leave
  * it behind. It can only shrink, and it names the next piece of work out loud.
+ *
+ * ═══ IT IS EMPTY. THAT IS THE SHIP, NOT A DISABLED TEST ═══
+ *
+ * The last four entries — `/categories/[slug]`, `/playoffs/[sport]`,
+ * `/sport/[sport]` and `/sport/[sport]/[league]` — came off together with
+ * `lib/collectionShareMeta.ts`. An empty list still fails in both directions:
+ * the rule below says every self-describing dynamic route must hold an
+ * `opengraph-image.tsx`, so the next route added to the app without one is an
+ * offender rather than a new line here.
+ *
+ * ⚠️ An empty `.filter()` result also satisfies a rule vacuously, which is why
+ * the third rule in this block asserts the CARD-SHIPPING side by name and
+ * counts the denominator. Ten routes are named there now; if that number ever
+ * drops, the walk broke and every rule here went quietly green.
  */
-const SHARES_THE_SITE_CARD: readonly string[] = [
-  "/categories/[slug]",
-  "/playoffs/[sport]",
-  "/sport/[sport]",
-  "/sport/[sport]/[league]",
-];
+const SHARES_THE_SITE_CARD: readonly string[] = [];
 
 /** Dynamic routes that say something about themselves, and so could say this. */
 const selfDescribingDynamicRoutes = dynamicRoutes.filter(({ dir }) =>
@@ -416,14 +425,15 @@ describe("an entity route unfurls with its own picture", () => {
 
   it("the routes #5888 fixed are on the CARD-SHIPPING side, by name", () => {
     // Both rules above are `.filter()` over a walk, and a walk that found
-    // nothing satisfies both. Assert the denominator, and assert the five
-    // routes that ship a card are not merely absent from the list but actually
-    // present in the population and actually holding the file.
+    // nothing satisfies both — which is now the ONLY way they can pass, since
+    // `SHARES_THE_SITE_CARD` is empty. Assert the denominator, and assert the
+    // ten routes that ship a card are not merely absent from the list but
+    // actually present in the population and actually holding the file.
     const routes = selfDescribingDynamicRoutes.map((r) => r.route);
     expect(routes).toContain("/tournaments/[slug]");
     expect(routes).toContain("/event/[domain]/[slug]");
     expect(routes).toContain("/hub/[competition]");
-    expect(routes.length).toBeGreaterThanOrEqual(8);
+    expect(routes.length).toBeGreaterThanOrEqual(10);
 
     for (const route of [
       "/tournaments/[slug]",
@@ -432,8 +442,15 @@ describe("an entity route unfurls with its own picture", () => {
       "/events/[id]",
       "/futures/[id]",
       // The team page, which the 2026-09-08 measurement in `lib/shareCard.ts`
-      // names as the one a fan actually pastes. Last off the list.
+      // names as the one a fan actually pastes.
       "/sport/[sport]/[league]/team/[team]",
+      // The four collections that emptied the list: a category's markets, a
+      // bracket, a sport's leagues, a league's season.
+      // `lib/collectionShareMeta.ts` carries their before-read.
+      "/categories/[slug]",
+      "/playoffs/[sport]",
+      "/sport/[sport]",
+      "/sport/[sport]/[league]",
     ]) {
       expect(siteCardRoutes).not.toContain(route);
       expect(
@@ -482,10 +499,26 @@ describe("an entity route unfurls with its own picture", () => {
       fs.existsSync(path.join(APP_DIR, "tournaments", "[slug]", "no-such-file.tsx"))
     ).toBe(false);
 
-    // And the population is genuinely split — a list that is everything or
-    // nothing is not a ratchet.
-    expect(siteCardRoutes.length).toBeGreaterThan(0);
-    expect(siteCardRoutes.length).toBeLessThan(selfDescribingDynamicRoutes.length);
+    // ⚠️ THIS RULE USED TO ASSERT `siteCardRoutes.length > 0`, and that is why
+    // it is being edited rather than deleted. It was the right control while
+    // the ratchet had members: "everything or nothing is not a ratchet". The
+    // list is now EMPTY BY SHIP — every self-describing dynamic route holds its
+    // own card — so the old assertion asked the rig to prove the defect still
+    // existed, and would have to be satisfied by leaving one route broken.
+    //
+    // What it was really protecting is kept: a walk that found nothing, or a
+    // `declaresOwnMetadata` probe stuck on one answer, makes every rule in this
+    // block pass for free. So both probes are asserted to SPLIT their
+    // population, on the axis each one actually reads.
+    expect(siteCardRoutes).toEqual([]);
+
+    expect(selfDescribingDynamicRoutes.length).toBeGreaterThanOrEqual(10);
+    // `declaresOwnMetadata` is the other filter, and it is the one with no
+    // negative control at all until here: dynamic routes that say nothing about
+    // themselves are excluded from every rule above, so a probe stuck on TRUE
+    // would silently widen the population and a probe stuck on FALSE would
+    // empty it. Both states have to exist in the tree.
+    expect(dynamicRoutes.length).toBeGreaterThan(selfDescribingDynamicRoutes.length);
   });
 });
 
