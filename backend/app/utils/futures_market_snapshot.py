@@ -65,7 +65,7 @@ that needs a live row fails a test instead of a request.
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, Iterable, Sequence
 
 #: Columns loaded for `FuturesMarket` on the Discover futures candidate query.
@@ -248,7 +248,61 @@ OUTCOME_COLUMNS: tuple[str, ...] = (
 #: `_opening_baseline_at`, and the per-outcome value never needs to reach a
 #: reader. It rides the outcome SELECT that is already fetching these rows, so
 #: it is the free half of the measurement above, not a second query.
+#:
+#: 🟢 #5809 AMENDS THE SECOND PARAGRAPH, NOT THE FIRST. `last_updated` itself is
+#: still loaded-and-dropped; what IS carried now is one DERIVED INTEGER per
+#: outcome — see `DERIVED_OUTCOME_COLUMNS` directly below, and the measurement
+#: that separates the two.
 OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = ("last_updated", "opening_captured_at")
+
+#: Outcome-level values COMPUTED for the artifact, not loaded (#5809).
+#:
+#: ═══ WHY THE +15% REFUSAL ABOVE DOES NOT COVER THIS ═══
+#:
+#: The refusal on record is against carrying `last_updated` — a `datetime`, and
+#: a datetime is a TAGGED value on this wire: `{"__pic__":"dt","v":"…"}` is ~31
+#: bytes of codec around one instant, repeated across up to 193 legs per market.
+#: Measured on the LAT-P221 production-shape fixture, that is
+#: 3,026,119 B -> 3,358,462 B, i.e. 1.15x the measured artifact and straight
+#: through that file's +/-10% band.
+#:
+#: `price_observed_epoch` is the same fact as an UNTAGGED int of whole UTC
+#: seconds. Measured on the same fixture, same seed, in the same run:
+#: 3,026,119 B -> 3,065,886 B (+39,767 B, +1.3%), and 116,527 -> 123,446
+#: validator nodes against a 200,000 cap (58% -> 62%, alarm at 133,333). So the
+#: refusal stands exactly where it was measured and this column is not an
+#: erosion of it; it is the cheap encoding that was never priced.
+#:
+#: ═══ WHY IT HAS TO BE PER OUTCOME AND CANNOT BE ANOTHER FOLD ═══
+#:
+#: #5809 shipped `top_price_observed_at` first: MIN over the top three legs BY
+#: PROBABILITY, folded per market at build time. That closed most of the defect
+#: and left a residue it could not reach, and the residue is the reason this
+#: column exists. `feed.py` does not print the top three by probability — it
+#: prints the top three of a FILTERED list (`drop_duplicate_legs`, the expired-
+#: rung and fabricated-book gates, `display_rank_order`,
+#: `drop_incoherent_ladder_outcomes`, `_strip_mixed_binary_meta`,
+#: `drop_dominant_field_outcomes`), and the two serializers do not even apply
+#: the same chain as each other. Half of those filters are feed-internal and one
+#: of them reads the REQUEST's clock, so no build-time fold over any fixed rule
+#: can name the set a given card will print.
+#:
+#: The only carrier that can is one that lets the fold happen where the
+#: selection is already in hand — at the serializer, over `card_outcomes[:3]`
+#: themselves. That is `displayed_price_stamp`, and this column is what makes it
+#: answerable on a rehydrated snapshot, whose outcomes have no `last_updated`.
+#: The market-level fold is therefore GONE rather than kept beside it: two folds
+#: answering "how old are the prices on this card" from two different sets is
+#: the drift this module keeps a changelog about.
+DERIVED_OUTCOME_COLUMNS: tuple[str, ...] = ("price_observed_epoch",)
+
+#: The full positional outcome row on the wire: loaded columns, then derived.
+#:
+#: Same construction and the same reason as `MARKET_ROW_COLUMNS` below — build,
+#: validate and rebuild all read this one name, so the appended block cannot
+#: drift out of position, while `market_load_options()` keeps projecting
+#: `OUTCOME_COLUMNS` alone, which is still exactly the load surface.
+OUTCOME_ROW_COLUMNS: tuple[str, ...] = OUTCOME_COLUMNS + DERIVED_OUTCOME_COLUMNS
 
 #: Market-level values that are COMPUTED for the artifact, not loaded from the
 #: `futures_markets` row.
@@ -277,17 +331,17 @@ OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = ("last_updated", "opening_captured_at
 #: outcomes do not agree on one. See the long note above `OUTCOME_COLUMNS` for
 #: why it is folded to one value per market instead of carried per outcome, and
 #: for the production coverage the fold buys.
-#: `top_price_observed_at` (#5809) is `MIN(FuturesOutcome.last_updated)` over the
-#: legs the CARD PRINTS — the newest stamp a card's own displayed prices can all
-#: support. It rides here for exactly the reason its two neighbours do: the
-#: per-outcome column costs 15% of a size-capped shared artifact, and the fold
-#: needs the hydrated rows that only exist at build time. It is a SECOND value
-#: rather than a redefinition of `price_polled_at` because the two answer
-#: different questions for different consumers — see `_top_price_observed_at`.
+#: `top_price_observed_at` (#5809) lived here for one deploy and is GONE. It
+#: folded MIN over the top three legs by PROBABILITY, which is a close proxy for
+#: "the legs the card prints" and not an identity — the card prints the top three
+#: of a filtered list. `DERIVED_OUTCOME_COLUMNS` carries the per-leg observation
+#: instead, so the fold happens at the serializer over the actual selection; see
+#: `displayed_price_stamp`. Keeping the market fold beside it would leave two
+#: answers to one reader-visible question, differing exactly on the cards the
+#: filters touch.
 DERIVED_MARKET_COLUMNS: tuple[str, ...] = (
     "price_polled_at",
     "opening_baseline_at",
-    "top_price_observed_at",
 )
 
 #: The full positional market row on the wire: loaded columns, then derived ones.
@@ -341,7 +395,16 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: while the build path knows the date, so a reader's age mark would blink in and
 #: out with the cache rather than track the price — worse than either behaviour
 #: on its own. Under v5 those entries are never read and expire under their TTL.
-SNAPSHOT_SCHEMA_VERSION = 5
+#:
+#: v6 — the completion of #5809, and the FIRST bump that moves the OUTCOME row:
+#: `price_observed_epoch` appended to it, `top_price_observed_at` removed from
+#: the market row. Arity alone would catch a v5 entry on either half (a market
+#: row one value LONG, an outcome row one value SHORT), but the two changes in
+#: one commit are exactly the case the note above says arity is not the backstop
+#: for: a same-width swap is invisible to it, and this commit is one column out
+#: and one column in. Under v6 a v5 entry is never read and expires under its
+#: TTL, which is the whole cost — one 2.9 MB rebuild per worker, once.
+SNAPSHOT_SCHEMA_VERSION = 6
 
 
 class _Snapshot:
@@ -366,10 +429,17 @@ class SportSnapshot(_Snapshot):
 
 
 class FuturesOutcomeSnapshot(_Snapshot):
-    """Inert stand-in for a `load_only`-restricted `FuturesOutcome` row."""
+    """Inert stand-in for a `load_only`-restricted `FuturesOutcome` row.
+
+    `OUTCOME_ROW_COLUMNS`, not `OUTCOME_COLUMNS` (#5809): the derived
+    observation is part of the row, and a rebuilt outcome that dropped it would
+    tell every cached card its prices cannot be dated while the build path knows
+    when they were seen — the "a DIFFERENT feed, not a cheaper one" failure this
+    module exists to make impossible, one level down from the market row.
+    """
 
     def __init__(self, values: Sequence[Any]) -> None:
-        for name, value in zip(OUTCOME_COLUMNS, values):
+        for name, value in zip(OUTCOME_ROW_COLUMNS, values):
             self.__dict__[name] = value
 
 
@@ -519,8 +589,17 @@ def _outcome_probability(outcome: Any) -> float:
         return -1.0
 
 
-def _top_price_observed_at(outcomes: Iterable[Any]) -> Any:
+def _top_price_observed_at(
+    outcomes: Iterable[Any], leg_count: int = CARD_PRICE_AGE_LEG_COUNT
+) -> Any:
     """`MIN(last_updated)` over the legs the CARD SHOWS, or `None` (#5809).
+
+    `leg_count` DEFAULTS to the futures card's three and is passed explicitly
+    only by the concept path, which shows one leg or two — see
+    `concept_card_leg_count`. It is a parameter rather than two copies of this
+    fold because the rule ("the oldest of what is displayed") is identical and
+    only the window differs; what must never be shared is the *choice* of
+    window, which is why no caller may pass a number it computed itself.
 
     ═══ WHY THIS EXISTS BESIDE `_price_polled_at` AND DOES NOT REPLACE IT ═══
 
@@ -578,17 +657,109 @@ def _top_price_observed_at(outcomes: Iterable[Any]) -> Any:
     is this module's rule everywhere (see `_opening_baseline_at`) and is also not
     a regression: `MAX` ignored it too. `None` when no displayed leg has a stamp
     — "we do not know", which every consumer reads as not-fresh (gotcha #53).
+
+    ═══ THE RESIDUE IS CLOSED FOR THE FUTURES CARD, NOT BY THIS FUNCTION ═══
+
+    The paragraph above used to end "the last row of it is not reachable from
+    here", and it is still true OF HERE. What changed is that the futures
+    serializers no longer come here at all: they hold the filtered selection
+    already and call `displayed_price_stamp` on it directly, over a per-leg
+    carrier (`DERIVED_OUTCOME_COLUMNS`) that did not exist when this was
+    written. This function survives for the CONCEPT path, where the caller hands
+    over a full adapter-filtered competitor list and the top-N window is still
+    the thing that has to be applied — see `concept_price_observed_at_iso`.
     """
     ranked = sorted(outcomes, key=_outcome_probability, reverse=True)
-    stamps = [
-        stamp
-        for stamp in (
-            (_instance_dict(o) or _NO_INSTANCE_DICT).get("last_updated")
-            for o in ranked[:CARD_PRICE_AGE_LEG_COUNT]
-        )
-        if stamp is not None
+    return displayed_price_stamp(ranked[:leg_count])
+
+
+def _price_observed_epoch(outcome: Any) -> int | None:
+    """One outcome's `last_updated` as whole UTC seconds, for the wire (#5809).
+
+    The build-time producer behind `DERIVED_OUTCOME_COLUMNS`. `__dict__.get`,
+    never `getattr`, for this module's usual reason (gotcha #42), so an outcome
+    whose column was not projected contributes `None` — "we do not know" — and
+    never a fabricated instant.
+
+    🔴 A NAIVE STAMP IS READ AS UTC, NOT AS THE DYNO'S LOCAL TIME. The column is
+    `DateTime(timezone=True)` and production hands back aware values, but the
+    SQLite fixtures every guard in this repo runs on do not, and
+    `datetime.timestamp()` on a naive value silently applies the HOST's offset.
+    That is a whole-hours error in a value whose only consumer is a thirty-minute
+    threshold, i.e. exactly the size of mistake that reads as a real finding.
+
+    WHOLE SECONDS, and the truncation is deliberate rather than incidental: the
+    same fold has to give the same answer on a rehydrated snapshot and on a live
+    ORM row, or the cached path serves a different feed from the direct one, and
+    the only way to guarantee that is for BOTH paths to go through the same
+    resolution. `displayed_price_stamp` therefore truncates the ORM side too.
+    Sub-second fidelity buys a reader nothing: the value is rendered as an age in
+    minutes and drawn only above thirty of them.
+    """
+    stamp = (_instance_dict(outcome) or _NO_INSTANCE_DICT).get("last_updated")
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return int(stamp.timestamp())
+
+
+def _outcome_observed_epoch(outcome: Any) -> int | None:
+    """One outcome's observation second, off WHICHEVER carrier it is (#5809).
+
+    `price_poll_stamp`'s two-carrier resolution, one level down and for one leg:
+
+    * an outcome rebuilt by `from_plain` carries `price_observed_epoch` on the
+      row, folded at build time. It does NOT carry `last_updated` — that column
+      is `OUTCOME_LOAD_ONLY_EXTRA`, and reading it here would be `None` on every
+      rebuilt leg, i.e. every card on the cached path silently undatable.
+    * an outcome from a plain ORM query has no derived value at all, because
+      `price_observed_epoch` is not a database column; but it DOES carry
+      `last_updated`, because `market_load_options()` projects it.
+
+    So the derived value is read FIRST and the raw column is the fallback — the
+    two carriers, in the order that makes each authoritative where it exists,
+    not a defensive `or`. A third carrier that has neither (the `__slots__`
+    `tennis_population.OutcomeRow`, whose whole projection is three fields)
+    contributes `None`, which is the honest degradation this module applies
+    everywhere.
+    """
+    state = _instance_dict(outcome) or _NO_INSTANCE_DICT
+    carried = state.get("price_observed_epoch")
+    if carried is not None:
+        return int(carried)
+    return _price_observed_epoch(outcome)
+
+
+def displayed_price_stamp(outcomes: Iterable[Any]) -> Any:
+    """`MIN` observation over the legs HANDED IN — no ranking, no window (#5809).
+
+    The completion of #5809, and the one function that can be exactly right
+    about a futures card: its argument IS the card's printed selection, already
+    filtered and already sliced by the serializer that is about to render it.
+    Nothing here re-derives which legs those are, because every attempt to do so
+    from a market is a proxy — `_top_price_observed_at`'s docstring records the
+    measurement that killed the last one.
+
+    `MIN`, for the reason stated at length above: three printed probabilities
+    are three facts, one mark speaks for all of them, and the oldest is the only
+    claim all three support.
+
+    An outcome with no readable observation is IGNORED, and `None` comes back
+    only when NO leg has one. That is the same rule as every other fold in this
+    module, and it is deliberately not "unknown if ANY leg is unknown": on a
+    card whose third leg was never polled, the honest thing the other two
+    support is still their own age, and `None` there would delete a disclosure
+    that is currently correct.
+    """
+    seconds = [
+        epoch
+        for epoch in (_outcome_observed_epoch(o) for o in outcomes)
+        if epoch is not None
     ]
-    return min(stamps) if stamps else None
+    if not seconds:
+        return None
+    return datetime.fromtimestamp(min(seconds), tz=timezone.utc)
 
 
 def _opening_baseline_at(outcomes: Iterable[Any]) -> Any:
@@ -681,32 +852,15 @@ def price_poll_stamp(market: Any) -> Any:
     return _carrier_stamp(market, "price_polled_at", _price_polled_at)
 
 
-def top_price_stamp(market: Any) -> Any:
-    """`top_price_observed_at` for a market on ANY carrier shape (#5809).
-
-    `price_poll_stamp`'s twin, over the same three carriers and by the same
-    delegation, for the value defined in `_top_price_observed_at`: the oldest
-    observation among the legs the card PRINTS, rather than the newest across
-    every leg the market has.
-
-    The two are deliberately separate functions rather than one with a flag.
-    They have different consumers — the dead-market clock and `my-stuff` want
-    the market-wide bound, the age mark under a card wants the displayed one —
-    and a single call site choosing between them by argument is how a later edit
-    silently gives one consumer the other's answer.
-    """
-    return _carrier_stamp(market, "top_price_observed_at", _top_price_observed_at)
-
-
 def _carrier_stamp(market: Any, key: str, fold: Any) -> Any:
     """One derived stamp off whichever of the three carriers `market` is.
 
-    Extracted (#5809) so `price_poll_stamp` and `top_price_stamp` cannot drift
-    on the carrier question, which is the part that is subtle and shared; what
-    differs between them is only the wire key and the fold, and those are the
-    arguments. Before this existed there was one such reader; a second copy of
-    the three branches below would be the drift this module keeps a changelog
-    about.
+    Extracted (#5809) so `price_poll_stamp` and `top_price_stamp` could not
+    drift on the carrier question. `top_price_stamp` is gone — the displayed-legs
+    answer is no longer a market-level fold at all (`displayed_price_stamp`) —
+    so this has one caller again, and it is kept rather than inlined for the
+    reason it was written: the three branches below are the subtle part, and the
+    next derived market column will want them rather than a second copy.
     """
     state = _instance_dict(market)
     if state is None:
@@ -762,17 +916,24 @@ def price_observed_at_iso(market: Any) -> str | None:
     somewhere, and doing it once here is what stops each caller getting it
     right separately.
 
-    ═══ SEVEN CALL SITES, ONE RULE ═══
+    ═══ 🔴 NO APP CALL SITE TODAY, AND THAT IS DELIBERATE (#5809) ═══
 
-    Every concept-envelope adapter writes this key beside the
-    `evolution_market_id` it already derives from the same market object. Seven
-    copies of `stamp.isoformat() if stamp else None` is seven chances for one
-    domain to drift — and a card that discloses its price age on the cycling
-    concept but not the F1 one is the defect #5778 was filed on, not half a
-    fix. `feed.py`'s `_card_price_observed_at` (#5752) is the same rule on the
-    futures serializers and should be collapsed onto this function once that
-    change is on master; it is deliberately left alone here because it is in
-    the desk tray and rewriting it would invalidate a gated sha.
+    This shipped (#5778) as the one helper all seven concept adapters called.
+    #5809 then moved every one of them to `concept_price_observed_at_iso`,
+    because folding `MAX` over a MARKET answers a different question from "how
+    old are the prices this CARD shows" — see that function for the filtering
+    that makes the two sets genuinely different rather than merely differently
+    computed.
+
+    It is kept rather than deleted for one named consumer, not on general
+    principle: `feed.py`'s `_card_price_observed_at` (#5752) is this exact rule
+    open-coded on the futures serializers and should be collapsed onto this
+    function. That collapse is not done here because those lines are inside a
+    gated sha in the desk tray and rewriting them would invalidate it.
+
+    So a reader finding this unused should NOT wire it back into a concept
+    adapter — the guard in `test_concept_card_price_observed_at_5778` refuses
+    that by name, and the refusal message says why.
 
     ═══ `None` IS AN ANSWER ═══
 
@@ -785,6 +946,110 @@ def price_observed_at_iso(market: Any) -> str | None:
     this shipped".
     """
     stamp = price_poll_stamp(market)
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.isoformat()
+
+
+#: A concept card that renders a BOUT prints both sides, so both are displayed
+#: facts and the mark must speak for the older of them.
+CONCEPT_BOUT_LEG_COUNT = 2
+#: Every other concept card prints exactly one probability — `leader`, the
+#: favourite — so exactly one price is displayed and nothing else may date it.
+CONCEPT_LEADER_LEG_COUNT = 1
+#: `_bout_from_competitors`' archetype gate, named here so this module and
+#: `feed.py` cannot drift on it silently; the guard test scans both for it.
+CONCEPT_BOUT_KIND = "co_equal_list"
+
+
+def concept_card_leg_count(kind: Any, competitor_count: int) -> int:
+    """How many prices a concept card DISPLAYS, given its envelope (#5809).
+
+    ═══ WHY THIS IS NOT `CARD_PRICE_AGE_LEG_COUNT` ═══
+
+    A futures card prints its top three outcomes. A concept card never prints
+    three. `ConceptCard.tsx` renders exactly one of two things on its unsettled
+    branch, and they are mutually exclusive in the source (`leader` is computed
+    as `!whatHit && !bout && …`):
+
+      * a BOUT — two names, two percentages, one row each; or
+      * a LEADER — one big percentage and one name.
+
+    So reusing the futures three here would date a concept card by two
+    candidates it does not show. ux/1226 declined to ship that on exactly this
+    reasoning, and it is worth restating why an over-statement is not the safe
+    direction merely because it errs old: the mark's whole job is to tell a
+    reader which numbers to trust. A card whose three-deep fold reaches a dead
+    47th leg would print "priced 3 days ago" over two prices polled a minute
+    ago — the disclosure firing when it should be silent, which teaches a reader
+    to ignore it, and an ignored disclosure protects nobody on the card that
+    needed it. Both directions are a lie; #5809 is on record about that.
+
+    ═══ THE GATE MIRRORS `_bout_from_competitors`, DELIBERATELY ═══
+
+    The bout is admitted by ARCHETYPE AND COUNT, not by count alone — a
+    two-entry `winner_field` (a Grand Tour thinned to two riders, a golf major
+    down to a final pair) stays an outright and prints one number. That is
+    `_bout_from_competitors`' own rule and the copy here is the risk this
+    function exists to concentrate: one place to read, one place to scan. The
+    guard test asserts the two agree on all four corners of (kind, count).
+
+    A count this function cannot trust degrades to the LEADER window, which is
+    the narrow one: a wrong guess there dates the card by the single price it
+    most certainly does display.
+    """
+    if kind == CONCEPT_BOUT_KIND and competitor_count == CONCEPT_BOUT_LEG_COUNT:
+        return CONCEPT_BOUT_LEG_COUNT
+    return CONCEPT_LEADER_LEG_COUNT
+
+
+def concept_price_observed_at_iso(
+    outcomes: Iterable[Any], kind: Any, competitor_count: int
+) -> str | None:
+    """When the prices a CONCEPT card displays were last polled (#5809).
+
+    `price_observed_at_iso`' sibling for the concept envelope, and it takes
+    OUTCOMES rather than a market on purpose. That is the whole correction.
+
+    ═══ WHY NOT A MARKET ═══
+
+    `price_observed_at_iso(market)` folds over `market.outcomes` — every leg the
+    market has. A concept adapter's `competitors` list is NOT that set: every
+    adapter filters it first, and the rows they drop are exactly the rows most
+    likely to carry the extreme probability that a top-N-by-probability fold
+    would then select. `event_cycling._real_outcomes` and the `_outcomes`
+    closures in `event_awards` / `event_election` drop `is_field_outcome` names
+    (the "Field" / "any other" catch-all, which on a 184-rider Grand Tour can
+    out-price every named rider), `is_placeholder_outcome_name` rows, and rows
+    with no probability at all; awards and election additionally cap at 40.
+
+    So a fold over the MARKET can rank a leg the card never prints and date the
+    card by it — which is #5809's own defect wearing a concept costume. Passing
+    the adapter's already-filtered list means the fold ranks the same rows the
+    reader sees, and the "is this the displayed set?" question is answered by
+    construction at the call site instead of being re-derived here from data
+    that no longer knows what was filtered.
+
+    ═══ `None` IS AN ANSWER, AND TENNIS IS WHY IT HAS TO BE ═══
+
+    An outcome carrying no `last_updated` contributes nothing, and a set in
+    which none does folds to `None` — "we do not know", which every consumer
+    reads as not-fresh (gotcha #53), never as fresh. `tennis_population`'s
+    `OutcomeRow` is a `__slots__` row carrying exactly
+    `("name", "current_probability", "is_winner")`, so tennis genuinely cannot
+    date its prices and correctly discloses nothing; `_instance_dict` degrades
+    it rather than raising. The call stays at that site for the reason #5778
+    gave: if that row ever widens, the card lights up with no edit here.
+
+    The UTC offset is applied here for the same reason `price_observed_at_iso`
+    applies it — an offsetless stamp is parsed as LOCAL time by `Date.parse`,
+    which would age a just-polled price by the reader's own offset.
+    """
+    stamp = _top_price_observed_at(
+        outcomes, concept_card_leg_count(kind, competitor_count)
+    )
     if stamp is None:
         return None
     if stamp.tzinfo is None:
@@ -816,7 +1081,12 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
     producers = {
         "price_polled_at": _price_polled_at,
         "opening_baseline_at": _opening_baseline_at,
-        "top_price_observed_at": _top_price_observed_at,
+    }
+    # Same rule, one level down (#5809): keyed by NAME so a derived outcome
+    # column added to the tuple without a producer here is a `KeyError` on the
+    # first build rather than a short row the validator then rejects forever.
+    outcome_producers = {
+        "price_observed_epoch": _price_observed_epoch,
     }
     rows: list[list[Any]] = []
     for market in markets:
@@ -827,7 +1097,14 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
             [
                 _row(market, MARKET_COLUMNS)
                 + [producers[name](outcomes) for name in DERIVED_MARKET_COLUMNS],
-                [_row(o, OUTCOME_COLUMNS) for o in outcomes],
+                [
+                    _row(o, OUTCOME_COLUMNS)
+                    + [
+                        outcome_producers[name](o)
+                        for name in DERIVED_OUTCOME_COLUMNS
+                    ]
+                    for o in outcomes
+                ],
                 _row(sport, SPORT_COLUMNS) if sport is not None else None,
             ]
         )
@@ -874,7 +1151,7 @@ def _validated_rows(payload: Any) -> list | None:
             return None
         if not isinstance(outcome_rows, (list, tuple)):
             return None
-        if any(not _is_value_tuple(o, len(OUTCOME_COLUMNS)) for o in outcome_rows):
+        if any(not _is_value_tuple(o, len(OUTCOME_ROW_COLUMNS)) for o in outcome_rows):
             return None
         if sport_values is not None and not _is_value_tuple(
             sport_values, len(SPORT_COLUMNS)
@@ -923,6 +1200,8 @@ __all__ = [
     "DERIVED_MARKET_COLUMNS",
     "MARKET_ROW_COLUMNS",
     "OUTCOME_COLUMNS",
+    "DERIVED_OUTCOME_COLUMNS",
+    "OUTCOME_ROW_COLUMNS",
     "SPORT_COLUMNS",
     "SNAPSHOT_SCHEMA_VERSION",
     "FuturesMarketSnapshot",
@@ -931,6 +1210,9 @@ __all__ = [
     "market_load_options",
     "opening_baseline_stamp",
     "price_poll_stamp",
+    "displayed_price_stamp",
+    "concept_card_leg_count",
+    "concept_price_observed_at_iso",
     "to_plain",
     "from_plain",
     "is_snapshot_payload",

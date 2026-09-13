@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.utils.futures_market_snapshot import price_observed_at_iso
+from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 
 from app.utils.settledness import (
     market_assigned_settled,
@@ -1028,7 +1028,15 @@ class TennisEventAdapter:
                 # column is ever added to that row this card lights up with no
                 # further change here. Widening the cached row is latency's
                 # call, not ux's (standing notice 41).
-                "price_observed_at": price_observed_at_iso(winner),
+                #
+                # #5809: routed through the concept helper with this card's own
+                # leg count, so the day that row widens it lights up with the
+                # DISPLAYED age and not a three-deep futures fold.
+                "price_observed_at": concept_price_observed_at_iso(
+                    getattr(winner, "outcomes", None) or [],
+                    "winner_field",
+                    len(competitors),
+                ),
             },
             "sections": sections,
             "children": children,

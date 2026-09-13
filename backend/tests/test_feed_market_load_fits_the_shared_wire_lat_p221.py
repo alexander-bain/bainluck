@@ -128,7 +128,35 @@ NULL_RATE = 0.25
 #:
 #: The budget assertion below is UNCHANGED and still has room: 116,527 against a
 #: 200,000 cap is 58%, and the 1.5x alarm sits at 133,333.
-MEASURED_NODES = 116_527
+#:
+#: #5809 COMPLETED moves it the other way as well as up, and this is the first
+#: delta with a NEGATIVE term, so it is worth reading rather than absorbing:
+#: 116,527 -> 122,749, +6,222, measured and decomposed before the constant was
+#: touched.
+#:
+#:   -700  `top_price_observed_at` REMOVED from the market row. The market-level
+#:         fold over the top three by probability was a proxy for "the legs the
+#:         card prints"; the card prints the top three of a FILTERED list, so it
+#:         is replaced rather than kept beside its successor.
+#: +6,904  one derived value per OUTCOME — `price_observed_epoch`, an untagged
+#:         int of whole UTC seconds, which is what makes the per-leg carrier
+#:         affordable where the `last_updated` DATETIME this file refused at +15%
+#:         was not. Outcome row values go 82,848 -> 89,752 over 6,904 rows, i.e.
+#:         exactly one column's worth and nothing else.
+#:    +18  the fixture's own RNG stream, shifted in BOTH directions this time:
+#:         the market row draws one FEWER nullable per row and the outcome row
+#:         one MORE, so six `market_metadata` cells flip from `None` to a
+#:         populated dict (524 -> 530) at 4 nodes against 1, i.e. 6 x 3.
+#:
+#: The envelope barely moves — 3,026,119 B -> 3,028,144 B on this fixture, ratio
+#: to the measured artifact 1.033 -> 1.034 — because 700 tagged datetimes leaving
+#: the wire very nearly pays for 6,904 untagged ints arriving on it. That is the
+#: whole economic argument for the completion and it is measured here, not
+#: asserted in the module's prose.
+#:
+#: The budget assertion below is again UNCHANGED and still has room: 122,749
+#: against a 200,000 cap is 61%, and the 1.5x alarm still sits at 133,333.
+MEASURED_NODES = 122_749
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -242,11 +270,21 @@ def _row_at_kinds(
 _DERIVED_KINDS = {
     "price_polled_at": "dt",
     "opening_baseline_at": "dt",
-    # #5809. A third tagged datetime per market, and it is here rather than in
-    # the outcome tuple for the reason the module's own note records: the
-    # per-outcome column was measured at +15% of this artifact, one timestamp
-    # repeated across up to 193 legs, to say one thing per market.
-    "top_price_observed_at": "dt",
+}
+
+#: The kinds of `DERIVED_OUTCOME_COLUMNS`, by name and for the same reason as
+#: the map above — they are not on `FuturesOutcome`, so a column added without a
+#: line here is a `KeyError` in this fixture rather than a silently-cheap `str`.
+#:
+#: #5809 completed. `top_price_observed_at` was a third tagged DATETIME on the
+#: market row and is gone; `price_observed_epoch` is an UNTAGGED int on every
+#: OUTCOME row, which is a far bigger population and still a smaller artifact
+#: than the datetime this file's own +15% refusal was measured against. That
+#: asymmetry is the entire reason the completion is affordable, so it is
+#: measured here rather than asserted in a docstring — see the delta
+#: decomposition on `MEASURED_NODES`.
+_DERIVED_OUTCOME_KINDS = {
+    "price_observed_epoch": "int",
 }
 
 
@@ -256,13 +294,18 @@ def _production_scale_payload() -> dict:
     market_kinds = _column_kinds(FuturesMarket, fs.MARKET_COLUMNS) + [
         _DERIVED_KINDS[name] for name in fs.DERIVED_MARKET_COLUMNS
     ]
-    outcome_kinds = _column_kinds(FuturesOutcome, fs.OUTCOME_COLUMNS)
+    outcome_kinds = _column_kinds(FuturesOutcome, fs.OUTCOME_COLUMNS) + [
+        _DERIVED_OUTCOME_KINDS[name] for name in fs.DERIVED_OUTCOME_COLUMNS
+    ]
     # Derived values are nullable by construction: `to_plain` writes `None` for
-    # a market the caller's map does not cover (a market with no outcome rows).
+    # a market the caller's map does not cover (a market with no outcome rows),
+    # and for an outcome whose `last_updated` was never projected or never set.
     market_null = _nullable(FuturesMarket, fs.MARKET_COLUMNS) + [True] * len(
         fs.DERIVED_MARKET_COLUMNS
     )
-    outcome_null = _nullable(FuturesOutcome, fs.OUTCOME_COLUMNS)
+    outcome_null = _nullable(FuturesOutcome, fs.OUTCOME_COLUMNS) + [True] * len(
+        fs.DERIVED_OUTCOME_COLUMNS
+    )
     per_market = PROD_OUTCOMES // PROD_MARKETS
     remainder = PROD_OUTCOMES - per_market * PROD_MARKETS
     rows = []

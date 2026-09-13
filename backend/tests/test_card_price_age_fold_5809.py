@@ -32,7 +32,7 @@ carry a leader more than an hour behind their own market max; 503 by a day.
 2. **The concern the old rule was defending still holds** — a dead fifth leg at
    123 days (the measurement in `_card_price_observed_at`'s own docstring) must
    not date a card whose displayed prices are current. That is preserved by the
-   top-N filter, not by `MAX`, so it needs its own assertion: a fix that took
+   printed WINDOW, not by `MAX`, so it needs its own assertion: a fix that took
    `MIN` over ALL legs would pass leg 1 and fail here.
 3. **It survives the carrier** — three carriers (build-path ORM rows, a
    `from_plain` rebuild, a `__slots__` row) must agree, or the defect moves to
@@ -41,6 +41,28 @@ carry a leader more than an hour behind their own market max; 503 by a day.
    market-wide question its own consumers (the dead-market clock,
    `newest_outcome_at`) ask. A "fix" that redefined it would empty cards.
 5. **The leg count cannot drift** from the slice `feed.py` actually prints.
+
+## WHERE THE WINDOW LIVES NOW, AND WHY THIS FILE MOVED WITH IT
+
+The first half of #5809 folded the answer at BUILD time, per market, over the
+top three legs by probability, and shipped saying in as many words that top-N by
+probability is a close PROXY for "displayed" and not an identity. It is not one
+because `feed.py` prints the top three of a FILTERED list, and half those
+filters are feed-internal while one reads the request's clock.
+
+The completion moves the fold to where the selection already exists — the
+serializer, over `card_outcomes[:3]` themselves — on the back of a per-leg wire
+carrier (`price_observed_epoch`). So `top_price_observed_at` and
+`top_price_stamp` are GONE, and the assertions below that named them now name
+`displayed_price_stamp` over an explicitly printed list. The top-N window itself
+did not disappear: it survives in `_top_price_observed_at`, which the CONCEPT
+path still needs because its caller hands over a whole filtered competitor list
+rather than a slice. Section 3 tests it there.
+
+The identity this file cannot assert — that the list handed over IS the list
+rendered — is the subject of `test_card_displayed_price_age_5809.py`, which
+drives the real serializer. Two files because they fail for different reasons:
+this one when the fold is wrong about a set, that one when the set is wrong.
 """
 
 from __future__ import annotations
@@ -128,6 +150,27 @@ def _specimen_outcomes():
     return displayed + hidden
 
 
+def _printed(outcomes):
+    """The legs a card actually prints, for a fixture that needs no filtering.
+
+    In production this list is `card_outcomes[:3]` — the top three of a list the
+    serializer has already put through six filters — and the binding between
+    THAT list and the fold is asserted against the route in
+    `test_card_displayed_price_age_5809.py`. Every fixture in this file is
+    deliberately one no filter touches, so here the printed legs are simply the
+    top three by probability, spelled out rather than derived by the thing under
+    test.
+    """
+    ranked = sorted(
+        outcomes,
+        key=lambda o: (
+            o.current_probability if o.current_probability is not None else -1.0
+        ),
+        reverse=True,
+    )
+    return ranked[: fms.CARD_PRICE_AGE_LEG_COUNT]
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 1. THE SPECIMEN REPRODUCES
 # ══════════════════════════════════════════════════════════════════════════
@@ -146,9 +189,9 @@ class TestTheSpecimen:
         assert fms.price_poll_stamp(market) == INVISIBLE_LEG_AT
 
     def test_the_new_rule_dates_it_by_the_prices_it_prints(self):
-        market = _DictMarket(_specimen_outcomes())
-
-        assert fms.top_price_stamp(market) == DISPLAYED_AT
+        assert fms.displayed_price_stamp(_printed(_specimen_outcomes())) == (
+            DISPLAYED_AT
+        )
 
     def test_the_served_string_is_the_displayed_age_and_carries_an_offset(self):
         """Through the route's own serializer, not just the fold beneath it.
@@ -158,9 +201,7 @@ class TestTheSpecimen:
         reader's own UTC offset — the whole mark, wrong, for everyone west of
         Greenwich.
         """
-        market = _DictMarket(_specimen_outcomes())
-
-        served = feed_module._card_price_observed_at(market)
+        served = feed_module._card_price_observed_at(_printed(_specimen_outcomes()))
 
         assert served == DISPLAYED_AT.isoformat()
         assert served.endswith("+00:00")
@@ -173,10 +214,10 @@ class TestTheSpecimen:
         day above it, so the card drew nothing at all.
         """
         now = INVISIBLE_LEG_AT + timedelta(minutes=1)
-        market = _DictMarket(_specimen_outcomes())
+        outcomes = _specimen_outcomes()
 
-        old_age = now - fms.price_poll_stamp(market)
-        new_age = now - fms.top_price_stamp(market)
+        old_age = now - fms.price_poll_stamp(_DictMarket(outcomes))
+        new_age = now - fms.displayed_price_stamp(_printed(outcomes))
 
         assert old_age < timedelta(minutes=30)
         assert new_age > timedelta(hours=23)
@@ -198,31 +239,34 @@ class TestTheDeadLegIsStillExcluded:
 
     def _card_with_a_dead_fifth_leg(self):
         fresh = datetime(2026, 9, 13, 2, 0, tzinfo=UTC)
-        return _DictMarket(
-            [
-                _Outcome("Leader", 0.40, fresh),
-                _Outcome("Second", 0.30, fresh),
-                _Outcome("Third", 0.20, fresh),
-                _Outcome("Fourth", 0.09, fresh),
-                _Outcome("Dead fifth", 0.01, fresh - timedelta(days=123)),
-            ]
-        )
+        return [
+            _Outcome("Leader", 0.40, fresh),
+            _Outcome("Second", 0.30, fresh),
+            _Outcome("Third", 0.20, fresh),
+            _Outcome("Fourth", 0.09, fresh),
+            _Outcome("Dead fifth", 0.01, fresh - timedelta(days=123)),
+        ]
 
     def test_a_dead_leg_outside_the_top_three_does_not_date_the_card(self):
-        market = self._card_with_a_dead_fifth_leg()
+        outcomes = self._card_with_a_dead_fifth_leg()
 
-        assert fms.top_price_stamp(market) == datetime(2026, 9, 13, 2, 0, tzinfo=UTC)
+        assert fms.displayed_price_stamp(_printed(outcomes)) == (
+            datetime(2026, 9, 13, 2, 0, tzinfo=UTC)
+        )
 
     def test_a_naive_min_over_all_legs_would_have_dated_it_123_days_old(self):
         """The mutant this class exists to kill, run explicitly.
 
-        Without this, "take the oldest" reads as the whole fix and the top-N
-        filter looks like an optimisation someone may later simplify away.
+        Without this, "take the oldest" reads as the whole fix and the printed
+        window looks like an optimisation someone may later simplify away — for
+        instance by handing `displayed_price_stamp` the market's whole outcome
+        list, which is a one-character change at either call site.
         """
-        market = self._card_with_a_dead_fifth_leg()
-        every_stamp = [o.last_updated for o in market.outcomes]
+        outcomes = self._card_with_a_dead_fifth_leg()
 
-        assert min(every_stamp) != fms.top_price_stamp(market)
+        assert fms.displayed_price_stamp(outcomes) != fms.displayed_price_stamp(
+            _printed(outcomes)
+        )
 
     def test_a_dead_leg_INSIDE_the_top_three_does_date_the_card(self):
         """The other direction, which is not symmetry — it is the point.
@@ -232,15 +276,13 @@ class TestTheDeadLegIsStillExcluded:
         """
         fresh = datetime(2026, 9, 13, 2, 0, tzinfo=UTC)
         dead = fresh - timedelta(days=123)
-        market = _DictMarket(
-            [
-                _Outcome("Leader", 0.60, fresh),
-                _Outcome("Second", 0.30, dead),
-                _Outcome("Third", 0.10, fresh),
-            ]
-        )
+        outcomes = [
+            _Outcome("Leader", 0.60, fresh),
+            _Outcome("Second", 0.30, dead),
+            _Outcome("Third", 0.10, fresh),
+        ]
 
-        assert fms.top_price_stamp(market) == dead
+        assert fms.displayed_price_stamp(_printed(outcomes)) == dead
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -259,7 +301,9 @@ class TestTheFold:
             ]
         )
 
-        assert fms.top_price_stamp(market) == base - timedelta(hours=9)
+        assert fms._top_price_observed_at(market.outcomes) == (
+            base - timedelta(hours=9)
+        )
 
     def test_the_window_is_by_PROBABILITY_not_by_list_order(self):
         """The rows do not arrive sorted on every path, so the fold sorts.
@@ -278,7 +322,7 @@ class TestTheFold:
             ]
         )
 
-        assert fms.top_price_stamp(market) == base
+        assert fms._top_price_observed_at(market.outcomes) == base
 
     def test_an_unstamped_leg_is_ignored_not_treated_as_undatable(self):
         """This module's rule everywhere, and not a regression: `MAX` did it too.
@@ -294,7 +338,7 @@ class TestTheFold:
             ]
         )
 
-        assert fms.top_price_stamp(market) == base
+        assert fms._top_price_observed_at(market.outcomes) == base
 
     def test_an_unreadable_probability_sorts_BELOW_every_readable_one(self):
         """So it can never displace a leg the reader actually sees.
@@ -312,7 +356,7 @@ class TestTheFold:
             ]
         )
 
-        assert fms.top_price_stamp(market) == base
+        assert fms._top_price_observed_at(market.outcomes) == base
 
     @pytest.mark.parametrize(
         "outcomes, why",
@@ -328,7 +372,7 @@ class TestTheFold:
         Never a raise: this runs inside the per-item serializer, where one
         exception drops the entire futures pool rather than one card (#42).
         """
-        assert fms.top_price_stamp(_DictMarket(outcomes)) is None, why
+        assert fms._top_price_observed_at(outcomes) is None, why
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -356,56 +400,87 @@ class TestTheThreeCarriersAgree:
         return market
 
     def test_the_build_path_folds_from_its_hydrated_outcomes(self):
-        assert fms.top_price_stamp(self._orm_specimen()) == DISPLAYED_AT
+        outcomes = self._orm_specimen().outcomes
+
+        assert fms.displayed_price_stamp(_printed(outcomes)) == DISPLAYED_AT
 
     def test_the_value_survives_the_wire(self):
         rebuilt = fms.from_plain(fms.to_plain([self._orm_specimen()]))[0]
 
-        assert rebuilt.__dict__["top_price_observed_at"] == DISPLAYED_AT
-        assert fms.top_price_stamp(rebuilt) == DISPLAYED_AT
+        assert fms.displayed_price_stamp(_printed(rebuilt.outcomes)) == DISPLAYED_AT
 
     def test_the_rebuilt_market_agrees_with_the_one_it_was_built_from(self):
         """Stated as an equality between carriers, which is the actual contract.
 
         Two assertions against the same literal can both drift to the same wrong
-        value; this one cannot pass unless the carriers agree.
+        value; this one cannot pass unless the carriers agree. It is also the
+        assertion that prices the completion's one deliberate loss of precision:
+        the wire carries whole seconds, so the ORM side is truncated to whole
+        seconds too. Truncate only one and this is the test that goes red.
         """
         direct = self._orm_specimen()
         rebuilt = fms.from_plain(fms.to_plain([self._orm_specimen()]))[0]
 
-        assert fms.top_price_stamp(rebuilt) == fms.top_price_stamp(direct)
+        assert fms.displayed_price_stamp(
+            _printed(rebuilt.outcomes)
+        ) == fms.displayed_price_stamp(_printed(direct.outcomes))
 
-    def test_the_rebuilt_market_does_not_re_derive_from_stampless_outcomes(self):
-        """`last_updated` is OUTCOME_LOAD_ONLY_EXTRA: loaded, never on the wire.
+    def test_the_rebuilt_legs_answer_it_WITHOUT_the_dropped_column(self):
+        """The inversion the completion turns on, asserted as a mechanism.
 
-        So the rebuilt outcomes cannot answer this question and the folded row
-        value must win. If the order of those two branches ever inverted, every
-        cached card would read "we do not know".
+        `last_updated` is still `OUTCOME_LOAD_ONLY_EXTRA` — loaded, dropped, and
+        genuinely ABSENT from a rebuilt leg, which is why the first half of
+        #5809 had to fold at build time and could only fold over a proxy set.
+        The derived second is what lets the same question be asked of an
+        arbitrary subset after rehydration, so both halves are asserted here: the
+        raw column is gone, and the answer is right anyway.
         """
         rebuilt = fms.from_plain(fms.to_plain([self._orm_specimen()]))[0]
+        leg = rebuilt.outcomes[0]
 
-        assert fms._top_price_observed_at(rebuilt.__dict__["outcomes"]) is None
-        assert fms.top_price_stamp(rebuilt) == DISPLAYED_AT
+        assert not hasattr(leg, "last_updated")
+        assert leg.price_observed_epoch == int(DISPLAYED_AT.timestamp())
+        assert fms.displayed_price_stamp(_printed(rebuilt.outcomes)) == DISPLAYED_AT
 
     def test_a_slots_row_degrades_instead_of_raising(self):
         """The third carrier (#5778): a compact row with no instance dict.
 
         It reached this module once and raised `AttributeError` through the fold
-        — nine tennis tests, not a wrong number.
+        — nine tennis tests, not a wrong number. It carries NEITHER column, so
+        the honest answer is `None` and the way it must be reached is by
+        degrading.
         """
-        market = _SlotsMarket(1, [_SlotsOutcome("Compact", 0.5)])
+        legs = [_SlotsOutcome("Compact", 0.5)]
 
-        assert fms.top_price_stamp(market) is None
+        assert fms.displayed_price_stamp(legs) is None
+        assert fms.price_poll_stamp(_SlotsMarket(1, legs)) is None
 
     def test_a_previous_schema_entry_is_never_read(self):
-        """A v4 entry's market row is one value SHORT.
+        """A v5 entry is one value LONG on the market row and one SHORT on the
+        outcome row — the completion moved both widths in one commit.
 
-        Read under v5 it would tell every cached card that its price age is
-        unknown while the build path knows it, so the reader's mark would blink
-        with the cache rather than track the price.
+        Read under v6 it would date every cached card by a leg the filters may
+        have dropped while the build path uses the printed ones, so the mark
+        would change meaning with the cache rather than track the price.
         """
         stale = fms.to_plain([self._orm_specimen()])
-        stale["v"] = 4
+        stale["v"] = 5
+
+        assert fms.is_snapshot_payload(stale) is False
+        assert fms.from_plain(stale) == []
+
+    def test_a_v5_SHAPED_entry_is_refused_on_arity_too(self):
+        """Belt and braces, and not redundant: the version is a CONVENTION.
+
+        A build that forgot the bump would hand v6 readers rows of the previous
+        widths. Arity catches this pair because they differ in width — the
+        module's note is explicit that it would NOT catch a same-width swap,
+        which is why the version exists as well.
+        """
+        stale = fms.to_plain([self._orm_specimen()])
+        for row in stale["rows"]:
+            row[0] = row[0] + [None]
+            row[1] = [leg[: len(fms.OUTCOME_COLUMNS)] for leg in row[1]]
 
         assert fms.is_snapshot_payload(stale) is False
         assert fms.from_plain(stale) == []
@@ -430,13 +505,24 @@ class TestTheOtherConsumersKeptTheirAnswer:
             INVISIBLE_LEG_AT
         )
 
-    def test_the_two_derived_columns_are_both_carried_and_distinct(self):
+    def test_the_market_fold_and_the_per_leg_carrier_are_both_carried(self):
+        """One value per market, one per leg, and they answer different things.
+
+        The market row keeps `MAX` for the clock; the outcome rows carry their
+        OWN observation so the age mark can be folded over an arbitrary subset
+        at serve time. Reading both off one `to_plain` is what makes it visible
+        that the second replaced a market column rather than joining it: there
+        is no third market-level stamp here any more.
+        """
         market = _DictMarket(_specimen_outcomes())
-        row = fms.to_plain([market])["rows"][0][0]
-        values = dict(zip(fms.MARKET_ROW_COLUMNS, row))
+        built = fms.to_plain([market])["rows"][0]
+        values = dict(zip(fms.MARKET_ROW_COLUMNS, built[0]))
+        legs = [dict(zip(fms.OUTCOME_ROW_COLUMNS, leg)) for leg in built[1]]
 
         assert values["price_polled_at"] == INVISIBLE_LEG_AT
-        assert values["top_price_observed_at"] == DISPLAYED_AT
+        assert "top_price_observed_at" not in values
+        assert legs[0]["price_observed_epoch"] == int(DISPLAYED_AT.timestamp())
+        assert legs[3]["price_observed_epoch"] == int(INVISIBLE_LEG_AT.timestamp())
 
     def _code_lines(self):
         return [
@@ -473,16 +559,39 @@ class TestTheOtherConsumersKeptTheirAnswer:
         A scan that only checked the clock would pass if a later edit added a
         third consumer of the displayed-legs stamp somewhere else entirely.
         """
-        callers = [ln for ln in self._code_lines() if "_top_price_stamp(" in ln]
+        callers = [
+            ln for ln in self._code_lines() if "_displayed_price_stamp(" in ln
+        ]
 
         assert len(callers) == 1, (
             "the displayed-legs stamp answers ONE question — the age mark under "
             f"a card. Every other consumer wants the market-wide MAX: {callers}"
         )
-        assert "_top_price_stamp(market)" in callers[0]
-        assert "_top_price_stamp" in inspect.getsource(
+        assert "_displayed_price_stamp(displayed_outcomes)" in callers[0]
+        assert "_displayed_price_stamp" in inspect.getsource(
             feed_module._card_price_observed_at
         )
+
+    def test_the_displayed_fold_is_never_handed_a_whole_market(self):
+        """The one mutation the scan above cannot see, named explicitly.
+
+        `displayed_price_stamp(market.outcomes)` is a plausible-looking edit that
+        reinstates the exact defect #5809 was filed on — every leg dating the
+        card, including the 45 nobody can see — while keeping one consumer, one
+        call site, and a green scan. The argument has to be the PRINTED list, so
+        the argument is what is asserted.
+        """
+        callers = [
+            ln for ln in self._code_lines() if "_card_price_observed_at(" in ln
+        ]
+        calls = [ln for ln in callers if not ln.startswith("def ")]
+
+        assert len(calls) == 2, (
+            "both futures serializers call it and nothing else does: " f"{calls}"
+        )
+        for call in calls:
+            assert "_card_price_observed_at(printed_outcomes)" in call, call
+            assert ".outcomes" not in call, call
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -497,6 +606,12 @@ class TestTheLegCountTracksTheCard:
         A fold over more legs than the card shows OVER-states the age; one over
         fewer UNDER-states it. #5809 is on record that both directions are
         equally a lie, so the number may not drift in either.
+
+        Completed: the slice is now spelled with the CONSTANT rather than a
+        literal, and bound to `printed_outcomes` so the same list reaches
+        `top_outcomes_data` and the age. The scan therefore asserts the binding
+        as well as the number — two slices that agree today are how a later edit
+        to one of them dates a card by a leg it has stopped printing.
         """
         source = Path(inspect.getfile(feed_module)).read_text()
         slices = {
@@ -506,19 +621,19 @@ class TestTheLegCountTracksTheCard:
         }
 
         assert slices, "the card slice moved — re-aim this scan before trusting it"
-        expected = f"card_outcomes[:{fms.CARD_PRICE_AGE_LEG_COUNT}]"
-        for sliced in slices:
-            assert expected in sliced, (
-                "the card prints a different number of legs than "
-                "`CARD_PRICE_AGE_LEG_COUNT` folds over: "
-                f"{sliced} vs {expected}"
-            )
+        expected = "printed_outcomes = card_outcomes[:CARD_PRICE_AGE_LEG_COUNT]"
+        assert slices == {expected}, (
+            "the printed legs are selected ONCE per serializer, from the "
+            f"constant, and bound: {sorted(slices)}"
+        )
 
     def test_the_fold_actually_honours_the_constant(self):
         """So the scan above is not a pin on a number nothing reads.
 
-        Built from the constant rather than from a literal 3: a fold hard-coded
-        to three would pass the scan and ignore a later change to the constant.
+        Built from the constant rather than from a literal 3: a caller that
+        sliced a hard-coded three would pass the scan above only by spelling the
+        constant, and this is the other half — the constant is the number of
+        legs whose age actually reaches the wire.
         """
         base = datetime(2026, 9, 13, 2, 0, tzinfo=UTC)
         count = fms.CARD_PRICE_AGE_LEG_COUNT
@@ -528,6 +643,9 @@ class TestTheLegCountTracksTheCard:
         ]
         just_outside = _Outcome("Hidden", 0.0, base - timedelta(days=365))
 
-        market = _DictMarket([*inside, just_outside])
+        printed = _printed([*inside, just_outside])
 
-        assert fms.top_price_stamp(market) == base - timedelta(hours=count - 1)
+        assert len(printed) == count
+        assert fms.displayed_price_stamp(printed) == base - timedelta(
+            hours=count - 1
+        )

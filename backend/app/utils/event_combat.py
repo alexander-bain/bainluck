@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.utils.event_matcher import player_key
-from app.utils.futures_market_snapshot import price_observed_at_iso
+from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 from app.utils.name_normalization import clean_slug
 from app.utils.settledness import price_converged, settled_under_assigned_state
 
@@ -1248,8 +1248,16 @@ class CombatEventAdapter:
                 "label": "Main event",
                 "competitors": competitors,
                 "evolution_market_id": main_event.id,
-                # #5778 — see `event_cycling`.
-                "price_observed_at": price_observed_at_iso(main_event),
+                # #5778 — see `event_cycling`. #5809: a fight card renders a
+                # BOUT — both fighters, both percentages — so both prices are
+                # displayed and the mark must speak for the OLDER of the two.
+                # `_fight_outcomes` applies no name filter, so the displayed set
+                # is the market's own outcomes; it is still routed through the
+                # concept helper, because what differs from a futures card here
+                # is the LEG COUNT (2, never 3) and that must come from one rule.
+                "price_observed_at": concept_price_observed_at_iso(
+                    main_event.outcomes or [], "co_equal_list", len(competitors)
+                ),
             },
             "sections": sections,
             "children": children,
