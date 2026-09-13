@@ -168,6 +168,7 @@ export function ComparisonCard({
           itemId={data.id}
           onShare={onShare}
           priceObservedAt={data.price_observed_at}
+          priceStatus={data.status}
         />
       </div>
     </article>

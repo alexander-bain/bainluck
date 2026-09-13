@@ -376,7 +376,7 @@ export function SignalBars({
 
 // ── Action Bar ──
 
-export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, pin, priceObservedAt }: ActionBarProps) {
+export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, pin, priceObservedAt, priceStatus }: ActionBarProps) {
   const [copied, setCopied] = useState(false);
 
   const trackShare = (method: string) => {
@@ -423,15 +423,32 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
           It sits in the gap the layout already had (`flex-1` either side), so a
           card that draws no mark is byte-identical to before and one that does
           takes no room from Like, the pin or Share.
-          `PriceAgeMark` decides whether to draw at all: nothing inside 30
-          minutes, nothing for a stamp it cannot read. Measured 2026-09-12 22:30Z
-          over the 76 futures cards a `limit=100` feed served, on this ship's own
-          rule (`MAX(last_updated)` per market): p25 13m, p50 133m, p75 493m,
-          max 25h — so 47 of 76 draw and 29 stay silent. That split is the
-          design: a ladder just polled says nothing, and a ladder eight hours
-          cold, sitting beside a live hero that restamps every 20 seconds, is
-          exactly the pair a reader cannot rank without being told. */}
-      <PriceAgeMark observedAt={priceObservedAt} scope="card" />
+          `PriceAgeMark` decides whether to draw at all: nothing inside the
+          cadence's threshold, nothing for a stamp it cannot read.
+
+          #5843 — THE CADENCE, NOT THE FLAT 30 MINUTES. The measurement this
+          comment used to quote (p50 133m over 76 cards, "47 of 76 draw") read as
+          a healthy split and was not one: those cards are polled TOGETHER on an
+          hourly beat, so the feed crosses a 30-minute line together and the mark
+          came on for the back half of every hour and then emptied.
+
+          Re-measured on the request THIS PAGE actually makes — `limit=20&
+          event_pct=0.15`, the three pages a full scroll fetches — at 2026-09-13
+          10:53Z: 18 of 48 datable cards would draw at 30 minutes, 7 under the
+          cadence. At the peak twelve minutes earlier, 30 of 30 against 5. Read
+          in the rendered DOM at 10:51Z, production against this build at 390px
+          over the same 34 action bars: 5 marks became 3.
+
+          🔴 Three counts because ONE would have been dishonest: the population
+          is a sawtooth on the hourly beat, so the same page truthfully reads 7,
+          32 or 9 depending on the minute. The survivors are the point — a PGA
+          ladder at 12h, two Kalshi futures at 30h, the House market at 123 days,
+          and one LIVE card at 2h49m. */}
+      <PriceAgeMark
+        observedAt={priceObservedAt}
+        scope="card"
+        cadence={priceStatus === "live" ? "live" : "futures"}
+      />
       <div className="flex-1" />
       {/* UX-P234 (board item 16): Discover was the one surface with no pin at all,
           while search, my-stuff and preferences all had one on the very same market.

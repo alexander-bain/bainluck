@@ -266,7 +266,21 @@ export default function RelatedByTag({
                   `PriceAgeMark` draws nothing inside 30 minutes and nothing for
                   an undatable stamp, so a rail beside a quiet market stays as
                   plain as it is today. `justify-between` rather than a gap:
-                  when only one of the two is present it keeps its own side. */}
+                  when only one of the two is present it keeps its own side.
+
+                  🔴 #5843 MOVED THE DISCOVER CARDS TO A 6h FUTURES CADENCE AND
+                  DELIBERATELY LEFT THIS RAIL AT 30 MINUTES. These are the same
+                  hourly-polled ladders (this rail calls `fetchFeed`), so the
+                  consistency argument says to move it too. The reason not to is
+                  the paragraph above: this rail's specimen IS the 61-minute
+                  card, and it is the one place a futures price is rendered two
+                  screens under a hero that restamps every 20 seconds. On
+                  Discover a 50-minute ladder has nothing to be ranked against
+                  and the mark was noise on 30 of 30 cards; here the reader is
+                  holding two answers to one question and the age is the only
+                  thing that ranks them. Six rows, not thirty, and a mark that
+                  earns its place. Moving this to 6h would silence exactly the
+                  case #5752 was filed on. */}
               {(d.outcome_count > field.length && field.length > 0) ||
               d.price_observed_at ? (
                 <span className="mt-1.5 flex items-baseline justify-between gap-2 text-[11px] text-text-muted">

@@ -301,7 +301,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             </div>
           )}
 
-          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={ladderShareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} priceObservedAt={data.price_observed_at} />
+          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={ladderShareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} priceObservedAt={data.price_observed_at} priceStatus={data.status} />
         </div>
       </article>
     );
@@ -476,6 +476,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             itemId={data.id}
             onShare={onShare}
             priceObservedAt={data.price_observed_at}
+            priceStatus={data.status}
           />
         </div>
       </article>
@@ -623,7 +624,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             </div>
           )}
 
-          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} priceObservedAt={data.price_observed_at} />
+          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} priceObservedAt={data.price_observed_at} priceStatus={data.status} />
         </div>
       </article>
     );
@@ -735,7 +736,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           </div>
         )}
 
-        <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} priceObservedAt={data.price_observed_at} />
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} priceObservedAt={data.price_observed_at} priceStatus={data.status} />
       </div>
     </article>
   );

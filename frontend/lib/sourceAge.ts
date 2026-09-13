@@ -47,6 +47,56 @@
  */
 export const SOURCE_STALE_AFTER_MS = 30 * 60 * 1000;
 
+/**
+ * The same question for a price that is only POLLED ONCE AN HOUR (#5843).
+ *
+ * 🔴 Not a second opinion about staleness — the FIRST one, for a population the
+ * 30 minutes above was never measured on. `SOURCE_STALE_AFTER_MS` is lifted from
+ * `BookmakerTable`, whose sportsbook rows restamp in minutes; applying it to a
+ * futures ladder asks a card to be fresher than the pipeline can make it.
+ *
+ * The backend already answers this, on THIS FIELD, at the render boundary:
+ * `utils/tournament_register.py` carries `STALE_PRICE_HOURS = 6.0` and raises
+ * `LIVE_PRICE_STALE` against a block's `price_observed_at` past it, and
+ * `tasks/futures_price_refresh.py`'s `STALE_AFTER_HOURS = 6` cites that constant
+ * by name so "the producer and the renderer use one definition of stale rather
+ * than two". This is the web renderer joining that agreement rather than minting
+ * a third number — so the value is the backend's, not a threshold I tuned.
+ *
+ * ### Why 30 minutes was the wrong end of the cadence
+ *
+ * Futures prices are written by `poll-polymarket-hourly` (:15), `poll-kalshi`
+ * (:45, every 2h) and `refresh-stale-futures-prices-hourly` (:50). The cadence
+ * is hourly at best, so a 30-minute threshold is HALF of it: the feed is polled
+ * together and therefore crosses together, and the mark comes on for the back
+ * half of every hour and then empties.
+ *
+ * 🔴 SO EVERY COUNT HERE CARRIES THE MINUTE IT WAS TAKEN. This population is not
+ * a level, it is a sawtooth, and a single read can be made to say almost
+ * anything — #5843's own three reads were 7, then 32, then 9, over one hour.
+ * Measured on the Discover page's OWN request (`/api/feed?limit=20&
+ * event_pct=0.15`, the three pages a scroll to the end fetches, 60 items / 48
+ * datable), 2026-09-13 10:53Z, just after the :45 and :50 polls landed:
+ *
+ * | threshold | cards that would draw |
+ * |---|---|
+ * | 30m (before) | **18 of 48** |
+ * | this rule | **7 of 48** |
+ *
+ * And at the PEAK, twelve minutes earlier, on the cache built 10:41Z: **30 of
+ * 30** datable, clustered at 50.2–50.4m, against **5** under this rule. Those
+ * thirty were not wrong and not an outage — they were fifty minutes old and
+ * about to refresh.
+ *
+ * The survivors are the ones worth a reader's eye: a PGA ladder at 12h, two
+ * Kalshi futures at 30h, the House market at 123 DAYS, and the live card below.
+ * That last comparison is the defect in one line — at 30 of 30, a market nobody
+ * has repriced since May is wearing the same grey mark as a market that is
+ * fine. The age stopped being surprising, and an age has value exactly when it
+ * is surprising.
+ */
+export const FUTURES_STALE_AFTER_MS = 6 * 60 * 60 * 1000;
+
 /** Milliseconds since `iso` was written, or `null` when there is no readable stamp. */
 export function sourceAgeMs(
   iso: string | null | undefined,
@@ -90,13 +140,21 @@ export function formatSourceAge(
  * the convenient one: an unstamped source is one we cannot date, and marking it
  * stale would be a claim we cannot support. The caller draws no age for it at
  * all, which is the honest treatment (see the module header).
+ *
+ * `staleAfterMs` is the cadence that SHOULD have replaced this price, and it
+ * defaults to the sportsbook/live bound so every caller written before #5843 is
+ * unchanged. A caller rendering hourly-polled futures passes
+ * `FUTURES_STALE_AFTER_MS`; the two named constants are the only values any
+ * caller passes, because a raw number here is how a fourth definition of stale
+ * gets into the repo (see that constant's header).
  */
 export function sourceIsStale(
   iso: string | null | undefined,
   nowMs: number = Date.now(),
+  staleAfterMs: number = SOURCE_STALE_AFTER_MS,
 ): boolean {
   const ms = sourceAgeMs(iso, nowMs);
-  return ms !== null && ms > SOURCE_STALE_AFTER_MS;
+  return ms !== null && ms > staleAfterMs;
 }
 
 /**
