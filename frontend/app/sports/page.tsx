@@ -36,8 +36,8 @@ import {
   partitionFinishedGames,
   buildFinishedSection,
   leagueResultsLinks,
-  FINISHED_SECTION_CAP,
 } from "@/lib/sports/finishedSection";
+import { FinishedMoreResultsNote } from "@/components/sports/FinishedMoreResultsNote";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
@@ -831,29 +831,17 @@ export default function SportsPage() {
                 </div>
                 {/* The cap, declared — and the declaration leads somewhere. A
                     league the register does not know is simply not named, rather
-                    than linked to a guessed URL that goes nowhere (UX-P062 E5). */}
-                {finishedSection.cappedMore && (
-                  <p
-                    className="text-micro text-text-muted mt-3"
-                    data-testid="finished-cap-note"
-                  >
-                    Showing the {FINISHED_SECTION_CAP} most recent
-                    {finishedMoreLinks.length > 0 && (
-                      <>
-                        {" — more in "}
-                        {finishedMoreLinks.map((link, i) => (
-                          <span key={link.href}>
-                            {i > 0 && (i === finishedMoreLinks.length - 1 ? " and " : ", ")}
-                            <a href={link.href} className="text-accent-brand hover:underline">
-                              {link.label}
-                            </a>
-                          </span>
-                        ))}
-                      </>
-                    )}
-                    .
-                  </p>
-                )}
+                    than linked to a guessed URL that goes nowhere (UX-P062 E5).
+
+                    #5860: it no longer says "the N most recent". The order
+                    inside the section IS recency; the pool it sorts is the
+                    score-ranked feed window, which on a Sunday morning did not
+                    contain the five most recently ended games at all. The
+                    component carries the measurement. */}
+                <FinishedMoreResultsNote
+                  cappedMore={finishedSection.cappedMore}
+                  links={finishedMoreLinks}
+                />
               </section>
             )}
 
