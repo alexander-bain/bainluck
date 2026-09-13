@@ -156,6 +156,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "FoldResult",
     "fold_twin_events",
+    "is_kalshi_date_only",
     "twin_fold_key",
     "twin_identity_rank",
 ]
@@ -201,6 +202,56 @@ def _squash(name: Optional[str]) -> str:
     if not name:
         return ""
     return _NON_ALNUM.sub("", strip_diacritics(name).lower())
+
+
+KALSHI_DATE_ONLY_SOURCE = "kalshi_ticker"
+"""The `commence_time_source` that means "this time came out of a ticker".
+
+A Kalshi ticker encodes a DATE and no hour (gotcha #14), so a row stamped with
+this source and sitting at exactly midnight UTC never learned when its fixture
+kicks off. Deliberately not `kalshi`: that source is the market's own
+`close_time`, which is a real instant even when it is wrong, and three
+`soccer_other` rows carried it at midnight on 2026-09-13 with no evidence either
+way. This one names the ticker in its own value.
+"""
+
+
+def is_kalshi_date_only(event: Any) -> bool:
+    """True when a row asserts a fixture's DATE and no kick-off hour.
+
+    #6007. Both halves are required and each carries its own weight: the source
+    says where the time came from, and midnight-UTC is the fingerprint that no
+    hour was ever recovered on top of it. A `kalshi_ticker` row that has since
+    been given a real hour — by `recover_kalshi_occurrence_starts`, by a later
+    poll, by anything — stops being date-only the moment it has one, which is
+    the behaviour we want: the exception below exists for rows with no clock,
+    not for rows whose clock we dislike.
+
+    THE MIDNIGHT TEST IS ALSO AN INVARIANT THE CALLER RELIES ON.
+    :func:`_name_clusters` walks its bucket in time order and breaks out of the
+    inner loop past the drift bound; it is safe to exempt a dateless group from
+    that break *only* because a dateless group is pinned to 00:00 and therefore
+    sorts first in its day. Loosen this predicate to admit some other hour and
+    that reasoning silently stops holding.
+
+    Measured on production 2026-09-13: 13 soccer rows in `[now-3d, now+8d]`, of
+    which 10 sat beside a completed, ESPN-anchored row for the same fixture on
+    the same day — a finished card and a phantom "upcoming" one, side by side.
+    """
+    if getattr(event, "commence_time_source", None) != KALSHI_DATE_ONLY_SOURCE:
+        return False
+    commence = getattr(event, "commence_time", None)
+    if commence is None:
+        return False
+    try:
+        return (
+            commence.hour == 0
+            and commence.minute == 0
+            and commence.second == 0
+            and commence.microsecond == 0
+        )
+    except AttributeError:  # gotcha #42 — a surprising type costs this row only
+        return False
 
 
 def twin_fold_key(event: Any) -> Optional[tuple]:
@@ -508,12 +559,14 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
     chain never decides which of its links survives.
     """
     pairs: dict[tuple, tuple] = {}
+    dateless: dict[tuple, bool] = {}
     for key in bucket_keys:
         rep = _group_representative(groups[key])
         pairs[key] = (
             getattr(rep, "home_team_name", None),
             getattr(rep, "away_team_name", None),
         )
+        dateless[key] = all(is_kalshi_date_only(member) for member in groups[key])
 
     def same_fixture(left: tuple, right: tuple) -> bool:
         """Both halves of the licence, asked about the two groups in hand.
@@ -523,9 +576,21 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
         say that these two rows are four minutes apart and those two are forty.
         Names are asked second because :func:`_pair_matches` is the memoized,
         expensive half and the drift test is a subtraction.
+
+        #6007 — A GROUP THAT NEVER CLAIMED AN HOUR CANNOT DISAGREE ABOUT ONE.
+        The drift bound measures how far two providers put the same kick-off.
+        A :func:`is_kalshi_date_only` group put it nowhere: its time is a
+        ticker's date with midnight stapled on. Holding it to a five-minute
+        bound asks it to agree with a clock it does not have, and the answer is
+        always no — which is why ten fixtures on 2026-09-13 served a finished
+        card and a phantom "upcoming" one beside it. So for those groups the
+        clock half is satisfied by the bucket itself (`sport_id`, UTC date) and
+        the club names carry the whole decision. The names are not weakened:
+        both clubs, orientation kept, squad-marker refusal, clique refusal.
         """
-        if abs(left[3] - right[3]) > SOCCER_KICKOFF_DRIFT:
-            return False
+        if not (dateless[left] or dateless[right]):
+            if abs(left[3] - right[3]) > SOCCER_KICKOFF_DRIFT:
+                return False
         return _pair_matches(pairs[left], pairs[right])
 
     parent = {key: key for key in bucket_keys}
@@ -542,10 +607,18 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
     # expensive name half about every other fixture in the competition that day.
     # Semantics are identical — this skips only pairs already refused — and it is
     # what keeps the wider bucket cheaper than the minute one it replaced.
+    #
+    # #6007 — AND THE WINDOW HAS TO KNOW THE SAME EXCEPTION THE PREDICATE DOES,
+    # or the fix is inert. A date-only group sits at 00:00Z, so it sorts first in
+    # its day and every real kick-off is hours past the break: the loop would
+    # stop before `same_fixture` was ever asked, and the change above would read
+    # as a no-op with green tests. A dateless `left` therefore scans its whole
+    # day-bucket. That is 13 rows' worth of full scan across the fleet today, and
+    # only a dateless group pays it — every other row keeps the sliding window.
     in_time_order = sorted(bucket_keys, key=lambda key: key[3])
     for i, left in enumerate(in_time_order):
         for right in in_time_order[i + 1 :]:
-            if right[3] - left[3] > SOCCER_KICKOFF_DRIFT:
+            if not dateless[left] and right[3] - left[3] > SOCCER_KICKOFF_DRIFT:
                 break
             if same_fixture(left, right):
                 parent[find(left)] = find(right)
