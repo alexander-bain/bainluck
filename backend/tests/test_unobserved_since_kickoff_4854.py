@@ -172,13 +172,24 @@ def test_the_anchor_is_derived_from_the_run_not_typed_as_a_date():
     night. That is exactly the failure this file just had, so the window check
     alone cannot be the whole guard.
 
-    This assertion is false for every literal at every clock except the few
-    minutes it was written in, so a restored date cannot survive one CI run.
+    Measured against the import stamp, not against a fresh `now`: this file is
+    imported once and its arms run thousands of tests later, so a tolerance read
+    off the wall clock at assert time is itself an ageing anchor. The first
+    version of this guard was exactly that and failed in CI at 10m49s of drift.
+
+    Both halves are needed and neither is vacuous. The second alone passes if
+    `_OBSERVED_AT` is also typed; the first alone passes if `KICKOFF` is typed
+    while `_OBSERVED_AT` stays live. Together they are false for any literal at
+    any clock, so a restored date cannot survive one CI run.
     """
-    drift = abs((datetime.now(timezone.utc) - timedelta(minutes=115)) - KICKOFF)
-    assert drift < timedelta(minutes=5), (
-        f"KICKOFF is {drift} away from `now - 115 minutes`, so it is not "
-        f"anchored to this run. A typed-in date expires again at kickoff + "
+    since_import = datetime.now(timezone.utc) - _OBSERVED_AT
+    assert timedelta(0) <= since_import < timedelta(hours=1), (
+        f"_OBSERVED_AT is {since_import} from now, so it is not this run's "
+        f"clock — no shard takes an hour. It has been typed as a date."
+    )
+    assert KICKOFF == _OBSERVED_AT - timedelta(minutes=115), (
+        f"KICKOFF ({KICKOFF}) is not derived from _OBSERVED_AT "
+        f"({_OBSERVED_AT}) — a typed-in date expires again at kickoff + "
         f"{UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES}."
     )
 
