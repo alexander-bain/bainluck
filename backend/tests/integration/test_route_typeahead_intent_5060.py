@@ -23,9 +23,10 @@ the team must also match, which is why the pool came back empty in production.
 `TestTheSeedIsReal` fails loudly if the seed stops reaching the pool at all.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -70,6 +71,47 @@ def _playoff_market_row():
         volume=250_000,
         outcomes=[],
     )
+
+
+_EASTERN = ZoneInfo("America/New_York")
+
+
+def _on_the_readers_own_day(now: datetime) -> datetime:
+    """An instant certain to fall on the reader's OWN Eastern calendar day.
+
+    🔴 DO NOT REPLACE THIS WITH `now + timedelta(hours=3)`. It was exactly that,
+    and it went red on master and on every open PR in the fleet nightly between
+    **01:00Z and 04:00Z** — three hours of red CI a night, for months, with no
+    code change of anyone's to blame.
+
+    The product bands `today` on the EASTERN game-date
+    (`market_identity.eastern_game_date`, and `_intent_day_order_key` says why:
+    a 7pm ET game is the next day in UTC, so a UTC comparison would call most of
+    an American sports evening "not today"). A fixture at `now + 3h` therefore
+    stops being "today" the moment `now` passes **21:00 Eastern** — `now + 3h` is
+    then tomorrow's Eastern date, the same-day row bands as a plain answer
+    alongside the 40-day-out row, the stable partition leaves the seed order
+    intact, and the future game leads. The assertion fires and reads exactly like
+    a live CERT-2735 regression.
+
+    This is gotcha #44 in the form `scripts/clock_sweep.py` was written for and
+    the form the anchor rule already prescribes — **offset first, then truncate**:
+    truncate `now` to its Eastern date, then add a fixed in-day offset, then
+    convert back. The anchor contains no `if`, so it cannot age out of the window
+    it seeds.
+
+    Noon deliberately, and not a boundary: it is a real, unambiguous local time on
+    every date including both DST transitions (the spring gap is 02:00-03:00 and
+    the fall repeat 01:00-02:00), and it is the furthest any in-day instant can be
+    from midnight at either end. That it may be in the past is not a defect —
+    `_intent_day_order_key` states the case outright: *"A same-day game that has
+    FINISHED is still the answer to `today`"*, which is the production specimen
+    (Sep 12 Mercyhurst) this class is reduced from.
+    """
+    eastern_noon = datetime.combine(
+        now.astimezone(_EASTERN).date(), time(12, 0), tzinfo=_EASTERN
+    )
+    return eastern_noon.astimezone(timezone.utc)
 
 
 def _event_row(event_id, away, home, commence_time):
@@ -522,7 +564,7 @@ class TestATimeQualifierConstrainsTheAnswer:
         now = datetime.now(timezone.utc)
         rows = [
             _event_row(7001, "Warriors", "Los Angeles Lakers", now + timedelta(days=40)),
-            _event_row(7002, "Gannon", "Mercyhurst Lakers", now + timedelta(hours=3)),
+            _event_row(7002, "Gannon", "Mercyhurst Lakers", _on_the_readers_own_day(now)),
         ]
         async for ac in _client_for(_make_seeded_db(recorder, rows), monkeypatch):
             yield ac
