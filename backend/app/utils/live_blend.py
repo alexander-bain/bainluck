@@ -54,6 +54,7 @@ from app.utils.probability_eligibility import (
     MarketRef,
     verified_record,
 )
+from app.utils.settledness import market_assigned_settled
 
 
 # The rule name every record minted here carries, qualified by the issue that
@@ -97,11 +98,20 @@ class MarketOutcomes:
     It defaults to None, which is "no evidence", and the observation gate that
     reads it abstains on None. A construction site that does not supply it keeps
     exactly the behaviour it has today rather than silently acquiring a gate.
+
+    ``event_has_result`` is TRI-STATE and that is the whole point (#5820): True
+    = the event carries a `completed_at`, False = we have measured that it does
+    NOT, None = the caller did not say. Only False arms the settled-speaker
+    clause. Collapsing None into False would arm the gate at every construction
+    site that has never heard of it — the opposite of the rule above — and
+    collapsing it into True would disarm it everywhere; the signal downstream
+    needs is exactly the distinction between "no result" and "not measured".
     """
 
     market: Any
     outcomes: Sequence[Any]
     event_commence_time: Optional[datetime] = None
+    event_has_result: Optional[bool] = None
 
 
 def is_game_winner_market(market: Any) -> bool:
@@ -409,6 +419,7 @@ def admissible_as_blend_speaker(
     is_primary: bool,
     outcomes: Optional[Sequence[Any]] = None,
     event_commence_time: Optional[datetime] = None,
+    event_has_result: Optional[bool] = None,
     now: Optional[datetime] = None,
 ) -> bool:
     """Whether this market may speak for its source — primary or not (#5031).
@@ -499,6 +510,53 @@ def admissible_as_blend_speaker(
     not measure, for no ship. Same reasoning the outcomes test is held off the
     Kalshi primary above.
     """
+    # ── A SETTLED MARKET MAY NOT SPEAK FOR A GAME WE HAVE NO RESULT FOR (#5820)
+    #
+    # ABOVE THE KALSHI PRIMARY'S EXEMPTION, deliberately, and that placement is
+    # the fix rather than an ordering detail. The exemption below says "the
+    # class recognizer is the wrong instrument on a Kalshi row" — a statement
+    # about a market's KIND. This clause is not about kind: it is the row
+    # refuting itself, and a Kalshi primary is the specimen. Event 15310861
+    # (Liu vs Blinkova) published **0.99** stamped `updated_at 03:53:13Z` from
+    # market 60836384, which Kalshi had settled at **00:40:00Z** — three hours
+    # and thirteen minutes earlier — over a page reading "No result reported".
+    # Put this clause after the exemption and that specimen still speaks.
+    #
+    # #5548'S ARM CANNOT REACH IT, and that is why a second clause exists rather
+    # than a wider `_is_settled_book`. That arm is a PRICE mechanism: every
+    # outcome at 0.00/1.00, so `find_moneyline_outcome` can never resolve a side
+    # and the group falls silent on its own. A Kalshi book settles at the last
+    # TRADE — 0.99/0.01 — which is strictly inside the band, so the reading is
+    # not None, `_retire_unbacked_blend_source` is never called, and the writer
+    # publishes a settlement price as a live observation every fifteen minutes.
+    # Measured over the 7-day linked window (2026-09-13 05:2xZ): of 936 events
+    # holding a Kalshi leg, 151 cite a market their own row says is settled
+    # while carrying no result — 106 of them at a non-terminal price, invisible
+    # to the price arm. Polymarket adds 23 more.
+    #
+    # THE SCOPE IS `completed_at IS NULL` AND THE OTHER DIRECTION IS LOAD-BEARING
+    # (gotcha #43). On an event we HAVE completed, the settlement price is the
+    # truth and "settled means settled" — 221 events in the same window hold
+    # exactly that leg and none of them may lose it, which is why this asks
+    # `event_has_result is False` and not `not event_has_result`. A caller that
+    # never measured it passes None and nothing changes for it.
+    #
+    # `market_assigned_settled` is `app/utils/settledness.py`'s predicate, not a
+    # second copy of it (#1951): it reads the row's own status AND its grade, so
+    # it also covers gotcha #33's settled-but-`status='open'` Kalshi rows, which
+    # a status test written here would have missed.
+    #
+    # THE OUTCOME LIST IS PASSED EXPLICITLY, ALWAYS, even when it is empty. That
+    # helper falls back to `market.outcomes` when handed None, and both live
+    # callers hold async ORM rows whose `outcomes` is a lazy relationship —
+    # touching it here would raise MissingGreenlet inside a pure function on the
+    # write path. An unsupplied list therefore abstains from the grade arm and
+    # leaves the status arm to decide, which is the same conservative direction
+    # `_is_settled_book` takes on a book it has not fetched.
+    if event_has_result is False and market_assigned_settled(
+        market, list(outcomes or [])
+    ):
+        return False
     if getattr(market, "source", None) == "kalshi" and is_primary:
         return True
     if not _class_says_game_winner(market):
@@ -579,6 +637,12 @@ def admissible_speakers(
                 if apply_observation_gate
                 else None
             ),
+            # NOT withheld by ``apply_observation_gate`` — that switch exists to
+            # abstain #4854's clause alone, so the "would anything have spoken
+            # but for the kickoff" question keeps every other rule intact. A
+            # settled market is not unobserved-since-kickoff and must not be
+            # counted as one.
+            event_has_result=getattr(entry, "event_has_result", None),
             now=now,
         )
     ]
@@ -609,6 +673,45 @@ def admissible_speakers_are_unobserved_since_kickoff(
     if not without_gate:
         return False
     return not admissible_speakers(group, now=now)
+
+
+def admissible_speakers_are_settled_without_result(
+    group: Sequence[MarketOutcomes],
+) -> bool:
+    """Whether the settled-speaker clause is what silenced this group (#5820).
+
+    A question about WHICH CAUSE, asked so the funnel can say it, and built the
+    same way `admissible_speakers_are_unobserved_since_kickoff` is: run the SAME
+    admission function twice, once with the clause armed and once with it
+    abstaining, rather than re-deriving beside it which rows are settled. The
+    second call withholds `event_has_result` — the tri-state's None is exactly
+    "do not arm this clause" — so it is this module's own rule minus one clause
+    and never a second copy of it (#1951).
+
+    Without this the group arrives at the retirement with zero admissible
+    speakers and is indistinguishable there from #5031's group-of-Player-Props
+    and #4854's frozen book. Folding a new cause into an old counter makes it
+    read as a spike in the old one, and the three need separate reach
+    measurements.
+
+    Returns False when the group has no speaker even with the clause abstaining:
+    that is the structural case `count_admissible_speakers` already owns.
+    """
+    entries = list(group or [])
+    if not entries:
+        return False
+    without_clause = [
+        MarketOutcomes(
+            market=entry.market,
+            outcomes=entry.outcomes,
+            event_commence_time=entry.event_commence_time,
+            event_has_result=None,
+        )
+        for entry in entries
+    ]
+    if not admissible_speakers(without_clause):
+        return False
+    return not admissible_speakers(entries)
 
 
 def _is_settled_book(entry: MarketOutcomes) -> bool:
@@ -810,6 +913,11 @@ def compute_source_home_probability(
             # the two places admission is asked, and they must not disagree —
             # the writer would publish a number the retirement then clears.
             event_commence_time=getattr(entry, "event_commence_time", None),
+            # #5820, and passed in both places for the same reason: a settled
+            # market refused here but admitted by `admissible_speakers` would
+            # leave the retirement counting a speaker that cannot speak, and
+            # the stale number would sit on the page unretired.
+            event_has_result=getattr(entry, "event_has_result", None),
         ):
             continue
         found = _reading_for_entry(entry, home_team_name, away_team_name)
@@ -883,6 +991,19 @@ def compute_source_home_probability(
             if sibling.market.source == "kalshi":
                 if not is_game_winner_market(sibling.market):
                     continue
+                # #5820 reaches this arm too. The Kalshi branch does not call
+                # `admissible_as_blend_speaker` — it asks the ticker rule
+                # directly — so the settled clause has to be asked here or a
+                # settled half of a per-team pair is averaged into a live one.
+                # Rare by construction (a Kalshi pair settles together) and
+                # asked anyway, because "rare" is how the second copy of an
+                # admission rule goes quietly out of step (#1951).
+                if getattr(
+                    sibling, "event_has_result", None
+                ) is False and market_assigned_settled(
+                    sibling.market, list(sibling.outcomes or [])
+                ):
+                    continue
             elif not admissible_as_blend_speaker(
                 sibling.market,
                 is_primary=False,
@@ -891,6 +1012,10 @@ def compute_source_home_probability(
                 # is part of the gate now. Without this the devig could average
                 # a live price with a pre-kickoff one and publish the mean.
                 event_commence_time=getattr(sibling, "event_commence_time", None),
+                # And #5820 for the same reason one rung up: a contributor is
+                # gated like a speaker, so a settled sibling may not be averaged
+                # into a live number either.
+                event_has_result=getattr(sibling, "event_has_result", None),
             ):
                 continue
             sibling_reading = _home_probability_for_market(

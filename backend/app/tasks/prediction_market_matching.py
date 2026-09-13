@@ -50,6 +50,7 @@ from app.utils.prediction_market_matching import (
 from app.utils.live_blend import (
     MarketOutcomes as _LiveBlendGroup,
     admissible_speakers_are_all_settled,
+    admissible_speakers_are_settled_without_result,
     admissible_speakers_are_unobserved_since_kickoff,
     compute_source_home_probability as _compute_source_home_probability,
     count_admissible_speakers,
@@ -351,6 +352,17 @@ class _LinkedMarketRef:
     event_commence_time: datetime | None
     home_team_name: str | None
     away_team_name: str | None
+    # #5820. `status` is part of the `MarketOutcomes.market` protocol now
+    # because `settledness.market_assigned_settled` reads it, and this scalar
+    # copy is the row that protocol sees on the matcher's path. Defaulted so a
+    # construction site that predates the clause — every test double — keeps
+    # exactly the behaviour it has today: unknown status, no settlement claim.
+    status: str | None = None
+    # The EVENT's `completed_at`, reduced to the tri-state the gate wants at the
+    # point where a real row is in hand. None here is "not measured", which is
+    # why `_phase2b_completed_catchup`'s site says True explicitly rather than
+    # leaving it to a default.
+    event_has_result: bool | None = None
 
     @property
     def id(self) -> int:
@@ -3651,6 +3663,13 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     speakers = count_admissible_speakers(blend_group)
     settled_book = admissible_speakers_are_all_settled(blend_group)
     unobserved = admissible_speakers_are_unobserved_since_kickoff(blend_group)
+    # A SETTLED MARKET ON A GAME WITH NO RESULT IS THE FOURTH (#5820), and like
+    # the third it arrives here already counted as the first — the clause lives
+    # in `admissible_as_blend_speaker`, so the group reaches this line with zero
+    # speakers. Asked apart for the reason the other three are: a new cause
+    # folded into an old counter reads as a spike in the old one, and the reach
+    # of each is measured separately.
+    settled_no_result = admissible_speakers_are_settled_without_result(blend_group)
     if speakers > 0 and not settled_book:
         return False
 
@@ -3673,6 +3692,13 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     # old one, and the two need separate reach measurements.
     if speakers > 0:
         funnel_key = "blend_source_retired_settled_book"
+    elif settled_no_result:
+        # Asked BEFORE the kickoff clause because the two can both be true of
+        # one group — a book settled hours ago is also a book nobody has looked
+        # at since kickoff — and settlement is the stronger statement: it says
+        # the price will never move again, where the observation clause only
+        # says it has not lately.
+        funnel_key = "blend_source_retired_settled_without_result"
     elif unobserved:
         funnel_key = "blend_source_retired_unobserved_since_kickoff"
     else:
@@ -3686,9 +3712,14 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
             "every market admitted to speak is a settled book"
             if speakers > 0
             else (
-                "no market admitted to speak has been observed since kickoff"
-                if unobserved
-                else "group holds no market admitted to speak for the winner"
+                "every market that could speak is settled and the event has "
+                "no result"
+                if settled_no_result
+                else (
+                    "no market admitted to speak has been observed since kickoff"
+                    if unobserved
+                    else "group holds no market admitted to speak for the winner"
+                )
             )
         ),
         len(blend_group),
@@ -3763,6 +3794,10 @@ async def _phase2_persist_group_reading(
             # observation gate can be asked here without a second query; a
             # caller that does not supply it leaves the gate abstaining.
             event_commence_time=ref.event_commence_time,
+            # #5820: the tri-state the scalar copy already carries. Phase 2's
+            # own query joins Event, so this is measured; phase 2b's does not,
+            # and its refs say None — see that construction site.
+            event_has_result=ref.event_has_result,
         )
         for ref in refs
     ]
@@ -4012,6 +4047,18 @@ async def _phase2b_completed_catchup(session, now, stats, time_remaining_fn) -> 
                     event_commence_time=None,
                     home_team_name=home_name,
                     away_team_name=away_name,
+                    status=market_row.status,
+                    # #5820 ABSTAINS HERE, ON PURPOSE. This scan's candidate
+                    # predicate is `e.status IN ('completed','closed')` — every
+                    # event it touches is a finished game whose blend key is
+                    # MISSING, and the settled price is precisely the number it
+                    # exists to write ("settled means settled"). Arming the
+                    # clause here would turn the catch-up into a no-op for its
+                    # whole population. None is the tri-state's "not measured",
+                    # and this query does not read `completed_at`; on the 7-day
+                    # window every `status='completed'` event carried one, so
+                    # the two agree and nothing is being papered over.
+                    event_has_result=None,
                 )
             )
 
@@ -4194,6 +4241,12 @@ async def _match_prediction_markets(limit: int = 500):
                 event_commence_time=event.commence_time,
                 home_team_name=event.home_team_name,
                 away_team_name=event.away_team_name,
+                status=market.status,
+                # #5820. Measured from the row that is already joined here, so
+                # the clause costs no query. False is the armed state and it is
+                # the honest reading of this join: a scheduled or live event
+                # with no `completed_at` is one we have no result for.
+                event_has_result=event.completed_at is not None,
             )
             for market, event in linked_rows
         ]

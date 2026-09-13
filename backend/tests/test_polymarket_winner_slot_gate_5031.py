@@ -276,7 +276,8 @@ class TestThePrimaryIsNoLongerExemptFromAdmission:
         assert admissible_as_blend_speaker(alone[0].market, is_primary=True) is False
 
         # `outcomes` is accepted and ignored (#5273), and so are
-        # `event_commence_time` and `now` (#4854): this stub reproduces the
+        # `event_commence_time` and `now` (#4854) and `event_has_result`
+        # (#5820): this stub reproduces the
         # pre-#5031 rule, which was "the primary is exempt" and consulted
         # nothing else. Dropping a parameter would make the double reject the
         # call its subject now makes, which is a harness failure wearing the
@@ -284,7 +285,13 @@ class TestThePrimaryIsNoLongerExemptFromAdmission:
         # added here as accepted-and-ignored for exactly that reason — the stub
         # must stay callable by the subject while still deciding the old way.
         def _exempt_primary(
-            market, *, is_primary, outcomes=None, event_commence_time=None, now=None
+            market,
+            *,
+            is_primary,
+            outcomes=None,
+            event_commence_time=None,
+            event_has_result=None,
+            now=None,
         ):
             return True if is_primary else False
 
