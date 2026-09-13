@@ -89,6 +89,243 @@ def espn_replay_unsettles(event_status, espn_status) -> bool:
     return espn_status == "in" and event_status in ("completed", "closed")
 
 
+def play_evidence(home_score=None, away_score=None, period=None, game_clock=None) -> bool:
+    """Is there positive evidence on this row that the game is being PLAYED?
+
+    THE ONE DEFINITION, shared by all four sites that ask (#5324, CERT-2782).
+    The demotion refuses on it, the promoter's hold is superseded by it, the
+    marker is cleared on it, and the refresh declines on it. They were three
+    copies of the same loop for one revision and that is how a row starts
+    ping-ponging between two tasks that disagree by a field — so the agreement
+    is structural here rather than a convention three docstrings promise.
+
+    A non-zero score, a period, or a game clock. A 0-0 with no clock is NOT
+    evidence: ``COALESCE(home_score,0)=0`` conflates absence with a real nil-nil
+    (live/182 rider 2), and that ambiguous shape is precisely what the authority
+    exists to break the tie on.
+
+    ``isinstance(True, int)`` is True in Python, so a bool in a score column
+    would otherwise read as 1. A bool there is garbage, not an observation.
+    """
+    if period or game_clock:
+        return True
+    for side in (home_score, away_score):
+        if isinstance(side, bool) or not isinstance(side, int):
+            continue
+        if side != 0:
+            return True
+    return False
+
+
+def espn_scheduled_marks_not_started(
+    event_status,
+    espn_status,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+) -> bool:
+    """Should this row CARRY the "authority says not started" marker right now?
+
+    CERT-2782's required repair, `5324-REPEATED-SCHEDULED-PASS-RETAINS-HOLD`.
+    The demotion predicate below answers a narrower question — *should the
+    status change* — and it is False once the row is already ``scheduled``. The
+    first cut used "the demotion did not fire" as the cue to CLEAR the marker,
+    so the second consecutive ESPN `scheduled` pass deleted the very fact the
+    first one recorded and the next transition restored ``LIVE``. The flicker
+    came back with a period of two passes instead of one.
+
+    So the marker's presence is its own question, asked of the same authority
+    statement: ESPN says not started, our row is ``live`` (about to be demoted)
+    or already ``scheduled`` (demoted on an earlier pass), and nothing on the
+    row says it is being played. While all three hold the marker is REFRESHED,
+    which is also what keeps the hold alive past its TTL for a start that slides
+    a long way.
+
+    Any other ESPN state leaves the marker exactly where it is. In particular
+    ``status_delayed`` neither stamps nor clears — ESPN publishes it before a
+    start and mid-game alike, so it is not a statement either way.
+    """
+    if espn_status != "scheduled" or event_status not in ("live", "scheduled"):
+        return False
+    return not play_evidence(home_score, away_score, period, game_clock)
+
+
+def espn_scheduled_demotes_live(
+    event_status,
+    espn_status,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+) -> bool:
+    """True when the authority positively reports a game as NOT YET STARTED on a
+    row we are serving as ``live`` — the second half of #5324.
+
+    ``events.status`` is a LATCH. ``transition_event_statuses`` promotes
+    ``scheduled -> live`` the moment ``commence_time <= now`` and nothing ever
+    re-derives it, so a start that slides leaves the row asserting ``live``
+    against a game nobody has begun. live/171 closed the half that is decidable
+    from the row alone (``live`` with its OWN start still ahead) inside
+    ``served_event_status``. This is the other half, and it needs a fact from
+    outside the row: between slides ``commence_time`` sits in the past and the
+    row is internally consistent while still being wrong.
+
+    ═══ WHY NOT A GRACE WINDOW ═══
+
+    The cheap rule — "live, nothing ever observed, started less than N minutes
+    ago" — was measured and RULED OUT (M-20260912-live171, 23:37Z 2026-09-12).
+    Twelve rows would have been demoted at N>=25 and **all twelve were genuinely
+    being played**; eleven simply had ``home_score IS NULL`` because we hold no
+    observation channel for their sport at all. That is gotcha #53's shape —
+    absence of an observation read as an observation of absence — and no value
+    of N can fix it while whole sports observe nothing. Re-taken after #5697
+    released (02:55Z 2026-09-13) the same set is 1 of 6 rows, and that row is
+    anchorless AFLW, on which this rule is silent by construction.
+
+    ═══ ASYMMETRIC, LIKE EVERY OTHER AUTHORITY WRITE HERE ═══
+
+    Only a POSITIVE statement moves the row, and our own observation outranks
+    the authority's negative one:
+
+    * ``espn_status == "scheduled"`` is ESPN's ``STATUS_SCHEDULED`` — it says
+      this game has not begun. Silence, an unmatched row, or any other state
+      writes nothing, so the sports ESPN does not cover are untouched rather
+      than wrongly demoted.
+    * ``status_delayed`` deliberately does NOT demote. ESPN publishes it both
+      before a start and mid-game, and it carries ``state="in"`` either way
+      (see :func:`espn_terminal_state`'s note) — an ambiguous read, so this
+      stays silent on it. Same for ``status_halftime``, which is not
+      "not started" by any reading.
+    * A real observation of our own REFUSES the demotion: a non-zero score, a
+      period, or a game clock. If we hold 21-14 and the authority says
+      scheduled, the anchor is wrong and the answer is to write nothing, not to
+      blank a game in progress.
+    * A 0-0 with no clock is NOT an observation. It is the ambiguous value
+      ``COALESCE(home_score,0)=0`` conflates with absence, and the whole reason
+      live/182's rider 2 insists on splitting ``IS NULL`` from ``= 0``; the
+      authority is the tiebreak on exactly that shape.
+    * Only ``live`` is demoted. A settled row contradicted by ``scheduled`` is
+      the cross-merge/fold class and belongs to ``_is_bogus_future_settled``,
+      which already judges it on different evidence.
+
+    Pure, so the whole policy is testable without a database and without a
+    network — the same reason :func:`authority_write` next door is pure.
+    """
+    if espn_status != "scheduled" or event_status != "live":
+        return False
+    return not play_evidence(home_score, away_score, period, game_clock)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# THE DEMOTION HAS TO SURVIVE THE CLOCK (#5324, CERT-2777's required repair)
+# ───────────────────────────────────────────────────────────────────────────
+#
+# `espn_scheduled_demotes_live` above writes `scheduled`. Sixty seconds later
+# `_transition_event_statuses_impl` selects `status == "scheduled" AND
+# commence_time <= now` and promotes the very same row back to `live`. Both
+# tasks run every 60s on the realtime queue, so without the fact below the ship
+# is a one-minute flicker and then nothing — CERT-2777 drove the two real tasks
+# in sequence and got `live` back, while the single-task band passed.
+#
+# The two tasks cannot both be right, and the tie-break is evidence: one of them
+# has read the authority and the other has read a clock. `transition` makes ZERO
+# API calls by design, so the authority's statement has to reach it through the
+# row. It travels in the `win_probability_sources` JSONB — the same mirror
+# `statpal_end_time` already uses for a non-probability fact
+# (`event_completion.statpal_end_time` reads it out of there), so this is an
+# established shape on an existing column and not a migration.
+#
+# IT EXPIRES, and the bound is derived rather than chosen: `sync-espn-live` is
+# a 60s interval beat, so a live stamp is re-written every pass while ESPN keeps
+# saying the game has not begun. The hold therefore only has to outlive a few
+# missed passes, and anything longer is a row frozen by a dead poller rather
+# than by the authority. Fifteen minutes is fifteen consecutive missed passes;
+# past that the clock wins again and the row promotes normally. A test asserts
+# this constant against the beat's own cadence rather than against a literal,
+# because two records of one capability drift.
+ESPN_NOT_STARTED_KEY = "espn_not_started_at"
+_ESPN_LIVE_BEAT_SECONDS = 60
+_AUTHORITY_NOT_STARTED_MISSED_PASSES = 15
+AUTHORITY_NOT_STARTED_TTL = timedelta(
+    seconds=_ESPN_LIVE_BEAT_SECONDS * _AUTHORITY_NOT_STARTED_MISSED_PASSES
+)
+
+
+def stamp_authority_not_started(sources, now):
+    """A NEW sources dict carrying "the authority says this has not begun, at ``now``".
+
+    Returns a fresh object rather than mutating in place: an in-place change to a
+    JSONB value is not seen by the ORM's change tracking and is silently dropped
+    (gotcha #4), which is the single most expensive way for this repair to look
+    like it works.
+    """
+    updated = dict(sources or {})
+    updated[ESPN_NOT_STARTED_KEY] = now.isoformat()
+    return updated
+
+
+def clear_authority_not_started(sources):
+    """A NEW sources dict with the marker removed, or the original when absent.
+
+    Returning the original unchanged when there is nothing to clear matters: the
+    caller writes only when the object differs, so an ordinary live pass over an
+    ordinary game issues no extra UPDATE.
+    """
+    if not sources or ESPN_NOT_STARTED_KEY not in sources:
+        return sources
+    updated = dict(sources)
+    updated.pop(ESPN_NOT_STARTED_KEY, None)
+    return updated
+
+
+def authority_not_started_holds(
+    sources,
+    now,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+    ttl=AUTHORITY_NOT_STARTED_TTL,
+) -> bool:
+    """True when the clock may NOT promote this row, because the authority said
+    within :data:`AUTHORITY_NOT_STARTED_TTL` that the game has not begun.
+
+    POSITIVE PLAY EVIDENCE SUPERSEDES THE HOLD, and it is the same evidence
+    :func:`espn_scheduled_demotes_live` refuses a demotion on — a non-zero score,
+    a period, or a game clock. Stated once here and once there deliberately: the
+    two tasks have to agree about what counts as "being played", or a row
+    ping-pongs between them, which is the class of defect this function exists
+    to end rather than to re-create in the other direction.
+
+    A 0-0 with no clock is NOT evidence, for the reason it is not evidence next
+    door: ``COALESCE(home_score,0)=0`` conflates absence with a real nil-nil, and
+    the authority is the tie-break on exactly that shape.
+
+    Fails OPEN on every unreadable input — absent key, ``None``, a non-string, an
+    unparseable stamp, a stamp in the future. A hold is a refusal to act on the
+    clock, so when in doubt the ordinary promotion path must win; the alternative
+    is a row stuck out of `live` on a corrupt string nobody can see.
+    """
+    if play_evidence(home_score, away_score, period, game_clock):
+        return False
+
+    raw = (sources or {}).get(ESPN_NOT_STARTED_KEY)
+    if not isinstance(raw, str):
+        return False
+    try:
+        stamped = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    age = now - stamped
+    if age < timedelta(0):
+        # A stamp from the future is a clock fault, not an authority statement.
+        return False
+    return age <= ttl
+
+
 def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) -> bool:
     """True when writing terminal/live ESPN state onto an EXISTING event whose own
     ``commence_time`` is still in the future (beyond ``slack``) — i.e. an ESPN game

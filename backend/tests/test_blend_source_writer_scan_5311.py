@@ -119,6 +119,18 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    the wrong function to call. (Two of the three are ORM assignment on a JSONB
 #    column, which gotcha #4 says can silently fail — a separate defect from this
 #    file's question, and not one this file asserts about.)
+#  * `espn_sync.py::_process_live_sport` — SIDECAR, and the same shape as
+#    `statpal_end_time` one bullet up. #5324/CERT-2777: when the authority
+#    positively reports that a game we are serving as `live` has not begun, the
+#    row is demoted to `scheduled` — and `_transition_event_statuses_impl`, on
+#    the same 60s beat, would promote it straight back. That task makes zero API
+#    calls by design, so the authority's statement has to reach it ON THE ROW.
+#    It rides this column under the non-probability key `espn_not_started_at`
+#    and is cleared by the next anchored pass that reports play. No probability
+#    is written or read, so the stamper is the wrong function: there is no
+#    source, no market and no reading to weight. Both shapes are listed because
+#    the site does what `write_espn_win_prob` does — one Core update, then the
+#    ORM object mirrored so in-session reads agree (gotcha #4/#5).
 #  * `prediction_market_matching.py` / `admin_matching.py` / `source_intelligence.py`
 #    — PRUNE. Each REMOVES a source key rather than writing a value: the two
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
@@ -143,6 +155,10 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_prune_orphaned_blend_source", "update.values"): "prune",
     ("backend/app/tasks/prediction_market_matching.py",
      "_retire_unbacked_blend_source", "update.values"): "prune",
+    ("backend/app/tasks/espn_sync.py", "_process_live_sport", "orm-assign"):
+        "sidecar",
+    ("backend/app/tasks/espn_sync.py", "_process_live_sport", "update.values"):
+        "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",
      "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",
     ("backend/app/tasks/statpal_sync.py", "_set_statpal_id", "orm-assign"):

@@ -215,6 +215,14 @@ class _Row:
         self.home_score = None
         self.away_score = None
         self.win_probability_sources = {}
+        # #5324: the promotion arm now also reads the row's play evidence, so
+        # the stand-in carries the two `Event` columns it was missing. Nothing
+        # in this file's behaviour moves — the authority hold is keyed on a
+        # marker inside `win_probability_sources`, which is empty on every row
+        # here, so the hold is False throughout and q076's question is
+        # untouched.
+        self.period = None
+        self.game_clock = None
         self.home_team_name = "Home"
         self.away_team_name = "Away"
         self.sport = type("S", (), {"key": sport_key})()
