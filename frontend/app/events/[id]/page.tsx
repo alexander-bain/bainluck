@@ -713,6 +713,35 @@ export default function EventPage({ params }: EventPageProps) {
   const heroUnderway = isLive || isFinished || hasStarted;
   const recordReadsAsRecord = !heroUnderway || heroScorePairPresent;
 
+  // ── #5697 AC2 — A PROJECTION OF THE FINAL NEEDS A GAME THE READER CAN SEE THE
+  //    STATE OF ────────────────────────────────────────────────────────────────
+  //
+  // `/events/15310565`, Southeastern Louisiana v North Alabama, LIVE and 90
+  // minutes past its own kickoff: `LIVE`, `live · 26s ago`, `⟳ 20s`, a full
+  // chart, `69% – 31%`, and `Projected final: 29 – 22` — over a game whose score
+  // the page cannot name. Every freshness signal on the frame is green and
+  // correct, which is the worst shape for a reader: there is no way to tell a
+  // missing score from 0–0, and the projection is the one number on the card
+  // that LOOKS like a scoreline.
+  //
+  // BEFORE KICKOFF THE PROJECTION IS THE HONEST THING and stays. A forecast of a
+  // game that has not started is exactly what it says it is; there is no absent
+  // score for it to be read against. The projection is withdrawn only once the
+  // game is underway, where a reader has started expecting a score.
+  //
+  // THE PAIR, NOT THE SIDE, for the same reason #5720 gives two gates up: the
+  // projection is rendered as `29 – 22`, a pair, so a half-reported score leaves
+  // the reader comparing a projected pair against a single number.
+  //
+  // 🔴 THIS IS DELIBERATELY ITS OWN PREDICATE AND NOT `recordReadsAsRecord`,
+  // which is the same expression today. #4018's line, quoted again four hundred
+  // lines down where this renders: a forecast and a result are two questions and
+  // they get two predicates. #5720 asks "can this small grey number be mistaken
+  // for a score"; this asks "is there a game state to frame a forecast against".
+  // They coincide now; binding them would make either ship silently move the
+  // other.
+  const projectionHasGameStateToFrame = !heroUnderway || heroScorePairPresent;
+
   // #4571 — the age of the score PAIR the two lines above just resolved.
   //
   // `lastChartPoint` runs the same cascade internally and reports the clock of
@@ -1589,10 +1618,16 @@ export default function EventPage({ params }: EventPageProps) {
                   and is the same one the badge four lines up is drawn from, so
                   the card can no longer ask the question one way and answer it
                   the other. */}
+              {/* #5697 AC2: and gated on the reader being able to see the state
+                  the forecast is about. `projectionHasGameStateToFrame` is
+                  computed beside the scores it reads — a live game with no score
+                  pair prints no projected final, a game that has not kicked off
+                  still does. */}
               {sportVocab(event.sport || undefined).hasDerivedSpread &&
                 historyData?.pm_spread_data?.projected_final &&
                 event.status !== "completed" && event.status !== "closed" &&
                 !isSuspended &&
+                projectionHasGameStateToFrame &&
                 historyData.pm_spread_data.projected_final.home_score > 0 &&
                 historyData.pm_spread_data.projected_final.away_score > 0 && (
                 <div className="mt-1.5">
