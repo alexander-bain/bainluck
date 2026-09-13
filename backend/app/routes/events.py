@@ -121,6 +121,7 @@ from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.feed_market_quality import has_no_real_price, is_empty_book_midpoint
 from app.utils.proven_duplicates import (
     FoldedBlendView,
+    folded_card_numbers_batch,
     folded_probability_sources_batch,
     not_a_proven_duplicate,
 )
@@ -10892,6 +10893,35 @@ async def list_events(
         )
     )
 
+    # #5918 — THE ID-ANCHORED BELT, which this route was the last list surface
+    # to be missing. The name-keyed fold below cannot group a pair that spells
+    # one side two ways: `_squash("RC Celta de Vigo")` is `rcceltadevigo` and
+    # `_squash("Celta Vigo")` is `celtavigo`, so `/api/events?sport=
+    # soccer_spain_la_liga` served BOTH rows of one fixture on production at
+    # 2026-09-13 16:5xZ — `15310518 Malaga CF @ RC Celta de Vigo` (suspended)
+    # and `15298077 Málaga @ Celta Vigo` (completed), same 12:00Z minute — while
+    # `15310518` had carried `provenance:duplicate-of:15298077` all along. A pair
+    # whose names ARE equal never needed the tag; the tag exists for exactly the
+    # population the name key cannot see, and twelve other queries in this file
+    # already carry this predicate.
+    #
+    # 🔴 THE FILTER ALONE WOULD BE A REGRESSION, AND THE FOLD BELOW IS WHY IT IS
+    # NOT. `twin_identity_rank` elects on score-then-anchor, so the row that gets
+    # TAGGED is routinely the one holding the prices — hiding it without carrying
+    # its numbers across trades two cards for one blank one ("the blend is the
+    # product"). This route already folds the tagged row's
+    # `win_probability_sources` (#3937) and, from this change, its opening line
+    # too (#5853's `merge_opening_line`), so the surviving card gains what the
+    # suppressed one held instead of losing it.
+    #
+    # The canonical is not assumed to be on the page — measured. Over every
+    # tagged row inside this route's own window and status set (production
+    # 2026-09-13 16:4xZ): 4 tagged, 0 with a missing canonical row, 0 with the
+    # canonical outside the window, 0 with the canonical outside the status set.
+    # A hypothetical orphan degrades to one missing card, which is why the
+    # measurement is stated rather than the invariant assumed.
+    conditions.append(not_a_proven_duplicate())
+
     if conditions:
         query = query.where(and_(*conditions))
 
@@ -11073,22 +11103,44 @@ async def list_events(
             pass
 
     # The page's folds (#3937), batched before the formatting loop rather than
-    # per row inside it — see `folded_probability_sources_batch`. This endpoint
-    # returns up to 500 events, which is `_FOLD_BATCH_ARMS`-chunked into 5
-    # statements rather than 500.
-    folded_map = await folded_probability_sources_batch(db, events)
+    # per row inside it — see `folded_card_numbers_batch`. This endpoint returns
+    # up to 500 events, which is `_FOLD_BATCH_ARMS`-chunked into 5 statements
+    # rather than 500.
+    #
+    # #5918 — BOTH numbers, in the lookup that used to fetch one. A card prints
+    # the blend while the fixture is live and the opening line once it is over,
+    # and `folded_probability_sources_batch` only ever carried the first. With
+    # the duplicate-tag predicate now on the query above, a settled card whose
+    # suppressed twin held the only opening would have printed no percentage at
+    # all — #5853's Bundesliga defect, arriving on this surface by way of its
+    # fix. `folded_card_numbers_batch` answers both from the same round trip
+    # (the opening columns ride a row the statement was already returning), so
+    # this costs nothing extra.
+    folded_map = await folded_card_numbers_batch(db, events)
 
-    # Format response with aggregated odds
-    return {
-        "events": [
+    # Format response with aggregated odds.
+    #
+    # The row's OWN numbers are the default, never a blank: the batch promises
+    # an entry per event, but a miss must degrade to today's card rather than to
+    # one whose percentage vanished — which is the defect this fold exists to
+    # remove, not one it may introduce.
+    formatted = []
+    for e in events:
+        _folded = folded_map.get(e.id)
+        formatted.append(
             _format_event_with_aggregated_odds(
                 e, aggregated_odds_map.get(e.id), gei_percentiles,
                 team_lookup=team_lookup,
                 time_series_metrics=ts_metrics_map.get(e.id),
-                folded_sources=folded_map.get(e.id),
+                folded_sources=(
+                    _folded.win_probability_sources if _folded is not None else None
+                ),
+                folded_opening=_folded.opening if _folded is not None else None,
             )
-            for e in events
-        ],
+        )
+
+    return {
+        "events": formatted,
         "count": len(events),
     }
 
@@ -19716,7 +19768,7 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     return response
 
 
-def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None, folded_sources: Optional[dict] = None) -> dict:
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None, folded_sources: Optional[dict] = None, folded_opening: Optional[tuple] = None) -> dict:
     """Format event for API response with aggregated odds from multiple bookmakers.
 
     ``folded_sources`` is this event's #3810 fold — its own readings plus any
@@ -19726,12 +19778,29 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     once per row: awaiting inside it is impossible and looping the caller would
     be the N+1 that kept this surface unfolded in the first place.
 
-    ``None`` means the caller did not fold, and the hero is then computed off the
-    event exactly as before. That is the honest default for a caller that has not
-    been taught to batch — an unfolded number is under-informed, never wrong in
-    the other direction (the fold is strictly additive).
+    ``folded_opening`` is the OTHER number one card can inherit from the row it
+    suppresses (#5853, wired to this surface by #5918): a ``(home, away)`` pair
+    from :func:`merge_opening_line`. It is a separate parameter because it is a
+    separate fact — the bag is the LIVE card's number and ``Event.opening_*`` is
+    the SETTLED card's, and a surface that folds only the first serves a finished
+    fixture with no percentage at all.
+
+    ``None`` on either means the caller did not fold that half, and the number is
+    then computed off the event exactly as before. That is the honest default for
+    a caller that has not been taught to batch — an unfolded number is
+    under-informed, never wrong in the other direction (both folds are strictly
+    additive gap-fills).
     """
     response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
+
+    # One resolution of the opening pair, read by BOTH sites below. Two
+    # resolutions is how a card's printed "Opened X/Y" and the highlight score
+    # computed from the same line start to disagree.
+    _open_home, _open_away = (
+        folded_opening
+        if folded_opening is not None
+        else (event.opening_home_probability, event.opening_away_probability)
+    )
 
     current_home_prob = None
     current_away_prob = None
@@ -19855,8 +19924,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         current_away_prob=current_away_prob,
         current_home_spread=current_spread,
         current_over_under=current_ou,
-        opening_home_prob=float(event.opening_home_probability) if event.opening_home_probability else None,
-        opening_away_prob=float(event.opening_away_probability) if event.opening_away_probability else None,
+        opening_home_prob=float(_open_home) if _open_home else None,
+        opening_away_prob=float(_open_away) if _open_away else None,
         opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
         opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
         opening_favorite=event.opening_favorite,
@@ -19895,12 +19964,20 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # cards that print "Opened X/Y", so it withholds on the same predicate rather
     # than growing its own — a card and the page it opens must not disagree about
     # whether a match has an opening (the #3903 family's whole subject).
-    if event.opening_home_probability and opening_consensus_has_frozen(
+    #
+    # #5918: the pair read here is `_open_home`/`_open_away`, which is the
+    # canonical's own line unless it has none and a row it suppresses does —
+    # see `merge_opening_line` for why a pair travels as a pair. The SPREAD,
+    # total and favourite below stay the event's own and are deliberately not
+    # folded: they are separate facts, and the gate above only fires when the
+    # canonical holds no opening probability at all, so a folded pair arrives on
+    # a row whose own opening line is empty.
+    if _open_home and opening_consensus_has_frozen(
         event.commence_time, event.status, datetime.now(timezone.utc)
     ):
         response["opening_odds"] = {
-            "home_probability": float(event.opening_home_probability),
-            "away_probability": float(event.opening_away_probability) if event.opening_away_probability else None,
+            "home_probability": float(_open_home),
+            "away_probability": float(_open_away) if _open_away else None,
             # #5414: `is not None`, not truthiness. A pick'em game opens at a
             # spread of exactly 0.0 — falsy — so this reported "no opening line"
             # for 557 of the 7,717 events with an opening spread (7.2%, measured
