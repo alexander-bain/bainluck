@@ -13,12 +13,24 @@ runs exactly one file — `tests/integration/test_search_recall_contract.py`. So
 these guards cover the parts that are decidable without a database and that a
 future edit can silently break:
 
+  * **what the repair DECIDES for one row** — `planned_write` is pure and takes
+    no database, which is the whole reason it exists as a separate function.
+    `TestTheSuspendedPopulation` drives the two production siblings through it
+    and then through the real `fold_twin_events` and the real
+    `served_event_status`, so the reader's three facts (one card, dated at the
+    kickoff, reading as upcoming) are asserted rather than described;
   * the runbook names the app the PRODUCER actually runs on, tied to live
     `HEAVY_TASKS` membership rather than to a sentence somebody typed;
   * the write refusals fire on the wrong app and on no app at all;
   * the runbook's commands only use flags the parser really has;
   * the UNDO line the apply prints names a restore script that exists and
     accepts the flag it is printed with.
+
+The first bullet is here because its absence cost a presentation: CERT-2797
+BLOCKed the previous sha for writing `commence_time` alone, which fixes the 40
+`live` rows (the serve layer downgrades those) and leaves the 302 `suspended`
+ones reading paused for a match days away. Nothing in the old file could have
+caught that, because nothing in it executed a decision.
 
 The population itself was measured on production (see the script header:
 603 → 27 ambiguous → 234 past → **342 in scope**, 0 scored, 0 finished, 0 moving
@@ -31,6 +43,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -270,3 +283,179 @@ class TestThePopulationsExclusions:
         assert repair.MAX_EXPECTED_POPULATION > 342
         assert repair.MAX_MOVE_DAYS > 27.44
         assert repair.MIN_DISAGREEMENT_SECONDS > 0
+
+
+# ---------------------------------------------------------------------------
+# CERT-2797's required repair: the 302 suspended rows
+# ---------------------------------------------------------------------------
+
+
+class TestTheSuspendedPopulation:
+    """`5821-FUTURE-SUSPENDED-ROWS-BECOME-SCHEDULED`.
+
+    The first cut wrote `commence_time` alone and argued that
+    `served_event_status` would do the rest. It does — for `live`, which is 40
+    of the 342 rows. The other 302 are `suspended`, and
+    `enforce_live_requires_start` passes `suspended` through verbatim *by
+    design*: "this rule only ever downgrades a premature `live`". So those rows
+    would have kept reading paused-with-no-result for matches days away.
+
+    These tests are written against the two production siblings the issue names
+    and assert the reader's three facts: ONE card, dated at the kickoff, reading
+    as upcoming.
+    """
+
+    #: The pair, verbatim (`db-query`, production 2026-09-13 10:2xZ). Both
+    #: `suspended`, both linked to a Gamma container whose `venue_game_start` is
+    #: the same instant two days out, and 30 minutes apart on nothing but the
+    #: minute they were ingested.
+    SIBLING_A = 15311503
+    SIBLING_B = 15311506
+    HOME = "Al Ain FC"
+    AWAY = "Al Nassr Club"
+    S_ACL = 1622
+
+    def _siblings(self, now):
+        from app.models.models import Event
+
+        venue = now + timedelta(days=2)
+        rows = [
+            Event(
+                id=self.SIBLING_A,
+                sport_id=self.S_ACL,
+                home_team_name=self.HOME,
+                away_team_name=self.AWAY,
+                # The two LISTING stamps, both in the past, 30 minutes apart.
+                commence_time=now - timedelta(hours=7),
+                status="suspended",
+            ),
+            Event(
+                id=self.SIBLING_B,
+                sport_id=self.S_ACL,
+                home_team_name=self.HOME,
+                away_team_name=self.AWAY,
+                commence_time=now - timedelta(hours=7, minutes=30),
+                status="suspended",
+            ),
+        ]
+        return rows, venue
+
+    def _repair(self, repair, rows, venue, now):
+        """Apply the script's own decision to the rows, as `--apply` would."""
+        for row in rows:
+            plan = repair.planned_write(row.status, row.commence_time, venue, now)
+            for column, value in plan.items():
+                setattr(row, column, value)
+        return rows
+
+    def test_future_suspended_population_serves_scheduled_after_repair_5821(
+        self, repair
+    ):
+        """🔴 THE REQUIRED TEST. Two linked siblings, one card, upcoming status.
+
+        All three assertions are made BEFORE as well as AFTER, so the test
+        cannot pass against a repair that does nothing: before it, the pair is
+        two cards both reading `suspended`.
+        """
+        from app.utils.event_twin_fold import fold_twin_events
+        from app.utils.lifecycle import served_event_status
+
+        now = datetime.now(timezone.utc)
+        rows, venue = self._siblings(now)
+
+        before = fold_twin_events(rows)
+        assert len(before.events) == 2, (
+            "the pair folded before the repair — then the repair is not what "
+            "collapses it and this whole test is measuring something else"
+        )
+        assert {served_event_status(r.status, r.commence_time, now) for r in rows} == {
+            "suspended"
+        }
+
+        self._repair(repair, rows, venue, now)
+        after = fold_twin_events(rows)
+
+        # ONE READER CARD.
+        assert len(after.events) == 1, (
+            "the two rows still serve as two cards after the re-date — the "
+            f"fold key did not collapse them (got {[e.id for e in after.events]})"
+        )
+        # DATED AT THE KICKOFF, not at either ingest instant.
+        assert after.events[0].commence_time == venue
+        # UPCOMING PUBLIC STATUS — the half CERT-2797 blocked on.
+        assert served_event_status(after.events[0].status, venue, now) == "scheduled", (
+            "the surviving card still reads as a match in progress for a "
+            "fixture two days away"
+        )
+
+    def test_the_clock_alone_would_not_have_fixed_the_status(self, repair):
+        """🔴 READ THIS ONE SECOND. It is the BLOCK, as a test.
+
+        Re-dating without lifting the status leaves `served_event_status`
+        returning `suspended`, because that function deliberately declines to
+        touch it. A future edit that drops the status half of `planned_write`
+        reddens here with the reason attached.
+        """
+        from app.utils.lifecycle import served_event_status
+
+        now = datetime.now(timezone.utc)
+        venue = now + timedelta(days=2)
+
+        assert served_event_status("suspended", venue, now) == "suspended"
+        assert (
+            repair.planned_write("suspended", now - timedelta(hours=7), venue, now)[
+                "status"
+            ]
+            == "scheduled"
+        )
+
+    def test_a_live_row_is_lifted_too_even_though_the_serve_layer_would_cope(
+        self, repair
+    ):
+        """The 40. `served_event_status` would already downgrade these, so the
+        write is belt and braces — but leaving the COLUMN saying `live` for a
+        fixture two days out means every admin surface, every raw reader and
+        every future rule keyed on the column still sees a match in progress."""
+        now = datetime.now(timezone.utc)
+        venue = now + timedelta(days=2)
+
+        plan = repair.planned_write("live", now - timedelta(hours=7), venue, now)
+
+        assert plan["status"] == "scheduled"
+
+    @pytest.mark.parametrize("status", ["closed", "completed", "voided", "merged"])
+    def test_a_terminal_row_keeps_its_status(self, repair, status):
+        """🔴 The allowlist, from the other side. `LIFTABLE_IN_PROGRESS_STATUSES`
+        is an allowlist rather than a denylist for the reason written beside
+        `EVENT_PLAYABLE_STATUSES`: a status nobody thought of must be left alone,
+        not quietly rewritten. A repair that lifted `closed` to `scheduled`
+        would un-settle a finished match."""
+        now = datetime.now(timezone.utc)
+        venue = now + timedelta(days=2)
+
+        plan = repair.planned_write(status, now - timedelta(hours=7), venue, now)
+
+        assert plan == {
+            "commence_time": venue
+        }, f"a `{status}` row had its status rewritten by a date repair"
+
+    def test_a_past_correction_moves_the_clock_and_not_the_status(self, repair):
+        """Out-of-scope for the population query, and refused a second time
+        here. A fixture whose corrected instant is in the PAST may really be
+        live or suspended right now — the whole argument for lifting the status
+        is that the match has not started."""
+        now = datetime.now(timezone.utc)
+        past = now - timedelta(hours=1)
+
+        plan = repair.planned_write("suspended", now - timedelta(days=3), past, now)
+
+        assert plan == {"commence_time": past}
+
+    def test_a_row_already_holding_the_venue_instant_plans_nothing(self, repair):
+        """Idempotence at the decision, not only at the population query: an
+        empty plan is a skip, so a second apply writes nothing and the receipt
+        stays honest about what the FIRST one did."""
+        now = datetime.now(timezone.utc)
+        venue = now + timedelta(days=2)
+
+        assert repair.planned_write("suspended", venue, venue, now) == {}
