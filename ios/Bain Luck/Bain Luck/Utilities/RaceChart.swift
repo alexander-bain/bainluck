@@ -53,6 +53,12 @@ nonisolated struct RaceChartSeries: Equatable, Sendable, Identifiable {
     /// alone and land a point away from it. Nil everywhere else, which is the
     /// ordinary per-row rendering.
     let renderedPercent: Int?
+    /// The payload's own word for where this contender ended up — `won`,
+    /// `eliminated`, `live` (#5990). Carried because a settled contender's
+    /// legend cell is its RESULT and the result is not derivable from the two
+    /// nil numbers above: `probability == nil` says only "no price", which is
+    /// also a live contender nobody has quoted.
+    let state: String
     let points: [RaceChartPoint]
 
     var id: String { entityKey }
@@ -63,6 +69,7 @@ nonisolated struct RaceChartSeries: Equatable, Sendable, Identifiable {
         colorIndex: Int,
         probability: Double?,
         renderedPercent: Int? = nil,
+        state: String = "",
         points: [RaceChartPoint]
     ) {
         self.entityKey = entityKey
@@ -70,6 +77,7 @@ nonisolated struct RaceChartSeries: Equatable, Sendable, Identifiable {
         self.colorIndex = colorIndex
         self.probability = probability
         self.renderedPercent = renderedPercent
+        self.state = state
         self.points = points
     }
 }
@@ -165,10 +173,40 @@ nonisolated enum RaceChart {
 
     // MARK: Building series
 
-    /// The top N still-standing rows as chart series, in board order.
+    /// The top N rows the chart can draw, in board order.
     ///
-    /// Rows without a probability are skipped: a result is not a standing, and
-    /// a settled contender has no live line to draw. `chartSeries` on the web.
+    /// ═══ #5990: A DECIDED DRAW STILL HAS A PICTURE ═══
+    ///
+    /// This filter was `probability != nil`, and its comment said "`chartSeries`
+    /// on the web" — which stopped being true when the web moved to DRAWABILITY
+    /// in #5934. The old test was right about the LINE and wrong about the
+    /// HISTORY: it made the whole title-race card disappear the moment the last
+    /// row settled, because every row of a finished draw arrives
+    /// `probability: null`. The women's card had no picture of the fortnight
+    /// that produced its champion, and the men's would have gone the same way an
+    /// hour later. Against Alex's standing ruling in as many words: *settled
+    /// means settled — charts show the completed journey.*
+    ///
+    /// So a row is chartable if it carries a current probability OR a history to
+    /// draw. The series is not a claim about now; it is what happened, and what
+    /// happened does not stop having happened. (Live payload, not a
+    /// hypothetical: #5945 keeps `trend`/`trend_hourly` on settled rows, so at
+    /// 20:44Z every settled women's row carried 19 daily points.)
+    ///
+    /// 🔵 **THE PRICE IS NOT RESURRECTED.** A settled row's `probability` stays
+    /// nil everywhere it is printed, and the legend prints `state` through
+    /// `legendValue`. Reading the last chart point into that cell would put back
+    /// the "RYBAKINA 99%" #5917 removed, sixteen hours after she won.
+    ///
+    /// **PRICED ROWS FIRST**, and that is the whole reason this is not one
+    /// `filter` and a `prefix`. Mid-tournament a board carries both — live
+    /// contenders and knocked-out players whose history is still drawable — and
+    /// taking the top N of the merged set would let a player who is OUT open the
+    /// chart ahead of one still in it, purely on where the board ranked them.
+    /// When NOTHING is priced the race does not stand any more and board order
+    /// IS the finish: champion first, exactly the lines the chart was drawing
+    /// the minute before the draw was decided. `defaultSelection` on the web.
+    ///
     /// `renderedPercents` is the board's own map of what each row PRINTS, keyed
     /// by `entity_key` (#5949). Passing it is how the legend and the rows under
     /// it stay one answer; omitting it is the per-row rendering every other
@@ -178,20 +216,54 @@ nonisolated enum RaceChart {
         limit: Int = seriesCount,
         renderedPercents: [String: Int] = [:]
     ) -> [RaceChartSeries] {
-        rows
-            .filter { $0.probability != nil }
+        let chartable = rows.map { ($0, (($0.trend ?? []).compactMap(point))) }
+            .filter { $0.0.probability != nil || !$0.1.isEmpty }
+        let priced = chartable.filter { $0.0.probability != nil }
+        return (priced.isEmpty ? chartable : priced)
             .prefix(limit)
             .enumerated()
-            .map { index, row in
-                RaceChartSeries(
+            .map { index, pair in
+                let (row, points) = pair
+                return RaceChartSeries(
                     entityKey: row.entityKey,
                     displayName: row.displayName,
                     colorIndex: index,
                     probability: row.probability,
                     renderedPercent: renderedPercents[row.entityKey],
-                    points: (row.trend ?? []).compactMap(point)
+                    state: row.state ?? "",
+                    points: points
                 )
             }
+    }
+
+    /// The two words a terminal state prints in a narrow slot, or nil for a
+    /// state that is not terminal — so a caller falls through to the number
+    /// rather than this inventing a word for a state it does not recognise.
+    ///
+    /// `legendStateLabel` on the web, and the same two words
+    /// `TournamentHubPresentation.boardRowValueText` puts in the rows below, so
+    /// one tournament cannot be `Won` in the legend and `Champion` in the list.
+    static func legendStateLabel(_ state: String) -> String? {
+        switch state {
+        case "won": return "Won"
+        case "eliminated": return "Out"
+        default: return nil
+        }
+    }
+
+    /// The legend's right-hand cell: a live probability, or a settled row's
+    /// result. `legendValue` on the web.
+    ///
+    /// ⚠️ THE ONE THING THIS MUST NEVER DO is reach into `points` for a number.
+    /// A settled row's last reading is a real observation, and printing it HERE
+    /// would read as a current standing. The line may end at 99; the label says
+    /// `Won`.
+    static func legendValue(_ entry: RaceChartSeries) -> String {
+        if entry.probability == nil, let label = legendStateLabel(entry.state) {
+            return label
+        }
+        return formatProbabilityOrDash(
+            entry.probability, renderedPercent: entry.renderedPercent)
     }
 
     private static func point(_ raw: TournamentHubTrendPoint) -> RaceChartPoint? {

@@ -108,8 +108,12 @@ struct RaceChartView: View {
                     // complement pair half-up sends both up, so a legend that
                     // re-rounds prints 42% two centimetres above a row printing
                     // 41% — #2452 / #2060 / UX-P114 for the sixth time.
-                    Text(formatProbabilityOrDash(
-                        entry.probability, renderedPercent: entry.renderedPercent))
+                    //
+                    // #5990: and on a settled contender that cell is the RESULT
+                    // — `Won` / `Out`, the words the rows below print — never
+                    // the last point of the line. The rule is in `RaceChart` so
+                    // the legend and the board cannot disagree about one player.
+                    Text(RaceChart.legendValue(entry))
                         .font(.caption2.weight(.bold).monospacedDigit())
                         .foregroundStyle(DS.textPrimary)
                 }

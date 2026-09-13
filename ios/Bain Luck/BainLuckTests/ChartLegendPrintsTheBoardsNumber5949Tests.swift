@@ -114,19 +114,57 @@ final class ChartLegendPrintsTheBoardsNumber5949Tests: XCTestCase {
         // formatter — which is exactly the state this issue was filed in. A
         // measurement that builds its own label cannot see that; only a scan
         // anchored on the card's own line can.
-        let view = URL(fileURLWithPath: #filePath)
+        //
+        // #5990 MOVED THE ANCHOR, NOT THE RULE. The legend cell now delegates to
+        // `RaceChart.legendValue`, because a settled contender's cell is `Won` /
+        // `Out` and that decision belongs beside the board's, not in a view. So
+        // this scans BOTH halves of the delegation — the view must hand the
+        // whole entry over, and the rule it hands it to must still carry the
+        // board's integer — and the behavioural arm below is what actually
+        // fails if either half stops being true.
+        let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()      // BainLuckTests
             .deletingLastPathComponent()      // Bain Luck (project dir)
-            .appendingPathComponent("Bain Luck/Components/RaceChartView.swift")
-        let source = try String(contentsOf: view, encoding: .utf8)
+        let view = try code(at: root.appendingPathComponent("Bain Luck/Components/RaceChartView.swift"))
+        let rule = try code(at: root.appendingPathComponent("Bain Luck/Utilities/RaceChart.swift"))
 
         XCTAssertTrue(
-            source.contains("renderedPercent: entry.renderedPercent"),
-            "RaceChartView's legend must print the percent the board decided")
+            view.contains("RaceChart.legendValue(entry)"),
+            "RaceChartView's legend must ask the rule what this cell says")
+        XCTAssertTrue(
+            rule.contains("renderedPercent: entry.renderedPercent"),
+            "`legendValue` must print the percent the board decided")
         XCTAssertFalse(
-            source.contains("formatProbabilityOrDash(entry.probability))"),
+            view.contains("formatProbabilityOrDash(entry.probability))"),
             "the one-argument call is the #5949 defect: it re-rounds 0.415 to "
             + "42% under a row printing 41%")
+
+        // The rule itself, on the pair that produced #5949: the board decided
+        // 41, so the legend says 41 even though 0.415 rounds up on its own.
+        XCTAssertEqual(
+            RaceChart.legendValue(
+                RaceChartSeries(
+                    entityKey: "ben-shelton", displayName: "Ben Shelton",
+                    colorIndex: 1, probability: 0.415, renderedPercent: 41,
+                    state: "live", points: [])),
+            "41%")
+    }
+
+    /// Source with its comment lines removed, plus the check that the strip left
+    /// real code standing: a scan that reads a doc comment quoting the call it
+    /// forbids is a guard that grades prose, and an over-eager filter makes
+    /// every assertion pass against an empty string.
+    private func code(at url: URL) throws -> String {
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let stripped = source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+
+        XCTAssertTrue(
+            stripped.contains("struct") || stripped.contains("enum"),
+            "the comment strip left nothing to scan in \(url.lastPathComponent)")
+        return stripped
     }
 
     // MARK: - Fixtures
