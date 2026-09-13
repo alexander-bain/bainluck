@@ -49,6 +49,7 @@ import {
   leagueQualifiedSlug,
   resolveTeamForRoute,
 } from "@/lib/teamRouteResolve";
+import { classifyTeamShare, fetchTeamShare } from "@/lib/teamShareMeta";
 
 type Row = { team: { name: string; sport_key?: string | null } };
 
@@ -162,6 +163,86 @@ describe("#5852 link half — the league-qualified retry", () => {
 
     expect(out.slug).toBe("clemson-tigers-ncaaf");
     expect(asked).toEqual(["clemson-tigers-ncaaf"]);
+  });
+});
+
+/**
+ * The unfurl has to resolve the SAME way the page does, or the promise
+ * `classifyTeamShare` makes in its own header — that the card and the page
+ * "cannot disagree about whether this URL is a football page" — is broken by
+ * the retry rather than kept by it. A reader who pastes a Clemson football link
+ * must not be shown "we don't have a football page for Clemson Tigers" and then
+ * disprove it by tapping the preview.
+ */
+describe("#5852 — the unfurl resolves the same way the page does", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  /** A `fetch` over a slug→row table; anything absent 404s, as the API does. */
+  function mockApi(rows: Record<string, Row>) {
+    const asked: string[] = [];
+    global.fetch = jest.fn(async (url: string) => {
+      const slug = decodeURIComponent(String(url).split("/api/teams/")[1] ?? "");
+      asked.push(slug);
+      const row = rows[slug];
+      if (!row) return { status: 404, ok: false } as Response;
+      return { status: 200, ok: true, json: async () => row } as unknown as Response;
+    }) as unknown as typeof fetch;
+    return asked;
+  }
+
+  it("unfurls the Clemson football team, not the refusal the page no longer shows", async () => {
+    const asked = mockApi(CLEMSON);
+
+    const verdict = classifyTeamShare(
+      await fetchTeamShare("football", "ncaaf", "clemson-tigers"),
+      "football",
+    );
+
+    expect(verdict.kind).toBe("team");
+    expect(asked).toEqual(["clemson-tigers", "clemson-tigers-ncaaf"]);
+  });
+
+  it("still refuses Hawai'i, which has no NCAAF row to find", async () => {
+    mockApi({
+      "hawaii-rainbow-warriors": {
+        team: { name: "Hawai'i Rainbow Warriors", sport_key: "basketball_wncaab" },
+      },
+    });
+
+    const verdict = classifyTeamShare(
+      await fetchTeamShare("football", "ncaaf", "hawaii-rainbow-warriors"),
+      "football",
+    );
+
+    expect(verdict.kind).toBe("off-route");
+  });
+
+  it("keeps 404 and a bad minute apart through the retry (gotcha #53)", async () => {
+    // Nothing at all: the FIRST fetch 404s, so the failure is "not-found" and
+    // must not be laundered into "unavailable" by the retry machinery.
+    mockApi({});
+    const missing = await fetchTeamShare("football", "ncaaf", "no-such-team");
+    expect(missing).toEqual({ ok: false, failure: "not-found" });
+
+    global.fetch = jest.fn(async () => ({ status: 503, ok: false }) as Response) as unknown as typeof fetch;
+    const down = await fetchTeamShare("football", "ncaaf", "clemson-tigers");
+    expect(down).toEqual({ ok: false, failure: "unavailable" });
+  });
+
+  it("does not let a retry's 404 overwrite a first answer that succeeded", async () => {
+    // Clemson resolves off-route, the retry 404s: the first answer stands and
+    // the card refuses — it must NOT come back as `unresolved`.
+    mockApi({
+      "clemson-tigers": { team: { name: "Clemson Tigers", sport_key: "basketball_wncaab" } },
+    });
+
+    const lookup = await fetchTeamShare("football", "ncaaf", "clemson-tigers");
+
+    expect(lookup.ok).toBe(true);
+    expect(classifyTeamShare(lookup, "football").kind).toBe("off-route");
   });
 });
 
