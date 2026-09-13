@@ -17,6 +17,30 @@ was meant to end. There were **31 backend deploys in 24h** (measured 2026-09-12)
 so per-release means 31 heavy cycles a day, for code that mostly does not change
 what heavy runs.
 
+**And not "whenever a cron happens to fire" either — that was the first design and
+it is the one that failed.** A schedule is uncorrelated with the thing it is
+chasing: drift is CREATED by main-app deploys, so the rate you need to sync at is
+the rate they happen at, and a clock cannot know that. Worse, GitHub does not
+deliver the slots — measured 2026-09-13 05:15Z over every run this workflow has
+ever had, **4 runs against 17 nominal hourly slots**, the last of them 3h48m
+earlier, while heavy sat 7h33m and 98 commits behind with four launch ships dark
+on it. Buying more lottery tickets (``34,42,50``, latency/362) raises the expected
+rate and leaves the tail exactly as heavy-tailed.
+
+So the primary trigger is ``workflow_run`` on CI completing on ``master``: the
+event that CREATES the drift is the event that clears it, and the opportunity rate
+tracks the deploy rate for free — including the case that matters most, a quiet
+night, where no deploys means no drift means nothing is owed. The cron stays as a
+backstop for the one thing the event cannot cover: a sync that was HELD (out of
+band, or under the floor below) while no further deploy arrives to re-offer it.
+
+**Which makes the trigger rate stop being the cycle rate, so the floor below is
+what keeps the price honest.** ~31 CI-success runs a day against a 25-minute band
+is ~13 cycles/day, and this file already rejected that rate at the top. The
+``ACCEPTED_CYCLES_PER_DAY`` floor holds the cost at the budget the cron raise was
+priced against, and it binds only when triggers are plentiful — at today's ~2.5
+cycles/day it never fires at all.
+
 **And not "push at a quiet minute" either.** 31 beats route to ``queue: heavy`` on
 one dyno at concurrency 2 — ``*/15``, ``*/20``, ``*/30``, two 15-minute cluster
 beats, plus hourly singles. No minute of the hour is reliably free of all of them.
@@ -49,7 +73,7 @@ Usage (the workflow gathers facts, this judges, the workflow acts on the code)::
 
     python3 scripts/heavy_sync_decision.py decide \\
         --main-live "$MAIN_LIVE" --heavy-live "$HEAVY_LIVE" \\
-        --heavy-is-ancestor true [--dispatched]
+        --heavy-is-ancestor true [--heavy-release-age-min N] [--dispatched]
 
 Exit codes: ``0`` PUSH · ``1`` HOLD (a benign result, not an error — gotcha #124) ·
 ``2`` REFUSE (unsafe; somebody should look) · ``3`` usage.
@@ -88,6 +112,27 @@ MAX_RELEASE_LAG_MIN = 12
 #: Slack on the closing edge so a lag at the top of the range still lands clear of
 #: the NEXT hour's rebuild.
 CLOSE_MARGIN_MIN = 5
+
+
+#: The cycle budget this file has ALREADY priced and accepted, in heavy releases
+#: per day. It is not a new number: the raise to three cron attempts an hour
+#: (latency/362) was justified at "~7.5 heavy cycles a day against today's ~2.5",
+#: and the same paragraph rejects N=6's "~15/day" as too many. 8 is that accepted
+#: rate, rounded up so the floor never forbids what the cron was licensed to do.
+#: A cycle costs ONE calibration unit (~2 min measured), so this prices at ~16
+#: min/day of recomputation.
+ACCEPTED_CYCLES_PER_DAY = 8
+
+
+def min_cycle_interval_min() -> int:
+    """The floor between two heavy releases, derived from the accepted budget.
+
+    Derived and not typed in for the same reason as :func:`window_bounds`: moving
+    the budget must move the floor, or the two drift apart and the comment above
+    becomes a story about a number nothing enforces
+    (``test_moving_the_accepted_budget_moves_the_floor``).
+    """
+    return round(24 * 60 / ACCEPTED_CYCLES_PER_DAY)
 
 
 def window_bounds() -> tuple[int, int]:
@@ -146,6 +191,7 @@ def decide(
     heavy_live: str | None,
     heavy_is_ancestor: bool | None,
     dispatched: bool = False,
+    heavy_release_age_min: int | None = None,
     now: datetime | None = None,
 ) -> Decision:
     """Judge one sync opportunity. Pure apart from the clock it reads itself.
@@ -159,7 +205,13 @@ def decide(
     3. **Divergence REFUSES**, and does so BEFORE the window and regardless of
        ``--dispatched``: an attended run may overrule a clock, never a
        never-backwards guard. This is the one that must not be forceable.
-    4. Only then does the clock get a say.
+    4. Only then do the two COST gates — the clock, then the cycle floor — get a
+       say, and they fail in the OPPOSITE direction to the guards above them. A
+       safety guard that cannot read its fact refuses; a cost gate that cannot
+       read its fact proceeds. ``heavy_release_age_min=None`` is therefore not a
+       hold: an unreadable release age means we do not know that heavy was
+       disturbed recently, and the harm of one extra cycle (~2 min of
+       recomputation) is not the harm of missing the sync this ship exists for.
     """
     if not _is_sha(main_live):
         return Decision(REFUSE, "REFUSE", f"main live ref unreadable: {main_live!r}")
@@ -189,6 +241,16 @@ def decide(
             f":{now.astimezone(timezone.utc).minute:02d} is outside the :{opens}-:{closes} "
             f"heavy-sync window (the :{REBUILD_START_MIN} accuracy rebuild runs "
             f"{REBUILD_DURATION_MIN} min) — the next scheduled run retries",
+        )
+
+    floor = min_cycle_interval_min()
+    if not dispatched and heavy_release_age_min is not None and heavy_release_age_min < floor:
+        return Decision(
+            HOLD,
+            "HOLD",
+            f"heavy was released {heavy_release_age_min} min ago, inside the {floor}-min "
+            f"cycle floor ({ACCEPTED_CYCLES_PER_DAY} cycles/day) — a release cycles "
+            "worker-heavy, so the trigger rate is not the cycle rate",
         )
 
     why_now = "attended run: window bypassed" if dispatched else f"inside :{opens}-:{closes}"
@@ -292,45 +354,100 @@ def poll_readback(
     return verdict
 
 
-def heroku_release_commit(app: str, token: str) -> str | None:
-    """The commit the app's CURRENT release was built from, via the Platform API.
-
-    Stdlib only — this script imports nothing external and must stay that way so
-    it runs on a bare runner before any `pip install`.
+def _heroku_get(path: str, token: str, extra: dict | None = None):
+    """One Platform API read. Stdlib only — this script imports nothing external
+    and must stay that way so it runs on a bare runner before any `pip install`.
     """
     import json
     import urllib.request
 
-    def _get(path: str, extra: dict | None = None):
-        # The trailing `/` in the literal is load-bearing, not a tidy-up target:
-        # `backend/tests/test_agent_origin_outbound_tag.py` proves statically that
-        # this call is third-party (so the origin carrier would be a no-op here,
-        # and this file can stay importless), and it can only prove that while the
-        # literal prefix CLOSES the authority. `f"...heroku.com{path}"` would leave
-        # the host open to whatever `path` holds, and is correctly reported.
-        req = urllib.request.Request(
-            f"https://api.heroku.com/{path}",
-            headers={
-                "Accept": "application/vnd.heroku+json; version=3",
-                "Authorization": f"Bearer {token}",
-                **(extra or {}),
-            },
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.load(resp)
+    # The trailing `/` in the literal is load-bearing, not a tidy-up target:
+    # `backend/tests/test_agent_origin_outbound_tag.py` proves statically that
+    # this call is third-party (so the origin carrier would be a no-op here,
+    # and this file can stay importless), and it can only prove that while the
+    # literal prefix CLOSES the authority. `f"...heroku.com{path}"` would leave
+    # the host open to whatever `path` holds, and is correctly reported.
+    req = urllib.request.Request(
+        f"https://api.heroku.com/{path}",
+        headers={
+            "Accept": "application/vnd.heroku+json; version=3",
+            "Authorization": f"Bearer {token}",
+            **(extra or {}),
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.load(resp)
 
-    releases = _get(
-        f"apps/{app}/releases", {"Range": "version ..; order=desc, max=1"}
+
+def _current_release(app: str, token: str) -> dict | None:
+    """The app's CURRENT release record, or ``None`` if the API named none."""
+    releases = _heroku_get(
+        f"apps/{app}/releases", token, {"Range": "version ..; order=desc, max=1"}
     )
     if not releases:
         return None
-    slug = (releases[0] or {}).get("slug") or {}
+    return releases[0] or None
+
+
+def heroku_release_age_min(app: str, token: str, now: datetime | None = None) -> int | None:
+    """Minutes since the app's current release, or ``None`` if unreadable.
+
+    A CONFIG-ONLY release counts here, and that is the difference between this
+    question and :func:`heroku_release_commit`'s. That function reads a slugless
+    release as unreadable because it cannot say which commit is running; this one
+    wants to know when heavy was last DISTURBED, and a config change cycles the
+    dyno exactly as a deploy does. Two questions, two right answers — the failure
+    would be to reuse one reader for both (gotcha #53).
+    """
+    release = _current_release(app, token)
+    created = (release or {}).get("created_at")
+    if not created:
+        return None
+    stamp = str(created).strip().replace("Z", "+00:00")
+    try:
+        when = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    # A release stamped in the FUTURE (clock skew between the API and the runner)
+    # reads as age 0, never as a negative that would sail under the floor.
+    return max(0, int((now - when).total_seconds() // 60))
+
+
+def heroku_release_commit(app: str, token: str) -> str | None:
+    """The commit the app's CURRENT release was built from, via the Platform API."""
+    release = _current_release(app, token)
+    if not release:
+        return None
+    slug = release.get("slug") or {}
     slug_id = slug.get("id")
     if not slug_id:
         # A release with no slug is a config change, not a deploy — it cannot
         # tell us which commit is running, and saying "no" would be a lie.
         return None
-    return (_get(f"apps/{app}/slugs/{slug_id}") or {}).get("commit")
+    return (_heroku_get(f"apps/{app}/slugs/{slug_id}", token) or {}).get("commit")
+
+
+def _age_arg(value: str | None) -> int | None:
+    """Minutes, or ``None`` for "the workflow could not read it".
+
+    Deliberately NOT ``type=int``. The workflow computes this from an API read
+    that is allowed to fail, so the empty string is a legitimate value here —
+    and argparse would turn it into a usage exit, which the workflow reads as a
+    story about the harness and refuses on (gotcha #54). An unreadable age is a
+    fact about a COST gate, and it proceeds; it must never take the sync down.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        return int(stripped)
+    except ValueError:
+        return None
 
 
 def _bool_arg(value: str) -> bool | None:
@@ -364,6 +481,16 @@ def main(argv: list[str] | None = None) -> int:
         help="an attended workflow_dispatch run: bypasses the CLOCK only, never the "
         "never-backwards guard",
     )
+    d.add_argument(
+        "--heavy-release-age-min",
+        default="",
+        help="minutes since heavy's current release. Empty or unparseable means "
+        "UNREADABLE, which does not hold — see the cost-gate polarity in decide().",
+    )
+    a = sub.add_parser(
+        "age", help="print minutes since the app's current release (empty if unreadable)"
+    )
+    a.add_argument("--app", required=True, help="the Heroku app, e.g. bainluck-heavy")
     v = sub.add_parser(
         "verify", help="confirm heavy's CURRENT RELEASE is built from the sha just pushed"
     )
@@ -376,6 +503,29 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(argv)
     except SystemExit:
         return USAGE
+
+    if args.command == "age":
+        import os
+
+        # Prints the NUMBER ALONE on stdout so the workflow can capture it with
+        # `$(...)`, and every diagnostic goes to stderr. Always exits 0: the
+        # caller's contract is the string, and an empty string already carries
+        # "unreadable" — a non-zero here would make a cost gate able to fail a
+        # job that has nothing wrong with it.
+        token = os.environ.get("HEROKU_API_KEY", "")
+        if not token:
+            print("HEROKU_API_KEY is not set, so no release age can be read", file=sys.stderr)
+            return 0
+        try:
+            age = heroku_release_age_min(args.app, token)
+        except Exception as exc:  # noqa: BLE001 - any read failure is "unreadable"
+            print(f"release age unreadable ({type(exc).__name__}: {exc})", file=sys.stderr)
+            return 0
+        if age is None:
+            print(f"{args.app}: the release API named no usable created_at", file=sys.stderr)
+            return 0
+        print(age)
+        return 0
 
     if args.command == "verify":
         import os
@@ -399,6 +549,7 @@ def main(argv: list[str] | None = None) -> int:
         heavy_live=args.heavy_live,
         heavy_is_ancestor=_bool_arg(args.heavy_is_ancestor),
         dispatched=args.dispatched,
+        heavy_release_age_min=_age_arg(args.heavy_release_age_min),
     )
     print(f"{decision.verdict}: {decision.reason}")
     return decision.code
