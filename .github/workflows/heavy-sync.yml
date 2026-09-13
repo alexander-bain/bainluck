@@ -52,7 +52,7 @@ on:
     branches: [master]
   # THE BACKSTOP, for the one case the event above cannot cover: a run that HELD
   # (outside the band, or under the cycle floor) when no further deploy arrives to
-  # re-offer the sync. Kept hourly-x3 rather than removed — the two triggers are
+  # re-offer the sync. Kept hourly rather than removed — the two triggers are
   # gated by the same `decide`, so a redundant attempt costs two `ls-remote`s.
   schedule:
     # HOURLY, AND THE MINUTE IS DECORATIVE. #5662, measured 2026-09-12 over all
@@ -97,30 +97,29 @@ on:
     # on a worker that never got the code. That is this issue, again, wearing a
     # green schedule.
     #
-    # So the pre-authorised raise fires — three attempts an hour, not one. Two
-    # deliberate differences from the `*/20` the paragraph above named:
+    # THE RAISE TO `34,42,50` IS WITHDRAWN, AND THE MINUTE BELOW IS THE ONLY
+    # AUTHORISED ONE (Codex, 2026-09-13 07:44Z, executed by latency/368). The
+    # paragraphs above measure a real problem and are kept because they are
+    # true; what they do NOT carry is an authorisation. "Pre-authorised" was the
+    # lane reading its own earlier rationale back as approval — the cadence that
+    # reached master was never granted, and a config delta does not become
+    # approved by being merged. Deliberately recorded rather than quietly
+    # reverted, so the next reader does not re-derive the raise from the same
+    # arithmetic and land in the same place.
     #
-    #   * all three minutes are INSIDE the derived band. Under the scheduler we
-    #     measured that buys nothing (the fire minute is uniform either way), but
-    #     `*/20` puts 2 of its 3 nominal fires at :00 and :20, outside it — so a
-    #     punctual scheduler would get ONE useful attempt an hour from `*/20` and
-    #     three from this. Strictly better in the regime we might return to, free
-    #     in the one we are in.
-    #   * three, not six, and the ceiling is the same arithmetic as the floor.
-    #     Expected in-band deliveries at N attempts/hour are N x 0.25 x 0.42 =>
-    #     N x 0.104/h. N=1 is one sync every ~9.6h, which is what we are living;
-    #     N=3 is every ~3.2h — the ~3h this design claimed — for ~7.5 heavy
-    #     cycles a day against today's ~2.5; N=6 is every ~1.6h for ~15/day,
-    #     which is half the per-release rate this file rejects at the top. A
-    #     cycle costs ONE calibration unit (~2 min, measured — see the script's
-    #     header), so N=3 prices at ~15 min/day of recomputation, ~10 more than
-    #     today.
+    # What carries the ship instead is the `workflow_run` trigger above, which is
+    # the reviewed mechanism and is untouched here: it fires on the deploy that
+    # CREATES the drift, so the opportunity rate tracks the deploy rate rather
+    # than a scheduler this repo has measured at 0/98 punctual. The cron is the
+    # backstop for the one case the event cannot cover — a run that HELD while no
+    # further deploy arrives to re-offer it — and one hourly attempt is what it
+    # is licensed to be.
     #
-    # If the tail is STILL long, go to `34,38,42,46,50,54` (N=6) — but re-measure
-    # the 4-of-16 delivery rate first. It is the only soft number here, it is one
-    # day old, and the wait is more sensitive to it than to N. Do not narrow the
-    # band.
-    - cron: '34,42,50 * * * *'
+    # Anyone considering N>1 again: the arithmetic is above, it is not the
+    # blocker, and the answer is Alex's. Raise the number only with his word, and
+    # re-measure the 4-of-16 delivery rate first — it is the only soft number
+    # here and the wait is more sensitive to it than to N. Do not narrow the band.
+    - cron: '42 * * * *'
   workflow_dispatch:
 
 permissions:

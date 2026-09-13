@@ -334,11 +334,13 @@ def test_the_workflows_cron_minutes_are_inside_the_derived_band():
     corrected measurement did not leave the nominal schedule behind, and it is
     the property we would rely on again if the scheduler ever became punctual.
 
-    EVERY minute is asserted, not the first (latency/362). With more than one
-    nominal fire per hour the difference is the whole point: `*/20` and
-    `34,42,50` are indistinguishable under the scheduler we measured, but under a
-    punctual one the first delivers a single useful attempt an hour and the
-    second delivers three. Checking only the first minute would pass both.
+    EVERY minute is asserted, not the first (latency/362). At today's authorised
+    single fire the two readings coincide, and the loop is kept deliberately: the
+    moment anyone adds a minute it is the only thing standing between a
+    multi-fire cron and a schedule whose extra attempts all land outside the band
+    — `*/20` and an all-in-band list are indistinguishable under the scheduler we
+    measured, but under a punctual one the first delivers a single useful attempt
+    an hour. Checking only the first minute would pass both.
     """
     opens, closes = sync.window_bounds()
     outside = [m for m in _cron_minutes() if not (opens <= m <= closes)]
@@ -356,25 +358,27 @@ def test_enough_attempts_that_a_random_fire_minute_reaches_the_band():
     At the derived band's width a 3-hourly cron was 8 attempts/day => ~8.3h
     expected wait, against a design claiming to bound drift to ~3h.
 
-    HOURLY WAS NOT ENOUGH EITHER, and the floor below is the measurement that
-    says so (latency/362, 2026-09-13 04:44Z). "Hourly => 24 attempts/day" counts
-    SLOTS; in the 16 nominal slots since this workflow landed the scheduler
-    delivered **4 runs**, so the real attempt rate was ~6/day and heavy sat
-    7h06m / 81 commits behind the main app's live commit. Expected in-band
-    deliveries are N x 0.25 x 0.42 => N x 0.104/h, which is why three fires an
-    hour (~3.2h) is the floor and one (~9.6h) is not.
+    HOURLY IS NOT ENOUGH ON ITS OWN, and that is now the `workflow_run`
+    trigger's job rather than the cron's (latency/362 measured why: "hourly =>
+    24 attempts/day" counts SLOTS, and in the 16 nominal slots after this
+    workflow landed the scheduler delivered 4 runs, ~6/day, while heavy sat
+    7h06m / 81 commits behind main's live commit). The answer to a scheduler
+    that cannot be trusted is not more tickets in the same lottery — it is a
+    trigger correlated with the thing that creates the drift, which is the
+    deploy. The cron is the backstop, and one hourly attempt is what it is
+    AUTHORISED to be (Codex, 2026-09-13 07:44Z).
+
+    So this test no longer licenses a raise, and the assertion below is the
+    guard against re-deriving one: the arithmetic that argues for N>1 is still
+    in the workflow and still correct, which is exactly why a lane can read it
+    back as permission. It is not permission. Changing N is Alex's call, and
+    the test says so at the point where someone would change it.
 
     Attempts are near-free by construction and that is asserted, not assumed:
     `decide` HOLDs on `main_live == heavy_live` BEFORE consulting the clock, so
-    an extra run against an already-synced app never deploys. If that ordering
-    is ever inverted, raising the frequency would start cycling the worker and
-    this test should stop licensing it.
-
-    No ceiling is asserted. The cost of one more attempt is one calibration unit
-    (~2 min, measured) and the rate that would price it — the 4-of-16 delivery
-    fraction — is one day old and soft; pinning a maximum here would pin that
-    number. The real bound is the band: every fire must sit inside it, which the
-    test above enforces, so the schedule cannot grow past the band's width.
+    an extra run against an already-synced app never deploys. That ordering is
+    what would make a future authorised raise cheap; if it is ever inverted,
+    extra fires start cycling the worker and the raise must be re-priced.
     """
     hour_field = _cron().group(2)
     assert hour_field == "*", (
@@ -382,10 +386,13 @@ def test_enough_attempts_that_a_random_fire_minute_reaches_the_band():
         "minute is not controllable (#5662), so attempts are the only lever on the band"
     )
     minutes = _cron_minutes()
-    assert len(minutes) >= 3, (
-        f"heavy-sync fires {len(minutes)} time(s) an hour ({minutes}); the measured "
-        "delivery rate was 4 runs in 16 nominal slots, so at fewer than 3 the expected "
-        "wait exceeds the ~3h drift this design claims to bound"
+    assert len(minutes) == 1, (
+        f"heavy-sync fires {len(minutes)} time(s) an hour ({minutes}); the authorised "
+        "cadence is ONE hourly attempt (Codex 2026-09-13 07:44Z). The in-band arithmetic "
+        "in the workflow argues for more and is not an authorisation — a cadence that "
+        "reaches master is still not approved. Raise it only on Alex's word, and "
+        "re-measure the 4-of-16 delivery rate first; the durable fix is the "
+        "`workflow_run` trigger, which fires on the deploy that creates the drift"
     )
 
     # The ordering that makes hourly attempts cheap. Out-of-band on purpose: if
@@ -815,15 +822,18 @@ def test_moving_the_accepted_budget_moves_the_floor(monkeypatch):
 
 
 def test_the_floor_is_at_least_as_permissive_as_the_cron_it_joins():
-    """The floor must never forbid what the schedule is licensed to attempt.
+    """The floor must never forbid what the triggers are licensed to attempt.
 
-    Three in-band cron attempts an hour were priced at ~7.5 cycles/day. A floor
-    tighter than that budget would silently undo the raise it sits beside — the
-    two changes would fight, and the schedule would look delivered while being
-    gated out.
+    Written when three in-band cron attempts an hour were priced at ~7.5
+    cycles/day; the cron is back to its authorised single hourly fire, so the
+    cron alone can no longer reach the budget and the invariant holds with room
+    to spare. It is kept, and kept at 8, because the binding consumer is now the
+    `workflow_run` trigger rather than the clock: a floor tighter than the budget
+    would gate out the very syncs the event trigger exists to deliver, and the
+    schedule would look delivered while being held.
     """
     assert sync.ACCEPTED_CYCLES_PER_DAY >= 8, (
-        "tightening the budget below the rate the cron raise was priced at makes "
+        "tightening the budget below the rate the triggers are priced at makes "
         "this file argue with itself"
     )
 
