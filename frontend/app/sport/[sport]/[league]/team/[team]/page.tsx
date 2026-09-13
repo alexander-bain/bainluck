@@ -9,7 +9,7 @@ import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { getSiteUrl } from "@/lib/siteUrl";
 import LoadingState from "@/components/LoadingState";
-import { getLeagueDisplay } from "@/lib/sportCategories";
+import { teamLeagueLabel } from "@/lib/teamLeagueLabel";
 import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
 import { sportKeyToGridSlug } from "@/lib/gridSlug";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
@@ -100,13 +100,7 @@ export default function TeamPage() {
   // Document title
   useEffect(() => {
     if (data?.team) {
-      // Derive a clean league label from sport_key so the breadcrumb/title never
-      // carries stale season-phase copy (e.g. "MLB Preseason") baked into
-      // sport_name (L2-158 Item 3).
-      const label = data.team.sport_key
-        ? getLeagueDisplay(data.team.sport_key)
-        : data.team.sport_name || league.toUpperCase();
-      document.title = `${data.team.name} — ${label} | Bain Luck`;
+      document.title = `${data.team.name} — ${teamLeagueLabel(data.team, league)} | Bain Luck`;
     }
   }, [data, league]);
 
@@ -145,10 +139,7 @@ export default function TeamPage() {
   const { team, upcoming_events, recent_events, futures, championship_path, season } =
     data;
   const leaguePath = `/sport/${sport}/${league}`;
-  // Clean league label — derived from sport_key, not the stale sport_name copy.
-  const leagueLabel = team.sport_key
-    ? getLeagueDisplay(team.sport_key)
-    : team.sport_name || league.toUpperCase();
+  const leagueLabel = teamLeagueLabel(team, league);
 
   // G1/G2 chips, drawn only from the provider's own doubleheader metadata —
   // never inferred from a same-day opponent pair, which is indistinguishable
