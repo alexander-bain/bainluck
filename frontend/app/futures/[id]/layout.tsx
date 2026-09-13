@@ -64,7 +64,21 @@ export async function generateMetadata({
     // #5840 — this branch used to return title+description and nothing else, so
     // Next inherited the root's `canonical: "/"` and `og:url: "/"` and a dead
     // market link previewed as the Bain Luck home page.
-    return unresolvedMetadata(unresolvedPath("futures", id), "market", lookup.failure);
+    // #5846 — the 4th argument. Next's `opengraph-image.tsx` file convention
+    // overrides `og:image` and NOT `twitter:image`, so with nothing passed here
+    // a dead link shipped two different pictures. Measured on production
+    // 2026-09-13 11:49:13Z: `og:image` named
+    // `…/futures/99999999/opengraph-image?d3e46b…` while `twitter:image` named
+    // `https://www.bainluck.com/opengraph-image`. X reads the `twitter:`
+    // namespace, so the same rotted link previewed as this route's own card in
+    // Slack and as the HOME PAGE on X.
+    const deadPath = unresolvedPath("futures", id);
+    return unresolvedMetadata(
+      deadPath,
+      "market",
+      lookup.failure,
+      buildShareUrl(`${deadPath}/opengraph-image`),
+    );
   }
 
   const market = lookup.market;

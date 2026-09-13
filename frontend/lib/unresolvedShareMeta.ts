@@ -210,11 +210,13 @@ export function unresolvedShareCopy(
  * Callers with no `opengraph-image.tsx` pass nothing and keep the site card,
  * which is correct for them: on those routes it really is the picture.
  *
- * Residue, deliberately not taken here: `/events/[id]` and `/futures/[id]` still
- * pass nothing, so their dead links keep the split above — and their dead
- * PICTURE is the live layout rendered empty (`Prediction market`, a `- -` glyph,
- * `0 outcomes tracked`), a card that looks authoritative and says nothing.
- * `/tournaments/[slug]` and `/event/[domain]/[slug]` draw a quiet card instead.
+ * That residue was taken by #5846. `/events/[id]` and `/futures/[id]` now pass
+ * their own card here, so all four routes name one picture in both namespaces,
+ * and their image routes draw `UnfurlCard`'s quiet shape on a miss instead of
+ * the live layout with its facts replaced by defaults. The events card was the
+ * worse of the two and is worth naming: it did not render empty, it rendered
+ * "Away" against "Home" at 50% each — an invented game on a link that names
+ * nothing. `lib/unresolvedCardCopy.ts` owns that decision for both.
  *
  * (The older note here said that card "cannot be verified in this sandbox,
  * because the OG routes fetch their font over the network". Measured false on

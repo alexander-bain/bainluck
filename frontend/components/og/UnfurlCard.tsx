@@ -26,9 +26,16 @@
  * family" a thing nobody can check. Both new routes render THIS, and differ only
  * in the facts they hand it.
  *
- * The two existing routes are deliberately NOT migrated here: they are live,
- * certed and shipping correct pictures, and rewriting them is a change with no
- * reader on the other end. Named residue, not an oversight.
+ * The two existing routes' LIVE cards are deliberately NOT migrated here: they
+ * are certed and shipping correct pictures, and rewriting them is a change with
+ * no reader on the other end. Named residue, not an oversight.
+ *
+ * Their DEAD branches did have a reader and now draw this (#5846): a rotted
+ * `/events/<id>` link used to render the live layout with every field defaulted
+ * — "Away" against "Home" at 50% each — and `/futures/<id>` drew "Prediction
+ * market", a `- -` glyph and "0 outcomes tracked". So five routes answer a
+ * link that names nothing with one picture, and two of them keep their own for
+ * a link that names something.
  *
  * ═══ WHY IT TAKES FORMATTED STRINGS ═══
  *
