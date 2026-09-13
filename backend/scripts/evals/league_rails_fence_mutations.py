@@ -120,8 +120,16 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
         # what makes this anchor unique — and if someone ever collapses them
         # back to one number, this needle goes ambiguous and the harness says so
         # before the page silently starves a rail again.
-        "    fenced_event = aliased(Event, inner)\n    return (\n        select(fenced_event)\n        .order_by(fenced_event.commence_time.desc())\n        .limit(RESULTS_LIMIT + 1)",
-        "    fenced_event = aliased(Event, inner)\n    return (\n        select(fenced_event)\n        .order_by(Event.commence_time.desc())\n        .limit(RESULTS_LIMIT + 1)",
+        #
+        # 🔴 RE-TARGETED by #5918, which inserted `.options(selectinload(...))`
+        # between `select(fenced_event)` and the `.order_by` — the scan reported
+        # this needle DRIFTED, which is the mechanism working. It is anchored on
+        # the option line downward rather than from `fenced_event = aliased(...)`
+        # because the four lines above now include a comment block, and a needle
+        # that contains prose drifts every time somebody edits the prose. What
+        # keeps it unique is unchanged: `RESULTS_LIMIT` vs `UNREPORTED_LIMIT`.
+        "        .options(selectinload(fenced_event.sport))\n        .order_by(fenced_event.commence_time.desc())\n        .limit(RESULTS_LIMIT + 1)",
+        "        .options(selectinload(fenced_event.sport))\n        .order_by(Event.commence_time.desc())\n        .limit(RESULTS_LIMIT + 1)",
         "sorting on the base table instead of the subquery re-correlates the two",
     ),
     (

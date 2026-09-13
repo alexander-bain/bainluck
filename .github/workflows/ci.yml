@@ -940,6 +940,32 @@ jobs:
             exit 1
           fi
 
+      - name: "#5918 the league rail loads the sport the fold reads (real Postgres)"
+        # CERT-2805's finding, and it is a reach defect rather than a logic one:
+        # the soccer name-pair fold worked and never fired on the page. All three
+        # league rails join `sports`, which is what made it invisible — a join in
+        # the FROM clause does not populate `Event.sport`, and `loaded_sport_key`
+        # answers None for an unloaded relationship on purpose (a lazy load there
+        # would emit IO inside a stage wrapped in a bare except, gotcha #42).
+        #
+        # A mock session cannot witness this: it returns whatever object the test
+        # built, and an object a test built has its sport in memory — the passing
+        # case, every time. That is how a fold measured at nine folds over 765
+        # production rows reached no reader at all. Only a server distinguishes a
+        # loaded relationship from an unloaded one, so this runs the REAL rail
+        # query twice over the same two Celta rows, with and without the loader.
+        #
+        # Same skip-detection as every gate in this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_league_rail_sport_load_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/league_rail_sport_load.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/league_rail_sport_load.txt; then
+            echo "::error::#5918 league rail reach gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Pre-match prior equivalence (real Postgres)
         # LAT-P222/#3030. Third instance of the class the two gates above cover:
         # a correlated bound the planner cannot evaluate until it holds the row.

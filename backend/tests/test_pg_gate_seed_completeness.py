@@ -76,6 +76,13 @@ COVERED = (
     "test_feed_static_tag_filter_pg.py",
     "test_futures_outcome_grade_schema_parity_pg.py",
     "test_kalshi_cliff_bind_contract.py",
+    # #5918 (CERT-2805's required repair). Seeds `sports` and two `events` by
+    # raw INSERT to prove the league rail's own query hydrates `Event.sport` —
+    # the fold reads the sport off the relationship, so an unloaded one made
+    # the whole soccer pass inert on the page it was built for. `sports.active`
+    # is exactly the Python-side default this file exists to catch, and the
+    # seed names it.
+    "test_league_rail_sport_load_pg.py",
     "test_kalshi_fabricated_loss_bind_contract_pg.py",
     "test_kalshi_settlement_recency_band_pg.py",
     "test_kalshi_sweep_settlement_bind_pg.py",
