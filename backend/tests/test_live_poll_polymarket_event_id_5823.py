@@ -550,11 +550,22 @@ class TestGammaEventIdCascade:
         market = _Market(1, COND_A, group_id=f"polymarket:{EVENT_ID}")
         assert pmm._polymarket_gamma_event_id(market) == EVENT_ID
 
-    def test_a_group_id_from_another_scheme_is_not_an_event_id(self):
-        """The digit test is the reason this rung sits BELOW the contract:
-        `group_id` is a column that happens to hold the id, not a promise."""
-        market = _Market(1, "1014623", group_id="kalshi:KXNFLGAME-EVT1")
-        assert pmm._polymarket_gamma_event_id(market) == "1014623", (
+    @pytest.mark.parametrize(
+        "group_id",
+        [
+            "kalshi:KXNFLGAME-EVT1",  # foreign scheme, non-numeric tail
+            "kalshi:987654",  # foreign scheme, NUMERIC tail — the digit test alone passes this
+            "notpolymarket:987654",  # a lookalike is not the scheme
+            "987654",  # no scheme at all
+        ],
+    )
+    def test_a_group_id_from_another_scheme_is_not_an_event_id(self, group_id):
+        """Why this rung sits BELOW the contract: `group_id` is a column that
+        happens to hold the id, not a promise. BOTH halves are tested, because
+        the digit test alone admits `kalshi:987654` — a numeric tail minted by
+        somebody else — and would hand it to Gamma as an event id."""
+        market = _Market(1, COND_A, group_id=group_id)
+        assert pmm._polymarket_gamma_event_id(market) == COND_A, (
             "a foreign group_id scheme contributed its tail as if it were a "
             "Gamma event id"
         )
