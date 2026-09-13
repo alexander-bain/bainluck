@@ -16,7 +16,7 @@ import {
   applyLiveFrame,
   eventFeedIsStalled,
   eventRefreshInterval,
-  liveClaimIsUnbacked,
+  pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
@@ -312,7 +312,35 @@ export default function EventPage({ params }: EventPageProps) {
   // this component once a second, so the age is re-derived on the same tick the
   // chrome is drawn from and there is no second timer to fall out of step with
   // the first — the same argument `feedStalled` below is written to.
-  const liveClaimUnbacked = liveClaimIsUnbacked({
+  //
+  // #5885 — AND ONLY ONCE THE GAME HAS STARTED. A claim of liveness cannot be
+  // unbacked on a page that has not made one.
+  //
+  // Without `hasStarted` this fires on any PREGAME page whose freshest source
+  // write is over the hour, and through `isSuspended` below it prints "No result
+  // reported" on a game that has not kicked off. Measured on production
+  // 2026-09-13 10:09Z: /events/14780147, Chargers–Cardinals, `status
+  // "scheduled"`, kickoff 20:25Z — ten hours out — with kalshi 08:52:40Z,
+  // betting 09:06:12Z and polymarket 09:08:03Z, so a 61-minute blend and the
+  // suspended badge on a hero that had read "Starts in 10h 34m" twenty minutes
+  // earlier. It also silently deleted `Projected final: 28 – 19`, which
+  // `isSuspended` gates under #5257.
+  //
+  // The 60-minute bound is not wrong, it was being asked the wrong question:
+  // `LIVE_CLAIM_MAX_BLEND_AGE_MS` reasons explicitly about a live game ("an NFL
+  // game on a two-minute beat never comes within thirty times of this one"),
+  // and a pregame market is polled on a slow cadence by design, so an hour-old
+  // blend hours before kickoff is the ordinary state rather than evidence of
+  // anything going dark.
+  //
+  // Composed inside `pageLiveClaimIsUnbacked` rather than spelled here as
+  // `hasStarted && …`: a Next.js page carries no named exports, so an inline
+  // conjunction is a decision no test can hold. `liveClaimIsUnbacked` stays
+  // keyed on the blend alone, the way `hasNoReportedResult` stays keyed on
+  // status and time alone, and this page keeps ONE answer for its four
+  // consumers of the flag.
+  const liveClaimUnbacked = pageLiveClaimIsUnbacked({
+    hasStarted,
     pinned: event?.live_probability_pinned,
     blendAgeMs: freshestSourceStamp
       ? Date.now() - Date.parse(freshestSourceStamp)
