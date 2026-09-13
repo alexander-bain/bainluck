@@ -104,24 +104,24 @@ def _ghost(id=15304908, when=BASE, home="St.Louis Cardinals"):
 
 class TestTheProductionSpecimen:
     def test_the_finished_game_is_not_also_awaiting_its_score(self):
-        results, unreported = _folded_past_rails([_final()], [_ghost()], [])
+        results, unreported, _g = _folded_past_rails([_final()], [_ghost()], [])
         assert [e.id for e in results] == [15309733]
         assert unreported == []
 
     def test_the_survivor_is_the_row_with_the_result(self):
         """Not the lower id, and not the richer row — the one a reader wants."""
-        results, unreported = _folded_past_rails([_final()], [_ghost()], [])
+        results, unreported, _g = _folded_past_rails([_final()], [_ghost()], [])
         survivor = results[0]
         assert survivor.home_score == 7
         assert survivor.espn_id == "401816896"
 
     def test_the_spelling_difference_does_not_save_the_ghost(self):
         assert _final().home_team_name != _ghost().home_team_name
-        results, unreported = _folded_past_rails([_final()], [_ghost()], [])
+        results, unreported, _g = _folded_past_rails([_final()], [_ghost()], [])
         assert (len(results), len(unreported)) == (1, 0)
 
     def test_the_survivor_gains_the_venue_stranded_on_the_ghost(self):
-        results, _ = _folded_past_rails([_final()], [_ghost()], [])
+        results, _, _g = _folded_past_rails([_final()], [_ghost()], [])
         assert results[0].win_probability_sources == {
             "betting": 0.63,
             "kalshi": 0.64,
@@ -155,39 +155,79 @@ class TestTheDesignClaimItself:
 class TestWhatItMustNeverFold:
     def test_a_doubleheaders_second_leg_keeps_its_own_card(self):
         leg_two = _ghost(id=15304909, when=BASE + timedelta(hours=4))
-        results, unreported = _folded_past_rails([_final()], [leg_two], [])
+        results, unreported, _g = _folded_past_rails([_final()], [leg_two], [])
         assert (len(results), len(unreported)) == (1, 1)
 
     def test_two_different_games_at_one_instant_are_untouched(self):
         other = _Row(15304910, "Boston Red Sox", "Kansas City Royals", BASE)
-        results, unreported = _folded_past_rails([_final()], [other], [])
+        results, unreported, _g = _folded_past_rails([_final()], [other], [])
         assert (len(results), len(unreported)) == (1, 1)
 
     def test_a_row_missing_a_team_name_is_never_folded(self):
         nameless = _Row(15304911, None, "Chicago White Sox", BASE)
-        results, unreported = _folded_past_rails([_final()], [nameless], [])
+        results, unreported, _g = _folded_past_rails([_final()], [nameless], [])
         assert (len(results), len(unreported)) == (1, 1)
 
     def test_two_lone_rails_are_returned_unchanged(self):
-        results, unreported = _folded_past_rails([], [], [])
+        results, unreported, _g = _folded_past_rails([], [], [])
         assert (results, unreported) == ([], [])
 
 
-class TestTheUpcomingRailIsContextOnly:
+class TestTheUpcomingRailIsContextExceptAgainstAFinal:
+    """#5532 narrowed this class; it did not delete it.
+
+    `test_the_upcoming_rail_is_never_shortened_by_this_call` used to live here
+    and asserted the rule in full. It was retired deliberately, not lost: its
+    own specimen — an upcoming ghost whose survivor is the Final on the results
+    rail — is the exact shape #5532 measured on production as a reader being
+    told one game was both in the Top 9th and over. The two tests below are that
+    old test split on the line the new rule draws, so the half that still holds
+    is still asserted.
+
+    It also could not have caught the change if it had been left alone: it
+    asserted `upcoming == before`, and the implementation builds a new list
+    rather than mutating the caller's, so it would have passed green over the
+    new behaviour without ever reading the returned rail. The mutation
+    guarantee is worth keeping and is now its own test, below, stated as what
+    it is.
+    """
+
     def test_a_ghost_here_goes_when_its_survivor_is_on_the_upcoming_rail(self):
         live = _final(id=15309999)
         live.status = "live"
-        _r, unreported = _folded_past_rails([], [_ghost()], [live])
+        _r, unreported, _g = _folded_past_rails([], [_ghost()], [live])
         assert unreported == []
 
-    def test_the_upcoming_rail_is_never_shortened_by_this_call(self):
-        """It is already capped and competition-shared, and its fold headroom is
-        spent. Dropping from it here would cost a card slot with no backfill."""
+    def test_the_returned_rail_drops_a_row_whose_fixture_is_already_a_final(self):
+        """#5532. The fixture keeps a card — the one with the score on it."""
+        upcoming = [_ghost(id=15304912)]
+        results, _u, kept_g = _folded_past_rails([_final()], [], upcoming)
+        assert [e.id for e in kept_g] == []
+        assert [e.id for e in results] == [15309733]
+
+    def test_it_is_not_shortened_when_the_survivor_has_no_result(self):
+        """The old rule, kept where it still holds.
+
+        The survivor is on the UNREPORTED rail, so the page has no finished
+        card for this fixture. Dropping the upcoming row would leave a reader
+        with nothing that says what happened — the card-slot argument the
+        docstring makes, on the pairing it is still true for.
+        """
+        bare = _Row(15304950, "St.Louis Cardinals", "Chicago White Sox", BASE)
+        ghost = _ghost()  # one source to the bare row's none, so the ghost wins
+        _r, unreported, kept_g = _folded_past_rails([], [ghost], [bare])
+        assert [e.id for e in unreported] == [15304908]
+        assert [e.id for e in kept_g] == [15304950], (
+            "an upcoming row was dropped for a survivor that is not a Final"
+        )
+
+    def test_the_callers_own_list_is_never_mutated(self):
+        """The rail is rebuilt, never edited in place — the route reassigns."""
         upcoming = [_ghost(id=15304912)]
         before = list(upcoming)
-        results, _u = _folded_past_rails([_final()], [], upcoming)
+        _r, _u, kept_g = _folded_past_rails([_final()], [], upcoming)
         assert upcoming == before
-        assert [e.id for e in results] == [15309733]
+        assert kept_g is not upcoming
 
 
 class TestItNeverTakesThePageDown:
@@ -198,7 +238,7 @@ class TestItNeverTakesThePageDown:
             raise RuntimeError("fold exploded")
 
         monkeypatch.setattr(league_futures, "fold_twin_events", boom)
-        results, unreported = _folded_past_rails([_final()], [_ghost()], [])
+        results, unreported, _g = _folded_past_rails([_final()], [_ghost()], [])
         assert [e.id for e in results] == [15309733]
         assert [e.id for e in unreported] == [15304908]
 
@@ -223,10 +263,26 @@ class TestItNeverTakesThePageDown:
 class TestTheRailsAreStillWiredUp:
     def test_the_route_folds_before_it_counts_or_caps_either_rail(self):
         source = inspect.getsource(league_futures)
-        fold_at = source.index("_folded_past_rails(_r_events, _u_events, _g_events)")
+        fold_at = source.index(
+            "_r_events, _u_events, _g_events = _folded_past_rails("
+        )
         assert fold_at < source.index("more_results = len(_rrows)")
         assert fold_at < source.index("more_unreported = len(_urows)")
         assert fold_at > source.index("_u_events = list(_u.scalars().all())")
+
+    def test_the_route_takes_back_the_upcoming_rail_before_anything_reads_it(self):
+        """#5532. The drop is only real if the reassignment lands upstream of
+        every reader — a returned list nobody binds changes no page."""
+        source = inspect.getsource(league_futures)
+        fold_at = source.index(
+            "_r_events, _u_events, _g_events = _folded_past_rails("
+        )
+        for reader in (
+            "for _e in (*_g_events, *_r_events, *_u_events):",
+            "_tag_folded = await _tag_folded_rows(",
+            "_grows = _format_all(_g_events)",
+        ):
+            assert fold_at < source.index(reader), reader
 
     @pytest.mark.parametrize("query", ["recent_results_query", "unreported_games_query"])
     def test_both_past_rails_keep_their_id_keyed_belt(self, query):

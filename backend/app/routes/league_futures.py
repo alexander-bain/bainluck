@@ -55,7 +55,7 @@ from app.utils.event_concept_cache import (
     release_refresh_lock,
 )
 from app.utils.event_tennis import is_tennis_feeder_circuit
-from app.utils.event_twin_fold import fold_twin_events
+from app.utils.event_twin_fold import fold_twin_events, twin_fold_key
 from app.utils.proven_duplicates import (
     FoldedBlendView,
     folded_card_numbers_batch,
@@ -823,8 +823,28 @@ def _folded_upcoming(events: list) -> list:
         return events
 
 
+def _twin_key_or_none(event) -> tuple | None:
+    """`twin_fold_key`, but a row that raises costs only its own comparison.
+
+    Gotcha #42, the same reason :func:`fold_twin_events` keys inside a per-row
+    guard: this runs over rails that are already built, and a single row with a
+    surprising `commence_time` type must not cost the page its fold. An
+    unkeyable row is a row that cannot be proven anybody's twin, which is
+    already the leave-it-alone branch — so `None` reads as "keep it".
+    """
+    try:
+        return twin_fold_key(event)
+    except Exception:  # noqa: BLE001 — see above; the fallback is inaction
+        logger.warning(
+            "league page: could not key event %s for the Final check; kept",
+            getattr(event, "id", "?"),
+            exc_info=True,
+        )
+        return None
+
+
 def _folded_past_rails(results: list, unreported: list, upcoming: list):
-    """One fixture, one card — ACROSS the two past rails, not within each. #5746.
+    """One fixture, one card — across the past rails, and against a Final. #5746.
 
     `_folded_upcoming` above gave the upcoming rail the id-free braces to go
     with `not_a_proven_duplicate`'s id-keyed belt. The two past rails got
@@ -850,15 +870,61 @@ def _folded_past_rails(results: list, unreported: list, upcoming: list):
     A per-rail fold sees one member of every such pair and folds nothing. Hence
     one call over the union.
 
-    🔴 THE UPCOMING RAIL IS CONTEXT AND IS NEVER DROPPED FROM. It is passed in
-    so that a ghost down here whose survivor is up there still goes, but its own
-    membership is returned untouched: by this point it has been through the
-    competition share and the cap, and its headroom (`UPCOMING_TWIN_FOLD_HEADROOM`)
-    was spent on `_folded_upcoming`. Dropping a row from it here would spend a
-    card slot with nothing left to backfill it — the exact defect the headroom
-    exists to prevent. A stuck-`live` row twinned with its own Final therefore
-    still doubles; that arm is #5532, and it is a different fix (the row is
-    wrong, not the rail).
+    🔴 THE UPCOMING RAIL IS CONTEXT, WITH ONE EXCEPTION: A PRINTED FINAL. It is
+    passed in so that a ghost down here whose survivor is up there still goes,
+    and its own membership is returned untouched in every case but one, because
+    by this point it has been through the competition share and the cap, and its
+    headroom (`UPCOMING_TWIN_FOLD_HEADROOM`) was spent on `_folded_upcoming`.
+    Dropping a row from it here would normally spend a card slot with nothing
+    left to backfill it — the exact defect the headroom exists to prevent.
+
+    THE EXCEPTION, AND WHY THE HEADROOM ARGUMENT DOES NOT REACH IT (#5532,
+    measured on production 22:2xZ 2026-09-13, `GET /api/leagues/baseball_mlb`)::
+
+        upcoming_games  15311614  Cardinals 3-1 White Sox  live       no ids
+        recent_results  15311666  Cardinals 3-1 White Sox  completed  espn 401816926
+
+    One contest, one kickoff `2026-09-13T18:15:00+00:00`, an exact
+    `twin_fold_key` match, the SAME SCORE on both rows — and a reader told at
+    390px that the game is in the Top 9th and that it finished, on one screen.
+    The fold already elects correctly here (`twin_identity_rank` ranks the ESPN
+    id above the lower row id, so the Final wins and the id-less row is the one
+    dropped); the only reason the lie survived is that this function then handed
+    the upcoming rail back whole.
+
+    So the trade is reversed for exactly this shape, and for no other: an
+    upcoming row goes when, and only when, its SURVIVOR IS A ROW THIS PAGE IS
+    ALREADY PRINTING AS A FINISHED CARD — a member of `kept_r`. The headroom
+    argument is about a fixture losing its only card; here the fixture keeps a
+    card, the right one, with its score on it. What is spent is a duplicate.
+
+    🔴 AND ON THE SPECIMEN IT SPENDS NOTHING AT ALL — the empty slot the old
+    rule feared is mostly not real, which is the half of this trade that was
+    never measured. `upcoming_games_query` fetches
+    `UPCOMING_GAMES_LIMIT + 1 + scan_depth + fold_headroom` rows and the CAP IS
+    NOT APPLIED UNTIL `_grows[:UPCOMING_GAMES_LIMIT]`, far below this call. So
+    for a league with more fixtures than the cap the drop is backfilled by the
+    next real game, automatically, and the rail still serves eight. The MLB
+    payload above carried `upcoming_games_has_more: True` — measured, not
+    assumed — so this exact fix costs that page zero cards.
+
+    The old fear is live in one place only: the two keys in
+    `RAIL_COMPETITION_SHARE_LEAGUES`, where `equal_share_by_competition` has
+    already truncated to the cap before we get here, and a thin league with
+    fewer fixtures than the cap. Even there an empty slot at the bottom of a
+    rail is cheaper than a finished game claiming to be live, so the rule does
+    not branch on it — but it is the honest statement of what it costs.
+
+    Every other pairing keeps the old rule and is deliberately untouched: a
+    survivor on the UNREPORTED rail never shortens the upcoming rail (a
+    result-less card is not a Final, so the fixture would be left with nothing
+    that says what happened), and an upcoming row twinned with another upcoming
+    row is `_folded_upcoming`'s business, with the headroom to pay for it.
+
+    The row is still wrong — 15311614 is the id-less twin of #5532's own title,
+    unreachable by any poller, and repairing THAT is the matching lane's (notice
+    14, #2693). This is the serve-time half: whatever the graph does, one
+    fixture gets one card today.
 
     Gotcha #42, as on the rail above: the fold improves the page and is never a
     precondition for having one. If it raises, both rails are served unfolded.
@@ -866,7 +932,7 @@ def _folded_past_rails(results: list, unreported: list, upcoming: list):
     try:
         fold = fold_twin_events([*upcoming, *results, *unreported])
         if not fold.dropped_ids:
-            return results, unreported
+            return results, unreported, upcoming
         survivors = {id(e) for e in fold.events}
         for survivor_id, merged in fold.merged_sources.items():
             survivor = next((e for e in fold.events if e.id == survivor_id), None)
@@ -874,25 +940,40 @@ def _folded_past_rails(results: list, unreported: list, upcoming: list):
                 set_committed_value(survivor, "win_probability_sources", merged)
         kept_r = [e for e in results if id(e) in survivors]
         kept_u = [e for e in unreported if id(e) in survivors]
+        # #5532 — the one shape that shortens the upcoming rail. Keyed off
+        # `kept_r` and nothing else, so the drop can only ever be "this fixture
+        # is already on the page as a finished card". A row the fold kept is
+        # never removed here, and a row it cannot key cannot be proven anybody's
+        # twin, so it stays too.
+        _final_keys = {
+            k for k in (_twin_key_or_none(e) for e in kept_r) if k is not None
+        }
+        kept_g = [
+            e
+            for e in upcoming
+            if id(e) in survivors or _twin_key_or_none(e) not in _final_keys
+        ]
         # `sport_key` is NOT interpolated, for the reason written twice above:
         # it is a path parameter and CodeQL grades it `py/log-injection` at
         # medium severity, which notice 32 refuses. The dropped ids name the
         # league more precisely than its key would.
         logger.info(
-            "league page past-rail twin fold: results %d->%d, unreported %d->%d "
-            "(dropped=%s)",
+            "league page past-rail twin fold: results %d->%d, unreported %d->%d, "
+            "upcoming %d->%d (dropped=%s)",
             len(results),
             len(kept_r),
             len(unreported),
             len(kept_u),
+            len(upcoming),
+            len(kept_g),
             fold.dropped_ids[:20],
         )
-        return kept_r, kept_u
+        return kept_r, kept_u, kept_g
     except Exception:
         logger.exception(
-            "league page: past-rail twin fold failed; serving both rails unfolded"
+            "league page: past-rail twin fold failed; serving all rails unfolded"
         )
-        return results, unreported
+        return results, unreported, upcoming
 
 
 async def _tag_folded_rows(db, events: list) -> dict:
@@ -2563,7 +2644,14 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # count rows — a duplicate must not be counted as availability the
         # reader never gets, which is `_folded_upcoming`'s ordering argument
         # applied to the rails that did not have it.
-        _r_events, _u_events = _folded_past_rails(_r_events, _u_events, _g_events)
+        # #5532: the upcoming rail is reassigned too. It is shortened by exactly
+        # one shape — a row whose fixture `_r_events` is already printing as a
+        # finished card — and the reassignment must land BEFORE `_team_names`,
+        # `_tag_folded_rows` and the formatter below, which are the readers that
+        # would otherwise put the dropped duplicate back on the page.
+        _r_events, _u_events, _g_events = _folded_past_rails(
+            _r_events, _u_events, _g_events
+        )
 
         # UX-P074 (#1860): colours and logos for the SHARED event card, fetched
         # ONCE for both rails. `_build_team_lookup` is the same in-memory-cached
