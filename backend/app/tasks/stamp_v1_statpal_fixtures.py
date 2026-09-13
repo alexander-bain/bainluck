@@ -272,7 +272,8 @@ class LeagueSpec:
     #: only safe because both sides spell all 32 franchises identically. Soccer
     #: is the opposite case and the gap is 50 games wide: over the pinned
     #: two-day corpus, equality joins **17 of 90** and
-    #: `soccer_team_matching.soccer_pair_matches` joins **67**. Widening the NFL
+    #: `soccer_team_matching.soccer_pair_matches` joins **73** (67 before its
+    #: alias tables, #5829). Widening the NFL
     #: rule to close that gap would buy soccer's 50 at the price of every league
     #: whose franchises are already spelled identically, so the rule is named
     #: per league instead (#3366).
@@ -921,7 +922,7 @@ def classify_fixture(
             NOT a default a new league may take: `LeagueSpec.pair_rule` has no
             default precisely so that a sport must answer, and
             `_run_stamp_v1_statpal_fixtures` always passes the spec's own. Soccer
-            passes `soccer_pair_matches`, which joins 67 of the pinned 90 where
+            passes `soccer_pair_matches`, which joins 73 of the pinned 90 where
             equality joins 17.
     """
     if fixture.start_time is None:

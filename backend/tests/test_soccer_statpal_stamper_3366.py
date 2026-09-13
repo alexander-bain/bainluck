@@ -578,13 +578,14 @@ class TestTheSoccerJoinStrategy:
         ]
         return fixtures, rows
 
-    def test_it_joins_67_of_the_pinned_90_where_the_default_join_gets_17(self, corpus):
+    def test_it_joins_73_of_the_pinned_90_where_the_default_join_gets_17(self, corpus):
         """THE CONTROL. Both rows built from identical inputs; the only thing
-        that differs is the strategy, and it is worth 50 games.
+        that differs is the strategy, and it is worth 56 games.
 
-        67 and 17 are the same two numbers `test_soccer_team_matching_3366`
+        73 and 17 are the same two numbers `test_soccer_team_matching_3366`
         pins on the rule itself, which is the point: the row and the writer
-        agree about what a match is.
+        agree about what a match is. 67 before the alias tables (#5829) — this
+        assertion is here so the rule cannot move without the ROW saying so.
         """
         fixtures, rows = self._sides(corpus)
         assert len(rows) == 90
@@ -602,9 +603,9 @@ class TestTheSoccerJoinStrategy:
             rows=rows,
             normalize=normalize_team,
         )
-        assert soccer["identity"]["both"] == 67
+        assert soccer["identity"]["both"] == 73
         assert default["identity"]["both"] == 17
-        assert soccer["identity"]["ours_only"] == 23
+        assert soccer["identity"]["ours_only"] == 17
         assert default["identity"]["ours_only"] == 73
 
     def test_it_declares_both_refusal_names_even_when_neither_fires(self, corpus):
@@ -806,7 +807,9 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
             for key, entry in celery_app.conf.beat_schedule.items()
             if entry["task"] == name
         }
-        assert len(entries) == 1, f"expected exactly one soccer beat entry, got {entries}"
+        assert (
+            len(entries) == 1
+        ), f"expected exactly one soccer beat entry, got {entries}"
         entry = next(iter(entries.values()))
         assert entry["options"]["queue"] == "background"
 
@@ -816,9 +819,9 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
         assert str(schedule._orig_hour) == "*", "hourly, like the four siblings"
 
         window = {(6 + k) % 60 for k in range(6)}
-        assert not window & set(range(31, 48)), (
-            "a 300s pass must not reach the settlement sweep's :31-:47"
-        )
+        assert not window & set(
+            range(31, 48)
+        ), "a 300s pass must not reach the settlement sweep's :31-:47"
 
         # The beat entry passes no kwargs, so what it WRITES is decided by the
         # Celery task's own default — a different object from the runner
@@ -1057,9 +1060,7 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
 
             monkeypatch.setattr(task, "record_anchor", _record_anchor)
 
-            summary = await task._run_stamp_soccer_statpal_fixtures(
-                now=start, **kwargs
-            )
+            summary = await task._run_stamp_soccer_statpal_fixtures(now=start, **kwargs)
             return summary, contexts
 
         async def _empty():
@@ -1112,9 +1113,7 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
         seen: list[dict] = []
 
         async def _spy(spec, *, apply, now=None, apply_run_id=None):
-            seen.append(
-                {"spec": spec, "apply": apply, "apply_run_id": apply_run_id}
-            )
+            seen.append({"spec": spec, "apply": apply, "apply_run_id": apply_run_id})
             return {}
 
         monkeypatch.setattr(task, "_run_stamp_v1_statpal_fixtures", _spy)

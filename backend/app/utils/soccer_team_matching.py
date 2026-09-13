@@ -13,10 +13,16 @@ fixtures StatPal's own `soccer/matches/daily?offset=1` and `offset=2` boards
 serve, both pinned as `tests/fixtures/statpal_soccer_join_corpus_20260907.json`:
 
     equality after normalization (the NFL rule)   17 / 90   18.9%
-    this module's rule                            67 / 90   74.4%
+    this module's rule, as first written          67 / 90   74.4%
+    with the alias tables (#5829)                 73 / 90   81.1%
 
-Neither number is a guess about the remaining 23: every one of them was read
-against the boards by hand and is accounted for in `THE 23 MISSES` below.
+Neither number is a guess about the remainder: every one of them was read
+against the boards by hand and is accounted for in `THE MISSES` below.
+
+The same rule was re-measured against a SECOND live population on 2026-09-13 —
+148 of our production soccer rows against the 834 distinct fixtures on offsets
+1, 2 and 3 — and moves 71 -> 78 there. Two populations six days apart, because
+one afternoon is how a vocabulary gets written down wrong.
 
 The reason is one-sided and consistent: **StatPal writes the short name and we
 write the long one.** `Wrexham` / `Wrexham AFC`, `Cardiff` / `Cardiff City`,
@@ -39,12 +45,22 @@ split into tokens, then, in order:
    three verified by hand, and it is the only tier that can match two strings
    sharing no token at all — so it is the narrowest one written here.
 
-Tier 1 accounts for 64 of the 67 (17 by equality, 47 by a real subset) and
+Tier 1 accounts for 64 of the first 67 (17 by equality, 47 by a real subset) and
 tier 2 for the remaining 3.
 
-Before any of that, runs of two or more single-letter tokens are joined, so our
-`D.C. United` and StatPal's `DC United` are the same two tokens rather than
-three against two. One letter alone is left alone (`U. Espanola` keeps its `u`).
+Before any of that, two things happen to the tokens:
+
+* **The alias tables** (:data:`CLUB_NAME_ALIASES`, then
+  :data:`CLUB_TOKEN_ALIASES`) put both sides' spelling of a club on one word,
+  so the two tiers above can do their work on `FC Cologne` as they always could
+  on `FC Köln`. This is the tier the "THE MISSES" section below deferred in
+  September until it had been measured twice; #5829 is that measurement.
+* **Runs of two or more single-letter tokens are joined**, so our `D.C. United`
+  and StatPal's `DC United` are the same two tokens rather than three against
+  two. One letter alone is left alone (`U. Espanola` keeps its `u`), and a run
+  made ENTIRELY of squad markers is left alone too — see
+  :func:`_join_initialism_run`, which exists because `Barcelona B W` was
+  reaching `Barcelona`.
 
 ## The subset rule needs a guard, and the board proves why
 
@@ -69,25 +85,41 @@ kind of unmeasured vocabulary this module exists to avoid. What stands behind
 the gap is the caller's contract, not this function: the ±1h window, and the
 requirement that a claim be refused unless exactly one fixture matches.
 
-## THE 23 MISSES, read against the boards rather than assumed
+## THE MISSES, read against the boards rather than assumed
 
 A rate with an unexamined remainder is how "the venue doesn't list it" gets
-written about a game the venue lists (standing notices 26 and 27). So:
+written about a game the venue lists (standing notices 26 and 27). 23 when this
+module was written, 17 after the alias tables:
 
-  * **15 are on the board under a name this grammar cannot reach.** They are
-    abbreviations (`Sheffield United`/`Sheffield Utd`, `West Bromwich Albion`/
-    `West Brom`, `Atlético Madrid`/`Atl. Madrid`, `Atlanta United FC`/
-    `Atlanta Utd`, `Estudiantes La Plata`/`Estudiantes L.P.`, `Go Ahead Eagles`/
-    `G.A. Eagles`, `Atletico Goianiense`/`Atletico GO`, `Clube Atlético
-    Mineiro`/`Atletico-MG`, `América Mineiro`/`America MG`), a plural
-    (`Helsingborgs IF`/`Helsingborg`), alternative club names (`Sporting
-    Lisbon`/`Sporting CP`, `Ulsan Hyundai FC`/`Ulsan HD`, `Sandvikens IF`/
-    `Sandviken`), a spelling (`Al-Taawoun`/`Al Taawon`), and one real RENAME
-    (`Sangju Sangmu FC`/`Gimcheon Sangmu`, where our side is the stale one).
-    That is the next tier's evidence, and it is deliberately not guessed at
-    here: `utd`→`united` and `atl`→`atletico` are a token-alias table, which is
-    a vocabulary, which has to be measured over more than two days before it is
-    written down.
+  * **15 were on the board under a name this grammar could not reach, and 6 of
+    them are now joined.** The tables took the abbreviations that appear on
+    BOTH the 2026-09-07 corpus and the 2026-09-13 live boards — `Sheffield
+    United`/`Sheffield Utd`, `West Bromwich Albion`/`West Brom`, `Atlético
+    Madrid`/`Atl. Madrid`, `Atlanta United FC`/`Atlanta Utd`, `Clube Atlético
+    Mineiro`/`Atletico-MG`, `América Mineiro`/`America MG` — which is the tier
+    this paragraph deferred ("a vocabulary, which has to be measured over more
+    than two days before it is written down"). The bar was met and the entries
+    carry their evidence; see :data:`CLUB_TOKEN_ALIASES`.
+
+    **The 9 still missing are the ones no measured pair supports**: an
+    initialism of a PREFIX (`Go Ahead Eagles`/`G.A. Eagles`), an abbreviation
+    whose expansion is ambiguous on the same board (`Atletico Goianiense`/
+    `Atletico GO`, where `GO` is also the English word in `Go Ahead Eagles`),
+    a genitive plural (`Helsingborgs IF`/`Helsingborg`, `Sandvikens IF`/
+    `Sandviken`), alternative club names (`Sporting Lisbon`/`Sporting CP`,
+    `Ulsan Hyundai FC`/`Ulsan HD`), a spelling (`Al-Taawoun`/`Al Taawon`), and
+    one real RENAME (`Sangju Sangmu FC`/`Gimcheon Sangmu`, where our side is
+    the stale one). Each is a different mechanism, so none of them is this
+    table's next entry — they are their own tiers, and none has been measured.
+
+    **A THIRD mechanism, found on 2026-09-13 and not fixed here:** the shared
+    fold drops a Latin letter that NFKD does not decompose instead of folding
+    it, and the drop SPLITS the token. `Bodø/Glimt` tokenizes to `bod glimt`,
+    `Zagłębie Lubin` to `zag ebie lubin`, `Großaspach` to `gro aspach`. The
+    board writes `Bodo/Glimt`, `Zaglebie` and `Grossaspach`, so all three miss
+    — and the invented tokens are worse than a miss, because they can subset
+    something else. That is `normalize_team`'s behaviour, shared with NFL, and
+    it is filed rather than changed under a soccer ship.
   * **5 kick off after the last fixture the two boards carry** (board span
     `2026-09-07T23:00Z` → `2026-09-10T00:45Z`; all five are west-coast MLS at
     `02:30Z`). Not a name defect and not a coverage gap — a READ-WINDOW defect
@@ -163,8 +195,83 @@ CLUB_FORM_TOKENS: frozenset[str] = frozenset(
         "club",
         "de",
         "the",
+        # `Calcio` is the Italian for football and carries exactly as much
+        # identity as `FC` does. Ours writes it and StatPal does not: production
+        # 2026-09-13 carries `Sassuolo Calcio`, `Parma Calcio` and `Frosinone
+        # Calcio` against the boards' `Sassuolo`, `Parma`, `Frosinone`.
+        "calcio",
     }
 )
+
+#: One WORD we and StatPal write differently for the same club, variant ->
+#: canonical. Applied to both sides, so the direction of an entry is arbitrary
+#: as long as every variant of a word lands on one canonical spelling.
+#:
+#: **Why a curated table and not a rule (#5829).** No transliteration takes
+#: `Köln` to `Cologne`: it is an exonym, a different word for the same city in
+#: another language, and English-language feeds use it while the venue does not.
+#: The same is true of `Nuremberg`/`Nürnberg`. There is nothing to derive, so the
+#: only honest mechanism is a list of measured pairs.
+#:
+#: **The bar for an entry, and it is the bar this module set for itself.** The
+#: docstring above deferred `utd`->`united` in September with the reason "a
+#: token-alias table is a vocabulary, which has to be measured over more than two
+#: days before it is written down". Every entry below clears that: it appears in
+#: the pinned 2026-09-07 corpus *and* on StatPal's live boards read 2026-09-13,
+#: or it is a pair of our own production rows a reader is being shown twice
+#: today. The evidence for each is named beside it.
+#:
+#: **What is deliberately NOT here.** `dep` is the board's abbreviation for both
+#: `Deportivo` (`Dep. Riestra`) and `Deportes` (`Deportes Tolima` is ours, and
+#: `Deportes Limache` is on the same board) — one variant, two expansions, so it
+#: is not a word alias and guessing one would join the wrong club. `ath`, `est`
+#: and `a` were each seen on one day only. An entry that cannot be written with
+#: its evidence does not get written.
+CLUB_TOKEN_ALIASES: dict[str, str] = {
+    # Exonyms. Ours from ESPN, the canonical from StatPal's own board.
+    #   `FC Cologne` (ours, 2026-09-12 + 2026-09-04) / `FC Koln` (board)
+    "cologne": "koln",
+    #   `Nuremberg` (ours) / `Nurnberg` (board, 2. Bundesliga)
+    "nuremberg": "nurnberg",
+    # A club name one writer shortens. `Hamburg SV` and `Hamburg` are both ours;
+    # `Hamburger SV` is ours and the board's.
+    "hamburg": "hamburger",
+    # Abbreviations, each on both reads.
+    #   `Sheffield Utd` (2026-09-07), `Manchester Utd` (2026-09-13),
+    #   `Atlanta Utd` (2026-09-07)
+    "utd": "united",
+    #   `West Brom` (2026-09-07) / `West Bromwich Albion` (ours)
+    "brom": "bromwich",
+    #   `Wolves` (2026-09-13) / `Wolverhampton Wanderers` (ours)
+    "wolves": "wolverhampton",
+    #   `Atl. Madrid` (2026-09-07 and 2026-09-13), `Atl. San Luis` (2026-09-13)
+    "atl": "atletico",
+    #   `Atletico-MG` and `America MG` on both reads; `MG` is Minas Gerais and
+    #   `Mineiro` is its adjective, which is how ours spells the same two clubs.
+    "mg": "mineiro",
+}
+
+#: A whole name that is this club under another name. Keyed on the FULL token
+#: tuple, so an entry can never fire on a club that merely shares a word.
+#:
+#: Two entries, and both are the same Bundesliga club, because a one-word alias
+#: cannot reach either of them:
+#:
+#: * `M´gladbach` is ours. It tokenizes to `m gladbach` — the apostrophe splits
+#:   it — and `gladbach` alone is a real different club on the board
+#:   (`Bergisch Gladbach`, Regionalliga West), so `gladbach`->`monchengladbach`
+#:   would be a wrong join waiting for a cup draw.
+#: * `B. Monchengladbach` is the BOARD's Bundesliga name, and it is refused
+#:   today by :data:`SQUAD_QUALIFIERS`: the abbreviation `B.` tokenizes to `b`,
+#:   which is the marker for a B-team. That is the guard working as written —
+#:   `Racing Club B` really is a different squad — so the fix is to say what
+#:   this particular name is before the guard reads it, not to weaken the guard.
+#:   Until this entry, NO Gladbach fixture could be joined at all, in either
+#:   direction, whatever else was written here.
+CLUB_NAME_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("m", "gladbach"): ("borussia", "monchengladbach"),
+    ("b", "monchengladbach"): ("borussia", "monchengladbach"),
+}
 
 #: Tokens that mark a DIFFERENT SQUAD of the same club. Disagreement about any
 #: of these refuses the match, in either direction. See the module docstring for
@@ -182,14 +289,58 @@ SQUAD_QUALIFIERS = re.compile(
 _INITIALISM_RUN = re.compile(r"\b(?:[a-z0-9] ){1,}[a-z0-9]\b")
 
 
+def _join_initialism_run(match: re.Match[str]) -> str:
+    """Join a run of single characters — unless the run is all squad markers.
+
+    `b w` is not an initialism. It is a B-team marker next to a women's marker,
+    and joining it into `bw` produces a token that is NEITHER, which is how
+    StatPal's `Barcelona B W` reaches our senior `Barcelona` by plain subset
+    today: :data:`SQUAD_QUALIFIERS` matches `b` and it matches `w`, and it
+    cannot match the word this function invented out of the two of them.
+
+    Twelve names on the boards read 2026-09-07 and 2026-09-13 are in this shape
+    (`Real Madrid B W`, `Sparta Prague B W`, `Waregem 2 W`, `Termalica B-B.`),
+    every one of them a reserve or women's side of a club whose senior team is
+    on the same boards. The refusal they need already exists; this is only about
+    letting it see them.
+
+    The test is ALL and not ANY on purpose: `D.C. United` is the reason this join
+    exists, and `c` alone is a squad marker, so an `any` here would refuse the
+    one name the rule was written for.
+    """
+    parts = match.group(0).split()
+    if all(SQUAD_QUALIFIERS.match(part) for part in parts):
+        return match.group(0)
+    return match.group(0).replace(" ", "")
+
+
 def soccer_tokens(name: Optional[str]) -> list[str]:
     """Normalized tokens, with runs of single characters joined into one.
 
-    `"D.C. United"` -> `["dc", "united"]`; `"U. Espanola"` -> `["u", "espanola"]`.
+    `"D.C. United"` -> `["dc", "united"]`; `"U. Espanola"` -> `["u", "espanola"]`;
+    `"Barcelona B W"` -> `["barcelona", "b", "w"]`, which two squad markers are
+    what it says and `["barcelona", "bw"]` was not.
     """
     normalized = normalize_team(name)
-    joined = _INITIALISM_RUN.sub(lambda m: m.group(0).replace(" ", ""), normalized)
+    joined = _INITIALISM_RUN.sub(_join_initialism_run, normalized)
     return joined.split()
+
+
+def club_alias_tokens(name: Optional[str]) -> list[str]:
+    """`soccer_tokens` with the two alias tables applied, whole name first.
+
+    `"FC Cologne"` -> `["fc", "koln"]`; `"B. Monchengladbach"` ->
+    `["borussia", "monchengladbach"]`.
+
+    The whole-name table is consulted before the word table, and its key is the
+    complete tuple: an entry is a statement about one name, so it must not be
+    reachable by a name that happens to end in the same words.
+    """
+    tokens = soccer_tokens(name)
+    renamed = CLUB_NAME_ALIASES.get(tuple(tokens))
+    if renamed is not None:
+        return list(renamed)
+    return [CLUB_TOKEN_ALIASES.get(t, t) for t in tokens]
 
 
 def _initials_match(short: list[str], long: list[str]) -> bool:
@@ -219,8 +370,8 @@ def soccer_team_matches(statpal_name: Optional[str], our_name: Optional[str]) ->
     a game. That falls out of the empty-core refusal below rather than getting
     its own guard: a name with no tokens has no core either.
     """
-    a = soccer_tokens(statpal_name)
-    b = soccer_tokens(our_name)
+    a = club_alias_tokens(statpal_name)
+    b = club_alias_tokens(our_name)
     set_a, set_b = set(a), set(b)
     core_a = set_a - CLUB_FORM_TOKENS
     core_b = set_b - CLUB_FORM_TOKENS
