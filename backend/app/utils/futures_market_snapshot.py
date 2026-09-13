@@ -65,6 +65,7 @@ that needs a live row fails a test instead of a request.
 
 from __future__ import annotations
 
+from datetime import timezone
 from typing import Any, Iterable, Sequence
 
 #: Columns loaded for `FuturesMarket` on the Discover futures candidate query.
@@ -276,7 +277,18 @@ OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = ("last_updated", "opening_captured_at
 #: outcomes do not agree on one. See the long note above `OUTCOME_COLUMNS` for
 #: why it is folded to one value per market instead of carried per outcome, and
 #: for the production coverage the fold buys.
-DERIVED_MARKET_COLUMNS: tuple[str, ...] = ("price_polled_at", "opening_baseline_at")
+#: `top_price_observed_at` (#5809) is `MIN(FuturesOutcome.last_updated)` over the
+#: legs the CARD PRINTS — the newest stamp a card's own displayed prices can all
+#: support. It rides here for exactly the reason its two neighbours do: the
+#: per-outcome column costs 15% of a size-capped shared artifact, and the fold
+#: needs the hydrated rows that only exist at build time. It is a SECOND value
+#: rather than a redefinition of `price_polled_at` because the two answer
+#: different questions for different consumers — see `_top_price_observed_at`.
+DERIVED_MARKET_COLUMNS: tuple[str, ...] = (
+    "price_polled_at",
+    "opening_baseline_at",
+    "top_price_observed_at",
+)
 
 #: The full positional market row on the wire: loaded columns, then derived ones.
 #: Building/validating/rebuilding all go through this, so the appended block can
@@ -321,7 +333,15 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: which is the failure this module exists to make impossible. Arity would in
 #: fact reject those rows too (30 values against 31); the version is what makes
 #: the rejection intentional rather than incidental.
-SNAPSHOT_SCHEMA_VERSION = 4
+#:
+#: v5 — `top_price_observed_at` appended to the derived block (#5809), for the
+#: third time and the same reason: an in-flight v4 entry is one value short, and
+#: the failure it would cause is the SPECIFIC one this column ships to end. The
+#: cached path would report "we cannot date this card" for every market it holds
+#: while the build path knows the date, so a reader's age mark would blink in and
+#: out with the cache rather than track the price — worse than either behaviour
+#: on its own. Under v5 those entries are never read and expire under their TTL.
+SNAPSHOT_SCHEMA_VERSION = 5
 
 
 class _Snapshot:
@@ -408,6 +428,39 @@ def _row(instance: Any, columns: tuple[str, ...]) -> list[Any]:
     return [state.get(name) for name in columns]
 
 
+#: Read-only stand-in for the instance dict of a `__slots__` row, so the folds
+#: below keep reading `__dict__` (never `getattr` — gotcha #42) on a carrier
+#: that has no instance dict. Module-level and shared because it is never
+#: written to; a fresh `{}` per outcome would allocate once per leg per fold.
+_NO_INSTANCE_DICT: dict[str, Any] = {}
+
+
+def _instance_dict(obj: Any) -> dict[str, Any] | None:
+    """`obj.__dict__`, or `None` for a `__slots__` row that has none (#5778).
+
+    🔴 `try`/`except AttributeError`, never the three-argument `getattr` form,
+    and the distinction is not cosmetic. `test_feed_dead_market_clock_uxp251`
+    asserts that call form never appears in `price_poll_stamp`, and it is right
+    to assert the mechanism rather than the outcome: reaching `__dict__` that
+    way is harmless in itself, but it is one edit from the same call on a
+    MAPPED attribute, which lazy-loads and raises `MissingGreenlet` inside the
+    per-item serializer — emptying the whole futures pool instead of dropping
+    one card (gotcha #42). This form cannot become that one by accident.
+
+    (Spelled without the open paren on purpose: the scan that pins this rule
+    matches the call form as a substring, and a docstring is source too.)
+
+    Extracted rather than inlined so `price_poll_stamp` and `_price_polled_at`
+    answer the carrier question identically; the `None`-vs-`{}` distinction is
+    the caller's, because only `price_poll_stamp` needs to tell "this row has
+    no instance dict" from "it has one and the key is missing".
+    """
+    try:
+        return obj.__dict__
+    except AttributeError:
+        return None
+
+
 def _price_polled_at(outcomes: Iterable[Any]) -> Any:
     """`MAX(outcome.last_updated)` for one market, or `None` if it has no price.
 
@@ -418,13 +471,124 @@ def _price_polled_at(outcomes: Iterable[Any]) -> Any:
     path. That also means a projection that stops loading the column degrades to
     `None` — "we do not know" — rather than to a wrong answer, and `None` is
     exclusion at every consumer.
+
+    `_NO_INSTANCE_DICT` extends that same degradation to an outcome with no
+    instance dict at all (#5778). `tennis_population.OutcomeRow` is a
+    `__slots__` row carrying exactly `("name", "current_probability",
+    "is_winner")` — the compact projection LAT-P146 caches — so it cannot hold
+    `last_updated` no matter how it is read, and reading `o.__dict__` on it
+    raised `AttributeError` through this fold. Contributing nothing is the
+    correct answer for such a row and is the rule already stated above: an
+    outcome with no stamp is ignored rather than treated as a disagreement.
+    Note this is a genuine "we cannot date this", not a silent zero papering
+    over a bug — the column is absent from the carrier BY DESIGN, and widening
+    that cache row is latency's call, not this module's.
     """
     stamps = [
         stamp
-        for stamp in (o.__dict__.get("last_updated") for o in outcomes)
+        for stamp in (
+            (_instance_dict(o) or _NO_INSTANCE_DICT).get("last_updated")
+            for o in outcomes
+        )
         if stamp is not None
     ]
     return max(stamps) if stamps else None
+
+
+#: How many legs a Discover futures card PRINTS. `feed.py` slices
+#: `card_outcomes[:3]` at both of its futures serializers, and
+#: `test_card_price_age_fold_5809` scans that module for the literal so the two
+#: cannot drift apart silently — a fold over more legs than the card shows
+#: over-states the age, one over fewer under-states it, and #5809 is on record
+#: that both directions are equally a lie to the reader.
+CARD_PRICE_AGE_LEG_COUNT = 3
+
+
+def _outcome_probability(outcome: Any) -> float:
+    """An outcome's display probability as a sortable float; `-1.0` if unreadable.
+
+    `__dict__.get`, never `getattr`, for this module's usual reason (gotcha
+    #42). An outcome whose probability cannot be read sorts BELOW every one that
+    can, so it is the first thing pushed out of the top-N window rather than
+    something that can displace a leg the reader actually sees.
+    """
+    value = (_instance_dict(outcome) or _NO_INSTANCE_DICT).get("current_probability")
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return -1.0
+
+
+def _top_price_observed_at(outcomes: Iterable[Any]) -> Any:
+    """`MIN(last_updated)` over the legs the CARD SHOWS, or `None` (#5809).
+
+    ═══ WHY THIS EXISTS BESIDE `_price_polled_at` AND DOES NOT REPLACE IT ═══
+
+    `price_polled_at` is `MAX` over ALL of a market's outcomes and answers "when
+    did we last read this book" — which is the right question for a freshness
+    bound over the whole market, and is what `my-stuff` and the dead-market clock
+    consume. It is the WRONG question for the age mark under a card, and the
+    difference is reader-visible: a card prints three probabilities, so an
+    outcome nobody can see must not vouch for the ones they can.
+
+    MEASURED on production `/api/feed?limit=40`, 2026-09-13 ~03:00Z, over the 38
+    cards carrying the key: **1 card** served a stamp newer than EVERY price it
+    displayed, and 3 served one more than an hour newer than the oldest price
+    displayed. The specimen is market `108445`, "2028 Democratic presidential
+    nominee" — 48 outcomes, 3 shown. Ossoff 17% / AOC 16% / Newsom 14% were all
+    last observed `2026-09-12 03:51:10Z`, twenty-three hours old, and the served
+    `price_observed_at` was byte-identical to the `last_updated` of Chris Van
+    Hollen at 1%, who is not on the card. `PriceAgeMark` only draws above 30
+    minutes, so the card computed ~0 and drew NOTHING: the disclosure went silent
+    on exactly the card it exists for. Reach: 890 of 26,971 open markets (3.3%)
+    carry a leader more than an hour behind their own market max, 503 by a day.
+
+    ═══ WHY `MIN`, WHEN THE FUNCTION ABOVE TAKES `MAX` ═══
+
+    The two are the same rule applied to different sets, not a disagreement —
+    `heroFreshness`'s "max WITHIN a number, min ACROSS facts". Three displayed
+    probabilities are three FACTS, each with its own observation time, and one
+    mark speaks for all of them; the oldest is the only claim all three support.
+
+    The `MAX` docstring defends itself with a real measurement — one market's
+    fifth leg at 123 DAYS while its leader was 50 minutes old — and that concern
+    survives here intact, but it is answered by the TOP-N FILTER rather than by
+    `MAX`: a dead fifth leg is not in the top three, so it cannot date the card.
+    What does not survive is that docstring's premise, that "a futures card's
+    legs are one market's prices, written by one poll of one venue, so their
+    stamps answer one question". Market `108445` has one leg written today and 47
+    written yesterday. `last_updated` is a per-outcome TOUCH stamp (the model is
+    explicit that it stays unconditional so stable prices do not drop out of the
+    playoff grid, and `price_changed_at` carries change), and a poll only touches
+    the outcomes it writes.
+
+    ═══ THE RESIDUE, STATED RATHER THAN PAPERED OVER ═══
+
+    Top-N-by-probability is a close PROXY for "displayed", not an identity.
+    `feed.py` applies `_strip_mixed_binary_meta` and `drop_dominant_field_outcomes`
+    before its slice, so on a card whose filters drop a high-probability leg the
+    two sets diverge by one row and the fold can read a leg the card does not
+    print. That cannot be closed on this carrier: the filters are feed-internal
+    and the per-outcome column is deliberately off the wire (see
+    `OUTCOME_LOAD_ONLY_EXTRA` — it was measured at +15% of a 2.9 MB size-capped
+    shared artifact). Narrowing 48 legs to 3 is the whole of the available win;
+    the last row of it is not reachable from here.
+
+    An outcome with no stamp is IGNORED rather than treated as undatable, which
+    is this module's rule everywhere (see `_opening_baseline_at`) and is also not
+    a regression: `MAX` ignored it too. `None` when no displayed leg has a stamp
+    — "we do not know", which every consumer reads as not-fresh (gotcha #53).
+    """
+    ranked = sorted(outcomes, key=_outcome_probability, reverse=True)
+    stamps = [
+        stamp
+        for stamp in (
+            (_instance_dict(o) or _NO_INSTANCE_DICT).get("last_updated")
+            for o in ranked[:CARD_PRICE_AGE_LEG_COUNT]
+        )
+        if stamp is not None
+    ]
+    return min(stamps) if stamps else None
 
 
 def _opening_baseline_at(outcomes: Iterable[Any]) -> Any:
@@ -504,19 +668,128 @@ def price_poll_stamp(market: Any) -> Any:
     a defensive `or` — it is the two carriers, in the order that makes each one
     authoritative where it is the one that exists.
 
-    Both branches use `__dict__.get`, never `getattr`, for this module's usual
-    reason: a deferred attribute lazy-loads and raises `MissingGreenlet` on the
-    async feed path, inside the per-item serializer, which empties the whole
-    futures pool rather than dropping one card (gotcha #42). That also makes the
-    degradation safe in the one case neither branch covers — a market rehydrated
-    from a snapshot written by an OLDER build, which has neither the derived key
-    nor the outcome column: it reads `None`, "we do not know", never a wrong
-    stamp.
+    `_carrier_stamp` holds those branches (#5809) now that `top_price_stamp`
+    needs the identical resolution for a different key; every branch there uses
+    `__dict__.get`, never `getattr`, for this module's usual reason — a deferred
+    attribute lazy-loads and raises `MissingGreenlet` on the async feed path,
+    inside the per-item serializer, which empties the whole futures pool rather
+    than dropping one card (gotcha #42). That also makes the degradation safe in
+    the one case no branch covers — a market rehydrated from a snapshot written
+    by an OLDER build, which has neither the derived key nor the outcome column:
+    it reads `None`, "we do not know", never a wrong stamp.
     """
-    state = market.__dict__
-    if "price_polled_at" in state:
-        return state["price_polled_at"]
-    return _price_polled_at(state.get("outcomes") or [])
+    return _carrier_stamp(market, "price_polled_at", _price_polled_at)
+
+
+def top_price_stamp(market: Any) -> Any:
+    """`top_price_observed_at` for a market on ANY carrier shape (#5809).
+
+    `price_poll_stamp`'s twin, over the same three carriers and by the same
+    delegation, for the value defined in `_top_price_observed_at`: the oldest
+    observation among the legs the card PRINTS, rather than the newest across
+    every leg the market has.
+
+    The two are deliberately separate functions rather than one with a flag.
+    They have different consumers — the dead-market clock and `my-stuff` want
+    the market-wide bound, the age mark under a card wants the displayed one —
+    and a single call site choosing between them by argument is how a later edit
+    silently gives one consumer the other's answer.
+    """
+    return _carrier_stamp(market, "top_price_observed_at", _top_price_observed_at)
+
+
+def _carrier_stamp(market: Any, key: str, fold: Any) -> Any:
+    """One derived stamp off whichever of the three carriers `market` is.
+
+    Extracted (#5809) so `price_poll_stamp` and `top_price_stamp` cannot drift
+    on the carrier question, which is the part that is subtle and shared; what
+    differs between them is only the wire key and the fold, and those are the
+    arguments. Before this existed there was one such reader; a second copy of
+    the three branches below would be the drift this module keeps a changelog
+    about.
+    """
+    state = _instance_dict(market)
+    if state is None:
+        # THIRD CARRIER (#5778): a `__slots__` row. `tennis_population.MarketRow`
+        # is "deliberately duck-type-identical to the ORM object it replaces" —
+        # and it is, for every reader that uses attributes. This module does not:
+        # it reads `__dict__` on purpose, and a slots class has no instance dict
+        # at all, so both branches below raised `AttributeError` on it rather
+        # than degrading (nine tennis tests, not a wrong number).
+        #
+        # Such a row can only ever hold the outcome carrier — there is no folded
+        # `key` slot to read.
+        #
+        # 🔴 THE ATTRIBUTE READ BELOW IS SAFE, AND ONLY HERE. Touching
+        # `.outcomes` on a mapped object is precisely what this module forbids:
+        # it is a relationship, and on an unloaded one it emits IO and raises
+        # `MissingGreenlet`. It cannot happen on this line, because this line is
+        # only reachable when the object has NO instance dict — and every
+        # SQLAlchemy-mapped instance has one. A slots row's `outcomes` is a
+        # plain slot holding an already-materialised list; there is no loader
+        # behind it to fire.
+        #
+        # An empty or absent `outcomes` (the row was never selected for the
+        # page, which is exactly what the two-phase load leaves behind) folds to
+        # `None`: "we do not know", the same honest degradation as every other
+        # unreadable case here.
+        try:
+            outcomes = market.outcomes
+        except AttributeError:
+            return None
+        return fold(outcomes or [])
+    if key in state:
+        return state[key]
+    return fold(state.get("outcomes") or [])
+
+
+def price_observed_at_iso(market: Any) -> str | None:
+    """`price_poll_stamp` as a UTC ISO string, for a payload (#5778).
+
+    The one way a market's price age reaches a reader. `price_poll_stamp`
+    answers the carrier question and returns a `datetime`; this puts that
+    datetime on the wire, and exists as a named function for two reasons that
+    are not stylistic.
+
+    ═══ THE OFFSET IS NOT OPTIONAL ═══
+
+    A naive `isoformat()` carries no offset, and `Date.parse` reads an
+    offsetless stamp as LOCAL time in the reader's browser — which ages a fresh
+    price by the reader's own UTC offset and would print "3h ago" on a
+    just-polled market in California. The two carriers hand back stamps that
+    differ in `tzinfo` (a plain ORM row's column is naive; a `from_plain`
+    rebuild's folded value is aware), so the normalisation has to happen
+    somewhere, and doing it once here is what stops each caller getting it
+    right separately.
+
+    ═══ SEVEN CALL SITES, ONE RULE ═══
+
+    Every concept-envelope adapter writes this key beside the
+    `evolution_market_id` it already derives from the same market object. Seven
+    copies of `stamp.isoformat() if stamp else None` is seven chances for one
+    domain to drift — and a card that discloses its price age on the cycling
+    concept but not the F1 one is the defect #5778 was filed on, not half a
+    fix. `feed.py`'s `_card_price_observed_at` (#5752) is the same rule on the
+    futures serializers and should be collapsed onto this function once that
+    change is on master; it is deliberately left alone here because it is in
+    the desk tray and rewriting it would invalidate a gated sha.
+
+    ═══ `None` IS AN ANSWER ═══
+
+    `price_poll_stamp` already returns `None` for a market whose outcomes carry
+    no stamp, and that propagates rather than being papered over: the reader
+    draws nothing for a price we cannot date, which is honest, where a borrowed
+    `created_at` would be a wrong stamp (gotcha #53 — "it returned" is not "it
+    worked"). Serving the key with a null is the #2088 rule: null is "checked,
+    and there is no stamp"; the key being ABSENT is "a payload built before
+    this shipped".
+    """
+    stamp = price_poll_stamp(market)
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.isoformat()
 
 
 def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
@@ -543,6 +816,7 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
     producers = {
         "price_polled_at": _price_polled_at,
         "opening_baseline_at": _opening_baseline_at,
+        "top_price_observed_at": _top_price_observed_at,
     }
     rows: list[list[Any]] = []
     for market in markets:

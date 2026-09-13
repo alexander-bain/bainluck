@@ -36,6 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.futures_market_snapshot import price_observed_at_iso
 from app.utils.settledness import settled_under_assigned_state
 from app.utils.winner_field_selection import prefer_graded_winner_field
 
@@ -777,6 +778,14 @@ class CyclingEventAdapter:
                 "label": "General Classification",
                 "competitors": competitors,
                 "evolution_market_id": winner.id,
+                # #5778 — when these prices were last seen. This adapter already
+                # computed the value and threw it away: `_pick_winner_field`
+                # folds `max(o.last_updated)` over each candidate's real
+                # outcomes to RANK them by freshness, then returns only the
+                # market. A Vuelta GC field measured 5h01m old under a `LIVE`
+                # pill printing `96%` is what that discard looked like to a
+                # reader.
+                "price_observed_at": price_observed_at_iso(winner),
             },
             "sections": sections,
             "children": children,

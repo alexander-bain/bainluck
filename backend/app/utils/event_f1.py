@@ -17,6 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.futures_market_snapshot import price_observed_at_iso
+
 # Tokens stripped when deriving the GP name from a market title.
 _F1_STOPWORDS = {
     "grand", "prix", "race", "main", "winner", "session", "the", "driver",
@@ -348,6 +350,10 @@ class F1EventAdapter:
                 "label": "Race winner",
                 "competitors": competitors,
                 "evolution_market_id": winner.id,
+                # #5778 — see `event_cycling`. Every concept adapter carries the
+                # age or the contract has drifted; a reader gets no say in which
+                # domain their card came from.
+                "price_observed_at": price_observed_at_iso(winner),
             },
             "sections": sections,
             "children": children,

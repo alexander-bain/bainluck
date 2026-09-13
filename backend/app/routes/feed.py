@@ -5805,14 +5805,15 @@ from app.utils.market_staleness import (
 from app.utils.futures_market_snapshot import (
     opening_baseline_stamp,
     price_poll_stamp as _price_poll_stamp,
+    top_price_stamp as _top_price_stamp,
 )
 
 
 def _card_price_observed_at(market: Any) -> str | None:
     """WHEN THE PRICES ON THIS CARD WERE LAST SEEN, for the reader (#5752).
 
-    The value is `price_poll_stamp` — the newest `last_updated` across the
-    market's outcomes, folded per market — and this function exists only to put
+    The value is `top_price_stamp` — the OLDEST `last_updated` among the legs
+    the card prints, folded per market — and this function exists only to put
     it on the wire as an ISO string. (Spelled without the attribute dot on
     purpose: `test_my_stuff_price_freshness_cert949` scans this module for
     per-outcome reads of that column and strips `#` comments but not
@@ -5823,19 +5824,29 @@ def _card_price_observed_at(market: Any) -> str | None:
     that discloses its age on Discover but not on the `MORE X` rail is exactly
     the defect #5752 was filed on.
 
-    ═══ WHY `MAX` AND NOT THE OLDEST LEG ═══
+    ═══ THE OLDEST LEG THE CARD SHOWS — NOT THE NEWEST LEG IT HAS (#5809) ═══
 
-    `lib/sourceAge.ts`'s `oldestSourceStamp` takes the OLDEST of several stamps,
-    and this deliberately does not, which looks like the two rules disagreeing.
-    They do not: that helper merges rows from DIFFERENT sources into one
-    outcome, where one current contributor must not vouch for a stale set. A
-    futures card's legs are one market's prices, written by one poll of one
-    venue, so their stamps answer one question — "when did we last read this
-    book" — and the newest is that read. Taking the oldest here would let a
-    single dead leg (measured: one market's fifth leg at 123 DAYS while its
-    leader was 50 minutes old) date a card whose prices are current.
-    This is `heroFreshness`'s rule stated once more: max WITHIN a number, min
+    This read `price_poll_stamp`, the market-wide `MAX`, until #5809 measured
+    what that does to the one card the mark exists for. `PriceAgeMark` only
+    draws above thirty minutes, so a market with one freshly-touched leg served
+    a stamp of ~0 and the card drew NOTHING while the three probabilities it
+    printed were a day old. Specimen: market `108445`, "2028 Democratic
+    presidential nominee", whose served stamp was byte-identical to the
+    observation time of a 1% candidate the card does not display.
+
+    So the value is now `top_price_stamp` — `MIN` over the legs the card PRINTS
+    — and the change is a narrowing of the SET, not an inversion of the rule.
+    `lib/sourceAge.ts`'s `oldestSourceStamp` has always taken the oldest, and
+    this now agrees with it for the same reason: three displayed probabilities
+    are three facts, one mark speaks for all of them, and the oldest is the only
+    claim all three support. `heroFreshness` again — max WITHIN a number, min
     ACROSS facts.
+
+    The measurement the `MAX` was defending is intact and is why the fold is
+    top-N rather than all-N: a single dead leg (measured: one market's fifth leg
+    at 123 DAYS while its leader was 50 minutes old) must not date a card whose
+    prices are current, and it cannot, because it is not in the top three. See
+    `_top_price_observed_at` for the residue that filtering leaves behind.
 
     ═══ ABSENT IS NOT ZERO ═══
 
@@ -5850,7 +5861,7 @@ def _card_price_observed_at(market: Any) -> str | None:
     no offset is read by `Date.parse` as LOCAL time in the reader's browser,
     which would age a fresh price by the reader's own UTC offset.
     """
-    stamp = _utc(_price_poll_stamp(market))
+    stamp = _utc(_top_price_stamp(market))
     return stamp.isoformat() if stamp else None
 
 
@@ -12660,6 +12671,21 @@ async def _resolve_concept_leader(
                 float(movement) if isinstance(movement, (int, float)) else None
             ),
             "field_size": len(competitors),
+            # #5778 — when the price behind `probability` was last polled. Read
+            # off the envelope rather than recomputed, because this path is
+            # CACHE-ONLY by design (see the paragraph above): loading the market
+            # to date it would put a DB round-trip on a probability flourish
+            # that is explicitly not allowed to cost the feed anything.
+            #
+            # The stamp is ABSOLUTE, which is what makes it survive the cache.
+            # A cached DURATION ("5h ago") would be wrong the moment the
+            # envelope aged a minute; an ISO instant stays true however long the
+            # envelope sits, and the reader's clock does the subtraction.
+            "price_observed_at": (
+                primary.get("price_observed_at")
+                if isinstance(primary.get("price_observed_at"), str)
+                else None
+            ),
         }
         return resolved, _bout_from_competitors(primary, competitors)
     except Exception as e:  # never break the feed for a probability flourish
@@ -12844,6 +12870,20 @@ async def _score_event_concepts(
                     # field, so the renderer's "has a leader" test is a presence
                     # test and an older client ignores it.
                     **({"leader": _leader} if _leader else {}),
+                    # #5778 — when this card's price was last seen, at the SAME
+                    # key and the SAME level a futures card carries it (#5752),
+                    # so one `ActionBar` prop serves both and a reader never
+                    # learns which card type they are looking at.
+                    #
+                    # NOT nested under `leader` even though that is where it is
+                    # resolved: `leader` is ABSENT on a card with no usable
+                    # field, and the age of a price is a fact about the card,
+                    # not about the favourite. Served as null in that case
+                    # rather than omitted — #2088, the same rule as every key
+                    # above that is null-when-checked.
+                    "price_observed_at": (
+                        _leader.get("price_observed_at") if _leader else None
+                    ),
                     # ux/1070 item 2: the main event as a BOUT. Absent (not
                     # null) when the card has no priced two-sided main event, so
                     # a renderer that has not learned it — and every shipped iOS

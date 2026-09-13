@@ -16,7 +16,15 @@ Envelope shape (domain-agnostic — every adapter returns this):
     {
       "event":   {key, domain, name, status, start_date, end_date, venue,
                   location, is_major},
-      "primary": {kind, label, competitors, evolution_market_id}
+      "primary": {kind, label, competitors, evolution_market_id,
+                  price_observed_at}
+                 # `price_observed_at` (#5778): UTC ISO string, when the prices
+                 # behind `competitors` were last polled — `price_poll_stamp` of
+                 # the market `evolution_market_id` names. NULL, never absent,
+                 # when the adapter has no market to date (golf, which maps
+                 # plain data; combat's no-futures-market branch; soccer with no
+                 # winner market). Distinct from `event.as_of`, which is when
+                 # LIVE LEADERBOARD data was fused, not when prices were read.
                  # kind flexes: "winner_field" (golf/tennis/F1-championship —
                  # a leaderboard/field) | "co_equal_list" (UFC card, awards
                  # categories — no single overall winner). Design §3.4 / §5 / §6.
@@ -1121,6 +1129,15 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
             "label": "Winner",
             "competitors": data.get("golfers", []) or [],
             "evolution_market_id": data.get("evolution_market_id"),
+            # #5778 — the one adapter that cannot answer this. Golf maps
+            # `routes/golf.py`'s already-serialized aggregation (the parity bar
+            # the module header names: golf.py stays untouched), so there is no
+            # market OBJECT here to read a poll stamp off — only plain data that
+            # never carried one. Null is the honest answer and the renderer
+            # draws nothing for it; borrowing `as_of` above would be a
+            # different fact (when the LIVE LEADERBOARD was fused, not when the
+            # PRICES were polled) wearing this key's name.
+            "price_observed_at": None,
         },
         "sections": data.get("markets", []) or [],
         "children": children,

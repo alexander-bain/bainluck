@@ -155,6 +155,51 @@ class TestTheLeaderIsResolved:
         assert leader["probability"] == pytest.approx(0.65)
         assert leader["field_size"] == 3
 
+    async def test_the_price_age_is_carried_off_the_envelope(self, envelope_source):
+        """#5778 — the resolver reads `primary.price_observed_at` onto the leader.
+
+        Added here rather than in `test_concept_card_price_observed_at_5778.py`
+        because this is where the envelope-through-the-cache fixture lives, and
+        a copy of it there would be a second harness to keep true.
+
+        The value is READ, never recomputed: this path is cache-only by design,
+        so dating the market here would put a DB round-trip on a probability
+        flourish that is explicitly not allowed to cost the feed anything.
+        """
+        stamp = "2026-09-12T17:50:00+00:00"
+        envelope = _envelope([{"name": "Enric Mas Nicolau", "probability": 0.96}])
+        envelope["primary"]["price_observed_at"] = stamp
+        envelope_source(envelope)
+
+        leader, _bout = await _resolve_concept_leader(None, "event:cycling:vuelta-2026")
+        assert leader["price_observed_at"] == stamp
+
+    async def test_a_non_string_price_age_is_refused(self, envelope_source):
+        """#5778 — a stamp that is not a string reads as "we do not know".
+
+        The envelope is JSON from Redis written by a producer this function does
+        not control, and `PriceAgeMark` parses whatever arrives. A number or a
+        dict reaching `Date.parse` would render `Invalid Date` or, worse, a
+        plausible wrong age; `None` renders nothing.
+        """
+        for bad in (1757699400, {"at": "..."}, ["..."], True):
+            envelope = _envelope([{"name": "A", "probability": 0.9}])
+            envelope["primary"]["price_observed_at"] = bad
+            envelope_source(envelope)
+            leader, _bout = await _resolve_concept_leader(None, "event:ufc:x")
+            assert leader["price_observed_at"] is None, f"accepted {bad!r}"
+
+    async def test_an_envelope_without_the_key_reads_none(self, envelope_source):
+        """#5778 — a pre-#5778 envelope still in Redis is not an error.
+
+        Cached envelopes outlive a deploy, so for the life of the cache the
+        producer half and the reader half are both live at once. Absent must
+        read as "we do not know", exactly like a null.
+        """
+        envelope_source(_envelope([{"name": "A", "probability": 0.9}]))
+        leader, _bout = await _resolve_concept_leader(None, "event:ufc:x")
+        assert leader["price_observed_at"] is None
+
     async def test_movement_is_carried_when_present(self, envelope_source):
         envelope_source(
             _envelope([{"name": "A", "probability": 0.7, "movement_24h": 0.031}])

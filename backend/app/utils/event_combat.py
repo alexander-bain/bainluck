@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.utils.event_matcher import player_key
+from app.utils.futures_market_snapshot import price_observed_at_iso
 from app.utils.name_normalization import clean_slug
 from app.utils.settledness import price_converged, settled_under_assigned_state
 
@@ -1247,6 +1248,8 @@ class CombatEventAdapter:
                 "label": "Main event",
                 "competitors": competitors,
                 "evolution_market_id": main_event.id,
+                # #5778 — see `event_cycling`.
+                "price_observed_at": price_observed_at_iso(main_event),
             },
             "sections": sections,
             "children": children,
@@ -1341,6 +1344,11 @@ class CombatEventAdapter:
                 "label": "Main event",
                 "competitors": _competitors(main_bout),
                 "evolution_market_id": None,  # no futures market yet → no timeline
+                # #5778 — and no futures market is no price to date either. Null
+                # rather than absent, so this envelope answers the key the way
+                # the other eight sites do (#2088: null is "checked"; absent is
+                # "built before this shipped").
+                "price_observed_at": None,
             },
             "sections": [
                 {

@@ -230,9 +230,19 @@ def test_the_new_derived_column_is_appended_not_inserted():
     is how the two copies drift, so the duplicate was deleted rather than kept
     "for completeness".
     """
-    assert fms.DERIVED_MARKET_COLUMNS[-1] == "opening_baseline_at"
-    assert fms.MARKET_ROW_COLUMNS[-1] == "opening_baseline_at"
+    #: Written as a PREFIX rather than as `[-1] == "opening_baseline_at"`
+    #: (#5809). The `[-1]` form pinned this ship's column to the END of the
+    #: block, so it went red on the next legitimate append — a guard that reds
+    #: on a correct change while still passing on the insert it was written to
+    #: catch. The invariant it was reaching for is that the columns that already
+    #: exist keep the slots their in-flight artifacts were written against, and
+    #: that is what a prefix says. A third column appended here needs one line
+    #: below and a version bump; one INSERTED still fails, which is the point.
+    assert fms.DERIVED_MARKET_COLUMNS[:2] == ("price_polled_at", "opening_baseline_at")
     assert fms.MARKET_ROW_COLUMNS[: len(fms.MARKET_COLUMNS)] == fms.MARKET_COLUMNS
+    assert fms.MARKET_ROW_COLUMNS[len(fms.MARKET_COLUMNS) :] == (
+        fms.DERIVED_MARKET_COLUMNS
+    )
 
 
 def test_every_outcome_column_a_build_time_fold_reads_is_actually_loaded():
