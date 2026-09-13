@@ -72,8 +72,14 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
     // MARK: - The reported defect
 
     /// The exact shape of Alex's report: a profile that has cooled the 11 biggest
-    /// categories leaves 3 uncooled cards out of 50. Before the floor that WAS the
-    /// rendered feed (the old fallback only fired at zero). Now it is the floor.
+    /// categories leaves 3 uncooled cards out of 50. Before #1221 that WAS the
+    /// rendered feed (the old fallback only fired at zero); under #1221's floor it
+    /// was 28; under #5951's sink it is all 50, because the stage stopped removing.
+    ///
+    /// Driven through `applyCooldownSink`, which is the composition `filteredItems`
+    /// actually runs for this stage. Pointing it at `applyFloor` — which the
+    /// DISMISS stage still uses and which is still covered below — would leave G1
+    /// asserted against a code path the cooldown no longer takes.
     func testCooledDownProfileCannotCutAFiftyCardPageToThree() throws {
         let page = try productionShapedPage()
         XCTAssertEqual(page.count, 50, "fixture must match the measured page size")
@@ -87,33 +93,29 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
             recordedAt: now
         )
 
-        // What the cooldown alone would leave — the measured "3".
+        // What the pre-#1221 cooldown alone would have left — the measured "3".
         let uncooled = page.filter { !profile.suppresses(category: categoryOf($0), now: now) }
         XCTAssertEqual(uncooled.count, 3, "the defect's arithmetic, pinned")
 
-        let rendered = DiscoverView.applyFloor(
+        let rendered = DiscoverView.applyCooldownSink(
             to: page,
-            keeping: { !profile.suppresses(category: self.categoryOf($0), now: self.now) },
-            backfillPriority: { profile.score(for: self.categoryOf($0), now: self.now) },
-            neverBackfill: { _ in false }
+            isCooled: { profile.suppresses(category: self.categoryOf($0), now: self.now) }
         )
-        XCTAssertGreaterThanOrEqual(
-            rendered.count, DiscoverView.feedFloor,
-            "a healthy 50-card page must never render below the feed floor")
 
         // SHOWABLE-1 gate G1, stated as a number and not as a constant: a floor
         // of 8 still let this page lose 84% of itself, which is not "Discover
-        // shows the feed the API sends". Written literally so raising the floor
-        // is a decision someone makes, not something a refactor does silently.
+        // shows the feed the API sends". Written literally so weakening it is a
+        // decision someone makes, not something a refactor does silently.
         XCTAssertGreaterThanOrEqual(
             rendered.count, 28,
             "G1: a 50-card page with a heavily cooled profile still shows ≥28 cards")
-
-        // And the cooldown is still doing its job: every uncooled card leads.
         XCTAssertEqual(
-            rendered.prefix(3).filter { !profile.suppresses(category: categoryOf($0), now: now) }.count,
-            3,
-            "the 3 uncooled cards lead; the floor sinks the cooled ones, it does not re-rank them up")
+            rendered.count, 50,
+            "and under #5951 it shows all of them — a sink cannot shrink a page")
+        XCTAssertEqual(
+            Set(rendered.map { DiscoverView.feedItemId($0) }),
+            Set(page.map { DiscoverView.feedItemId($0) }),
+            "same cards, reordered — nothing dropped and nothing invented")
     }
 
     /// The floor is a floor, not a cap: an uncooled page renders in full.
@@ -143,33 +145,78 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
         XCTAssertEqual(rendered.count, 3, "backfill is bounded by what was served")
     }
 
-    /// The profile still decides WHICH cards come back: least-cooled first, so a
-    /// cooldown remains a downrank even when the floor overrides it.
-    func testBackfillPrefersTheLeastCooledCategory() throws {
-        // The page has to be bigger than the floor for the ORDER to be
-        // observable at all: 1 uncooled + 20 hard-cooled + 20 barely-cooled = 41,
-        // so the floor backfills 27 of the 40 removed cards and has to choose.
-        var page: [FeedItem] = []
-        page.append(try card(1, category: "tennis"))                            // not cooled
-        for id in 2...21 { page.append(try card(id, category: "politics")) }    // hard cooled
-        for id in 22...41 { page.append(try card(id, category: "soccer")) }     // barely cooled
+    /// The cooldown is still a downrank, and it is still the profile that decides
+    /// which card gets one — but it is now bounded (#5951).
+    ///
+    /// This test used to assert the opposite shape: that the one uncooled card led
+    /// the page and every cooled card followed it. That partition is the defect
+    /// #5951 fixes, so the assertion is inverted here on purpose rather than
+    /// deleted — a reader of this file should be able to see which rule replaced
+    /// which, and that the replacement still moves cooled cards DOWN.
+    func testACooledCardSinksByExactlyTheBound() throws {
+        // One cooled card leading a page of uncooled ones — the only shape in
+        // which the bound is observable at all, because sinking is relative and a
+        // block of cooled cards sinks together (see `applyCooldownSink`).
+        var page: [FeedItem] = [try card(1, category: "politics")]              // cooled
+        for id in 2...12 { page.append(try card(id, category: "tennis")) }      // not cooled
         let profile = DiscoverInteractionProfile.forTesting(
-            scores: ["politics": -9, "soccer": -3.1], recordedAt: now)
+            scores: ["politics": -9], recordedAt: now)
 
-        let rendered = DiscoverView.applyFloor(
+        let rendered = DiscoverView.applyCooldownSink(
             to: page,
-            keeping: { !profile.suppresses(category: self.categoryOf($0), now: self.now) },
-            backfillPriority: { profile.score(for: self.categoryOf($0), now: self.now) },
-            neverBackfill: { _ in false }
+            isCooled: { profile.suppresses(category: self.categoryOf($0), now: self.now) }
         )
-        XCTAssertEqual(rendered.count, DiscoverView.feedFloor)
-        XCTAssertEqual(categoryOf(rendered[0]), "tennis", "the kept card still leads")
-        let backfilled = rendered.dropFirst().map { categoryOf($0) }
-        XCTAssertTrue(
-            backfilled.allSatisfy { $0 == "soccer" || $0 == "politics" }, "\(backfilled)")
+
+        XCTAssertEqual(rendered.count, 12, "a sink never removes")
+        let cooledId = DiscoverView.feedItemId(page[0])
+        // The literal 10, not `cooldownSinkPositions`: a guard written against the
+        // constant it is guarding agrees with every value that constant takes,
+        // including 0 — which is the mutant that turns the whole stage off.
         XCTAssertEqual(
-            backfilled.prefix(20).filter { $0 == "soccer" }.count, 20,
-            "every barely-cooled soccer card returns before any hard-cooled politics card")
+            rendered.firstIndex(where: { DiscoverView.feedItemId($0) == cooledId }),
+            10,
+            "the leading cooled card sinks behind exactly the next 10 cards")
+        XCTAssertEqual(
+            DiscoverView.cooldownSinkPositions, 10,
+            "and 10 is the shipped bound — change it here deliberately, with the test above")
+        XCTAssertEqual(categoryOf(rendered[0]), "tennis", "so an uncooled card leads")
+        XCTAssertNotEqual(
+            rendered.last.map { DiscoverView.feedItemId($0) }, cooledId,
+            "and it is NOT sent to the back of the page — that partition is the defect")
+    }
+
+    /// A block of cooled cards the server ranked first keeps the server's order.
+    /// Sinking is relative; a client that re-ranked here would be #5951 with the
+    /// opposite sign.
+    func testACooledBlockSinksTogetherAndKeepsServerOrder() throws {
+        var page: [FeedItem] = []
+        for id in 1...20 { page.append(try card(id, category: "politics")) }    // all cooled
+        let profile = DiscoverInteractionProfile.forTesting(
+            scores: ["politics": -9], recordedAt: now)
+        let rendered = DiscoverView.applyCooldownSink(
+            to: page,
+            isCooled: { profile.suppresses(category: self.categoryOf($0), now: self.now) }
+        )
+        XCTAssertEqual(
+            rendered.map { DiscoverView.feedItemId($0) },
+            page.map { DiscoverView.feedItemId($0) },
+            "everything sinks equally, so nothing moves")
+    }
+
+    /// The sink is stable: a page with nothing cooled comes back untouched, in the
+    /// server's order. `sorted(by:)` is not a stable sort in Swift, so this is the
+    /// guard on the explicit served-position tiebreak, not a restatement of it.
+    func testAnUncooledPageIsReturnedInServerOrder() throws {
+        let page = try productionShapedPage()
+        let profile = DiscoverInteractionProfile.forTesting(scores: [:], recordedAt: now)
+        let rendered = DiscoverView.applyCooldownSink(
+            to: page,
+            isCooled: { profile.suppresses(category: self.categoryOf($0), now: self.now) }
+        )
+        XCTAssertEqual(
+            rendered.map { DiscoverView.feedItemId($0) },
+            page.map { DiscoverView.feedItemId($0) },
+            "no opinion, no reordering")
     }
 
     /// The group-collapse floor is NOT the subtractive-filter floor, and must not

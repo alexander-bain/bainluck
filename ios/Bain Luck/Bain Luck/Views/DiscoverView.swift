@@ -544,36 +544,114 @@ struct DiscoverView: View {
         // backfill the least-recently-dismissed so a heavy dismiss history can't
         // collapse the feed to ~2 cards. Never backfills stale rot — staleBase
         // already excludes it.
-        let dismissBase = Self.applyDismissFloor(
-            to: staleBase,
-            dismissedAt: dismissedAt,
-            now: Date().timeIntervalSince1970
-        )
-
-        // 3. Category cooldown (soft) — floored EXACTLY like the dismiss stage
-        // above (#1221). This was the last unfloored subtractive stage in the
-        // client, and it is the one that actually starved Alex's phone: the old
-        // rule dropped every card in a cooled-down category and only fell back
-        // when the result was empty, so a profile that had cooled the big
-        // categories cut a healthy 50-card page to 3 while `/api/feed` was
-        // serving 50. (Measured on the live page of 2026-09-03: 50 cards over 14
-        // categories, the 11 largest suppressed → 3 left.) The companion half of
-        // the fix is in `DiscoverInteractionProfile`, where a cooldown now decays
-        // instead of blacklisting a category for the life of the install.
         //
-        // Backfill order is least-cooled-first, so the profile still decides WHICH
-        // cards come back — a cooldown stays a downrank, it just can no longer
-        // empty the feed underneath the reader.
-        return Self.applyFloor(
-            to: dismissBase,
-            keeping: { !interactionProfile.suppresses(category: itemCategory($0)) },
-            backfillPriority: { interactionProfile.score(for: itemCategory($0)) },
-            // A cooled category is a decayed preference, not a fresh rejection:
-            // nothing is withheld from this stage's backfill (#5453). The cards
-            // the reader just swiped are already gone — the dismiss stage above
-            // withheld them, and this stage only ever sees what it passed on.
-            neverBackfill: { _ in false }
+        // 3. Category cooldown — a BOUNDED SINK, not a partition (#5951).
+        //
+        // #1221 floored this stage so it could no longer cut a 50-card page to 3,
+        // and that floor worked. What it did not change is that the stage still
+        // sorted the page into two blocks: every uncooled card, then the backfill.
+        // On a reader who has swiped the categories he follows, the uncooled block
+        // is *what he has never touched* — `score(for:)` returns 0 for an unknown
+        // category and negative for a cooled one — so the top of his page became
+        // UFC / F1 / cycling, every session, for the 14 days the cooldown lives.
+        // That is Alex's report of 2026-09-13 verbatim ("consistently entirely
+        // UFC/F1/Cycling"), and it compounds instead of self-correcting: the
+        // categories he never engages with are the ones the rule keeps promoting.
+        //
+        // So the stage no longer removes anything and no longer re-blocks the
+        // page. It sinks each cooled card `cooldownSinkPositions` places and keeps
+        // the server's order otherwise — which is what the profile's own
+        // documentation always said a cooldown was ("a downrank the view may
+        // honour", never "the card is gone"). #1221's G1 is strictly stronger
+        // under this rule than it was under the floor: the client returns the
+        // whole page the API sent, so a cooldown cannot starve it at any depth.
+        //
+        // Stages 2 and 3 are composed inside `personalize` rather than here, for
+        // the reason `applyDismissFloor` gives above: the thing that has to be
+        // under test is the COMPOSITION the app runs. Two stages that are each
+        // green apart can still be wired in the wrong order, or one of them wired
+        // out entirely, and no unit test of either one would notice.
+        return Self.personalize(
+            staleBase,
+            dismissedAt: dismissedAt,
+            now: Date().timeIntervalSince1970,
+            isCooled: { interactionProfile.suppresses(category: itemCategory($0)) }
         )
+    }
+
+    /// The two personalization stages, in the order the app runs them: dismiss
+    /// (floored, #1221/#5453) and then the category cooldown sink (#5951).
+    ///
+    /// The sink runs LAST so that it orders the page the reader actually gets:
+    /// the dismiss stage can backfill cards of its own, and a sink computed
+    /// before that backfill would not have ranked them. (Reversing the two is
+    /// not a way to resurrect a dismissal — the dismiss stage removes by id
+    /// whatever order it is handed — so this is an ordering argument, not a
+    /// safety one; the battery's M3 records that, measured, rather than leaving
+    /// a comment claiming more than the code does.)
+    static func personalize(
+        _ base: [FeedItem],
+        dismissedAt: [String: TimeInterval],
+        now: TimeInterval,
+        isCooled: (FeedItem) -> Bool
+    ) -> [FeedItem] {
+        applyCooldownSink(
+            to: applyDismissFloor(to: base, dismissedAt: dismissedAt, now: now),
+            isCooled: isCooled
+        )
+    }
+
+    /// How far one cooled card sinks, in card positions (#5951).
+    ///
+    /// A number, not an ordering: the cooled card goes BEHIND the ten cards that
+    /// followed it, not behind every uncooled card on the page. That bound is the
+    /// whole fix — an unbounded sink is the partition that produced the
+    /// monoculture, and a sink of zero is no personalization at all.
+    ///
+    /// Ten because the reader's own screen is the unit: a phone shows two to three
+    /// Discover cards at a time, so ten positions is three or four flicks — far
+    /// enough that "I see less of this" is true, near enough that a cooled
+    /// category the server ranked first is still on page one, able to re-earn its
+    /// score when the reader taps it (`DiscoverInteractionProfile.record`).
+    static let cooldownSinkPositions = 10
+
+    /// The category-cooldown stage, whole (#5951).
+    ///
+    /// Rank is `served position + sink`, and a tie is broken for the UNCOOLED
+    /// card. That tiebreak is not decoration: it is what makes the bound exact
+    /// rather than off-by-one — a cooled card sinks behind the next
+    /// `cooldownSinkPositions` cards, not behind `n - 1` of them.
+    ///
+    /// The final `served` comparison is the comparator's total-order obligation
+    /// and nothing more: two cards can only share a rank if they differ in
+    /// `cooled`, so it is unreachable by construction, and the battery's M7
+    /// (which breaks it) is an equivalent mutant, recorded there as such.
+    ///
+    /// Sinking is RELATIVE, which is the point: a cooled card only moves past
+    /// cards that are not sinking with it. A page whose first twenty cards are all
+    /// cooled comes back in the server's order — the reader is being served a
+    /// category he has cooled because that is what the server ranked highest, and
+    /// a client that reordered it anyway would be the #5951 defect wearing the
+    /// other sign.
+    ///
+    /// Removes NOTHING. The floor below (`applyFloor`) exists for the dismiss
+    /// stage, which does remove; a sink cannot shrink a page, so it needs no
+    /// floor — and the two stages stay separate rather than sharing one helper
+    /// whose contract would then have to mean both things.
+    static func applyCooldownSink(
+        to base: [FeedItem],
+        isCooled: (FeedItem) -> Bool
+    ) -> [FeedItem] {
+        base.enumerated()
+            .map { (served: $0.offset, cooled: isCooled($0.element), item: $0.element) }
+            .map { (served: $0.served, cooled: $0.cooled, item: $0.item,
+                    rank: $0.served + ($0.cooled ? cooldownSinkPositions : 0)) }
+            .sorted {
+                if $0.rank != $1.rank { return $0.rank < $1.rank }
+                if $0.cooled != $1.cooled { return !$0.cooled }
+                return $0.served < $1.served
+            }
+            .map(\.item)
     }
 
     /// Apply one soft, subtractive client filter without letting it shrink the
