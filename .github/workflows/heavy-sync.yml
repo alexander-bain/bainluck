@@ -147,6 +147,10 @@ jobs:
       cancel-in-progress: false
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      # #5886's in-flight gate reads `/api/admin/celery/inspect`. An absent
+      # secret is a benign UNKNOWN, never a failure — gotcha #9 keeps the check
+      # inside the run block, and the gate's own polarity does the rest.
+      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
       DISPATCHED: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
     steps:
       - uses: actions/checkout@v6
@@ -236,6 +240,60 @@ jobs:
             *) echo "Decision script exited $DECISION (usage/crash), which is a"
                echo "story about the harness, not a verdict — refusing."
                exit 1 ;;
+          esac
+
+          # #5886 — THE CLOCK IS NOT THE LAST WORD, BECAUSE THE BAND IS DERIVED
+          # AGAINST ONE OF WORKER-HEAVY'S THREE SCHEDULED RESIDENTS.
+          #
+          # The first unattended convergence (09:53:58Z) cleared the accuracy
+          # rebuild by 19m44s — the band worked — and cycled
+          # `prediction_market_match` 3m58s in and `rebuild_typeahead_index` 58s
+          # in. Both are scheduled INSIDE the band by construction (the matcher
+          # fires :05/:20/:35/:50 and runs 154-552s, so it holds 19 of the band's
+          # 25 minutes), and no 25-minute window clears all three. So instead of
+          # predicting the worker, ask it: `/api/admin/celery/inspect` already
+          # broadcasts the active set, and `HEAVY_TASKS` membership is what names
+          # the heavy fleet in it.
+          #
+          # THE READ IS DONE HERE RATHER THAN IN THE SCRIPT for one reason: this
+          # is OUR host, so it must carry `x-bainluck-origin` (notice 39), and
+          # the script cannot import the carrier — it runs on a bare runner
+          # before any `pip install`, which is the exemption the outbound-tag
+          # guard grants it for its Heroku reads. `curl -H` tags it with no
+          # import. A failed read writes nothing usable and the gate reads that
+          # as UNKNOWN, which PROCEEDS: this is a cost gate, and a cost gate that
+          # cannot read its fact must never be able to stop the sync.
+          INSPECT_JSON="${RUNNER_TEMP:-/tmp}/heavy-inspect.json"
+          if [ -z "${ADMIN_TOKEN:-}" ]; then
+            echo "ADMIN_TOKEN is not set — the in-flight gate will read UNKNOWN."
+          fi
+          # `--retry`, because ONE READ IS NOT A READING of this endpoint:
+          # measured 2026-09-13 11:02-11:03Z, two of eight calls returned HTTP
+          # 500 (the inspect broadcast raises and the route does not catch it).
+          # An UNKNOWN is safe — it proceeds — but an instrument that is inert a
+          # quarter of the time is a veto that reads as one and is not.
+          curl -fsS --max-time 45 --retry 2 --retry-delay 3 --retry-all-errors \
+            -H "Authorization: Bearer ${ADMIN_TOKEN:-}" \
+            -H "X-BainLuck-Origin: heavy-sync-workflow" \
+            "https://api.bainluck.com/api/admin/celery/inspect" \
+            -o "$INSPECT_JSON" \
+            || echo "the inspect read failed; the gate treats that as UNKNOWN."
+
+          set +e
+          python3 scripts/heavy_sync_decision.py inflight \
+            --inspect-json "$INSPECT_JSON" \
+            $DISPATCH_FLAG
+          INFLIGHT=$?
+          set -e
+
+          case "$INFLIGHT" in
+            0) echo "In flight: clear to cycle worker-heavy." ;;
+            1) echo "Decision: HOLD — a heavy job is mid-run, exiting green."
+               exit 0 ;;
+            *) echo "::warning::the in-flight gate exited $INFLIGHT, which is a"
+               echo "::warning::story about the harness and not a verdict. Proceeding:"
+               echo "::warning::a cost gate must not be able to stop the sync."
+               ;;
           esac
 
           BEHIND="$(git rev-list --count "${HEAVY_LIVE}..${MAIN_LIVE}" 2>/dev/null || echo '?')"

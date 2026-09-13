@@ -69,14 +69,44 @@ throws away every banked unit whenever it lands, and one that does not touch it
 costs a single unit whenever it lands. Timing is the small term in both branches —
 which is why a wide, cheap band beats a precise idle probe.
 
+**AND THE BAND IS DERIVED AGAINST ONE OF THREE RESIDENTS, WHICH IS WHY IT IS NOT
+THE LAST GATE (#5886).** ``worker-heavy`` runs at concurrency 2 and the rebuild is
+only one of the jobs scheduled on it. The first unattended convergence
+(2026-09-13T09:53:58Z) landed 19m44s clear of the rebuild — the band did its job —
+and cycled ``prediction_market_match`` 3m58s in and ``rebuild_typeahead_index``
+58s in, both of which are scheduled INSIDE the band by construction: the matcher
+fires ``:05/:20/:35/:50`` and runs 154-552s, so it occupies 19 of the band's 25
+minutes, and the typeahead fires ``:53``. There is no 25-minute window that clears
+all three (matcher-free minutes are ``:14-:20``, ``:29-:35``, ``:44-:50``,
+``:59-:05``), so narrowing the band cannot fix this and would only cost triggers.
+
+So the clock stops being the last word: :func:`inflight_verdict` ASKS the fleet
+what it is running instead of predicting it, from the ``active`` set the main
+app's ``/api/admin/celery/inspect`` already broadcasts, and holds while a
+``HEAVY_TASKS`` job is in flight. The band stays — it is the fallback for the runs
+where that answer cannot be read, and a cost gate that cannot read its fact must
+never take the sync down (the polarity rule in :func:`decide`).
+
+What the probe does NOT cover, stated so nobody reads it as a proof: a job that
+STARTS in the 36-118s between the push and the release (the typeahead at ``:53``
+is exactly that case), and a job on ``worker-heavy`` that is not in
+``HEAVY_TASKS`` — the inspect reply is keyed by an opaque ``celery@<uuid>``
+hostname, so membership of that set is the only channel that names the heavy
+fleet. Both residuals are narrower than today's, and neither is silent: the
+verdict names what it saw.
+
 Usage (the workflow gathers facts, this judges, the workflow acts on the code)::
 
     python3 scripts/heavy_sync_decision.py decide \\
         --main-live "$MAIN_LIVE" --heavy-live "$HEAVY_LIVE" \\
         --heavy-is-ancestor true [--heavy-release-age-min N] [--dispatched]
+    python3 scripts/heavy_sync_decision.py inflight \\
+        --inspect-json /tmp/inspect.json [--dispatched]
 
 Exit codes: ``0`` PUSH · ``1`` HOLD (a benign result, not an error — gotcha #124) ·
-``2`` REFUSE (unsafe; somebody should look) · ``3`` usage.
+``2`` REFUSE (unsafe; somebody should look) · ``3`` usage. ``inflight`` uses the
+same two benign codes: ``0`` proceed (IDLE, or UNKNOWN — see the polarity rule) ·
+``1`` HOLD.
 
 There is deliberately **no ``--now`` flag**. authority/114 checked its window three
 times and pushed 29 minutes early because it computed the time from its own
@@ -96,18 +126,47 @@ from datetime import datetime, timezone
 
 #: The accuracy rebuild's beat. Hourly at :15 (beat schedule is the authority).
 REBUILD_START_MIN = 15
-#: MEASURED on production 2026-09-12 (latency/350), NOT notice 29's "~7": the
-#: `precompute_calibration_main` phase ledger read `elapsed_ms = 1,332,567`
-#: (22m13s) with `deferred_rebuild.elapsed_ms = 1,256,026` (20m56s), and
-#: `last_success_at` 11:37:13Z against a :15 start. The sibling guard
+#: MEASURED on production, and this constant is a CEILING on the rebuild, not its
+#: typical length — the band is only safe if no rebuild outlives it. latency/350
+#: read one run at 22m13s (`elapsed_ms = 1,332,567`); latency/372 then read the
+#: task-metrics ring of 30 consecutive runs (2026-09-12T17:14Z .. 09-13T09:15Z)
+#: and the MAX was 22m31s (09-12 19:14:59 -> 19:37:30), i.e. 22 understated the
+#: observed ceiling by 31s. 23 covers every run in that ring. The sibling guard
 #: `push_window_guard.py` still carries 7 — see #5470's note; correcting it there
 #: without also retiring notice 29 would narrow THAT band to three minutes.
-REBUILD_DURATION_MIN = 22
+REBUILD_DURATION_MIN = 23
 #: Push -> heavy release. A Heroku build with NO CI in front of it, so both ends
-#: are well under the main app's CI-queue-dependent lag. ESTIMATES, not
-#: measurements — named as constants precisely so the first real reading can move
-#: the band instead of being argued about. Widen rather than narrow when unsure.
-MIN_RELEASE_LAG_MIN = 3
+#: are well under the main app's CI-queue-dependent lag. These were ESTIMATES —
+#: named as constants precisely so the first real reading could move the band
+#: instead of being argued about.
+#:
+#: MIN IS NOW READ FROM EVERY SYNC THIS WORKFLOW HAS EVER COMPLETED, not from
+#: one of them (latency/374, `Pushing ...` -> `remote: Released vN` in the run
+#: logs, cross-checked against the release records):
+#:
+#:     v14  run 34750397765  09:52:01.518Z -> 09:53:59.010Z   117.5s
+#:     v13  run 34743071282  06:34:38.837Z -> 06:35:15.077Z    36.2s  <- the floor
+#:     v12  run 34720427451  21:37:14.249Z -> 21:38:10.096Z    55.8s
+#:     v11  run 34714692872  19:37:36.353Z -> 19:38:15.612Z    39.3s
+#:
+#: `opens` SUBTRACTS this, so only a LOWER bound on the real lag makes the
+#: opening edge safe, and the single 1m57.5s reading it was set from was the
+#: SLOWEST of the four — three times the real floor. 1 is therefore still not a
+#: lower bound: 36.2s is 0.60 min, so the honest floored value is 0 and the band
+#: opens at the rebuild's own ceiling rather than a minute inside it. Headroom
+#: against the worst observed rebuild goes from **5 seconds** to 1m05s
+#: (`test_the_opening_edge_clears_the_worst_rebuild_at_the_fastest_real_lag`).
+#: MAX stays an estimate at 12 and is deliberately NOT moved down to the 1m57.5s
+#: ceiling these four readings give: it sits on the CLOSING edge, where the band
+#: shrinks as the number grows, so over-estimating buys safety and costs only
+#: opportunity. The four readings are recorded here anyway, because the day
+#: something wants a real upper bound (an imminent-fire gate would) they are the
+#: measurement, and re-deriving it from one log line is how 1 got here.
+#:
+#: Cost of the move, measured rather than assumed (latency/372): CI completions
+#: on master cluster at :40-:59 with ZERO in :30-:40, so :34 -> :37 -> :38 loses
+#: no triggers at all — 8/13 in band at every one of the three edges.
+MIN_RELEASE_LAG_MIN = 0
 MAX_RELEASE_LAG_MIN = 12
 #: Slack on the closing edge so a lag at the top of the range still lands clear of
 #: the NEXT hour's rebuild.
@@ -259,6 +318,143 @@ def decide(
         "PUSH",
         f"heavy {heavy_live[:9]} -> main's live {main_live[:9]} ({why_now})",
     )
+
+
+# ---------------------------------------------------------------------------
+# IN FLIGHT — ask the fleet what it is running instead of predicting it (#5886)
+# ---------------------------------------------------------------------------
+#
+# THE BAND PROTECTS ONE OF THREE RESIDENTS. The header states the measurement;
+# this is the mechanism. Three facts make it cheap:
+#
+#   * only `worker-heavy` consumes the `heavy` queue, and `HEAVY_TASKS` is the
+#     single source of what routes there (`task_routes` and every beat entry's
+#     `options["queue"]` are both written from it, in `app/tasks/__init__.py`).
+#     So "a HEAVY_TASKS task is active ANYWHERE" and "worker-heavy is busy" are
+#     the same reading, and no worker identity is needed — which matters,
+#     because `inspect` names workers `celery@<uuid>` with no app or dyno in it;
+#   * the set is READ FROM THAT FILE rather than copied here. A second copy is
+#     the drift this repo has already paid for twice (the `ß`/`æ` normaliser
+#     tables of #5878), and a list of 28 task names would rot in a week.
+#     `test_the_heavy_task_set_is_the_one_the_app_routes_on` asserts the parse
+#     equals the imported `app.tasks.HEAVY_TASKS`, both directions;
+#   * the payload is gathered by the workflow, not fetched here. Our own host
+#     must carry `x-bainluck-origin` (notice 39) and this script cannot import
+#     the carrier — it runs on a bare runner before any `pip install`, which is
+#     the exemption `test_agent_origin_outbound_tag.py` grants it for the Heroku
+#     reads. A `curl -H` in the workflow tags the call without the import.
+
+#: The name of the assignment this module reads the heavy fleet's task set from.
+HEAVY_TASKS_NAME = "HEAVY_TASKS"
+#: Where that assignment lives, relative to the repo root.
+HEAVY_TASKS_SOURCE = "backend/app/tasks/__init__.py"
+
+BUSY, IDLE = 1, 0
+
+
+def heavy_task_names(source: str) -> frozenset | None:
+    """The `HEAVY_TASKS` string set, parsed out of `source`, or ``None``.
+
+    ``None`` — never ``frozenset()`` — when the assignment is missing, is not a
+    set/list of plain strings, or the file does not parse. An empty set would
+    make every reading IDLE: the worker would be declared free precisely when
+    this module has lost the ability to tell, which is gotcha #53's failure
+    written as a gate. The caller treats ``None`` as UNKNOWN.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(getattr(t, "id", None) == HEAVY_TASKS_NAME for t in node.targets):
+            continue
+        value = node.value
+        if not isinstance(value, (ast.Set, ast.List, ast.Tuple)):
+            return None
+        names = {
+            e.value for e in value.elts
+            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        }
+        # A set literal that parsed but yielded nothing usable is unknown, not
+        # empty — same reason as above.
+        return frozenset(names) or None
+    return None
+
+
+def active_task_names(payload) -> list | None:
+    """Every task name the inspect payload reports as ACTIVE, or ``None``.
+
+    ``None`` when the payload names no worker at all. That is the reading a
+    failed broadcast produces — `/api/admin/celery/inspect` composes its reply
+    from `registered`/`active`/`reserved`, so a broker that answered nothing
+    returns a body carrying only `_cache` — and it is indistinguishable in shape
+    from a genuinely idle fleet. It is NOT indistinguishable in meaning: three
+    workers have replied to every reading this repo has taken, so no worker keys
+    means the instrument failed, and "the instrument failed" must not read as
+    "nothing is running" (gotcha #53).
+    """
+    if not isinstance(payload, dict):
+        return None
+    names = []
+    workers = 0
+    for key, value in payload.items():
+        if key.startswith("_") or not isinstance(value, dict):
+            continue
+        workers += 1
+        for task in value.get("active") or []:
+            if isinstance(task, dict) and task.get("name"):
+                names.append(str(task["name"]))
+    if not workers:
+        return None
+    return names
+
+
+def inflight_verdict(
+    *,
+    active: list | None,
+    heavy: frozenset | None,
+    dispatched: bool = False,
+) -> Decision:
+    """Is a heavy job in flight, so that a release would kill it mid-run?
+
+    The polarity is :func:`decide`'s, for the same reason: this is a COST gate,
+    not a safety one. A killed heavy job self-heals on its next beat — the
+    09:53:58Z matcher restarted at 10:05 and succeeded at 10:09:37, and the cost
+    was one lost pass — while a sync that cannot happen is #5470 itself, silent
+    and unbounded. So an unreadable fact PROCEEDS, and says that it is doing so.
+
+    ``--dispatched`` bypasses it, exactly as it bypasses the clock and the cycle
+    floor: an attended run is a person accepting one lost pass to get the code
+    onto the worker now. It never bypasses the never-backwards guard.
+    """
+    if dispatched:
+        return Decision(IDLE, "BYPASSED", "attended run: the in-flight veto is bypassed")
+    if heavy is None:
+        return Decision(
+            IDLE, "UNKNOWN",
+            f"the {HEAVY_TASKS_NAME} set could not be read from {HEAVY_TASKS_SOURCE} — "
+            "proceeding, because a cost gate that cannot read its fact must not be "
+            "able to stop the sync",
+        )
+    if active is None:
+        return Decision(
+            IDLE, "UNKNOWN",
+            "the inspect reply named no worker, so the fleet did not answer — "
+            "proceeding (an unreadable cost gate never holds the sync)",
+        )
+    busy = sorted({name for name in active if name in heavy})
+    if busy:
+        short = ", ".join(n.rsplit(".", 1)[-1] for n in busy)
+        return Decision(
+            BUSY, "BUSY",
+            f"worker-heavy is running {short} — a release cycles the dyno and kills "
+            "it mid-run (#5886); the next trigger re-reads and re-judges",
+        )
+    return Decision(IDLE, "IDLE", "no heavy job is in flight")
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +683,28 @@ def main(argv: list[str] | None = None) -> int:
         help="minutes since heavy's current release. Empty or unparseable means "
         "UNREADABLE, which does not hold — see the cost-gate polarity in decide().",
     )
+    f = sub.add_parser(
+        "inflight",
+        help="hold while a HEAVY_TASKS job is running on worker-heavy (#5886)",
+    )
+    f.add_argument(
+        "--inspect-json",
+        required=True,
+        help="path to the body of /api/admin/celery/inspect, as the workflow "
+        "fetched it. Missing, empty or unparseable is UNKNOWN, which PROCEEDS.",
+    )
+    f.add_argument(
+        "--tasks-source",
+        default="",
+        help=f"override the path to the file carrying {HEAVY_TASKS_NAME} "
+        f"(default: <repo>/{HEAVY_TASKS_SOURCE})",
+    )
+    f.add_argument(
+        "--dispatched",
+        action="store_true",
+        help="an attended workflow_dispatch run: bypasses the in-flight veto, "
+        "never the never-backwards guard",
+    )
     a = sub.add_parser(
         "age", help="print minutes since the app's current release (empty if unreadable)"
     )
@@ -501,8 +719,47 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         args = parser.parse_args(argv)
-    except SystemExit:
+    except SystemExit as exc:
+        # READ THE VALUE, don't catch the class (gotcha #54). argparse raises
+        # SystemExit(0) for `--help` and SystemExit(2) for a bad argument, and
+        # folding both into USAGE made `--help` exit 3 — the code the workflow
+        # and notice 10's dry-run clause both read as "the script is broken".
+        if not exc.code:
+            raise
         return USAGE
+
+    if args.command == "inflight":
+        import json
+        import os
+
+        # EVERY read here is wrapped, and the wrap is the gate's polarity, not
+        # defensive habit: a crash would exit 1 from argparse-land or a
+        # traceback, and the workflow reads 1 as HOLD. A gate that holds the
+        # sync because it could not open a file is the failure #5470 is.
+        def _read(path: str) -> str | None:
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    return handle.read()
+            except OSError:
+                return None
+
+        source_path = args.tasks_source or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            *HEAVY_TASKS_SOURCE.split("/"),
+        )
+        source = _read(source_path)
+        heavy = heavy_task_names(source) if source is not None else None
+
+        raw = _read(args.inspect_json)
+        try:
+            payload = json.loads(raw) if raw else None
+        except ValueError:
+            payload = None
+        active = active_task_names(payload) if payload is not None else None
+
+        decision = inflight_verdict(active=active, heavy=heavy, dispatched=args.dispatched)
+        print(f"{decision.verdict}: {decision.reason}")
+        return decision.code
 
     if args.command == "age":
         import os
