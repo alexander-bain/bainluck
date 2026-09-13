@@ -8,7 +8,8 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
-import { adminFetch } from "@/lib/adminFetch";
+import { adminFetch, AdminApiError } from "@/lib/adminFetch";
+import { adminErrorStatus } from "@/lib/adminHealthStatus";
 import PageHeader from "@/components/admin/PageHeader";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -64,7 +65,8 @@ export default function CohortViewsPage() {
 
   const fetcher = useCallback(async (url: string) => {
     const res = await adminFetch(url, secret);
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    // #6024: throw the typed error so a 403 is distinguishable from a fault.
+    if (!res.ok) throw new AdminApiError(res.status, await res.text());
     return res.json() as Promise<CohortPayload>;
   }, [secret]);
 
@@ -98,7 +100,10 @@ export default function CohortViewsPage() {
     <div className="p-6 space-y-6">
       <PageHeader
         question="Cohort Views — is every cell provable?"
-        status={isLoading ? "loading" : error ? "critical" : "good"}
+        status={
+          // #6024: a rejected credential is not a verdict on the cells.
+          isLoading ? "loading" : error ? adminErrorStatus(error) : "good"
+        }
         summary="ECE by source × league × type × band × week, sorted desc by ECE. Graded share <50% ⇒ NOT-PROVABLE-selection-biased."
         ideal="Every cell GREEN (≤5pp) or NOT-PROVABLE with a plan; no RED"
         subtitle="Band = 0-10%..90-100% (4th axis). Weekly for Monday scoreboard. Auto-refreshes every 60s."

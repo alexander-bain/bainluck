@@ -1,5 +1,5 @@
 import { getIdToken } from "@/lib/firebase";
-import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
+import { adminFetch, adminFetchJSON, AdminApiError } from "@/lib/adminFetch";
 import type {
   FeedDebugResponse,
   HookCoverage,
@@ -33,7 +33,9 @@ export async function fetchDiscoverDebug(secret: string): Promise<FeedDebugRespo
   const token = await getIdToken();
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
   const res = await fetch(`${API_URL}/api/feed?${params}`, { headers });
-  if (!res.ok) throw new Error(`Feed debug API error: ${res.status}`);
+  // #6024: typed so the page can tell "this credential was refused" from
+  // "the feed is broken" — it drew both as Critical.
+  if (!res.ok) throw new AdminApiError(res.status, `Feed debug API error`);
   return res.json();
 }
 

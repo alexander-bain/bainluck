@@ -8,7 +8,9 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
-import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
+import { adminFetch, adminFetchJSON, isAdminAuthError } from "@/lib/adminFetch";
+import { adminErrorStatus, adminErrorSummary } from "@/lib/adminHealthStatus";
+import AdminAuthNotice from "@/components/admin/AdminAuthNotice";
 import AdminCockpit from "@/components/admin/AdminCockpit";
 import SentinelsCard from "@/components/admin/SentinelsCard";
 import PageHeader from "@/components/admin/PageHeader";
@@ -1339,13 +1341,16 @@ export default function AdminDashboard() {
     { refreshInterval: 60000 }
   );
 
+  const authFailed = isAdminAuthError(error);
+
   return (
     <div className="space-y-6 max-w-5xl">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <PageHeader
           question="Is the system healthy?"
           status={
-            error ? "critical"
+            // #6024: a 403 is a statement about the credential, not the system.
+            error ? adminErrorStatus(error)
             : isLoading ? "loading"
             : data?.worker?.overall_health === "critical" ? "critical"
             : data?.worker?.overall_health !== "healthy" || (data?.quota?.budget?.projected_surplus ?? 1) < 0 ? "warning"
@@ -1353,7 +1358,7 @@ export default function AdminDashboard() {
           }
           summary={
             isLoading ? "Loading dashboard..."
-            : error ? error.message
+            : error ? adminErrorSummary(error)
             : `${data?.source_coverage?.length ?? 0} sports tracked · ${data?.quota?.current?.health ?? "unknown"} quota`
           }
           ideal="All workers healthy, quota on budget, all sources reporting."
@@ -1366,18 +1371,29 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* Alex Cockpit (L2-102): quick site-health view, what's waiting on Alex,
-          and the quick human-eval queue. Renders above the full ops dashboard;
-          all existing sub-pages stay reachable via the sidebar. */}
-      <AdminCockpit />
+      {/* #6024: one rejected secret 403s every card on this page at once, and
+          each one draws its own red failure — the cockpit prints "Cockpit
+          failed to load", the sentinels print "can't confirm the sentinel
+          ran". None of that is a finding about the site. When the credential
+          is what failed, the recovery control is the whole page. */}
+      {authFailed ? (
+        <AdminAuthNotice />
+      ) : (
+        <>
+          {/* Alex Cockpit (L2-102): quick site-health view, what's waiting on Alex,
+              and the quick human-eval queue. Renders above the full ops dashboard;
+              all existing sub-pages stay reachable via the sidebar. */}
+          <AdminCockpit />
 
-      {/* L2-153: the sentinel family's own cockpit presence — a silent guard
-          (no run cached / stale beyond 1.5× its beat) reads RED so it can't go
-          dark unnoticed (the r236 catch). Reads the three /last endpoints. */}
-      <SentinelsCard />
+          {/* L2-153: the sentinel family's own cockpit presence — a silent guard
+              (no run cached / stale beyond 1.5× its beat) reads RED so it can't go
+              dark unnoticed (the r236 catch). Reads the three /last endpoints. */}
+          <SentinelsCard />
 
-      {error && (
-        <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-lg">{error.message}</div>
+          {error && (
+            <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-lg">{error.message}</div>
+          )}
+        </>
       )}
       {isLoading && <div className="text-sm text-text-muted animate-pulse">Loading dashboard...</div>}
 
