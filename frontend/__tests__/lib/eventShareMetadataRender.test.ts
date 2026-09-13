@@ -119,7 +119,16 @@ describe("generateMetadata leaves unsettled events alone", () => {
   it("falls back safely when the event cannot be fetched", async () => {
     stubFetch(null, false);
     const meta = await generateMetadata({ params: Promise.resolve({ id: "9" }) });
-    expect(asText(meta.title)).toBe("Event Odds - Bain Luck");
+    // #5840 changed this copy twice over. The suffix went (the root template
+    // appends `| Bain Luck`, so the old value rendered `Event Odds - Bain Luck |
+    // Bain Luck`), and a stub with no `status` is no longer read as "the event
+    // does not exist" — it is a bad minute, so the wording claims nothing.
+    expect(asText(meta.title)).toBe("Game Odds");
+    expect(asText(meta.title)).not.toMatch(/\| Bain Luck/);
+    // …and the branch is self-canonical now. Asserted here as well as in
+    // `unresolvedShareMeta5840.test.ts` because this file is the one that drives
+    // the real route, and the whole defect was a branch that said nothing.
+    expect(meta.alternates?.canonical).toBe("/events/9");
   });
 });
 
