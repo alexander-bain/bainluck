@@ -543,7 +543,15 @@ maybe_restock () {
   # `< missing-file` is a SHELL redirection error, printed before tr ever runs,
   # so `2>/dev/null` on tr does not silence it. Test for the file instead.
   LAST=""
-  [ -f "$LASTF" ] && LAST=$(tr -cd '0-9' < "$LASTF")
+  if [ -f "$LASTF" ]; then
+    LAST=$(cat "$LASTF")
+    # State is one bounded decimal epoch, not a date label to strip into digits.
+    # Reject leading zeroes (Bash octal), text and overflow before arithmetic.
+    if [[ ! "$LAST" =~ ^(0|[1-9][0-9]{0,9})$ ]]; then
+      rs_say "[restock:$L] invalid .last-restock — ignoring malformed timestamp"
+      LAST=""
+    fi
+  fi
   if [ -n "${LAST:-}" ] && [ $((NOW - LAST)) -lt "$RESTOCK_MIN_INTERVAL" ]; then
     rs_say "[restock:$L] last restock $((NOW - LAST))s ago (<${RESTOCK_MIN_INTERVAL}s floor) — holding"
     return 1

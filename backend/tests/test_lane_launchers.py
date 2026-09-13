@@ -2622,3 +2622,15 @@ def test_the_notices_and_the_directive_body_still_arrive_intact(tmp_path):
     assert prompt.index("NOTICES-SENTINEL") < prompt.index("YOU ARE LANE") < prompt.index(
         "BODY-SENTINEL"
     ), f"the header is not between the notices and the body:\n{prompt[:2000]}"
+
+
+@pytest.mark.parametrize("stamp", ["0913-1230\n", "latency-375\n", "09131230\n", "9" * 80, "123\n456\n"])
+def test_malformed_restock_stamp_cannot_crash_or_become_an_epoch(tmp_path, stamp):
+    handoff = _handoff(tmp_path)
+    state = handoff / "runner-inbox" / "demo" / ".last-restock"
+    state.write_text(stamp)
+    rc, out = _restock(handoff)
+    assert rc == 0, out
+    assert "invalid .last-restock" in out
+    assert "WOULD WRITE" in out
+    assert state.read_text() == stamp  # rehearsal never repairs production state
