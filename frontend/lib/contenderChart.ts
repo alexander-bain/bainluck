@@ -23,7 +23,7 @@
  *   and never carried forward.
  */
 
-import type { TournamentRow, TournamentTrendPoint } from "./tournament";
+import { formatBoardProbability, type TournamentRow, type TournamentTrendPoint } from "./tournament";
 // #4259: the #2451 ceiling ladder is shared with FuturesChart — see lib/chartCeiling.ts.
 import { ceilingForMax } from "./chartCeiling";
 
@@ -395,38 +395,83 @@ export interface ChartSeries {
   displayName: string;
   color: string;
   probability: number | null;
+  /** The row's own `won` / `eliminated` / `live` word, for the legend (#5934). */
+  state: string;
   isLive: boolean;
   points: ChartPoint[];
 }
 
-/**
- * The top N rows as chart series, in board order.
- *
- * Rows without a probability (settled) are skipped: a result is not a
- * standing, and a settled player has no live line to draw.
- */
+function seriesFromRow(row: TournamentRow, index: number): ChartSeries {
+  return {
+    entityKey: row.entity_key,
+    displayName: row.display_name,
+    color: SERIES_COLORS[index % SERIES_COLORS.length],
+    probability: row.probability,
+    state: row.state,
+    isLive: row.probability_is_live === true,
+    points: chartPoints(row),
+  };
+}
+
+/** The top N rows as chart series, in board order. */
 export function chartSeries(rows: TournamentRow[], limit = CHART_SERIES_COUNT): ChartSeries[] {
-  return rows
-    .filter((row) => row.probability !== null)
-    .slice(0, limit)
-    .map((row, index) => ({
-      entityKey: row.entity_key,
-      displayName: row.display_name,
-      color: SERIES_COLORS[index % SERIES_COLORS.length],
-      probability: row.probability,
-      isLive: row.probability_is_live === true,
-      points: chartPoints(row),
-    }));
+  return chartableRows(rows).slice(0, limit).map(seriesFromRow);
 }
 
-/** Rows the chart is allowed to draw at all: a settled row has no live line. */
+/**
+ * ═══ #5934: A SETTLED ROW HAS NO LINE. A DECIDED DRAW STILL HAS A PICTURE. ═══
+ *
+ * This filter used to be `probability !== null`, and its comment — "a settled
+ * row has no live line" — was right about the LINE and wrong about the HISTORY.
+ * Nobody had written the case where EVERY row is settled, which is what a
+ * finished draw became the moment #5917's payload half landed: the selection
+ * emptied, `chartSeriesFor` returned nothing, and `ContenderChart` took its
+ * `series.length === 0 → return null`. The whole title-race card unmounted from
+ * the women's tab on the last day of the US Open, and the men's was two hours
+ * behind it. Against Alex's standing ruling in as many words: *settled means
+ * settled — charts show the completed journey*.
+ *
+ * So the test is DRAWABILITY, not liveness: a row is chartable if it carries a
+ * current probability OR a history to draw. The series is not a claim about
+ * now; it is what happened, and what happened does not stop having happened.
+ *
+ * 🔵 **THE PRICE IS NOT RESURRECTED.** A settled row's `probability` stays
+ * `null` everywhere it is printed — the legend prints the row's terminal state
+ * (`legendValue`), never its last reading. Reading the last chart point into
+ * that slot would put back the exact "RYBAKINA 99%" that #5917 killed, sixteen
+ * hours after she had won.
+ *
+ * ⚠️ **INERT UNTIL THE PRODUCER HALF LANDS** (notice 46; #5934's second half is
+ * live's). `tournament_board.py`'s settled-row shape currently emits
+ * `trend: []` / `trend_hourly: []`, so `chartPoints` is empty on every settled
+ * row today and this reads exactly as the old filter did — measured on the
+ * 15:30Z payload: 0 rows in either draw have a null probability AND history.
+ * It is written ahead of that half deliberately, so the men's final needs one
+ * deploy and not two.
+ */
 export function chartableRows(rows: TournamentRow[]): TournamentRow[] {
-  return rows.filter((row) => row.probability !== null);
+  return rows.filter((row) => row.probability !== null || chartPoints(row).length > 0);
 }
 
-/** The default selection — the board's top three, by entity key. */
+/**
+ * The default selection — the board's top three, by entity key.
+ *
+ * PRICED ROWS FIRST, and the fallback is the whole reason this is not just
+ * `chartableRows().slice(0, 3)`. Mid-tournament a board carries both: live
+ * contenders and knocked-out players whose history is still drawable. Taking
+ * the top three of the merged set would let a player who is OUT open the chart
+ * ahead of one still in it, purely on where the board happened to rank them.
+ * A reader who wants the completed line of someone eliminated can add it from
+ * the picker; the default is the race as it stands.
+ *
+ * When NOTHING is priced the race does not stand any more, and the top three
+ * by board order is the finish: champion first, exactly the three the chart was
+ * drawing the minute before the draw was decided.
+ */
 export function defaultSelection(rows: TournamentRow[]): string[] {
-  return chartableRows(rows)
+  const chartable = chartableRows(rows);
+  const priced = chartable.filter((row) => row.probability !== null);
+  return (priced.length > 0 ? priced : chartable)
     .slice(0, CHART_SERIES_COUNT)
     .map((row) => row.entity_key);
 }
@@ -445,8 +490,9 @@ export function defaultSelection(rows: TournamentRow[]): string[] {
  * they can never disagree with each other — only with the reader's memory of
  * a second ago. Worth knowing, not worth a second data structure.
  *
- * Unknown or unpriced keys are dropped rather than rendered empty, and the
- * result is capped at `MAX_SERIES_COUNT`.
+ * Keys the board does not carry, and keys with neither a probability nor a
+ * history to draw (#5934), are dropped rather than rendered empty. The result
+ * is capped at `MAX_SERIES_COUNT`.
  */
 export function chartSeriesFor(
   rows: TournamentRow[],
@@ -457,17 +503,54 @@ export function chartSeriesFor(
   for (const key of selection) {
     const row = byKey.get(key);
     if (!row || out.some((entry) => entry.entityKey === key)) continue;
-    out.push({
-      entityKey: row.entity_key,
-      displayName: row.display_name,
-      color: SERIES_COLORS[out.length % SERIES_COLORS.length],
-      probability: row.probability,
-      isLive: row.probability_is_live === true,
-      points: chartPoints(row),
-    });
+    out.push(seriesFromRow(row, out.length));
     if (out.length >= MAX_SERIES_COUNT) break;
   }
   return out;
+}
+
+/**
+ * What the legend prints where a percent goes, when there is no percent (#5934).
+ *
+ * `null` for anything that is not a terminal state, so the caller falls through
+ * to `formatBoardProbability`'s em dash rather than this inventing a word for a
+ * row whose state it does not recognise.
+ *
+ * "Out" rather than "Eliminated" is the word this codebase already puts in a
+ * narrow slot beside a name (`eventConceptDisplay`'s OUT chip); "Eliminated" is
+ * the tooltip-length form and would crowd out the name it sits next to at
+ * 320px. The board two inches below still prints the payload's own word in its
+ * sub-line, so nothing here is the only place a reader can learn the state.
+ */
+export function legendStateLabel(state: string): string | null {
+  if (state === "won") return "Won";
+  if (state === "eliminated") return "Out";
+  return null;
+}
+
+/**
+ * The legend's right-hand cell: a live probability, or a settled row's result.
+ *
+ * ⚠️ THE ONE THING THIS MUST NEVER DO is reach into `points` for a number. A
+ * settled row's last reading is a real observation and printing it HERE would
+ * read as a current standing — "E. RYBAKINA 99%" sixteen hours after she won
+ * the title is the exact sentence #5917 removed from the board above. The line
+ * may end at 99; the label says `Won`.
+ *
+ * Typed on the two fields it reads rather than on `ChartSeries`, because the
+ * picker below the chart offers the same contenders from the raw rows and has
+ * to print the same word — one function, so a legend and a picker listing the
+ * same player can never label them differently.
+ */
+export function legendValue(
+  entry: { probability: number | null; state: string },
+  rendered?: number | null
+): string {
+  if (entry.probability === null) {
+    const label = legendStateLabel(entry.state);
+    if (label !== null) return label;
+  }
+  return formatBoardProbability(entry.probability, rendered);
 }
 
 /** Colour per selected entity — so the board's name underline follows the chart. */

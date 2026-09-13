@@ -22,6 +22,7 @@ import {
   filterCandidates,
   isChartWindow,
   legendName,
+  legendValue,
   pointsInTimeframe,
   rangeDescription,
   rangeIsDrawable,
@@ -37,7 +38,6 @@ import {
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
 import {
   boardRenderedPercents,
-  formatBoardProbability,
   type TournamentRow,
 } from "@/lib/tournament";
 
@@ -307,8 +307,11 @@ export default function ContenderChart({
                   entry.isLive ? "text-text-primary" : "text-text-secondary"
                 }`}
                 data-testid="chart-legend-probability"
+                data-state={entry.state}
               >
-                {formatBoardProbability(entry.probability, renderedPercents[entry.entityKey])}
+                {/* #5934: a settled row's cell is its RESULT, not its last
+                    reading — see `legendValue`. */}
+                {legendValue(entry, renderedPercents[entry.entityKey])}
               </span>
               <span aria-hidden="true" className="w-3 shrink-0 text-right text-[13px] text-text-muted">
                 &times;
@@ -693,7 +696,8 @@ export default function ContenderChart({
                       {row.display_name}
                     </span>
                     <span className="text-[12.5px] tabular-nums text-text-muted">
-                      {formatBoardProbability(row.probability, renderedPercents[row.entity_key])}
+                      {/* #5934: same cell, same rule as the legend's. */}
+                      {legendValue(row, renderedPercents[row.entity_key])}
                     </span>
                   </button>
                 </li>
