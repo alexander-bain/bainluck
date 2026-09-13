@@ -1765,8 +1765,17 @@ async def _try_link_market(
             _set_market_sport_fields(market, auto_event)
             stats["newly_linked"] += 1
             stats["funnel"]["linked"] += 1
-            stats["funnel"].setdefault("auto_created_events", 0)
-            stats["funnel"]["auto_created_events"] += 1
+            # #5821: a container that linked to its sibling's event minted
+            # nothing, so it is not an auto-create. Counted under its own key —
+            # this counter is the deployment receipt for that ship, and folding
+            # it into `auto_created_events` would leave the number that is
+            # supposed to FALL looking exactly as it did before.
+            if auto_event.get("container_sibling_link"):
+                stats["funnel"].setdefault("container_sibling_links", 0)
+                stats["funnel"]["container_sibling_links"] += 1
+            else:
+                stats["funnel"].setdefault("auto_created_events", 0)
+                stats["funnel"]["auto_created_events"] += 1
             backfill_request = (
                 (int(market.id), auto_event["event_id"])
                 if market.source == "polymarket" else None
@@ -5713,6 +5722,104 @@ async def _resolve_combat_opponent(session, external_id, known_fighter, sport_ke
     return None  # 0 or ambiguous — honest unknown, no guess
 
 
+#: The Polymarket container suffixes that name the SAME fixture as their base
+#: title. `_strip_more_markets` removes exactly these two, so the list below is
+#: its inverse and the two must move together — a suffix added there and not
+#: here would strip to a base name this lookup never asks for.
+_POLYMARKET_CONTAINER_SUFFIXES = (" - More Markets", " - Player Props")
+
+
+async def _polymarket_container_sibling_event_id(session, market) -> Optional[int]:
+    """The event a sibling Polymarket container for this same fixture already holds.
+
+    #5821. Polymarket mints a game as TWO or three parent containers, not one:
+    the base event (`acle-ain-aln-2026-09-15`, the 3-way moneyline) and a
+    companion whose ticker is that ticker plus `-more-markets`
+    (`acle-ain-aln-2026-09-15-more-markets`, the 33 derivative markets). Each is
+    a separate Gamma event with its own id, so each arrives here as its own
+    id-less claim and — ruling 048 / gotcha #32, correctly — MINTS ITS OWN ROW.
+    One fixture became two live cards: `/api/events/search?q=Al Nassr` served
+    Al Ain–Al Nassr twice, events 15311506 and 15311503, both `live`.
+
+    THIS IS NOT A RELAXATION OF RULING 048, and it is not a name-and-time
+    absorption. Nothing is absorbed: no event is merged, no claim is moved, and
+    the CREATE path below is untouched for every row that reaches it. What
+    happens here is that a container which would have minted a SECOND row for a
+    fixture we already hold links to that row instead — market→event linkage,
+    which is L2 and has always been decided by name, not L1 event identity.
+
+    Membership is decided by the venue's own structure, per notice 40, and by
+    TWO independent venue-side signals rather than one:
+
+    1. The title. Polymarket mints the companion's title as the base title plus
+       a fixed suffix, so `_strip_more_markets` recovers the base EXACTLY — this
+       is string equality on a string the venue composed, not a fuzzy join.
+    2. `venue_game_start`, the kickoff Polymarket publishes for the fixture,
+       which the ingest already stores in `market_metadata`. Measured on all
+       four of tonight's pairs it is IDENTICAL across the pair while the stored
+       `commence_time`s differ by ~30 minutes (those are Gamma `startDate`, the
+       minute the market opened — see #5862, filed separately).
+
+    The pair is SYMMETRIC and the lookup is deliberately order-independent,
+    because the arrival order is not ours to choose: tonight the COMPANION
+    minted first (event 15311503 at 04:23:51.777Z, base 15311506 at
+    04:23:52.547Z, 0.77s later). A rule that only taught the companion to find
+    its base would have fixed nothing on this specimen. So both sides strip to
+    the same key and whichever arrives second attaches to whichever arrived
+    first.
+
+    Ambiguity is measured, not assumed: over 45 days, the 4,359 distinct
+    (base title, `venue_game_start`) keys held by Polymarket parent containers
+    have **0** collisions and **0** keys spanning more than one event
+    (production, 2026-09-13 08:55Z). A key names at most one fixture.
+
+    Returns ``None`` — i.e. falls through to today's CREATE, changing nothing —
+    whenever the venue has not given us both signals. Rows minted before the
+    ingest wrote `venue_game_start` therefore keep their current behaviour;
+    repairing those is a backfill under D51, not a minting decision.
+    """
+    if market.source != "polymarket":
+        return None
+
+    metadata = getattr(market, "market_metadata", None) or {}
+    venue_game_start = metadata.get("venue_game_start")
+    if not venue_game_start or not str(venue_game_start).strip():
+        return None
+
+    from app.utils.prediction_market_matching import _strip_more_markets
+
+    base_name = _strip_more_markets(market.name or "")
+    if not base_name:
+        return None
+
+    # The base title and every container form of it. Spelled as an exact IN
+    # list rather than a prefix/LIKE so a DIFFERENT fixture whose title merely
+    # STARTS with this one's can never be swept in.
+    candidate_names = [base_name] + [
+        base_name + suffix for suffix in _POLYMARKET_CONTAINER_SUFFIXES
+    ]
+
+    from app.models.models import FuturesMarket
+
+    sibling_event_id = (
+        await session.execute(
+            select(FuturesMarket.event_id)
+            .where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.event_id.isnot(None),
+                FuturesMarket.id != market.id,
+                FuturesMarket.name.in_(candidate_names),
+                FuturesMarket.market_metadata["venue_game_start"].astext
+                == str(venue_game_start),
+            )
+            .order_by(FuturesMarket.event_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    return sibling_event_id
+
+
 async def _create_event_from_prediction_market(session, matchup, market, now):
     """
     Auto-create an Event when a game-level prediction market has no matching Event.
@@ -5764,6 +5871,45 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
             market.name,
         )
         return None
+
+    # #5821, and it belongs exactly HERE, at the seam #2871 named and left open:
+    # "The game's own container market ('- More Markets') does not match this
+    # and still creates the fixture normally." It is the game — but the game may
+    # already have a row, minted by the SIBLING container Polymarket publishes
+    # for the same fixture. See `_polymarket_container_sibling_event_id` for the
+    # two venue-side signals and why this is linkage, not absorption.
+    #
+    # BEFORE the create-refusal gates below, deliberately. Every one of them
+    # (#4242's invented time, #2020's self-refuting create, #5544's covered
+    # league) answers one question — "should we INVENT a row?" — and this path
+    # invents nothing. A container that finds its sibling's event should link to
+    # it whether or not we would have been willing to mint that event today;
+    # falling through to a refusal would leave the market unlinked and the
+    # fixture's derivative markets stranded, which is strictly worse than the
+    # duplicate this removes.
+    sibling_event_id = await _polymarket_container_sibling_event_id(session, market)
+    if sibling_event_id is not None:
+        team_match = match_teams_to_event(
+            matchup, matchup.team_a, matchup.team_b,
+            external_id=market.external_id,
+        )
+        logger.info(
+            "Linking Polymarket container '%s' to event %d (#5821) — a sibling "
+            "container for this fixture already holds it; not minting a second row",
+            market.name, sibling_event_id,
+        )
+        return {
+            "event_id": sibling_event_id,
+            "home_team": matchup.team_a,
+            "away_team": matchup.team_b,
+            "yes_is_home": team_match["yes_is_home"] if team_match else True,
+            # Nothing was created. The caller reads this to keep the
+            # `auto_created_events` funnel counter honest — a link that reuses a
+            # row is not a mint, and counting it as one would hide this ship's
+            # whole effect behind an unchanged number.
+            "auto_created": False,
+            "container_sibling_link": True,
+        }
 
     # #3446 / CERT-2055: the same principle, the shape the other two miss.
     #
