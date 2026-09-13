@@ -715,3 +715,372 @@ def test_the_app_name_is_the_one_asked_for(monkeypatch):
     _deployed(app="bainluck-heavy").install(monkeypatch)
     with pytest.raises(AssertionError, match="does not serve"):
         sync.heroku_release_commit("bainluck", "tok")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #5470, the tail — the trigger is the event that creates the drift, and the
+# cycle floor is what keeps that affordable.
+#
+# The cron was never the mechanism failing; it was the mechanism being uncorrelated
+# with the problem AND undelivered (4 runs against 17 nominal slots, measured
+# 2026-09-13). So CI completing on master is the primary trigger, the schedule
+# demotes to a backstop, and a floor holds the cycle rate at the budget this file
+# already priced — because the trigger rate is now the deploy rate, not a clock.
+#
+# The two properties worth the most here are POLARITY and ORDER: a cost gate that
+# cannot read its fact must PROCEED (the opposite of every guard above it), and
+# it must sit after them, so no arrangement of cheap facts can talk the script out
+# of the never-backwards guard.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+CI_WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
+
+
+def _in_band_push(**over):
+    """The ordinary PUSH call, with one field overridden per test."""
+    kwargs = dict(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True, now=_at(40),
+    )
+    kwargs.update(over)
+    return sync.decide(**kwargs)
+
+
+# ── the floor, derived like the band ───────────────────────────────────────────
+
+
+def test_the_cycle_floor_falls_out_of_the_accepted_budget():
+    """180 min must be arithmetic on a budget, not a number somebody liked.
+
+    Same shape as the band: pin the value AND the derivation, so neither the
+    constant nor the formula can drift alone.
+    """
+    assert sync.min_cycle_interval_min() == 180
+    assert sync.min_cycle_interval_min() == round(24 * 60 / sync.ACCEPTED_CYCLES_PER_DAY)
+
+
+def test_moving_the_accepted_budget_moves_the_floor(monkeypatch):
+    """The property, not the number. A re-priced budget must move the gate."""
+    monkeypatch.setattr(sync, "ACCEPTED_CYCLES_PER_DAY", 24)
+    assert sync.min_cycle_interval_min() == 60
+    monkeypatch.setattr(sync, "ACCEPTED_CYCLES_PER_DAY", 4)
+    assert sync.min_cycle_interval_min() == 360
+
+
+def test_the_floor_is_at_least_as_permissive_as_the_cron_it_joins():
+    """The floor must never forbid what the schedule is licensed to attempt.
+
+    Three in-band cron attempts an hour were priced at ~7.5 cycles/day. A floor
+    tighter than that budget would silently undo the raise it sits beside — the
+    two changes would fight, and the schedule would look delivered while being
+    gated out.
+    """
+    assert sync.ACCEPTED_CYCLES_PER_DAY >= 8, (
+        "tightening the budget below the rate the cron raise was priced at makes "
+        "this file argue with itself"
+    )
+
+
+# ── the gate itself ────────────────────────────────────────────────────────────
+
+
+def test_a_heavy_released_minutes_ago_holds_even_inside_the_band():
+    """The trigger rate is not the cycle rate, and this is the only thing saying so.
+
+    ~31 CI-success runs a day through a 25-minute band is ~13 heavy cycles/day —
+    a rate this file rejects at the top, because each one cycles `worker-heavy`.
+    """
+    d = _in_band_push(heavy_release_age_min=10)
+    assert d.code == HOLD
+    assert "cycle floor" in d.reason
+    assert "180" in d.reason, "the reason must name the floor it enforced"
+
+
+def test_an_age_past_the_floor_pushes_and_the_boundary_is_inclusive():
+    """`< floor` holds; exactly the floor is permission, not a coin toss."""
+    assert _in_band_push(heavy_release_age_min=181).code == PUSH
+    assert _in_band_push(heavy_release_age_min=180).code == PUSH
+    assert _in_band_push(heavy_release_age_min=179).code == HOLD
+
+
+def test_an_unreadable_age_PROCEEDS_because_a_cost_gate_is_not_a_safety_gate():
+    """THE POLARITY TEST, and the one a later reader is most likely to invert.
+
+    Every other unknown in this script refuses, so "unknown -> hold" looks like
+    the house style. It is exactly wrong here. An unreadable release age does not
+    mean heavy was disturbed recently; it means we could not ask. Holding on it
+    would let one flaky Heroku read stop the sync this whole ship exists to make
+    happen, to save ~2 minutes of recomputation.
+    """
+    assert _in_band_push(heavy_release_age_min=None).code == PUSH
+    # And the default is the unreadable case, so a caller that never learned
+    # about the floor gets the sync rather than silence.
+    assert sync.decide(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True, now=_at(40)
+    ).code == PUSH
+
+
+def test_an_attended_run_bypasses_the_floor_as_well_as_the_clock():
+    """Both COST gates yield to a person; neither safety guard does."""
+    assert _in_band_push(heavy_release_age_min=1, dispatched=True).code == PUSH
+    assert sync.decide(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=1, dispatched=True, now=_at(5),
+    ).code == PUSH
+
+
+def test_the_floor_can_never_talk_the_script_out_of_the_never_backwards_guard():
+    """Order is the safety order. A diverged heavy REFUSES at any age.
+
+    The dangerous refactor is "check the cheap local number first and return
+    early" — it would turn a rewind into a benign-looking HOLD, and the next run
+    would report the same HOLD, forever, with nobody alerted.
+    """
+    for age in (0, 1, 179, 180, 10_000):
+        d = sync.decide(
+            main_live=A, heavy_live=B, heavy_is_ancestor=False,
+            heavy_release_age_min=age, now=_at(40),
+        )
+        assert d.code == REFUSE, age
+    # …and an unreadable sha still refuses before the floor is even considered.
+    assert sync.decide(
+        main_live="abc", heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=0, now=_at(40),
+    ).code == REFUSE
+
+
+def test_the_window_and_the_floor_stay_two_gates_with_two_reasons():
+    """Outside the band the reason is the band, even when the floor would also fire.
+
+    Folding them into one HOLD would cost the only diagnosis a person gets from a
+    green run: "held because heavy is fresh" and "held because GitHub fired at
+    :09" call for completely different responses.
+    """
+    d = sync.decide(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=1, now=_at(5),
+    )
+    assert d.code == HOLD
+    assert "window" in d.reason and "cycle floor" not in d.reason
+
+    # And in sync beats both, as it already beat the window.
+    d = sync.decide(
+        main_live=A, heavy_live=A, heavy_is_ancestor=True,
+        heavy_release_age_min=1, now=_at(40),
+    )
+    assert d.code == HOLD and "already on" in d.reason
+
+
+# ── the CLI carries the age without ever choking on it ─────────────────────────
+
+
+def test_an_unreadable_age_reaches_decide_as_unknown_and_never_as_a_usage_exit():
+    """`type=int` here would be a live outage waiting for one bad API read.
+
+    The workflow computes this from a Heroku call that is allowed to fail, so it
+    passes the empty string. argparse would exit 2 on it — which the workflow's
+    `case` treats as "a story about the harness" and refuses on, failing a job
+    whose only problem was an unreadable cost input.
+    """
+    for value in ("", "   ", "banana", "12.5", "-"):
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "decide", "--main-live", A, "--heavy-live", B,
+             "--heavy-is-ancestor", "true", "--heavy-release-age-min", value],
+            capture_output=True, text=True,
+        )
+        assert proc.returncode in (PUSH, HOLD), (value, proc.returncode, proc.stderr)
+        assert proc.returncode != USAGE, value
+    assert sync._age_arg("") is None
+    assert sync._age_arg("banana") is None
+    assert sync._age_arg(None) is None
+    assert sync._age_arg(" 42 ") == 42
+
+
+def test_the_parsed_age_reaches_decide_and_is_not_dropped_on_the_way(monkeypatch):
+    """The wiring: a number on the command line arrives as that number.
+
+    Asserted in-process on purpose. The obvious version — run the CLI with
+    `--heavy-release-age-min 1` and expect the floor's HOLD — passes or fails on
+    the wall-clock minute, because the floor sits AFTER the window and the script
+    deliberately has no `--now` (#4997). It went red at :19 the first time it
+    ran, which is the same trap in a new costume: a test whose verdict depends on
+    when CI happened to reach it (gotcha #44).
+    """
+    seen = {}
+
+    def _spy(**kwargs):
+        seen.update(kwargs)
+        return sync.Decision(HOLD, "HOLD", "spied")
+
+    monkeypatch.setattr(sync, "decide", _spy)
+    assert sync.main(
+        ["decide", "--main-live", A, "--heavy-live", B,
+         "--heavy-is-ancestor", "true", "--heavy-release-age-min", "1"]
+    ) == HOLD
+    assert seen["heavy_release_age_min"] == 1
+    assert seen["main_live"] == A and seen["heavy_is_ancestor"] is True
+
+    seen.clear()
+    sync.main(["decide", "--main-live", A, "--heavy-live", B, "--heavy-is-ancestor", "true"])
+    assert seen["heavy_release_age_min"] is None, (
+        "an omitted flag must arrive as UNKNOWN, which proceeds — never as 0, "
+        "which would hold every sync forever"
+    )
+
+
+# ── reading the age: a different question from reading the commit ──────────────
+
+
+def _released_at(stamp: str, app: str = "bainluck-heavy", slug: bool = True):
+    release = {"version": 12, "created_at": stamp}
+    if slug:
+        release["slug"] = {"id": SLUG_ID}
+    return _FakeHeroku(
+        {
+            f"apps/{app}/releases": [release],
+            f"apps/{app}/slugs/{SLUG_ID}": {"id": SLUG_ID, "commit": A},
+        }
+    )
+
+
+def test_the_age_comes_from_created_at(monkeypatch):
+    _released_at("2026-09-12T14:00:00Z").install(monkeypatch)
+    age = sync.heroku_release_age_min("bainluck-heavy", "tok", now=_at(40))
+    assert age == 40
+
+
+def test_a_CONFIG_ONLY_release_has_no_commit_but_it_does_have_an_age(monkeypatch):
+    """The two readers answer two questions, and must not be merged.
+
+    `heroku config:set` mints a slugless release. It cannot say which commit is
+    running — so the readback rightly calls it unreadable — but it DID cycle the
+    dyno, which is the only thing the floor cares about. Reusing one reader for
+    both would make a config edit invisible to the floor, and the sync would
+    cycle a worker that restarted a minute ago.
+    """
+    api = _released_at("2026-09-12T14:30:00Z", slug=False).install(monkeypatch)
+    assert sync.heroku_release_age_min("bainluck-heavy", "tok", now=_at(40)) == 10
+    assert api.paths == ["apps/bainluck-heavy/releases"], "no slug hop is needed for an age"
+
+    _released_at("2026-09-12T14:30:00Z", slug=False).install(monkeypatch)
+    assert sync.heroku_release_commit("bainluck-heavy", "tok") is None
+
+
+def test_a_stamp_the_script_cannot_read_is_unreadable_and_not_a_zero(monkeypatch):
+    """A zero would read as "released just now" and hold the sync out silently."""
+    for stamp in ("", "not-a-date", "2026-13-45T99:00:00Z"):
+        _released_at(stamp).install(monkeypatch)
+        assert sync.heroku_release_age_min("bainluck-heavy", "tok", now=_at(40)) is None
+
+    _FakeHeroku({"apps/bainluck-heavy/releases": []}).install(monkeypatch)
+    assert sync.heroku_release_age_min("bainluck-heavy", "tok", now=_at(40)) is None
+
+
+def test_a_future_stamp_clamps_to_zero_rather_than_sailing_under_the_floor(monkeypatch):
+    """Clock skew between Heroku and the runner must fail toward the cautious side.
+
+    A negative age is `< floor` either way, so this is belt and braces — but a
+    later refactor that compares `abs(age)` or formats it into a message should
+    not be able to print "released -7 min ago".
+    """
+    _released_at("2026-09-12T14:50:00Z").install(monkeypatch)
+    assert sync.heroku_release_age_min("bainluck-heavy", "tok", now=_at(40)) == 0
+
+
+def test_the_age_read_asks_for_the_LATEST_release_too(monkeypatch):
+    """The same paginated trap as the readback: unranged, Heroku answers v1.
+
+    An age computed from v1 is months, which is always past the floor — the gate
+    would be permanently open and would read as working.
+    """
+    api = _released_at("2026-09-12T14:00:00Z").install(monkeypatch)
+    sync.heroku_release_age_min("bainluck-heavy", "tok", now=_at(40))
+    _, headers = api.calls[0]
+    assert "order=desc" in headers.get("range", ""), headers
+    assert "max=1" in headers.get("range", ""), headers
+
+
+def test_the_age_subcommand_prints_the_number_alone_and_always_exits_zero():
+    """Its caller is `$(...)`, so stdout is a contract and a non-zero is a hazard.
+
+    With no credential there is nothing to read; the honest answer is an empty
+    string, and the job carries on. Failing here would let a cost input take down
+    a sync — and this is the exact shape of the first sync's own bug (#5722),
+    where a read that could not answer was reported as a negative.
+    """
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "age", "--app", "bainluck-heavy"],
+        capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin", "HEROKU_API_KEY": ""},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "", proc.stdout
+    assert "HEROKU_API_KEY" in proc.stderr, "silence would be the unreadable-as-zero bug"
+
+
+# ── the trigger, in the workflow ───────────────────────────────────────────────
+
+
+def test_the_primary_trigger_is_CI_completing_on_master():
+    """The whole point of the change: an event correlated with the drift.
+
+    A schedule fires whether or not anything deployed, and GitHub delivered 4 of
+    17 of them. CI completing on master fires exactly when new drift exists.
+    """
+    code = _workflow_code()
+    assert "workflow_run:" in code
+    assert re.search(r"workflows:\s*\[\s*\"CI\"\s*\]", code), code
+    assert re.search(r"types:\s*\[\s*completed\s*\]", code), code
+    assert re.search(r"branches:\s*\[\s*master\s*\]", code), (
+        "without a branch filter every PR's CI run triggers a heavy sync"
+    )
+
+
+def test_the_triggering_workflow_is_named_the_way_ci_yml_actually_names_itself():
+    """A `workflow_run` filter is a STRING MATCH against another file's `name:`.
+
+    Rename ci.yml's `name:` and this trigger stops firing — silently, green,
+    forever, which is #5470's failure mode exactly. Nothing else in the repo
+    couples these two files, so this assertion is the coupling.
+    """
+    ci_name = re.search(r"(?m)^name:\s*(.+?)\s*$", CI_WORKFLOW.read_text())
+    assert ci_name, "ci.yml has no top-level name:"
+    named = re.search(r"workflows:\s*\[\s*\"([^\"]+)\"\s*\]", _workflow_code())
+    assert named and named.group(1) == ci_name.group(1), (
+        f"heavy-sync listens for {named and named.group(1)!r}, "
+        f"ci.yml calls itself {ci_name.group(1)!r}"
+    )
+
+
+def test_a_ci_run_that_did_not_succeed_never_syncs():
+    """A red CI deployed nothing, so there is no new drift — and the guard must
+    not accidentally gate the schedule or the attended dispatch, whose events
+    carry no `workflow_run` object at all."""
+    code = _workflow_code()
+    assert "github.event.workflow_run.conclusion == 'success'" in code
+    assert "github.event_name != 'workflow_run'" in code, (
+        "without this arm the `if` is false for every scheduled run and the "
+        "backstop dies silently"
+    )
+
+
+def test_the_schedule_survives_as_a_backstop():
+    """A HELD run needs something to re-offer it when no further deploy arrives.
+
+    Deleting the cron as "superseded" would leave a sync that fell outside the
+    band with no second chance until the next merge.
+    """
+    minutes = [int(m) for m in _cron().group(1).split(",")]
+    assert minutes, "the backstop cron was removed"
+    opens, closes = sync.window_bounds()
+    assert all(opens <= m <= closes for m in minutes), minutes
+
+
+def test_the_workflow_hands_the_decision_the_age_it_read():
+    """A gate nothing calls is a comment. Prove the flag is on the real call."""
+    code = _workflow_code()
+    assert "--heavy-release-age-min" in code
+    assert "heavy_sync_decision.py age --app bainluck-heavy" in code
+    decide_call = code[code.index("heavy_sync_decision.py decide"):]
+    assert "--heavy-release-age-min" in decide_call[:400], (
+        "the age is read but never passed to the decision"
+    )

@@ -32,6 +32,28 @@ name: Heavy app sync
 # `backend/tests/test_heavy_sync_decision_5470.py`.
 
 on:
+  # THE PRIMARY TRIGGER IS THE EVENT THAT CREATES THE DRIFT. Heavy falls behind
+  # when the MAIN app deploys and it does not; so the main app deploying is the
+  # only signal whose rate is guaranteed to track the rate of the problem. A
+  # clock cannot, and measurably did not — see the script header's 4-runs-in-17-
+  # slots reading, taken while heavy sat 7h33m behind with four launch ships dark.
+  #
+  # This cannot wedge the main deploy path, which is the property the whole file
+  # is built around: `workflow_run` observes CI from OUTSIDE, in its own run. A
+  # bug here reddens this job; `deploy` never learns it exists. (A line inside
+  # ci.yml's deploy job would have neither property.)
+  #
+  # `branches: [master]` filters on the TRIGGERING run's head branch, so the ~10x
+  # more numerous PR runs never reach here. `completed` is the only type offered,
+  # so the conclusion is filtered on the job below.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+  # THE BACKSTOP, for the one case the event above cannot cover: a run that HELD
+  # (outside the band, or under the cycle floor) when no further deploy arrives to
+  # re-offer the sync. Kept hourly-x3 rather than removed — the two triggers are
+  # gated by the same `decide`, so a redundant attempt costs two `ls-remote`s.
   schedule:
     # HOURLY, AND THE MINUTE IS DECORATIVE. #5662, measured 2026-09-12 over all
     # 100 `event=schedule` runs in this repo (2026-09-02..09-12, four workflows
@@ -70,6 +92,14 @@ jobs:
   sync:
     name: Sync bainluck-heavy to the main app's live commit
     runs-on: ubuntu-latest
+    # A CI run that did not succeed deployed nothing, so there is no new drift to
+    # clear — and `workflow_run` offers `completed` as its only type. Written as
+    # `!= 'workflow_run' || ...` so the schedule and the attended dispatch are
+    # never accidentally gated by a field their events do not carry. No secret is
+    # read here, which is the whole of gotcha #9's rule about step-level `if`.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     # NOT `heroku-deploy`. That group is held by ci.yml's deploy job with
     # `cancel-in-progress: false`, under which a newly queued job cancels the
     # previously PENDING one — so joining it would let 31 main deploys a day
@@ -140,12 +170,21 @@ jobs:
             DISPATCH_FLAG="--dispatched"
           fi
 
+          # How long since heavy was last DISTURBED, for the cycle floor. `age`
+          # always exits 0 and prints the number alone, so an unreadable answer
+          # arrives here as the empty string and `decide` proceeds on it: this is
+          # a cost gate, and a cost gate that cannot read its fact must not be
+          # able to fail a job — the opposite polarity to the guards above it.
+          HEAVY_AGE_MIN="$(python3 scripts/heavy_sync_decision.py age --app bainluck-heavy)"
+          echo "heavy release age: ${HEAVY_AGE_MIN:-<unreadable>} min"
+
           # Never piped, and the VALUE of the code is what is read (gotcha #54).
           set +e
           python3 scripts/heavy_sync_decision.py decide \
             --main-live "${MAIN_LIVE:-}" \
             --heavy-live "${HEAVY_LIVE:-}" \
             --heavy-is-ancestor "$ANCESTOR" \
+            --heavy-release-age-min "${HEAVY_AGE_MIN:-}" \
             $DISPATCH_FLAG
           DECISION=$?
           set -e
