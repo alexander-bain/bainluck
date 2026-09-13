@@ -2,8 +2,12 @@
 
 #3366 / D50, program step "soccer shadow stamping". `app/utils/nfl_team_matching`
 is equality-after-normalization and soccer scores 17/90 on it. This file is the
-proof that `app/utils/soccer_team_matching` scores 67/90 on the SAME population
+proof that `app/utils/soccer_team_matching` scores 73/90 on the SAME population
 and links no wrong game while doing it.
+
+67/90 until the alias tables landed (#5829). The six links they added are in
+`ACCEPTED_LINKS` below like every other one, each read by hand against the
+board; the count in this sentence is not the evidence, the id pairs are.
 
 The corpus (`fixtures/statpal_soccer_join_corpus_20260907.json`) is real on both
 sides, read 2026-09-07:
@@ -14,8 +18,8 @@ sides, read 2026-09-07:
                             deduped by `fallback_id_3` (15 verbatim repeats)
 
 `ACCEPTED_LINKS` pins every link BY ID PAIR, not just the count. A count would
-pass while the rule swapped one game for another; all 67 were read by hand when
-they were first generated, so a diff here is a claim that needs re-reading, not
+pass while the rule swapped one game for another; all 73 were read by hand when
+they were generated, so a diff here is a claim that needs re-reading, not
 a number to bump.
 """
 
@@ -30,6 +34,7 @@ import pytest
 from app.utils.nfl_team_matching import pair_matches as nfl_pair_matches
 from app.utils.soccer_team_matching import (
     CLUB_FORM_TOKENS,
+    CLUB_TOKEN_ALIASES,
     SQUAD_QUALIFIERS,
     soccer_pair_matches,
     soccer_team_matches,
@@ -78,6 +83,10 @@ ACCEPTED_LINKS: tuple[tuple[int, str], ...] = (
     (15223746, "9537419"),  # Boca Juniors v Sao Paulo  ==  Boca Juniors v Sao Paulo
     (15275083, "9537853"),  # Fluminense-RJ v Platense  ==  Fluminense v Platense
     (15290702, "9538492"),  # Palmeiras-SP v LDU Quito  ==  Palmeiras v LDU Quito
+    (
+        15290774,
+        "9538444",
+    ),  # Santos v Clube Atlético Mineiro  ==  Santos v Atletico-MG
     (15291890, "9543653"),  # Vitoria v Grêmio  ==  Vitoria v Gremio
     (
         15293383,
@@ -99,12 +108,17 @@ ACCEPTED_LINKS: tuple[tuple[int, str], ...] = (
     (15296755, "9543348"),  # Barcelona v Feyenoord  ==  Barcelona v Feyenoord
     (15296756, "9543349"),  # VfB Stuttgart v Viking FK  ==  Stuttgart v Viking
     (15296757, "9543350"),  # Napoli v Arsenal  ==  Napoli v Arsenal
+    (15296758, "9542331"),  # Liverpool v Atlético Madrid  ==  Liverpool v Atl. Madrid
     (
         15296760,
         "9543351",
     ),  # Paris Saint Germain v ŠK Slovan Bratislava  ==  PSG v Slovan Bratislava
     (15297725, "9540022"),  # FC Twente Enschede v SC Telstar  ==  Twente v Telstar
     (15298410, "9546264"),  # Norwich City v Birmingham City  ==  Norwich v Birmingham
+    (
+        15298411,
+        "9546263",
+    ),  # Derby County v West Bromwich Albion  ==  Derby v West Brom
     (
         15298412,
         "9546265",
@@ -125,6 +139,10 @@ ACCEPTED_LINKS: tuple[tuple[int, str], ...] = (
         15298467,
         "9467856",
     ),  # Houston Dynamo v Real Salt Lake  ==  Houston Dynamo v Real Salt Lake
+    (
+        15298468,
+        "9467848",
+    ),  # Atlanta United FC v Orlando City SC  ==  Atlanta Utd v Orlando City
     (15298469, "9467849"),  # CF Montreal v Charlotte FC  ==  CF Montreal v Charlotte
     (
         15298470,
@@ -168,6 +186,7 @@ ACCEPTED_LINKS: tuple[tuple[int, str], ...] = (
         15301238,
         "9544442",
     ),  # Botafogo-SP v Grêmio Novorizontino  ==  Botafogo SP v Novorizontino
+    (15301239, "9545712"),  # América Mineiro v Nautico PE  ==  America MG v Nautico
     (
         15301240,
         "9545713",
@@ -180,6 +199,10 @@ ACCEPTED_LINKS: tuple[tuple[int, str], ...] = (
         "9541985",
     ),  # Nordic United FC v IFK Värnamo  ==  Nordic United v Varnamo
     (15301255, "9541687"),  # Ljungskile SK v Norrby IF  ==  Ljungskile v Norrby
+    (
+        15301282,
+        "9545753",
+    ),  # Blackburn Rovers v Sheffield United  ==  Blackburn v Sheffield Utd
     (15301283, "9545757"),  # Wrexham AFC v Burnley  ==  Wrexham v Burnley
     (15301284, "9545754"),  # Cardiff City v Stoke City  ==  Cardiff v Stoke
     (15301285, "9545756"),  # Watford v Preston North End  ==  Watford v Preston
@@ -262,8 +285,15 @@ class TestTheRuleOverTheWholePopulation:
                     SQUAD_QUALIFIERS.match(t) for t in soccer_tokens(name)
                 ), f"{fixture['home']} v {fixture['away']}"
 
-    def test_the_23_misses_are_accounted_for_by_the_boards_own_span(self, corpus):
-        """5 past the tail, 1 before the head — read-window, not name, defects."""
+    def test_the_17_misses_are_accounted_for_by_the_boards_own_span(self, corpus):
+        """5 past the tail, 1 before the head — read-window, not name, defects.
+
+        23 before the alias table (#5829), and the six it closed are pinned
+        individually in `ACCEPTED_LINKS` above. The read-window arms do not move
+        with it: a name table cannot reach a fixture that is not on the board,
+        so `after` and `before` staying at 5 and 1 is the assertion that the six
+        came out of the NAME remainder and nowhere else.
+        """
         accepted, _ = _join(corpus, soccer_pair_matches)
         linked = {e for e, _ in accepted}
         kickoffs = [
@@ -271,7 +301,7 @@ class TestTheRuleOverTheWholePopulation:
         ]
         head, tail = min(kickoffs), max(kickoffs)
         misses = [e for e in corpus["our_events"] if e["event_id"] not in linked]
-        assert len(misses) == 23
+        assert len(misses) == 17
         after = [e for e in misses if datetime.fromisoformat(e["commence_time"]) > tail]
         before = [
             e for e in misses if datetime.fromisoformat(e["commence_time"]) < head
@@ -463,6 +493,168 @@ class TestThisModuleNowHasItsCaller:
         from app.utils.nfl_team_matching import pair_matches
 
         assert SOCCER.pair_rule is soccer_pair_matches
-        assert SOCCER.pair_rule is not pair_matches, (
-            "soccer on the NFL rule joins 17 of the pinned 90, not 67"
-        )
+        assert (
+            SOCCER.pair_rule is not pair_matches
+        ), "soccer on the NFL rule joins 17 of the pinned 90, not 67"
+
+
+class TestTheAliasTables:
+    """#5829 — the tier the module docstring deferred until it was measured.
+
+    The bar it set for itself was "measured over more than two days before it is
+    written down", so every entry is exercised here by the pair that put it in
+    the table, and the safety argument is measured rather than asserted.
+    """
+
+    @pytest.mark.parametrize(
+        "statpal,ours",
+        [
+            # Exonyms: another language's word for the same city.
+            ("FC Koln", "FC Cologne"),
+            ("FC Koln", "1. FC Köln"),
+            ("Nurnberg", "Nuremberg"),
+            ("Nurnberg", "1. FC Nürnberg"),
+            # A name one writer shortens.
+            ("Hamburger SV", "Hamburg SV"),
+            ("Hamburger SV", "Hamburg"),
+            # Abbreviations, each read on both 2026-09-07 and 2026-09-13.
+            ("Sheffield Utd", "Sheffield United"),
+            ("Manchester Utd", "Manchester United"),
+            ("Atlanta Utd", "Atlanta United FC"),
+            ("West Brom", "West Bromwich Albion"),
+            ("Wolves", "Wolverhampton Wanderers"),
+            ("Atl. Madrid", "Atlético Madrid"),
+            ("Atl. San Luis", "Atlético San Luis"),
+            ("Atletico-MG", "Clube Atlético Mineiro"),
+            ("America MG", "América Mineiro"),
+            # `Calcio` is the Italian `FC` and carries no identity.
+            ("Sassuolo", "Sassuolo Calcio"),
+            ("Parma", "Parma Calcio"),
+        ],
+    )
+    def test_every_entry_is_exercised_by_the_pair_that_earned_it(self, statpal, ours):
+        assert soccer_team_matches(statpal, ours)
+        assert soccer_team_matches(ours, statpal), "the tables apply to both sides"
+
+    def test_no_entry_is_dead_weight(self):
+        """A table nobody reads is a comment. Each key must change some name.
+
+        This is the mutant the parametrized list above cannot kill on its own:
+        an entry could be added for a club that never appears, and every other
+        test would still pass.
+        """
+        exercised = {
+            token
+            for statpal, ours in (
+                ("FC Koln", "FC Cologne"),
+                ("Nurnberg", "Nuremberg"),
+                ("Hamburger SV", "Hamburg SV"),
+                ("Sheffield Utd", "Sheffield United"),
+                ("West Brom", "West Bromwich Albion"),
+                ("Wolves", "Wolverhampton Wanderers"),
+                ("Atl. Madrid", "Atlético Madrid"),
+                ("America MG", "América Mineiro"),
+            )
+            for token in soccer_tokens(statpal) + soccer_tokens(ours)
+        }
+        assert (
+            set(CLUB_TOKEN_ALIASES) <= exercised
+        ), "an alias key with no test above it is an unmeasured vocabulary entry"
+
+    @pytest.mark.parametrize(
+        "statpal,ours",
+        [
+            ("B. Monchengladbach", "Borussia Monchengladbach"),
+            ("B. Monchengladbach", "M´gladbach"),
+            ("Borussia Monchengladbach", "M´gladbach"),
+        ],
+    )
+    def test_the_gladbach_names_reach_each_other_at_last(self, statpal, ours):
+        """Before this table no Gladbach fixture could be joined in any direction.
+
+        The board writes `B. Monchengladbach`, whose `B.` tokenizes to the
+        B-team marker; we write `Borussia Monchengladbach` and `M´gladbach`,
+        which share no token with each other.
+        """
+        assert soccer_team_matches(statpal, ours)
+
+    @pytest.mark.parametrize(
+        "statpal,ours",
+        [
+            # `gladbach` alone is a real different club on the same boards, and
+            # it is why the whole-name table is keyed on the FULL token tuple.
+            ("Bergisch Gladbach", "M´gladbach"),
+            ("Bergisch Gladbach", "Borussia Monchengladbach"),
+            ("B. Monchengladbach", "Bergisch Gladbach"),
+            # The squad guard survives the rewrite: a name that merely STARTS
+            # with a table key is not that key.
+            ("B. Monchengladbach II", "Borussia Monchengladbach"),
+            ("B. Monchengladbach W", "Borussia Monchengladbach"),
+            # ...and it survives the word table too.
+            ("Atlanta Utd 2", "Atlanta United FC"),
+            ("Wolves U21", "Wolverhampton Wanderers"),
+            ("Atl. Madrid U19", "Atlético Madrid"),
+            ("Hamburger SV II", "Hamburg SV"),
+            ("Koln II", "FC Cologne"),
+        ],
+    )
+    def test_the_tables_do_not_reach_a_different_club_or_a_different_squad(
+        self, statpal, ours
+    ):
+        assert not soccer_team_matches(statpal, ours)
+
+    @pytest.mark.parametrize(
+        "variant,canonical",
+        [("FC Cologne", "FC Koln"), ("Nuremberg", "Nurnberg")],
+    )
+    def test_an_exonym_matches_exactly_what_its_endonym_already_matched(
+        self, variant, canonical, corpus
+    ):
+        """The safety argument, stated as a property rather than a promise.
+
+        A subset rule lets a bare club word reach a longer name containing it —
+        `FC Köln` already matched `Viktoria Koln` and `Fortuna Koln` before this
+        table existed, and `Hamburg` already matched `ETSV Hamburg`. The table
+        does not create that shape and must not widen it: an anglicised spelling
+        is required to match the SAME names its endonym does, no more. What
+        stands behind the shape is the caller's contract — one candidate or a
+        receipt — which is unchanged.
+        """
+        names = {f["home"] for f in corpus["statpal_fixtures"]} | {
+            f["away"] for f in corpus["statpal_fixtures"]
+        }
+        names |= {"Viktoria Koln", "Fortuna Koln", "Koln II", "Bergisch Gladbach"}
+        assert {n for n in names if soccer_team_matches(n, variant)} == {
+            n for n in names if soccer_team_matches(n, canonical)
+        }
+
+
+class TestARunOfSquadMarkersIsNotAnInitialism:
+    """#5829, found by the collision scan rather than by the ship.
+
+    `Barcelona B W` is a women's B side. The run-join turned `b w` into `bw`,
+    which is neither marker, so the senior `Barcelona` matched it by plain
+    subset — the exact join `SQUAD_QUALIFIERS` exists to refuse. Twelve names on
+    the boards read 2026-09-07 and 2026-09-13 are in this shape.
+    """
+
+    @pytest.mark.parametrize(
+        "shadow,senior",
+        [
+            ("Barcelona B W", "Barcelona"),
+            ("Real Madrid B W", "Real Madrid"),
+            ("Sparta Prague B W", "Sparta Prague"),
+            ("Waregem 2 W", "Waregem"),
+        ],
+    )
+    def test_a_reserve_womens_side_no_longer_reaches_its_senior_team(
+        self, shadow, senior
+    ):
+        assert soccer_tokens(shadow)[-2:] != ["bw"]
+        assert not soccer_team_matches(shadow, senior)
+
+    def test_the_run_join_the_rule_was_written_for_still_joins(self):
+        """`c` is a squad marker and `D.C. United` is why the test is ALL, not ANY."""
+        assert soccer_tokens("D.C. United") == ["dc", "united"]
+        assert soccer_team_matches("D.C. United", "DC United")
+        assert soccer_tokens("Estudiantes L.P.") == ["estudiantes", "lp"]

@@ -3614,7 +3614,7 @@ def stamp_soccer_statpal_fixtures(self, apply=True):
     the one to restore instead.
 
     The reason soccer pays for this and the siblings do not is its matcher: a
-    token subset rather than an equality (67 links of a pinned 90 where equality
+    token subset rather than an equality (73 links of a pinned 90 where equality
     gets 17), with `SOCCER-NAMED-RESERVE-QUALIFIER-3366` still open — `Real
     Madrid` matches `Real Madrid Castilla` and only the ±1h window plus
     refuse-unless-exactly-one stands behind it.
@@ -3634,7 +3634,7 @@ def stamp_soccer_statpal_fixtures(self, apply=True):
       - **The match rule is `soccer_pair_matches`.** StatPal writes the short
         club name and we write the long one, so equality after normalization —
         the rule the other three leagues use and the only rule that is safe for
-        them — joins 17 of a pinned 90 where soccer's rule joins 67.
+        them — joins 17 of a pinned 90 where soccer's rule joins 73.
 
     The 300s soft limit sits under the 330s hard limit (#966) and covers four
     HTTP reads rather than two: three boards plus the live one."""
