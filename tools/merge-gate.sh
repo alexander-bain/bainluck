@@ -646,6 +646,93 @@ pr_state_scan () {
   fi
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# notice 28's CI row — WHICH row (lane1/275). One sha can carry MORE THAN ONE
+# CI run: a re-run after master was fixed under it, or the close+reopen that
+# `ci.yml`'s own header comment prescribes for a PR that got no run at all. The
+# shipped read compared the whole list against the single string
+# "completed/success", so the moment a second row existed `$ci` was multi-line,
+# equalled nothing, and the gate printed STOP on a sha whose CI is green —
+# `46476393…` and `3ef6a24f…`, each a 00:56Z failure plus a 01:55Z re-run.
+#
+# The rule is "the run that is about this sha NOW", and it has to hold in both
+# directions, which is why neither "any success" nor "all success" is it:
+#   · a newer green REPLACES an older red    — the re-run case above;
+#   · an older green NEVER covers a newer red or a run still going.
+# Newest is created_at (ISO-8601, so lexical order IS chronological) with the
+# run id as the tiebreak — ids increase monotonically and two runs can share a
+# second. A re-run of an existing run adds an ATTEMPT and updates that row in
+# place rather than creating one, so nothing here reasons about attempts.
+#
+# PENDING ANYWHERE IS A WAIT, NOT A PASS, and it is deliberately not read off
+# the newest row alone: re-running the OLDER row puts an unfinished CI against
+# this same tree while the newest row still reads green, which is precisely
+# "an older success over a newer unfinished run" with the rows swapped. The
+# test is `status != completed`, not a list of the pending words, because that
+# vocabulary is GitHub's to extend (`waiting`, `requested`, … arrived later).
+#
+# Verdict, not exit code, for the same reason as every other scan in this file:
+# "GitHub did not answer", "this sha is not pushed", "CI is still running" and
+# "CI failed" are four different instructions to the reader, and the gate that
+# collapses them is the gate that gets re-derived wrong at minute twelve.
+# ─────────────────────────────────────────────────────────────────────────────
+CI_VERDICT=""; CI_DETAIL=""; CI_LATEST=""
+ci_runs_scan () {
+  local raw="$1" rc="$2"
+  local total rows sorted n latest created id unfinished others
+  if [ "$rc" -ne 0 ] || [ -z "$raw" ]; then
+    CI_VERDICT=unanswered
+    CI_DETAIL="the runs API did not answer (exit $rc) — an empty answer here is NOT 'CI never ran'"
+    return 0
+  fi
+  total="$(printf '%s\n' "$raw" | /usr/bin/grep '^TOTAL ' | head -1)"
+  total="${total#TOTAL }"
+  case "$total" in
+    ''|*[!0-9]*)
+      CI_VERDICT=unanswered
+      CI_DETAIL="the runs API answered without a usable total_count ('${total:-<empty>}')"
+      return 0
+      ;;
+  esac
+  if [ "$total" -eq 0 ]; then
+    # total_count 0 means "the API could not match this commit", i.e. the sha is
+    # unpushed or abbreviated — a fixable mistake, NOT evidence about CI.
+    CI_VERDICT=unpushed
+    CI_DETAIL="total_count=0 — this sha is not pushed to the remote"
+    return 0
+  fi
+  rows="$(printf '%s\n' "$raw" | /usr/bin/grep '^RUN ' | sed 's/^RUN //')"
+  if [ -z "$rows" ]; then
+    CI_VERDICT=norow
+    CI_DETAIL="total_count=$total but NO CI row — the real hazard; check the PR is mergeable"
+    return 0
+  fi
+  sorted="$(printf '%s\n' "$rows" | sort -t'|' -k1,1 -k2,2n)"
+  n="$(printf '%s\n' "$sorted" | /usr/bin/grep -c '')"
+  latest="$(printf '%s\n' "$sorted" | tail -1)"
+  created="${latest%%|*}"
+  id="${latest#*|}"; id="${id%%|*}"
+  CI_LATEST="${latest##*|}"
+  unfinished="$(printf '%s\n' "$sorted" | awk -F'|' '{split($3,a,"/"); if (a[1] != "completed") c++} END {print c+0}')"
+  if [ "${unfinished:-0}" -gt 0 ]; then
+    CI_VERDICT=pending
+    CI_DETAIL="$unfinished of $n CI row(s) on this sha is still going (newest: run $id $created $CI_LATEST) — WAIT, do not merge on a finished sibling"
+  elif [ "$CI_LATEST" = "completed/success" ]; then
+    CI_VERDICT=pass
+    CI_DETAIL="total_count=$total, newest of $n CI row(s) is completed/success (run $id, $created)"
+  else
+    CI_VERDICT=fail
+    CI_DETAIL="the CURRENT CI row is $CI_LATEST (run $id, $created), newest of $n"
+  fi
+  if [ "$n" -gt 1 ]; then
+    # Printed because a reader who has just been told "green" while a red row
+    # exists on the same sha needs to see that it was read and superseded, not
+    # missed. The desk's ledger row quotes this line.
+    others="$(printf '%s\n' "$sorted" | sed '$d' | awk -F'|' '{printf "run %s %s %s; ", $2, $1, $3}')"
+    CI_DETAIL="$CI_DETAIL — superseded by age: $others"
+  fi
+}
+
 if [ -z "$SHA_IN" ]; then
   echo "usage: tools/merge-gate.sh <sha> [<repo-path>]" >&2
   echo "       tools/merge-gate.sh --orphans [--all] [<repo-path>]" >&2
@@ -839,6 +926,128 @@ FIXEOF
     "resolve_cert_id 5d18064c91caac7cae36caaaf9efe54fba3f885e '$fx/repaired.md'; [ \"\$CERT_ID\" != CERT-2613 ]"
   check "notice 13: a sha with no granted row resolves to empty, not to a withheld id" \
     "resolve_cert_id deadbeef '$fx/repaired.md'; [ -z \"\$CERT_ID\" ]"
+
+  # ── notice 28, behavioural (lane1/275). TWO CI rows on one sha is the normal
+  # shape after a re-run or the close+reopen `ci.yml` itself prescribes, and the
+  # shipped string comparison STOPped every one of them — on shas whose current
+  # CI is green. Fixtures are the verbatim shape of the call site's own jq, so
+  # these replay a real payload offline; the checks call the SHIPPED function
+  # rather than re-deriving its sort, for the reason supersedes_scan's do.
+  cat > "$fx/ci_rerun.txt" <<'FIXEOF'
+TOTAL 41
+RUN 2026-09-13T00:56:07Z|18430001|completed/failure
+RUN 2026-09-13T01:55:31Z|18431997|completed/success
+FIXEOF
+  check "n28: a newer green REPLACES an older red on the same sha (the 46476393 STOP)" \
+    "ci_runs_scan \"\$(cat '$fx/ci_rerun.txt')\" 0; [ \"\$CI_VERDICT\" = pass ]"
+  check "n28: and it names the row it chose, so the desk can check the choice" \
+    "ci_runs_scan \"\$(cat '$fx/ci_rerun.txt')\" 0; \
+     printf '%s' \"\$CI_DETAIL\" | /usr/bin/grep -q '18431997'"
+  check "n28: the superseded red is reported, not silently dropped" \
+    "ci_runs_scan \"\$(cat '$fx/ci_rerun.txt')\" 0; \
+     printf '%s' \"\$CI_DETAIL\" | /usr/bin/grep -q '18430001'"
+
+  # The other direction, which is the whole reason this is not "any row green".
+  cat > "$fx/ci_regress.txt" <<'FIXEOF'
+TOTAL 41
+RUN 2026-09-13T00:56:07Z|18430001|completed/success
+RUN 2026-09-13T01:55:31Z|18431997|completed/failure
+FIXEOF
+  check "n28: an OLDER green never covers a NEWER red" \
+    "ci_runs_scan \"\$(cat '$fx/ci_regress.txt')\" 0; [ \"\$CI_VERDICT\" = fail ]"
+
+  # Still going — on the NEWEST row.
+  cat > "$fx/ci_pending.txt" <<'FIXEOF'
+TOTAL 41
+RUN 2026-09-13T00:56:07Z|18430001|completed/success
+RUN 2026-09-13T01:55:31Z|18431997|queued/null
+FIXEOF
+  check "n28: an older green never covers a newer run that has not finished" \
+    "ci_runs_scan \"\$(cat '$fx/ci_pending.txt')\" 0; [ \"\$CI_VERDICT\" = pending ]"
+
+  # Still going — on the OLDER row, which is what a re-run of the red one looks
+  # like: `created_at` stays where it was, so a rule that only reads the newest
+  # row's status calls this green while CI is running against the same tree.
+  cat > "$fx/ci_rerun_inflight.txt" <<'FIXEOF'
+TOTAL 41
+RUN 2026-09-13T00:56:07Z|18430001|in_progress/null
+RUN 2026-09-13T01:55:31Z|18431997|completed/success
+FIXEOF
+  check "n28: a re-run in flight on the OLDER row is a WAIT, not the newest row's green" \
+    "ci_runs_scan \"\$(cat '$fx/ci_rerun_inflight.txt')\" 0; [ \"\$CI_VERDICT\" = pending ]"
+  check "n28: pending and pass are DISTINCT verdicts (neither collapses into the other)" \
+    "ci_runs_scan \"\$(cat '$fx/ci_rerun_inflight.txt')\" 0; a=\$CI_VERDICT; \
+     ci_runs_scan \"\$(cat '$fx/ci_rerun.txt')\" 0; b=\$CI_VERDICT; \
+     [ \"\$a\" != \"\$b\" ] && [ -n \"\$a\" ] && [ -n \"\$b\" ]"
+
+  # Two runs inside one second: ids increase monotonically and settle it. Both
+  # orders are asserted, because a tiebreak that always picks the same end of
+  # the file would pass one of them by accident.
+  cat > "$fx/ci_tie_green.txt" <<'FIXEOF'
+TOTAL 41
+RUN 2026-09-13T01:55:31Z|18431997|completed/failure
+RUN 2026-09-13T01:55:31Z|18432050|completed/success
+FIXEOF
+  cat > "$fx/ci_tie_red.txt" <<'FIXEOF'
+TOTAL 41
+RUN 2026-09-13T01:55:31Z|18431997|completed/success
+RUN 2026-09-13T01:55:31Z|18432050|completed/failure
+FIXEOF
+  check "n28: a same-second pair is settled by run id — higher id green is a pass" \
+    "ci_runs_scan \"\$(cat '$fx/ci_tie_green.txt')\" 0; [ \"\$CI_VERDICT\" = pass ]"
+  check "n28: a same-second pair is settled by run id — higher id red is a stop" \
+    "ci_runs_scan \"\$(cat '$fx/ci_tie_red.txt')\" 0; [ \"\$CI_VERDICT\" = fail ]"
+
+  # Both pairs above pass WITHOUT the numeric key, because `sort` falls back to
+  # a whole-line comparison when its keys tie and every run id GitHub has issued
+  # is the same width, where lexical and numeric agree. Measured: dropping
+  # `-k2,2n` left the entire suite green. So the rule is pinned where the two
+  # orders actually diverge — ids either side of a digit-count boundary, which
+  # is synthetic today and is the shape the next boundary crossing will have.
+  # Without this the numeric key is decoration and a reader cannot tell.
+  cat > "$fx/ci_tie_width.txt" <<'FIXEOF'
+TOTAL 41
+RUN 2026-09-13T01:55:31Z|9000000000|completed/failure
+RUN 2026-09-13T01:55:31Z|18432050000|completed/success
+FIXEOF
+  check "n28: the same-second tiebreak is NUMERIC, not sort's lexical last resort" \
+    "ci_runs_scan \"\$(cat '$fx/ci_tie_width.txt')\" 0; [ \"\$CI_VERDICT\" = pass ]"
+
+  # The ordinary one-row shas, which are most of them: this ship must not buy
+  # the re-run case by breaking the case that already worked.
+  check "n28: one green row is still a pass (the common case, unchanged)" \
+    "ci_runs_scan 'TOTAL 41
+RUN 2026-09-13T01:55:31Z|18431997|completed/success' 0; [ \"\$CI_VERDICT\" = pass ]"
+  check "n28: one red row is still a stop" \
+    "ci_runs_scan 'TOTAL 41
+RUN 2026-09-13T01:55:31Z|18431997|completed/failure' 0; [ \"\$CI_VERDICT\" = fail ]"
+
+  # The three non-CI answers notice 28 and its amendments are actually about.
+  # ABSENCE OF THE CI ROW IS A STOP, NOT A PASS — and it must not be reachable
+  # by the same road as "the sha is unpushed", which is a typo, not a hazard.
+  check "n28: total_count=0 is 'not pushed', not a finding about CI" \
+    "ci_runs_scan 'TOTAL 0' 0; [ \"\$CI_VERDICT\" = unpushed ]"
+  check "n28: rows present in the payload but NO CI row is the real hazard" \
+    "ci_runs_scan 'TOTAL 41' 0; [ \"\$CI_VERDICT\" = norow ]"
+  check "n28: unpushed and no-CI-row stay distinct verdicts" \
+    "ci_runs_scan 'TOTAL 0' 0; a=\$CI_VERDICT; ci_runs_scan 'TOTAL 41' 0; \
+     [ \"\$a\" != \"\$CI_VERDICT\" ]"
+  check "n28: a non-zero gh exit is UNANSWERED, never a reading of CI" \
+    "ci_runs_scan '' 1; [ \"\$CI_VERDICT\" = unanswered ]"
+  check "n28: an empty payload at exit 0 is UNANSWERED too" \
+    "ci_runs_scan '' 0; [ \"\$CI_VERDICT\" = unanswered ]"
+  check "n28: a payload with no parsable total is UNANSWERED, not total=0" \
+    "ci_runs_scan 'gh: something went wrong' 0; [ \"\$CI_VERDICT\" = unanswered ]"
+
+  # Only `unanswered` may reach stopq (it is the only one that means RE-RUN),
+  # and `pass` is the only branch that reaches `pass`. A mutant that widened the
+  # case arm to `pass|fail)` would be a green gate on a red sha.
+  check "n28: the call site passes ONLY on the pass verdict" \
+    "sed -e 's/#.*//' '$self' | /usr/bin/grep -q 'pass) *pass  \"notice 28'"
+  check "n28: the runs payload is read ONCE, so the two halves cannot disagree" \
+    "[ \$(sed -e 's/#.*//' '$self' | /usr/bin/grep -c 'gh api \"\$RUNS_URL\"') -eq 1 ]"
+  check "ci_runs_scan is called as a statement, never in a subshell" \
+    "! sed -e 's/#.*//' '$self' | /usr/bin/grep -q '\$(ci_runs_scan'"
 
   # -w, not \b: BSD grep is what /usr/bin/grep is here, and a prefix match
   # would make CERT-261 inherit CERT-2619's verdict.
@@ -1920,23 +2129,19 @@ fi
 # the list pages at 30, so page one can hold no CI row on a sha whose CI passed.
 # ─────────────────────────────────────────────────────────────────────────────
 RUNS_URL="repos/$REPO_SLUG/actions/runs?head_sha=$SHA&per_page=100"
-total="$(gh api "$RUNS_URL" --jq '.total_count' 2>/dev/null)"
-if [ -z "$total" ]; then
-  stopq "notice 28 exact-sha CI" "the runs API did not answer"
-elif [ "$total" -eq 0 ]; then
-  # total_count 0 means "the API could not match this commit", i.e. the sha is
-  # unpushed — a fixable mistake, NOT evidence about CI.
-  stop "notice 28 exact-sha CI" "total_count=0 — this sha is not pushed to the remote"
-else
-  ci="$(gh api "$RUNS_URL" --jq '.workflow_runs[]|select(.name=="CI")|"\(.status)/\(.conclusion)"' 2>/dev/null)"
-  if [ -z "$ci" ]; then
-    stop "notice 28 exact-sha CI" "total_count=$total but NO CI row — the real hazard; check the PR is mergeable"
-  elif [ "$ci" = "completed/success" ]; then
-    pass "notice 28 exact-sha CI" "total_count=$total, CI completed/success"
-  else
-    stop "notice 28 exact-sha CI" "CI is $ci"
-  fi
-fi
+# ONE read, not two. total_count and the CI rows come out of the same snapshot,
+# so the gate can never answer from a list that moved between two calls — and
+# the answer it gives can be replayed offline, which is how ci_runs_scan below
+# is guarded without a network.
+ci_raw="$(gh api "$RUNS_URL" \
+  --jq '"TOTAL \(.total_count)", (.workflow_runs[]|select(.name=="CI")|"RUN \(.created_at)|\(.id)|\(.status)/\(.conclusion)")' 2>/dev/null)"
+ci_rc=$?
+ci_runs_scan "$ci_raw" "$ci_rc"
+case "$CI_VERDICT" in
+  unanswered) stopq "notice 28 exact-sha CI" "$CI_DETAIL" ;;
+  pass)       pass  "notice 28 exact-sha CI" "$CI_DETAIL" ;;
+  *)          stop  "notice 28 exact-sha CI" "$CI_DETAIL" ;;
+esac
 
 # ─────────────────────────────────────────────────────────────────────────────
 # notice 32 — CHECK-RUNS, which are not the same thing as workflow runs: a sha
