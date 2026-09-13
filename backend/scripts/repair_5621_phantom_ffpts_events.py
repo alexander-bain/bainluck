@@ -123,6 +123,14 @@ CERT-2724 blocked on lane1b's #5595 the same morning). The insert now refreshes
 on conflict and the gate compares every backed-up column with
 `IS NOT DISTINCT FROM`, so a stale backup FAILS instead of passing.
 
+And the gate survives its own precondition. Before `--backup` has ever run the
+two tables do not exist, and the reconciliation used to CRASH there
+(`UndefinedTable`) rather than report it — on the very first dry run, which is
+the one the runbook's step 0 is. It now probes with `to_regclass` and reads an
+absent backup as "every in-scope row is unbacked", so the dry run prints a
+verdict and `--apply` refuses. Alex hit the crash on `bainluck-heavy` run.9689
+(2026-09-13 15:56Z); his command was correct and this script was not.
+
     python3 scripts/restore_5621_phantom_ffpts_events.py --apply
 
 USAGE
@@ -460,41 +468,85 @@ async def run(args):
             await s.commit()
             print(f"  copied {len(event_ids)} events + {len(market_ids)} markets")
 
-        # The D51 gate: every in-scope row has a backup holding the values that
-        # are about to be overwritten. A clean pass over an EMPTY backup is not
-        # a clean pass — and neither is one over a STALE backup, which is why
-        # these compare CONTENT and not just the id. `IS NOT DISTINCT FROM`
-        # rather than `=` so a NULL on both sides reconciles instead of
-        # silently counting as a mismatch forever (`event_id` is nullable).
-        stale_e = (
-            await s.execute(
-                text(
-                    "SELECT count(*) FROM events e WHERE e.id = ANY(:ids) AND NOT "
-                    "EXISTS (SELECT 1 FROM backup_5621_events b WHERE b.id = e.id "
-                    "AND b.status IS NOT DISTINCT FROM e.status)"
-                ),
-                {"ids": event_ids},
-            )
-        ).scalar()
-        stale_m = (
-            await s.execute(
-                text(
-                    "SELECT count(*) FROM futures_markets f WHERE f.id = ANY(:ids) "
-                    "AND NOT EXISTS (SELECT 1 FROM backup_5621_markets b "
-                    "WHERE b.id = f.id "
-                    "AND b.llm_sport_category IS NOT DISTINCT FROM "
-                    "f.llm_sport_category "
-                    "AND b.sport_id IS NOT DISTINCT FROM f.sport_id "
-                    "AND b.event_id IS NOT DISTINCT FROM f.event_id)"
-                ),
-                {"ids": market_ids},
-            )
-        ).scalar()
-        missing_e, missing_m = stale_e, stale_m
-        print(
-            f"\n=== backup reconciliation (content-exact) === events "
-            f"unbacked-or-stale={stale_e} markets unbacked-or-stale={stale_m}"
+        # THE RECONCILIATION MUST NOT ASSUME ITS OWN TABLES EXIST.
+        #
+        # Alex ran the documented no-arg dry run on `bainluck-heavy` (run.9689,
+        # 2026-09-13 15:56Z) and it died here with `UndefinedTable:
+        # backup_5621_events`. The two queries below were written to run
+        # unconditionally, but the tables they read are created only under
+        # `--backup` — so on a pristine schema, which is every first run, the
+        # step whose entire job is to prove a backup exists CRASHED instead of
+        # reporting that one does not. A dry run that cannot survive the state
+        # it is meant to inspect is not a pre-flight, and the runbook's step 0
+        # was therefore unrunnable on exactly the first invocation it exists for.
+        #
+        # `to_regclass` answers without touching the table and returns NULL
+        # rather than raising, so the probe cannot itself be the thing that
+        # aborts the transaction.
+        backup_exists = bool(
+            (
+                await s.execute(
+                    text(
+                        "SELECT to_regclass('public.backup_5621_events') IS NOT "
+                        "NULL AND to_regclass('public.backup_5621_markets') IS "
+                        "NOT NULL"
+                    )
+                )
+            ).scalar()
         )
+
+        if not backup_exists:
+            # FAILS TOWARD REFUSING. Absent tables mean every in-scope row is
+            # unbacked, which is the strongest possible reading and the one that
+            # stops `--apply` below. Reporting 0 here would be the inverse
+            # mistake: a clean-looking reconciliation over a backup that does
+            # not exist, which is precisely what the D51 gate is for.
+            missing_e, missing_m = len(event_ids), len(market_ids)
+            print(
+                "\n=== backup reconciliation (content-exact) === no backup "
+                f"tables yet — events unbacked-or-stale={missing_e} markets "
+                f"unbacked-or-stale={missing_m}. Run --backup before --apply."
+            )
+            # No early return: the dry-run print and the `--apply` refusal below
+            # are the same two sentences in both worlds, and a second copy of
+            # them is a second place for them to drift apart.
+        else:
+            # The D51 gate: every in-scope row has a backup holding the values
+            # that are about to be overwritten. A clean pass over an EMPTY
+            # backup is not a clean pass — and neither is one over a STALE
+            # backup, which is why these compare CONTENT and not just the id.
+            # `IS NOT DISTINCT FROM` rather than `=` so a NULL on both sides
+            # reconciles instead of silently counting as a mismatch forever
+            # (`event_id` is nullable).
+            stale_e = (
+                await s.execute(
+                    text(
+                        "SELECT count(*) FROM events e WHERE e.id = ANY(:ids) AND "
+                        "NOT EXISTS (SELECT 1 FROM backup_5621_events b WHERE "
+                        "b.id = e.id AND b.status IS NOT DISTINCT FROM e.status)"
+                    ),
+                    {"ids": event_ids},
+                )
+            ).scalar()
+            stale_m = (
+                await s.execute(
+                    text(
+                        "SELECT count(*) FROM futures_markets f WHERE f.id = "
+                        "ANY(:ids) AND NOT EXISTS (SELECT 1 FROM "
+                        "backup_5621_markets b WHERE b.id = f.id "
+                        "AND b.llm_sport_category IS NOT DISTINCT FROM "
+                        "f.llm_sport_category "
+                        "AND b.sport_id IS NOT DISTINCT FROM f.sport_id "
+                        "AND b.event_id IS NOT DISTINCT FROM f.event_id)"
+                    ),
+                    {"ids": market_ids},
+                )
+            ).scalar()
+            missing_e, missing_m = stale_e, stale_m
+            print(
+                f"\n=== backup reconciliation (content-exact) === events "
+                f"unbacked-or-stale={stale_e} markets unbacked-or-stale={stale_m}"
+            )
 
         if not args.apply:
             print(
