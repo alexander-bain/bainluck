@@ -1234,6 +1234,9 @@ async def _process_live_sport(
     """
     from app.models.models import Event, Team
     from sqlalchemy import and_, or_
+    # Function-local for the same reason every other `espn_helpers` import in
+    # this module is: the two modules import each other (header, line 62).
+    from app.utils.espn_helpers import espn_scheduled_demotes_live
 
     events_result = await session.execute(
         select(Event)
@@ -1448,6 +1451,38 @@ async def _process_live_sport(
         # Update clock, scores, broadcast, importance, commence_time
         fields_changed = await update_fields_fn(session, event, ee, claimed_espn_ids, stats)
         if fields_changed:
+            changed = True
+
+        # ── THE AUTHORITY SAYS NOBODY HAS STARTED (#5324, second half) ──
+        #
+        # Read AFTER `update_fields_fn` on purpose: that call is what lands
+        # ESPN's score, period and clock on the row, so the observation guard
+        # inside the predicate judges this pass's facts rather than last
+        # pass's. It is also what corrects `commence_time` to ESPN's own — the
+        # slide we ingest correctly and then go on contradicting.
+        #
+        # ANCHORED ROWS ONLY. A name match can fold onto the wrong sibling
+        # (gotcha #32 — the same two teams play again on Thursday), and a
+        # status write driven by a mis-matched board entry would blank a game
+        # that is genuinely being played. `espn_terminal_write_is_fold` exists
+        # because that fold is real; ruling 048's id-anchored correspondence is
+        # the bar for a claim about identity, and this is one. The tennis
+        # authority write next door is likewise anchored-only.
+        if match_method == "espn_id" and espn_scheduled_demotes_live(
+            event.status, ee.status,
+            home_score=event.home_score, away_score=event.away_score,
+            period=event.period, game_clock=event.game_clock,
+        ):
+            logger.info(
+                "ESPN authority demotes LIVE -> scheduled: event %d (%s vs %s) "
+                "— ESPN reports STATUS_SCHEDULED, our commence %s (#5324)",
+                event.id, event.home_team_name, event.away_team_name,
+                event.commence_time.isoformat() if event.commence_time else None,
+            )
+            event.status = "scheduled"
+            stats["live_demoted_by_authority"] = (
+                stats.get("live_demoted_by_authority", 0) + 1
+            )
             changed = True
 
         # ESPN win probability + snapshots

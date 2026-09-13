@@ -89,6 +89,79 @@ def espn_replay_unsettles(event_status, espn_status) -> bool:
     return espn_status == "in" and event_status in ("completed", "closed")
 
 
+def espn_scheduled_demotes_live(
+    event_status,
+    espn_status,
+    home_score=None,
+    away_score=None,
+    period=None,
+    game_clock=None,
+) -> bool:
+    """True when the authority positively reports a game as NOT YET STARTED on a
+    row we are serving as ``live`` — the second half of #5324.
+
+    ``events.status`` is a LATCH. ``transition_event_statuses`` promotes
+    ``scheduled -> live`` the moment ``commence_time <= now`` and nothing ever
+    re-derives it, so a start that slides leaves the row asserting ``live``
+    against a game nobody has begun. live/171 closed the half that is decidable
+    from the row alone (``live`` with its OWN start still ahead) inside
+    ``served_event_status``. This is the other half, and it needs a fact from
+    outside the row: between slides ``commence_time`` sits in the past and the
+    row is internally consistent while still being wrong.
+
+    ═══ WHY NOT A GRACE WINDOW ═══
+
+    The cheap rule — "live, nothing ever observed, started less than N minutes
+    ago" — was measured and RULED OUT (M-20260912-live171, 23:37Z 2026-09-12).
+    Twelve rows would have been demoted at N>=25 and **all twelve were genuinely
+    being played**; eleven simply had ``home_score IS NULL`` because we hold no
+    observation channel for their sport at all. That is gotcha #53's shape —
+    absence of an observation read as an observation of absence — and no value
+    of N can fix it while whole sports observe nothing. Re-taken after #5697
+    released (02:55Z 2026-09-13) the same set is 1 of 6 rows, and that row is
+    anchorless AFLW, on which this rule is silent by construction.
+
+    ═══ ASYMMETRIC, LIKE EVERY OTHER AUTHORITY WRITE HERE ═══
+
+    Only a POSITIVE statement moves the row, and our own observation outranks
+    the authority's negative one:
+
+    * ``espn_status == "scheduled"`` is ESPN's ``STATUS_SCHEDULED`` — it says
+      this game has not begun. Silence, an unmatched row, or any other state
+      writes nothing, so the sports ESPN does not cover are untouched rather
+      than wrongly demoted.
+    * ``status_delayed`` deliberately does NOT demote. ESPN publishes it both
+      before a start and mid-game, and it carries ``state="in"`` either way
+      (see :func:`espn_terminal_state`'s note) — an ambiguous read, so this
+      stays silent on it. Same for ``status_halftime``, which is not
+      "not started" by any reading.
+    * A real observation of our own REFUSES the demotion: a non-zero score, a
+      period, or a game clock. If we hold 21-14 and the authority says
+      scheduled, the anchor is wrong and the answer is to write nothing, not to
+      blank a game in progress.
+    * A 0-0 with no clock is NOT an observation. It is the ambiguous value
+      ``COALESCE(home_score,0)=0`` conflates with absence, and the whole reason
+      live/182's rider 2 insists on splitting ``IS NULL`` from ``= 0``; the
+      authority is the tiebreak on exactly that shape.
+    * Only ``live`` is demoted. A settled row contradicted by ``scheduled`` is
+      the cross-merge/fold class and belongs to ``_is_bogus_future_settled``,
+      which already judges it on different evidence.
+
+    Pure, so the whole policy is testable without a database and without a
+    network — the same reason :func:`authority_write` next door is pure.
+    """
+    if espn_status != "scheduled" or event_status != "live":
+        return False
+    if period or game_clock:
+        return False
+    for side in (home_score, away_score):
+        if isinstance(side, bool) or not isinstance(side, int):
+            continue
+        if side != 0:
+            return False
+    return True
+
+
 def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) -> bool:
     """True when writing terminal/live ESPN state onto an EXISTING event whose own
     ``commence_time`` is still in the future (beyond ``slack``) — i.e. an ESPN game
