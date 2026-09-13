@@ -56,7 +56,11 @@ from app.utils.event_concept_cache import (
 )
 from app.utils.event_tennis import is_tennis_feeder_circuit
 from app.utils.event_twin_fold import fold_twin_events
-from app.utils.proven_duplicates import not_a_proven_duplicate
+from app.utils.proven_duplicates import (
+    FoldedBlendView,
+    folded_card_numbers_batch,
+    not_a_proven_duplicate,
+)
 from app.utils.rail_competition_share import equal_share_by_competition
 from app.utils.sport_keys import (
     SPORT_HIERARCHY,
@@ -877,6 +881,63 @@ def _folded_past_rails(results: list, unreported: list, upcoming: list):
             "league page: past-rail twin fold failed; serving both rails unfolded"
         )
         return results, unreported
+
+
+async def _tag_folded_rows(db, events: list) -> dict:
+    """What each rail row should PRINT once its suppressed twin is read. #5853.
+
+    The third fold on this page, and the only id-keyed one. The other two are
+    `_folded_upcoming` and `_folded_past_rails`, which group by name and minute
+    and can therefore see pairs the tag cannot; this reads the
+    `provenance:duplicate-of:` tag and can therefore see pairs the NAME cannot.
+    The Bundesliga results rail on 2026-09-13 is the case that proves they are
+    not redundant:
+
+        15310934  Mainz          Eintracht Frankfurt  espn      0 speakers, no opening
+        15297803  FSV Mainz 05   Eintracht Frankfurt  odds_api  3 speakers, opened 0.6937
+
+    `_squash("Mainz")` is `mainz` and `_squash("FSV Mainz 05")` is `fsvmainz05`,
+    so the name fold never groups them; the tag suppressed the richer row hours
+    earlier, and the rail served eight cards with a percentage and one — that
+    one — with none. Measured over all 191 tagged rows on production the same
+    morning: 11 canonicals hold FEWER probability speakers than the row they
+    suppress, 6 hold none at all, and 1 is missing the opening line the settled
+    card actually prints. This closes all three counts on this page.
+
+    🔴 IT RUNS AFTER THE OTHER TWO FOLDS, NOT BEFORE. Those two deliver their
+    union onto the row with `set_committed_value`, so by the time this reads
+    `event.win_probability_sources` it is already the name-fold's merged bag and
+    the two compose into one answer. Reversed, the name fold would union a stale
+    bag and the tag fold's work would be invisible on any row that was also a
+    name twin.
+
+    🔴 IT RETURNS A VIEW, NEVER A WRITE. `FoldedBlendView` cannot assign to the
+    row (ruling 048 permits reading a suppressed row's content onto the page and
+    does not permit `UPDATE events SET win_probability_sources`), which is also
+    why this does not reuse `set_committed_value` like its two neighbours: those
+    merge a bag the row could legitimately own, this one carries another row's
+    opening line and must not be able to reach the database with it.
+
+    DEGRADES TO TODAY'S RAIL, LOUDLY — the shared module's rule is that fold
+    errors are not swallowed, and its reason is a page that "silently loses its
+    prices" (gotcha #53). Neither half applies at this boundary: the fallback is
+    each row's OWN numbers, so every card prints exactly what it prints today,
+    and `logger.exception` is the opposite of silent. What a bare raise would
+    cost is the whole games block of a league page — all three rails, sixteen
+    games — for the sake of one card's percentage.
+    """
+    try:
+        return await folded_card_numbers_batch(db, events)
+    except Exception:
+        # `sport_key` is not taken as an argument, let alone logged: it is a
+        # path parameter and CodeQL grades the interpolation `py/log-injection`
+        # at medium severity, which notice 32 refuses. The row count says as
+        # much about which call failed as the key would.
+        logger.exception(
+            "league page: tag fold failed over %d rows; rails serve their own numbers",
+            len(events),
+        )
+        return {}
 
 
 def recent_results_query(
@@ -2507,6 +2568,13 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                 # Chrome, not content: a game with no logo is still a game.
                 logger.exception("league page: team lookup failed for %s", sport_key)
 
+        # ── #5853: a card may not lose the number the row it suppressed held ──
+        #
+        # ONE lookup for all three rails, placed after both name folds so the
+        # two compose (see `_tag_folded_rows` for why that order is the only one
+        # that works) and before the formatter, which is the only reader.
+        _tag_folded = await _tag_folded_rows(db, [*_g_events, *_r_events, *_u_events])
+
         # Per-item, not per-rail (gotcha #42: "one bad item must never wipe a
         # whole scoring pass"). This formatter reads twice as many columns since
         # UX-P074, and the whole rails block sits under ONE except — so a single
@@ -2515,7 +2583,27 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             out: list[dict] = []
             for _e in events:
                 try:
-                    out.append(_format_game_brief(_e, sport_key, _teams))
+                    # The row's OWN numbers are the default, never a blank: the
+                    # batch promises an entry per event, but a miss must degrade
+                    # to today's card rather than to one whose percentage
+                    # vanished — which is the defect this fold exists to remove,
+                    # not one it may introduce.
+                    _folded = _tag_folded.get(int(_e.id))
+                    out.append(
+                        _format_game_brief(
+                            (
+                                FoldedBlendView(
+                                    _e,
+                                    _folded.win_probability_sources,
+                                    opening=_folded.opening,
+                                )
+                                if _folded is not None
+                                else _e
+                            ),
+                            sport_key,
+                            _teams,
+                        )
+                    )
                 except Exception:
                     logger.exception(
                         "league page: game %s failed to format for %s",
