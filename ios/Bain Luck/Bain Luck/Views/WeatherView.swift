@@ -142,9 +142,18 @@ struct WeatherView: View {
                     .fontWeight(.medium)
                     .lineLimit(2)
                 HStack(spacing: 8) {
+                    // #5908 / D91: the source mark is a NAME. This row squeezes
+                    // two Labels into ~120pt, both wrapped, and SwiftUI
+                    // hyphenated the brand across the break — the card read
+                    // "Polymar-" / "ket". A wrapped date is a date; a
+                    // hyphenated brand is not the brand. So the name never
+                    // compresses and never breaks, and the closing date takes
+                    // the two lines instead.
                     Label(item.src.capitalized, systemImage: "chart.bar.fill")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     Label("Closes \(item.closes)", systemImage: "clock")
                         .font(.caption2)
                         .foregroundStyle(.secondary)

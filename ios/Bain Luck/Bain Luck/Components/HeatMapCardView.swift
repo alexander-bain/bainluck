@@ -238,7 +238,7 @@ private struct HeatMapCell {
     ScrollView {
         HeatMapCardView(
             data: heatmapPreviewData(
-                name: "Dune: Part Three -- Rotten Tomatoes score",
+                name: "Dune: Part Three \u{2014} Rotten Tomatoes score",
                 category: "entertainment",
                 cells: [
                     (label: "\u{2265}70", prob: 0.92),
