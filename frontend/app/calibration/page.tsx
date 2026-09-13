@@ -2184,6 +2184,36 @@ export default function CalibrationPage() {
               ({(100 * data.liquidity_filter.kalshi_excluded / (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded)).toFixed(0)}% of the Kalshi set). A skeptical auditor can re-include them &mdash; we publish both counts so the filter is never silent.
             </li>
           )}
+          {/* #5401 / q270 — THE WRITER BAR, and why it is its own bullet rather
+              than a bigger number on the one above.
+              The two Kalshi bars nest: everything the liquidity bar drops is also
+              below this one. So the counts OVERLAP and adding them would
+              overstate the drop. Naming them separately is the only honest
+              arithmetic available, and it is also the one a reader can check.
+              Notice 34 / CERT-2295: the payload's own `rule` and
+              `relation_to_liquidity_filter` strings are NOT rendered — they carry
+              column names written for an auditor. The label names the exclusion,
+              the counts size it, and the sentence is this page's own. */}
+          {data.writer_bar_filter &&
+            data.writer_bar_filter.excluded > 0 &&
+            data.writer_bar_filter.included + data.writer_bar_filter.excluded > 0 && (
+            <li data-testid="calibration-writer-bar-exclusion">
+              <strong className="text-text-primary">Prices nobody could have traded at (Kalshi).</strong>{" "}
+              <span className="text-text-primary">
+                {data.writer_bar_filter.included.toLocaleString()} included
+              </span>{" "}
+              &middot;{" "}
+              <span className="text-text-muted">
+                {data.writer_bar_filter.excluded.toLocaleString()} excluded
+              </span>{" "}
+              ({(100 * data.writer_bar_filter.excluded / (data.writer_bar_filter.included + data.writer_bar_filter.excluded)).toFixed(0)}% of the Kalshi set).
+              An opening price only counts if there was a real offer on both sides of it. Some of
+              our stored openings had no one on the other side, so they were never prices anyone
+              could have acted on, and we stopped scoring ourselves against them. This bar is
+              stricter than the liquidity filter above and covers the same rows, so the two counts
+              overlap rather than adding up.
+            </li>
+          )}
           {/* L2-103 Item 4: the other read-side exclusions that pull the raw count
               down to the published total — surfaced so the drop is never silent. */}
           {data.esports_multi_bundle_filter && data.esports_multi_bundle_filter.excluded > 0 && (
