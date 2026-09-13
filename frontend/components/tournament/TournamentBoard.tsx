@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import LiquidityMark from "../LiquidityMark";
 import { FreshnessDot } from "../FreshnessDot";
 import TrendSparkline from "./TrendSparkline";
@@ -10,6 +10,7 @@ import { COLLAPSED_ROW_COUNT, deltaWindowNote } from "@/lib/contenderChart";
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
 import {
   boardNotice,
+  boardRenderedPercents,
   formatBoardProbability,
   formatTrendDelta,
   rowFreshness,
@@ -43,7 +44,16 @@ import {
  * winning the whole tournament — and neither of them said so.
  */
 
-function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: string }) {
+function BoardRow({
+  row,
+  seriesColor,
+  renderedPercent,
+}: {
+  row: TournamentRow;
+  seriesColor?: string;
+  /** The field-level integer for this row (#5893) — see `boardRenderedPercents`. */
+  renderedPercent?: number | null;
+}) {
   const isLive = rowIsPresentedAsLive(row);
   const settled = row.probability === null;
   // Names the old leg when only one of them is old (UX-P135), so a row muted
@@ -166,7 +176,7 @@ function BoardRow({ row, seriesColor }: { row: TournamentRow; seriesColor?: stri
           }`}
           data-testid="row-probability"
         >
-          {formatBoardProbability(row.probability)}
+          {formatBoardProbability(row.probability, renderedPercent)}
         </div>
         {!settled && row.trend_delta !== null && (
           <div
@@ -220,6 +230,11 @@ export default function TournamentBoard({
   seriesColors?: Record<string, string>;
 }) {
   const notice = boardNotice(board);
+
+  // #5893: over the WHOLE field, not the visible slice. Whether the draw is down
+  // to its final is a fact about the draw, and a number must not change when a
+  // reader taps "show more".
+  const renderedPercents = useMemo(() => boardRenderedPercents(board.rows), [board.rows]);
 
   // COLLAPSED BY DEFAULT — Alex called the uncollapsed list a P1 on this page,
   // not a polish item: the women's draw ran 44 rows and reading it meant
@@ -293,6 +308,7 @@ export default function TournamentBoard({
                 <BoardRow
                   key={row.entity_key}
                   row={row}
+                  renderedPercent={renderedPercents[row.entity_key]}
                   seriesColor={
                     row.probability !== null ? seriesColors?.[row.entity_key] : undefined
                   }

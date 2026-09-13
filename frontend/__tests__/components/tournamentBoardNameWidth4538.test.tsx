@@ -177,7 +177,10 @@ describe("#4538 the name column is not starved at phone widths", () => {
 
   it("CONTROL: the probability still prints", () => {
     expect(render()).toContain('data-testid="row-probability"');
-    expect(render()).toContain("44.3%");
+    // `44.3%` until #5893 took the board's private decimal out. The control is
+    // that a width change does not remove the number; its digit count is not
+    // this file's subject.
+    expect(render()).toContain(">44%<");
   });
 
   it("CONTROL: the rank and avatar tracks are untouched", () => {

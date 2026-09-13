@@ -446,12 +446,14 @@ describe("no two-sided price pills", () => {
 
   it("renders no complement of any shown probability", () => {
     // The reference pairs 34.5% with 65.5%. If a complement ever appeared, this
-    // is what would catch it.
+    // is what would catch it. Printed whole since #5893, so the pair to look
+    // for is 35 and 65 — a lone row is not a complement pair and is not
+    // renormalized, so the number the reader sees is still its own.
     const one = board(1);
     one.rows[0].probability = 0.345;
     const html = render(<TournamentBoard board={one} />);
-    expect(html).toContain("34.5%");
-    expect(html).not.toContain("65.5%");
+    expect(html).toContain(">35%<");
+    expect(html).not.toContain(">65%<");
   });
 });
 
