@@ -533,7 +533,10 @@ def authority_write(
       ``play_refutes_upcoming`` folded in — a game on the board, not an inferred
       clock.
     * ``decided`` -> ``status='completed'``, and only when the row is not
-      already settled.  ``closed`` and ``completed`` are both settled and
+      already settled **and the format does not refute the result** (#5987 —
+      :func:`result_refuted_by_format`; a best-of-five cannot be won in two
+      sets, and ESPN published exactly that for half an hour during the
+      2026 US Open men's final).  ``closed`` and ``completed`` are both settled and
       churning one into the other would rewrite history for no reader.
       ``completed_at`` is deliberately NOT invented from ESPN's ``date``, which
       is the match's START: a plausible-looking end time is the value nothing
@@ -617,13 +620,19 @@ def authority_write(
         if _cleared is not our_sources:
             changes["win_probability_sources"] = _cleared
     elif state == "decided":
-        if our_status not in SETTLED_STATUSES:
-            changes["status"] = "completed"
-        # A match with a result began. Leaving "has not begun" on a settled row
-        # would be a claim contradicted by the row beside it.
-        _cleared = clear_authority_not_started(our_sources)
-        if _cleared is not our_sources:
-            changes["win_probability_sources"] = _cleared
+        # A RESULT THE FORMAT REFUTES IS NOT A RESULT (#5987). Nothing at all is
+        # written from a `decided` a best-of-five cannot have produced — not the
+        # status, and not the clear, because both act on a claim the payload
+        # contradicts by itself. See `result_refuted_by_format` for the three
+        # shapes it is careful to let through.
+        if not result_refuted_by_format(competition):
+            if our_status not in SETTLED_STATUSES:
+                changes["status"] = "completed"
+            # A match with a result began. Leaving "has not begun" on a settled
+            # row would be a claim contradicted by the row beside it.
+            _cleared = clear_authority_not_started(our_sources)
+            if _cleared is not our_sources:
+                changes["win_probability_sources"] = _cleared
     elif state == "upcoming":
         # NOT YET PLAYED, AND ESPN SAYS SO WITH A CLOCK RATHER THAN A SILENCE.
         # Only a real (non-TBD) start still in the future counts; see the
@@ -756,6 +765,111 @@ SCORED_STATES = ("in_progress", "decided")
 #: inverted-winner defect gotcha #21 exists about, arriving through a column
 #: nothing downstream doubts.
 COMPLETED_WINNER_SET_COUNTS = (2, 3)
+
+#: The four tournaments whose men's singles main draw is played over five sets,
+#: as :func:`board_tournaments` tokens.  Roland Garros is carried under both of
+#: the names ESPN has used for it.
+GRAND_SLAM_TOKENS = frozenset(
+    {"usopen", "wimbledon", "australianopen", "frenchopen", "rolandgarros"}
+)
+
+#: The one draw that is ever best-of-five, and ESPN's prefix for the rounds of
+#: it that are NOT — qualifying is best-of-three at every Slam.
+BEST_OF_FIVE_DRAW = "mens-singles"
+QUALIFYING_ROUND_PREFIX = "qualifying"
+
+#: ESPN's word for a result that ran its full distance.  Every OTHER post word
+#: it publishes — ``STATUS_RETIRED``, ``STATUS_WALKOVER`` and their kin — is a
+#: match that ended early, where the set count is legitimately short and
+#: :func:`result_refuted_by_format` must not fire.
+CLEAN_FINAL_STATUS_NAME = "STATUS_FINAL"
+
+
+def _fold_token(text: Any) -> str:
+    """``"US Open"`` -> ``usopen``.  The comparable form of a tournament name."""
+    return "".join(ch for ch in str(text or "").lower() if ch.isalnum())
+
+
+def sets_to_win(competition: dict[str, Any]) -> int:
+    """How many sets the winner of THIS match must hold — 3, or 2.
+
+    Best-of-five is not a property of the draw.  ESPN's ``mens-singles``
+    grouping at a Slam carries the best-of-five main draw and the
+    best-of-three qualifying in one list, and on the 2026-09-13 US Open board
+    the two populations separate exactly, with no exception either way::
+
+        Round 1/2/3/4, QF, SF      124 STATUS_FINAL   winner held 3 sets  124/124
+        Qualifying 1st/2nd/Final   107 STATUS_FINAL   winner held 2 sets  107/107
+
+    So the round is part of the question, and **its absence answers 2**.  A
+    payload that carries no round is silence about the distance, and the only
+    refusal this number feeds (:func:`result_refuted_by_format`) must never
+    fire on silence: reading a missing round as main draw would refuse all 107
+    real qualifying results to catch one glitch.
+    """
+    round_name = str(competition.get("espn_round") or "").strip().lower()
+    if (
+        str(competition.get("draw") or "") == BEST_OF_FIVE_DRAW
+        and _fold_token(competition.get("event_name")) in GRAND_SLAM_TOKENS
+        and round_name
+        and not round_name.startswith(QUALIFYING_ROUND_PREFIX)
+    ):
+        return 3
+    return 2
+
+
+def result_refuted_by_format(competition: dict[str, Any]) -> bool:
+    """Does this ``decided`` competition refute itself? — #5987.
+
+    ═══ THE DEFECT: A CHAMPION CROWNED AT TWO SETS TO LOVE ═══
+
+    On 2026-09-13 ESPN's board briefly published the US Open men's singles
+    FINAL (competition ``182677``) as a completed result while the third set
+    was being played.  We took it: at 20:21Z ``/events/15310688`` read
+    ``Final · Zverev WON · 6-3, 7-6 · 2 – 0``, the full settled treatment
+    fired, and the row healed itself only ~30 minutes later when the board went
+    back to ``in`` and the revoke clause above pulled it live again (ux/1240).
+    ESPN was reading ``STATUS_IN_PROGRESS · 3rd Set · 6-3 7-6 4-5`` when this
+    was written.
+
+    **No ground truth is needed to catch it.**  A best-of-five match cannot be
+    WON in two sets, so the payload contradicts itself, and a rule that reads
+    the row alone is one that also fires the first time rather than after a
+    second opinion arrives (:func:`state_contradiction` reports; this refuses).
+
+    ═══ THE THREE THINGS IT IS CAREFUL NOT TO REFUSE ═══
+
+    ``STATUS_RETIRED`` / ``STATUS_WALKOVER``  A real result that ended early.
+        Sweeny was two sets up when Moutet retired in the third and the match
+        is genuinely over at ``2-0``; refusing it would leave a finished match
+        reading ``live`` to spare a glitch.  ESPN names the difference and this
+        reads the name rather than guessing from the count — the whole reason
+        ``status_name`` now travels with the competition.
+    A best-of-three draw at two sets.  ``sets_to_win`` is 2 for the women's
+        draw, for doubles, for every tour event and for Slam QUALIFYING, which
+        is 107 of the 231 men's singles finals on one US Open board.
+    Silence.  No winner flag, no set line at all, or no round to say which
+        distance this was — none of those is evidence of anything (gotcha #53).
+        Every one of them returns ``False`` and the write proceeds as before.
+
+    Pure, and deliberately NOT folded into :func:`authority_score`: that rail
+    asks whether a SCORE may be written and is already right here — ``2-0`` is
+    exactly what the live card wants while the third set is played.  What must
+    not be written is the word FINAL, which is a status.
+    """
+    if competition.get("state") != "decided":
+        return False
+    if str(competition.get("status_name") or "") != CLEAN_FINAL_STATUS_NAME:
+        return False
+
+    sides = competition.get("sides") or []
+    winners = [side for side in sides if side.get("winner")]
+    if len(winners) != 1:
+        return False
+    if not any(side.get("games") for side in sides):
+        return False
+
+    return int(winners[0].get("sets_won") or 0) < sets_to_win(competition)
 
 
 def orient_sides(
@@ -1153,10 +1267,7 @@ def board_tournaments(competitions: Iterable[dict[str, Any]]) -> set[str]:
     """
     return {
         token
-        for token in (
-            "".join(ch for ch in str(c.get("event_name") or "").lower() if ch.isalnum())
-            for c in competitions
-        )
+        for token in (_fold_token(c.get("event_name")) for c in competitions)
         if token
     }
 
