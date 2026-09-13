@@ -5755,6 +5755,14 @@ _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS = 20
 _LIVE_POLL_FETCH_BUDGET_SHARE = 0.6
 
 
+#: The scheme half of a Polymarket ``group_id``, minted ``polymarket:{event.id}``
+#: by ``app/tasks/polymarket.py``. Named here rather than shared because the
+#: literal is spelled out in eight other modules and unifying them is a refactor
+#: with no reader behind it; what this constant buys is that the rung below
+#: tests the scheme it documents.
+_POLYMARKET_GROUP_ID_SCHEME = "polymarket"
+
+
 def _polymarket_gamma_event_id(market) -> Optional[str]:
     """The Gamma **event** id to fetch prices for one Polymarket market row.
 
@@ -5792,12 +5800,18 @@ def _polymarket_gamma_event_id(market) -> Optional[str]:
        where it is the whole repair). This is the contract: the minter writes
        it, and ``backfill_winners``/``repair_polymarket_*`` already address
        Gamma through it.
-    2. ``group_id``'s second segment when it is all digits — the remaining
-       **159 rows**, every one of which has one. ``polymarket.py``'s own
-       docstring names this the established fallback for a row minted before
-       the key existed, while warning it is "a column that happens to contain
-       the id, not a contract that promises it" — hence the digit test, and
-       hence its position below the contract rather than beside it.
+    2. ``group_id``'s second segment when the scheme is ``polymarket:`` **and**
+       the tail is all digits — the remaining **159 rows**, every one of which
+       has one. ``polymarket.py``'s own docstring names this the established
+       fallback for a row minted before the key existed, while warning it is "a
+       column that happens to contain the id, not a contract that promises it"
+       — hence the two tests, and hence its position below the contract rather
+       than beside it. The scheme half was added after the fact (#5823
+       follow-up): the digit test alone admitted ``kalshi:12345``, a shape no
+       row carries today — all 709,772 Polymarket rows holding a ``group_id``
+       are ``polymarket:`` with a numeric tail, measured on production
+       2026-09-13 08:09Z, so this narrowing moves nothing live and exists so a
+       future scheme cannot be handed to Gamma as an event id.
     3. ``external_id`` — reached by nothing in today's population, kept so the
        function can never return ``None`` for a row that has any id at all and
        so the behaviour of a row this code has not seen is the OLD behaviour,
@@ -5815,12 +5829,14 @@ def _polymarket_gamma_event_id(market) -> Optional[str]:
 
     group_id = getattr(market, "group_id", None)
     if group_id:
-        # `polymarket:{event.id}`. Split rather than strip a prefix: a row whose
-        # group_id is some other scheme must fall through, not contribute its
-        # own tail as if it were an event id.
-        _, _, tail = str(group_id).partition(":")
+        # `polymarket:{event.id}`. BOTH halves are tested, because either alone
+        # admits a row this rung has no claim on: the digit test alone lets a
+        # foreign scheme with a numeric tail (`kalshi:12345`) contribute its
+        # tail as a Gamma event id, and the scheme test alone would hand Gamma
+        # whatever a `polymarket:`-prefixed row happened to carry.
+        scheme, _, tail = str(group_id).partition(":")
         tail = tail.strip()
-        if tail.isdigit():
+        if scheme.strip() == _POLYMARKET_GROUP_ID_SCHEME and tail.isdigit():
             return tail
 
     external_id = getattr(market, "external_id", None)
