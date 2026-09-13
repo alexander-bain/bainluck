@@ -55,6 +55,8 @@ import re
 import unicodedata
 from typing import Optional
 
+from app.utils.name_normalization import EXTRA_TRANSLITERATIONS
+
 #: Everything that is not a letter, a digit or a space. The `49ers` keep their
 #: digits; `St. Louis`-style punctuation and any stray hyphen are dropped.
 _NOISE_RE = re.compile(r"[^a-z0-9 ]+")
@@ -67,6 +69,26 @@ def normalize_team(name: Optional[str]) -> str:
     An empty string out is the honest answer for an empty string in, and
     :func:`teams_match` refuses it — a normalizer that returned `None` would push
     the same check onto every caller.
+
+    **Why a combining-mark fold is not enough** (#5878). `ø`, `ł`, `ß`, `æ`, `ð`
+    and `ı` carry their mark inside the glyph, so NFKD leaves them whole and the
+    combining-mark drop below never sees them. They then reach `_NOISE_RE`, which
+    is a `[^a-z0-9 ]` class — so it does not *shorten* the word, it replaces the
+    letter with a SPACE and splits it:
+
+        `Bodø/Glimt`       -> `bod glimt`      (not `bodo glimt`)
+        `SC Preußen Münster` -> `sc preu en munster`
+        `Wisła Płock`      -> `wis a p ock`
+
+    StatPal writes `Bodo/Glimt` and `Preussen Munster`, so the two sides shared
+    no token and every one of the 438 production events whose team name carries
+    such a letter was unjoinable in both directions — `statpal_fixture_id` NULL
+    on all 46 of them inside the ±10-day window, measured 2026-09-13.
+    :data:`~app.utils.name_normalization.EXTRA_TRANSLITERATIONS` is the shared
+    table that fixes it, deliberately reused rather than copied: this codebase
+    already had two of them (`name_normalization` and `golf_card_snapshot`, the
+    latter written when the same defect dropped both Højgaards from a golf card,
+    UX-P270) and a third would have been the bug, not the fix.
     """
     if not name:
         return ""
@@ -75,6 +97,9 @@ def normalize_team(name: Optional[str]) -> str:
     folded = unicodedata.normalize("NFKC", str(name))
     folded = unicodedata.normalize("NFKD", folded)
     folded = "".join(c for c in folded if not unicodedata.combining(c))
+    # Before the noise strip, never after: after it the letter is already a
+    # space and the token it split is unrecoverable.
+    folded = folded.translate(EXTRA_TRANSLITERATIONS)
     folded = _NOISE_RE.sub(" ", folded.lower())
     return _SPACES_RE.sub(" ", folded).strip()
 

@@ -128,13 +128,44 @@ def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
     return result
 
 
-# Special letter transliterations not handled by NFD decomposition
+# Special letter transliterations not handled by NFD decomposition.
+#
+# These are the Latin letters that carry their mark INSIDE the glyph, so NFD has
+# nothing to decompose and a "strip the combining marks" fold leaves them intact
+# — and then whatever runs next deletes them. Deleting one does not shorten a
+# word, it SPLITS it: `Bodø/Glimt` becomes the two tokens `bod` and `glimt`, and
+# `bod` is not a word anything else will ever match (#5878).
+#
+# The right-hand sides are not transliteration theory; they are what the venues
+# actually write. Measured 2026-09-13 over 5,614 distinct club names on StatPal's
+# own soccer boards (offsets -2, -1, 1, 2, 3, 5) — not one of them carries any
+# letter in this table, and every club we spell with one is spelled there with
+# the expansion below: `Bodo/Glimt`, `Tromso`, `Lillestrom`, `Brondby`, `Koge`,
+# `Sonderjyske`, `Preussen Munster`, `Grossaspach`, `Widzew Lodz`, `Slask
+# Wroclaw`, `Zaglebie`, `Nordsjaelland`, `Breidablik`.
+#
+# Eight of these code points are present in production team names today (ø Ø ł Ł
+# ß æ ð ı, over 438 events); the rest are the closure of the same character
+# class. A transliteration is a property of the alphabet, not a guess about one
+# club, so an unused row costs nothing and a missing row costs a split token.
 _EXTRA_TRANSLITERATIONS = str.maketrans({
     "ø": "o", "Ø": "O",
     "đ": "d", "Đ": "D",
     "ł": "l", "Ł": "L",
-    "ß": "ss",
+    "ß": "ss", "ẞ": "SS",
+    "æ": "ae", "Æ": "AE",
+    "œ": "oe", "Œ": "OE",
+    "ð": "d", "Ð": "D",
+    "þ": "th", "Þ": "TH",
+    "ı": "i",
 })
+
+#: The same table, public, for normalizers that cannot call
+#: :func:`strip_diacritics` because they need NFKC/NFKD rather than NFD —
+#: :func:`app.utils.nfl_team_matching.normalize_team` is the one. It shares the
+#: TABLE so the two folds cannot drift; it does not share the function, because
+#: the compatibility pass it runs first is load-bearing for its own callers.
+EXTRA_TRANSLITERATIONS = _EXTRA_TRANSLITERATIONS
 
 # Sponsor suffixes stripped during slug generation
 _SPONSOR_SUFFIX_RE = re.compile(
