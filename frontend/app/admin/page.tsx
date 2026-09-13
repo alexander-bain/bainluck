@@ -14,6 +14,7 @@ import SentinelsCard from "@/components/admin/SentinelsCard";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 import DiagnosisCard from "@/components/admin/DiagnosisCard";
+import ClockCard from "@/components/admin/ClockCard";
 import DenominatorTooltip from "@/components/admin/DenominatorTooltip";
 import {
   LineChart,
@@ -1508,6 +1509,11 @@ export default function AdminDashboard() {
           <GridHealthCard secret={secret} />
 
           </MetricSection>
+
+          {/* #5470 — one clock, and which app it is on. The verification step
+              for the attended `scheduler` dyno move; two beats double-dispatch
+              every scheduled task, so the count is the alarm. */}
+          <ClockCard secret={secret} />
 
           {/* PREQ Performance */}
           <PREQCard secret={secret} />
