@@ -277,11 +277,28 @@ struct FuturesBrowseMarketRow: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Label(category.title, systemImage: category.icon)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .foregroundStyle(category.color)
-                .lineLimit(1)
+            // #5872: this was a `Label`, which reserves a FIXED icon column
+            // wide enough for the widest symbol it might be handed — measured
+            // at 36pt on iPhone 17 for glyphs that are themselves 10–18pt, so
+            // ~19pt of every header was dead space between the icon and the
+            // word. A tight pair spends the glyph's own width and no more.
+            //
+            // The layout priority is the other half. HStack divides the space
+            // it has LEFT between the children it has LEFT, so the trailing
+            // spacer was taking half of what remained at the moment the
+            // category was measured — "Tennis" drew as "Te…" with 28pt of the
+            // row sitting empty to its right. Sizing the category first, off
+            // the full width, is what makes the word the reader navigates by
+            // the thing that gets its space first.
+            HStack(spacing: 4) {
+                Image(systemName: category.icon)
+                Text(category.title)
+            }
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundStyle(category.color)
+            .lineLimit(1)
+            .layoutPriority(1)
 
             if let source = market.source {
                 FuturesSourceBadge(source: source)
