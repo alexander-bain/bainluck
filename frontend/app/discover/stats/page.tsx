@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
+import { buildScorecardShareSentence } from "@/lib/share";
 import LoadingState from "@/components/LoadingState";
 
 interface DetailedStats {
@@ -46,7 +47,13 @@ export default function PredictionStatsPage() {
     const accuracy = Math.round(stats.accuracy * 100);
     const shareParams = `accuracy=${accuracy}&total=${stats.total}&correct=${stats.correct}&streak=${stats.current_streak}&best=${stats.best_streak}`;
     const shareUrl = `${window.location.origin}/discover/scorecard?${shareParams}`;
-    const shareText = `I'm ${accuracy}% accurate across ${stats.total} predictions on Bain Luck!`;
+    const shareText = `I'm ${buildScorecardShareSentence({
+      accuracy,
+      total: stats.total,
+      correct: stats.correct,
+      streak: stats.current_streak,
+      best: stats.best_streak,
+    })}`;
 
     // Whether the share actually happened. A cancelled native share sheet is
     // not a share, and previously still logged one.

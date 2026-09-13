@@ -95,6 +95,78 @@ export function endShareSentence(text: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
+export interface ScorecardStats {
+  accuracy: number;
+  total: number;
+  correct: number;
+  streak: number;
+  best: number;
+}
+
+/**
+ * The five numbers behind a shared prediction scorecard, or `null` when the URL
+ * does not describe a real one.
+ *
+ * `/discover/scorecard` is a share TARGET: everything it draws arrives in the
+ * query string. The page body has always sanitized (`parseInt(...) || 0`);
+ * `generateMetadata` did not, so one URL told two stories. Read off production
+ * 2026-09-13 22:03Z:
+ *
+ *   ?accuracy=999999&total=abc&correct=-5
+ *   og:description  "999999% accurate across abc predictions on Bain Luck!"
+ *   the page         999999% over 0 predictions
+ *
+ * and a bare `/discover/scorecard` unfurled "0% accurate across 0 predictions".
+ * Our own `handleShare` never writes those — it is a hand-edited or mangled
+ * link — but it still unfurls chosen copy under our name, which is the thing a
+ * pasted link is judged on.
+ *
+ * So this REFUSES rather than invents. A scorecard has to be internally
+ * possible to be described at all: five plain non-negative integers (no signs,
+ * no decimals, no `abc`, which `parseInt` would otherwise read as far as it can
+ * and shrug), an accuracy inside 0-100, at least one prediction, and no more
+ * correct than were made. Anything else is not a low scorecard, it is not a
+ * scorecard, and the caller says so in words instead of printing a number.
+ */
+export function readScorecardStats(params: {
+  accuracy?: string;
+  total?: string;
+  correct?: string;
+  streak?: string;
+  best?: string;
+}): ScorecardStats | null {
+  const read = (raw: string | undefined): number | null =>
+    raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : null;
+
+  const accuracy = read(params.accuracy);
+  const total = read(params.total);
+  const correct = read(params.correct);
+  const streak = read(params.streak);
+  const best = read(params.best);
+
+  if (accuracy === null || total === null || correct === null || streak === null || best === null) {
+    return null;
+  }
+  if (accuracy > 100 || total < 1 || correct > total || streak > total || best > total) {
+    return null;
+  }
+  return { accuracy, total, correct, streak, best };
+}
+
+/**
+ * The one sentence a shared scorecard prints, in the unfurl and in the text the
+ * reader posts beside it.
+ *
+ * Both sites said "across ${total} predictions" unconditionally, so the reader
+ * with exactly ONE settled prediction — who is past `handleShare`'s only guard,
+ * `stats.total === 0`, and is by construction the newest sharer we have —
+ * posted "100% accurate across 1 predictions on Bain Luck!".
+ */
+export function buildScorecardShareSentence(stats: ScorecardStats): string {
+  const noun = stats.total === 1 ? "prediction" : "predictions";
+  return `${stats.accuracy}% accurate across ${stats.total} ${noun} on Bain Luck!`;
+}
+
 export type ShareMethod = "native" | "clipboard";
 
 export interface ShareAttempt {
