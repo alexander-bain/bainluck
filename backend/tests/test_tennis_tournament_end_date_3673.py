@@ -45,12 +45,32 @@ from app.utils.event_tennis import (
 
 SLUG = "us-open-men-s-singles-winner"
 
+#: The three dates are OFFSETS FROM THE REAL CLOCK, not the calendar days the
+#: incident happened on, and that is a repair (2026-09-13 00:14Z, lane1/273).
+#:
+#: They were the literal production values — final 2026-09-13 00:00Z, backstop
+#: 2026-09-28 02:00Z. `TestTheRailAndThePageCannotDisagree` builds its card
+#: through `list_tennis_tournament_concepts`, which reads the REAL clock and
+#: drops a tournament whose end date has passed. So at 2026-09-13 00:00:00Z the
+#: fixture's final went into the past, the rail went empty, and all three arms
+#: in that class failed on their own vacuity guard — on master, in every lane,
+#: fourteen minutes after the boundary. Gotcha #44: a test anchor is an offset
+#: first, never a calendar date that the calendar eventually reaches.
+#:
+#: THE SPACING IS THE FIXTURE, so it is preserved exactly rather than rounded.
+#: `TestTheStatusIsTheTournaments` passes `NOW` in explicitly and reads a verdict
+#: off the gap between it and each date — `FINAL` near (live), `BACKSTOP` far
+#: (upcoming) — so the two intervals below are the measured ones to the minute,
+#: and only the anchor moves. Three days of headroom is many times the longest
+#: CI job, so the anchor cannot age out mid-run the way a tighter one would.
+_ANCHOR = datetime.now(timezone.utc) + timedelta(days=3)
+
 #: Saturday of the second week — the moment the page was shot.
-NOW = datetime(2026, 9, 6, 20, 35, tzinfo=timezone.utc)
+NOW = _ANCHOR - timedelta(days=6, hours=3, minutes=25)
 #: The day of the men's final, as Polymarket states it.
-FINAL = datetime(2026, 9, 13, 0, 0, tzinfo=timezone.utc)
+FINAL = _ANCHOR
 #: Kalshi's contract expiration, fifteen days after the trophy.
-BACKSTOP = datetime(2026, 9, 28, 2, 0, tzinfo=timezone.utc)
+BACKSTOP = _ANCHOR + timedelta(days=15, hours=2)
 
 
 def _market(name, mid, n_outcomes, resolution_date, status="open", volume=0.0):
