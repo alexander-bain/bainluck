@@ -202,7 +202,10 @@ struct FuturesDetailView: View {
                 // Probability + movement
                 if let leader, let prob = leader.probability {
                     HStack(alignment: .bottom, spacing: 10) {
-                        Text("\(Int((prob * 100).rounded()))%")
+                        // #5899: the 52pt figure said `0%` for a leader the venue
+                        // prices at 0.05%, three scrolls above `<1%` on every
+                        // other row of the same market.
+                        Text("\(percentNumber(prob * 100))%")
                             .font(.system(size: 52, weight: .black).monospacedDigit())
                             .minimumScaleFactor(0.76)
                             .foregroundStyle(.white)
