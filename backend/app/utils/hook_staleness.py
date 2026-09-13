@@ -1,4 +1,4 @@
-"""Hook staleness detection for Discover feed cards.
+"""Hook staleness detection for Discover feed cards AND the futures detail page.
 
 A hook description becomes stale when:
 0. It was written under a RETIRED hook policy (see below, #5461)
@@ -11,6 +11,30 @@ A hook description becomes stale when:
 Stale hooks are suppressed at serve time (replaced by deterministic
 headlines from feed_reasons.py) and prioritized for async re-enrichment
 by the enrich_market_hooks Celery task.
+
+WHO ASKS, AND THE ONE THAT NEVER DID (#5906). Two serve paths publish a stored
+hook to a reader: the Discover card (``routes/feed.py``, which has called
+``is_hook_stale`` since this module shipped) and the futures DETAIL page
+(``routes/futures.py``), which until #5906 served ``market.hook_description``
+raw. Same sentence, same reader, one gate. The split was not a product
+decision — nobody made it — and it was total rather than marginal: measured on
+production 2026-09-13, of the **11,444 open markets carrying a hook, 0 are
+policy 2 and 10,629 are also older than the 7-day age gate**, so every hook the
+feed refuses is a hook the detail page publishes.
+
+What a reader saw (#5906): ``/futures/8641774`` (*Brazil Série B: Winner*) said
+*"Novorizontino has surged to the top"* under a hero crowning **Juventude** and
+over a table where Novorizontino's own row read **—**, its price withheld by
+#5876. Three statements, no two agreeing. That market's stored hook is policy 1,
+was generated 2026-06-29 (76 days), and names a leader that has since changed —
+it trips THREE of the rules below, and the feed had been suppressing it the
+whole time.
+
+The detail page's two share surfaces improve rather than empty: both
+``app/futures/[id]/layout.tsx`` and ``opengraph-image.tsx`` already fall back to
+a derived, true sentence (``"{leader} leads {market} at {probability}"``), and
+the page body renders the paragraph conditionally, so suppression leaves no
+gap to explain (notice 34).
 
 WHY THERE IS A POLICY VERSION AT ALL (#5461, CERT-2697's required repair).
 
@@ -35,7 +59,9 @@ key), and reading it as "fine" would be reading the entire defect as fine.
 Fail-closed costs a deterministic headline; fail-open ships an invented fact.
 """
 
+import re
 from datetime import datetime, timedelta, timezone
+from typing import Iterable
 
 
 # Probability delta threshold (as a fraction 0-1) above which a hook
@@ -159,6 +185,87 @@ def is_hook_stale(
             if delta >= probability_delta:
                 return True
 
+    return False
+
+
+#: Shortest outcome name this module will look for inside a hook.
+#:
+#: Not a style rule — a false-positive bound. Real boards carry legs named
+#: ``C``, ``D`` and ``Yes``, and a one- or two-character needle matches
+#: somewhere in almost any English sentence, which would suppress hooks on
+#: markets that have nothing wrong with them. Four is the shortest length at
+#: which a name is carrying identity rather than a slot number.
+MIN_MATCHABLE_OUTCOME_NAME = 4
+
+
+def _is_word_char(ch: str) -> bool:
+    """Whether ``\\b`` can assert a boundary against this character.
+
+    Mirrors the regex engine's own ``\\w`` for ``str`` patterns — Unicode
+    letters and digits plus underscore — so "í" and "ã" count, as they must for
+    Avaí and São Bernardo.
+    """
+    return ch.isalnum() or ch == "_"
+
+
+def hook_names_unpriced_outcome(
+    *,
+    hook_description: str | None,
+    unpriced_outcome_names: Iterable[str],
+) -> bool:
+    """True if the hook talks about an outcome whose price this response withholds.
+
+    #5906'S OWN RULE, AND IT IS NOT REDUNDANT WITH ``is_hook_stale`` ABOVE.
+    Today it is inert — every stored hook is policy 1, so rule 0 suppresses the
+    whole population before this is reached, and the Brazil specimen is caught
+    three times over. It is here because that is a statement about a COUNT, not
+    about the rule: the moment ``enrich_market_hooks`` writes policy-2 hooks,
+    rule 0 stops firing and a freshly-written, correctly-versioned hook can name
+    a leg the serializer withholds. The hook writer reads STORED prices; the
+    serializer withholds at SERVE time (#5611/#5876), so the two can disagree
+    about a leg without either being stale.
+
+    Rule 2 above does not cover it. That rule asks whether the LEADER changed;
+    this one fires on any named leg, and a hook routinely names a challenger
+    ("X is closing on Y") whose price is the withheld one.
+
+    WORD BOUNDARIES, NOT ``in``. The Brazil board carries a club named **Sport**,
+    and a bare substring test would fire on the word "sports" in any hook —
+    suppressing honest prose on markets with no withheld leg at all. ``\\b`` is
+    Unicode-aware for ``str`` patterns, so accented names (Avaí, Ceará) bound
+    correctly rather than falling back to ASCII.
+
+    THE BOUNDARY IS APPLIED PER EDGE, WHICH IS NOT DECORATION. ``\\b`` asserts a
+    word/non-word transition, so gluing it to a needle whose own first or last
+    character is NOT a word character asserts a transition that can never occur:
+    ``\\b\\(Over\\)\\b`` matches nothing at all, because the character before
+    ``(`` in " (Over)" is a space and neither side is a word character. Outcome
+    names carrying punctuation at the edge are real — ``(Over)``, ``+3.5``, a
+    quoted song title — so an unconditional boundary would silently make this
+    rule inert on exactly those legs. Each edge gets a boundary only when the
+    needle's character there can participate in one.
+
+    THE CALLER CHOOSES THE NAMES, deliberately, for the reason the futures
+    serializer's own comment gives about withheld ids: only the caller can see
+    which rows its display pipeline dropped, demoted or refused. Handing this
+    module a display rule to re-derive would put a second copy of that judgement
+    here, free to drift from the first.
+
+    Pure: no DB, no clock, no LLM. Safe in a serve path.
+    """
+    if not hook_description:
+        return False
+    for name in unpriced_outcome_names:
+        if not name:
+            continue
+        needle = str(name).strip()
+        if len(needle) < MIN_MATCHABLE_OUTCOME_NAME:
+            continue
+        lead = r"\b" if _is_word_char(needle[0]) else ""
+        trail = r"\b" if _is_word_char(needle[-1]) else ""
+        pattern = f"{lead}{re.escape(needle)}{trail}"
+        if re.search(pattern, hook_description, re.IGNORECASE):
+            return True
     return False
 
 

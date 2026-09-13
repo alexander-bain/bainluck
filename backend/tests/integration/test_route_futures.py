@@ -241,6 +241,12 @@ class TestFuturesMarketDetail:
             "group_id",
             "canonical_market_key",
             "hook_description",
+            # #5906: whether a stored hook existed and this response refused to
+            # publish it — the detail page now runs the same `is_hook_stale`
+            # gate the Discover card has always used. Present for the same
+            # reason as the two lines above: a probe must be able to tell "this
+            # market never had prose" from "we declined to print it".
+            "hook_withheld",
             "image_url",
             "event_concept_key",
             "hub_slug",
