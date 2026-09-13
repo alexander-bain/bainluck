@@ -108,7 +108,13 @@ describe("the kill — a probability is still the right answer when nothing sett
   it("keeps the probability copy verbatim for a scheduled game", () => {
     const copy = buildEventShareCopy(unsettled);
     expect(copy.settled).toBe(false);
-    expect(copy.title).toBe("76ers vs Celtics: Celtics 65%, 76ers 35%");
+    // The ORDER changed here, and only the order. This fence was written to prove
+    // the #1495 settled ladder did not disturb the unsettled branch, and it still
+    // does: a scheduled game still gets a title, both percentages and the words
+    // "win probability". What it no longer pins is HOME-first, which put the two
+    // teams in the opposite order to `matchup` and to the card. See the
+    // away-first block below for the assertion that now carries the reason.
+    expect(copy.title).toBe("76ers vs Celtics: 76ers 35%, Celtics 65%");
     expect(copy.description).toContain("win probability");
   });
 

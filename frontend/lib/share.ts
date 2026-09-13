@@ -43,10 +43,33 @@ export function formatShareProbability(probability: number | null | undefined): 
   return `${Math.round(probability * 100)}%`;
 }
 
+/**
+ * Fit share text to a budget, cutting at a WORD boundary.
+ *
+ * The cut used to land wherever `maxLength` fell, so the card for
+ * `/futures/60276241` read "...has become increasingly perti..." and its
+ * `og:description` "...raising conc...". A half-word is not an abbreviation; it
+ * reads as a rendering failure, and it is the first thing a reader sees under a
+ * pasted link.
+ *
+ * Two deliberate limits:
+ *  - A boundary is only honoured if it keeps at least half the budget. One
+ *    pathological token — `tournamentShareMeta`'s guard feeds a 400-character
+ *    display name — would otherwise rewind past everything before it and emit
+ *    "US Open 2026:...". Cutting that token mid-word is the lesser failure, so
+ *    below the floor the old behaviour stands.
+ *  - The ellipsis is still added AFTER the budget, so the ceiling remains
+ *    `maxLength + 2`. Callers have been pinned to that since #4149 and this is
+ *    not the change that moves it.
+ */
 export function truncateShareText(text: string, maxLength = 180): string {
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (cleaned.length <= maxLength) return cleaned;
-  return `${cleaned.slice(0, maxLength - 1).trim()}...`;
+  const clipped = cleaned.slice(0, maxLength - 1);
+  const lastSpace = clipped.lastIndexOf(" ");
+  const atBoundary =
+    lastSpace >= Math.floor((maxLength - 1) / 2) ? clipped.slice(0, lastSpace) : clipped;
+  return `${atBoundary.trim()}...`;
 }
 
 export type ShareMethod = "native" | "clipboard";

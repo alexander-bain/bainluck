@@ -271,14 +271,30 @@ export function buildEventShareCopy(
   const homeProbability = formatProbability(event.current_odds?.home_probability);
   const awayProbability = formatProbability(event.current_odds?.away_probability);
 
+  // ── ONE ORDER, THREE SURFACES ──────────────────────────────────────────────
+  // `matchup` is AWAY vs HOME (line 161) and `opengraph-image.tsx` draws the away
+  // side on the left, so the picture and the matchup already agree. The two
+  // percentage lists below used to run HOME-first, which flipped the teams
+  // halfway through a single title. Measured on production 2026-09-13 15:31Z,
+  // `/events/15297788` (away RC Lens, home Le Mans FC):
+  //
+  //   og:title  "RC Lens vs Le Mans FC: Le Mans FC 25%, RC Lens 75%"
+  //   og:image  RC Lens 75% on the LEFT, Le Mans FC 25% on the right
+  //
+  // A reader pasting that link sees 75% under the left-hand crest and reads a
+  // sentence that opens with the other team on 25%. Nothing was wrong with the
+  // numbers — each team carried its own — but the card cannot be read straight
+  // through. Away-first here makes the matchup, the title, the description and
+  // the picture one order. The settled branches above are unaffected: they name
+  // the winner outright, so they never depend on side order.
   const title =
     homeProbability && awayProbability
-      ? `${matchup}: ${home} ${homeProbability}, ${away} ${awayProbability}`
+      ? `${matchup}: ${away} ${awayProbability}, ${home} ${homeProbability}`
       : `${matchup} Odds`;
 
   const description = truncate(
     homeProbability && awayProbability
-      ? `${statusLabel(event)}. Bain Luck gives ${home} a ${homeProbability} win probability and ${away} a ${awayProbability} win probability.`
+      ? `${statusLabel(event)}. Bain Luck gives ${away} a ${awayProbability} win probability and ${home} a ${homeProbability} win probability.`
       : `${statusLabel(event)}. Follow ${matchup} with probability-first odds on Bain Luck.`,
   );
 
