@@ -164,9 +164,21 @@ def _event(
 
 
 def _the_production_pair(
-    *, canonical_opening=(OPEN_HOME, OPEN_AWAY), canonical_status="completed"
+    *,
+    canonical_opening=(OPEN_HOME, OPEN_AWAY),
+    canonical_status="completed",
+    twin_minutes_later=0,
 ):
-    """The two La Liga rows as production holds them, canonical first."""
+    """The two La Liga rows as production holds them, canonical first.
+
+    ``twin_minutes_later`` moves the duplicate's stored kick-off away from the
+    canonical's. Both of this route's folds key on the exact MINUTE, so any
+    non-zero offset puts the pair beyond either of them and leaves the
+    `duplicate-of:` tag as the only thing that can still see it — which is what
+    `TestWhatMustNotChange` uses to tell the two mechanisms apart. It is not a
+    contrivance: two providers disagreeing about a kick-off is the ordinary
+    case here (#5905's Kalshi rows hold the whistle plus three hours).
+    """
     when = _played()
     canonical = _event(
         CANONICAL,
@@ -182,7 +194,7 @@ def _the_production_pair(
         SUPPRESSED,
         home=DUP_HOME,
         away=DUP_AWAY,
-        when=when,
+        when=when + timedelta(minutes=twin_minutes_later),
         status="suspended",
         sources={"kalshi": _fresh(0.71), "polymarket": _fresh(0.70)},
         tags=["provenance:source:statpal", duplicate_tag(CANONICAL)],
@@ -382,15 +394,47 @@ class TestTheSurvivingCardKeepsWhatTheHiddenRowHeld:
 
 
 class TestWhatMustNotChange:
-    def test_an_untagged_pair_is_still_served_exactly_as_before(self):
+    """What the TAG does, stated so no other mechanism can answer for it.
+
+    This class asserted, when it was written, that *the same two rows with no
+    tag are two cards*. That stopped being true four hours later and the
+    collision is worth stating, because both halves are deliberate and neither
+    is a mistake: authority/181's soccer name pass (#5918, `event_twin_fold`)
+    merges same-minute soccer rows whose clubs are NAMED differently — `Celta
+    Vigo` / `RC Celta de Vigo` is the exonym family it was built for, and it is
+    the specimen above. So on this route the tagged pair now has two mechanisms
+    that can reach it, and an assertion that cannot tell them apart is an
+    assertion about neither.
+
+    They are different acts and the difference is the whole argument. The tag
+    HIDES a row on an id-anchored proof; the name pass MERGES two rows and
+    unions their venues, so no price leaves the page. Ruling 048 / gotcha #32
+    govern the registry's absorb-vs-create at WRITE time and neither one writes
+    a row, but the filter is the one that can cost a reader a number, which is
+    why its licence stays exactly as narrow as it was.
+
+    So the pair is moved beyond BOTH folds — 40 minutes apart, where the minute
+    key cannot reach — and the tag is asked the same two questions it was
+    always asked. MEASURED, not argued: delete `not_a_proven_duplicate()` from
+    `list_events` and this file goes red in exactly two places,
+    `test_a_tagged_pair_no_fold_can_reach_is_still_one_card` and
+    `test_a_tagged_row_whose_canonical_is_absent_is_still_hidden` — the two
+    specimens no fold can reach. `TestOneFixtureOneCard` stays GREEN under that
+    mutant, because the name pass collapses its same-minute pair by itself, so
+    the ship assertions at the top of this file can no longer speak for the
+    predicate and these two are what does.
+    """
+
+    def test_an_untagged_pair_no_fold_can_reach_is_still_two_cards(self):
         """The predicate removes TAGGED rows and nothing else.
 
-        The same two rows with no `duplicate-of:` tag are two cards, as they are
-        today. A filter that also swept untagged near-misses would be deciding
-        for itself which rows are one game — a second matcher, which ruling 048
-        exists to prevent.
+        A filter that also swept untagged near-misses would be deciding for
+        itself which rows are one game — a second matcher, which ruling 048
+        exists to prevent. Neither fold can group these two (different minute),
+        so if one card comes back the predicate swept a row it was not shown a
+        proof for.
         """
-        canonical, suppressed = _the_production_pair()
+        canonical, suppressed = _the_production_pair(twin_minutes_later=40)
         suppressed.event_tags = ["provenance:source:statpal"]
 
         served = _by_id(_payload(canonical, suppressed))
@@ -398,6 +442,58 @@ class TestWhatMustNotChange:
         assert sorted(served) == sorted([CANONICAL, SUPPRESSED]), (
             "an untagged row was suppressed — the tag is the whole licence for "
             f"hiding a card (served: {sorted(served)})"
+        )
+
+    def test_a_tagged_pair_no_fold_can_reach_is_still_one_card(self):
+        """🔴 THE NON-VACUITY PROOF FOR THE TAG, AFTER #5918.
+
+        The same two rows, 40 minutes apart and tagged. Neither fold keys
+        across a minute boundary, so the only thing in the route that can serve
+        one card here is the `duplicate-of:` predicate. Delete it and this
+        fails — which is no longer true of the ship tests at the top of this
+        file, because the name pass would collapse their same-minute pair by
+        itself.
+        """
+        canonical, suppressed = _the_production_pair(twin_minutes_later=40)
+
+        assert twin_fold_key(canonical) != twin_fold_key(suppressed)
+
+        served = _by_id(_payload(canonical, suppressed))
+
+        assert sorted(served) == [CANONICAL], (
+            "the tagged duplicate was served as its own card on a specimen no "
+            f"fold can reach — the predicate did nothing (served: {sorted(served)})"
+        )
+
+    def test_an_untagged_exonym_pair_is_merged_by_the_name_pass_and_keeps_both_prices(
+        self,
+    ):
+        """What replaced the assertion this class opened with, and why it is not a loss.
+
+        The same-minute pair with the tag stripped comes back as ONE card since
+        #5918 — but it is the merge, not the filter, and the distinction is
+        visible in the payload rather than argued: the surviving card carries
+        the two venues that live on the row it absorbed. A reader loses a
+        duplicate and keeps every price, which is what the fold was built to do
+        and what the filter alone could not have done.
+        """
+        canonical, suppressed = _the_production_pair(canonical_status="suspended")
+        suppressed.event_tags = ["provenance:source:statpal"]
+
+        served = _by_id(_payload(canonical, suppressed))
+
+        assert sorted(served) == [CANONICAL], (
+            "the untagged exonym pair is still two cards — #5918's soccer name "
+            f"pass did not reach this route (served: {sorted(served)})"
+        )
+        assert sorted(served[CANONICAL].get("win_probability_sources") or {}) == [
+            "betting",
+            "kalshi",
+            "polymarket",
+        ], (
+            "the survivor kept only its own venue — the pair was FILTERED, not "
+            "merged, and the absorbed row's prices left the page (got "
+            f"{served[CANONICAL].get('win_probability_sources')!r})"
         )
 
     def test_a_lone_untagged_row_is_untouched(self):
