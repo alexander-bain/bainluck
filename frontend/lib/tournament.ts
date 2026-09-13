@@ -324,6 +324,26 @@ export function rowFreshness(
   return { label, kind: ageHours === null ? "answer" : "age", ageHours };
 }
 
+/**
+ * #5924 — IS THE DRAW ON SCREEN FINISHED? Over EVERY board the pill is showing.
+ *
+ * `drawsShown` is one draw for a singles pill and three for Doubles (#4124), so
+ * "the first matching board" is the wrong reading of the question: a graded
+ * men's doubles final would then speak for the mixed draw still being played.
+ *
+ * Empty set is FALSE, deliberately. `[].every(...)` is true in logic and wrong
+ * on a page — a payload with no board for this pill knows nothing about whether
+ * the draw is over, and the hedged empty states downstream are the right answer
+ * to that, not "the final has been played".
+ */
+export function shownBoardsAreDecided(
+  boards: TournamentBoardData[] | null | undefined,
+  drawsShown: readonly string[],
+): boolean {
+  const shown = (boards ?? []).filter((board) => drawsShown.includes(board.draw));
+  return shown.length > 0 && shown.every((board) => Boolean(board.decided));
+}
+
 export interface BoardNotice {
   tone: "stale" | "dark" | "decided";
   headline: string;
