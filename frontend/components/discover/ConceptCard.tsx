@@ -251,6 +251,7 @@ export function ConceptCard({
           // is this card: the Vuelta GC field led Discover at 96% under a LIVE
           // pill on a price 5h01m old.
           priceObservedAt={data.price_observed_at}
+          priceStatus={data.status}
         />
       </div>
     </div>

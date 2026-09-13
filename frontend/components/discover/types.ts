@@ -51,6 +51,36 @@ export interface ActionBarProps {
    * carrier (`win_probability_sources[*].updated_at`) and is not this ship.
    */
   priceObservedAt?: string | null;
+  /**
+   * The market's `status`, used for ONE decision: which staleness bound the age
+   * mark above is held to (#5843).
+   *
+   * A `live` card marks at 30 minutes; every other status is on the hourly sweep
+   * and marks at the backend's 6h contract. The status itself is not rendered
+   * here — the card already draws its own `● Live` pill from the same field — so
+   * this is a cadence hint, not a second source of truth about liveness.
+   *
+   * ### Which cards can actually take the `live` arm — measured, because it is
+   * one component and THREE payloads
+   *
+   * `futures_markets.status` is only ever `open` or `resolved` (987,750 resolved
+   * / 41,108 open on production, 2026-09-13), and the feed serves only the open
+   * ones. So a `FuturesCard` or `ComparisonCard` is ALWAYS `open` and always
+   * takes the 6h arm — correct, since those are the hourly ladders, but it means
+   * the `live` arm is unreachable from those two.
+   *
+   * It is reachable, and load-bearing, from `ConceptCard`: a concept's status is
+   * calendar-driven (`marquee_pin_state` — "live" during the event), and the
+   * specimen that component was filed on is exactly a live concept whose price
+   * had gone quiet. Same feed read: Vuelta a España 2026, `live`, 169.6m old.
+   * A flat 6h would have silenced it.
+   *
+   * Absent means "not live", which is the correct default for this bar: every
+   * card that mounts an `ActionBar` with a price is a futures card, and an
+   * hourly-polled one is what that is. Defaulting the other way would leave a
+   * caller that forgets the prop reproducing the exact 30-of-30 defect.
+   */
+  priceStatus?: string | null;
 }
 
 export interface CardActionCallbacks {
