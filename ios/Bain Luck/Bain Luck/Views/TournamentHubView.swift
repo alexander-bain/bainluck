@@ -437,14 +437,18 @@ private struct TournamentHubBoardCard: View {
                 }
             }
 
-            // #3033: what the `+33` in the rows above measures, said once, so a
-            // reader is not left to reconcile it against the chart's own footer
-            // by inference.
-            if let note = board.deltaWindowNote {
-                Text(note)
-                    .font(.caption2)
-                    .foregroundStyle(DS.textMuted)
-            }
+            // NOTICE 34 (#4278), matching the web twin. `Movement since 26 Aug.`
+            // used to print here in grey. It is a method note — it states the
+            // window our `+19.8` was measured over — and notice 34 puts that
+            // class in the artifact or a tooltip, never in the page body. On a
+            // SETTLED board it was worse than grey noise: the chart is
+            // suppressed and the chips are now suppressed too, so the sentence
+            // explained numbers that are not on the screen. #3033's finding (a
+            // delta with no stated window has no units) is not denied — it is
+            // relocated. `deltaWindowNote` is unchanged, still computed, still
+            // on `BoardSection`, still asserted by `TournamentHubRenderSmoke`
+            // and still pinned against the web in `RaceChartTests`; a reader
+            // just does not read it. The web moved it to `data-delta-window`.
 
             if let note = board.trimNote {
                 Text(note)
