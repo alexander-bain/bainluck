@@ -470,6 +470,23 @@ describe("#4015 — a match that went dark does not print a hero older than its 
     evt({
       status: "suspended",
       commence_time: "2026-09-01T00:00:00Z",
+      // #5890 — THE BAG, which this payload always had and this fixture omitted
+      // because nothing read it: the docblock above records
+      // `win_probability_sources.kalshi 0.895 @ 2026-09-02T00:00:54Z` as the
+      // frozen blob the hero was reading. The chart fallback is now gated on the
+      // event still HAVING a source (an emptied bag is a withdrawal, not an
+      // absence), so the field has to be present for this fixture to still be
+      // the payload it describes. Adding it does not soften the #4015 assertions
+      // below — it is why they are reachable.
+      win_probability_sources: {
+        kalshi: {
+          value: 0.895,
+          display_name: "Kalshi",
+          type: "prediction_market",
+          color: "#000",
+          updated_at: "2026-09-02T00:00:54Z",
+        },
+      },
       hero_probability: 0.895,
       hero_probability_away: 0.105,
       hero_probability_source: "blend",

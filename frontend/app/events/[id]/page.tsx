@@ -1544,6 +1544,12 @@ export default function EventPage({ params }: EventPageProps) {
                 // what happened; animating it would imply a continuity between
                 // two readings half a minute apart that the data does not have.
                 animate={streamConnected}
+                // #5890 — the no-reading copy's tense. "No price yet" promises a
+                // price that is still coming; on a match that has kicked off,
+                // the prices came and were withdrawn. The page's own three
+                // answers, not a fourth reading of the clock: `isSuspended` is
+                // the one `hasNoReportedResult` answer computed above.
+                started={isLive || isFinished || isSuspended}
               />
               )}
 
