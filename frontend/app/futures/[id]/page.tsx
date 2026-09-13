@@ -43,6 +43,7 @@ import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import {
   asOfLabel,
   movementExplanation as movementExplanationHelper,
+  heroOutcomeLabel,
   movementWindowLabel,
   pickHeroOutcome,
   sortFuturesOutcomes,
@@ -79,51 +80,6 @@ function getCategoryEmoji(category: string | null): string {
     case "health": return "🏥";
     default: return "🍀";
   }
-}
-
-/**
- * Detect whether an outcome name is a recognizable entity (person, team, place)
- * vs a generic/date-like identifier that needs extra context in the hero display.
- *
- * Returns true for names like "May 18", "2026", "Q3", "Option A", "Before July",
- * "Over 5.5", bare numbers, single short words, or Yes/No variants.
- * Returns false for names that look like real entities: "Celtics", "Trump",
- * "Kendrick Lamar", "Manchester City".
- */
-function isGenericOutcomeName(name: string): boolean {
-  const trimmed = name.trim();
-
-  // Short single-token names (<=4 chars) are likely generic unless they look like
-  // known abbreviations that are still meaningful (e.g., "Yes", "No")
-  if (trimmed.length <= 3) return true;
-
-  // Bare numbers or numbers with units: "5", "42.5", "100+", "$50"
-  if (/^[$]?\d+([.,]\d+)?[+%]?$/.test(trimmed)) return true;
-
-  // Date patterns: "May 18", "June 2026", "Jan 1, 2027", "2025-06", "Q3 2026"
-  const datePatterns = [
-    /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d/i,
-    /^(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d/i,
-    /^\d{4}(-\d{2})?$/,
-    /^Q[1-4]\b/i,
-    /^(Before|After|By)\s+(January|February|March|April|May|June|July|August|September|October|November|December)/i,
-    /^(Before|After|By)\s+(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i,
-    /^(Before|After|By)\s+\d{4}/i,
-    /^Week\s+\d/i,
-  ];
-  if (datePatterns.some((p) => p.test(trimmed))) return true;
-
-  // Threshold/range patterns: "Over 5.5", "Under 100", ">=50", "250+"
-  if (/^(Over|Under|Above|Below|At least|At most|More than|Less than|Fewer than)\s/i.test(trimmed)) return true;
-  if (/^[<>=]+\s*\d/.test(trimmed)) return true;
-
-  // Yes/No variants
-  if (/^(Yes|No)(\s|$)/i.test(trimmed)) return true;
-
-  // Option/Choice labels: "Option A", "Choice 1"
-  if (/^(Option|Choice|Bucket)\s/i.test(trimmed)) return true;
-
-  return false;
 }
 
 // UX-P230: aliases of the sorter's own types, so the buttons and the comparator
@@ -652,7 +608,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       <FuturesHero
         name={market.name}
         probability={heroOutcome?.probability ?? null}
-        outcomeName={heroOutcome ? (isGenericOutcomeName(heroOutcome.name) ? "Yes" : heroOutcome.name) : undefined}
+        outcomeName={heroOutcome ? heroOutcomeLabel(heroOutcome.name) : undefined}
         movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
         // UX-P233 (board item 11): the pill used to render a bare "↓ 71.5 pts"
         // with no window at all, directly above a caption reading "Amazon up 13.5
@@ -883,7 +839,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           )}
           {isResolved && resolvedWinner && (
             <p className="text-[13px] leading-relaxed text-text-secondary mt-3">
-              Settled{resolvedWinner.is_winner === true ? ` — ${isGenericOutcomeName(resolvedWinner.name) ? "Yes" : resolvedWinner.name} won.` : "."}
+              Settled{resolvedWinner.is_winner === true ? ` — ${heroOutcomeLabel(resolvedWinner.name)} won.` : "."}
             </p>
           )}
         </div>
