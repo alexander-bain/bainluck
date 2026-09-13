@@ -56,11 +56,11 @@ each pair to a reader on 2026-09-13: La Liga showed Celta–Málaga twice, once
 finished 1–1 and once with a green LIVE badge and no price at all.
 
 So one extra pass runs AFTER the strict key has grouped what it can, inside a
-`(sport_id, commence MINUTE)` bucket, using the club-name rule the StatPal
-stamper already trusts (:func:`app.utils.soccer_team_matching.soccer_pair_matches`
-— token subset with a squad-marker refusal, orientation kept). Three properties
-make that safe to run on a reader's page, and each is a real constraint rather
-than a reassurance:
+`(sport_id)` bucket and within :data:`SOCCER_NAME_FOLD_WINDOW_MINUTES` of stored
+kick-off, using the club-name rule the StatPal stamper already trusts
+(:func:`app.utils.soccer_team_matching.soccer_pair_matches` — token subset with a
+squad-marker refusal, orientation kept). Three properties make that safe to run
+on a reader's page, and each is a real constraint rather than a reassurance:
 
 * **It is a PREDICATE, never a key.** Token subset is not transitive: `Madrid` ⊆
   `Real Madrid` and `Madrid` ⊆ `Atlético Madrid` say nothing about the other
@@ -105,6 +105,38 @@ gains `betting` and `kalshi` from the twin it absorbs; two more survivors gain a
 Kalshi price they would otherwise have lost. Dropping the tagged row instead —
 the fix #5918 was filed to refuse — would have served those three cards with no
 number on them.
+
+## WHAT THE FIRST SHIP GOT WRONG, FOUND BY CHECKING IT ON PRODUCTION (#5918)
+
+Two things, measured at 19:0xZ–19:3xZ the same day, both by driving this
+function over all 800 soccer rows a reader could then reach.
+
+**The minute was too strict, and its own specimen proved it inside forty
+minutes.** At 18:30Z Getafe–Deportivo was two rows both stamped `16:30:00Z`; at
+19:06Z the Odds API row read `16:32:00Z` and the La Liga page served the
+finished match twice — `54% / 46%` on one card, no percentage at all on the one
+below it. Two providers, two clocks, and an exact-minute bucket cannot hold
+them. Hence :data:`SOCCER_NAME_FOLD_WINDOW_MINUTES`, applied per PAIR inside the
+clique rather than as a bucket boundary.
+
+**And this fold was deleting a number.** Of the eighteen rows it folded away,
+`15297786` (Brest v Paris Saint-Germain) held
+`opening_home_probability = 0.0953` while its elected survivor `15311919` held
+none — so that reader got one card instead of two and lost the "Pre-match ·
+sportsbooks" percentage in the trade. The sources union cannot reach it: that
+percentage is served from the `Event.opening_*` COLUMNS and has never been in
+the JSONB bag. :func:`_carry_opening_line` closes it by calling
+`merge_opening_line`, the same rule the tag fold uses, rather than restating it.
+
+    window   duplicate rows folded   openings carried
+    0m         18                      1   (Brest, the live defect)
+    5m         19                      1
+    10m        20                      2   (adds Getafe, 0.5439 travels)
+    15m        20                      2   (the population plateaus)
+
+No pair inside fifteen minutes was a different fixture, and each window is a
+strict superset of the one before it — nothing the exact-minute key already
+folded stopped being folded.
 """
 
 from __future__ import annotations
@@ -116,10 +148,12 @@ from functools import lru_cache
 from typing import Any, Iterable, Optional
 
 from app.utils.kalshi_occurrence_start import (
+    _is_orm_instance,
     _loaded_sport_key,
     recover_kalshi_occurrence_starts,
 )
 from app.utils.name_normalization import strip_diacritics
+from app.utils.proven_duplicates import merge_opening_line
 from app.utils.soccer_team_matching import soccer_pair_matches
 
 logger = logging.getLogger(__name__)
@@ -212,6 +246,12 @@ class FoldResult:
     merged_sources: dict = field(default_factory=dict)
     """``{survivor_id: unioned win_probability_sources}`` — survivors only, and
     only where a fold actually added a venue."""
+
+    merged_opening: dict = field(default_factory=dict)
+    """``{survivor_id: (home, away)}`` — survivors that gained a pre-match line
+    from the row they absorbed, and only those. Unlike
+    :attr:`merged_sources`, the fold has ALREADY applied this to the row (see
+    :func:`_elect`); this is the record, for the log line and the guard tests."""
 
     dropped_ids: list = field(default_factory=list)
     """Row ids the fold removed, for the log line and the guard tests."""
@@ -309,17 +349,58 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     return result
 
 
-def _soccer_bucket_key(key: tuple) -> tuple:
-    """`(sport_id, commence minute)` — the widest thing two twins must still share.
+#: How far apart two soccer rows' stored kick-offs may be and still be one
+#: fixture. **Measured, and the measurement is why this is not zero.** #5918
+#: shipped with an exact-minute bucket and its own specimen walked out of it
+#: inside forty minutes: at 18:30Z production held Getafe–Deportivo as
+#: `15311881` (ESPN) and `15298080` (Odds API) both at 16:30Z; by 19:06Z the
+#: Odds API row read 16:32Z, and the La Liga page served the finished match
+#: twice — once with `54% / 46%`, once with no percentage at all.
+#:
+#: Ten minutes rather than the three observed (2.0 and 5.9) because a constant
+#: fitted to the largest reading in one population is the extreme, not the
+#: bound. What sizes it is what it must EXCLUDE, and the answer is nothing:
+#: the same two clubs do not play a second fixture in the same competition ten
+#: minutes after the first, so inside this window the club-name predicate and
+#: the clique test are doing all of the work and the clock is doing none. Ten
+#: keeps it obviously sub-fixture-scale.
+#:
+#: Over all 800 production soccer rows a reader could reach on 2026-09-13
+#: 19:1xZ, driving :func:`soccer_pair_matches` over every same-sport pair:
+#: four pairs at zero minutes apart (what the exact-minute key already saw),
+#: one at 2.0 (the La Liga defect above) and two at 5.9 (`Lexington SC` v
+#: `Orange County SC`, three rows for one match in `soccer_other`). **No pair
+#: inside fifteen minutes was a different fixture** — there was nothing for a
+#: tighter window to protect.
+SOCCER_NAME_FOLD_WINDOW_MINUTES = 10
 
-    Everything the strict key adds beyond this is the two club names, which is
-    precisely what the soccer pass is allowed to decide differently. The minute
-    and the sport are not negotiable: two fixtures at one instant in one
-    competition between clubs whose names subset each other do not exist, and
-    that is the whole licence for relaxing the names.
+
+def _soccer_bucket_key(key: tuple) -> tuple:
+    """`(sport_id,)` — the only thing two twins must share before the pairing.
+
+    The sport is not negotiable and never was. The MINUTE used to be here too,
+    and it was doing a job the club-name predicate and the clique test were
+    already doing better: see :data:`SOCCER_NAME_FOLD_WINDOW_MINUTES` for the
+    live specimen that two providers' clocks pushed out of an exact-minute
+    bucket. Time is still a guard — it is just applied per PAIR, where a window
+    can be stated, rather than per bucket, where a boundary decides.
     """
-    sport_id, _away, _home, minute = key
-    return (sport_id, minute)
+    sport_id, _away, _home, _minute = key
+    return (sport_id,)
+
+
+def _within_fold_window(left: tuple, right: tuple) -> bool:
+    """Are these two strict keys' kick-offs inside the window, inclusive?
+
+    Applied to every PAIR in a cluster rather than to the cluster's span, for
+    the same reason the name predicate is: neither relation is transitive. Rows
+    at 0, 8 and 16 minutes chain through the middle one, and a fold that
+    followed the chain would serve one card for a pair sixteen minutes apart
+    that nothing ever compared. The clique test below asks both questions of
+    every pair, so such a cluster is refused whole and all three rows stand.
+    """
+    delta = abs((left[3] - right[3]).total_seconds())
+    return delta <= SOCCER_NAME_FOLD_WINDOW_MINUTES * 60
 
 
 def _group_representative(members: list) -> Any:
@@ -334,8 +415,27 @@ def _group_representative(members: list) -> Any:
     return min(members, key=lambda m: getattr(m, "id", 0) or 0)
 
 
+def _bucket_sport_key(
+    bucket_keys: list[tuple], groups: dict[tuple, list]
+) -> Optional[str]:
+    """The sport key of a bucket, from the first group that can answer.
+
+    `_loaded_sport_key` answers `None` for a row whose `Event.sport` the caller
+    did not load, and that is the safe answer for that ROW. Asking only the
+    first group would now let one unloaded row veto a whole sport — the bucket
+    is the sport since the window replaced the minute — so the question is put
+    to each group in turn until one can answer. Every row in a bucket shares a
+    `sport_id`, so any answer is the bucket's answer.
+    """
+    for key in bucket_keys:
+        sport_key = _loaded_sport_key(_group_representative(groups[key]))
+        if sport_key:
+            return sport_key
+    return None
+
+
 def _merge_soccer_name_variants(groups: dict[tuple, list]) -> list[list]:
-    """Merge same-minute soccer groups whose club names name the same fixture.
+    """Merge nearby soccer groups whose club names name the same fixture.
 
     Returns the groups to elect over, in the order the strict key made them; a
     merged cluster takes the position of its earliest member group. Nothing is
@@ -347,7 +447,10 @@ def _merge_soccer_name_variants(groups: dict[tuple, list]) -> list[list]:
     when handing this over: `Madrid` ⊆ `Real Madrid` and `Madrid` ⊆ `Atlético
     Madrid` would chain the two Madrid clubs into one card through a third row
     that matched both. Requiring every pair inside a cluster to match collapses
-    that chain back to nothing and leaves all three groups standing.
+    that chain back to nothing and leaves all three groups standing. Since the
+    bucket became the sport rather than the minute, the clique carries the
+    :func:`_within_fold_window` question too — non-transitive for exactly the
+    same reason, and refused the same way.
     """
     buckets: dict[tuple, list[tuple]] = {}
     for key in groups:
@@ -357,7 +460,7 @@ def _merge_soccer_name_variants(groups: dict[tuple, list]) -> list[list]:
     for bucket_keys in buckets.values():
         if len(bucket_keys) < 2:
             continue
-        sport_key = _loaded_sport_key(_group_representative(groups[bucket_keys[0]]))
+        sport_key = _bucket_sport_key(bucket_keys, groups)
         if not sport_key or not sport_key.startswith("soccer"):
             # Not soccer, or the caller did not load `Event.sport` — either way
             # this pass has nothing it is licensed to say about these rows.
@@ -407,7 +510,9 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
 
     Only clusters of two or more are returned, and only cliques: a candidate
     cluster that is merely connected is discarded whole rather than split, so a
-    chain never decides which of its links survives.
+    chain never decides which of its links survives. "Pair-match" is BOTH
+    questions — the club names name one fixture, and the two kick-offs are
+    inside :data:`SOCCER_NAME_FOLD_WINDOW_MINUTES` of each other.
     """
     pairs: dict[tuple, tuple] = {}
     for key in bucket_keys:
@@ -425,9 +530,14 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
             key = parent[key]
         return key
 
+    def joined(left: tuple, right: tuple) -> bool:
+        return _within_fold_window(left, right) and _pair_matches(
+            pairs[left], pairs[right]
+        )
+
     for i, left in enumerate(bucket_keys):
         for right in bucket_keys[i + 1 :]:
-            if _pair_matches(pairs[left], pairs[right]):
+            if joined(left, right):
                 parent[find(left)] = find(right)
 
     clusters: dict[tuple, list] = {}
@@ -439,7 +549,7 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
         if len(members) < 2:
             continue
         if all(
-            _pair_matches(pairs[left], pairs[right])
+            joined(left, right)
             for i, left in enumerate(members)
             for right in members[i + 1 :]
         ):
@@ -447,9 +557,29 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
         else:
             logger.info(
                 "twin fold: refused a non-clique soccer cluster %s",
-                [pairs[key] for key in members],
+                [(pairs[key], key[3].isoformat()) for key in members],
             )
     return out
+
+
+def _set_served_value(event: Any, column: str, value: Any) -> None:
+    """Place a served reading on a row without making it a pending write.
+
+    The same two arms, for the same reason, as
+    `kalshi_occurrence_start._set_served_commence_time`, whose docstring carries
+    the full argument: an ORM row takes `set_committed_value` so it is never
+    marked dirty and no later flush can persist a serve-time reading into
+    `events`; anything else — a test double, a detached object — takes a plain
+    assignment, because `set_committed_value` needs instance state it has not
+    got. Getting the arms backwards is what turns "we read this differently"
+    into "we wrote this down".
+    """
+    if _is_orm_instance(event):
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        set_committed_value(event, column, value)
+        return
+    setattr(event, column, value)
 
 
 def _elect(members: list, keep: set, result: "FoldResult") -> None:
@@ -470,3 +600,67 @@ def _elect(members: list, keep: set, result: "FoldResult") -> None:
                 added = True
     if added:
         result.merged_sources[survivor.id] = merged
+
+    _carry_opening_line(survivor, losers, result)
+
+
+def _carry_opening_line(survivor: Any, losers: list, result: "FoldResult") -> None:
+    """Give the survivor the pre-match line only an absorbed row held. #5853.
+
+    🔴 WITHOUT THIS, THIS FOLD DELETES A NUMBER, AND IT WAS DOING SO ON
+    PRODUCTION. Measured 2026-09-13 19:3xZ by driving :func:`fold_twin_events`
+    over all 800 soccer rows a reader could reach: of the eighteen rows it
+    folded away, Brest v Paris Saint-Germain's `15297786` held
+    `opening_home_probability = 0.0953` and the survivor it was folded into,
+    `15311919`, holds none. The reader got one card instead of two and lost the
+    "Pre-match · sportsbooks" percentage in the trade. That is precisely the
+    regression #5918 was filed to refuse, arriving by way of its own fix.
+
+    The sources union above cannot reach it: on a SETTLED or pre-match card the
+    printed percentage comes from the `Event.opening_*` COLUMNS, which have
+    never been in the JSONB bag (`merge_opening_line`'s own docstring carries
+    the Bundesliga measurement that established this).
+
+    ONE RULE, NOT A SECOND COPY OF IT. The tag fold answered this question
+    first, in :func:`app.utils.proven_duplicates.merge_opening_line`, and its
+    three clauses are load-bearing — both halves absent before anything is
+    filled, a pair travels as a pair, twins consumed in ascending id order so a
+    card cannot flicker between two readings. Restating them here is how the
+    two rules drift apart, so the function is called rather than imitated.
+    Orientation, which that rule requires of its caller, holds by construction
+    here: the strict key is built from `(away, home)`, and the soccer name pass
+    uses :func:`soccer_pair_matches`, which matches home to home and refuses the
+    swap on purpose.
+
+    APPLIED TO THE ROW, unlike :attr:`FoldResult.merged_sources`, which every
+    caller applies itself. Both shapes exist in this pipeline already —
+    `recover_kalshi_occurrence_starts` writes the corrected kick-off onto the
+    row from inside this same function — and the row is the right place for
+    this one: six call sites in four route files consume this fold, and a
+    number that only arrives when a caller remembers to ask for it is a number
+    that will be missing from the fifth surface somebody adds. The write goes
+    through :func:`_set_served_value`, whose two arms are the safety argument
+    (gotcha #4): `set_committed_value` on an ORM row, so no later flush can
+    persist a served reading back into `events`.
+    """
+    if not losers:
+        return
+    own_home = getattr(survivor, "opening_home_probability", None)
+    home, away = merge_opening_line(
+        own_home,
+        getattr(survivor, "opening_away_probability", None),
+        [
+            (
+                loser.id,
+                getattr(loser, "opening_home_probability", None),
+                getattr(loser, "opening_away_probability", None),
+            )
+            for loser in losers
+        ],
+    )
+    if home is own_home:
+        return
+
+    result.merged_opening[survivor.id] = (home, away)
+    _set_served_value(survivor, "opening_home_probability", home)
+    _set_served_value(survivor, "opening_away_probability", away)
