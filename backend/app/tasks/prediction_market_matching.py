@@ -5729,6 +5729,23 @@ _LIVE_POLL_BUDGET_SECONDS = (
     _LIVE_POLL_HARD_KILL_SECONDS - _LIVE_POLL_BUDGET_MARGIN_SECONDS
 )
 
+#: The wall on ONE first-venue call, and the reason the floor below is a floor
+#: rather than an aspiration (CERT-2774). The stage deadline is tested BEFORE a
+#: fetch, so it bounds when a venue stops ADMITTING work, never when it stops
+#: RUNNING: the last item admitted a millisecond inside the boundary then runs
+#: for as long as the venue takes, and the reserve it was supposed to leave is
+#: gone. Bounding the item is the only thing that turns a reserved share into a
+#: guarantee. 20 s against a venue whose calls are normally well under one.
+_LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS = 20
+
+#: The smallest fetch window a venue with ANY rows is allowed to be left with.
+#: A purely PROPORTIONAL reserve is not a floor either, and CERT-2774's 100:1
+#: population is the proof: one Polymarket key beside a hundred Kalshi ones
+#: reserves 1/101 of the window — about 1.4 s — which is less than a single
+#: call, so the "reserve" could not buy even one fetch. A share is only a floor
+#: once it cannot be smaller than the work it is reserved for.
+_LIVE_POLL_MIN_VENUE_FLOOR_SECONDS = 20
+
 #: The share of the budget the VENUE-FETCH stages may spend. The stages after
 #: them write `win_probability_sources` — the number the reader actually sees
 #: on the page — and they are database-only and quick. Letting ~100 fetches and
@@ -6012,13 +6029,36 @@ async def _poll_live_prediction_market_prices():
         # wildly unequal and a fixed split would hand 428 keys the same seconds as
         # 1,327, starving the big venue to feed the small one. A share of zero is
         # correct when a venue has no rows — the loop does not run.
+        # CERT-2774 — AND THE FLOOR IS ENFORCED AT DISPATCH, which a share alone
+        # never was. Two holes, both measured, both closed here:
+        #
+        #   1. a proportional reserve can be smaller than one call. The grader's
+        #      100:1 population reserves Polymarket 1/101 of the window, ~1.4 s.
+        #      `_LIVE_POLL_MIN_VENUE_FLOOR_SECONDS` is the answer: a venue with
+        #      rows is never left less than one call's worth.
+        #   2. the deadline gates ADMISSION, not COMPLETION. The last Kalshi item
+        #      admitted just inside the boundary then runs unbounded, and eats the
+        #      reserve it was supposed to leave. Reproduced 1/1 at 100 Kalshi keys
+        #      x 2 s: Kalshi 72, Polymarket 0. So Kalshi's admission boundary is
+        #      pulled back by the per-item wall as well as the floor, and the wall
+        #      is REAL (`asyncio.wait_for` on the call itself) — subtracting a
+        #      number for an overshoot nothing actually bounds would be arithmetic
+        #      pretending to be a guarantee.
         _venue_total = len(kalshi_ids) + len(polymarket_ids)
-        _polymarket_share = (
-            len(polymarket_ids) / _venue_total if _venue_total else 0.0
+        _polymarket_reserve = (
+            max(
+                _venue_fetch_window * (len(polymarket_ids) / _venue_total),
+                _LIVE_POLL_MIN_VENUE_FLOOR_SECONDS,
+            )
+            if polymarket_ids
+            else 0.0
         )
-        _kalshi_fetch_deadline = _started_at + _venue_fetch_window * (
-            1.0 - _polymarket_share
+        # A venue with no rows reserves NOTHING — the single-venue common case
+        # must keep the whole window, or this repair costs every ordinary beat.
+        _kalshi_admission_window = _venue_fetch_window - _polymarket_reserve - (
+            _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS if polymarket_ids else 0.0
         )
+        _kalshi_fetch_deadline = _started_at + max(_kalshi_admission_window, 0.0)
         # The FULL window, deliberately: Polymarket runs second, so its deadline
         # is the global one and it inherits every second Kalshi did not use.
         _polymarket_fetch_deadline = _started_at + _venue_fetch_window
@@ -6132,11 +6172,23 @@ async def _poll_live_prediction_market_prices():
                     # path below cannot read it off an expired instance.
                     event_ticker = market.external_id
                     try:
-                        # Kalshi external_id is the event ticker
-                        markets_data, _ = await service.get_markets(
-                            event_ticker=event_ticker,
-                            status=None,  # Get all statuses
-                            limit=10,
+                        # Kalshi external_id is the event ticker.
+                        #
+                        # CERT-2774: WALLED, because this is the call whose
+                        # overrun ate Polymarket's reserve. The stage deadline
+                        # is checked before the fetch, so without a wall here
+                        # one slow venue call crosses the whole window no matter
+                        # what the arithmetic above reserved. The wall bounds the
+                        # WAIT, which is exactly the quantity the budget is
+                        # about — it makes no claim about the request the venue
+                        # may still be serving, and it does not need to.
+                        markets_data, _ = await asyncio.wait_for(
+                            service.get_markets(
+                                event_ticker=event_ticker,
+                                status=None,  # Get all statuses
+                                limit=10,
+                            ),
+                            timeout=_LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS,
                         )
                         stats["kalshi_fetched"] += 1
 
@@ -6253,6 +6305,23 @@ async def _poll_live_prediction_market_prices():
                         # Rate limit between Kalshi requests
                         await asyncio.sleep(0.3)
 
+                    except asyncio.TimeoutError:
+                        # CERT-2774: the wall firing is a DIFFERENT FACT from the
+                        # venue erroring, and the generic arm below would have
+                        # filed it as the latter. It is not an error at all — it
+                        # is this beat declining to spend another venue's floor
+                        # on one slow call. Counted, not `_recover`ed: there is
+                        # no transaction to repair, and the next iteration's
+                        # budget check breaks the loop anyway now that the clock
+                        # has passed the boundary.
+                        stats["kalshi_calls_walled"] = (
+                            stats.get("kalshi_calls_walled", 0) + 1
+                        )
+                        logger.warning(
+                            "live poll: kalshi call for %s hit the %ss wall",
+                            event_ticker,
+                            _LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS,
+                        )
                     except Exception as e:
                         await _recover(f"kalshi_{event_ticker}", e)
 

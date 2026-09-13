@@ -531,3 +531,135 @@ class TestNeitherVenueCanBeStarvedOfTheFetchBudget:
         ).replace("_polymarket_fetch_deadline,", ""), (
             "a loop is still reading the shared deadline"
         )
+
+    async def test_one_polymarket_key_survives_kalshi_deadline_overshoot_5767(
+        self, monkeypatch
+    ):
+        """THE CERT-2774 ARM: a reserved share is only a floor if DISPATCH keeps it.
+
+        The first repair reserved Polymarket a PROPORTIONAL share and still
+        starved it, for two reasons this arm reproduces together at the grader's
+        own population — **100 Kalshi keys, 1 Polymarket key, 2 s per Kalshi
+        call**, measured 1/1 as Kalshi 72 / Polymarket 0:
+
+        * 1/101 of a 144 s window is ~1.4 s. The "reserve" was smaller than one
+          call, so it could not buy a single fetch even if it were honoured.
+        * the stage deadline is tested BEFORE a fetch, so it bounds when a venue
+          stops ADMITTING, never when it stops RUNNING. The item admitted a
+          millisecond inside the boundary ran on and spent the reserve.
+
+        So the assertion is not "Kalshi stopped somewhere sensible" — it is the
+        one thing the reader needs: **the second venue got a call.**
+        """
+        clock = self._clock(monkeypatch)
+        journal = []
+        beat = self._mixed_beat(100, 1)
+        session = _Session([beat, beat], journal=journal)
+        kalshi, poly = self._venues(
+            journal, clock, n_kalshi=100, n_poly=1, kalshi_cost=2, poly_cost=1
+        )
+
+        stats = await _run(monkeypatch, session, kalshi=kalshi, poly=poly)
+
+        kalshi_fetches, poly_fetches = self._fetches(journal)
+        assert poly_fetches, (
+            "the one Polymarket key was starved by 100 Kalshi keys — this is "
+            f"CERT-2774 exactly. kalshi={len(kalshi_fetches)} "
+            f"budget_stops={stats.get('budget_stops')}"
+        )
+        assert len(poly_fetches) == 1, poly_fetches
+        # Kalshi must still get the bulk of the window — a floor for the small
+        # venue is not a licence to halve the big one.
+        assert len(kalshi_fetches) >= 40, (
+            f"the floor overcorrected and cost Kalshi its share: {len(kalshi_fetches)}"
+        )
+
+    async def test_a_single_slow_call_cannot_cross_the_whole_window(
+        self, monkeypatch
+    ):
+        """The other half of CERT-2774, and the one arithmetic alone cannot fix.
+
+        Subtracting a per-item allowance from the admission boundary is only a
+        guarantee if something actually bounds the item. Here one Kalshi call
+        never returns.
+
+        **The REAL clock, deliberately, and this arm is the reason the others
+        fake one.** `asyncio.wait_for` measures on the event loop's clock, and
+        `loop.time()` IS `time.monotonic` — so the fake clock the sibling arms
+        install to charge fetches also freezes the loop's timers, and the wall
+        could never fire under it. A wall is a wall in real seconds or it is not
+        one, so this arm shrinks the wall instead of stretching the clock.
+        """
+        import asyncio as _asyncio
+
+        monkeypatch.setattr(pmm, "_LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS", 0.05)
+        journal = []
+        beat = self._mixed_beat(1, 1)
+        session = _Session([beat, beat], journal=journal)
+
+        class _HangingKalshi(_KalshiService):
+            async def get_markets(self, *a, **kw):
+                journal.append(("fetch", kw.get("event_ticker")))
+                # NOT `asyncio.sleep`: the runner stubs sleep out (the poll has
+                # rate-limit sleeps), so a sleeping fake returns INSTANTLY and
+                # the arm passes on an unwalled call. An Event nobody sets
+                # cannot be stubbed away.
+                await _asyncio.Event().wait()
+
+        kalshi = _HangingKalshi({}, journal)
+        _, poly = self._venues(
+            journal, {"t": 0.0}, n_kalshi=0, n_poly=1, kalshi_cost=0, poly_cost=0
+        )
+
+        # THE ARM IS ITSELF WALLED, and that is not belt-and-braces. With the
+        # product's wall removed this beat never returns — mutation-tested, it
+        # HUNG instead of failing, which in CI is a wedged job and a six-hour
+        # runner, not a red X. A guard for a hang must fail fast when the thing
+        # it guards is gone.
+        try:
+            stats = await _asyncio.wait_for(
+                _run(monkeypatch, session, kalshi=kalshi, poly=poly), timeout=10
+            )
+        except _asyncio.TimeoutError:  # pragma: no cover - the mutation path
+            raise AssertionError(
+                "the poll never returned: the per-item wall is gone, so one "
+                "hanging venue call holds the whole beat until celery SIGKILLs "
+                "it — the exact silent death #5767 exists to end"
+            ) from None
+
+        kalshi_fetches, poly_fetches = self._fetches(journal)
+        assert kalshi_fetches, "the hanging call never ran — the arm is vacuous"
+        assert stats.get("kalshi_calls_walled", 0) >= 1, (
+            "the hanging call was not walled — one slow venue call can still "
+            "consume the entire fetch window, whatever the reserve says"
+        )
+        # And the point of the wall: the venue behind it still gets served.
+        assert poly_fetches, "Polymarket never ran despite the wall firing"
+        # Walled is NOT errored — it is this beat declining to spend another
+        # venue's floor, and filing it as a venue error would hide that.
+        assert not stats["errors"], stats["errors"]
+
+    def test_the_floor_and_the_wall_are_both_real_numbers(self):
+        """The two constants the repair rests on, asserted as a RELATIONSHIP.
+
+        The floor has to be able to buy a call, and the wall has to be no larger
+        than the floor — otherwise the admission boundary is pulled back further
+        than the reserve it is protecting, and Kalshi pays for a guarantee
+        Polymarket never receives.
+        """
+        assert pmm._LIVE_POLL_MIN_VENUE_FLOOR_SECONDS > 0
+        assert pmm._LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS > 0
+        assert (
+            pmm._LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS
+            <= pmm._LIVE_POLL_MIN_VENUE_FLOOR_SECONDS
+        ), "the wall is wider than the floor it protects"
+        # Both have to fit inside the fetch window with room for the big venue.
+        _window = (
+            pmm._LIVE_POLL_BUDGET_SECONDS * pmm._LIVE_POLL_FETCH_BUDGET_SHARE
+        )
+        assert (
+            pmm._LIVE_POLL_MIN_VENUE_FLOOR_SECONDS
+            + pmm._LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS
+        ) < _window / 2, (
+            "the reserve plus the wall take more than half the fetch window"
+        )
