@@ -33,6 +33,31 @@ struct EventCardView: View {
     private var isScheduled: Bool {
         !isSuspended && (event.status == "scheduled" || (!isLive && !isFinished))
     }
+    /// #6010 — whether the per-side slot may print a LIVE reading at all.
+    ///
+    /// The slot used to ask `isFinished`, and a suspended row is not finished, so
+    /// it took the live arm and printed `current_odds` — the stale blend CERT-792
+    /// ruled off this card. The bar (`probabilityBar`), the start time and the
+    /// score dim had each been given the suspended branch one at a time; the
+    /// NUMBER never got it, which is the loudest element on the card still saying
+    /// it. Production specimen (live/210, 2026-09-13 22:21Z), Torino v AS Roma
+    /// `15297959`, suspended and scoreless: `current_odds` home **0.1525**
+    /// captured **2026-09-05**, `opening_odds` home **0.2514**. Web prints 25/75
+    /// in grey after ux's `18eaceac8`; this card printed **15%/85%** semibold in
+    /// team colour, an eight-day-old in-play blend wearing the styling of a price.
+    ///
+    /// It is `canStillBeGraded` and not a fourth inline copy of the status test,
+    /// because "may we print a forecast?" is the question that helper was lifted
+    /// out to answer (#4018) and a blend IS a forecast. The four states fall out
+    /// of it rather than being enumerated: scheduled and live can still be graded
+    /// and keep the live arm untouched; finished and suspended-and-started cannot
+    /// and take the pre-match one. Note the CLOCK travels with it — a suspended
+    /// row dated in the future is still pregame (#4021) and still prints its
+    /// current line.
+    private var canStillBeGraded: Bool {
+        EventState.canStillBeGraded(
+            event.status, commenceTime: event.commenceTime?.asDate)
+    }
 
     /// #4915 — one reading of who won, shared with the event-page hero.
     ///
@@ -331,10 +356,10 @@ struct EventCardView: View {
                     // so the draw is the one arm that moves.
                     .foregroundStyle(isLive ? .primary : (won || outcome == .draw ? .primary : .secondary))
             }
-            if isFinished {
-                preGameOddsLabel(for: side)
-            } else {
+            if canStillBeGraded {
                 probabilityWithMovement(for: side)
+            } else {
+                preGameOddsLabel(for: side)
             }
         }
     }
@@ -613,7 +638,18 @@ struct EventCardView: View {
         }
     }
 
-    /// Shows pre-game odds inline for completed games — dimmed, with "was" prefix for clarity
+    /// The pre-match number, dimmed — for every row that will draw no further
+    /// live reading: completed, and since #6010 suspended-and-started too.
+    ///
+    /// It needed no change to serve the second state, and that is worth saying
+    /// once rather than rediscovering: `outcome` resolves through
+    /// `EventOutcome.resolve`, which returns `.undecided` for anything
+    /// `EventState.isFinished` rejects, so on a suspended row `won` is false for
+    /// BOTH sides and the upset orange and the favourite's grey are both
+    /// unreachable. What a suspended card gets is the plain
+    /// `.secondary.opacity(0.7)` — a grey pre-match number under "No result
+    /// reported", which is the treatment web settled on, and no verdict on a row
+    /// that has none (#4788).
     @ViewBuilder
     private func preGameOddsLabel(for side: TeamSide) -> some View {
         let opening = event.openingOdds
