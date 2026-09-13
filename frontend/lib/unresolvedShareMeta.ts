@@ -59,7 +59,7 @@ import { selfCanonical } from "@/lib/routeMetadata";
 import { defaultShareCard } from "@/lib/shareCard";
 
 /**
- * Which of the four things a link can name — one per unfurl route.
+ * Which of the five things a link can name — one per unfurl route.
  *
  * `"tournament"` and `"event"` joined in #5861. Their two routes were fixed by
  * #5813 and #5833 and are correct about `canonical` and `og:url`; what neither
@@ -67,8 +67,14 @@ import { defaultShareCard } from "@/lib/shareCard";
  * page's `twitter:title` and `twitter:description`. Adopting this builder
  * closes that and settles the voice — the same condition was reading "This game
  * isn't on Bain Luck" on two routes and "Tournament Odds" on another.
+ *
+ * `"hub"` joined in #5877, the last real route on check 8's ratchet. It is the
+ * one subject whose NOUN is not its own name: the segment is `[competition]`,
+ * the nav calls these pages "MMA" and "Tennis", and no reader has ever called
+ * one a hub. "Hub" is our word for the route; "competition" is the reader's
+ * word for the thing, and `SUBJECT_NOUN` exists precisely so the two can differ.
  */
-export type UnresolvedSubject = "game" | "market" | "tournament" | "event";
+export type UnresolvedSubject = "game" | "market" | "tournament" | "event" | "hub";
 
 /**
  * Why the payload did not arrive.
@@ -94,6 +100,7 @@ const SUBJECT_NOUN: Record<UnresolvedSubject, string> = {
   market: "market",
   tournament: "tournament",
   event: "event",
+  hub: "competition",
 };
 
 /**
@@ -102,6 +109,11 @@ const SUBJECT_NOUN: Record<UnresolvedSubject, string> = {
  * That branch is not a new claim — it is the old fallback, now merely saying
  * which page it is on. Keeping the existing words is what makes this table
  * reviewable: every string here can be found in the route it came from.
+ *
+ * ⚠️ `hub` is the one exception, and it is worth stating rather than hiding:
+ * `/hub/[competition]` shipped NO fallback text, because it declared no
+ * metadata at all — that was #5877's defect. So its two strings are new, and
+ * they are written to the pattern of the four above rather than to taste.
  */
 const UNAVAILABLE_COPY: Record<UnresolvedSubject, UnresolvedCopy> = {
   game: {
@@ -120,6 +132,10 @@ const UNAVAILABLE_COPY: Record<UnresolvedSubject, UnresolvedCopy> = {
     title: "Event Odds",
     description: "Every market on this event, as one clean probability.",
   },
+  hub: {
+    title: "Competition Odds",
+    description: "Every market in this competition, as one clean probability.",
+  },
 };
 
 /** The second sentence of the `"not-found"` copy — what the site offers instead. */
@@ -128,6 +144,7 @@ const NOT_FOUND_INVITATION: Record<UnresolvedSubject, string> = {
   market: "See what the world thinks will happen, as probabilities.",
   tournament: "See every contender's chance of winning, as one clean probability.",
   event: "See what the world thinks will happen, as probabilities.",
+  hub: "See the sports and competitions we cover, as probabilities.",
 };
 
 /**
