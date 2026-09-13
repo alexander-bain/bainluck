@@ -23,7 +23,7 @@ the team must also match, which is why the pool came back empty in production.
 `TestTheSeedIsReal` fails loudly if the seed stops reaching the pool at all.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -32,39 +32,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.dependencies.auth import get_optional_user
-from app.routes.events import _EASTERN_TZ_NAME
 from app.services.database import get_db, get_db_rw
 
 pytestmark = pytest.mark.asyncio
-
-
-def _on_the_readers_eastern_day(now: datetime) -> datetime:
-    """An instant on the reader's OWN Eastern day, at every clock.
-
-    The route resolves `today` on the EASTERN calendar date, and does so
-    deliberately: a 7pm ET game on the 12th is the 13th in UTC, so a UTC
-    comparison would rank most of an American sports day as "not today".
-
-    A fixture written as `now + timedelta(hours=3)` therefore stops naming the
-    reader's day for the three hours before Eastern midnight. That is how this
-    file reddened master at 2026-09-13 01:04Z with no code change on either
-    side of it — gotcha #44 in the form `clock_sweep` cannot see: the anchor
-    does not branch on the clock, it ages past it.
-
-    Noon Eastern is twelve hours from either boundary, so it names the reader's
-    day at every instant and needs no `if` (DST moves at 2am, never at noon).
-    It can fall in the PAST, which is the case the route exists to serve — the
-    evening slate a reader asks about at 11pm — and `two_seasons` beside it
-    already proves a past row both reaches the page and can lead it.
-
-    The tz name is imported from the route rather than retyped, so a change of
-    the product's timezone moves this fixture with it instead of silently
-    leaving it a day out.
-    """
-    eastern_noon = now.astimezone(ZoneInfo(_EASTERN_TZ_NAME)).replace(
-        hour=12, minute=0, second=0, microsecond=0
-    )
-    return eastern_noon.astimezone(timezone.utc)
 
 
 def _team_row():
@@ -245,6 +215,84 @@ async def _client_for(session, monkeypatch):
 async def client(seeded_db, monkeypatch):
     async for ac in _client_for(seeded_db, monkeypatch):
         yield ac
+
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _pinned_now() -> datetime:
+    """The one instant the time-qualifier fixtures and the ROUTE both read.
+
+    #5668, and it went from predicted to red: `now + 3 hours` lands on the NEXT
+    America/New_York day for every run after 21:00 ET, so
+    `test_today_does_not_promote_a_future_game_over_a_same_day_game_5060`
+    failed on `backend-tests (1)` for every lane's sha between roughly 01:00Z
+    and 04:00Z — a false red with no code change, on a guard whose subject was
+    never broken.
+
+    Gotcha #44 in the form an offset wears: this anchor never branched on the
+    clock, it DRIFTED off it, so `clock_sweep.py` (which fakes the clock the
+    code reads, not the one the fixture reads) could not see it either.
+
+    Noon ET is the fix because it is the only ET time of day that cannot cross
+    a day boundary under the offsets below: +1h is still the same ET date at
+    every hour of the year, DST transitions included. And the instant is
+    computed ONCE and handed to the route through `promote_answering_rows`'s
+    `now` parameter — which exists for exactly this (`"the tests can pin a day
+    without branching on the clock"`) — so the fixture and the production
+    predicate cannot disagree about which day "today" is, not even across the
+    millisecond in which the ET date ticks over.
+
+    It is derived from the real date rather than frozen at an absolute one so
+    it cannot AGE out of any window a parser applies to a year token.
+    """
+    today_et = datetime.now(timezone.utc).astimezone(_ET).date()
+    return datetime.combine(today_et, time(12, 0), tzinfo=_ET).astimezone(timezone.utc)
+
+
+def _old_season_game(now: datetime) -> datetime:
+    """Noon ET on 1 July, two calendar years before the pinned day.
+
+    The year the reader asks for is READ BACK off this instant rather than
+    computed a second way, so the fixture and the assertion cannot agree for
+    the wrong reason — the second half of #5668. `now - 800 days` could not
+    promise that: which year it lands in depends on the day the suite runs, and
+    the same moving clock produced both the row and the question.
+
+    1 July because no UTC↔ET offset can carry it into another calendar year.
+    """
+    et_year = now.astimezone(_ET).year - 2
+    return datetime.combine(
+        datetime(et_year, 7, 1).date(), time(12, 0), tzinfo=_ET
+    ).astimezone(timezone.utc)
+
+
+def _pin_the_route_clock(monkeypatch, now: datetime) -> list[datetime]:
+    """Give the route's own call site the pinned clock; record what it got.
+
+    The REAL `promote_answering_rows` still runs and the route still has to
+    call it — this only supplies the `now` the route leaves defaulted — so the
+    reach this file exists to prove (#5060's "an unguarded serving path proves
+    the mechanism and nothing about the reader") is untouched: stop calling it
+    and the ordering assertions fail exactly as before.
+
+    The returned list is the non-vacuity handle. A patch that silently misses
+    its target — a renamed import, a call moved to another module — would leave
+    the real clock in place and the suite would go back to being red for three
+    hours a night; `test_the_route_is_using_the_pinned_clock` reads this list
+    so that failure is loud and immediate instead of nocturnal.
+    """
+    from app.routes import events as events_route
+
+    real = events_route.promote_answering_rows
+    seen: list[datetime] = []
+
+    def _pinned(suggestions, intent, now_=None):
+        seen.append(now)
+        return real(suggestions, intent, now)
+
+    monkeypatch.setattr(events_route, "promote_answering_rows", _pinned)
+    return seen
 
 
 TYPEAHEAD = "/api/events/typeahead"
@@ -529,45 +577,6 @@ class TestTheIntentTravels:
 
 
 
-class TestTheSameDayAnchorSurvivesEveryClock:
-    """The fixture's own anchor, swept — because the fixture is the thing that
-    broke, and a specimen nobody tests is a specimen that ages.
-
-    `test_the_competing_rows_reach_the_page` cannot catch this: it asserts both
-    rows are IN the pool, which stays true at every clock. Only the Eastern
-    DATE of the seeded row moves, and nothing asserted it.
-    """
-
-    @pytest.mark.parametrize("hour", range(24))
-    async def test_the_seeded_game_lands_on_the_readers_eastern_day(self, hour):
-        """24 hourly clocks, including the three that reddened master."""
-        now = datetime(2026, 9, 13, hour, 4, tzinfo=timezone.utc)
-        seeded = _on_the_readers_eastern_day(now)
-        eastern = ZoneInfo(_EASTERN_TZ_NAME)
-        assert seeded.astimezone(eastern).date() == now.astimezone(eastern).date(), (
-            f"at {now:%H:%M}Z the seeded game is "
-            f"{seeded.astimezone(eastern):%Y-%m-%d %H:%M} ET but the reader's day "
-            f"is {now.astimezone(eastern).date()} — the `today` band would rank "
-            f"it a miss and the test above would assert nothing."
-        )
-
-    @pytest.mark.parametrize("hour", range(24))
-    async def test_the_old_plus_three_hours_anchor_would_have_failed_this_sweep(self, hour):
-        """The guard is not vacuous: the anchor this replaced fails it.
-
-        Without this, a refactor could quietly restore `now + 3h` and the sweep
-        above would still be green on the clock the refactor happened to run at.
-        """
-        now = datetime(2026, 9, 13, hour, 4, tzinfo=timezone.utc)
-        eastern = ZoneInfo(_EASTERN_TZ_NAME)
-        old = now + timedelta(hours=3)
-        drifted = old.astimezone(eastern).date() != now.astimezone(eastern).date()
-        assert drifted == (hour in {1, 2, 3}), (
-            f"the replaced anchor is expected to name the wrong Eastern day at "
-            f"exactly 01/02/03Z; at {hour:02d}Z drifted={drifted}"
-        )
-
-
 class TestATimeQualifierConstrainsTheAnswer:
     """CERT-2735's required repair, `5060-TIME-QUALIFIERS-CONSTRAIN-THE-ANSWER`.
 
@@ -589,17 +598,24 @@ class TestATimeQualifierConstrainsTheAnswer:
     async def two_lakers_games(self, recorder, monkeypatch):
         """The production specimen, reduced: a future game the scorer ranks
         first, and a same-day game it ranks second."""
-        now = datetime.now(timezone.utc)
+        now = _pinned_now()
+        calls = _pin_the_route_clock(monkeypatch, now)
         rows = [
             _event_row(7001, "Warriors", "Los Angeles Lakers", now + timedelta(days=40)),
-            _event_row(7002, "Gannon", "Mercyhurst Lakers", _on_the_readers_eastern_day(now)),
+            # +1h off NOON ET, so it is the pinned day at every hour of the year
+            # (#5668). The `+3h` that used to be here was the same ET day only
+            # until 21:00 ET.
+            _event_row(7002, "Gannon", "Mercyhurst Lakers", now + timedelta(hours=1)),
         ]
         async for ac in _client_for(_make_seeded_db(recorder, rows), monkeypatch):
+            ac.pinned_now = now
+            ac.pin_calls = calls
             yield ac
 
     @pytest.fixture
     async def one_future_game(self, recorder, monkeypatch):
-        now = datetime.now(timezone.utc)
+        now = _pinned_now()
+        _pin_the_route_clock(monkeypatch, now)
         rows = [
             _event_row(7201, "Warriors", "Los Angeles Lakers", now + timedelta(days=40)),
         ]
@@ -608,12 +624,14 @@ class TestATimeQualifierConstrainsTheAnswer:
 
     @pytest.fixture
     async def two_seasons(self, recorder, monkeypatch):
-        now = datetime.now(timezone.utc)
+        now = _pinned_now()
+        _pin_the_route_clock(monkeypatch, now)
         rows = [
             _event_row(7101, "Warriors", "Los Angeles Lakers", now + timedelta(days=40)),
-            _event_row(7102, "Clippers", "Los Angeles Lakers", now - timedelta(days=800)),
+            _event_row(7102, "Clippers", "Los Angeles Lakers", _old_season_game(now)),
         ]
         async for ac in _client_for(_make_seeded_db(recorder, rows), monkeypatch):
+            ac.pinned_now = now
             yield ac
 
     async def test_the_competing_rows_reach_the_page(self, two_lakers_games):
@@ -622,6 +640,32 @@ class TestATimeQualifierConstrainsTheAnswer:
         body = (await two_lakers_games.get(f"{TYPEAHEAD}?q=lakers")).json()
         ids = [s.get("event_id") for s in body["suggestions"] if s.get("type") == "event"]
         assert sorted(i for i in ids if i) == [7001, 7002], ids
+
+    async def test_the_route_is_using_the_pinned_clock(self, two_lakers_games):
+        """The pin is only worth what it is observed to reach (#5668).
+
+        A `monkeypatch.setattr` whose target has moved patches something
+        nothing calls and raises nothing: the route keeps reading the real
+        clock, and the suite silently goes back to being red for three hours a
+        night. So the clock the route was handed is read back here, and the
+        fixture's same-day row is asserted to be the pinned ET day THROUGH the
+        production predicate rather than through arithmetic of my own.
+        """
+        from app.utils.market_identity import eastern_game_date
+
+        await two_lakers_games.get(f"{TYPEAHEAD}?q=lakers today")
+        assert two_lakers_games.pin_calls, (
+            "the route never called the patched `promote_answering_rows` — the "
+            "pin reached nothing and every day assertion below is back on the "
+            "real clock"
+        )
+        assert all(c == two_lakers_games.pinned_now for c in two_lakers_games.pin_calls)
+        assert eastern_game_date(
+            two_lakers_games.pinned_now + timedelta(hours=1)
+        ) == eastern_game_date(two_lakers_games.pinned_now), (
+            "the same-day fixture is not on the pinned ET day, so the test "
+            "below would be asserting the opposite of what it says"
+        )
 
     async def test_today_does_not_promote_a_future_game_over_a_same_day_game_5060(
         self, two_lakers_games
@@ -656,7 +700,7 @@ class TestATimeQualifierConstrainsTheAnswer:
         nothing but the echoed intent object, so a reader asking for an old
         season was shown the current one as though it were the answer.
         """
-        requested = (datetime.now(timezone.utc) - timedelta(days=800)).year
+        requested = _old_season_game(two_seasons.pinned_now).astimezone(_ET).year
         body = (await two_seasons.get(f"{TYPEAHEAD}?q=lakers {requested}")).json()
         events = [s for s in body["suggestions"] if s.get("type") == "event"]
         assert len(events) == 2, events
