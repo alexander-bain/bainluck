@@ -146,7 +146,9 @@ struct EconomicsView: View {
                     .tracking(-0.5)
                     .lineSpacing(2)
 
-                Text("Economic prediction markets translated into plain probabilities. Rates, inflation, jobs, GDP -- no odds, just percentages.")
+                // #5908: the page shipped a literal ASCII `--` here. It draws as
+                // two hyphens, which is a typewriter artefact and not a dash.
+                Text("Economic prediction markets translated into plain probabilities. Rates, inflation, jobs, GDP \u{2014} no odds, just percentages.")
                     .font(.system(size: 15))
                     .foregroundStyle(DS.textSecondary)
                     .lineSpacing(3)
