@@ -694,6 +694,18 @@ def upcoming_games_query(
     return (
         select(Event)
         .join(Sport, Sport.id == Event.sport_id)
+        # #5918 — THE JOIN DOES NOT POPULATE THE RELATIONSHIP. This rail has
+        # joined `sports` since it was written, but a join in the FROM clause
+        # only makes the table available to the WHERE; `Event.sport` stays
+        # unloaded on every hydrated row. The soccer name-pair fold reads the
+        # sport through `loaded_sport_key`, which answers `None` for an
+        # unloaded relationship rather than emitting IO inside a stage wrapped
+        # in a bare `except` — so without this option the fold's soccer pass
+        # silently no-ops on exactly the league pages it was built for, and
+        # Celta–Málaga renders twice. `selectinload` rather than
+        # `contains_eager`: one extra keyed read of a tiny table, against
+        # restructuring a SELECT whose plan this file measures in blocks.
+        .options(selectinload(Event.sport))
         .where(
             _rail_league_scope(sport_key, also_sport_keys),
             upcoming_rail_condition(now),
@@ -1041,6 +1053,12 @@ def recent_results_query(
     fenced_event = aliased(Event, inner)
     return (
         select(fenced_event)
+        # #5918, as on the upcoming rail — the fold's soccer pass cannot see an
+        # unloaded `Event.sport`. Applied to the OUTER select over the aliased
+        # entity, so the fence's own plan (the whole point of the subquery) is
+        # untouched: `selectinload` is a second statement keyed on the ids this
+        # one returns, never a change to this one.
+        .options(selectinload(fenced_event.sport))
         .order_by(fenced_event.commence_time.desc())
         .limit(RESULTS_LIMIT + 1)
     )
@@ -1098,6 +1116,11 @@ def unreported_games_query(
     fenced_event = aliased(Event, inner)
     return (
         select(fenced_event)
+        # #5918 — same as the two rails above. This one matters even though its
+        # own rows rarely twin: `_folded_results` folds upcoming + results +
+        # unreported as ONE list, so a row here with an unloaded sport is a row
+        # the soccer pass must skip, and a survivor it cannot elect.
+        .options(selectinload(fenced_event.sport))
         .order_by(fenced_event.commence_time.desc())
         .limit(UNREPORTED_LIMIT + 1)
     )

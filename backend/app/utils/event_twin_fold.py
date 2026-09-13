@@ -44,6 +44,67 @@ not equal "st louis cardinals". `match_key` keeps spaces, so it yields
 "stlouis cardinals" against "st louis cardinals". Both leave the twin unfolded.
 The squash below removes every non-alphanumeric character, spaces included, and
 both spellings land on `stlouiscardinals`.
+
+## AND WHY A SQUASH IS NOT ENOUGH FOR SOCCER (#5918)
+
+The squash bridges two SPELLINGS of one name. Soccer's duplicates are not
+spelled differently — they are NAMED differently, by two providers with two
+vocabularies: `PSG` and `Paris Saint-Germain`, `Celta Vigo` and `RC Celta de
+Vigo`, `Deportivo` and `Deportivo La Coruña`, `Plzen` and `Viktoria Plzeň`. No
+character-level rule reaches those, and `/api/events` was serving both rows of
+each pair to a reader on 2026-09-13: La Liga showed Celta–Málaga twice, once
+finished 1–1 and once with a green LIVE badge and no price at all.
+
+So one extra pass runs AFTER the strict key has grouped what it can, inside a
+`(sport_id, commence MINUTE)` bucket, using the club-name rule the StatPal
+stamper already trusts (:func:`app.utils.soccer_team_matching.soccer_pair_matches`
+— token subset with a squad-marker refusal, orientation kept). Three properties
+make that safe to run on a reader's page, and each is a real constraint rather
+than a reassurance:
+
+* **It is a PREDICATE, never a key.** Token subset is not transitive: `Madrid` ⊆
+  `Real Madrid` and `Madrid` ⊆ `Atlético Madrid` say nothing about the other
+  two. A dict key would have silently merged that triple. So the pass unions
+  candidate groups and then REFUSES any cluster that is not a clique under the
+  predicate — every pair in it must match, not just a chain of them.
+* **Soccer only, and the gate is load-bearing.** The subset rule is written for
+  a vocabulary where the short name is the same club. College sport is the
+  counterexample that would break it — `Texas` ⊆ `Texas State` and `Miami` ⊆
+  `Miami (OH)` are *different schools*, and soccer's squad-qualifier guard has
+  nothing to say about them. `soccer_team_matching` measured itself on soccer
+  boards, so it is used on soccer rows and nowhere else.
+* **The survivor is elected exactly as before.** On these pairs the priced row
+  and the id-bearing row are DIFFERENT rows — Getafe's ESPN twin carries the
+  espn_id and no price, its Odds API twin carries a Kalshi price and no id — so
+  the pass hands the merged group to the same :func:`_elect` and the same
+  additive source union. Filtering one row out instead (the obvious fix, and
+  the one #5918 was filed to refuse) would have deleted the only priced card.
+
+MEASURED ON PRODUCTION 2026-09-13 by driving this function — not a
+re-implementation of it — over all 756 soccer rows a reader can reach in
+`[now-12h, now+8d]`, with each half switched off in turn:
+
+    #5905 recovery   #5918 name pass   duplicate rows folded
+    off              off                2      (master today)
+    off              on                 4
+    on               off                2
+    on               on                 9
+
+**Neither half closes this alone, and the interaction is most of the ship.** Six
+of the seven rows this pass newly folds hold a Kalshi *expected expiration*
+three hours after the whistle, so they are not in the same minute-bucket as
+their twin until #5905 puts the kick-off back — PSG/Brest, PSG/Marseille,
+Palmeiras/LDU Quito, Corinthians/Estudiantes, Union Saint-Gilloise/Plzeň. All
+nine are on league pages a reader opens; none is in `soccer_other`. No cluster
+was refused as a non-clique, and no group the strict key already made changed in
+any way.
+
+**The venue union is the reason this merges rather than filters, and production
+says so plainly.** Getafe's elected survivor carries NO venues of its own and
+gains `betting` and `kalshi` from the twin it absorbs; two more survivors gain a
+Kalshi price they would otherwise have lost. Dropping the tagged row instead —
+the fix #5918 was filed to refuse — would have served those three cards with no
+number on them.
 """
 
 from __future__ import annotations
@@ -51,10 +112,15 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Iterable, Optional
 
-from app.utils.kalshi_occurrence_start import recover_kalshi_occurrence_starts
+from app.utils.kalshi_occurrence_start import (
+    _loaded_sport_key,
+    recover_kalshi_occurrence_starts,
+)
 from app.utils.name_normalization import strip_diacritics
+from app.utils.soccer_team_matching import soccer_pair_matches
 
 logger = logging.getLogger(__name__)
 
@@ -207,13 +273,23 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             continue
         groups.setdefault(key, []).append(event)
 
+    # #5918 — the strict key has now grouped every pair that SPELLS its clubs the
+    # same way. The soccer pass below is the only thing that can reach a pair
+    # that NAMES them differently, and it runs on the groups rather than on the
+    # rows so that it can never weaken the key for anybody else.
+    try:
+        grouped = _merge_soccer_name_variants(groups)
+    except Exception:  # noqa: BLE001 — gotcha #42; the strict groups are today's
+        logger.exception("twin fold: soccer name merge failed; serving strict groups")
+        grouped = list(groups.values())
+
     # Keyed on the PYTHON object, not on `.id`: the fold must survive a caller
     # that hands it two hydrated rows carrying the same primary key, and must
     # never keep a row merely because a sibling elected the same id.
     keep: set[int] = {id(e) for e in unkeyed}
     result = FoldResult()
 
-    for members in groups.values():
+    for members in grouped:
         if len(members) == 1:
             keep.add(id(members[0]))
             continue
@@ -231,6 +307,149 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
 
     result.events = [e for e in ordered if id(e) in keep]
     return result
+
+
+def _soccer_bucket_key(key: tuple) -> tuple:
+    """`(sport_id, commence minute)` — the widest thing two twins must still share.
+
+    Everything the strict key adds beyond this is the two club names, which is
+    precisely what the soccer pass is allowed to decide differently. The minute
+    and the sport are not negotiable: two fixtures at one instant in one
+    competition between clubs whose names subset each other do not exist, and
+    that is the whole licence for relaxing the names.
+    """
+    sport_id, _away, _home, minute = key
+    return (sport_id, minute)
+
+
+def _group_representative(members: list) -> Any:
+    """The row whose names speak for a group — lowest id, so it never flickers.
+
+    Members of a group share a *squashed* name, not a tokenized one:
+    "St.Louis" and "St. Louis" squash alike and tokenize differently. So which
+    member answers for the group is a real choice, and it is made the same way
+    :func:`twin_identity_rank` breaks its final tie — deterministically, by row
+    id — rather than by the order the caller happened to hand us the rows.
+    """
+    return min(members, key=lambda m: getattr(m, "id", 0) or 0)
+
+
+def _merge_soccer_name_variants(groups: dict[tuple, list]) -> list[list]:
+    """Merge same-minute soccer groups whose club names name the same fixture.
+
+    Returns the groups to elect over, in the order the strict key made them; a
+    merged cluster takes the position of its earliest member group. Nothing is
+    dropped and nothing is reordered for a sport this does not touch, so a
+    caller serving no soccer gets byte-identical behaviour to before #5918.
+
+    THE CLIQUE TEST IS THE SAFETY, AND IT IS NOT BELT-AND-BRACES. Union-find
+    over a non-transitive predicate is exactly the bug lane1/281 warned about
+    when handing this over: `Madrid` ⊆ `Real Madrid` and `Madrid` ⊆ `Atlético
+    Madrid` would chain the two Madrid clubs into one card through a third row
+    that matched both. Requiring every pair inside a cluster to match collapses
+    that chain back to nothing and leaves all three groups standing.
+    """
+    buckets: dict[tuple, list[tuple]] = {}
+    for key in groups:
+        buckets.setdefault(_soccer_bucket_key(key), []).append(key)
+
+    merged_into: dict[tuple, tuple] = {}
+    for bucket_keys in buckets.values():
+        if len(bucket_keys) < 2:
+            continue
+        sport_key = _loaded_sport_key(_group_representative(groups[bucket_keys[0]]))
+        if not sport_key or not sport_key.startswith("soccer"):
+            # Not soccer, or the caller did not load `Event.sport` — either way
+            # this pass has nothing it is licensed to say about these rows.
+            continue
+        for cluster in _name_clusters(bucket_keys, groups):
+            target = cluster[0]
+            for other in cluster[1:]:
+                merged_into[other] = target
+
+    if not merged_into:
+        return list(groups.values())
+
+    out: list[list] = []
+    position: dict[tuple, int] = {}
+    for key, members in groups.items():
+        target = merged_into.get(key, key)
+        if target in position:
+            out[position[target]].extend(members)
+            continue
+        position[target] = len(out)
+        out.append(list(members))
+    return out
+
+
+@lru_cache(maxsize=4096)
+def _pair_matches(left: tuple, right: tuple) -> bool:
+    """:func:`soccer_pair_matches`, memoized on the two name pairs.
+
+    Pure in its arguments — it reads two module-level alias tables and nothing
+    else — so a cache is a cache and not a stale answer. It is worth having for
+    one specific reason: the clique test below re-asks about every pair the
+    union-find above has already decided, and the fixtures a dyno serves repeat
+    from request to request. Measured, and BOTH regimes are quoted because the
+    cold one is what a dyno pays on its first request after a release:
+
+        40 rows, a feed page   +0.47ms cold   +0.03ms warm
+        756 rows, all soccer   +5.24ms cold   +0.69ms warm
+
+    4096 entries is comfortable rather than tuned: those 756 rows asked 809
+    distinct questions.
+    """
+    return soccer_pair_matches(left, right)
+
+
+def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[list]:
+    """Groups of keys inside one bucket that all pair-match each other.
+
+    Only clusters of two or more are returned, and only cliques: a candidate
+    cluster that is merely connected is discarded whole rather than split, so a
+    chain never decides which of its links survives.
+    """
+    pairs: dict[tuple, tuple] = {}
+    for key in bucket_keys:
+        rep = _group_representative(groups[key])
+        pairs[key] = (
+            getattr(rep, "home_team_name", None),
+            getattr(rep, "away_team_name", None),
+        )
+
+    parent = {key: key for key in bucket_keys}
+
+    def find(key: tuple) -> tuple:
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    for i, left in enumerate(bucket_keys):
+        for right in bucket_keys[i + 1 :]:
+            if _pair_matches(pairs[left], pairs[right]):
+                parent[find(left)] = find(right)
+
+    clusters: dict[tuple, list] = {}
+    for key in bucket_keys:
+        clusters.setdefault(find(key), []).append(key)
+
+    out: list[list] = []
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        if all(
+            _pair_matches(pairs[left], pairs[right])
+            for i, left in enumerate(members)
+            for right in members[i + 1 :]
+        ):
+            out.append(members)
+        else:
+            logger.info(
+                "twin fold: refused a non-clique soccer cluster %s",
+                [pairs[key] for key in members],
+            )
+    return out
 
 
 def _elect(members: list, keep: set, result: "FoldResult") -> None:
