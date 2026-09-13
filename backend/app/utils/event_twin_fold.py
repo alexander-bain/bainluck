@@ -56,11 +56,17 @@ each pair to a reader on 2026-09-13: La Liga showed Celta–Málaga twice, once
 finished 1–1 and once with a green LIVE badge and no price at all.
 
 So one extra pass runs AFTER the strict key has grouped what it can, inside a
-`(sport_id, commence MINUTE)` bucket, using the club-name rule the StatPal
-stamper already trusts (:func:`app.utils.soccer_team_matching.soccer_pair_matches`
-— token subset with a squad-marker refusal, orientation kept). Three properties
-make that safe to run on a reader's page, and each is a real constraint rather
-than a reassurance:
+`(sport_id, commence DATE)` candidate bucket, using the club-name rule the
+StatPal stamper already trusts
+(:func:`app.utils.soccer_team_matching.soccer_pair_matches` — token subset with a
+squad-marker refusal, orientation kept) AND a bound on how far apart two
+providers may put one kick-off (:data:`SOCCER_KICKOFF_DRIFT`). Both halves are
+asked about the pair in hand, not about the bucket: #5964 moved the clock test
+out of the bucket after La Liga served Getafe–Deportivo twice, ESPN storing the
+kick-off at 16:30Z and the Odds API at 16:32Z, which put one fixture in two
+minute-buckets and meant the name question was never asked at all. Four
+properties make that safe to run on a reader's page, and each is a real
+constraint rather than a reassurance:
 
 * **It is a PREDICATE, never a key.** Token subset is not transitive: `Madrid` ⊆
   `Real Madrid` and `Madrid` ⊆ `Atlético Madrid` say nothing about the other
@@ -79,6 +85,12 @@ than a reassurance:
   the pass hands the merged group to the same :func:`_elect` and the same
   additive source union. Filtering one row out instead (the obvious fix, and
   the one #5918 was filed to refuse) would have deleted the only priced card.
+* **The clock is a BOUND, not an equality, and it is tight** (#5964). Five
+  minutes is provider rounding; it is not a schedule. Everything further apart
+  belongs to somebody else and is still refused here — the 30-minute re-mints
+  #5918 excluded on purpose, and the three-hour Kalshi rows #5905 corrects
+  upstream of this function. The bound is enforced pairwise, so it cannot be
+  walked around by chaining rows five minutes at a time.
 
 MEASURED ON PRODUCTION 2026-09-13 by driving this function — not a
 re-implementation of it — over all 756 soccer rows a reader can reach in
@@ -99,6 +111,20 @@ nine are on league pages a reader opens; none is in `soccer_other`. No cluster
 was refused as a non-clique, and no group the strict key already made changed in
 any way.
 
+RE-MEASURED FOR #5964 the same way, later the same day, over all 1,503 soccer
+rows in `[now-3d, now+8d]`, folding each league page the way a reader meets it:
+
+    master                46 rows served twice, of which 40 folded
+    with the drift bound  46 folded, 0 unfolded that master folded
+
+The six it adds are the Getafe pair on La Liga and five identical-name pairs in
+`soccer_other` three to four minutes apart. Two objective false-fold tests over
+all 34 surviving groups: no group holds two different `espn_id`s, and no group
+holds two different scorelines — either would mean two real games merged into
+one card. The naive version of this change (make the bucket a day and let the
+names decide) folded 226 instead of 46, and is what the drift bound exists to
+refuse.
+
 **The venue union is the reason this merges rather than filters, and production
 says so plainly.** Getafe's elected survivor carries NO venues of its own and
 gains `betting` and `kalshi` from the twin it absorbs; two more survivors gain a
@@ -112,6 +138,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import timedelta
 from functools import lru_cache
 from typing import Any, Iterable, Optional
 
@@ -132,6 +159,35 @@ __all__ = [
 ]
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+SOCCER_KICKOFF_DRIFT = timedelta(minutes=5)
+"""How far apart two providers may put ONE soccer kick-off and still be folded.
+
+#5964. This is a bound on provider disagreement, not on scheduling: two rows
+this far apart are one fixture recorded twice, never two fixtures. It is the
+clock half of the soccer pass's licence, and it is deliberately far below the
+two populations either side of it.
+
+MEASURED, and the reading that sets it is quoted rather than the round number.
+Over the 1,503 soccer rows a reader could reach on 2026-09-13 (`[now-3d,
+now+8d]`), driving this module's own predicate over every pair in a competition:
+
+    drift on a LEAGUE page a reader opens   0 min (name variants), 2 min
+    drift only in `soccer_other`            3, 5, 8, 9, 14, 15, 16, 21, 24 min
+    the 30-minute re-mint class             30 and 31 min   (#5918 excluded it)
+    the Kalshi expected-expiration class    180 min         (#5905 corrects it)
+
+The only sub-30-minute disagreement reaching a reader's league page was the
+2-minute Getafe pair, so 5 minutes is that reading plus margin — chosen to sit
+in the empty band between the defect and the nearest population somebody else
+owns, so that widening it later is a decision and not an accident. n is small
+and the constant is a ceiling on a rounding artifact, so it is sized to be
+obviously clear of its neighbours rather than fitted to its one specimen.
+
+Chaining is not a way around it: the clique refusal below requires EVERY pair in
+a cluster to pass, so rows at 0, 4 and 8 minutes do not become one fixture by
+standing next to each other.
+"""
 
 
 def _squash(name: Optional[str]) -> str:
@@ -310,16 +366,36 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
 
 
 def _soccer_bucket_key(key: tuple) -> tuple:
-    """`(sport_id, commence minute)` — the widest thing two twins must still share.
+    """`(sport_id, commence DATE)` — the CANDIDATE bucket, not the licence.
 
-    Everything the strict key adds beyond this is the two club names, which is
-    precisely what the soccer pass is allowed to decide differently. The minute
-    and the sport are not negotiable: two fixtures at one instant in one
-    competition between clubs whose names subset each other do not exist, and
-    that is the whole licence for relaxing the names.
+    #5964 — THE BUCKET STOPPED BEING THE CLOCK TEST. Until today this returned
+    `(sport_id, minute)` and exact-minute equality was the whole clock rule.
+    That cost a real pair: on 2026-09-13 La Liga served Getafe–Deportivo twice,
+    ESPN storing the kick-off at 16:30Z and the Odds API at 16:32Z, so the two
+    rows sat in different buckets and were never asked the name question at all.
+
+    So the bucket is now only how CANDIDATES are found cheaply — a day of one
+    competition — and the clock rule moved into the pair predicate, where it is
+    applied to the two rows actually being compared
+    (:data:`SOCCER_KICKOFF_DRIFT`). Widening a bucket cannot fold anything on its
+    own: every pair inside it must still pass both the name rule and the drift
+    rule, and the clique refusal still applies to the result.
+
+    Why not simply make the bucket the day and let the names decide, which is the
+    obvious version of this change: it folds two populations that are not
+    #5964's and that other people deliberately own. The 30-minute re-mints
+    measured on these boards were excluded by #5918 on purpose, and the
+    three-hour Kalshi rows are #5905's recovery to correct — folding them here
+    would make that recovery's own non-vacuity guards pass for the wrong reason
+    and quietly retire a ship that is still doing work on rows with no twin.
+
+    The day is read in UTC because that is the frame the rows are stored in. Two
+    twins either side of midnight UTC are therefore never even candidates; that
+    fails CLOSED — two cards, which is today's behaviour — and no observed pair
+    needs it.
     """
     sport_id, _away, _home, minute = key
-    return (sport_id, minute)
+    return (sport_id, minute.date())
 
 
 def _group_representative(members: list) -> Any:
@@ -398,6 +474,20 @@ def _pair_matches(left: tuple, right: tuple) -> bool:
 
     4096 entries is comfortable rather than tuned: those 756 rows asked 809
     distinct questions.
+
+    #5964 RE-MEASURED, because widening the candidate bucket to a day is exactly
+    the change that could have made this expensive. On the largest page in the
+    system — all 697 `soccer_other` rows, the worst case by a distance — master
+    against this change, two rounds after discarding an import-warmed first
+    reading, cold and warm on the same rows:
+
+        697 rows, `soccer_other`   8.76ms → 13.2ms cold   3.58ms → 4.4ms warm
+        40 rows, a feed page                0.54ms cold          0.24ms warm
+
+    So +4.4ms cold and +0.8ms warm on the one page that pays the most, and the
+    day bucket asks 1,679 distinct questions where the minute bucket asked 1,062.
+    The sliding window in :func:`_name_clusters` is what keeps that from being a
+    cross product; without it the same page cost 16.2ms cold.
     """
     return soccer_pair_matches(left, right)
 
@@ -417,6 +507,19 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
             getattr(rep, "away_team_name", None),
         )
 
+    def same_fixture(left: tuple, right: tuple) -> bool:
+        """Both halves of the licence, asked about the two groups in hand.
+
+        #5964 — the clock half lives here rather than in the bucket so that it is
+        asked about the PAIR. A bucket can only sort rows into piles; it cannot
+        say that these two rows are four minutes apart and those two are forty.
+        Names are asked second because :func:`_pair_matches` is the memoized,
+        expensive half and the drift test is a subtraction.
+        """
+        if abs(left[3] - right[3]) > SOCCER_KICKOFF_DRIFT:
+            return False
+        return _pair_matches(pairs[left], pairs[right])
+
     parent = {key: key for key in bucket_keys}
 
     def find(key: tuple) -> tuple:
@@ -425,9 +528,18 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
             key = parent[key]
         return key
 
-    for i, left in enumerate(bucket_keys):
-        for right in bucket_keys[i + 1 :]:
-            if _pair_matches(pairs[left], pairs[right]):
+    # #5964 — a day-wide bucket asked in time order is a sliding window, not a
+    # cross product. Beyond the drift bound `same_fixture` can only answer False,
+    # so the inner loop stops at the first key out of range instead of asking the
+    # expensive name half about every other fixture in the competition that day.
+    # Semantics are identical — this skips only pairs already refused — and it is
+    # what keeps the wider bucket cheaper than the minute one it replaced.
+    in_time_order = sorted(bucket_keys, key=lambda key: key[3])
+    for i, left in enumerate(in_time_order):
+        for right in in_time_order[i + 1 :]:
+            if right[3] - left[3] > SOCCER_KICKOFF_DRIFT:
+                break
+            if same_fixture(left, right):
                 parent[find(left)] = find(right)
 
     clusters: dict[tuple, list] = {}
@@ -439,7 +551,7 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
         if len(members) < 2:
             continue
         if all(
-            _pair_matches(pairs[left], pairs[right])
+            same_fixture(left, right)
             for i, left in enumerate(members)
             for right in members[i + 1 :]
         ):
