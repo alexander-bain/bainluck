@@ -495,3 +495,60 @@ class TestRelatedFuturesHelpers:
         assert "Clippers" in patterns
         # "LA" should NOT be a separate pattern (< 4 chars)
         assert len(patterns) == 2
+
+    # ── #5798: a bare place QUALIFIER is never a pattern ──────────────────
+    #
+    # Every assertion below is a PAIR: the bare qualifier is gone AND the
+    # multi-word form that carries it survives. Without the second half a
+    # helper that returned `[]` would pass, and the narrowing this guards
+    # would be indistinguishable from deleting the team's own recall.
+
+    def test_bare_state_is_not_a_pattern_but_the_school_still_matches(self):
+        """`%State%` pulled Ohio State's title odds onto Arkansas State's card."""
+        from app.routes.events import _team_name_patterns
+        patterns = _team_name_patterns("Arkansas State Red Wolves")
+        assert "State" not in patterns
+        # The team itself is still reachable three ways.
+        assert "Arkansas State Red Wolves" in patterns
+        assert "Arkansas State Red" in patterns
+        assert "Arkansas" in patterns
+
+    def test_bare_direction_is_not_a_pattern_but_the_qualified_place_is(self):
+        """`%South%` is how NFC South and AFC South reached a Sun Belt game."""
+        from app.routes.events import _team_name_patterns
+        patterns = _team_name_patterns("South Alabama Jaguars")
+        assert "South" not in patterns
+        assert "South Alabama" in patterns
+        assert "South Alabama Jaguars" in patterns
+
+    def test_qualifier_in_the_mascot_slot_is_gated_too(self):
+        """A two-word row puts the qualifier last, where the mascot arm reads it."""
+        from app.routes.events import _team_name_patterns
+        patterns = _team_name_patterns("Penn State")
+        assert "State" not in patterns
+        assert "Penn State" in patterns
+        assert "Penn" in patterns
+
+    def test_real_place_words_are_not_in_the_stoplist(self):
+        """The other direction: Kalshi labels outcomes with these words ALONE.
+
+        Stoplisting a real place to silence a mascot collision (the Alabama and
+        Carolina leaks still open on #5798) would cost recall on every team that
+        one names, so the fix for those is a scope, not a bigger stoplist.
+        """
+        from app.routes.events import _GENERIC_PLACE_QUALIFIERS
+        for place in (
+            "texas", "alabama", "carolina", "boston", "houston", "seattle",
+            "arkansas", "ohio", "penn", "england", "york",
+        ):
+            assert place not in _GENERIC_PLACE_QUALIFIERS
+
+    def test_qualifiers_do_not_narrow_a_pro_team(self):
+        """Nothing in the four pinned pro cases above moves — restated as one."""
+        from app.routes.events import _team_name_patterns
+        assert _team_name_patterns("Boston Celtics") == [
+            "Boston Celtics", "Celtics", "Boston",
+        ]
+        assert _team_name_patterns("New England Patriots") == [
+            "New England Patriots", "Patriots", "New England", "England",
+        ]

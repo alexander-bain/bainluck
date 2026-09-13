@@ -11816,17 +11816,57 @@ def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+# A word that qualifies a place but never IS one. These can only ever appear as
+# a standalone pattern by accident, and as an ILIKE token they match every other
+# school in the sport (#5798).
+#
+# Production, 2026-09-13 00:50Z, the live Sun Belt game Arkansas State @ South
+# Alabama (`/api/events/15306765/related-futures`): `'Arkansas State Red Wolves'`
+# emitted a bare `'State'`, so `FuturesOutcome.name ILIKE '%State%'` pulled Ohio
+# State, Penn State, Michigan State, Boise State and Kansas State into Arkansas
+# State's own card — and the page printed OHIO STATE's 11.5% national-title
+# number as the Red Wolves'. `'South Alabama Jaguars'` emitted a bare `'South'`,
+# which is how `NFC South`, `AFC South`, South Carolina, South Florida, South
+# Dakota St., Southern Miss, Texas Southern and Charleston Southern all reached
+# a Sun Belt game's away card.
+#
+# Membership test: could an outcome a reader wants be labelled with this word
+# ALONE? Real place words are therefore NOT here — Kalshi does label outcomes
+# "Texas", "Carolina" and "Alabama", so dropping those would cost recall. These
+# cannot: "St." is not a substring of "State", so no Kalshi college label
+# ("Arkansas St.") was ever reached through the bare token this removes.
+#
+# The two other leaks the same page showed are NOT fixed here and are open on
+# #5798: `'Jaguars'` still reaches the NFL's Jacksonville Jaguars (a mascot
+# shared with a pro franchise, plus a league scope that lets NFL markets into an
+# NCAAF pool), and `'North Carolina Tar Heels'` still emits a bare `'Carolina'`.
+# Both need a recall census before they move; this one needs none.
+_GENERIC_PLACE_QUALIFIERS = frozenset({
+    "state", "university", "college", "academy", "institute", "tech",
+    "north", "south", "east", "west", "central",
+    "northern", "southern", "eastern", "western",
+    "saint",
+})
+
+
 def _team_name_patterns(full_name: str) -> list[str]:
     """Build ILIKE-safe patterns for matching a team in outcome names.
 
     Returns escaped patterns suitable for use in ILIKE '%pattern%' queries.
     Includes full name, city/location, and mascot/short name.
 
+    A standalone word in `_GENERIC_PLACE_QUALIFIERS` is never emitted — see the
+    comment above it. Multi-word patterns that CONTAIN one are untouched, so
+    "Ohio State" and "South Alabama" still match; only the bare word goes.
+
     Examples:
         "Texas Rangers" → ["Texas Rangers", "Rangers", "Texas"]
         "Los Angeles Dodgers" → ["Los Angeles Dodgers", "Dodgers", "Los Angeles"]
         "New York Yankees" → ["New York Yankees", "Yankees", "New York"]
         "Athletics" → ["Athletics"]
+        "Arkansas State Red Wolves"
+            → ["Arkansas State Red Wolves", "Wolves", "Arkansas State Red",
+               "Arkansas"]                              # no bare "State"
     """
     if not full_name:
         return []
@@ -11837,9 +11877,11 @@ def _team_name_patterns(full_name: str) -> list[str]:
 
     parts = full_name.strip().split()
     if len(parts) > 1:
-        # Mascot/short name: last word (e.g., "Celtics" from "Boston Celtics")
+        # Mascot/short name: last word (e.g., "Celtics" from "Boston Celtics").
+        # Gated too: a two-word row like "Penn State" puts the qualifier in the
+        # mascot slot, and that is the same bare "State" token.
         short = parts[-1]
-        if len(short) >= 4:
+        if len(short) >= 4 and short.lower() not in _GENERIC_PLACE_QUALIFIERS:
             escaped_short = _escape_like(short)
             if escaped_short.lower() != escaped_full.lower():
                 patterns.append(escaped_short)
@@ -11857,7 +11899,7 @@ def _team_name_patterns(full_name: str) -> list[str]:
         # individual words ≥4 chars. Kalshi uses just "Boston" not "Boston Red".
         if len(parts) >= 3:
             for word in parts[:-1]:
-                if len(word) >= 4:
+                if len(word) >= 4 and word.lower() not in _GENERIC_PLACE_QUALIFIERS:
                     escaped_word = _escape_like(word)
                     if escaped_word.lower() not in [p.lower() for p in patterns]:
                         patterns.append(escaped_word)
