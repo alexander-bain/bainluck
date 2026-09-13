@@ -47,6 +47,7 @@ from app.utils.tournament_board import (
     TREND_DAYS,
     TREND_FINE_DAYS,
     apply_final_match_blend,
+    apply_final_result,
     build_boards,
 )
 from app.utils.tournament_event_link import (
@@ -1794,6 +1795,30 @@ async def _build_sections(
         now=now,
     )
 
+    # ── WHAT THE DRAW HAS ALREADY DECIDED, FOR BOTH HALVES (#4174, #5917) ────
+    #
+    # Hoisted above the split because it now has two readers: the grid's reach
+    # cells in `rest`, and the board's decided state in `first` (#5917). One
+    # computation, not two — it is pure Python over the `espn` payload already
+    # loaded above, and a `rest` build was paying for it anyway.
+    #
+    # A first-only request newly pays for it. That cost is one pass over the
+    # scoreboard's decided matches and no query, on a page whose first screen
+    # already blends every board row; the alternative was for the board to read
+    # `results`, which lives in the other fragment and would have made the first
+    # screen build the 76% of the payload the split exists to skip.
+    progress = build_progress(
+        register,
+        espn,
+        # "Round 2" is R64 in a slam and R32 in a 64-draw, so the round cannot
+        # be read without the draw's own size. The register is the authority.
+        draw_sizes={
+            str(draw): first_round_size(reg, draw)
+            for draw in {m.get("draw") for m in reg.matchups}
+            if draw
+        },
+    )
+
     fragments: dict[str, dict[str, Any]] = {}
 
     if want_first:
@@ -1917,19 +1942,9 @@ async def _build_sections(
             # raw scoreboard, NOT from `rest["results"]` below: that list drops
             # a match unless BOTH names resolve, which is right for publishing a
             # score and wrong for knowing that one named player is out. See
-            # `tournament_progress`, CERT-2360.
-            progress=build_progress(
-                register,
-                espn,
-                # "Round 2" is R64 in a slam and R32 in a 64-draw, so the round
-                # cannot be read without the draw's own size. The register is
-                # the authority for it, through the slate's own reader.
-                draw_sizes={
-                    str(draw): first_round_size(reg, draw)
-                    for draw in {m.get("draw") for m in reg.matchups}
-                    if draw
-                },
-            ),
+            # `tournament_progress`, CERT-2360. Built once above the fragment
+            # split since #5917 gave it a second reader on the first screen.
+            progress=progress,
         )
         # DECIDED MATCHES, WITH THE SCORE (UX-P139, Alex's item 9). A separate
         # section rather than a field on the slate, because a slate structurally
@@ -2082,6 +2097,16 @@ async def _build_sections(
         # already been built from it; see `FINAL_ROUND` in `tournament_board`
         # for why the grid's `title` column is deliberately not reconciled here.
         apply_final_match_blend(first["boards"], first["slate"], now=now)
+
+        # ═══ #5917: A DECIDED DRAW HAS NO CONTENDERS ═══
+        #
+        # AFTER the blend overlay, and the order is the ruling, not a habit:
+        # "settled means settled" outranks any price. A draw cannot normally be
+        # both down-to-two-and-live and finished — the slate retires the row to
+        # `results` at the whistle — but if the two sections ever disagree, the
+        # result is the one that wins, and running this second is what makes
+        # that true without either overlay having to know about the other.
+        apply_final_result(first["boards"], progress, now=now)
 
     if want_rest:
         # THE BOOKS RUNG OF THE PRE-MATCH LADDER (#2747, ux/1036 Tier A).

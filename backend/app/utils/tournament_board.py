@@ -55,7 +55,9 @@ from datetime import datetime
 from typing import Any, Optional
 
 from app.utils.futures_source_merge import blend_with_verdict
+from app.utils.grid_register import TERMINAL_RESULTS
 from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
+from app.utils.tournament_progress import DrawProgress
 from app.utils.tournament_register import (
     STALE_PRICE_HOURS,
     TournamentRegister,
@@ -155,6 +157,13 @@ FINAL_ROUND = "F"
 #: row from an outright one without re-deriving the rule.
 PROBABILITY_BASIS_OUTRIGHT = "outright"
 PROBABILITY_BASIS_FINAL = "final-match"
+
+#: The row states a decided board publishes.  Named from ``TERMINAL_RESULTS``
+#: rather than spelled again, because ``_row_state`` already publishes the
+#: register's ``terminal_result`` verbatim for a venue-settled row and the two
+#: ways a board can settle must not drift into two vocabularies.  A guard test
+#: pins these two names to that tuple in both directions.
+TERMINAL_WON, TERMINAL_ELIMINATED = TERMINAL_RESULTS
 
 DRAW_LABELS: dict[str, str] = {
     "mens-singles": "Men's Singles",
@@ -933,5 +942,176 @@ def apply_final_match_blend(
         # will now be served.
         _rank_rows(rows)
         board.update(_board_summary(rows, now))
+
+    return changed
+
+
+def _settle_row(row: dict[str, Any], state: str) -> None:
+    """Turn a priced row into a result, in the module's own settled shape.
+
+    Mirrors what ``build_boards`` publishes for a market-settled row
+    (``status == "settled"``) field for field, so a board decided by the RESULT
+    and a board decided by the VENUE are one shape to every reader.  That
+    includes emptying the trend: the existing settled row carries none, and a
+    sparkline of title prices under a finished title is the outright market's
+    history presented as if the question were still open.
+    """
+    row.update(
+        {
+            "state": state,
+            # Settled means settled: a result, never a probability.
+            "probability": None,
+            "probability_basis": None,
+            "probability_is_live": False,
+            "observed_at": None,
+            "age_hours": None,
+            "price_state": "dark",
+            "freshest_observed_at": None,
+            "freshest_age_hours": None,
+            "stale_sources": [],
+            "mixed_freshness": False,
+            "source_count": 0,
+            "sources": [],
+            "blend_rule": None,
+            "divergent": False,
+            "trend": [],
+            "trend_hourly": [],
+            "trend_delta": None,
+            "liquidity": LIQUIDITY_UNKNOWN,
+            "liquidity_reasons": [],
+        }
+    )
+
+
+def apply_final_result(
+    boards: list[dict[str, Any]],
+    progress: Optional[dict[str, DrawProgress]],
+    *,
+    now: datetime,
+) -> int:
+    """Publish the RESULT on a board whose draw is over, in place (#5917).
+
+    Returns how many rows were settled.
+
+    ═══ WHY ``progress`` AND NOT ``results`` ═══
+
+    The obvious input is ``results.matches[]`` — it has the final, the winner
+    and the score.  It is the wrong one, twice over:
+
+    * **It is in the other fragment.**  ``results`` is a ``rest`` key
+      (``REST_SECTION_KEYS``) and the boards are a ``first`` key, so a
+      first-screen request never builds it.  An overlay reading it would have
+      fired on nothing in production while passing every test built from a whole
+      payload — the same shape as #5893's ``entity_key`` join, which passed 23
+      tests and matched no row.
+    * **It drops a match unless BOTH names resolve**, which is right for
+      printing a score and wrong for knowing who won (CERT-2360).
+
+    ``build_progress`` is the module that exists for this exact question, reads
+    the raw scoreboard before that strict join, resolves names into the
+    REGISTER's key space — the board rows' own — and is pure Python over an
+    ``espn`` payload the route already loads above the fragment split.  Its
+    ``champion`` is set only where a side won the last round of a match whose
+    ``completion`` is in ``DECIDED_COMPLETIONS``, so a title won by retirement
+    or walkover counts, and an abandoned or unreadable one does not.
+
+    ``apply_final_match_blend`` above makes the board defer to the match once a
+    draw is down to two.  This is the same deference one step later: once that
+    match has a winner, the board defers to the RESULT.  Without it the board
+    has no notion of a decided draw at all — it keeps publishing the outright
+    market's last prices, so on 2026-09-13 it read "Elena Rybakina 99% TO WIN
+    THE TITLE" seventeen hours after she won it, under a staleness apology, two
+    inches from a settled prop correctly reading "Yes · Settled".
+
+    The venue's own settlement already has a path here (``_row_state``); it is
+    simply not the only way a title gets decided, and it is the slower one.  The
+    result is known the moment the last ball is struck.
+
+    EVERY ROW SETTLES, not only the two finalists.  A draw with a champion has
+    no contenders left, and a board that settled the final pair while still
+    pricing the 42 players they beat would answer "who will win the title" twice
+    again — which is the defect one draw wider.
+
+    ═══ WHAT THIS DELIBERATELY DOES NOT DO ═══
+
+    **It does not recompute the freshness banner.**  ``_board_summary`` reads
+    the rows' ``freshest_observed_at``, and a settled row has none — so
+    recomputing would take ``newest_observed_at`` to ``None`` and
+    ``price_state`` to ``dark``, which is the exact pair the renderer words as
+    "No numbers yet — no market has put a probability on this draw yet".  On a
+    draw that finished yesterday that is a worse sentence than the one being
+    fixed, and it would be live for however long this ship and its render half
+    (#5917, ux) are apart.  So the three fields the banner reads are preserved
+    across the settle.  They stay TRUE sentences: ``newest_observed_at`` is
+    genuinely when we last saw a price for this draw.  The counts beside them
+    are re-derived, because "0 rows are not live" is true of a board with no
+    probabilities on it and the preserved value would not be.
+
+    The banner is the render half's to replace, keyed on ``decided``; this side
+    only guarantees it is never made worse.
+    """
+    if not progress:
+        return 0
+
+    changed = 0
+    for board in boards:
+        if not isinstance(board, dict):
+            continue
+        draw_progress = progress.get(board.get("draw"))
+        if not isinstance(draw_progress, DrawProgress):
+            continue
+        winner_key = draw_progress.champion
+        if not isinstance(winner_key, str) or not winner_key:
+            continue
+
+        rows = [row for row in (board.get("rows") or []) if isinstance(row, dict)]
+        if not rows:
+            continue
+        # The champion has to be ON this board. Settling 44 rows around a winner
+        # we could not place would erase the board and name nobody — strictly
+        # worse than the stale prices it replaced. Key only, and no name
+        # fallback is needed: `build_progress` has already resolved ESPN's name
+        # into the register's `entity_key` space, which is the space these rows
+        # are keyed in. A miss here is a real miss.
+        winner_row = next(
+            (row for row in rows if row.get("entity_key") == winner_key), None
+        )
+        if winner_row is None:
+            continue
+        # A board already naming a DIFFERENT champion is two authorities
+        # disagreeing about who won. Publishing either is picking a side of a
+        # contradiction; the board keeps what it had and the disagreement stays
+        # visible upstream.
+        if any(
+            row is not winner_row and row.get("state") == TERMINAL_WON for row in rows
+        ):
+            continue
+
+        banner = {
+            key: board.get(key)
+            for key in ("price_state", "newest_observed_at", "age_hours")
+        }
+
+        for row in rows:
+            _settle_row(row, TERMINAL_WON if row is winner_row else TERMINAL_ELIMINATED)
+            changed += 1
+
+        # The champion tops the board. `_rank_rows` cannot do this on its own:
+        # with every probability `None` its sort key is equal for every row, so
+        # a stable sort would leave the winner wherever the outright market's
+        # last prices happened to put them — first for a favourite, far down for
+        # an upset, which is the case that matters.
+        rows.sort(key=lambda row: row is not winner_row)
+        board["rows"] = rows
+        # ABSENT on an undecided board, never `None`: a reader testing
+        # `board.decided` gets one answer, and there is no second falsy shape to
+        # remember. The SCORE is deliberately not here — it lives on the result
+        # row in `results`, which is the `rest` fragment, and copying it into
+        # `first` would either duplicate a fact or make the first screen build
+        # the section the split exists to avoid building.
+        board["decided"] = {"winner_entity_key": winner_key}
+        _rank_rows(rows)
+        board.update(_board_summary(rows, now))
+        board.update(banner)
 
     return changed
