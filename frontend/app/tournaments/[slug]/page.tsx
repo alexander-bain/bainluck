@@ -164,7 +164,11 @@ import {
   HUB_SECTIONS_FIRST,
   HUB_SECTIONS_REST,
 } from "@/lib/tournament/hubBoot";
-import { mergeTournamentSections, type TournamentPayload } from "@/lib/tournament";
+import {
+  mergeTournamentSections,
+  shownBoardsAreDecided,
+  type TournamentPayload,
+} from "@/lib/tournament";
 
 /* ═══ THE TAB BAR IS GONE — ALEX, 2026-09-08 4:00pm PT (#4125, item 5) ═══
  *
@@ -353,6 +357,17 @@ export default function TournamentPage() {
   const board = useMemo(
     () => data?.boards.find((entry) => drawsShown.includes(entry.draw)) ?? null,
     [data, drawsShown]
+  );
+
+  /**
+   * #5924 — IS THE DRAW ON SCREEN FINISHED? The rule itself lives in
+   * `shownBoardsAreDecided` (pure, over EVERY board the pill shows) so a guard
+   * can reach it: `board` above is the FIRST match and is the wrong input here,
+   * because Doubles is three draws behind one pill.
+   */
+  const drawIsDecided = useMemo(
+    () => shownBoardsAreDecided(data?.boards, drawsShown),
+    [data, drawsShown],
   );
 
   const selectionKeys = useMemo(
@@ -572,6 +587,11 @@ export default function TournamentPage() {
                     drawReleased: data.draw_released,
                     mainDrawLabel: data.main_draw_label,
                     orderOfPlayListed: data.slate?.order_of_play_listed,
+                    // #5924 — over EVERY board this pill is showing, not the
+                    // first one: Doubles is three draws behind one pill, and a
+                    // men's doubles final graded while the mixed draw plays on
+                    // must not tell the reader the day is over.
+                    drawIsDecided,
                   })}
                 />
               </div>

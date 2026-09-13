@@ -622,8 +622,10 @@ export interface SlateEmptyState {
    *   we published none of it. OUR failure, and the card says so.
    * - `unlisted` — the authority listed nothing. Either the tournament is over
    *   or the feed is dark, and an empty slate cannot tell those apart.
+   * - `decided` — THIS DRAW is over: its final has been played and graded. The
+   *   one case where an empty list needs no apology at all (#5924).
    */
-  cause: "pre-draw" | "unrendered" | "unlisted";
+  cause: "pre-draw" | "unrendered" | "unlisted" | "decided";
 }
 
 /**
@@ -658,6 +660,29 @@ export interface SlateEmptyState {
  * feed produce the same zero, and the honest sentence covers both without
  * pretending to know which: nothing is listed, and if a match is on we are not
  * seeing it.
+ *
+ * ═══ THE MIRROR OF THE DEFECT (#5924) ═══
+ *
+ * The discriminator above is TOURNAMENT-wide and the list it explains is
+ * PER-DRAW (`order_of_play_listed` is `len(order_of_play)` for the whole
+ * tournament, `tournament_slate.py:1685`). So on a draw that is simply OVER,
+ * `listed > 0` read "we dropped the feed" and the page apologised for a
+ * rendering failure that had not happened.
+ *
+ * Production 2026-09-13 14:40Z, /tournaments/us-open → Women's: the draw
+ * finished at 20:15Z the night before, `slate.matches` held exactly one row and
+ * it was `mens-singles`, `order_of_play_listed` was 625 — and the tab printed
+ * "We can't show today's schedule … so a match that is on right now would be
+ * missing. We're checking." Every clause false, and notice-34 prose on the
+ * marquee surface. The Men's tab reaches the identical state the moment today's
+ * final ends and the slate drops it while 625 stays (live/201, #5924).
+ *
+ * `drawIsDecided` is read FIRST because it is the only input here that is a
+ * fact about the WORLD rather than about our output. It comes from the board's
+ * `decided` (live/200's #5917 half, `f6668f077`) — the same grading that names
+ * the champion — and NOT from counting results client-side, which would be this
+ * file's own sin one level down: inferring a fact about the world from the
+ * shape of what we happened to render.
  */
 export function slateEmptyState(args: {
   /** Has the draw ceremony happened? Before it, the fixtures truly do not exist. */
@@ -669,7 +694,22 @@ export function slateEmptyState(args: {
    * field existed, and read the same as `0` — hedged, never confident.
    */
   orderOfPlayListed?: number | null;
+  /**
+   * #5924 — is the draw on screen finished? Every board the pill is showing has
+   * a graded final. Optional and defaulting to false, so a caller that predates
+   * this (and a payload served before `decided` existed) keeps its exact words.
+   */
+  drawIsDecided?: boolean;
 }): SlateEmptyState {
+  if (args.drawIsDecided) {
+    return {
+      cause: "decided",
+      headline: "This draw is done",
+      // No hedge and no apology: the one empty list on this page that is not
+      // about our output. What happened is on the page already, in FINISHED.
+      detail: "The final has been played.",
+    };
+  }
   if (!args.drawReleased) {
     return {
       cause: "pre-draw",
