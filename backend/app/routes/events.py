@@ -61,6 +61,7 @@ from app.utils.hero_probability import resolve_hero
 # which asks the settled question on its own account. The hero cascade itself
 # left with #3903 — see `utils/hero_probability`.
 from app.utils.settled_hero import resolve_settled_hero
+from app.utils.settledness import market_assigned_settled
 from app.utils.standings_shape import public_standings
 from app.utils import (
     moneyline_to_probability,
@@ -13436,6 +13437,65 @@ def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over, comm
     return opening_over
 
 
+def _settled_market_prices_an_unstarted_game(event, market, market_outcomes, now) -> bool:
+    """A market our own row says is SETTLED, on a game that has not kicked off (#5771).
+
+    THE ROW REFUTES ITSELF AND NO GROUND TRUTH IS NEEDED. `/api/events/15298125
+    /game-markets` served three legs — `Sevilla 0.99 · Tie 0.01 · Valencia 0.01`,
+    `observed_at` stamped one minute before the read — off market 60482102,
+    ticker `KXLALIGAGAME-26SEP13SEVVCF`, whose own row reads `status='resolved',
+    settled_at 2026-09-11 22:49:23Z`. The event commences `2026-09-13 19:00Z`.
+    The page said "Starts in 2h 17m" over an Additional Markets card reading
+    "Sevilla 99%". A settlement two days before kickoff cannot be that fixture's
+    live price, and deciding so needs neither the venue nor a score.
+
+    THIS IS #5820'S CLAUSE ON THE SERVING RAIL, same predicate and same
+    direction. That one refuses a settled market as the BLEND's speaker
+    (`admissible_as_blend_speaker`, `app/utils/live_blend.py`) and it is live —
+    both specimens' heroes now read honestly (`No price` / `59% – 41%`). It
+    never touched `/game-markets`, so the identical settlement price kept being
+    served as a current market row one card below the hero that had refused it.
+
+    WHY THE SCOPE IS "HAS NOT STARTED" AND NOT #5820'S WIDER "HAS NO RESULT".
+    Measured over the 7-day linked window (2026-09-13 16:5xZ), events holding a
+    `status='resolved'` market: **36 events / 57 markets have not started**,
+    2,080 / 8,867 have started with no result, and 550 / 10,953 are completed.
+    Only the first bucket is decidable from the row alone. The second is mostly
+    a live game's genuinely-settled sub-market (a finished first set during a
+    match in play) — real information that a withdrawal would destroy and that
+    wants grading, not hiding, so it is deliberately out of scope and stays
+    exactly as it renders today. The third is "settled means settled" and is
+    load-bearing in the other direction (gotcha #43): a completed event's rows
+    keep their settlement prices and their grades, which is why the guard asks
+    `_event_is_really_finished` first and returns False for it.
+
+    `market_assigned_settled` is `app/utils/settledness.py`'s predicate rather
+    than a status test written here (#1951), so it also covers gotcha #33's
+    settled-but-`status='open'` Kalshi rows. It is handed the ALREADY-FILTERED
+    outcome list, the same list the sections below draw from.
+    """
+    if market_outcomes is None:
+        return False
+    if _event_is_really_finished(event, now):
+        return False
+    commence = getattr(event, "commence_time", None)
+    if commence is None:
+        return False
+    # A NAIVE commence_time is read as UTC, which is what the TIMESTAMPTZ column
+    # means. `_event_is_really_finished` makes the same comparison and never had
+    # to care, because it is only reached on a completed/closed row; this gate is
+    # asked of EVERY market on EVERY event, so it meets the naive datetimes that
+    # older fixtures build — 6 tests across two files raised
+    # `can't compare offset-naive and offset-aware datetimes` before this line
+    # existed. A page build must never throw on a lookup (same rule
+    # `market_assigned_settled` states for a partially-loaded row).
+    if commence.tzinfo is None:
+        commence = commence.replace(tzinfo=timezone.utc)
+    if commence <= now:
+        return False
+    return market_assigned_settled(market, list(market_outcomes))
+
+
 def _event_is_really_finished(event, now) -> bool:
     """True only when an event is genuinely settled.
 
@@ -14000,7 +14060,10 @@ async def _build_game_markets(
     # BUT do enforce sport compatibility as a safety net against cross-sport
     # mislinkage (e.g., baseball World Series market linked to a cricket event).
     # Sport filtering uses sport_id OR llm_sport_category — either must match.
-    event_is_finished = _event_is_really_finished(event, datetime.now(timezone.utc))
+    # One clock for the whole build: `event_is_finished` and the #5771 settled
+    # gate below must not disagree about "now" halfway down a long page build.
+    _gm_now = datetime.now(timezone.utc)
+    event_is_finished = _event_is_really_finished(event, _gm_now)
 
     # #2693 — read the markets of the rows we have declined to PRINT as well as
     # our own. `not_a_proven_duplicate` suppresses a second card for one match;
@@ -14295,6 +14358,18 @@ async def _build_game_markets(
         ]
 
         if not market_outcomes:
+            continue
+
+        # #5771: a market we have already settled may not price a game that has
+        # not kicked off. Asked here, at the one place every section below draws
+        # from, so `other`/`totals`/`spreads`/period/props are covered by one
+        # rule — the same placement and the same reasoning as the #5247 empty-book
+        # filter above. See `_settled_market_prices_an_unstarted_game` for the
+        # specimen, the measured population, and why the scope stops at
+        # "has not started" instead of #5820's wider "has no result".
+        if _settled_market_prices_an_unstarted_game(
+            event, market, market_outcomes, _gm_now
+        ):
             continue
 
         # #921 slice 2: don't render no-real-price or placeholder-team markets on
