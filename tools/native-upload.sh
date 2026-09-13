@@ -44,6 +44,9 @@
 #   tools/native-upload.sh --upload  --build 8  # + TestFlight delivery   (key)
 #   tools/native-upload.sh --export --reuse-archive
 #
+#   --repo PATH          archive that tree instead of the script's own
+#   --allow-stale-tree   build anyway from a tree that is behind master or dirty
+#
 # CREDENTIALS (upload/validate only; never committed, never printed)
 #   ASC_KEY_ID     App Store Connect API key id       (e.g. ABCD123456)
 #   ASC_ISSUER_ID  the issuer uuid from the same page
@@ -56,7 +59,37 @@
 #      for a mode that needs one) — nothing was built
 set -uo pipefail
 
+# WHICH TREE GETS ARCHIVED (#5480's class, in the release tool)
+# ------------------------------------------------------------
+# `REPO_ROOT` comes from the SCRIPT'S OWN LOCATION, so
+# `bash ~/bainluck/tools/native-upload.sh` archives ~/bainluck no matter which
+# worktree you are standing in. For a release that default is right — a TestFlight
+# build should be master, not a lane branch — and it is deliberately kept. What
+# was wrong is that the script never SAID so, and never looked at whether that
+# tree was current. `native-gates.sh` had the same bug and was fixed for it
+# (#5480); the same silence in the tool that produces the binary means shipping
+# stale code to Alex's phone with a clean-looking log. So the tree, its branch,
+# its sha and its distance from the REMOTE master are printed in every mode, and
+# the modes that actually build refuse a tree that is behind or dirty in `ios/`
+# unless `--allow-stale-tree` says otherwise. `--repo PATH` picks a different one.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT_SOURCE="the script's own location"
+ALLOW_STALE_TREE=0
+# --repo is read before anything derives from REPO_ROOT, so the whole preflight
+# describes the tree the caller actually meant.
+_argv=("$@")
+for _i in "${!_argv[@]}"; do
+  if [ "${_argv[$_i]}" = "--repo" ]; then
+    _next=$(( _i + 1 ))
+    _cand="${_argv[$_next]:-}"
+    if [ -z "$_cand" ] || [ ! -d "$_cand" ]; then
+      echo "FAIL: --repo needs a directory that exists, got '${_cand:-<nothing>}'" >&2
+      exit 2
+    fi
+    REPO_ROOT="$(cd "$_cand" && pwd)"
+    REPO_ROOT_SOURCE="--repo"
+  fi
+done
 PROJECT="$REPO_ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
 PBXPROJ="$PROJECT/project.pbxproj"
 EXPORT_OPTIONS="${NATIVE_EXPORT_OPTIONS:-$REPO_ROOT/ios/ExportOptions-AppStore.plist}"
@@ -83,8 +116,10 @@ while [ $# -gt 0 ]; do
     --validate)            MODE="validate" ;;
     --upload)              MODE="upload" ;;
     --reuse-archive)       REUSE_ARCHIVE=1 ;;
+    --allow-stale-tree)    ALLOW_STALE_TREE=1 ;;
+    --repo)                shift ;;  # already consumed above, before REPO_ROOT derived
     --build)               shift; BUILD_NUMBER="${1:-}" ;;
-    -h|--help)             sed -n '1,60p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help)             sed -n '1,59p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "FAIL: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -114,6 +149,72 @@ if [ ! -d "$PROJECT" ]; then
   exit 2
 fi
 note "project : $PROJECT"
+
+# ─── WHICH TREE, AND IS IT CURRENT ────────────────────────────────────────────
+# Graded on the tree's own facts, never on $? — a tree can be a perfectly healthy
+# git repo and still be the wrong one. The distance is measured against the
+# REMOTE master by ls-remote, not against the local `origin/master` ref, because a
+# checkout that has not fetched in hours has a stale local ref that would report a
+# reassuring 0. If the remote sha is not present locally we say "unknown", which
+# is a third answer and not a pass (gotcha #53: an absence is not a clean bill).
+#
+# TWO KINDS OF BAD NEWS, AND ONLY ONE OF THEM IS A REFUSAL. `TREE_STALE` is a
+# MEASURED defect — this tree is demonstrably behind master, or demonstrably has
+# uncommitted `ios/` changes — and it stops a build. `TREE_UNSURE` is the absence
+# of a measurement: no git, no network, no local copy of the remote sha. Refusing
+# on that would make the rig unusable offline and would refuse a perfectly good
+# export from a tarball, so it is printed loudly and passes. Conflating the two
+# is how a guard gets switched off wholesale the first time it is wrong.
+TREE_STALE=""
+TREE_UNSURE=""
+if ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  note "tree    : $REPO_ROOT  (resolved from $REPO_ROOT_SOURCE) — NOT a git repo"
+  TREE_UNSURE="not a git repo, so nothing here can say what code is in this build"
+else
+  TREE_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  TREE_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)
+  note "tree    : $REPO_ROOT  (resolved from $REPO_ROOT_SOURCE)"
+  note "          $TREE_BRANCH @ ${TREE_SHA:0:9}"
+
+  IOS_DIRTY=$(git -C "$REPO_ROOT" status --porcelain -- ios/ 2>/dev/null | wc -l | tr -d ' ')
+  REMOTE_MASTER=$(git -C "$REPO_ROOT" ls-remote origin refs/heads/master 2>/dev/null | /usr/bin/awk '{print $1}')
+
+  if [ -z "$REMOTE_MASTER" ]; then
+    note "          vs remote master: UNKNOWN — ls-remote said nothing (offline?)"
+    TREE_UNSURE="cannot reach origin, so this tree's distance from master is unmeasured"
+  elif ! git -C "$REPO_ROOT" cat-file -e "$REMOTE_MASTER^{commit}" 2>/dev/null; then
+    note "          vs remote master: UNKNOWN — ${REMOTE_MASTER:0:9} is not in this tree yet (fetch)"
+    TREE_UNSURE="the remote master commit is not local, so containment is unmeasured"
+  elif git -C "$REPO_ROOT" merge-base --is-ancestor "$REMOTE_MASTER" HEAD 2>/dev/null; then
+    note "          vs remote master: CONTAINS ${REMOTE_MASTER:0:9} — current"
+  else
+    BEHIND=$(git -C "$REPO_ROOT" rev-list --count "HEAD..$REMOTE_MASTER" 2>/dev/null)
+    IOS_BEHIND=$(git -C "$REPO_ROOT" diff --name-only "HEAD..$REMOTE_MASTER" -- ios/ 2>/dev/null | wc -l | tr -d ' ')
+    note "          vs remote master: BEHIND by ${BEHIND:-?} commit(s), ${IOS_BEHIND:-?} of them touching ios/"
+    TREE_STALE="behind remote master by ${BEHIND:-?} commit(s) (${IOS_BEHIND:-?} touching ios/)"
+  fi
+
+  if [ "${IOS_DIRTY:-0}" != "0" ]; then
+    note "          ios/ working tree: $IOS_DIRTY uncommitted change(s) — the build would include them"
+    TREE_STALE="${TREE_STALE:+$TREE_STALE; }$IOS_DIRTY uncommitted change(s) under ios/"
+  fi
+fi
+
+if [ -n "$TREE_UNSURE" ]; then
+  note "          ** UNVERIFIED: $TREE_UNSURE"
+fi
+
+# The refusal binds only the modes that produce a binary. --dry-run must stay
+# runnable on any tree — a preflight that refuses to describe a bad tree is how
+# you end up with no warning at all — so it REPORTS and passes.
+if [ -n "$TREE_STALE" ] && [ "$MODE" != "dry-run" ] && [ "$ALLOW_STALE_TREE" = "0" ]; then
+  echo
+  echo "FAIL: refusing to build from this tree — $TREE_STALE" >&2
+  echo "      A TestFlight build is the code Alex's phone runs; a stale tree ships" >&2
+  echo "      silently and the log looks clean (#5480's class)." >&2
+  echo "      Fix the tree, or pass --repo <path>, or --allow-stale-tree if you mean it." >&2
+  exit 2
+fi
 
 # The build number. --build is the authority; the project file is only consulted
 # so a --dry-run on a machine with no argument still prints a concrete plan.
