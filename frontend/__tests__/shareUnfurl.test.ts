@@ -180,6 +180,153 @@ describe("a route that declares openGraph declares its image too", () => {
   });
 });
 
+/* ─────── a dynamic route does not inherit the ROOT's identity ─────── */
+
+/**
+ * ═══ THE HOLE #5813 CAME THROUGH ═══
+ *
+ * `/tournaments/us-open` — a real hub, with two priced boards — unfurled as the
+ * home page: the site title, the site card, and `canonical`/`og:url` reading
+ * `https://www.bainluck.com`. A real slug, a second real slug and a slug that
+ * does not exist were byte-identical in metadata.
+ *
+ * It was not a regression. It was never measured, by anything:
+ *
+ *   * **#4193's census** read *"the built HTML of all 40 PRERENDERED pages"*,
+ *     plus `/categories/politics` and `/playoffs/nfl` added by hand. A dynamic
+ *     route prerenders nothing, and `/tournaments/[slug]` was not one of the two.
+ *   * **The source sweep above** opens with `if (!/openGraph\s*:/.test(src))
+ *     continue;`. A route declaring NO metadata is skipped by construction — the
+ *     rule is "declared `openGraph` implies declared `images`", which is silent
+ *     on declaring nothing.
+ *   * **The built-HTML rules below** walk `BUILT_HTML_DIR` for `.html`. Same
+ *     blind spot as #4193's census, for the same reason.
+ *
+ * Three layers, one shared denominator: pages that already say something. So
+ * this rule reads SOURCE and asks the opposite question — which routes say
+ * nothing — over the population none of the others can see.
+ *
+ * ═══ WHY THE ROOT, AND NOT "DECLARES METADATA" ═══
+ *
+ * Inheriting is normal and usually right: `/events/[id]/models` takes
+ * `/events/[id]`'s layout, and `/sports/[key]` takes `/sports`'s. Those name a
+ * real neighbouring page. Inheriting the ROOT is the defect, because the root's
+ * `canonical: "/"` and `og:url: "/"` are correct for exactly one page and are
+ * inherited literally by everyone else (#4193). So the rule walks to the
+ * nearest ancestor that declares, and fires only when that ancestor is the root.
+ *
+ * ═══ WHY A LIST, WHEN `lib/crawlPolicy.ts` ARGUES AGAINST ONE ═══
+ *
+ * That file's warning is against a SILENT exemption list — one that swallows a
+ * route and never speaks again. This is the other thing: a ratchet, the shape
+ * `frontend/typecheck-baseline.json` already uses. It fails in BOTH directions.
+ * An unlisted route that inherits the root fails, and a LISTED route that has
+ * since been fixed also fails, with "delete this line". You cannot quietly join
+ * it and you cannot quietly leave it behind, so it can only shrink.
+ */
+const INHERITS_THE_ROOT_IDENTITY: readonly string[] = [
+  "/challenge/[id]",
+  "/event/[domain]",
+  "/event/[domain]/[slug]",
+  "/hub/[competition]",
+];
+
+/** `export const metadata` or `generateMetadata`, in a page or its own layout. */
+const DECLARES_METADATA = /generateMetadata|export\s+const\s+metadata\b/;
+
+function fileDeclaresMetadata(file: string): boolean {
+  return fs.existsSync(file) && DECLARES_METADATA.test(read(file));
+}
+
+/** Does this route segment declare its own metadata, in `page` or `layout`? */
+function declaresOwnMetadata(dir: string): boolean {
+  return (
+    fileDeclaresMetadata(path.join(dir, "page.tsx")) ||
+    fileDeclaresMetadata(path.join(dir, "layout.tsx"))
+  );
+}
+
+/**
+ * The nearest ANCESTOR layout that declares metadata, or `null` when the only
+ * one above this route is `app/layout.tsx` — i.e. it inherits the root.
+ */
+function nearestMetadataAncestor(dir: string): string | null {
+  let current = path.dirname(dir);
+  while (current !== APP_DIR && current.startsWith(APP_DIR)) {
+    if (fileDeclaresMetadata(path.join(current, "layout.tsx"))) return current;
+    current = path.dirname(current);
+  }
+  return null;
+}
+
+/** `app/tournaments/[slug]` -> `/tournaments/[slug]`, on any separator. */
+function routeOfDir(dir: string): string {
+  return `/${path.relative(APP_DIR, dir).split(path.sep).join("/")}`;
+}
+
+const dynamicRoutes = walk(APP_DIR, (n) => n === "page.tsx")
+  .map((file) => path.dirname(file))
+  .filter((dir) => routeOfDir(dir).includes("["))
+  .map((dir) => ({ dir, route: routeOfDir(dir) }))
+  .filter(({ route }) => !isCrawlerDisallowed(route))
+  .sort((a, b) => a.route.localeCompare(b.route));
+
+/** Routes with no identity of their own that fall all the way back to the root. */
+const rootInheritors = dynamicRoutes
+  .filter(({ dir }) => !declaresOwnMetadata(dir))
+  .filter(({ dir }) => nearestMetadataAncestor(dir) === null)
+  .map(({ route }) => route);
+
+describe("a dynamic route does not unfurl as the home page", () => {
+  it("declares its own identity, or is on the shrinking list", () => {
+    const offenders = rootInheritors.filter(
+      (route) => !INHERITS_THE_ROOT_IDENTITY.includes(route)
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("the list holds nothing that has since been fixed", () => {
+    // The ratchet's other direction, and the half that makes the list honest.
+    // Without it, `/tournaments/[slug]` would have stayed listed after #5813
+    // shipped and the next reader would have believed it was still broken.
+    const fixed = INHERITS_THE_ROOT_IDENTITY.filter(
+      (route) => !rootInheritors.includes(route)
+    );
+    expect(fixed).toEqual([]);
+  });
+
+  it("the sweep reads a real set of dynamic routes, including the fixed one", () => {
+    // Both rules above are `.filter(...)` over a walk. A walk that found
+    // nothing satisfies both and reports green forever, so assert the
+    // denominator by name — and assert that the route this rule was written
+    // for is on the DECLARING side of it, not merely absent from the list.
+    const routes = dynamicRoutes.map((r) => r.route);
+    expect(routes).toContain("/tournaments/[slug]");
+    expect(routes).toContain("/events/[id]");
+    expect(routes).toContain("/futures/[id]");
+    expect(routes.length).toBeGreaterThanOrEqual(12);
+
+    expect(rootInheritors).not.toContain("/tournaments/[slug]");
+  });
+
+  it("the rule can actually fail — the predicates are not stuck on true", () => {
+    // Negative control for the two regex-driven predicates, because a rule
+    // built on `fs.existsSync` plus a regex has two silent ways to pass: a path
+    // that never resolves, and a pattern that never matches.
+    expect(DECLARES_METADATA.test("export async function generateMetadata() {}")).toBe(true);
+    expect(DECLARES_METADATA.test("export const metadata = { title: 'x' };")).toBe(true);
+    expect(DECLARES_METADATA.test('export default function Page() { return null; }')).toBe(false);
+
+    // `/events/[id]/models` declares nothing itself, so it exercises the
+    // ancestor walk rather than the cheap first branch — and its answer must be
+    // the events layout, NOT the root, or the walk is not walking.
+    const models = path.join(APP_DIR, "events", "[id]", "models");
+    expect(fs.existsSync(models)).toBe(true);
+    expect(declaresOwnMetadata(models)).toBe(false);
+    expect(nearestMetadataAncestor(models)).toBe(path.join(APP_DIR, "events", "[id]"));
+  });
+});
+
 /* ──────────────── the layer that reads what actually shipped ──────────── */
 
 /**
