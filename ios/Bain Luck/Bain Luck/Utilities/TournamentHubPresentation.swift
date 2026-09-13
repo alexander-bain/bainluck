@@ -586,9 +586,14 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         let rendered = boardRenderedPercents(board.rows)
 
         // A decided board with no history draws no frame rather than an empty
-        // one carrying a sentence about prices (web's #5934, arm 5). Settled
-        // rows arrive with `probability: null`, and `RaceChart.series` skips
-        // those, so this is today's every decided board.
+        // one carrying a sentence about prices (web's #5934, arm 5).
+        //
+        // #5990 CORRECTS WHAT THIS USED TO SAY. It read "…`RaceChart.series`
+        // skips [settled rows], so this is today's every decided board" — and
+        // that was the defect, not the design: a finished draw lost the picture
+        // of the race that decided it. `series` now selects on DRAWABILITY, so
+        // the guard below fires only where it was always meant to, on a decided
+        // board that has no history to draw either.
         let chart = raceChart(ordered, starts: starts, rendered: rendered)
 
         return BoardSection(
