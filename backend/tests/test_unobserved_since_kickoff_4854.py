@@ -71,9 +71,35 @@ from app.utils.live_blend import (
 EVENT_ID = 15297674
 HOME = "AFC Bournemouth"
 AWAY = "Brentford FC"
-KICKOFF = datetime(2026, 9, 12, 14, 0, tzinfo=timezone.utc)
-FROZEN_AT = datetime(2026, 9, 12, 13, 8, 6, tzinfo=timezone.utc)  # 52m pre-kickoff
-AT_78_MINUTES = datetime(2026, 9, 12, 15, 55, tzinfo=timezone.utc)
+# The specimen's clock is anchored to the RUN, not to the calendar — and the
+# clause under test is the reason.
+#
+# These were the literals above: KICKOFF 2026-09-12 14:00Z, frozen 13:08:06Z,
+# observed 15:55Z. `speaker_unobserved_since_kickoff` is the one clause in
+# `live_blend` that reads the wall clock, and it ABSTAINS once a kickoff is more
+# than `UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES` (12h) old. That abstention is
+# deliberate, and the constant's own comment gives this exact reason:
+#
+#     "a fixed-date fixture replayed months later drifts arbitrarily far from
+#      its own anchor; outside this window the gate abstains rather than acting
+#      on a date it has no business trusting"
+#
+# So at 2026-09-13 02:00:00Z — twelve hours to the minute after the literal —
+# the gate stopped applying, the frozen book became admissible again, and three
+# arms below inverted on a tree nobody had touched (CI at 02:04Z, on a master
+# whose own run was green). The fixture aged into the very abstention the code
+# it tests documents. Gotcha #44, in the form `clock_sweep` cannot see: the
+# anchor does not branch on the clock, it ages past it.
+#
+# Anchored to the run the specimen keeps its exact shape — frozen 51m54s before
+# kickoff, observed at 78' on the match clock, which is 115 minutes of wall
+# clock after kickoff once halftime and stoppage are counted — and "now" IS that
+# observation. 115 minutes is far past GRACE and sits in the first sixth of the
+# 12h window, where production measured the entire population (under 3.4h).
+_OBSERVED_AT = datetime.now(timezone.utc)
+KICKOFF = _OBSERVED_AT - timedelta(minutes=115)
+FROZEN_AT = KICKOFF - timedelta(minutes=51, seconds=54)  # 52m pre-kickoff
+AT_78_MINUTES = _OBSERVED_AT
 
 GRACE = UNOBSERVED_SINCE_KICKOFF_GRACE
 
@@ -111,6 +137,61 @@ def _book(stamp, *, mid=60258512, source="polymarket", external_id=None):
 # =============================================================================
 # The specimen — and the proof that the OTHER TWO silences cannot see it
 # =============================================================================
+
+
+def test_the_specimens_clock_is_inside_the_window_the_gate_acts_in():
+    """The precondition every default-clock arm below silently depends on.
+
+    Three arms call the gate with no explicit `now`, so they read the real
+    clock. They are assertions about the gate ACTING; outside
+    `UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES` the gate abstains by design and
+    each one inverts. Nothing asserted that precondition, which is why the
+    expiry at 02:00:00Z read as three product failures instead of as one
+    fixture that had aged out.
+    """
+    elapsed = datetime.now(timezone.utc) - KICKOFF
+    assert elapsed > GRACE, (
+        f"the specimen must be past grace for the gate to bite; {elapsed} <= {GRACE}"
+    )
+    assert elapsed < UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES, (
+        f"the specimen has aged out of the window ({elapsed} >= "
+        f"{UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES}); the gate now abstains and "
+        f"every default-clock arm below is asserting the opposite of its name"
+    )
+    # Not merely inside — inside with room, so a long suite cannot walk out of
+    # the window mid-run the way an import-time anchor can.
+    assert UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES - elapsed > timedelta(hours=8)
+
+
+def test_the_anchor_is_derived_from_the_run_not_typed_as_a_date():
+    """Teeth for the guard above — teeth that do not dull after twelve hours.
+
+    A typed-in date satisfies the window check for the twelve hours FOLLOWING
+    whatever was typed, so a guard that only reads the window goes green on the
+    machine of whoever wrote the literal and red for everyone else the next
+    night. That is exactly the failure this file just had, so the window check
+    alone cannot be the whole guard.
+
+    Measured against the import stamp, not against a fresh `now`: this file is
+    imported once and its arms run thousands of tests later, so a tolerance read
+    off the wall clock at assert time is itself an ageing anchor. The first
+    version of this guard was exactly that and failed in CI at 10m49s of drift.
+
+    Both halves are needed and neither is vacuous. The second alone passes if
+    `_OBSERVED_AT` is also typed; the first alone passes if `KICKOFF` is typed
+    while `_OBSERVED_AT` stays live. Together they are false for any literal at
+    any clock, so a restored date cannot survive one CI run.
+    """
+    since_import = datetime.now(timezone.utc) - _OBSERVED_AT
+    assert timedelta(0) <= since_import < timedelta(hours=1), (
+        f"_OBSERVED_AT is {since_import} from now, so it is not this run's "
+        f"clock — no shard takes an hour. It has been typed as a date."
+    )
+    assert KICKOFF == _OBSERVED_AT - timedelta(minutes=115), (
+        f"KICKOFF ({KICKOFF}) is not derived from _OBSERVED_AT "
+        f"({_OBSERVED_AT}) — a typed-in date expires again at kickoff + "
+        f"{UNOBSERVED_SINCE_KICKOFF_WINDOW_CLOSES}."
+    )
 
 
 def test_the_frozen_book_resolves_fine_which_is_why_the_old_arms_miss_it():
