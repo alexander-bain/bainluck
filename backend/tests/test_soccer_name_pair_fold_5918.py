@@ -262,9 +262,16 @@ def test_the_reverse_fixture_never_folds():
 
 
 def test_a_different_minute_is_a_different_fixture():
-    """The bucket is `(sport_id, minute)`. Relaxing the names does not relax the
-    clock: the 30-minute Polymarket re-mints measured on the same boards are a
-    different mechanism and are not this pass's to fold.
+    """Relaxing the names does not relax the clock: the 30-minute Polymarket
+    re-mints measured on the same boards are a different mechanism and are not
+    this pass's to fold.
+
+    #5964 moved the clock rule out of the bucket and into a bound on the pair
+    (`SOCCER_KICKOFF_DRIFT`, 5 minutes), so the sentence that used to be here —
+    "the bucket is `(sport_id, minute)`" — is no longer how it is enforced. The
+    assertion is untouched and still says what it always said: thirty minutes is
+    not one fixture. That is now a statement about the bound rather than about
+    exact equality, and it is exactly the boundary #5964 undertook not to cross.
     """
     rows = [
         _Row(1, "Celta Vigo", "Málaga"),
