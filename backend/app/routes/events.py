@@ -13511,6 +13511,37 @@ def _event_is_really_finished(event, now) -> bool:
     return event.commence_time is None or event.commence_time <= now
 
 
+def _event_has_not_kicked_off(event, now) -> bool:
+    """The contest has not started yet, by our own rows (#5890 answer 2 / #5771).
+
+    The scope test for every "a settled market may not speak for this" gate. It
+    is deliberately the SAME judgement `/game-markets` makes about a market card
+    (`_settled_market_prices_an_unstarted_game`, #5771): two rails, one notion of
+    "has not kicked off", so a reader can never find the withheld number on one
+    surface and the withdrawn one on the other.
+
+    Three abstentions, each load-bearing:
+
+    * A **finished** event is never unstarted — asked first, so "settled means
+      settled" (a completed event keeps its whole journey and its verdicts,
+      gotcha #43) is unreachable from any caller of this.
+    * A **NULL** ``commence_time`` is *unknown*, not *future*. Abstain.
+    * A **naive** ``commence_time`` is read as UTC, which is what the TIMESTAMPTZ
+      column means. `_event_is_really_finished` makes the same comparison and
+      never had to care because it is only reached on a completed row; this is
+      asked of ordinary scheduled events, so it meets the naive datetimes older
+      fixtures build, and a page build must never throw on a lookup.
+    """
+    if _event_is_really_finished(event, now):
+        return False
+    commence = getattr(event, "commence_time", None)
+    if commence is None:
+        return False
+    if commence.tzinfo is None:
+        commence = commence.replace(tzinfo=timezone.utc)
+    return commence > now
+
+
 def _own_axis(value, inverted):
     """A leg's probability on ITS OWN axis, given an over-axis ``value``.
 
@@ -17543,6 +17574,42 @@ async def get_event_odds_history(
                 _dropped_wp,
                 _state_window[0].isoformat(),
                 _state_window[1].isoformat(),
+            )
+
+    # ── A market we have already settled does not draw the chart of a game that
+    #    has not kicked off (#5890 answer 2 — the third rail of #5820 / #5771) ──
+    #
+    # `/events/15298125` at 18:06Z, 58 minutes before kick-off: an honest hero
+    # (`59% – 41%`, "2 sportsbooks") over a Kalshi line that cliffs vertically to
+    # a labelled 99% and holds it to the right edge, on an undated x-axis a
+    # reader takes for this afternoon. Every point is market 60482102, whose own
+    # row says `status='resolved', settled_at 2026-09-11 22:49Z`. #5820 refused
+    # that market as the blend's speaker and #5771 refused it as a market card;
+    # this rail was still drawing the number both had withdrawn.
+    #
+    # Placed with the #1828 filter above, before `period_markers`, the ESPN score
+    # supplement and `aggregate_line` derive anything from these lists — one
+    # filter, every consumer. See `app/utils/settled_chart.py` for the measured
+    # population (22 markets on 21 events; 643 markets on 455 unstarted events
+    # untouched), and for why truncating at `settled_at` would have moved 0-2
+    # points per event and fixed nothing.
+    if _event_has_not_kicked_off(event, now):
+        from app.utils.settled_chart import withhold_settled_market_series
+
+        _dropped_settled, _settled_ids = await withhold_settled_market_series(
+            db, win_prob_history, win_prob_sources_meta
+        )
+        if _settled_ids:
+            # `event.id` and not the `event_id` path parameter: same number, and
+            # the row's own copy is not user-provided, so the log line cannot be
+            # a taint sink (CodeQL `py/log-injection`, medium — refused under
+            # notice 32 even though FastAPI has already coerced the param to int).
+            logger.warning(
+                "event %s: withheld %d chart points drawn from settled markets %s "
+                "on a fixture that has not kicked off — see #5890/#5771",
+                event.id,
+                _dropped_settled,
+                sorted(_settled_ids),
             )
 
     # Supplement espn_history with score data from win_prob_history sources.
